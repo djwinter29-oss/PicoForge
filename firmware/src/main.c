@@ -2,11 +2,12 @@
 #include "task.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
+#include "usb_status.h"
 
 #define USB_TASK_STACK_SIZE (1024U)
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
 #define USB_CDC_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
-#define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(100U))
+#define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
 
 static StaticTask_t usb_task_control_block;
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE];
@@ -39,10 +40,14 @@ static void usb_task(void *context)
         }
 
         if (tud_hid_ready() &&
-            ((TickType_t)(now - last_hid_report) >= USB_HID_REPORT_INTERVAL) &&
-            tud_hid_report(0U, &hid_sequence, (uint8_t)sizeof(hid_sequence))) {
-            ++hid_sequence;
-            last_hid_report = now;
+            ((TickType_t)(now - last_hid_report) >= USB_HID_REPORT_INTERVAL)) {
+            picoforge_hid_status_report_t report;
+
+            picoforge_hid_build_status_report(&report, hid_sequence);
+            if (tud_hid_report(PICOFORGE_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
+                ++hid_sequence;
+                last_hid_report = now;
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(1U));

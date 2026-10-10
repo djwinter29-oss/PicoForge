@@ -2,6 +2,7 @@
 
 #include "pico/unique_id.h"
 #include "tusb.h"
+#include "usb_status.h"
 
 #define USB_VID 0xCAFEu
 #define USB_PID 0x4011u
@@ -29,7 +30,7 @@ enum {
 #define EPNUM_HID_IN 0x83
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_HID_DESC_LEN)
 
-/* Development-only vendor-defined input report; replace the VID/PID before release. */
+/* Development-only vendor-defined reports; replace the VID/PID before release. */
 static uint8_t const hid_report_descriptor[] = {
     0x06, 0x00, 0xFF,
     0x09, 0x01,
@@ -37,8 +38,13 @@ static uint8_t const hid_report_descriptor[] = {
     0x15, 0x00,
     0x26, 0xFF, 0x00,
     0x75, 0x08,
-    0x95, 0x01,
+    0x85, PICOFORGE_HID_INFO_REPORT_ID,
+    0x95, PICOFORGE_HID_INFO_PAYLOAD_SIZE,
     0x09, 0x01,
+    0xB1, 0x02,
+    0x85, PICOFORGE_HID_STATUS_REPORT_ID,
+    0x95, PICOFORGE_HID_STATUS_PAYLOAD_SIZE,
+    0x09, 0x02,
     0x81, 0x02,
     0xC0,
 };
@@ -84,29 +90,6 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
     (void)instance;
     return hid_report_descriptor;
-}
-
-uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
-                               hid_report_type_t report_type, uint8_t *buffer,
-                               uint16_t reqlen)
-{
-    (void)instance;
-    if ((report_id == 0U) && (report_type == HID_REPORT_TYPE_INPUT) && (reqlen >= 1U)) {
-        buffer[0] = 0U;
-        return 1U;
-    }
-    return 0;
-}
-
-void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
-                           hid_report_type_t report_type, uint8_t const *buffer,
-                           uint16_t bufsize)
-{
-    (void)instance;
-    (void)report_id;
-    (void)report_type;
-    (void)buffer;
-    (void)bufsize;
 }
 
 static char const *string_desc_arr[] = {

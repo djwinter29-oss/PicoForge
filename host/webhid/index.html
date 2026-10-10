@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>PicoForge | WebHID</title>
+  <link rel="stylesheet" href="../web/css/dashboard.css">
+  <script type="module" src="js/app.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="PicoForge WebHID status">
+      <span class="brand-mark">PF</span>
+      <span class="brand-copy"><small>BROWSER DEVICE</small><strong>PicoForge</strong></span>
+    </a>
+    <div class="connection" id="connection" data-state="disconnected">
+      <span class="connection-light" aria-hidden="true"></span>
+      <span id="connection-label">Disconnected</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-heading">
+      <div>
+        <p class="eyebrow">WEBHID / USB</p>
+        <h1>Board overview</h1>
+      </div>
+      <div class="actions">
+        <button class="button" id="connect" type="button">Connect</button>
+        <button class="button" id="refresh" type="button" disabled>Refresh</button>
+        <button class="button button-secondary" id="disconnect" type="button" disabled>Disconnect</button>
+      </div>
+    </section>
+
+    <section class="identity" aria-label="Hardware identity">
+      <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
+      <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
+      <div class="metric"><span>System clock</span><strong id="clock">--</strong></div>
+      <div class="metric"><span>USB serial</span><strong id="serial">--</strong></div>
+    </section>
+
+    <section class="runtime" aria-labelledby="runtime-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">LIVE REPORT</p>
+          <h2 id="runtime-title">Runtime status</h2>
+        </div>
+        <p class="sample-time" id="sample-time">Waiting for HID report</p>
+      </div>
+      <dl class="runtime-grid">
+        <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
+        <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
+        <div><dt>USB device</dt><dd id="usb-state">--</dd></div>
+        <div><dt>Report sequence</dt><dd id="sequence">--</dd></div>
+      </dl>
+    </section>
+
+    <footer class="status-line" role="status" aria-live="polite">
+      <span class="status-mark" aria-hidden="true"></span>
+      <span id="status-message">Select a PicoForge HID device</span>
+    </footer>
+  </main>
+</body>
+</html>

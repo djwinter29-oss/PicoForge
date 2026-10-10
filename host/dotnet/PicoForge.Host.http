@@ -1,0 +1,7 @@
+@baseUrl = http://127.0.0.1:8766
+
+### Get current device state (200, including connected=false when no board is attached)
+GET {{baseUrl}}/api/status
+
+### OpenAPI description in Development
+GET {{baseUrl}}/openapi/v1.json

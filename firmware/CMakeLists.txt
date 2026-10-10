@@ -32,6 +32,7 @@ include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_
 add_executable(picoforge_hello_world
     src/main.c
     src/integration/usb/usb_descriptors.c
+    src/integration/usb/usb_status.c
 )
 
 target_include_directories(picoforge_hello_world PRIVATE
