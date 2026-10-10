@@ -1,8 +1,7 @@
 # Prerequisites
 *.d
 
-# Pico SDK checkout and generated build output
-.pico-sdk/
+# Generated build output
 /build/
 
 # Object files

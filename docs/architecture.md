@@ -1,12 +1,20 @@
 # PicoForge Architecture
 
-> **Status:** This document defines the intended module boundaries. The current firmware is only a Pico SDK Hello World; the platform, driver, and middleware layers below are planned and not yet implemented.
+> **Status:** The initial firmware now runs a single-core FreeRTOS task. The reusable platform, driver, and middleware layers below remain planned and are not yet implemented.
 
 ## Current Firmware
 
-`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, and builds `picoforge_hello_world` for the selected `PICO_BOARD`. `firmware/src/main.c` initializes USB stdio and prints a greeting once per second. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets.
+`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `picoforge_hello_world` for the selected `PICO_BOARD`. `firmware/src/main.c` creates a statically allocated task that initializes USB stdio and prints a greeting once per second. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets.
 
-This is a buildable starting point, not yet the application framework architecture. The current `main.c` uses `pico_stdlib` directly; future modules should establish the boundaries below before more hardware and application behavior is added.
+This is a buildable starting point, not yet the complete application framework. The example currently uses Pico SDK and FreeRTOS APIs directly; future modules should establish the boundaries below before more hardware and application behavior is added.
+
+## Core and Runtime Policy
+
+The initial runtime uses FreeRTOS-Kernel 11.3.1 with `configNUMBER_OF_CORES=1`. PicoForge starts its scheduler on core 0 and does not launch framework work on core 1. Core 1 is left unused by this baseline and may be assigned by a product application in a future, explicitly designed mode.
+
+The FreeRTOS port itself is SMP-capable, but that does not mean this build runs SMP: the configured scheduler core count is one. Do not treat this as a hard real-time guarantee. Any core-1 application mode will need defined startup ownership, peripheral/IRQ affinity, cross-core synchronization, and measured timing.
+
+The example uses static allocation for its application task and the port-provided idle-task memory. Software timers are enabled because the Pico port uses the timer-pend API for SDK synchronization interoperation. Additional tasks should document their stack, priority, ownership, and whether allocation is static or dynamic. The current firmware disables dynamic task allocation.
 
 ## Intended Dependency Direction
 
@@ -45,9 +53,9 @@ Own board support, configuration, logging, version metadata, and integration wit
 
 ## External Components
 
-Pico SDK is checked out at a pinned revision by `tools/firmware/setup-sdk-env.sh`; firmware CMake consumes it through `PICO_SDK_PATH`. Use SDK-provided components rather than maintaining duplicate copies.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules at `firmware/third_party/pico-sdk` and `firmware/third_party/FreeRTOS-Kernel`. Initialize dependencies with `git submodule update --init --recursive`; the setup script validates the SDK submodule and exports `PICO_SDK_PATH`, which can be overridden for an existing checkout. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. Use SDK-provided components rather than maintaining duplicate copies.
 
-FreeRTOS, FatFs, and other external components are not integrated yet. Before adding one, select and pin its source revision, record its license, and keep vendor sources separate from PicoForge adapters. If an RTOS is selected, keep its kernel integration behind the platform/runtime boundary so middleware does not depend on scheduler-specific APIs without an explicit interface.
+FatFs and other external components are not integrated yet. Before adding one, select and pin its source revision, record its license, and keep vendor sources separate from PicoForge adapters. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
 
 ## Testing and Validation
 

@@ -5,7 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 FIRMWARE_BUILD_SCRIPT="$REPO_ROOT/tools/firmware/build.sh"
 CEEDLING_SCRIPT="$REPO_ROOT/tools/firmware/setup-ceedling-testing.sh"
-PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-$REPO_ROOT/.pico-sdk}"
+PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-$REPO_ROOT/firmware/third_party/pico-sdk}"
 GENERATOR="${CMAKE_GENERATOR:-}"
 BOARD=""
 SKIP_FIRMWARE=0

@@ -12,10 +12,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  PICO_SDK_VERSION: "2.3.0"
-  PICO_SDK_REVISION: "98a542c1a62fb549ffb5d66a3e5892b06276b670"
-
 jobs:
   firmware:
     name: Firmware (${{ matrix.board }})
@@ -27,6 +23,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Install build tools
         run: |
@@ -44,10 +42,7 @@ jobs:
           sh -n tools/firmware/build.sh
 
       - name: Setup Pico SDK
-        run: |
-          . tools/firmware/setup-sdk-env.sh \
-            --sdk-version "$PICO_SDK_VERSION" \
-            --sdk-revision "$PICO_SDK_REVISION"
+        run: . tools/firmware/setup-sdk-env.sh
 
       - name: Build firmware
         run: tools/firmware/build.sh --board "${{ matrix.board }}"

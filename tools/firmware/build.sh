@@ -5,6 +5,7 @@ BOARD="${PICO_BOARD:-pico}"
 BUILD_DIR=""
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
+FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -24,6 +25,10 @@ while [ "$#" -gt 0 ]; do
             PICO_SDK_PATH_VALUE="$2"
             shift 2
             ;;
+        --freertos-kernel-path)
+            FREERTOS_KERNEL_PATH_VALUE="$2"
+            shift 2
+            ;;
         --help)
             cat <<'EOF'
 Usage: tools/firmware/build.sh [options]
@@ -31,8 +36,9 @@ Usage: tools/firmware/build.sh [options]
 Options:
   --board NAME       Pico SDK board (default: pico)
   --build-dir PATH   Build directory (default: build/firmware-NAME)
-  --generator NAME  CMake generator (default: Ninja when available)
+    --generator NAME  CMake generator (default: Ninja when available)
   --pico-sdk-path PATH
+    --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
 EOF
             exit 0
             ;;
@@ -54,11 +60,19 @@ if [ ! -f "$SOURCE_DIR/CMakeLists.txt" ]; then
 fi
 
 if [ -z "$PICO_SDK_PATH_VALUE" ]; then
-    PICO_SDK_PATH_VALUE="$REPO_ROOT/.pico-sdk"
+    PICO_SDK_PATH_VALUE="$SOURCE_DIR/third_party/pico-sdk"
 fi
 if [ ! -f "$PICO_SDK_PATH_VALUE/external/pico_sdk_import.cmake" ]; then
     echo "Pico SDK is not available at $PICO_SDK_PATH_VALUE." >&2
     echo "Run '. tools/firmware/setup-sdk-env.sh' first, or pass --pico-sdk-path." >&2
+    exit 1
+fi
+if [ -z "$FREERTOS_KERNEL_PATH_VALUE" ]; then
+    FREERTOS_KERNEL_PATH_VALUE="$SOURCE_DIR/third_party/FreeRTOS-Kernel"
+fi
+if [ ! -f "$FREERTOS_KERNEL_PATH_VALUE/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake" ]; then
+    echo "FreeRTOS-Kernel is not available at $FREERTOS_KERNEL_PATH_VALUE." >&2
+    echo "Initialize the dependency with 'git submodule update --init --recursive', or pass --freertos-kernel-path." >&2
     exit 1
 fi
 if ! command -v cmake >/dev/null 2>&1; then
@@ -81,5 +95,6 @@ fi
 
 cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" \
+    -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \
     -DPICO_BOARD="$BOARD"
 cmake --build "$BUILD_DIR" --parallel
