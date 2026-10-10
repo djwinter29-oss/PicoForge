@@ -64,7 +64,7 @@ if [ -z "$PICO_SDK_PATH_VALUE" ]; then
 fi
 if [ ! -f "$PICO_SDK_PATH_VALUE/external/pico_sdk_import.cmake" ]; then
     echo "Pico SDK is not available at $PICO_SDK_PATH_VALUE." >&2
-    echo "Run '. tools/firmware/setup-sdk-env.sh' first, or pass --pico-sdk-path." >&2
+    echo "Initialize submodules with 'git submodule update --init --recursive', or pass --pico-sdk-path." >&2
     exit 1
 fi
 if [ -z "$FREERTOS_KERNEL_PATH_VALUE" ]; then

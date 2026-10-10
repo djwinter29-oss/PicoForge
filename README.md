@@ -62,7 +62,9 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 ├── firmware/
 │   ├── CMakeLists.txt       # Pico SDK firmware build
 │   ├── src/
-│   │   └── main.c           # USB-stdio Hello World
+│   │   ├── integration/
+│   │   │   └── usb/         # TinyUSB configuration and composite descriptors
+│   │   └── main.c           # FreeRTOS USB service task
 │   ├── tests/               # Firmware unit tests
 │   └── third_party/
 │       ├── FreeRTOS-Kernel/ # Pinned FreeRTOS dependency submodule
@@ -77,18 +79,17 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 
 ## Firmware Setup
 
-Install Git, CMake, Ninja, and the `arm-none-eabi-gcc` toolchain, then source the SDK setup script from the repository root:
+Install Git, CMake, Ninja, and the `arm-none-eabi-gcc` toolchain, then initialize submodules and build from the repository root:
 
 ```sh
 git submodule update --init --recursive
-. tools/firmware/setup-sdk-env.sh
 tools/firmware/build.sh --board pico
 tools/firmware/build.sh --board pico2
 ```
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The setup script validates the SDK submodule and exports `PICO_SDK_PATH`; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The build defaults to the SDK submodule; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
 
-The current firmware is a FreeRTOS task-based USB-stdio Hello World for RP2040 (`pico`) and RP2350 (`pico2`). The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. After reboot, connect to the board's USB serial interface to read the repeating greeting.
+The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes a CDC ACM serial interface that sends a greeting when opened and a vendor-defined HID interface that reports a one-byte counter. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. Host enumeration still needs confirmation on physical boards.
 
 ## Host Unit Tests
 

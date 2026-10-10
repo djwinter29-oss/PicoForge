@@ -5,7 +5,7 @@
 - Target RP2040 and RP2350 through Pico SDK-supported interfaces. Avoid assuming a specific board when the SDK or board-support layer can provide the information.
 - Keep board-specific behavior in `firmware/src/platform/board`; keep reusable drivers and middleware independent of application-specific board details.
 - Keep platform services, drivers, and middleware in their respective directories. Prefer explicit interfaces and avoid unnecessary cross-layer dependencies.
-- Use the checked-in SDK setup script and its pinned Pico SDK revision. Do not add a second SDK checkout mechanism or duplicate components already provided by the SDK.
+- Use the Pico SDK submodule pinned by the superproject. Do not add a second SDK checkout mechanism or duplicate components already provided by the SDK.
 - Pin third-party dependencies to reviewed versions or commits, keep vendor code separate from PicoForge integration code, and preserve applicable license notices.
 - Preserve existing public APIs and hardware behavior unless the task explicitly requires a change. Update focused documentation when behavior or configuration changes.
 - Add or update the smallest relevant test for non-trivial behavior. Keep host-runnable tests independent of physical hardware where practical; document tests that require a board or probe.

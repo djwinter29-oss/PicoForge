@@ -1,14 +1,16 @@
-#include <stdio.h>
-
 #include "FreeRTOS.h"
 #include "task.h"
 #include "pico/stdlib.h"
+#include "tusb.h"
 
-#define HELLO_TASK_STACK_SIZE (512U)
-#define HELLO_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
+#define USB_TASK_STACK_SIZE (1024U)
+#define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
+#define USB_CDC_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
+#define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(100U))
 
-static StaticTask_t hello_task_control_block;
-static StackType_t hello_task_stack[HELLO_TASK_STACK_SIZE];
+static StaticTask_t usb_task_control_block;
+static StackType_t usb_task_stack[USB_TASK_STACK_SIZE];
+static uint8_t hid_sequence;
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 {
@@ -16,28 +18,51 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
     panic("FreeRTOS stack overflow in task %s", task_name);
 }
 
-static void hello_task(void *context)
+static void usb_task(void *context)
 {
     (void)context;
+    static const char cdc_greeting[] = "PicoForge CDC ready\r\n";
+    TickType_t last_cdc_report = xTaskGetTickCount();
+    TickType_t last_hid_report = last_cdc_report;
 
     while (true) {
-        printf("Hello from PicoForge!\n");
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        TickType_t now = xTaskGetTickCount();
+
+        tud_task();
+
+        if (tud_cdc_connected() &&
+            ((TickType_t)(now - last_cdc_report) >= USB_CDC_REPORT_INTERVAL) &&
+            (tud_cdc_write_available() >= (sizeof(cdc_greeting) - 1U))) {
+            (void)tud_cdc_write(cdc_greeting, (uint32_t)(sizeof(cdc_greeting) - 1U));
+            tud_cdc_write_flush();
+            last_cdc_report = now;
+        }
+
+        if (tud_hid_ready() &&
+            ((TickType_t)(now - last_hid_report) >= USB_HID_REPORT_INTERVAL) &&
+            tud_hid_report(0U, &hid_sequence, (uint8_t)sizeof(hid_sequence))) {
+            ++hid_sequence;
+            last_hid_report = now;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1U));
     }
 }
 
 int main(void)
 {
-    stdio_init_all();
+    if (!tusb_init()) {
+        panic("Failed to initialize TinyUSB");
+    }
 
-    if (xTaskCreateStatic(hello_task,
-                          "Hello",
-                          HELLO_TASK_STACK_SIZE,
+    if (xTaskCreateStatic(usb_task,
+                          "USB",
+                          USB_TASK_STACK_SIZE,
                           NULL,
-                          HELLO_TASK_PRIORITY,
-                          hello_task_stack,
-                          &hello_task_control_block) == NULL) {
-        panic("Failed to create the Hello task");
+                          USB_TASK_PRIORITY,
+                          usb_task_stack,
+                          &usb_task_control_block) == NULL) {
+        panic("Failed to create the USB task");
     }
 
     vTaskStartScheduler();

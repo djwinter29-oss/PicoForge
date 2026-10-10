@@ -31,18 +31,25 @@ include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_
 
 add_executable(picoforge_hello_world
     src/main.c
+    src/integration/usb/usb_descriptors.c
+)
+
+target_include_directories(picoforge_hello_world PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/src/integration/usb"
 )
 
 target_link_libraries(picoforge_hello_world
     pico_stdlib
     FreeRTOS-Kernel-Static
+    pico_unique_id
+    tinyusb_device
 )
 
 target_compile_definitions(picoforge_hello_world PRIVATE
     configNUMBER_OF_CORES=1
 )
 
-pico_enable_stdio_usb(picoforge_hello_world 1)
+pico_enable_stdio_usb(picoforge_hello_world 0)
 pico_enable_stdio_uart(picoforge_hello_world 0)
 
 pico_add_extra_outputs(picoforge_hello_world)

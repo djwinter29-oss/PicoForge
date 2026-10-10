@@ -12,7 +12,7 @@ This document is the starting point for connecting PicoForge hardware. It record
 | Board revision | TBD |
 | MCU and package | RP2040 or RP2350 variant TBD |
 | Schematic revision | TBD |
-| Pico SDK version | See `tools/firmware/setup-sdk-env.sh` |
+| Pico SDK version | 2.3.0, pinned by `firmware/third_party/pico-sdk` |
 | Power source | TBD |
 
 ## Signal Assignment

@@ -4,7 +4,7 @@
 
 ## Current Firmware
 
-`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `picoforge_hello_world` for the selected `PICO_BOARD`. `firmware/src/main.c` creates a statically allocated task that initializes USB stdio and prints a greeting once per second. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets.
+`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `picoforge_hello_world` for the selected `PICO_BOARD`. The TinyUSB configuration and descriptors expose one CDC ACM interface and one vendor-defined HID interface as a composite device. `firmware/src/main.c` services TinyUSB from a statically allocated FreeRTOS task, sends a CDC greeting when the host opens the port, and publishes a one-byte HID counter report every 100 ms. The development VID/PID is `0xCAFE:0x4011` and is not for product release. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; host enumeration still requires physical-board validation.
 
 This is a buildable starting point, not yet the complete application framework. The example currently uses Pico SDK and FreeRTOS APIs directly; future modules should establish the boundaries below before more hardware and application behavior is added.
 
@@ -41,7 +41,7 @@ Own product behavior, startup, and composition of the services needed by a firmw
 
 ### Middleware
 
-Provide reusable application-facing services. Planned examples include CLI, storage, USB services, and FatFs. A filesystem should use a storage/block-device interface rather than own SDIO pin assignments or board setup. The USB device/host role is not selected yet.
+Provide reusable application-facing services. Planned examples include CLI, storage, higher-level USB services, and FatFs. The firmware currently uses the USB device role; a USB host role is not selected. A filesystem should use a storage/block-device interface rather than own SDIO pin assignments or board setup.
 
 ### Drivers
 
@@ -53,7 +53,7 @@ Own board support, configuration, logging, version metadata, and integration wit
 
 ## External Components
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules at `firmware/third_party/pico-sdk` and `firmware/third_party/FreeRTOS-Kernel`. Initialize dependencies with `git submodule update --init --recursive`; the setup script validates the SDK submodule and exports `PICO_SDK_PATH`, which can be overridden for an existing checkout. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. Use SDK-provided components rather than maintaining duplicate copies.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules at `firmware/third_party/pico-sdk` and `firmware/third_party/FreeRTOS-Kernel`. Initialize dependencies with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. Use SDK-provided components rather than maintaining duplicate copies.
 
 FatFs and other external components are not integrated yet. Before adding one, select and pin its source revision, record its license, and keep vendor sources separate from PicoForge adapters. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
 

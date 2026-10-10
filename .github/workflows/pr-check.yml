@@ -38,11 +38,7 @@ jobs:
 
       - name: Check shell script syntax
         run: |
-          sh -n tools/firmware/setup-sdk-env.sh
           sh -n tools/firmware/build.sh
-
-      - name: Setup Pico SDK
-        run: . tools/firmware/setup-sdk-env.sh
 
       - name: Build firmware
         run: tools/firmware/build.sh --board "${{ matrix.board }}"
