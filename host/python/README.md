@@ -1,4 +1,4 @@
-# PicoForge Python Host
+# PicoForge Python Tools
 
 The Python host reads the PicoForge vendor-defined HID interface and can serve a local status dashboard.
 
@@ -6,8 +6,8 @@ The Python host reads the PicoForge vendor-defined HID interface and can serve a
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e .
-python -m picoforge_host status
-python -m picoforge_host web
+python -m picoforge status
+python -m picoforge web
 ```
 
 The dashboard binds to `127.0.0.1:8765`. Use `--serial SERIAL` or `--device-path PATH` when more than one board is connected. On Linux, grant the user access to the matching HID interface before connecting.

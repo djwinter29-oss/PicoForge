@@ -4,9 +4,7 @@
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
 ![Targets: RP2040 and RP2350](https://img.shields.io/badge/Targets-RP2040%20%7C%20RP2350-2674b8)
 
-PicoForge is a production-ready application framework for building embedded products on the RP2040 and RP2350 microcontroller families. It brings reusable drivers, platform services, middleware, testing infrastructure, and CI/CD workflows together in a modular foundation for product development.
-
-The goal is to make common embedded capabilities easier to reuse across projects, while keeping application code organized around clear platform and middleware components.
+PicoForge is an evolving embedded firmware framework for RP2040 and RP2350, built on the Raspberry Pi Pico SDK and FreeRTOS. It brings together a buildable firmware baseline, USB CDC/HID interfaces, host-side tools, and a foundation for reusable drivers, middleware, and automated testing.
 
 ## At A Glance
 
@@ -117,11 +115,11 @@ The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pic
 The Python host opens HID and serves a loopback-only dashboard:
 
 ```sh
-uv venv build/picoforge-host
-. build/picoforge-host/bin/activate
+uv venv build/picoforge
+. build/picoforge/bin/activate
 uv pip install -e host/python
-picoforge-host status
-picoforge-host web
+picoforge status
+picoforge web
 ```
 
 The Python dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:

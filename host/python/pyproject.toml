@@ -3,14 +3,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "picoforge-host"
+name = "picoforge"
 version = "0.1.0"
 description = "PicoForge HID diagnostics and local status dashboard"
 requires-python = ">=3.10"
 dependencies = ["Flask==3.1.2", "hidapi==0.15.0"]
 
 [project.scripts]
-picoforge-host = "picoforge_host.cli:main"
+picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -19,4 +19,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-picoforge_host = ["web/index.html", "web/*.css", "web/*.js"]
+picoforge = ["web/index.html", "web/*.css", "web/*.js"]

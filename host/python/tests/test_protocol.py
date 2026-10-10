@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from picoforge_host.protocol import (
+from picoforge.protocol import (
     BOARD_STATUS_REPORT_ID,
     LED_COMMAND_REPORT_ID,
     build_led_command_report,

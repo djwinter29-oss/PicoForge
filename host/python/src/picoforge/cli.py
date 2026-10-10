@@ -10,7 +10,7 @@ from .device import PicoForgeHid
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="picoforge-host")
+    parser = argparse.ArgumentParser(prog="picoforge")
     commands = parser.add_subparsers(dest="command", required=True)
     status = commands.add_parser("status", help="read hardware and runtime status")
     web = commands.add_parser("web", help="serve the local status dashboard")

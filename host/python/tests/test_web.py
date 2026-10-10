@@ -1,6 +1,6 @@
 import unittest
 
-from picoforge_host.web import create_app
+from picoforge.web import create_app
 
 
 class FakeMonitor:
