@@ -18,8 +18,10 @@ function featurePayload(report, reportId, payloadSize) {
   const view = asView(report);
   let offset;
   if (view.byteLength === payloadSize) offset = 0;
+  else if (view.byteLength >= payloadSize + 2
+    && ((view.getUint8(0) === 0 && view.getUint8(1) === reportId)
+      || (view.getUint8(0) === reportId && view.getUint8(1) === reportId))) offset = 2;
   else if (view.byteLength >= payloadSize + 1 && view.getUint8(0) === reportId) offset = 1;
-  else if (view.byteLength >= payloadSize + 2 && view.getUint8(0) === 0 && view.getUint8(1) === reportId) offset = 2;
   else throw new Error("Unexpected HID feature report ID or size");
   for (let index = offset + payloadSize; index < view.byteLength; index++) {
     if (view.getUint8(index) !== 0) throw new Error("Unexpected HID feature report padding");

@@ -9,6 +9,7 @@ The goal is to make common embedded capabilities easier to reuse across projects
 - **Target platforms:** RP2040 and RP2350
 - **Platform services:** board support, version management, build configuration, configuration management, and logging
 - **Middleware:** FatFs, SDIO, command-line interface, storage, and USB services
+- **Current USB device:** one CDC ACM interface and one HID status interface
 - **Development workflow:** automated testing and CI/CD pipelines
 - **Intended use:** industrial, IoT, and other embedded products
 
@@ -63,12 +64,19 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 │   ├── CMakeLists.txt       # Pico SDK firmware build
 │   ├── src/
 │   │   ├── integration/
-│   │   │   └── usb/         # TinyUSB configuration and composite descriptors
+│   │   │   ├── freertos/    # FreeRTOS configuration
+│   │   │   └── usb/         # TinyUSB integration configuration
+│   │   ├── usb/             # HID API and TinyUSB descriptors
 │   │   └── main.c           # FreeRTOS USB service task
 │   ├── tests/               # Firmware unit tests
 │   └── third_party/
 │       ├── FreeRTOS-Kernel/ # Pinned FreeRTOS dependency submodule
 │       └── pico-sdk/        # Pinned Pico SDK submodule
+├── host/
+│   ├── dotnet/              # .NET HID monitor and local dashboard host
+│   ├── python/              # Python HID client and Flask dashboard host
+│   ├── web/                 # Shared native-host status dashboard
+│   └── webhid/              # Direct browser WebHID dashboard
 ├── tests/
 │   └── contracts/           # Cross-component and repository contract tests
 └── tools/
@@ -89,11 +97,45 @@ tools/firmware/build.sh --board pico2
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The build defaults to the SDK submodule; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
 
-The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes a CDC ACM serial interface that sends a greeting when opened and a vendor-defined HID interface that reports a one-byte counter. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. Host enumeration still needs confirmation on physical boards.
+The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product name, MCU, system clock, uptime, and USB/CDC state. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. Host enumeration still needs confirmation on physical boards.
 
-## Host Unit Tests
+## Host Tools
 
-Ceedling 1.1.10 is configured at the repository root for firmware unit tests under `firmware/tests`. See [firmware/tests/README.md](firmware/tests/README.md) for setup and commands, and [tests/README.md](tests/README.md) for test ownership. The suite has no module tests yet; add the first when a reusable C component is introduced.
+The Python host opens HID and serves a loopback-only dashboard:
+
+```sh
+uv venv build/picoforge-host
+. build/picoforge-host/bin/activate
+uv pip install -e host/python
+picoforge-host status
+picoforge-host web
+```
+
+The Python dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:
+
+```sh
+dotnet run --project host/dotnet/PicoForge.Host.csproj
+```
+
+For a direct browser connection, serve the WebHID page from localhost and open `http://localhost:8000/webhid/` in a WebHID-capable browser:
+
+```sh
+python3 -m http.server 8000 --directory host
+```
+
+WebHID requires a secure browser context and a user-granted device permission. CDC remains available to serial terminal applications.
+
+## Host Tests
+
+Ceedling 1.1.10 is configured at the repository root for firmware unit tests under `firmware/tests`. No firmware module tests exist yet. Host protocol tests live beside each implementation:
+
+```sh
+PYTHONPATH=host/python/src python3 -m unittest discover -s host/python/tests -v
+node --test host/webhid/tests/*.test.mjs
+dotnet test host/dotnet/tests/PicoForge.Host.Tests.csproj
+```
+
+See [firmware/tests/README.md](firmware/tests/README.md) for Ceedling setup and [tests/README.md](tests/README.md) for test ownership.
 
 ## Project Validation
 
@@ -101,4 +143,4 @@ Run `tools/validation/validate.sh` from the repository root to check shell synta
 
 ## Project Status
 
-The repository currently contains the project overview, initial directory scaffold, a buildable single-core FreeRTOS Hello World firmware baseline, and Ceedling host-test infrastructure. Platform services, drivers, middleware, host unit tests, and release automation will be added as the framework is developed.
+The repository contains a buildable single-core FreeRTOS firmware baseline, composite CDC/HID status interface, Python and .NET HID hosts, a direct WebHID page, and Ceedling infrastructure. Reusable platform services, drivers, middleware, and release automation remain under development.

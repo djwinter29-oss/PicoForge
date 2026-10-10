@@ -19,6 +19,10 @@ No firmware unit-test files have been added yet; `firmware/tests/README.md` docu
 
 No contract tests have been added yet.
 
+## Host Applications
+
+Host-side tests live with their implementation: Python tests under `host/python/tests/`, .NET tests under `host/dotnet/tests/`, and browser protocol tests under `host/webhid/tests/`. These tests validate HID protocol decoding and status presentation without requiring a connected board.
+
 ## Hardware Test Documentation
 
 `docs/tests/` is for hardware test plans, fixture and wiring procedures, and qualification evidence. Procedures requiring a board or probe should state the hardware setup and distinguish a partial run from a complete pass.

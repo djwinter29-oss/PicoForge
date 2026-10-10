@@ -2,7 +2,7 @@
 
 #include "pico/unique_id.h"
 #include "tusb.h"
-#include "usb_status.h"
+#include "hid.h"
 
 #define USB_VID 0xCAFEu
 #define USB_PID 0x4011u

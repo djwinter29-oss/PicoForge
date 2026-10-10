@@ -37,6 +37,10 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     def index():
         return send_from_directory(root, "index.html")
 
+    @app.get("/favicon.svg")
+    def favicon():
+        return send_from_directory(root, "favicon.svg", mimetype="image/svg+xml")
+
     @app.get("/css/<path:filename>")
     def css(filename: str):
         return send_from_directory(root / "css", filename)

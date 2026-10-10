@@ -26,6 +26,10 @@ class ProtocolTests(unittest.TestCase):
         report = bytes([0]) + info_report() + bytes(4)
         self.assertEqual(parse_info_report(report)["product_name"], "PicoForge")
 
+    def test_accepts_linux_feature_report_with_repeated_report_id(self):
+        report = bytes([1]) + info_report() + bytes(4)
+        self.assertEqual(parse_info_report(report)["product_name"], "PicoForge")
+
     def test_rejects_bad_info_reports(self):
         for report in (b"", bytes(27), bytes([1, 2]) + bytes(25), info_report(clock=0)):
             with self.subTest(report=report):

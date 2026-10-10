@@ -21,7 +21,10 @@ STATUS_KNOWN_FLAGS = STATUS_USB_MOUNTED | STATUS_CDC_OPEN
 
 def _feature_payload(report: bytes | bytearray | list[int], report_id: int, size: int) -> bytes:
     data = bytes(report)
-    if len(data) >= size + 2 and data[0] == 0 and data[1] == report_id:
+    if len(data) >= size + 2 and (
+        (data[0] == 0 and data[1] == report_id)
+        or (data[0] == report_id and data[1] == report_id)
+    ):
         offset = 2
     elif len(data) >= size + 1 and data[0] == report_id:
         offset = 1

@@ -21,6 +21,13 @@ test("decode product, MCU, and clock from report payload", () => {
   });
 });
 
+test("accept Linux feature report transport prefixes", () => {
+  for (const prefix of [0, 1]) {
+    const bytes = Uint8Array.from([prefix, ...infoReport()]);
+    assert.equal(decodeInfoReport(new DataView(bytes.buffer)).product_name, "PicoForge");
+  }
+});
+
 test("decode little-endian runtime status", () => {
   const payload = new Uint8Array([1, 9, 0x40, 0xe2, 0x01, 0x00, 3]);
   assert.deepEqual(decodeStatusReport(2, new DataView(payload.buffer)), {

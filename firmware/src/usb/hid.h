@@ -1,5 +1,5 @@
-#ifndef PICOFORGE_USB_STATUS_H
-#define PICOFORGE_USB_STATUS_H
+#ifndef PICOFORGE_USB_HID_H
+#define PICOFORGE_USB_HID_H
 
 #include <stdint.h>
 

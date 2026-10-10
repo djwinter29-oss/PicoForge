@@ -3,7 +3,7 @@
 #include "hardware/clocks.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
-#include "usb_status.h"
+#include "hid.h"
 
 void picoforge_hid_build_info_report(picoforge_hid_info_report_t *report)
 {

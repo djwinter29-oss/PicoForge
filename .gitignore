@@ -3,6 +3,11 @@
 
 # Generated build output
 /build/
+**/bin/
+**/obj/
+__pycache__/
+*.py[cod]
+*.egg-info/
 
 # Object files
 *.o

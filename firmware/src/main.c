@@ -2,7 +2,7 @@
 #include "task.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
-#include "usb_status.h"
+#include "usb/hid.h"
 
 #define USB_TASK_STACK_SIZE (1024U)
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)

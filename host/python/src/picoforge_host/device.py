@@ -73,7 +73,7 @@ class PicoForgeHid:
 
     def read_info(self) -> dict[str, object]:
         self._require_open()
-        report = self._device.get_feature_report(INFO_REPORT_ID, INFO_PAYLOAD_SIZE + 2)
+        report = self._device.get_feature_report(INFO_REPORT_ID, INFO_PAYLOAD_SIZE + 1)
         info = parse_info_report(report)
         info["serial_number"] = self.serial_number
         return info

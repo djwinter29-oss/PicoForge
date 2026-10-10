@@ -7,7 +7,7 @@ name = "picoforge-host"
 version = "0.1.0"
 description = "PicoForge HID diagnostics and local status dashboard"
 requires-python = ">=3.10"
-dependencies = ["Flask==3.1.2", "hidapi==0.14.0"]
+dependencies = ["Flask==3.1.2", "hidapi==0.15.0"]
 
 [project.scripts]
 picoforge-host = "picoforge_host.cli:main"

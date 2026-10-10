@@ -1,24 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "RuAQmBBIYTE=",
-  "success": false,
+  "dgSpecHash": "46h/apWT/1Y=",
+  "success": true,
   "projectFilePath": "/home/home/repo/PicoForge/host/dotnet/PicoForge.Host.csproj",
   "expectedPackageFiles": [
     "/home/home/.nuget/packages/hidsharp/2.6.4/hidsharp.2.6.4.nupkg.sha512",
     "/home/home/.nuget/packages/microsoft.aspnetcore.openapi/10.0.0/microsoft.aspnetcore.openapi.10.0.0.nupkg.sha512",
-    "/home/home/.nuget/packages/microsoft.openapi/2.0.0/microsoft.openapi.2.0.0.nupkg.sha512"
+    "/home/home/.nuget/packages/microsoft.openapi/2.7.5/microsoft.openapi.2.7.5.nupkg.sha512"
   ],
-  "logs": [
-    {
-      "code": "NU1903",
-      "level": "Error",
-      "message": "Warning As Error: Package 'Microsoft.OpenApi' 2.0.0 has a known high severity vulnerability, https://github.com/advisories/GHSA-v5pm-xwqc-g5wc",
-      "projectPath": "/home/home/repo/PicoForge/host/dotnet/PicoForge.Host.csproj",
-      "filePath": "/home/home/repo/PicoForge/host/dotnet/PicoForge.Host.csproj",
-      "libraryId": "Microsoft.OpenApi",
-      "targetGraphs": [
-        "net10.0"
-      ]
-    }
-  ]
+  "logs": []
 }
