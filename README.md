@@ -67,7 +67,7 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 │   │   │   ├── freertos/    # FreeRTOS configuration
 │   │   │   └── usb/         # TinyUSB integration configuration
 │   │   ├── usb/             # HID API and TinyUSB descriptors
-│   │   └── main.c           # FreeRTOS USB service task
+│   │   └── main.c           # Firmware startup and scheduler launch
 │   ├── tests/               # Firmware unit tests
 │   └── third_party/
 │       ├── FreeRTOS-Kernel/ # Pinned FreeRTOS dependency submodule

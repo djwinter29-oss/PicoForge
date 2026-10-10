@@ -33,6 +33,7 @@ add_executable(picoforge_hello_world
     src/main.c
     src/usb/usb_descriptors.c
     src/usb/hid.c
+    src/usb/task.c
 )
 
 target_include_directories(picoforge_hello_world PRIVATE

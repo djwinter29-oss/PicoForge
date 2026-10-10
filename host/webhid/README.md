@@ -6,4 +6,4 @@ Serve the repository's `host` directory so the browser gets a secure localhost o
 python3 -m http.server 8000 --directory host
 ```
 
-Open `http://localhost:8000/webhid/` in a WebHID-capable browser, connect the board, and grant access to its vendor HID interface. The page reads the same feature and input reports as the Python and .NET hosts. USB serial support in a browser is not used; CDC remains available to terminal applications.
+Open `http://localhost:8000/webhid/` in a WebHID-capable browser, connect the board, and grant access to its vendor HID interface. The page owns its HTML, CSS, view logic, and favicon. It shares only the HID wire protocol with the Python and .NET hosts. USB serial support in a browser is not used; CDC remains available to terminal applications.

@@ -1,5 +1,5 @@
-import { renderStatus } from "../../web/js/dashboard.mjs";
 import { PicoForgeWebHid } from "./device.mjs";
+import { renderStatus } from "./view.mjs";
 
 const connect = document.querySelector("#connect");
 const refresh = document.querySelector("#refresh");
