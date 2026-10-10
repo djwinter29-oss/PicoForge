@@ -24,12 +24,12 @@ Record MCU GPIO numbers and physical connector pin numbers separately. Direction
 | Debug UART | TX | TBD | TBD | Output | Connect to peer RX |
 | Debug UART | RX | TBD | TBD | Input | Connect to peer TX |
 | Debug UART | GND | N/A | TBD | Reference | Share ground with peer |
-| SDIO | CLK | TBD | TBD | Output | Confirm controller and board routing |
-| SDIO | CMD | TBD | TBD | Bidirectional | Confirm pull-ups and voltage requirements |
-| SDIO | DAT0 | TBD | TBD | Bidirectional | Required data line |
-| SDIO | DAT1 | TBD | TBD | Bidirectional | Required for 4-bit mode |
-| SDIO | DAT2 | TBD | TBD | Bidirectional | Required for 4-bit mode |
-| SDIO | DAT3 | TBD | TBD | Bidirectional | Required for 4-bit mode |
+| SDIO | CLK | TBD | TBD | Output | Native PIO host derives CLK as `(DAT0 - 2) mod 32` |
+| SDIO | CMD | TBD | TBD | Bidirectional | Must not overlap CLK or DAT0-DAT3; confirm pull-ups and voltage |
+| SDIO | DAT0 | TBD | TBD | Bidirectional | Native PIO host base; DAT0-DAT3 must be consecutive GPIOs |
+| SDIO | DAT1 | TBD | TBD | Bidirectional | Derived as DAT0 + 1 |
+| SDIO | DAT2 | TBD | TBD | Bidirectional | Derived as DAT0 + 2 |
+| SDIO | DAT3 | TBD | TBD | Bidirectional | Derived as DAT0 + 3 |
 | SD card | Detect | TBD / unused | TBD / N/A | Input | Optional; document active level and pull-up/down |
 | USB | D+ / D- | Board connector | TBD | Bidirectional | Use the board's supported USB connector and routing |
 | SWD | SWDIO | Board debug pads | TBD | Bidirectional | Confirm board-specific access |
@@ -46,7 +46,7 @@ Add rows for any additional buses, control signals, or external peripherals befo
 - Choose and document one power source and its current budget before connecting external hardware. Do not assume a board can power attached peripherals from its 3.3 V rail.
 - Use level shifting or a suitable transceiver when a peripheral's signal levels are not compatible with the board.
 - For UART, cross TX and RX. Connect RTS/CTS only when both endpoints support the selected flow-control mode.
-- For SDIO, confirm the selected bus width, required pull-ups, card-detect behavior, and signal routing against the card interface and board design.
+- For the current 4-bit PIO SD-card backend, use PIO0 or PIO1 and GPIOs below 32; place DAT0-DAT3 on four consecutive GPIOs, with DAT0 at least GPIO2 and CLK at DAT0-2. Reserve the selected PIO instruction memory for the backend. Confirm pull-ups, optional card-detect wiring, voltage, and signal routing against the board design.
 
 ## Bring-Up Checklist
 

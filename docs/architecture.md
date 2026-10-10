@@ -41,11 +41,11 @@ Own product behavior, startup, and composition of the services needed by a firmw
 
 ### Middleware
 
-Provide reusable application-facing services. Planned examples include CLI, storage, higher-level USB services, and FatFs. The firmware currently uses the USB device role; a USB host role is not selected. A filesystem should use a storage/block-device interface rather than own SDIO pin assignments or board setup.
+Provide reusable application-facing services. Planned examples include CLI, storage, higher-level USB services, and FatFs. The firmware currently uses the USB device role; a USB host role is not selected. Storage middleware should consume a block-device interface rather than own SDIO signaling, pin assignments, or controller setup.
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Drivers should expose project-level interfaces instead of leaking board connector numbers or unrelated application policy.
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Drivers should expose project-level interfaces instead of leaking board connector numbers or unrelated application policy. The initial SD memory-card block driver is under `firmware/src/drivers/sdio/`; storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in platform board support. See the [SDIO block API](../firmware/src/drivers/sdio/sdio_pio.h) and [pinout constraints](pinout.md).
 
 ### Platform
 
@@ -53,9 +53,9 @@ Own board support, configuration, logging, version metadata, and integration wit
 
 ## External Components
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules at `firmware/third_party/pico-sdk` and `firmware/third_party/FreeRTOS-Kernel`. Initialize dependencies with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. Use SDK-provided components rather than maintaining duplicate copies.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The 4-bit PIO SD memory-card host is implemented in `firmware/src/drivers/sdio/`; FatFs remains a future middleware integration.
 
-FatFs and other external components are not integrated yet. Before adding one, select and pin its source revision, record its license, and keep vendor sources separate from PicoForge adapters. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
+PicoForge does not yet mount a volume or expose filesystem services. Choose and pin a FatFs version separately when adding storage middleware. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
 
 ## Testing and Validation
 

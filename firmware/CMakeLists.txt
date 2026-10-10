@@ -29,6 +29,26 @@ set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the
 set(FREERTOS_CONFIG_FILE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src/integration/freertos")
 include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 
+add_library(picoforge_sdio_backend STATIC
+    src/drivers/sdio/sdio_pio.c
+    src/drivers/sdio/sdio_host.c
+    src/drivers/sdio/sdio_protocol.c
+)
+pico_generate_pio_header(picoforge_sdio_backend
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio/sdio_host.pio"
+)
+target_include_directories(picoforge_sdio_backend
+    PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio"
+)
+target_link_libraries(picoforge_sdio_backend PUBLIC
+    hardware_clocks
+    hardware_dma
+    hardware_gpio
+    hardware_pio
+    hardware_sync
+    pico_stdlib
+)
+
 add_executable(picoforge_hello_world
     src/main.c
     src/usb/usb_descriptors.c
@@ -47,6 +67,7 @@ target_link_libraries(picoforge_hello_world
     FreeRTOS-Kernel-Static
     pico_unique_id
     tinyusb_device
+    picoforge_sdio_backend
 )
 
 target_compile_definitions(picoforge_hello_world PRIVATE
