@@ -1,8 +1,6 @@
 # Hardware Pinout and Wiring Baseline
 
-This document is the starting point for connecting PicoForge to standard Raspberry Pi Pico or Pico 2 boards and peripheral breakouts. It records a candidate SD-card wiring and the remaining decisions required before board bring-up.
-
-> **Status: Draft.** The target is a standard Pico or Pico 2 board. The SD-card mapping below is a candidate and is not enabled in firmware; confirm breakout compatibility and wiring before connecting hardware. `TBD` means unassigned.
+Pinout and breakout wiring for standard Raspberry Pi Pico/Pico 2 boards. The SD interface is not enabled in firmware; verify wiring and power before connecting hardware. `TBD` means unassigned.
 
 ## Target Identification
 
@@ -12,87 +10,99 @@ This document is the starting point for connecting PicoForge to standard Raspber
 | MCU and package | RP2040 (Pico) or RP2350 (Pico 2) |
 | Power source | USB |
 
+## SD-Card Breakout
+
+The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Use the Signal Assignment below for either SDIO-PIO or hardware SPI0 without rewiring; SPI mode uses GPIO-controlled CS, and DET on GP14 is active-high. The breakout and driver both provide SDIO pull-ups, so check their combined strength. SDIO remains disabled in board support, and SPI-mode firmware is not implemented.
+
+## W25Q128 Flash Breakout
+
+The [Adafruit QSPI DIP Breakout - W25Q128](https://www.adafruit.com/product/5634) is a 3.3 V, 16 MB flash supporting QSPI and SPI; see its [pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). Use the shared pin map above. QSPI-PIO requires support for its noncontiguous data pins. In SPI1 mode, keep IO2/WP and IO3/HOLD high through reset using pull-ups, or isolate them with jumpers and tie them to 3V3. PicoForge does not yet implement either flash driver.
+
 ## Signal Assignment
 
-Record MCU GPIO numbers and physical connector pin numbers separately. GPIO assignments are listed in ascending GPIO order. Directions are from the MCU's perspective. Confirm every assignment against the selected board schematic and the MCU datasheet.
+GPIO names and header numbers are separate; rows are ordered by GPIO. Directions are from the MCU's perspective.
 
-| Interface | Signal | MCU GPIO | Board connector / pin | MCU direction | Status / notes |
+| Interface | Signal | MCU GPIO | Header pin | MCU direction | Status / notes |
 | --- | --- | --- | --- | --- | --- |
-| UART0 | TX | 0 | Physical pin 1 | Output | Candidate UART connection; connect to peer RX |
-| UART0 | RX | 1 | Physical pin 2 | Input | Candidate UART connection; connect to peer TX |
-| QSPI | CS | 10 | Physical pin 14 | Output | Candidate mapping to flash breakout `CS` |
-| QSPI | CLK | 11 | Physical pin 15 | Output | Candidate mapping to flash breakout `CLK` |
-| QSPI | IO0 | 12 | Physical pin 16 | Bidirectional | Candidate mapping to flash breakout `IO0` |
-| QSPI | IO1 | 13 | Physical pin 17 | Bidirectional | Candidate mapping to flash breakout `IO1` |
-| QSPI | IO2 | 14 | Physical pin 19 | Bidirectional | Candidate mapping to flash breakout `IO2` |
-| QSPI | IO3 | 15 | Physical pin 20 | Bidirectional | Candidate mapping to flash breakout `IO3` |
-| SDIO | CLK | 16 | Physical pin 21 | Output | Candidate mapping to breakout `CLK`; derived as `DAT0 - 2` |
-| SD card detect | DET | 17 | Physical pin 22 | Input | Optional candidate near the SDIO signals; high when card is inserted, low when absent; no extra pull configured |
-| SDIO | DAT0 | 18 | Physical pin 24 | Bidirectional | Candidate mapping to breakout `D0`; DAT0-DAT3 must be consecutive GPIOs |
-| SDIO | DAT1 | 19 | Physical pin 25 | Bidirectional | Candidate mapping to breakout `D1` |
-| SDIO | DAT2 | 20 | Physical pin 26 | Bidirectional | Candidate mapping to breakout `DAT2` |
-| SDIO | DAT3 | 21 | Physical pin 27 | Bidirectional | Candidate mapping to breakout `D3` |
-| SDIO | CMD | 22 | Physical pin 29 | Bidirectional | Candidate mapping to breakout `CMD` |
-| Board LED | Onboard LED | 25 on Pico / Pico 2 | Onboard LED; no external connector assignment | Output | Current SDK board definitions set `PICO_DEFAULT_LED_PIN` to GPIO 25; board support configures active-high. Verify the selected board definition and schematic before relying on this mapping. |
-| UART0 | GND | N/A | Physical pin 3 | Reference | Common ground |
-| Power | Flash breakout `3V` | N/A | Physical pin 36 | Power | 3.3 V only; share the board 3V3 rail if its current budget permits |
-| Power | SD breakout `3V` | N/A | Physical pin 36 | Power | Only if the board's 3V3 rail can supply the breakout; verify its requirements |
-| Ground | Flash breakout `G` | N/A | Physical pin 38 | Reference | Common ground |
-| Ground | SD breakout `GND` | N/A | Physical pin 38 | Reference | Common ground |
-| USB | D+ / D- | Board connector | TBD | Bidirectional | Use the board's supported USB connector and routing |
-| SWD | SWDIO | Board debug pads | TBD | Bidirectional | Confirm board-specific access |
-| SWD | SWCLK | Board debug pads | TBD | Input to target | Confirm board-specific access |
-| SWD | GND | N/A | TBD | Reference | Required for the debug probe |
+| UART0 | TX | GP0 | 1 | Output | Candidate UART connection; connect to peer RX |
+| UART0 | RX | GP1 | 2 | Input | Candidate UART connection; connect to peer TX |
+| SDIO-PIO / SPI0 | CLK / SCK | GP2 | 4 | Output | SDIO `CLK`; SPI0 `SCK` in SPI mode |
+| SDIO-PIO / SPI0 | CMD / MOSI | GP3 | 5 | Bidirectional | Breakout `CMD`; SPI0 `MOSI` in SPI mode |
+| SDIO-PIO / SPI0 | DAT0 / MISO | GP4 | 6 | Bidirectional | Breakout `D0`; SPI0 `MISO` in SPI mode |
+| SDIO only | DAT1 (SPI unused) | GP5 | 7 | Bidirectional | Breakout `D1`; not connected to an SPI-mode signal |
+| SDIO only | DAT2 (SPI unused) | GP6 | 9 | Bidirectional | Breakout `DAT2`; not connected to an SPI-mode signal |
+| SDIO-PIO / SPI0 | DAT3 / CS | GP7 | 10 | Bidirectional | Breakout `D3`; SPI-mode CS is controlled as a GPIO |
+| QSPI-PIO / SPI1 | IO1 / MISO | GP8 | 11 | Bidirectional | Flash breakout `IO1`; SPI1 `MISO` in SPI mode |
+| QSPI-PIO / SPI1 | CS / CSn | GP9 | 12 | Output | Flash breakout `CS`; SPI1 chip select in SPI mode |
+| QSPI-PIO / SPI1 | CLK / SCK | GP10 | 14 | Output | Flash breakout `CLK`; SPI1 `SCK` in SPI mode |
+| QSPI-PIO / SPI1 | IO0 / MOSI | GP11 | 15 | Bidirectional | Flash breakout `IO0`; SPI1 `MOSI` in SPI mode |
+| QSPI-PIO / SPI1 | IO2 / WP | GP12 | 16 | Bidirectional | Flash `IO2`; hold high in SPI mode |
+| QSPI-PIO / SPI1 | IO3 / HOLD | GP13 | 17 | Bidirectional | Flash `IO3`; hold high in SPI mode |
+| SD card detect | DET | GP14 | 19 | Input | Optional; high when card is inserted, low when absent; no extra pull configured |
+| Board LED | Onboard LED | GP25 | N/A (onboard LED) | Output | SDK default for Pico/Pico 2; active-high |
+| USB | D+ / D- | Board connector | N/A (USB connector) | Bidirectional | Use the board's supported USB connector and routing |
+| SWD | SWDIO | Board debug pads | N/A (debug pads) | Bidirectional | Confirm board-specific access |
+| SWD | SWCLK | Board debug pads | N/A (debug pads) | Input to target | Confirm board-specific access |
+| SWD | GND | N/A | N/A (debug pads) | Reference | Required for the debug probe |
 
-The SDIO and QSPI assignments are proposed wiring for the two breakouts below, not enabled board configurations. The SDIO driver derives CLK from DAT0 and requires PIO0 or PIO1. The QSPI mapping uses four bidirectional data GPIOs plus separate CLK and CS GPIOs. Add rows for any additional buses, control signals, or external peripherals before connecting them. Note active polarity, pull resistors, and any alternate-function conflicts.
+Shared wiring supports SDIO-PIO or SPI0 for the card, and QSPI-PIO or SPI1 for flash. Neither external-storage driver is enabled.
 
-The earlier lower-numbered SDIO example was only one valid arrangement; SDIO does not require low GPIO numbers. This mapping uses the upper header GPIO range for both storage interfaces and reserves physical pins 1 and 2 (GP0 and GP1) for UART0.
+With UART0, both breakouts in PIO mode, and DET connected, 11 of 26 header GPIOs remain free. SPI modes free GP5/GP6 (13 free); jumpers that isolate flash IO2/IO3 free GP12/GP13 too (15 free). GP25 drives the onboard LED; it is not on the header.
 
-The standard Pico and Pico 2 expose 26 GPIOs on their headers. UART0 uses 2, SDIO uses 6, and QSPI uses 6, leaving 12 user GPIOs without card detect: GP2-GP9, GP17, and GP26-GP28. If optional card detect uses GP17, 11 remain: GP2-GP9 and GP26-GP28. The onboard LED uses GP25, which is not a header pin.
+## User I/O Pin List
 
-GP23 and GP24 are not listed as user pins because the standard Pico/Pico 2 board uses them internally: GP23 controls the onboard SMPS power-save function, and GP24 senses USB VBUS. GP25 drives the onboard LED, and GP29 senses VSYS. These four signals are not exposed on the 40-pin header, so the 26 header GPIOs are GP0-GP22 and GP26-GP28. See the [official Raspberry Pi Pico board layout and pin functions](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pin_functions).
+This table lists only digital GPIO pins left for application use after the proposed PicoForge allocations: UART0, QSPI-PIO, SDIO-PIO, and SD card detect on GP14. It shows the available hardware-controller mux functions for each pin; all listed pins can also be used as digital GPIO or routed to PIO.
+
+| Available digital GPIO | Header pin | Hardware peripheral functions |
+| --- | --- | --- |
+| GP15 | 20 | I2C1 SCL, PWM B7 |
+| GP16 | 21 | I2C0 SDA, PWM A0 |
+| GP17 | 22 | I2C0 SCL, PWM B0 |
+| GP18 | 24 | I2C1 SDA, PWM A1 |
+| GP19 | 25 | I2C1 SCL, PWM B1 |
+| GP20 | 26 | I2C0 SDA, UART1 TX, PWM A2 |
+| GP21 | 27 | I2C0 SCL, UART1 RX, PWM B2 |
+| GP22 | 29 | I2C1 SDA, PWM A3 |
+| GP26 | 31 | I2C1 SDA, PWM A5, ADC0 |
+| GP27 | 32 | I2C1 SCL, PWM B5, ADC1 |
+| GP28 | 34 | I2C0 SDA, PWM A6, ADC2 |
+
+These are alternate mux functions, not simultaneous assignments. UART0 TX/RX are allocated to GP0/GP1. For I2C, use matching SDA/SCL pins from the same controller. Some alternate UART functions differ between RP2040 and RP2350.
+
+### Complete SPI Pin Groups
+
+Complete hardware SPI groups (CS may be software-controlled):
+
+| Controller option | MISO / RX | MOSI / TX | SCK | CS |
+| --- | --- | --- | --- | --- |
+| SPI0 option A | GP16 (pin 21) | GP19 (pin 25) | GP18 (pin 24) | GP17 (pin 22) |
+| SPI0 option B | GP20 (pin 26) | GP19 (pin 25) | GP22 (pin 29) | GP21 (pin 27) |
+| SPI1 | GP28 (pin 34) | GP27 (pin 32) | GP26 (pin 31) | GP15 (pin 20), software GPIO |
+
+SPI0 options A/B are alternatives. These groups cannot be used while that controller is mapped to a breakout on a different pin group. GP23/GP24 are used internally for SMPS control and USB VBUS sensing; GP25 drives the onboard LED and GP29 senses VSYS. These pins are not on the user header. See the [official Pico pin functions](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pin_functions).
 
 ## Firmware Resource Mapping
 
-Not every firmware-facing value corresponds to a connector pin:
+Firmware resources that do not use header GPIOs:
 
 | Feature | RP2040 / RP2350 resource | External pin required | Notes |
 | --- | --- | --- | --- |
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
-| Board LED | Board-defined `PICO_DEFAULT_LED_PIN` | No external LED wiring for the onboard LED | The current `pico` and `pico2` SDK board definitions use GPIO 25. Other board definitions may use a different pin or omit the LED. |
 
-These defaults describe the current SDK board targets, not an approved PicoForge PCB pinout. When changing `PICO_BOARD`, confirm its SDK definition and schematic, then keep `firmware/src/board/` and this document aligned. The SDIO interface remains disabled in board support until its GPIO and connector assignments are approved.
-
-## SD-Card Breakout
-
-The SD breakout is the [Adafruit Micro SD SPI or SDIO Card Breakout Board](https://www.adafruit.com/product/4682), marked P4682D. It is 3.3 V power and logic only, supports SPI or SDIO, and provides the SDIO pads `CLK`, `CMD`, `D0`, `D1`, `DAT2`, and `D3`. See Adafruit's [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). The table maps those six pads to the driver's required 4-bit SDIO arrangement. The optional `DET` output is low when no card is present and pulled high when a card is inserted; if connected as shown, configure card detect as active-high and do not enable an additional GPIO pull.
-
-The driver enables pull-ups on CMD and DAT0-DAT3; the Adafruit breakout also provides pull-ups on its SDIO logic pins, so verify the combined pull-up strength. The proposed GPIO-to-header mapping does not itself enable the driver. `firmware/src/board/board.c` currently sets `sdio_enabled` to false and leaves SD pins unassigned. Update board support only after confirming the wiring and power budget and validating the board topology. SPI-only operation is not wired in this candidate map.
-
-## External QSPI Flash
-
-The flash breakout is the [Adafruit QSPI DIP Breakout Board - W25Q128](https://www.adafruit.com/product/5634), using the W25Q128JVSSIQ 128-Mbit (16-Mbyte) 3.3 V flash. See Adafruit's [QSPI breakout pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). The candidate map connects `CS`, `CLK`, and all four bidirectional data lines (`IO0`-`IO3`) to separate Pico/Pico 2 GPIOs for true QSPI operation. This flash variant has quad mode enabled by default. The RP2040/RP2350 onboard boot-flash QSPI signals are not available as a general-purpose bus on the 40-pin header; this proposal uses GPIO/PIO instead.
-
-PicoForge currently has no external W25Q128 QSPI driver, so this is a wiring proposal only. The QSPI pins do not conflict with the candidate SDIO pins above, allowing both breakouts to be connected at once. Firmware still needs a QSPI driver and PIO resource allocation before the flash can be used alongside SDIO. Confirm the combined 3V3 current budget before powering both breakouts from the Pico/Pico 2 rail.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. SDIO remains disabled in board support until wiring is approved.
 
 ## Electrical and Power Baseline
 
-- Treat RP2040 and RP2350 GPIO as 3.3 V logic. Never connect 5 V logic or RS-232 voltage levels directly to a GPIO.
-- Check the selected board's schematic and datasheet for GPIO limits, pin availability, USB wiring, and power-path behavior.
-- Share a ground reference between the board and each non-isolated peripheral.
-- Choose and document one power source and its current budget before connecting external hardware. Do not assume a board can power attached peripherals from its 3.3 V rail.
-- Use level shifting or a suitable transceiver when a peripheral's signal levels are not compatible with the board.
-- For UART, cross TX and RX. Connect RTS/CTS only when both endpoints support the selected flow-control mode.
-- For the current 4-bit PIO SD-card backend, use PIO0 or PIO1 and GPIOs below 32; place DAT0-DAT3 on four consecutive GPIOs, with DAT0 at least GPIO2 and CLK at DAT0-2. The candidate mapping in this document uses DAT0=GPIO18 and CLK=GPIO16. Reserve the selected PIO instruction memory for the backend. Confirm pull-ups, optional card-detect wiring, voltage, and signal routing against the board design.
-- The W25Q128 candidate QSPI wiring uses GPIO10-15; this external-flash path is not implemented in firmware and requires PIO/resource planning alongside SDIO.
+- Pico/Pico 2 GPIO is 3.3 V only. Never apply 5 V or RS-232 levels directly.
+- Share ground with peripherals; check their voltage and current requirements before using the board's 3V3 rail.
+- Check the selected board schematic for pin limits, USB routing, and power behavior. Use level shifting when required.
+- For UART, cross TX/RX and share ground.
 
 ## Bring-Up Checklist
 
-1. Identify whether the board is a Pico or Pico 2 and verify its revision and connector numbering against its schematic.
-2. Select the peripheral breakout and verify that its interface and voltage requirements match the proposed wiring.
-3. Fill every used signal's GPIO, connector pin, direction, active level, and pull configuration in the table.
-4. Check that no pin is assigned to conflicting board functions or reserved for debug, flash, or another peripheral.
-5. Verify voltage compatibility, ground reference, and power budget before attaching peripherals.
-6. Check continuity and power rails before applying power; bring up one interface at a time.
-7. Keep this document aligned with the board-support configuration and record the board revision used for validation.
+1. Confirm the board variant and verify header numbering against its pinout.
+2. Choose each breakout's mode and follow the matching pin assignments; check for conflicts.
+3. Verify 3.3 V compatibility, common ground, and power budget before wiring.
+4. Check continuity and rails, then bring up one interface at a time.
+5. Keep board support and this document aligned; record hardware validation results.
