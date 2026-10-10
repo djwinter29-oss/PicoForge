@@ -1,0 +1,57 @@
+name: PR Check
+
+'on':
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pr-check-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PICO_SDK_VERSION: "2.3.0"
+  PICO_SDK_REVISION: "98a542c1a62fb549ffb5d66a3e5892b06276b670"
+
+jobs:
+  firmware:
+    name: Firmware (${{ matrix.board }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [pico, pico2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+
+      - name: Install Arm GNU Toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@98c40e51546516419841748d3210c290df0d2c6c # v1
+        with:
+          release: "13.3.Rel1"
+
+      - name: Check shell script syntax
+        run: |
+          sh -n tools/firmware/setup-sdk-env.sh
+          sh -n tools/firmware/build.sh
+
+      - name: Setup Pico SDK
+        run: |
+          . tools/firmware/setup-sdk-env.sh \
+            --sdk-version "$PICO_SDK_VERSION" \
+            --sdk-revision "$PICO_SDK_REVISION"
+
+      - name: Build firmware
+        run: tools/firmware/build.sh --board "${{ matrix.board }}"
+
+  host-validation:
+    name: Host validation
+    uses: ./.github/workflows/host-validation.yml
