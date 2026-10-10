@@ -53,13 +53,13 @@ Own board support, configuration, logging, version metadata, and integration wit
 
 ## External Components
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The 4-bit PIO SD memory-card host is implemented in `firmware/src/drivers/sdio/`; FatFs remains a future middleware integration.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The 4-bit PIO SD memory-card host is implemented in `firmware/src/drivers/sdio/`. FatFs R0.16 with upstream patches 1 and 2 is vendored in `firmware/third_party/fatfs/` but is not part of the firmware build.
 
-PicoForge does not yet mount a volume or expose filesystem services. Choose and pin a FatFs version separately when adding storage middleware. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
+PicoForge does not yet mount a volume or expose filesystem services. Integration still requires a disk-I/O adapter over the SD block API, an `ffconf.h` configuration, and a deliberate filesystem concurrency policy. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
 
 ## Testing and Validation
 
-Ceedling is configured by the repository-root `project.yml`. Host unit tests belong under `firmware/tests/` and should cover hardware-independent modules in platform, drivers, and middleware. The configuration intentionally excludes `main.c` and board support from host builds. No unit-test source files exist yet.
+Ceedling is configured by the repository-root `project.yml`. Host unit tests belong under `firmware/tests/` and should mirror hardware-independent source modules in platform, drivers, and middleware. The configuration intentionally excludes `main.c` and board support from host builds.
 
 `host/python/tests/`, `host/dotnet/tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 

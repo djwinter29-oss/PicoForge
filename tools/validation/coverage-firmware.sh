@@ -16,7 +16,7 @@ EOF
     exit 0
 fi
 
-if ! find "$FIRMWARE_TEST_DIR" -maxdepth 1 -type f -name 'test_*.c' -print -quit | grep -q .; then
+if ! find "$FIRMWARE_TEST_DIR" -type f -name 'test_*.c' -print -quit | grep -q .; then
     echo "No Ceedling tests found under $FIRMWARE_TEST_DIR." >&2
     echo "Add a host-testable module and its test_*.c file before generating coverage." >&2
     exit 1

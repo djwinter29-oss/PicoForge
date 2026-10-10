@@ -100,6 +100,10 @@ bool picoforge_sdio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_cou
 
 void picoforge_sdio_crc16_4bit(const uint8_t block[512], uint16_t crc[4])
 {
+    if ((block == NULL) || (crc == NULL)) {
+        return;
+    }
+
     for (uint8_t lane = 0u; lane < 4u; lane++) {
         crc[lane] = 0u;
     }
@@ -128,6 +132,10 @@ void picoforge_sdio_pack_data_block(const uint8_t block[512],
 {
     uint16_t crc[4];
 
+    if ((block == NULL) || (words == NULL)) {
+        return;
+    }
+
     for (size_t word_index = 0u; word_index < 128u; word_index++) {
         uint32_t word = 0u;
         for (size_t byte_index = 0u; byte_index < 4u; byte_index++) {
@@ -138,6 +146,8 @@ void picoforge_sdio_pack_data_block(const uint8_t block[512],
         words[word_index] = word;
     }
 
+    words[128] = 0u;
+    words[129] = 0u;
     picoforge_sdio_crc16_4bit(block, crc);
     for (size_t cycle = 0u; cycle < 16u; cycle++) {
         uint8_t nibble = 0u;
@@ -155,6 +165,10 @@ bool picoforge_sdio_unpack_data_block(const uint32_t words[PICOFORGE_SDIO_TRANSF
 {
     uint16_t expected_crc[4];
     uint16_t received_crc[4] = { 0u, 0u, 0u, 0u };
+
+    if ((words == NULL) || (block == NULL)) {
+        return false;
+    }
 
     for (size_t word_index = 0u; word_index < 128u; word_index++) {
         uint32_t word = words[word_index];

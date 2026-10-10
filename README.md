@@ -73,6 +73,7 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 │   ├── tests/               # Firmware unit tests
 │   └── third_party/
 │       ├── FreeRTOS-Kernel/ # Pinned FreeRTOS dependency submodule
+│       ├── fatfs/           # FatFs R0.16 with official patches 1 and 2
 │       └── pico-sdk/        # Pinned Pico SDK submodule
 ├── host/
 │   ├── dotnet/              # .NET HID monitor and local dashboard host
