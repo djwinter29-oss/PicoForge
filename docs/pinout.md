@@ -50,6 +50,8 @@ The earlier lower-numbered SDIO example was only one valid arrangement; SDIO doe
 
 The standard Pico and Pico 2 expose 26 GPIOs on their headers. UART0 uses 2, SDIO uses 6, and QSPI uses 6, leaving 12 user GPIOs without card detect: GP2-GP9, GP17, and GP26-GP28. If optional card detect uses GP17, 11 remain: GP2-GP9 and GP26-GP28. The onboard LED uses GP25, which is not a header pin.
 
+GP23 and GP24 are not listed as user pins because the standard Pico/Pico 2 board uses them internally: GP23 controls the onboard SMPS power-save function, and GP24 senses USB VBUS. GP25 drives the onboard LED, and GP29 senses VSYS. These four signals are not exposed on the 40-pin header, so the 26 header GPIOs are GP0-GP22 and GP26-GP28. See the [official Raspberry Pi Pico board layout and pin functions](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pin_functions).
+
 ## Firmware Resource Mapping
 
 Not every firmware-facing value corresponds to a connector pin:
