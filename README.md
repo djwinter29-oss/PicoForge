@@ -11,7 +11,7 @@ PicoForge is an evolving embedded firmware framework for RP2040 and RP2350, buil
 - **Target platforms:** RP2040 and RP2350
 - **Platform services:** board support, version management, build configuration, configuration management, and logging
 - **Middleware:** FatFs, SDIO, command-line interface, storage, and USB services
-- **Current USB device:** one CDC ACM interface and one HID status interface
+- **Current USB device:** CDC ACM plus HID status, board telemetry, and LED control
 - **Development workflow:** automated testing and CI/CD pipelines
 - **Intended use:** industrial, IoT, and other embedded products
 
@@ -48,7 +48,7 @@ PicoForge is intended to support the full embedded development cycle, from bring
 
 PicoForge is designed for teams building industrial controllers, connected IoT devices, and other embedded products that benefit from reusable platform services and a repeatable development workflow.
 
-See [docs/pinout.md](docs/pinout.md) for the hardware connection baseline and currently unassigned pin mappings.
+See [docs/pinout.md](docs/pinout.md) for Pico/Pico 2 header wiring, a candidate SD-card breakout map, and external QSPI flash constraints.
 See [docs/architecture.md](docs/architecture.md) for implemented status and intended module boundaries.
 
 ## Repository Layout
@@ -69,8 +69,11 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 │   │   │   ├── fatfs/      # FatFs configuration and disk-I/O adapter
 │   │   │   ├── freertos/    # FreeRTOS configuration
 │   │   │   └── usb/         # TinyUSB integration configuration
-│   │   ├── drivers/         # Flat system, temperature, LED drivers; grouped sdio/
-│   │   │   └── sdio/        # PIO SD-card block-device API
+│   │   ├── drivers/
+│   │   │   ├── system.c/h   # MCU identity, clock, and uptime
+│   │   │   ├── temperature.c/h # Internal sensor and conversion
+│   │   │   ├── led.c/h      # Board-configured LED control
+│   │   │   └── sdio/        # Multi-file PIO SD-card block driver
 │   │   ├── middleware/
 │   │   │   └── storage/     # FatFs mount lifecycle API
 │   │   ├── board/           # Board topology and SD-card configuration
