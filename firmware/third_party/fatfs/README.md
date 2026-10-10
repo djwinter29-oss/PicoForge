@@ -1,6 +1,6 @@
 # FatFs
 
-This directory contains the official FatFs R0.16 source release from [ChaN's FatFs page](https://elm-chan.org/fsw/ff/). The upstream archive is retained in its original layout, including `LICENSE.txt`, `source/`, and `documents/`.
+This directory contains the official FatFs R0.16 source release from [ChaN's FatFs page](https://elm-chan.org/fsw/ff/), including the upstream license and documentation. PicoForge's `ffconf.h` and the disk-interface header are kept in `firmware/src/integration/fatfs/` rather than mixed with the filesystem core.
 
 ## Source and patches
 
@@ -11,7 +11,7 @@ This directory contains the official FatFs R0.16 source release from [ChaN's Fat
 - Official patch 2: July 10, 2026, applied after patch 1 to `source/ff.c`
 - Patch notes: [known problems and patches](https://elm-chan.org/fsw/ff/patches.html)
 
-The patches were applied in the order specified by the upstream notes. No other FatFs source files have been modified.
+The patches were applied in the order specified by the upstream notes. `ffconf.h` is project configuration; all other FatFs core source files are retained from the archive except for the official patches to `ff.c`.
 
 ## License
 
@@ -19,4 +19,4 @@ See the upstream [`LICENSE.txt`](LICENSE.txt) and `source/00readme.txt` for FatF
 
 ## PicoForge integration status
 
-The source is vendored but is not yet part of the firmware build. Integration still needs a PicoForge disk-I/O adapter over the SD block API, an `ffconf.h` configuration, and a deliberate filesystem concurrency policy. Do not mount or access a volume through this copy until that integration and hardware validation are complete.
+FatFs is compiled and linked by the firmware build. The integration provides a disk-I/O adapter over the SD block API and `picoforge_storage_mount()` / `picoforge_storage_unmount()` middleware. The application must call mount explicitly with board-specific SDIO settings; startup does not mount a volume, and formatting is disabled. Serialize all FatFs calls through one storage-owner task. Physical card I/O is not yet hardware-validated.

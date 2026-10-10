@@ -12,8 +12,9 @@ python -m picoforge_host web
 
 The dashboard binds to `127.0.0.1:8765`. Use `--serial SERIAL` or `--device-path PATH` when more than one board is connected. On Linux, grant the user access to the matching HID interface before connecting.
 
-Run the hardware-free protocol tests from the repository root:
+Run all hardware-free host unit suites from the repository root (install this package first):
 
 ```sh
-PYTHONPATH=host/python/src python3 -m unittest discover -s host/python/tests -v
+python3 -m pip install --editable host/python
+tools/validation/test-host.sh
 ```

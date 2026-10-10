@@ -59,6 +59,7 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
-
+# Python bytecode cache
+__pycache__/
 # debug information files
 *.dwo

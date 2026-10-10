@@ -64,10 +64,13 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 │   ├── CMakeLists.txt       # Pico SDK firmware build
 │   ├── src/
 │   │   ├── integration/
+│   │   │   ├── fatfs/      # FatFs configuration and disk-I/O adapter
 │   │   │   ├── freertos/    # FreeRTOS configuration
 │   │   │   └── usb/         # TinyUSB integration configuration
 │   │   ├── drivers/
 │   │   │   └── sdio/        # PIO SD-card block-device API
+│   │   ├── middleware/
+│   │   │   └── storage/     # FatFs mount lifecycle API
 │   │   ├── usb/             # HID API and TinyUSB descriptors
 │   │   └── main.c           # Firmware startup and scheduler launch
 │   ├── tests/               # Firmware unit tests
@@ -100,7 +103,7 @@ tools/firmware/build.sh --board pico2
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The build defaults to the SDK submodule; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
 
-The SD-card block driver is a PicoForge-owned 4-bit PIO SD memory-card host. Configure board-validated CMD and DAT0 pins in the application before calling `picoforge_sdio_init()`; the host derives CLK and DAT1-DAT3 from DAT0. See [the SDIO pinout constraints](docs/pinout.md). No card pins are assigned and no FatFs volume is mounted by the current example.
+The SD-card block driver is a PicoForge-owned 4-bit PIO SD memory-card host. Configure board-validated CMD and DAT0 pins before calling `picoforge_storage_mount()`; the host derives CLK and DAT1-DAT3 from DAT0. FatFs R0.16 is compiled and linked, but the example does not mount a volume or format media. See [the SDIO pinout constraints](docs/pinout.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
 
 The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product name, MCU, system clock, uptime, and USB/CDC state. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. Host enumeration still needs confirmation on physical boards.
 
@@ -132,13 +135,14 @@ WebHID requires a secure browser context and a user-granted device permission. C
 
 ## Host Tests
 
-Ceedling 1.1.10 is configured at the repository root for firmware unit tests under `firmware/tests`. No firmware module tests exist yet. Host protocol tests live beside each implementation:
+Ceedling 1.1.10 is configured at the repository root for firmware unit tests under `firmware/tests`. Host unit tests live beside each implementation and can be run together with:
 
 ```sh
-PYTHONPATH=host/python/src python3 -m unittest discover -s host/python/tests -v
-node --test host/webhid/tests/*.test.mjs
-dotnet test host/dotnet/tests/PicoForge.Host.Tests.csproj
+python3 -m pip install --editable host/python
+tools/validation/test-host.sh
 ```
+
+The script requires Python 3.10+, Node.js 22+, and .NET 10. The GitHub host-validation workflow installs these runtimes and runs the same script.
 
 See [firmware/tests/README.md](firmware/tests/README.md) for Ceedling setup and [tests/README.md](tests/README.md) for test ownership.
 

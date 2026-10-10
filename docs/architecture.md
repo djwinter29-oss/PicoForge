@@ -41,7 +41,7 @@ Own product behavior, startup, and composition of the services needed by a firmw
 
 ### Middleware
 
-Provide reusable application-facing services. Planned examples include CLI, storage, higher-level USB services, and FatFs. The firmware currently uses the USB device role; a USB host role is not selected. Storage middleware should consume a block-device interface rather than own SDIO signaling, pin assignments, or controller setup.
+Provide reusable application-facing services. Storage middleware mounts FatFs over the SD block-device API; application code remains responsible for supplying board-approved pins and choosing when to mount. The firmware currently uses the USB device role; a USB host role is not selected.
 
 ### Drivers
 
@@ -53,9 +53,9 @@ Own board support, configuration, logging, version metadata, and integration wit
 
 ## External Components
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The 4-bit PIO SD memory-card host is implemented in `firmware/src/drivers/sdio/`. FatFs R0.16 with upstream patches 1 and 2 is vendored in `firmware/third_party/fatfs/` but is not part of the firmware build.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The 4-bit PIO SD memory-card host is implemented in `firmware/src/drivers/sdio/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/`, configured and adapted under `firmware/src/integration/fatfs/`, and compiled into the firmware.
 
-PicoForge does not yet mount a volume or expose filesystem services. Integration still requires a disk-I/O adapter over the SD block API, an `ffconf.h` configuration, and a deliberate filesystem concurrency policy. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
+`picoforge_storage_mount()` explicitly initializes the configured SD card and mounts the existing FAT/exFAT volume; it never formats the card. Mounting is not called during startup because the repository has no approved GPIO assignment. FatFs is configured without cross-task locking, so mount, unmount, and file operations must be serialized through one storage-owner task. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
 
 ## Testing and Validation
 

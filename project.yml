@@ -26,6 +26,7 @@
     - +:firmware/src/**
   :include:
     - firmware/src/**
+    - firmware/third_party/fatfs/source
   :support:
     - firmware/tests/support
 

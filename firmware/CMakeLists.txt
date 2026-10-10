@@ -49,6 +49,30 @@ target_link_libraries(picoforge_sdio_backend PUBLIC
     pico_stdlib
 )
 
+add_library(picoforge_fatfs STATIC
+    third_party/fatfs/source/ff.c
+    third_party/fatfs/source/ffunicode.c
+)
+target_include_directories(picoforge_fatfs PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
+    "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
+)
+
+add_library(picoforge_storage STATIC
+    src/integration/fatfs/diskio.c
+    src/middleware/storage/storage.c
+)
+target_include_directories(picoforge_storage PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
+    "${CMAKE_CURRENT_LIST_DIR}/src/middleware/storage"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio"
+    "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
+)
+target_link_libraries(picoforge_storage PUBLIC
+    picoforge_fatfs
+    picoforge_sdio_backend
+)
+
 add_executable(picoforge_hello_world
     src/main.c
     src/usb/usb_descriptors.c
@@ -68,6 +92,7 @@ target_link_libraries(picoforge_hello_world
     pico_unique_id
     tinyusb_device
     picoforge_sdio_backend
+    picoforge_storage
 )
 
 target_compile_definitions(picoforge_hello_world PRIVATE
