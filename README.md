@@ -1,5 +1,9 @@
 # PicoForge
 
+[![PR Check](https://github.com/djwinter29-oss/PicoForge/actions/workflows/pr-check.yml/badge.svg?branch=main)](https://github.com/djwinter29-oss/PicoForge/actions/workflows/pr-check.yml)
+[![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
+![Targets: RP2040 and RP2350](https://img.shields.io/badge/Targets-RP2040%20%7C%20RP2350-2674b8)
+
 PicoForge is a production-ready application framework for building embedded products on the RP2040 and RP2350 microcontroller families. It brings reusable drivers, platform services, middleware, testing infrastructure, and CI/CD workflows together in a modular foundation for product development.
 
 The goal is to make common embedded capabilities easier to reuse across projects, while keeping application code organized around clear platform and middleware components.
@@ -67,10 +71,11 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 │   │   │   ├── fatfs/      # FatFs configuration and disk-I/O adapter
 │   │   │   ├── freertos/    # FreeRTOS configuration
 │   │   │   └── usb/         # TinyUSB integration configuration
-│   │   ├── drivers/
+│   │   ├── drivers/         # Flat system, temperature, LED drivers; grouped sdio/
 │   │   │   └── sdio/        # PIO SD-card block-device API
 │   │   ├── middleware/
 │   │   │   └── storage/     # FatFs mount lifecycle API
+│   │   ├── board/           # Board topology and SD-card configuration
 │   │   ├── usb/             # HID API and TinyUSB descriptors
 │   │   └── main.c           # Firmware startup and scheduler launch
 │   ├── tests/               # Firmware unit tests
@@ -105,7 +110,7 @@ Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmw
 
 The SD-card block driver is a PicoForge-owned 4-bit PIO SD memory-card host. Configure board-validated CMD and DAT0 pins before calling `picoforge_storage_mount()`; the host derives CLK and DAT1-DAT3 from DAT0. FatFs R0.16 is compiled and linked, but the example does not mount a volume or format media. See [the SDIO pinout constraints](docs/pinout.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
 
-The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product name, MCU, system clock, uptime, and USB/CDC state. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. Host enumeration still needs confirmation on physical boards.
+The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product identity, MCU, system clock, uptime, USB/CDC state, internal temperature, and board LED state, and accepts a set-LED command. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SDIO use grouped subdirectories. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. Host enumeration and physical sensor/LED behavior still need board validation.
 
 ## Host Tools
 
@@ -122,14 +127,16 @@ picoforge-host web
 The Python dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:
 
 ```sh
-dotnet run --project host/dotnet/PicoForge.Host.csproj
+dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 ```
 
-For a direct browser connection, serve the WebHID page from localhost and open `http://localhost:8000/webhid/` in a WebHID-capable browser:
+For a direct browser connection, serve the WebHID directory so the page opens at the origin root:
 
 ```sh
-python3 -m http.server 8000 --directory host
+python3 -m http.server 8000 --directory host/webhid
 ```
+
+Open `http://localhost:8000/` in a WebHID-capable browser, connect the board, and grant access to its HID interface.
 
 WebHID requires a secure browser context and a user-granted device permission. CDC remains available to serial terminal applications.
 
@@ -145,6 +152,10 @@ tools/validation/test-host.sh
 The script requires Python 3.10+, Node.js 22+, and .NET 10. The GitHub host-validation workflow installs these runtimes and runs the same script.
 
 See [firmware/tests/README.md](firmware/tests/README.md) for Ceedling setup and [tests/README.md](tests/README.md) for test ownership.
+
+## Project Policies
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution and validation guidance, [SECURITY.md](SECURITY.md) for private vulnerability reporting, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations and reporting concerns.
 
 ## Project Validation
 

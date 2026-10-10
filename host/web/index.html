@@ -27,7 +27,10 @@
         <p class="eyebrow">HID STATUS / USB</p>
         <h1>Board overview</h1>
       </div>
-      <button class="button" id="refresh" type="button">Refresh</button>
+      <div class="actions">
+        <button class="button" id="refresh" type="button">Refresh</button>
+        <button class="button" id="led-control" type="button" disabled>Set LED</button>
+      </div>
     </section>
 
     <section class="identity" aria-label="Hardware identity">
@@ -50,6 +53,8 @@
         <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>USB device</dt><dd id="usb-state">--</dd></div>
         <div><dt>Report sequence</dt><dd id="sequence">--</dd></div>
+        <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
+        <div><dt>Onboard LED</dt><dd id="led-state">--</dd></div>
       </dl>
     </section>
 

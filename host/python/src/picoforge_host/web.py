@@ -6,7 +6,7 @@ from pathlib import Path
 import secrets
 from typing import Any
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 
 from .monitor import DeviceMonitor
 
@@ -52,6 +52,18 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     @app.get("/api/status")
     def status():
         return jsonify(dashboard.snapshot())
+
+    @app.post("/api/led")
+    def set_led():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
+            return jsonify({"error": "Expected JSON with a boolean 'on' field"}), 400
+        try:
+            return jsonify({"board_status": dashboard.set_led(payload["on"])}), 200
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except OSError as error:
+            return jsonify({"error": str(error)}), 503
 
     app.extensions["picoforge_monitor"] = dashboard
     return app

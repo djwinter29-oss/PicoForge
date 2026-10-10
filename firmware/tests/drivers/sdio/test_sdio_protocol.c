@@ -82,6 +82,58 @@ void test_parses_response_without_crc_check_when_requested(void)
     TEST_ASSERT_EQUAL_HEX32(0x12345678u, argument);
 }
 
+void test_parses_r3_ocr_without_a_command_index(void)
+{
+    uint8_t response[6] = { 0x3fu, 0xc0u, 0xffu, 0x80u, 0x00u, 0x01u };
+    uint32_t ocr;
+
+    TEST_ASSERT_TRUE(picoforge_sdio_parse_r3_response(response, &ocr));
+    TEST_ASSERT_EQUAL_HEX32(0xc0ff8000u, ocr);
+    TEST_ASSERT_FALSE(picoforge_sdio_parse_r3_response(NULL, &ocr));
+    TEST_ASSERT_FALSE(picoforge_sdio_parse_r3_response(response, NULL));
+    response[0] |= 0x40u;
+    TEST_ASSERT_FALSE(picoforge_sdio_parse_r3_response(response, &ocr));
+    response[0] &= 0xbfu;
+    response[5] = 0u;
+    TEST_ASSERT_FALSE(picoforge_sdio_parse_r3_response(response, &ocr));
+}
+
+void test_unpacks_partial_response_words_from_the_low_bits(void)
+{
+    const uint32_t r1_words[] = { 0x01020304u, 0x00000506u };
+    const uint8_t r1_expected[] = { 1u, 2u, 3u, 4u, 5u, 6u };
+    const uint32_t r2_words[] = { 0x01020304u, 0x05060708u, 0x090a0b0cu,
+                                  0x0d0e0f10u, 0x00000011u };
+    uint8_t r1[6];
+    uint8_t r2[17];
+
+    TEST_ASSERT_TRUE(picoforge_sdio_response_words_to_bytes(r1_words, 48u, r1, sizeof(r1)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(r1_expected, r1, sizeof(r1));
+    TEST_ASSERT_TRUE(picoforge_sdio_response_words_to_bytes(r2_words, 136u, r2, sizeof(r2)));
+    TEST_ASSERT_EQUAL_HEX8(0x11u, r2[16]);
+    TEST_ASSERT_FALSE(picoforge_sdio_response_words_to_bytes(r1_words, 48u, r1, 5u));
+    TEST_ASSERT_FALSE(picoforge_sdio_response_words_to_bytes(r1_words, 47u, r1, sizeof(r1)));
+}
+
+void test_classifies_cmd8_v2_and_legacy_cards(void)
+{
+    bool supports_v2;
+
+    TEST_ASSERT_TRUE(picoforge_sdio_cmd8_supports_v2(0x000001aau, &supports_v2));
+    TEST_ASSERT_TRUE(supports_v2);
+    TEST_ASSERT_TRUE(picoforge_sdio_cmd8_supports_v2(1u << 22u, &supports_v2));
+    TEST_ASSERT_FALSE(supports_v2);
+    TEST_ASSERT_FALSE(picoforge_sdio_cmd8_supports_v2(0x000001abu, &supports_v2));
+    TEST_ASSERT_FALSE(picoforge_sdio_cmd8_supports_v2(1u << 22u, NULL));
+}
+
+void test_decodes_data_write_response_from_low_fifo_nibble(void)
+{
+    TEST_ASSERT_TRUE(picoforge_sdio_write_response_accepted(0x00000005u));
+    TEST_ASSERT_FALSE(picoforge_sdio_write_response_accepted(0x50000000u));
+    TEST_ASSERT_FALSE(picoforge_sdio_write_response_accepted(0x0000000bu));
+}
+
 void test_rejects_malformed_short_response_frames(void)
 {
     uint8_t response[6] = { 0x11u, 0u, 0u, 0u, 0u, 0x01u };

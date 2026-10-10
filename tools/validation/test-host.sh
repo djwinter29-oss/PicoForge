@@ -28,5 +28,5 @@ printf '%s\n' '=== WebHID tests ==='
 "$NODE" --test "$REPO_ROOT"/host/webhid/tests/*.test.mjs
 
 printf '%s\n' '=== .NET host tests ==='
-"$DOTNET" test "$REPO_ROOT/host/dotnet/tests/PicoForge.Host.Tests.csproj" \
+"$DOTNET" test "$REPO_ROOT/host/dotnet/PicoForge.sln" \
     --configuration Release --nologo

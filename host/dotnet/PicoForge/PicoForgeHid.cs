@@ -1,6 +1,6 @@
 using HidSharp;
 
-namespace PicoForge.Host;
+namespace PicoForge;
 
 internal sealed class PicoForgeHid : IDisposable
 {
@@ -42,6 +42,20 @@ internal sealed class PicoForgeHid : IDisposable
         {
             return null;
         }
+    }
+
+    public BoardStatusResponse ReadBoardStatus()
+    {
+        var report = new byte[Math.Max(HidProtocol.BoardStatusPayloadSize + 1,
+            device.GetMaxFeatureReportLength() + 1)];
+        report[0] = HidProtocol.BoardStatusReportId;
+        stream.GetFeature(report);
+        return HidProtocol.ParseBoardStatusReport(report);
+    }
+
+    public void SetLed(bool on)
+    {
+        stream.SetFeature(HidProtocol.BuildLedCommandReport(on));
     }
 
     public void Dispose() => stream.Dispose();

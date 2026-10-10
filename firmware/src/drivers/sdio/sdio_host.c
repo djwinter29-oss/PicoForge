@@ -295,11 +295,8 @@ bool picoforge_sdio_host_command_bytes(picoforge_sdio_host_t *host, uint8_t comm
         return false;
     }
 
-    for (size_t byte_index = 0u; byte_index < response_size; byte_index++) {
-        response[byte_index] = (uint8_t)(response_words[byte_index / 4u] >>
-                                         (24u - (byte_index % 4u) * 8u));
-    }
-    return true;
+    return picoforge_sdio_response_words_to_bytes(response_words, response_bits,
+                                                  response, response_capacity);
 }
 
 bool picoforge_sdio_host_read_sector(picoforge_sdio_host_t *host, uint32_t sector,
@@ -450,8 +447,8 @@ bool picoforge_sdio_host_write_sector(picoforge_sdio_host_t *host, uint32_t sect
     }
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) > 0u) {
-        uint32_t response_token = (pio_sm_get(host->pio, host->data_sm) >> 28u) & 0x0fu;
-        success = (response_token == 0x05u);
+        success = picoforge_sdio_write_response_accepted(
+            pio_sm_get(host->pio, host->data_sm));
     }
 
 restore:

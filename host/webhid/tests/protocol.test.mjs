@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeInfoReport, decodeStatusReport, matchesPicoForge } from "../js/device.mjs";
+import {
+  decodeBoardStatusReport,
+  decodeInfoReport,
+  decodeStatusReport,
+  matchesPicoForge,
+} from "../js/device.mjs";
 
 function infoReport({ reportId = true, mcu = 2, clock = 150_000_000, name = "PicoForge" } = {}) {
   const payload = new Uint8Array(26);
@@ -21,11 +26,12 @@ test("decode product, MCU, and clock from report payload", () => {
   });
 });
 
-test("accept Linux feature report transport prefixes", () => {
-  for (const prefix of [0, 1]) {
-    const bytes = Uint8Array.from([prefix, ...infoReport()]);
-    assert.equal(decodeInfoReport(new DataView(bytes.buffer)).product_name, "PicoForge");
-  }
+test("accept zero-prefixed and padded standard feature reports", () => {
+  const zeroPrefixed = Uint8Array.from([0, ...infoReport()]);
+  assert.equal(decodeInfoReport(new DataView(zeroPrefixed.buffer)).product_name, "PicoForge");
+
+  const padded = Uint8Array.from([...infoReport(), 0]);
+  assert.equal(decodeInfoReport(new DataView(padded.buffer)).product_name, "PicoForge");
 });
 
 test("decode little-endian runtime status", () => {
@@ -37,6 +43,21 @@ test("decode little-endian runtime status", () => {
     usb_mounted: true,
     cdc_open: true,
   });
+});
+
+test("decode signed temperature and LED state from board Feature report", () => {
+  const report = new Uint8Array([3, 1, 7, 0x29, 0x09]);
+  assert.deepEqual(decodeBoardStatusReport(new DataView(report.buffer)), {
+    temperature_valid: true,
+    temperature_centidegrees: 2345,
+    led_available: true,
+    led_on: true,
+  });
+});
+
+test("reject an LED-on status when no LED is available", () => {
+  const report = new Uint8Array([3, 1, 4, 0, 0]);
+  assert.throws(() => decodeBoardStatusReport(new DataView(report.buffer)), /without an available LED/);
 });
 
 test("reject wrong versions, clocks, padding, and device identities", () => {

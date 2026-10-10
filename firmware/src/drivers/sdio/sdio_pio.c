@@ -128,6 +128,8 @@ static bool initialize_card(void)
     uint32_t response_argument;
     uint32_t ocr;
     uint32_t start;
+    uint32_t acmd41_argument = 0x00ff8000u;
+    bool supports_sd_v2;
 
     sleep_ms(2u);
     if (!picoforge_sdio_host_command_bytes(&sdio_host, 0u, 0u, 0u, NULL, 0u)) {
@@ -135,19 +137,21 @@ static bool initialize_card(void)
     }
 
     if (!command_response(8u, 0x1aau, short_response, &response_argument) ||
-        ((response_argument & 0xfffu) != 0x1aau)) {
+        !picoforge_sdio_cmd8_supports_v2(response_argument, &supports_sd_v2)) {
         return false;
+    }
+    if (supports_sd_v2) {
+        acmd41_argument |= 0x40000000u;
     }
 
     start = time_us_32();
     do {
         if (!command_response(55u, 0u, short_response, &response_argument) ||
-            !picoforge_sdio_host_command_bytes(&sdio_host, 41u, 0x40ff8000u,
+            !picoforge_sdio_host_command_bytes(&sdio_host, 41u, acmd41_argument,
                                                48u, short_response, sizeof(short_response)) ||
-            !picoforge_sdio_parse_response(41u, short_response, &response_argument, false)) {
+            !picoforge_sdio_parse_r3_response(short_response, &ocr)) {
             return false;
         }
-        ocr = response_argument;
         if ((ocr & 0x80000000u) != 0u) {
             break;
         }
@@ -156,7 +160,7 @@ static bool initialize_card(void)
     if ((ocr & 0x80000000u) == 0u) {
         return false;
     }
-    card_block_addressed = (ocr & 0x40000000u) != 0u;
+    card_block_addressed = supports_sd_v2 && ((ocr & 0x40000000u) != 0u);
 
     if (!picoforge_sdio_host_command_bytes(&sdio_host, 2u, 0u, 136u,
                                           response, sizeof(response)) ||

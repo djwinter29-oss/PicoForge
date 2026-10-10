@@ -33,6 +33,12 @@ export function renderStatus(snapshot) {
   renderLinkState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   renderLinkState("#usb-state", runtime ? (runtime.usb_mounted ? "Mounted" : "Not mounted") : "--", runtime?.usb_mounted);
   document.querySelector("#sequence").textContent = runtime?.sequence ?? "--";
+  const board = snapshot.board_status;
+  document.querySelector("#temperature").textContent = board?.temperature_valid
+    ? `${(board.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
+  document.querySelector("#led-state").textContent = board?.led_available
+    ? (board.led_on ? "On" : "Off") : "Unavailable";
+  document.querySelector("#led-control").textContent = board?.led_on ? "Turn LED off" : "Turn LED on";
   document.querySelector("#sample-time").textContent = snapshot.updated_at
     ? `Last report ${new Date(snapshot.updated_at).toLocaleTimeString()}` : "Waiting for HID report";
 

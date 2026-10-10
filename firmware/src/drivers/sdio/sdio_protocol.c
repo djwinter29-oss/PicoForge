@@ -58,6 +58,75 @@ bool picoforge_sdio_parse_response(uint8_t command, const uint8_t frame[6],
     return true;
 }
 
+bool picoforge_sdio_response_words_to_bytes(const uint32_t *words, uint16_t response_bits,
+                                            uint8_t *response, size_t response_capacity)
+{
+    size_t response_size;
+
+    if ((response_bits > 136u) || ((response_bits % 8u) != 0u)) {
+        return false;
+    }
+    response_size = response_bits / 8u;
+    if (response_size > response_capacity) {
+        return false;
+    }
+    if (response_size == 0u) {
+        return true;
+    }
+    if ((words == NULL) || (response == NULL)) {
+        return false;
+    }
+
+    for (size_t byte_index = 0u; byte_index < response_size; byte_index++) {
+        size_t word_index = byte_index / 4u;
+        size_t word_byte_index = byte_index % 4u;
+        size_t word_byte_count = response_size - word_index * 4u;
+        if (word_byte_count > 4u) {
+            word_byte_count = 4u;
+        }
+        size_t shift = (word_byte_count - 1u - word_byte_index) * 8u;
+        response[byte_index] = (uint8_t)(words[word_index] >> shift);
+    }
+    return true;
+}
+
+bool picoforge_sdio_parse_r3_response(const uint8_t frame[6], uint32_t *ocr)
+{
+    if ((frame == NULL) || (ocr == NULL) ||
+        ((frame[0] & 0xc0u) != 0u) || ((frame[5] & 1u) == 0u)) {
+        return false;
+    }
+
+    *ocr = ((uint32_t)frame[1] << 24u) |
+           ((uint32_t)frame[2] << 16u) |
+           ((uint32_t)frame[3] << 8u) |
+           (uint32_t)frame[4];
+    return true;
+}
+
+bool picoforge_sdio_write_response_accepted(uint32_t response_word)
+{
+    return (response_word & 0x0fu) == 0x05u;
+}
+
+bool picoforge_sdio_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2)
+{
+    const uint32_t illegal_command = 1u << 22u;
+
+    if (supports_v2 == NULL) {
+        return false;
+    }
+    if ((response_argument & illegal_command) != 0u) {
+        *supports_v2 = false;
+        return true;
+    }
+    if ((response_argument & 0xfffu) != 0x1aau) {
+        return false;
+    }
+    *supports_v2 = true;
+    return true;
+}
+
 bool picoforge_sdio_validate_r2_response(const uint8_t frame[17])
 {
     return (frame != NULL) && ((frame[16] & 1u) != 0u) &&

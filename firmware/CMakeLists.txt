@@ -49,6 +49,30 @@ target_link_libraries(picoforge_sdio_backend PUBLIC
     pico_stdlib
 )
 
+add_library(picoforge_system STATIC
+    src/drivers/system.c
+)
+target_include_directories(picoforge_system PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+)
+target_link_libraries(picoforge_system PUBLIC hardware_clocks pico_stdlib)
+
+add_library(picoforge_temperature STATIC
+    src/drivers/temperature.c
+)
+target_include_directories(picoforge_temperature PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+)
+target_link_libraries(picoforge_temperature PUBLIC hardware_adc)
+
+add_library(picoforge_led STATIC
+    src/drivers/led.c
+)
+target_include_directories(picoforge_led PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+)
+target_link_libraries(picoforge_led PUBLIC hardware_gpio)
+
 add_library(picoforge_fatfs STATIC
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
@@ -73,6 +97,20 @@ target_link_libraries(picoforge_storage PUBLIC
     picoforge_sdio_backend
 )
 
+add_library(picoforge_board STATIC
+    src/board/board.c
+    src/board/board_topology.c
+)
+target_include_directories(picoforge_board PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/board"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio"
+)
+target_link_libraries(picoforge_board PUBLIC
+    hardware_gpio
+    hardware_pio
+    picoforge_sdio_backend
+)
+
 add_executable(picoforge_hello_world
     src/main.c
     src/usb/usb_descriptors.c
@@ -91,8 +129,12 @@ target_link_libraries(picoforge_hello_world
     FreeRTOS-Kernel-Static
     pico_unique_id
     tinyusb_device
+    picoforge_system
+    picoforge_temperature
+    picoforge_led
     picoforge_sdio_backend
     picoforge_storage
+    picoforge_board
 )
 
 target_compile_definitions(picoforge_hello_world PRIVATE

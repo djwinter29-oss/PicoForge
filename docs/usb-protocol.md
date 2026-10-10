@@ -37,6 +37,22 @@ Input report 2 has a 7-byte payload and is published every 250 ms.
 
 The sequence byte wraps modulo 256. The feature report also supports `GET_REPORT`, returning the current hardware information; the input report supports `GET_REPORT` with the current runtime values.
 
+## Feature Report 3
+
+Feature report 3 has a 4-byte payload:
+
+| Payload offset | Size | Field | Encoding |
+| --- | ---: | --- | --- |
+| 0 | 1 | Layout version | `1` |
+| 1 | 1 | Flags | Bit 0: temperature valid; bit 1: board LED available; bit 2: board LED on; remaining bits reserved |
+| 2 | 2 | Temperature | Signed centidegrees Celsius, little-endian; meaningful only when bit 0 is set |
+
+The RP2040/RP2350 internal sensor provides an estimate, not a calibrated ambient-temperature measurement. LED availability comes from the selected board topology.
+
+## Feature Report 4
+
+Feature report 4 accepts a 2-byte command payload: version `1`, then desired LED state (`0` off or `1` on). Setting a state is idempotent; the command is ignored if malformed or if the selected board has no controllable LED.
+
 ## Host Implementations
 
 - Python HIDAPI client and loopback Flask dashboard: `host/python/`.

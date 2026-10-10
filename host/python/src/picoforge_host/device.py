@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from .protocol import INFO_PAYLOAD_SIZE, INFO_REPORT_ID, STATUS_INPUT_SIZE, parse_info_report, parse_status_report
+from .protocol import (
+    BOARD_STATUS_PAYLOAD_SIZE,
+    BOARD_STATUS_REPORT_ID,
+    INFO_PAYLOAD_SIZE,
+    INFO_REPORT_ID,
+    STATUS_INPUT_SIZE,
+    build_led_command_report,
+    parse_board_status_report,
+    parse_info_report,
+    parse_status_report,
+)
 
 VENDOR_ID = 0xCAFE
 PRODUCT_ID = 0x4011
@@ -84,6 +94,18 @@ class PicoForgeHid:
         self._require_open()
         report = self._device.read(STATUS_INPUT_SIZE, timeout_ms)
         return parse_status_report(report) if report else None
+
+    def read_board_status(self) -> dict[str, object]:
+        self._require_open()
+        report = self._device.get_feature_report(BOARD_STATUS_REPORT_ID, BOARD_STATUS_PAYLOAD_SIZE + 1)
+        return parse_board_status_report(report)
+
+    def set_led(self, on: bool) -> None:
+        self._require_open()
+        report = build_led_command_report(on)
+        result = self._device.send_feature_report(list(report))
+        if result < 0:
+            raise OSError("failed to send HID LED command")
 
     def close(self) -> None:
         if not self.closed:

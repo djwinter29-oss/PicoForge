@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.FileProviders;
-using PicoForge.Host;
+using PicoForge;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:8766");

@@ -7,6 +7,8 @@ export const DEVICE_FILTER = Object.freeze({
 
 export const INFO_REPORT_ID = 1;
 export const STATUS_REPORT_ID = 2;
+export const BOARD_STATUS_REPORT_ID = 3;
+export const LED_COMMAND_REPORT_ID = 4;
 
 function asView(report) {
   if (report instanceof DataView) return report;
@@ -19,8 +21,7 @@ function featurePayload(report, reportId, payloadSize) {
   let offset;
   if (view.byteLength === payloadSize) offset = 0;
   else if (view.byteLength >= payloadSize + 2
-    && ((view.getUint8(0) === 0 && view.getUint8(1) === reportId)
-      || (view.getUint8(0) === reportId && view.getUint8(1) === reportId))) offset = 2;
+    && view.getUint8(0) === 0 && view.getUint8(1) === reportId) offset = 2;
   else if (view.byteLength >= payloadSize + 1 && view.getUint8(0) === reportId) offset = 1;
   else throw new Error("Unexpected HID feature report ID or size");
   for (let index = offset + payloadSize; index < view.byteLength; index++) {
@@ -75,6 +76,23 @@ export function decodeStatusReport(reportId, report) {
   };
 }
 
+export function decodeBoardStatusReport(report) {
+  const payload = featurePayload(report, BOARD_STATUS_REPORT_ID, 4);
+  const version = payload.getUint8(0);
+  const flags = payload.getUint8(1);
+  if (version !== 1) throw new Error(`Unsupported HID board-status report version ${version}`);
+  if ((flags & ~0x07) !== 0) throw new Error("Unknown HID board-status flags");
+  const ledAvailable = Boolean(flags & 0x02);
+  const ledOn = Boolean(flags & 0x04);
+  if (ledOn && !ledAvailable) throw new Error("LED state reported without an available LED");
+  return {
+    temperature_valid: Boolean(flags & 0x01),
+    temperature_centidegrees: flags & 0x01 ? payload.getInt16(2, true) : null,
+    led_available: ledAvailable,
+    led_on: ledOn,
+  };
+}
+
 export function matchesPicoForge(device) {
   return device.vendorId === DEVICE_FILTER.vendorId && device.productId === DEVICE_FILTER.productId
     && device.collections.some(collection => collection.usagePage === DEVICE_FILTER.usagePage
@@ -91,6 +109,7 @@ export class PicoForgeWebHid {
       error: hid ? null : "WebHID is unavailable; use a supported browser on localhost or HTTPS",
       hardware: null,
       runtime: null,
+      board_status: null,
       updated_at: null,
       busy: false,
     };
@@ -107,7 +126,7 @@ export class PicoForgeWebHid {
       if (event.device !== this.device) return;
       event.device.removeEventListener("inputreport", this.onInputReport);
       this.device = null;
-      this.update({ connected: false, hardware: null, runtime: null, updated_at: null,
+      this.update({ connected: false, hardware: null, runtime: null, board_status: null, updated_at: null,
         busy: false, error: "Device disconnected" });
     };
     hid?.addEventListener("disconnect", this.onDisconnect);
@@ -136,9 +155,10 @@ export class PicoForgeWebHid {
       selected.addEventListener("inputreport", this.onInputReport);
       this.device = selected;
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
+      const boardStatus = decodeBoardStatusReport(await selected.receiveFeatureReport(BOARD_STATUS_REPORT_ID));
       hardware.serial_number = selected.serialNumber || "";
       this.update({ connected: true, busy: false, error: null, hardware,
-        runtime: null, updated_at: null });
+        runtime: null, board_status: boardStatus, updated_at: null });
     } catch (error) {
       selected?.removeEventListener("inputreport", this.onInputReport);
       if (selected?.opened) {
@@ -146,7 +166,7 @@ export class PicoForgeWebHid {
       }
       this.device = null;
       this.update({ connected: false, busy: false, error: error.message,
-        hardware: null, runtime: null, updated_at: null });
+        hardware: null, runtime: null, board_status: null, updated_at: null });
     }
   }
 
@@ -155,8 +175,22 @@ export class PicoForgeWebHid {
     this.update({ busy: true, error: null });
     try {
       const hardware = decodeInfoReport(await this.device.receiveFeatureReport(INFO_REPORT_ID));
+      const boardStatus = decodeBoardStatusReport(await this.device.receiveFeatureReport(BOARD_STATUS_REPORT_ID));
       hardware.serial_number = this.device.serialNumber || "";
-      this.update({ hardware, busy: false });
+      this.update({ hardware, board_status: boardStatus, busy: false });
+    } catch (error) {
+      this.update({ busy: false, error: error.message });
+    }
+  }
+
+  async setLed(on) {
+    if (typeof on !== "boolean") throw new Error("LED state must be boolean");
+    if (!this.device || this.state.busy || !this.state.board_status?.led_available) return;
+    this.update({ busy: true, error: null });
+    try {
+      await this.device.sendFeatureReport(LED_COMMAND_REPORT_ID, Uint8Array.from([1, on ? 1 : 0]));
+      const boardStatus = decodeBoardStatusReport(await this.device.receiveFeatureReport(BOARD_STATUS_REPORT_ID));
+      this.update({ board_status: boardStatus, busy: false });
     } catch (error) {
       this.update({ busy: false, error: error.message });
     }
@@ -171,7 +205,7 @@ export class PicoForgeWebHid {
       if (device.opened) await device.close();
       this.device = null;
       this.update({ connected: false, busy: false, error: null,
-        hardware: null, runtime: null, updated_at: null });
+        hardware: null, runtime: null, board_status: null, updated_at: null });
     } catch (error) {
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ busy: false, error: error.message });
