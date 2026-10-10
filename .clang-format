@@ -1,0 +1,13 @@
+BasedOnStyle: LLVM
+ColumnLimit: 120
+IndentWidth: 4
+PointerAlignment: Right
+SortIncludes: Never
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  SplitEmptyFunction: true
+KeepEmptyLines:
+  AtStartOfBlock: true
+AllowShortFunctionsOnASingleLine: None
+ReflowComments: Always

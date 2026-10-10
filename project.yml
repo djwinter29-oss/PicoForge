@@ -1,0 +1,36 @@
+:project:
+  :name: PicoForge Firmware Tests
+  :ceedling_version: 1.1.10
+  :build_root: build/ceedling
+  :use_mocks: TRUE
+  :release_build: FALSE
+
+:plugins:
+  :enabled:
+    - gcov
+
+:gcov:
+  :utilities:
+    - gcovr
+  :reports:
+    - HtmlDetailed
+    - Cobertura
+  :gcovr:
+    :report_root: .
+
+:paths:
+  :test:
+    - +:firmware/tests/**
+    - -:firmware/tests/support
+  :source:
+    - +:firmware/src/**
+  :include:
+    - firmware/src/**
+    - firmware/third_party/fatfs/source
+  :support:
+    - firmware/tests/support
+
+:files:
+  :source:
+    - -:firmware/src/main.c
+    - -:firmware/src/drivers/temperature.c

@@ -1,6 +1,14 @@
 # Prerequisites
 *.d
 
+# Generated build output
+/build/
+**/bin/
+**/obj/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
 # Object files
 *.o
 *.ko
@@ -35,6 +43,7 @@
 *.i*86
 *.x86_64
 *.hex
+*.uf2
 
 # Debug files
 *.dSYM/
@@ -50,6 +59,7 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
-
+# Python bytecode cache
+__pycache__/
 # debug information files
 *.dwo
