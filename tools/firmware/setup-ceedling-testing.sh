@@ -55,7 +55,7 @@ if [ ! -x "$CEEDLING_BIN" ]; then
     exit 1
 fi
 
-"$REPO_ROOT/tools/host/setup-venv.sh" --venv-dir "$COVERAGE_VENV"
+"$REPO_ROOT/tools/validation/setup-coverage-env.sh" --venv-dir "$COVERAGE_VENV"
 export PATH="$COVERAGE_VENV/bin:$PATH"
 cd "$REPO_ROOT"
 if [ "$#" -eq 0 ]; then

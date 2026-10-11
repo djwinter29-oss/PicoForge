@@ -48,6 +48,20 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void ParsesHidSharpFeatureReportWithRepeatedReportIdPrefix()
+    {
+        var report = new byte[28];
+        report[0] = HidProtocol.InfoReportId;
+        report[1] = HidProtocol.InfoReportId;
+        report[2] = HidProtocol.ReportVersion;
+        report[3] = 2;
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(4), 150_000_000);
+        "PicoForge"u8.CopyTo(report.AsSpan(8));
+
+        Assert.Equal("PicoForge", HidProtocol.ParseInfoReport(report, "board-1").ProductName);
+    }
+
+    [Fact]
     public void ParsesRuntimeStateAndRejectsUnknownFlags()
     {
         var report = new byte[8];
@@ -84,6 +98,15 @@ public sealed class ProtocolTests
             HidProtocol.BuildLedCommandReport(true));
         Assert.Equal(new byte[] { HidProtocol.LedCommandReportId, 1, 0 },
             HidProtocol.BuildLedCommandReport(false));
+    }
+
+    [Fact]
+    public void ParsesHidSharpBoardFeatureWithRepeatedReportIdPrefix()
+    {
+        var report = new byte[] { 3, 3, 1, 7, 0x29, 0x09 };
+
+        Assert.Equal(new BoardStatusResponse(true, 2345, true, true),
+            HidProtocol.ParseBoardStatusReport(report));
     }
 
     [Fact]

@@ -33,6 +33,8 @@ if [ ! -f "$PROJECT" ]; then
     exit 1
 fi
 
+"$SCRIPT_DIR/check-hid-permissions.sh"
+
 exec "$DOTNET_EXE" run \
     --project "$PROJECT" \
     --no-launch-profile \

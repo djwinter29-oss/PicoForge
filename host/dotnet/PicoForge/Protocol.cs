@@ -87,8 +87,9 @@ internal static class HidProtocol
 
     private static ReadOnlySpan<byte> FeaturePayload(ReadOnlySpan<byte> report, byte reportId, int size)
     {
-        var offset = report.Length >= size + 2
-            && report[0] == 0 && report[1] == reportId ? 2
+        var offset = report.Length >= size + 2 && report[0] == 0 && report[1] == reportId ? 2
+            : report.Length >= size + 2 && report[0] == reportId && report[1] == reportId
+                && report[2] == ReportVersion ? 2
             : report.Length >= size + 1 && report[0] == reportId ? 1
             : -1;
         Require(offset >= 0 && report.Length >= offset + size, "unexpected HID feature report length or ID");

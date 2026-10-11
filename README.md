@@ -117,17 +117,14 @@ To flash over a CMSIS-DAP debug probe, run `tools/firmware/load.sh --board pico`
 
 ## Host Tools
 
-The Python host opens HID and serves a loopback-only dashboard:
+The Python launcher creates `build/picoforge` and installs the host package on first run, then opens HID and serves a loopback-only dashboard:
 
 ```sh
-uv venv build/picoforge
-. build/picoforge/bin/activate
-uv pip install -e host/python
-picoforge status
-picoforge web
+tools/host/run-python.sh
+tools/host/run-python.sh status
 ```
 
-`tools/host/run-python.sh` starts the dashboard by default; pass `status` or `web` and its options to run a specific command. The dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:
+The dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:
 
 ```sh
 tools/host/run-dotnet.sh
@@ -135,13 +132,15 @@ tools/host/run-dotnet.sh
 
 Set `DOTNET` to select a .NET 10 SDK executable. Application arguments can be passed through the script.
 
-For a direct browser connection, serve the WebHID directory so the page opens at the origin root:
+For a direct browser connection, serve the WebHID app at the origin root:
 
 ```sh
-python3 -m http.server 8000 --directory host/webhid
+tools/host/run-webhid.sh
 ```
 
-Open `http://localhost:8000/` in a WebHID-capable browser, connect the board, and grant access to its HID interface.
+Open `http://localhost:8000/` in a WebHID-capable browser, connect the board, and grant access to its HID interface. Use `--port` or `--bind` to change the server settings.
+
+On Linux, if either launcher reports a HID permission error, run `tools/host/setup-hid-permissions.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session; both launchers check device-node permissions and exit with this instruction if access is blocked.
 
 WebHID requires a secure browser context and a user-granted device permission. CDC remains available to serial terminal applications.
 

@@ -3,14 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
-REQUIREMENTS_FILE="$SCRIPT_DIR/requirements-coverage.txt"
+REQUIREMENTS_FILE="$SCRIPT_DIR/coverage-requirements.txt"
 VENV_DIR="${VENV_DIR:-$REPO_ROOT/build/coverage-tools}"
 PYTHON="${PYTHON:-python3}"
 GCOVR_VERSION="8.6"
 
 usage() {
 	cat <<'EOF'
-Usage: tools/host/setup-venv.sh [--venv-dir PATH]
+Usage: tools/validation/setup-coverage-env.sh [--venv-dir PATH]
 
 Create the Python environment for PicoForge's Ceedling coverage tools.
 Relative --venv-dir paths are resolved from the current working directory.
