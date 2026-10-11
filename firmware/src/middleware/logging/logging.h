@@ -10,8 +10,8 @@ typedef enum {
     PF_LOG_LEVEL_ERROR,
 } log_level_t;
 
-/** Initialize SDK stdio on UART0. Call once before starting application tasks. */
-bool pf_log_init(void);
+/** Select the UART stdio driver after board UART initialization. */
+void pf_log_init(void);
 
 /** Set the minimum emitted severity; this may be changed while tasks are running. */
 bool pf_log_set_minimum_level(log_level_t level);

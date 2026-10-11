@@ -22,7 +22,7 @@ Serial and SWD do not overlap the memory pins below. Share ground with the adapt
 | GP0 | 1 | TX |
 | GP1 | 2 | RX |
 
-Connect MCU TX to adapter RX and MCU RX to adapter TX. Firmware uses UART0 as its monitor/logging port at 115200 baud, 8-N-1. Logs are output on TX; no command console or RTS/CTS flow control is implemented. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
+Connect MCU TX to adapter RX and MCU RX to adapter TX. Board support initializes the monitor UART from the selected topology; the Pico/Pico 2 profiles assign UART0 to GP0/GP1 at 115200 baud, 8-N-1. Logs are output on TX; no command console or RTS/CTS flow control is implemented. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
 
 ### SWD
 
@@ -49,7 +49,7 @@ Use GP2-GP7 for one memory device and choose one mode column below. Wiring stays
 
 - `-` means unused in that mode, not necessarily disconnected. GP8 is optional SD-card detect.
 - Use 3.3 V and common ground, never 5 V. Power off before replacing a breakout.
-- This SDIO mapping requires driver/PIO changes: the current driver expects data pins in consecutive bit order.
+- The board profile explicitly assigns CLK=GP2, CMD=GP3, and logical DAT0-DAT3 to GP4/GP7/GP6/GP5. PIO samples the contiguous GP4-GP7 window; the SDIO transfer code remaps the DAT1/DAT3 bit lanes to match this wiring.
 - Future SPI drivers must demonstrate with a logic analyzer that automatic CS remains low across each complete SD/flash transaction, including transfer gaps; a valid CSn pin mux alone does not establish this behavior.
 - If automatic CS cannot meet the protocol requirements, hardware SPI0 with GPIO-controlled CS on the same GP5 wire is a proposed fallback requiring no rewiring. This does not satisfy the hardware-CS goal; if hardware CS is mandatory, the design remains unresolved until a suitable transaction-control approach is demonstrated.
 - Pin names follow the breakout guides below; wiring, signal integrity, and protocol operation remain unverified on hardware.
@@ -60,7 +60,7 @@ The lab uses two types of memory/storage breakout: the Adafruit microSD board an
 
 #### SD-Card Breakout
 
-The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Optional DET on GP8 is active-high. The breakout and driver both provide SDIO pull-ups, so check their combined strength. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching. SDIO remains disabled in board support and requires the mapping changes described above; SD-SPI firmware is not implemented.
+The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. The board profile configures its active-high DET signal on GP8 and relies on the breakout's pull-up, without an MCU pull. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. The board profile provides this SDIO configuration, but startup does not initialize or mount the card; physical wiring and card I/O still require validation. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching. SD-SPI firmware is not implemented.
 
 #### W25Q128 Flash Breakout
 
@@ -113,7 +113,7 @@ Firmware resources that do not use header GPIOs:
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
-When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. SDIO remains disabled in board support until wiring is approved.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. SDIO is available through the board configuration API but is not initialized or mounted automatically; validate the wiring on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

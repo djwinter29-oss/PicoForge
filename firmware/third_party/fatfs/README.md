@@ -19,4 +19,4 @@ See the upstream [`LICENSE.txt`](LICENSE.txt) and `source/00readme.txt` for FatF
 
 ## PicoForge integration status
 
-FatFs is compiled and linked by the firmware build. The integration provides a disk-I/O adapter over the SD block API and `picoforge_storage_mount()` / `picoforge_storage_unmount()` middleware. The application must call mount explicitly with board-specific SDIO settings; startup does not mount a volume, and formatting is disabled. Serialize all FatFs calls through one storage-owner task. Physical card I/O is not yet hardware-validated.
+FatFs is compiled and linked by the firmware build. The integration provides a disk-I/O adapter over the SD block API and `pf_storage_mount()` / `pf_storage_unmount()` middleware. The application must call mount explicitly with board-specific SDIO settings; startup does not mount a volume, and formatting is disabled. Serialize all FatFs calls through one storage-owner task. Physical card I/O is not yet hardware-validated.

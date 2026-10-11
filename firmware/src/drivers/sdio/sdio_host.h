@@ -10,7 +10,8 @@
 typedef struct {
     PIO pio;
     uint command_gpio;
-    uint data0_gpio;
+    uint data_gpio_base;
+    uint32_t data_gpio[4];
     uint clock_gpio;
     uint command_sm;
     uint data_sm;

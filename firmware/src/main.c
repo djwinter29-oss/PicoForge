@@ -15,17 +15,13 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 
 int main(void)
 {
-    pf_board_led_config_t led_config;
-
-    if (!pf_log_init()) {
-        panic("Failed to initialize UART monitor logging");
+    if (!pf_board_init()) {
+        panic("Failed to initialize board pin assignments");
     }
+    pf_log_init();
     PF_LOG_INFO("boot", "Firmware initialization started");
 
     pf_temperature_init();
-    if (pf_board_get_led_config(&led_config)) {
-        (void)pf_led_init(led_config.gpio, led_config.active_high);
-    }
 
     pf_usb_start();
     PF_LOG_INFO("usb", "CDC and HID interfaces initialized");

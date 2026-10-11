@@ -22,5 +22,8 @@ void pf_sdio_crc16_4bit(const uint8_t block[512], uint16_t crc[4]);
 void pf_sdio_pack_data_block(const uint8_t block[512], uint32_t words[PF_SDIO_TRANSFER_WORDS]);
 bool pf_sdio_unpack_data_block(const uint32_t words[PF_SDIO_TRANSFER_WORDS],
 									  uint8_t block[512]);
+/** Remap packed nibble lanes between DAT0-DAT3 order and ascending GPIO order. */
+bool pf_sdio_remap_data_lanes(uint32_t words[PF_SDIO_TRANSFER_WORDS],
+							  const uint32_t data_gpio[4], bool to_gpio_order);
 
 #endif

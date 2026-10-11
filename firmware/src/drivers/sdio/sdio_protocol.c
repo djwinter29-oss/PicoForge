@@ -267,3 +267,50 @@ bool pf_sdio_unpack_data_block(const uint32_t words[PF_SDIO_TRANSFER_WORDS],
     }
     return true;
 }
+
+bool pf_sdio_remap_data_lanes(uint32_t words[PF_SDIO_TRANSFER_WORDS],
+                              const uint32_t data_gpio[4], bool to_gpio_order)
+{
+    uint32_t gpio_base = UINT32_MAX;
+    uint8_t lane_at_gpio_bit[4] = { 0u, 0u, 0u, 0u };
+    bool lane_assigned[4] = { false, false, false, false };
+
+    if ((words == NULL) || (data_gpio == NULL)) {
+        return false;
+    }
+
+    for (uint8_t lane = 0u; lane < 4u; lane++) {
+        if (data_gpio[lane] < gpio_base) {
+            gpio_base = data_gpio[lane];
+        }
+    }
+    for (uint8_t lane = 0u; lane < 4u; lane++) {
+        uint32_t gpio_bit = data_gpio[lane] - gpio_base;
+        if ((gpio_bit >= 4u) || lane_assigned[gpio_bit]) {
+            return false;
+        }
+        lane_at_gpio_bit[gpio_bit] = lane;
+        lane_assigned[gpio_bit] = true;
+    }
+
+    for (size_t word_index = 0u; word_index < PF_SDIO_TRANSFER_WORDS; word_index++) {
+        uint32_t remapped_word = 0u;
+        for (uint8_t nibble_index = 0u; nibble_index < 8u; nibble_index++) {
+            uint8_t shift = (uint8_t)(28u - nibble_index * 4u);
+            uint8_t nibble = (uint8_t)((words[word_index] >> shift) & 0x0fu);
+            uint8_t remapped_nibble = 0u;
+            for (uint8_t gpio_bit = 0u; gpio_bit < 4u; gpio_bit++) {
+                uint8_t lane = lane_at_gpio_bit[gpio_bit];
+                if (to_gpio_order) {
+                    remapped_nibble |= (uint8_t)(((nibble >> lane) & 1u) << gpio_bit);
+                } else {
+                    remapped_nibble |= (uint8_t)(((nibble >> gpio_bit) & 1u) << lane);
+                }
+            }
+            remapped_word |= (uint32_t)remapped_nibble << shift;
+        }
+        words[word_index] = remapped_word;
+    }
+
+    return true;
+}

@@ -12,17 +12,14 @@ enum { PF_LOG_LINE_SIZE = 256 };
 static atomic_int minimum_level = ATOMIC_VAR_INIT(PF_LOG_LEVEL_INFO);
 static bool initialized;
 
-bool pf_log_init(void)
+void pf_log_init(void)
 {
     if (initialized) {
-        return true;
+        return;
     }
 
-    initialized = stdio_init_all();
-    if (initialized) {
-        stdio_filter_driver(&stdio_uart);
-    }
-    return initialized;
+    stdio_filter_driver(&stdio_uart);
+    initialized = true;
 }
 
 bool pf_log_set_minimum_level(log_level_t level)

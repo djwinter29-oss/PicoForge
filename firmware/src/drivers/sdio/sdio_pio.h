@@ -9,7 +9,8 @@
 /** Board-provided SD memory-card connection settings for the native PIO host. */
 typedef struct {
     uint32_t command_gpio;
-    uint32_t data0_gpio;
+    uint32_t clock_gpio;
+    uint32_t data_gpio[4];    /**< GPIO assignment for logical DAT0, DAT1, DAT2, DAT3. */
     PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
     uint32_t clock_hz;       /**< 0 selects clk_sys / 12; otherwise 400 kHz through 25 MHz. */
     uint32_t dma_irq;        /**< Reserved; current block transfers poll DMA synchronously. */

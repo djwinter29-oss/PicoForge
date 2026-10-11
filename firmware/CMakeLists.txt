@@ -107,7 +107,8 @@ target_link_libraries(pf_storage PUBLIC
 
 add_library(pf_board STATIC
     src/board/board.c
-    src/board/board_topology.c
+    src/board/board_profile.c
+    src/board/board_resources.c
 )
 target_include_directories(pf_board PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/board"
@@ -116,6 +117,8 @@ target_include_directories(pf_board PUBLIC
 target_link_libraries(pf_board PUBLIC
     hardware_gpio
     hardware_pio
+    pico_stdio_uart
+    pf_led
     pf_sdio_backend
 )
 
@@ -139,7 +142,6 @@ target_link_libraries(pf_hello_world
     tinyusb_device
     pf_system
     pf_temperature
-    pf_led
     pf_logging
     pf_sdio_backend
     pf_storage
@@ -151,6 +153,6 @@ target_compile_definitions(pf_hello_world PRIVATE
 )
 
 pico_enable_stdio_usb(pf_hello_world 0)
-pico_enable_stdio_uart(pf_hello_world 1)
+pico_enable_stdio_uart(pf_hello_world 0)
 
 pico_add_extra_outputs(pf_hello_world)

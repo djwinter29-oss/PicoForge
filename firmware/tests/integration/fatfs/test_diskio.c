@@ -4,9 +4,9 @@
 #include "sdio_block.h"
 
 static bool card_ready;
-static picoforge_sdio_result_t read_result;
-static picoforge_sdio_result_t write_result;
-static picoforge_sdio_result_t sync_result;
+static pf_sdio_result_t read_result;
+static pf_sdio_result_t write_result;
+static pf_sdio_result_t sync_result;
 static uint32_t reported_block_count;
 static uint32_t last_first_block;
 static uint32_t last_block_count;
@@ -15,17 +15,17 @@ static uint32_t read_calls;
 static uint32_t write_calls;
 static uint32_t sync_calls;
 
-bool picoforge_sdio_is_initialized(void)
+bool pf_sdio_is_initialized(void)
 {
     return card_ready;
 }
 
-uint32_t picoforge_sdio_block_count(void)
+uint32_t pf_sdio_block_count(void)
 {
     return reported_block_count;
 }
 
-picoforge_sdio_result_t picoforge_sdio_read_blocks(uint32_t first_block,
+pf_sdio_result_t pf_sdio_read_blocks(uint32_t first_block,
                                                     void *buffer,
                                                     uint32_t block_count)
 {
@@ -36,7 +36,7 @@ picoforge_sdio_result_t picoforge_sdio_read_blocks(uint32_t first_block,
     return read_result;
 }
 
-picoforge_sdio_result_t picoforge_sdio_write_blocks(uint32_t first_block,
+pf_sdio_result_t pf_sdio_write_blocks(uint32_t first_block,
                                                      const void *buffer,
                                                      uint32_t block_count)
 {
@@ -47,7 +47,7 @@ picoforge_sdio_result_t picoforge_sdio_write_blocks(uint32_t first_block,
     return write_result;
 }
 
-picoforge_sdio_result_t picoforge_sdio_sync(void)
+pf_sdio_result_t pf_sdio_sync(void)
 {
     sync_calls++;
     return sync_result;
@@ -56,9 +56,9 @@ picoforge_sdio_result_t picoforge_sdio_sync(void)
 void setUp(void)
 {
     card_ready = true;
-    read_result = PICOFORGE_SDIO_OK;
-    write_result = PICOFORGE_SDIO_OK;
-    sync_result = PICOFORGE_SDIO_OK;
+    read_result = PF_SDIO_OK;
+    write_result = PF_SDIO_OK;
+    sync_result = PF_SDIO_OK;
     reported_block_count = 1234u;
     last_first_block = 0u;
     last_block_count = 0u;
@@ -125,7 +125,7 @@ void test_translates_unready_and_io_failures(void)
     TEST_ASSERT_EQUAL_UINT32(0u, read_calls);
 
     card_ready = true;
-    read_result = PICOFORGE_SDIO_IO_ERROR;
+    read_result = PF_SDIO_IO_ERROR;
     TEST_ASSERT_EQUAL(RES_ERROR, disk_read(0u, buffer, 0u, 1u));
 }
 
@@ -152,7 +152,7 @@ void test_reports_sector_geometry_and_sync(void)
     TEST_ASSERT_EQUAL(RES_OK, disk_ioctl(0u, GET_SECTOR_COUNT, &sectors));
     TEST_ASSERT_EQUAL_UINT32(1234u, (uint32_t)sectors);
     TEST_ASSERT_EQUAL(RES_OK, disk_ioctl(0u, GET_SECTOR_SIZE, &sector_size));
-    TEST_ASSERT_EQUAL(PICOFORGE_SDIO_BLOCK_SIZE, sector_size);
+    TEST_ASSERT_EQUAL(PF_SDIO_BLOCK_SIZE, sector_size);
     TEST_ASSERT_EQUAL(RES_OK, disk_ioctl(0u, GET_BLOCK_SIZE, &block_size));
     TEST_ASSERT_EQUAL_UINT32(1u, block_size);
     TEST_ASSERT_EQUAL(RES_OK, disk_ioctl(0u, CTRL_SYNC, NULL));

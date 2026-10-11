@@ -19,45 +19,85 @@ static bool card_initialized;
 static bool same_config(const pf_sdio_config_t *left,
                         const pf_sdio_config_t *right)
 {
-    return (left->command_gpio == right->command_gpio) &&
-           (left->data0_gpio == right->data0_gpio) &&
-           (left->pio == right->pio) &&
-           (left->clock_hz == right->clock_hz) &&
-           (left->dma_irq == right->dma_irq) &&
-           (left->use_card_detect == right->use_card_detect) &&
-           (left->card_detect_gpio == right->card_detect_gpio) &&
-           (left->card_detect_active_high == right->card_detect_active_high) &&
-           (left->card_detect_use_pull == right->card_detect_use_pull) &&
-           (left->card_detect_pull_up == right->card_detect_pull_up);
+    if ((left->command_gpio != right->command_gpio) ||
+        (left->clock_gpio != right->clock_gpio) ||
+        (left->pio != right->pio) ||
+        (left->clock_hz != right->clock_hz) ||
+        (left->dma_irq != right->dma_irq) ||
+        (left->use_card_detect != right->use_card_detect) ||
+        (left->card_detect_gpio != right->card_detect_gpio) ||
+        (left->card_detect_active_high != right->card_detect_active_high) ||
+        (left->card_detect_use_pull != right->card_detect_use_pull) ||
+        (left->card_detect_pull_up != right->card_detect_pull_up)) {
+        return false;
+    }
+    for (uint32_t lane = 0u; lane < 4u; lane++) {
+        if (left->data_gpio[lane] != right->data_gpio[lane]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool data_gpio_window(const uint32_t data_gpio[4], uint32_t pin_limit,
+                             uint32_t *gpio_base)
+{
+    bool used_offsets[4] = { false, false, false, false };
+    uint32_t base = UINT32_MAX;
+
+    for (uint32_t lane = 0u; lane < 4u; lane++) {
+        if (data_gpio[lane] >= pin_limit) {
+            return false;
+        }
+        if (data_gpio[lane] < base) {
+            base = data_gpio[lane];
+        }
+    }
+    for (uint32_t lane = 0u; lane < 4u; lane++) {
+        uint32_t offset = data_gpio[lane] - base;
+        if ((offset >= 4u) || used_offsets[offset]) {
+            return false;
+        }
+        used_offsets[offset] = true;
+    }
+    *gpio_base = base;
+    return true;
+}
+
+static bool pin_is_data_gpio(uint32_t pin, const uint32_t data_gpio[4])
+{
+    for (uint32_t lane = 0u; lane < 4u; lane++) {
+        if (pin == data_gpio[lane]) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool pins_are_valid(const pf_sdio_config_t *config)
 {
     uint32_t pin_limit = (NUM_BANK0_GPIOS < 32u) ? NUM_BANK0_GPIOS : 32u;
-    uint32_t data3_gpio;
-    uint32_t clock_gpio;
+    uint32_t data_gpio_base;
 
     if (((config->pio != pio0) && (config->pio != pio1)) ||
-        (config->data0_gpio < 2u) || (config->data0_gpio > 28u) ||
+        !data_gpio_window(config->data_gpio, pin_limit, &data_gpio_base) ||
+        (data_gpio_base < 2u) || (data_gpio_base > 28u) ||
+        (config->clock_gpio >= pin_limit) ||
+        (config->clock_gpio != ((data_gpio_base + 30u) % 32u)) ||
         (config->command_gpio >= pin_limit)) {
         return false;
     }
 
-    data3_gpio = config->data0_gpio + 3u;
-    clock_gpio = (config->data0_gpio + 30u) % 32u;
-    if ((data3_gpio >= pin_limit) || (clock_gpio >= pin_limit) ||
-        (config->command_gpio == clock_gpio) ||
-        ((config->command_gpio >= config->data0_gpio) &&
-         (config->command_gpio <= data3_gpio))) {
+    if ((config->command_gpio == config->clock_gpio) ||
+        pin_is_data_gpio(config->command_gpio, config->data_gpio)) {
         return false;
     }
 
     if (config->use_card_detect &&
         ((config->card_detect_gpio >= pin_limit) ||
          (config->card_detect_gpio == config->command_gpio) ||
-         (config->card_detect_gpio == clock_gpio) ||
-         ((config->card_detect_gpio >= config->data0_gpio) &&
-          (config->card_detect_gpio <= data3_gpio)))) {
+         (config->card_detect_gpio == config->clock_gpio) ||
+         pin_is_data_gpio(config->card_detect_gpio, config->data_gpio))) {
         return false;
     }
     return true;

@@ -48,11 +48,11 @@ static bool load_data_rx_program(pf_sdio_host_t *host)
     }
     host->data_rx_program_offset = pio_add_program(host->pio, &pf_sdio_data_rx_program);
     config = pf_sdio_data_rx_program_get_default_config(host->data_rx_program_offset);
-    sm_config_set_in_pins(&config, host->data0_gpio);
+    sm_config_set_in_pins(&config, host->data_gpio_base);
     sm_config_set_in_shift(&config, false, true, 32u);
     sm_config_set_out_shift(&config, false, false, 32u);
     pio_sm_init(host->pio, host->data_sm, host->data_rx_program_offset, &config);
-    pio_sm_set_consecutive_pindirs(host->pio, host->data_sm, host->data0_gpio, 4u, false);
+    pio_sm_set_consecutive_pindirs(host->pio, host->data_sm, host->data_gpio_base, 4u, false);
     host->data_rx_program_loaded = true;
     return true;
 }
@@ -119,8 +119,10 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
 {
     int state_machine;
     int dma_channel;
+    uint32_t data_gpio_base;
 
     if ((host == NULL) || (config == NULL) ||
+        (((config->pio != pio0) && (config->pio != pio1))) ||
         !pio_can_add_program(config->pio, &pf_sdio_command_program)) {
         return false;
     }
@@ -128,8 +130,15 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
     memset(host, 0, sizeof(*host));
     host->pio = config->pio;
     host->command_gpio = config->command_gpio;
-    host->data0_gpio = config->data0_gpio;
-    host->clock_gpio = (config->data0_gpio + SDIO_CLK_PIN_D0_OFFSET) % 32u;
+    memcpy(host->data_gpio, config->data_gpio, sizeof(host->data_gpio));
+    data_gpio_base = config->data_gpio[0];
+    for (uint lane = 1u; lane < 4u; lane++) {
+        if (config->data_gpio[lane] < data_gpio_base) {
+            data_gpio_base = config->data_gpio[lane];
+        }
+    }
+    host->data_gpio_base = data_gpio_base;
+    host->clock_gpio = config->clock_gpio;
     host->system_clock_hz = clock_get_hz(clk_sys);
 
     state_machine = pio_claim_unused_sm(host->pio, false);
@@ -157,12 +166,12 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
     pio_gpio_init(host->pio, host->clock_gpio);
     pio_gpio_init(host->pio, host->command_gpio);
     for (uint pin = 0u; pin < 4u; pin++) {
-        pio_gpio_init(host->pio, host->data0_gpio + pin);
+        pio_gpio_init(host->pio, host->data_gpio_base + pin);
     }
     host->input_sync_bypass_mask = (1u << host->clock_gpio) |
                                    (1u << host->command_gpio);
     for (uint pin = 0u; pin < 4u; pin++) {
-        host->input_sync_bypass_mask |= 1u << (host->data0_gpio + pin);
+        host->input_sync_bypass_mask |= 1u << (host->data_gpio_base + pin);
     }
     host->previous_input_sync_bypass = host->pio->input_sync_bypass;
     host->pio->input_sync_bypass |= host->input_sync_bypass_mask;
@@ -174,7 +183,7 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
 
     gpio_pull_up(host->command_gpio);
     for (uint pin = 0u; pin < 4u; pin++) {
-        gpio_pull_up(host->data0_gpio + pin);
+        gpio_pull_up(host->data_gpio_base + pin);
     }
 
     if (!pf_sdio_host_set_clock(host, 400000u)) {
@@ -346,7 +355,8 @@ bool pf_sdio_host_read_sector(pf_sdio_host_t *host, uint32_t sector,
     }
 
     dma_channel_wait_for_finish_blocking(host->dma_channel);
-    success = pf_sdio_unpack_data_block(transfer_words, block);
+    success = pf_sdio_remap_data_lanes(transfer_words, host->data_gpio, false) &&
+              pf_sdio_unpack_data_block(transfer_words, block);
 
 cleanup:
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -377,6 +387,11 @@ bool pf_sdio_host_write_sector(pf_sdio_host_t *host, uint32_t sector,
         (!block_addressed && (sector > (UINT32_MAX / PF_SDIO_BLOCK_SIZE)))) {
         return false;
     }
+    pf_sdio_pack_data_block(block, transfer_words);
+    if (!pf_sdio_remap_data_lanes(transfer_words, host->data_gpio, true)) {
+        return false;
+    }
+
     command_argument = block_addressed ? sector : sector * PF_SDIO_BLOCK_SIZE;
     if (!pf_sdio_host_command_bytes(host, 24u, command_argument, 48u,
                                            response, sizeof(response)) ||
@@ -384,7 +399,6 @@ bool pf_sdio_host_write_sector(pf_sdio_host_t *host, uint32_t sector,
         return false;
     }
 
-    pf_sdio_pack_data_block(block, transfer_words);
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
     if (host->data_rx_program_loaded) {
@@ -415,9 +429,9 @@ bool pf_sdio_host_write_sector(pf_sdio_host_t *host, uint32_t sector,
                       (float)host->system_clock_hz / (2.0f * (float)host->current_clock_hz));
 
     state_machine_config = pf_sdio_data_tx_program_get_default_config(host->data_tx_program_offset);
-    sm_config_set_out_pins(&state_machine_config, host->data0_gpio, 4u);
-    sm_config_set_set_pins(&state_machine_config, host->data0_gpio, 4u);
-    sm_config_set_in_pins(&state_machine_config, host->data0_gpio);
+    sm_config_set_out_pins(&state_machine_config, host->data_gpio_base, 4u);
+    sm_config_set_set_pins(&state_machine_config, host->data_gpio_base, 4u);
+    sm_config_set_in_pins(&state_machine_config, host->data_gpio_base);
     sm_config_set_out_shift(&state_machine_config, false, true, 32u);
     sm_config_set_in_shift(&state_machine_config, false, false, 32u);
     pio_sm_init(host->pio, host->data_sm, host->data_tx_program_offset, &state_machine_config);
