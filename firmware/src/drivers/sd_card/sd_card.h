@@ -3,7 +3,7 @@
 
 #include "sd_card_block.h"
 #include "sdio_pio/sdio_pio.h"
-#include "spi/sdspi.h"
+#include "spi/sd_spi.h"
 
 typedef enum {
     PF_SD_CARD_TRANSPORT_SDIO_PIO = 0,
@@ -14,7 +14,7 @@ typedef struct {
     pf_sd_card_transport_t transport;
     union {
         pf_sdio_pio_config_t sdio_pio;
-        pf_sdspi_config_t spi;
+        pf_sd_spi_config_t spi;
     } bus;
 } pf_sd_card_config_t;
 

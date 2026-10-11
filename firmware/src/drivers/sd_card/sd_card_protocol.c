@@ -1,6 +1,29 @@
 #include "sd_card_protocol.h"
 #include "sd_card_block.h"
 
+bool pf_sd_card_block_argument(uint32_t block, bool block_addressed, uint32_t *argument)
+{
+    if ((argument == NULL) ||
+        (!block_addressed && (block > UINT32_MAX / PF_SD_CARD_BLOCK_SIZE))) {
+        return false;
+    }
+    *argument = block_addressed ? block : block * PF_SD_CARD_BLOCK_SIZE;
+    return true;
+}
+
+pf_sd_card_result_t pf_sd_card_validate_transfer(uint32_t first_block, const void *buffer,
+                                                uint32_t block_count, uint32_t capacity)
+{
+    if (block_count == 0u) {
+        return PF_SD_CARD_OK;
+    }
+    if ((buffer == NULL) || (first_block >= capacity) ||
+        (block_count > capacity - first_block)) {
+        return PF_SD_CARD_INVALID_ARGUMENT;
+    }
+    return PF_SD_CARD_OK;
+}
+
 uint8_t pf_sd_card_crc7(const uint8_t *data, size_t size)
 {
     uint8_t crc = 0u;

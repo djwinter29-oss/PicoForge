@@ -1,4 +1,4 @@
-#include "sdspi.h"
+#include "sd_spi.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -6,7 +6,7 @@
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 #include "sd_card_protocol.h"
-#include "sdspi_protocol.h"
+#include "sd_spi_protocol.h"
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u
@@ -33,15 +33,15 @@
 #define SD_OCR_VOLTAGE_WINDOW 0x00ff8000u
 #define SD_OCR_HCS (1u << 30u)
 
-static pf_sdspi_config_t active_config;
+static pf_sd_spi_config_t active_config;
 static bool configuration_set;
 static bool spi_configured;
 static bool card_initialized;
 static bool card_block_addressed;
 static uint32_t card_sector_count;
 
-static bool same_config(const pf_sdspi_config_t *left,
-                        const pf_sdspi_config_t *right)
+static bool same_config(const pf_sd_spi_config_t *left,
+                        const pf_sd_spi_config_t *right)
 {
     return (left->spi == right->spi) &&
            (left->clock_gpio == right->clock_gpio) &&
@@ -61,7 +61,7 @@ static bool pin_is_valid(uint32_t pin)
     return pin < NUM_BANK0_GPIOS;
 }
 
-static bool config_is_valid(const pf_sdspi_config_t *config)
+static bool config_is_valid(const pf_sd_spi_config_t *config)
 {
     uint32_t pins[4];
 
@@ -186,7 +186,7 @@ static bool send_application_command(uint8_t command, uint32_t argument,
     uint8_t app_response;
 
     return send_command(SD_CMD_APP, 0u, &app_response, NULL, 0u) &&
-           pf_sdspi_r1_is_ready_or_idle(app_response) &&
+           pf_sd_spi_r1_is_ready_or_idle(app_response) &&
            send_command(command, argument, response, NULL, 0u);
 }
 
@@ -199,14 +199,14 @@ static bool read_data_block(uint8_t *data, size_t size)
 
     do {
         token = exchange_byte(0xffu);
-        if (pf_sdspi_read_token_is_valid(token)) {
+        if (pf_sd_spi_read_token_is_valid(token)) {
             break;
         }
         if (token != 0xffu) {
             return false;
         }
     } while ((uint32_t)(time_us_32() - start) < SD_SPI_RESPONSE_TIMEOUT_US);
-    if (!pf_sdspi_read_token_is_valid(token) ||
+    if (!pf_sd_spi_read_token_is_valid(token) ||
         (spi_read_blocking(active_config.spi, 0xffu, data, size) != (int)size)) {
         return false;
     }
@@ -283,7 +283,7 @@ static bool initialize_card(void)
         if (!send_application_command(
                 SD_ACMD_SD_SEND_OP_COND,
                 0x00ff8000u | (supports_v2 ? SD_OCR_HCS : 0u), &response) ||
-            !pf_sdspi_r1_is_ready_or_idle(response)) {
+            !pf_sd_spi_r1_is_ready_or_idle(response)) {
             return false;
         }
         if (response == 0u) {
@@ -339,7 +339,7 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
         card_initialized = false;
         return PF_SD_CARD_NOT_READY;
     }
-    if (!pf_sdspi_block_argument(block, card_block_addressed, &argument)) {
+    if (!pf_sd_spi_block_argument(block, card_block_addressed, &argument)) {
         return PF_SD_CARD_INVALID_ARGUMENT;
     }
 
@@ -371,7 +371,7 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
         (void)exchange_byte((uint8_t)(crc >> 8u));
         (void)exchange_byte((uint8_t)crc);
         data_response = exchange_byte(0xffu);
-        success = pf_sdspi_write_response_is_accepted(data_response) &&
+        success = pf_sd_spi_write_response_is_accepted(data_response) &&
                   wait_ready(SD_SPI_WRITE_TIMEOUT_US);
     }
 
@@ -380,7 +380,7 @@ transfer_done:
     return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
 }
 
-pf_sd_card_result_t pf_sdspi_init(const pf_sdspi_config_t *config)
+pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config)
 {
     if (!config_is_valid(config)) {
         return PF_SD_CARD_INVALID_ARGUMENT;
@@ -425,7 +425,7 @@ pf_sd_card_result_t pf_sdspi_init(const pf_sdspi_config_t *config)
     return PF_SD_CARD_OK;
 }
 
-bool pf_sdspi_is_initialized(void)
+bool pf_sd_spi_is_initialized(void)
 {
     if (card_initialized && !card_is_present()) {
         card_initialized = false;
@@ -433,29 +433,26 @@ bool pf_sdspi_is_initialized(void)
     return card_initialized;
 }
 
-uint32_t pf_sdspi_block_count(void)
+uint32_t pf_sd_spi_block_count(void)
 {
-    return pf_sdspi_is_initialized() ? card_sector_count : 0u;
+    return pf_sd_spi_is_initialized() ? card_sector_count : 0u;
 }
 
 static pf_sd_card_result_t validate_transfer(uint32_t first_block,
                                              const void *buffer,
                                              uint32_t block_count)
 {
-    if (!pf_sdspi_is_initialized()) {
+    if (!pf_sd_spi_is_initialized()) {
         card_initialized = false;
         return PF_SD_CARD_NOT_READY;
     }
-    if ((block_count > PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER) ||
-        ((block_count != 0u) && (buffer == NULL)) ||
-        (first_block > card_sector_count) ||
-        (block_count > (card_sector_count - first_block))) {
+    if (block_count > PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER) {
         return PF_SD_CARD_INVALID_ARGUMENT;
     }
-    return PF_SD_CARD_OK;
+    return pf_sd_card_validate_transfer(first_block, buffer, block_count, card_sector_count);
 }
 
-pf_sd_card_result_t pf_sdspi_read_blocks(uint32_t first_block, void *buffer,
+pf_sd_card_result_t pf_sd_spi_read_blocks(uint32_t first_block, void *buffer,
                                          uint32_t block_count)
 {
     pf_sd_card_result_t result = validate_transfer(first_block, buffer, block_count);
@@ -475,7 +472,7 @@ pf_sd_card_result_t pf_sdspi_read_blocks(uint32_t first_block, void *buffer,
     return PF_SD_CARD_OK;
 }
 
-pf_sd_card_result_t pf_sdspi_write_blocks(uint32_t first_block,
+pf_sd_card_result_t pf_sd_spi_write_blocks(uint32_t first_block,
                                           const void *buffer,
                                           uint32_t block_count)
 {
@@ -495,11 +492,11 @@ pf_sd_card_result_t pf_sdspi_write_blocks(uint32_t first_block,
     return PF_SD_CARD_OK;
 }
 
-pf_sd_card_result_t pf_sdspi_sync(void)
+pf_sd_card_result_t pf_sd_spi_sync(void)
 {
     bool ready;
 
-    if (!pf_sdspi_is_initialized()) {
+    if (!pf_sd_spi_is_initialized()) {
         card_initialized = false;
         return PF_SD_CARD_NOT_READY;
     }

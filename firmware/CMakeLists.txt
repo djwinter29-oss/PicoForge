@@ -29,13 +29,20 @@ set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the
 set(FREERTOS_CONFIG_FILE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src/integration/freertos")
 include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 
+add_library(pf_sd_card_protocol STATIC
+    src/drivers/sd_card/sd_card_protocol.c
+)
+target_include_directories(pf_sd_card_protocol PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
+)
+
 add_library(pf_sdio_backend STATIC
     src/drivers/sd_card/sdio_pio/sdio_pio.c
-    src/drivers/sd_card/sdio_pio/sdio_host.c
-    src/drivers/sd_card/sdio_pio/sdio_protocol.c
+    src/drivers/sd_card/sdio_pio/sdio_pio_host.c
+    src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c
 )
 pico_generate_pio_header(pf_sdio_backend
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio/sdio_host.pio"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio/sdio_pio_host.pio"
 )
 target_include_directories(pf_sdio_backend
     PUBLIC
@@ -43,6 +50,7 @@ target_include_directories(pf_sdio_backend
         "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"
 )
 target_link_libraries(pf_sdio_backend PUBLIC
+    pf_sd_card_protocol
     hardware_clocks
     hardware_dma
     hardware_gpio
@@ -51,10 +59,22 @@ target_link_libraries(pf_sdio_backend PUBLIC
     pico_stdlib
 )
 
+add_library(pf_sd_spi_backend STATIC
+    src/drivers/sd_card/spi/sd_spi.c
+    src/drivers/sd_card/spi/sd_spi_protocol.c
+)
+target_include_directories(pf_sd_spi_backend PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/spi"
+)
+target_link_libraries(pf_sd_spi_backend PUBLIC
+    pf_sd_card_protocol
+    hardware_spi
+    hardware_gpio
+    pico_stdlib
+)
+
 add_library(pf_sd_card STATIC
     src/drivers/sd_card/sd_card.c
-    src/drivers/sd_card/spi/sdspi.c
-    src/drivers/sd_card/spi/sdspi_protocol.c
 )
 target_include_directories(pf_sd_card PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
@@ -62,7 +82,8 @@ target_include_directories(pf_sd_card PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/spi"
 )
 target_link_libraries(pf_sd_card PUBLIC
-    hardware_spi
+    pf_sd_card_protocol
+    pf_sd_spi_backend
     pf_sdio_backend
 )
 

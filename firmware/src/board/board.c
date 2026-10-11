@@ -71,7 +71,7 @@ bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
         return true;
     }
     if (transport == PF_SD_CARD_TRANSPORT_SPI) {
-        config->bus.spi = (pf_sdspi_config_t){
+        config->bus.spi = (pf_sd_spi_config_t){
             .spi = (topology->spi_index == 0u) ? spi0 : spi1,
             .clock_gpio = topology->spi_clock_gpio,
             .mosi_gpio = topology->spi_mosi_gpio,

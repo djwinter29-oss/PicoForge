@@ -49,6 +49,40 @@ Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple sy
 
 ### Platform
 
+### SD-Card Driver Structure
+
+The SD-card driver separates card-wide rules from transport-specific wire handling:
+
+| Role | Shared | SDIO-PIO | SPI |
+| --- | --- | --- | --- |
+| Configuration and dispatch | `sd_card.c/h` | `sdio_pio.c/h` | `sd_spi.c/h` |
+| Block contract and errors | `sd_card_block.h` | Same result type and operation suffixes | Same result type and operation suffixes |
+| Protocol rules | `sd_card_protocol.c/h` | `sdio_pio_protocol.c/h` | `sd_spi_protocol.c/h` |
+| Hardware engine | None | `sdio_pio_host.c/h` and `.pio` | Pico SDK SPI APIs |
+
+Both backend headers expose `init`, `is_initialized`, `block_count`, `read_blocks`,
+`write_blocks`, and `sync`, with the prefixes `pf_sdio_pio_` and `pf_sd_spi_`.
+Configuration types remain distinct because PIO/DMA resources and SPI controllers
+are not interchangeable. The SDIO block declarations now live in its backend
+header, rather than a separate block header; the SPI prefix replaces `pf_sdspi_`.
+Both backends return `pf_sd_card_result_t` directly.
+
+The shared protocol library owns command CRC7/framing, CMD8 classification, CSD
+capacity decoding, serial CRC16, sector-address conversion, and capacity/buffer
+validation. SDIO helper entry points delegate card-wide algorithms to this library.
+Native response parsing, four-lane CRC and PIO packing remain in the SDIO protocol;
+SPI response tokens remain in the SPI protocol. SDIO requires a 4-byte-aligned
+buffer; SPI accepts byte alignment and retains its 256-sector per-call limit.
+Zero-sector transfers are no-ops after readiness checks. Both transports use
+synchronous single-sector operations internally and require serialized access.
+
+Each transport has a backend library; the card facade links both, and both reuse
+`pf_sd_card_protocol`. FatFs continues to depend only on the neutral block API;
+its adapter stays in `integration/fatfs`, where it handles filesystem types,
+status conversion, and unaligned-buffer bouncing.
+
+### Platform
+
 Own board support, configuration, logging, version metadata, and integration with the selected MCU and SDK. The board topology/configuration API lives in `firmware/src/board/`; board-specific pin mapping belongs here and must agree with [the hardware setup baseline](hardware-setup.md) and the board schematic. The selected Pico profile exposes SDIO-PIO and SPI wiring for explicit transport selection; physical card operation still needs board validation.
 
 ## External Components

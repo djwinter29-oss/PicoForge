@@ -1,10 +1,10 @@
-#ifndef PF_SDIO_PIO_PIO_H
-#define PF_SDIO_PIO_PIO_H
+#ifndef PF_SDIO_PIO_H
+#define PF_SDIO_PIO_H
 
 #include <stdint.h>
 
 #include "hardware/pio.h"
-#include "sdio_block.h"
+#include "sd_card_block.h"
 
 /** Board-provided SD memory-card connection settings for the native PIO host. */
 typedef struct {
@@ -27,6 +27,23 @@ typedef struct {
  * The configuration is retained for the lifetime of the firmware and cannot be
  * changed after first use. Repeating the same call retries card initialization.
  */
-pf_sdio_pio_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config);
+pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config);
+
+/** Return whether the card has initialized successfully. */
+bool pf_sdio_pio_is_initialized(void);
+
+/** Return the initialized card's number of 512-byte sectors, or zero. */
+uint32_t pf_sdio_pio_block_count(void);
+
+/** Read sectors into a caller-owned, 4-byte-aligned buffer. */
+pf_sd_card_result_t pf_sdio_pio_read_blocks(uint32_t first_block, void *buffer,
+                                           uint32_t block_count);
+
+/** Write sectors from a caller-owned, 4-byte-aligned buffer. */
+pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *buffer,
+                                            uint32_t block_count);
+
+/** Complete pending writes; current block writes are synchronous. */
+pf_sd_card_result_t pf_sdio_pio_sync(void);
 
 #endif

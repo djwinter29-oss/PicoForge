@@ -1,5 +1,5 @@
-#ifndef PF_SDSPI_H
-#define PF_SDSPI_H
+#ifndef PF_SD_SPI_H
+#define PF_SD_SPI_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -20,29 +20,29 @@ typedef struct {
     bool card_detect_active_high;
     bool card_detect_use_pull;
     bool card_detect_pull_up;
-} pf_sdspi_config_t;
+} pf_sd_spi_config_t;
 
 /**
  * Initialize the configured card. The first successful SPI setup locks this
  * singleton to the supplied configuration; repeating it retries card init.
  */
-pf_sd_card_result_t pf_sdspi_init(const pf_sdspi_config_t *config);
+pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config);
 
 /** Return true while the initialized card remains present. */
-bool pf_sdspi_is_initialized(void);
+bool pf_sd_spi_is_initialized(void);
 
 /** Return the card's number of 512-byte sectors, or zero if unavailable. */
-uint32_t pf_sdspi_block_count(void);
+uint32_t pf_sd_spi_block_count(void);
 
-/** Read up to PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER sectors into a caller buffer. */
-pf_sd_card_result_t pf_sdspi_read_blocks(uint32_t first_block, void *buffer,
+/** Read up to PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER sectors; byte alignment is sufficient. */
+pf_sd_card_result_t pf_sd_spi_read_blocks(uint32_t first_block, void *buffer,
                                          uint32_t block_count);
 
-/** Write up to PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER sectors from a caller buffer. */
-pf_sd_card_result_t pf_sdspi_write_blocks(uint32_t first_block, const void *buffer,
+/** Write up to PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER sectors; byte alignment is sufficient. */
+pf_sd_card_result_t pf_sd_spi_write_blocks(uint32_t first_block, const void *buffer,
                                           uint32_t block_count);
 
 /** Wait for the card to finish its current write operation. */
-pf_sd_card_result_t pf_sdspi_sync(void);
+pf_sd_card_result_t pf_sd_spi_sync(void);
 
 #endif

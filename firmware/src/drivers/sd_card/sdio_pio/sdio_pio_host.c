@@ -1,4 +1,5 @@
-#include "sdio_host.h"
+#include "sdio_pio_host.h"
+#include "sd_card_protocol.h"
 
 #include <string.h>
 
@@ -7,8 +8,8 @@
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "pico/stdlib.h"
-#include "sdio_host.pio.h"
-#include "sdio_protocol.h"
+#include "sdio_pio_host.pio.h"
+#include "sdio_pio_protocol.h"
 
 #define SDIO_COMMAND_TIMEOUT_US 100000u
 #define SDIO_RESPONSE_IRQ 0u
@@ -320,11 +321,10 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     bool success = false;
 
     if ((host == NULL) || (block == NULL) || !host->data_rx_program_loaded ||
-        (!block_addressed && (sector > (UINT32_MAX / PF_SD_CARD_BLOCK_SIZE)))) {
+        !pf_sd_card_block_argument(sector, block_addressed, &command_argument)) {
         return false;
     }
 
-    command_argument = block_addressed ? sector : sector * PF_SD_CARD_BLOCK_SIZE;
     pio_sm_clear_fifos(host->pio, host->data_sm);
     pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
     pio_sm_put_blocking(host->pio, host->data_sm, SDIO_DATA_NIBBLE_COUNT - 1u);
@@ -384,7 +384,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     bool success = false;
 
     if ((host == NULL) || (block == NULL) ||
-        (!block_addressed && (sector > (UINT32_MAX / PF_SD_CARD_BLOCK_SIZE)))) {
+        !pf_sd_card_block_argument(sector, block_addressed, &command_argument)) {
         return false;
     }
     pf_sdio_pio_pack_data_block(block, transfer_words);
@@ -392,7 +392,6 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         return false;
     }
 
-    command_argument = block_addressed ? sector : sector * PF_SD_CARD_BLOCK_SIZE;
     if (!pf_sdio_pio_host_command_bytes(host, 24u, command_argument, 48u,
                                            response, sizeof(response)) ||
         !pf_sdio_pio_parse_response(24u, response, &response_argument, true)) {
