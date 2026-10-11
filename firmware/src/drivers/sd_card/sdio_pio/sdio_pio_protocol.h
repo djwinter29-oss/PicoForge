@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #define PF_SDIO_PIO_TRANSFER_WORDS 130u
+#define PF_SDIO_PIO_IMAGE_SIZE (PF_SDIO_PIO_TRANSFER_WORDS * 4u)
 
 uint8_t pf_sdio_pio_crc7(const uint8_t *data, size_t size);
 bool pf_sdio_pio_build_command(uint8_t command, uint32_t argument, uint8_t frame[6]);
@@ -19,11 +20,29 @@ bool pf_sdio_pio_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2)
 bool pf_sdio_pio_validate_r2_response(const uint8_t frame[17]);
 bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count);
 void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4]);
-void pf_sdio_pio_pack_data_block(const uint8_t block[512], uint32_t words[PF_SDIO_PIO_TRANSFER_WORDS]);
-bool pf_sdio_pio_unpack_data_block(const uint32_t words[PF_SDIO_PIO_TRANSFER_WORDS],
-									  uint8_t block[512]);
-/** Remap packed nibble lanes between DAT0-DAT3 order and ascending GPIO order. */
-bool pf_sdio_pio_remap_data_lanes(uint32_t words[PF_SDIO_PIO_TRANSFER_WORDS],
-							  const uint32_t data_gpio[4], bool to_gpio_order);
+
+/** Per-nibble DAT0-DAT3 <-> ascending-GPIO lane permutation. */
+typedef struct {
+    uint8_t to_gpio[16];
+    uint8_t from_gpio[16];
+} pf_sdio_pio_lane_map_t;
+
+/** Build the lane map for a board's DAT0-DAT3 GPIOs; they must occupy four contiguous pins. */
+bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_gpio[4]);
+
+/**
+ * Build the 520-byte DAT wire image: the block in GPIO lane order followed by the four
+ * lane CRC16s. Byte order equals transmission order (high nibble first), so a
+ * byte-swapping 32-bit DMA transfer feeds it to the PIO unchanged.
+ */
+bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint8_t block[512],
+                                   uint8_t image[PF_SDIO_PIO_IMAGE_SIZE]);
+
+/**
+ * Restore a received wire image to a logical block and verify all four lane CRCs.
+ * The block contents are unspecified when this returns false.
+ */
+bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
+                                   const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512]);
 
 #endif

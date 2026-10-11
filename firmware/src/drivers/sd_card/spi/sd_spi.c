@@ -84,6 +84,11 @@ static bool config_is_valid(const pf_sd_spi_config_t *config)
         }
     }
 
+    if (!pf_sd_spi_pins_match_controller(spi_get_index(config->spi), config->clock_gpio,
+                                         config->mosi_gpio, config->miso_gpio)) {
+        return false;
+    }
+
     if (config->use_card_detect &&
         (!pin_is_valid(config->card_detect_gpio) ||
          (config->card_detect_gpio == config->clock_gpio) ||
@@ -131,6 +136,7 @@ static bool wait_ready(uint32_t timeout_us)
         if (exchange_byte(0xffu) == 0xffu) {
             return true;
         }
+        pf_sd_card_idle();
     } while ((uint32_t)(time_us_32() - start) < timeout_us);
 
     return false;
@@ -205,6 +211,7 @@ static bool read_data_block(uint8_t *data, size_t size)
         if (token != 0xffu) {
             return false;
         }
+        pf_sd_card_idle();
     } while ((uint32_t)(time_us_32() - start) < SD_SPI_RESPONSE_TIMEOUT_US);
     if (!pf_sd_spi_read_token_is_valid(token) ||
         (spi_read_blocking(active_config.spi, 0xffu, data, size) != (int)size)) {
@@ -417,6 +424,10 @@ pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config)
         configuration_set = true;
     }
 
+    card_initialized = false;
+    if (spi_configured) {
+        (void)spi_set_baudrate(active_config.spi, SD_SPI_INIT_CLOCK_HZ);
+    }
     if (!spi_configured || !card_is_present() || !initialize_card()) {
         card_initialized = false;
         return PF_SD_CARD_INIT_FAILED;
@@ -445,9 +456,6 @@ static pf_sd_card_result_t validate_transfer(uint32_t first_block,
     if (!pf_sd_spi_is_initialized()) {
         card_initialized = false;
         return PF_SD_CARD_NOT_READY;
-    }
-    if (block_count > PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER) {
-        return PF_SD_CARD_INVALID_ARGUMENT;
     }
     return pf_sd_card_validate_transfer(first_block, buffer, block_count, card_sector_count);
 }

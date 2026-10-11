@@ -5,7 +5,6 @@
 #include <stdint.h>
 
 #define PF_SD_CARD_BLOCK_SIZE 512u
-#define PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER 256u
 
 typedef enum {
     PF_SD_CARD_OK = 0,
@@ -33,5 +32,12 @@ pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block, const void *bu
 
 /** Complete any pending write. */
 pf_sd_card_result_t pf_sd_card_sync(void);
+
+/**
+ * Set a callback run between polls of card waits that can last milliseconds
+ * (write busy, command-line busy). Keep it short, such as taskYIELD(); NULL selects
+ * plain busy polling. Set it before the first transfer; it is not synchronized.
+ */
+void pf_sd_card_set_idle_hook(void (*hook)(void));
 
 #endif

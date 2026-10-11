@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include "sd_spi_protocol.h"
+
 static uint32_t topology_gpio_limit(uint32_t gpio_count)
 {
     return (gpio_count < 32u) ? gpio_count : 32u;
@@ -89,7 +91,8 @@ static bool spi_pins_are_valid(const pf_board_resources_t *topology,
         !pin_is_valid(topology->card_detect_gpio, gpio_limit)) {
         return false;
     }
-    return true;
+    return pf_sd_spi_pins_match_controller(topology->spi_index, topology->spi_clock_gpio,
+                                           topology->spi_mosi_gpio, topology->spi_miso_gpio);
 }
 
 bool pf_board_resources_validate(const pf_board_resources_t *topology)

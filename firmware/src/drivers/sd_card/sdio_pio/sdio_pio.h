@@ -13,7 +13,6 @@ typedef struct {
     uint32_t data_gpio[4];    /**< GPIO assignment for logical DAT0, DAT1, DAT2, DAT3. */
     PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
     uint32_t clock_hz;       /**< 0 selects clk_sys / 12; otherwise 400 kHz through 25 MHz. */
-    uint32_t dma_irq;        /**< Reserved; current block transfers poll DMA synchronously. */
     bool use_card_detect;
     uint32_t card_detect_gpio;
     bool card_detect_active_high;
@@ -35,11 +34,11 @@ bool pf_sdio_pio_is_initialized(void);
 /** Return the initialized card's number of 512-byte sectors, or zero. */
 uint32_t pf_sdio_pio_block_count(void);
 
-/** Read sectors into a caller-owned, 4-byte-aligned buffer. */
+/** Read sectors into a caller-owned buffer of any alignment. */
 pf_sd_card_result_t pf_sdio_pio_read_blocks(uint32_t first_block, void *buffer,
                                            uint32_t block_count);
 
-/** Write sectors from a caller-owned, 4-byte-aligned buffer. */
+/** Write sectors from a caller-owned buffer of any alignment. */
 pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *buffer,
                                             uint32_t block_count);
 

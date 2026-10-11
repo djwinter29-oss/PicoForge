@@ -90,29 +90,22 @@ void test_reads_aligned_buffer_in_one_block_request(void)
     TEST_ASSERT_EQUAL_PTR(buffer, last_buffer);
 }
 
-void test_reads_unaligned_buffer_through_aligned_sector_bounce_buffer(void)
+void test_passes_unaligned_buffers_straight_through(void)
 {
     uint32_t storage[257];
     BYTE *buffer = (BYTE *)storage + 1u;
 
     TEST_ASSERT_EQUAL(RES_OK, disk_read(0u, buffer, 4u, 2u));
-    TEST_ASSERT_EQUAL_UINT32(2u, read_calls);
-    TEST_ASSERT_EQUAL_UINT32(5u, last_first_block);
-    TEST_ASSERT_EQUAL_UINT32(1u, last_block_count);
-    TEST_ASSERT_NOT_NULL(last_buffer);
-    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)((uintptr_t)last_buffer & 3u));
-}
+    TEST_ASSERT_EQUAL_UINT32(1u, read_calls);
+    TEST_ASSERT_EQUAL_UINT32(4u, last_first_block);
+    TEST_ASSERT_EQUAL_UINT32(2u, last_block_count);
+    TEST_ASSERT_EQUAL_PTR(buffer, last_buffer);
 
-void test_writes_unaligned_buffer_one_sector_at_a_time(void)
-{
-    uint32_t storage[129];
-    const BYTE *buffer = (const BYTE *)storage + 1u;
-
-    TEST_ASSERT_EQUAL(RES_OK, disk_write(0u, buffer, 9u, 2u));
-    TEST_ASSERT_EQUAL_UINT32(2u, write_calls);
-    TEST_ASSERT_EQUAL_UINT32(10u, last_first_block);
-    TEST_ASSERT_EQUAL_UINT32(1u, last_block_count);
-    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)((uintptr_t)last_buffer & 3u));
+    TEST_ASSERT_EQUAL(RES_OK, disk_write(0u, buffer, 9u, 3u));
+    TEST_ASSERT_EQUAL_UINT32(1u, write_calls);
+    TEST_ASSERT_EQUAL_UINT32(9u, last_first_block);
+    TEST_ASSERT_EQUAL_UINT32(3u, last_block_count);
+    TEST_ASSERT_EQUAL_PTR(buffer, last_buffer);
 }
 
 void test_translates_unready_and_io_failures(void)

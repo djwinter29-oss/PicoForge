@@ -6,12 +6,13 @@
 #include <stdint.h>
 
 #include "sdio_pio.h"
+#include "sdio_pio_protocol.h"
 
 typedef struct {
     PIO pio;
     uint command_gpio;
     uint data_gpio_base;
-    uint32_t data_gpio[4];
+    pf_sdio_pio_lane_map_t lane_map;
     uint clock_gpio;
     uint command_sm;
     uint data_sm;

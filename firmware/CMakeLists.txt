@@ -160,6 +160,7 @@ target_link_libraries(pf_board PUBLIC
     hardware_spi
     pico_stdio_uart
     pf_led
+    pf_sd_spi_backend
     pf_sdio_backend
 )
 

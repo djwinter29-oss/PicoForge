@@ -24,7 +24,6 @@ static bool same_config(const pf_sdio_pio_config_t *left,
         (left->clock_gpio != right->clock_gpio) ||
         (left->pio != right->pio) ||
         (left->clock_hz != right->clock_hz) ||
-        (left->dma_irq != right->dma_irq) ||
         (left->use_card_detect != right->use_card_detect) ||
         (left->card_detect_gpio != right->card_detect_gpio) ||
         (left->card_detect_active_high != right->card_detect_active_high) ||
@@ -108,7 +107,7 @@ static bool config_is_valid(const pf_sdio_pio_config_t *config)
 {
     uint32_t clock_hz;
 
-    if ((config == NULL) || !pins_are_valid(config) || (config->dma_irq > 1u)) {
+    if ((config == NULL) || !pins_are_valid(config)) {
         return false;
     }
 
@@ -156,7 +155,7 @@ static bool wait_command_line_ready(void)
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
             return false;
         }
-        tight_loop_contents();
+        pf_sd_card_idle();
     }
     return true;
 }
@@ -286,7 +285,8 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         card_initialized = false;
         return PF_SD_CARD_INIT_FAILED;
     }
-    if (!initialize_card()) {
+    card_initialized = false;
+    if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u) || !initialize_card()) {
         card_initialized = false;
         return PF_SD_CARD_INIT_FAILED;
     }
@@ -315,10 +315,6 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
     }
     if (block_count == 0u) {
         return PF_SD_CARD_OK;
-    }
-    if (((read_buffer == NULL) && (write_buffer == NULL)) ||
-        (((uintptr_t)((read_buffer != NULL) ? (const void *)read_buffer : (const void *)write_buffer) & 3u) != 0u)) {
-        return PF_SD_CARD_INVALID_ARGUMENT;
     }
 
     result = pf_sd_card_validate_transfer(first_block, read_buffer != NULL ? read_buffer : write_buffer,

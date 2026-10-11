@@ -2,10 +2,8 @@
 #include "diskio.h"
 #include "sd_card_block.h"
 
+#include <stddef.h>
 #include <stdint.h>
-#include <string.h>
-
-static BYTE unaligned_sector_buffer[PF_SD_CARD_BLOCK_SIZE] __attribute__((aligned(4)));
 
 static DRESULT translate_result(pf_sd_card_result_t result)
 {
@@ -50,20 +48,7 @@ DRESULT disk_read(BYTE drive, BYTE *buffer, LBA_t sector, UINT count)
         return RES_NOTRDY;
     }
 
-    if (((uintptr_t)buffer & 3u) == 0u) {
-        return translate_result(pf_sd_card_read_blocks((uint32_t)sector, buffer, (uint32_t)count));
-    }
-
-    for (UINT index = 0u; index < count; index++) {
-        pf_sd_card_result_t result = pf_sd_card_read_blocks(
-            (uint32_t)sector + index, unaligned_sector_buffer, 1u);
-        if (result != PF_SD_CARD_OK) {
-            return translate_result(result);
-        }
-         memcpy(buffer + (size_t)index * PF_SD_CARD_BLOCK_SIZE,
-             unaligned_sector_buffer, PF_SD_CARD_BLOCK_SIZE);
-    }
-    return RES_OK;
+    return translate_result(pf_sd_card_read_blocks((uint32_t)sector, buffer, (uint32_t)count));
 }
 
 DRESULT disk_write(BYTE drive, const BYTE *buffer, LBA_t sector, UINT count)
@@ -75,21 +60,7 @@ DRESULT disk_write(BYTE drive, const BYTE *buffer, LBA_t sector, UINT count)
         return RES_NOTRDY;
     }
 
-    if (((uintptr_t)buffer & 3u) == 0u) {
-        return translate_result(pf_sd_card_write_blocks((uint32_t)sector, buffer, (uint32_t)count));
-    }
-
-    for (UINT index = 0u; index < count; index++) {
-        memcpy(unaligned_sector_buffer,
-             buffer + (size_t)index * PF_SD_CARD_BLOCK_SIZE,
-             PF_SD_CARD_BLOCK_SIZE);
-         pf_sd_card_result_t result = pf_sd_card_write_blocks(
-            (uint32_t)sector + index, unaligned_sector_buffer, 1u);
-         if (result != PF_SD_CARD_OK) {
-            return translate_result(result);
-        }
-    }
-    return RES_OK;
+    return translate_result(pf_sd_card_write_blocks((uint32_t)sector, buffer, (uint32_t)count));
 }
 
 DRESULT disk_ioctl(BYTE drive, BYTE command, void *buffer)

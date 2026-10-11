@@ -25,3 +25,16 @@ bool pf_sd_spi_block_argument(uint32_t block, bool block_addressed,
 {
     return pf_sd_card_block_argument(block, block_addressed, argument);
 }
+
+static bool pin_has_role(uint32_t spi_index, uint32_t pin, uint32_t role)
+{
+    return ((pin % 4u) == role) && (((pin / 8u) % 2u) == spi_index);
+}
+
+bool pf_sd_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
+                                     uint32_t mosi_gpio, uint32_t miso_gpio)
+{
+    /* Pin function pattern repeats per 4 GPIOs: RX, CSn, SCK, TX. */
+    return (spi_index <= 1u) && pin_has_role(spi_index, miso_gpio, 0u) &&
+           pin_has_role(spi_index, clock_gpio, 2u) && pin_has_role(spi_index, mosi_gpio, 3u);
+}

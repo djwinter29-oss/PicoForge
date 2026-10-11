@@ -1,5 +1,7 @@
 #include "unity.h"
 #include "board_resources.h"
+#include "sd_card_protocol.h"
+#include "sd_spi_protocol.h"
 
 static pf_board_resources_t valid_topology(void)
 {
@@ -72,6 +74,17 @@ void test_rejects_invalid_spi_sd_pin_assignments(void)
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
     topology.spi_clock_gpio = topology.monitor_uart_tx_gpio;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+}
+
+void test_rejects_spi_pins_that_do_not_match_the_controller(void)
+{
+    pf_board_resources_t topology = valid_topology();
+
+    topology.spi_index = 1u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+    topology = valid_topology();
+    topology.spi_mosi_gpio = 9u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 }
 

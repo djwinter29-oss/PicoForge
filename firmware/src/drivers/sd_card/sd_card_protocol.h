@@ -18,6 +18,9 @@ bool pf_sd_card_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count);
 /** Calculate serial SD data CRC16; NULL input returns zero. */
 uint16_t pf_sd_card_crc16(const uint8_t *data, size_t size);
 
+/** Driver-internal: run the idle hook, if any, while polling a long card wait. */
+void pf_sd_card_idle(void);
+
 /** Convert a sector index to an SDHC block or SDSC byte address, rejecting overflow. */
 bool pf_sd_card_block_argument(uint32_t block, bool block_addressed, uint32_t *argument);
 

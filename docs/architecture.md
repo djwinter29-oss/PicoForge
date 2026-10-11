@@ -47,8 +47,6 @@ Provide reusable application-facing services. Storage middleware mounts FatFs ov
 
 Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sd_card/`. Storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. FatFs consumes the transport-neutral [SD-card block API](../firmware/src/drivers/sd_card/sd_card_block.h); transport configuration lives in [board support](../firmware/src/board/board.h). See the [hardware setup options](hardware-setup.md).
 
-### Platform
-
 ### SD-Card Driver Structure
 
 The SD-card driver separates card-wide rules from transport-specific wire handling:
@@ -70,16 +68,29 @@ Both backends return `pf_sd_card_result_t` directly.
 The shared protocol library owns command CRC7/framing, CMD8 classification, CSD
 capacity decoding, serial CRC16, sector-address conversion, and capacity/buffer
 validation. SDIO helper entry points delegate card-wide algorithms to this library.
-Native response parsing, four-lane CRC and PIO packing remain in the SDIO protocol;
-SPI response tokens remain in the SPI protocol. SDIO requires a 4-byte-aligned
-buffer; SPI accepts byte alignment and retains its 256-sector per-call limit.
-Zero-sector transfers are no-ops after readiness checks. Both transports use
-synchronous single-sector operations internally and require serialized access.
+Native response parsing and the four-lane data CRC remain in the SDIO protocol;
+SPI response tokens remain in the SPI protocol. Both transports accept any buffer
+alignment and any sector count per call. Zero-sector transfers are no-ops after
+readiness checks. Both transports use synchronous single-sector operations
+internally and require serialized access.
+
+SDIO data moves by DMA between the PIO FIFOs and a 520-byte on-stack wire image
+(512 data bytes plus four lane CRC16s). The DMA channel byte-swaps each word, so
+image byte order equals nibble transmission order. The CPU makes one pass per
+sector to map lanes to GPIO order and compute or check the four CRCs, which are
+held bit-sliced in one 64-bit register. SPI uses the CPU for the data phase and a
+table-driven CRC16.
+
+Long card waits (write busy, command-line busy) call an optional hook set with
+`pf_sd_card_set_idle_hook()`, so an RTOS application can yield instead of spinning;
+without a hook they poll. Repeating initialization restarts at the 400 kHz identification
+clock. SPI pins must be the SCK/MOSI/MISO functions of the selected controller,
+checked by both board validation and the driver.
 
 Each transport has a backend library; the card facade links both, and both reuse
 `pf_sd_card_protocol`. FatFs continues to depend only on the neutral block API;
-its adapter stays in `integration/fatfs`, where it handles filesystem types,
-status conversion, and unaligned-buffer bouncing.
+its adapter stays in `integration/fatfs`, where it handles filesystem types and
+status conversion.
 
 ### Platform
 

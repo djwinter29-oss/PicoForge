@@ -46,3 +46,15 @@ void test_rejects_unrepresentable_byte_address(void)
         (UINT32_MAX / PF_SD_CARD_BLOCK_SIZE) + 1u, false, &argument));
     TEST_ASSERT_FALSE(pf_sd_spi_block_argument(0u, true, NULL));
 }
+
+void test_matches_spi_pins_to_controller_roles(void)
+{
+    TEST_ASSERT_TRUE(pf_sd_spi_pins_match_controller(0u, 2u, 3u, 4u));
+    TEST_ASSERT_TRUE(pf_sd_spi_pins_match_controller(0u, 6u, 7u, 0u));
+    TEST_ASSERT_TRUE(pf_sd_spi_pins_match_controller(1u, 10u, 11u, 8u));
+    TEST_ASSERT_TRUE(pf_sd_spi_pins_match_controller(0u, 34u, 35u, 36u));
+    TEST_ASSERT_FALSE(pf_sd_spi_pins_match_controller(1u, 2u, 3u, 4u));
+    TEST_ASSERT_FALSE(pf_sd_spi_pins_match_controller(0u, 2u, 3u, 5u));
+    TEST_ASSERT_FALSE(pf_sd_spi_pins_match_controller(0u, 2u, 11u, 4u));
+    TEST_ASSERT_FALSE(pf_sd_spi_pins_match_controller(2u, 2u, 3u, 4u));
+}

@@ -24,6 +24,42 @@ void test_shared_serial_crc16_reference(void)
     TEST_ASSERT_EQUAL_HEX16(0u, pf_sd_card_crc16(NULL, 9u));
 }
 
+void test_shared_crc16_matches_bitwise_reference_for_a_sector(void)
+{
+    uint8_t block[512];
+    uint16_t expected = 0u;
+
+    for (size_t index = 0u; index < sizeof(block); index++) {
+        block[index] = (uint8_t)(index * 73u + 5u);
+        expected ^= (uint16_t)block[index] << 8u;
+        for (int bit = 0; bit < 8; bit++) {
+            expected = (expected & 0x8000u) ? (uint16_t)((expected << 1u) ^ 0x1021u)
+                                            : (uint16_t)(expected << 1u);
+        }
+    }
+    TEST_ASSERT_EQUAL_HEX16(expected, pf_sd_card_crc16(block, sizeof(block)));
+}
+
+static uint32_t idle_calls;
+
+static void count_idle(void)
+{
+    idle_calls++;
+}
+
+void test_idle_hook_runs_only_when_set(void)
+{
+    idle_calls = 0u;
+    pf_sd_card_idle();
+    TEST_ASSERT_EQUAL_UINT32(0u, idle_calls);
+    pf_sd_card_set_idle_hook(count_idle);
+    pf_sd_card_idle();
+    TEST_ASSERT_EQUAL_UINT32(1u, idle_calls);
+    pf_sd_card_set_idle_hook(NULL);
+    pf_sd_card_idle();
+    TEST_ASSERT_EQUAL_UINT32(1u, idle_calls);
+}
+
 void test_shared_command_reference(void)
 {
     uint8_t frame[6];

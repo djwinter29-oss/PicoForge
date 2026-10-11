@@ -129,9 +129,11 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
     }
 
     memset(host, 0, sizeof(*host));
+    if (!pf_sdio_pio_lane_map_init(&host->lane_map, config->data_gpio)) {
+        return false;
+    }
     host->pio = config->pio;
     host->command_gpio = config->command_gpio;
-    memcpy(host->data_gpio, config->data_gpio, sizeof(host->data_gpio));
     data_gpio_base = config->data_gpio[0];
     for (uint lane = 1u; lane < 4u; lane++) {
         if (config->data_gpio[lane] < data_gpio_base) {
@@ -312,7 +314,7 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
 bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                      bool block_addressed, uint8_t block[512])
 {
-    uint32_t transfer_words[PF_SDIO_PIO_TRANSFER_WORDS] __attribute__((aligned(4)));
+    uint32_t image[PF_SDIO_PIO_TRANSFER_WORDS];
     uint8_t response[6];
     uint32_t response_argument;
     uint32_t command_argument;
@@ -331,10 +333,11 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
 
     dma_config = dma_channel_get_default_config(host->dma_channel);
     channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
+    channel_config_set_bswap(&dma_config, true);
     channel_config_set_read_increment(&dma_config, false);
     channel_config_set_write_increment(&dma_config, true);
     channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, false));
-    dma_channel_configure(host->dma_channel, &dma_config, transfer_words,
+    dma_channel_configure(host->dma_channel, &dma_config, image,
                           &host->pio->rxf[host->data_sm], SDIO_DATA_WORD_COUNT, false);
     dma_channel_start(host->dma_channel);
     pio_sm_set_enabled(host->pio, host->data_sm, true);
@@ -355,8 +358,7 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     }
 
     dma_channel_wait_for_finish_blocking(host->dma_channel);
-    success = pf_sdio_pio_remap_data_lanes(transfer_words, host->data_gpio, false) &&
-              pf_sdio_pio_unpack_data_block(transfer_words, block);
+    success = pf_sdio_pio_decode_data_block(&host->lane_map, (const uint8_t *)image, block);
 
 cleanup:
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -374,7 +376,7 @@ cleanup:
 bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                       bool block_addressed, const uint8_t block[512])
 {
-    uint32_t transfer_words[PF_SDIO_PIO_TRANSFER_WORDS] __attribute__((aligned(4))) = { 0u };
+    uint32_t image[PF_SDIO_PIO_TRANSFER_WORDS];
     uint8_t response[6];
     uint32_t response_argument;
     uint32_t command_argument;
@@ -387,8 +389,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         !pf_sd_card_block_argument(sector, block_addressed, &command_argument)) {
         return false;
     }
-    pf_sdio_pio_pack_data_block(block, transfer_words);
-    if (!pf_sdio_pio_remap_data_lanes(transfer_words, host->data_gpio, true)) {
+    if (!pf_sdio_pio_encode_data_block(&host->lane_map, block, (uint8_t *)image)) {
         return false;
     }
 
@@ -441,11 +442,12 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
 
     dma_config = dma_channel_get_default_config(host->dma_channel);
     channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
+    channel_config_set_bswap(&dma_config, true);
     channel_config_set_read_increment(&dma_config, true);
     channel_config_set_write_increment(&dma_config, false);
     channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, true));
     dma_channel_configure(host->dma_channel, &dma_config,
-                          &host->pio->txf[host->data_sm], transfer_words,
+                          &host->pio->txf[host->data_sm], image,
                           SDIO_DATA_WORD_COUNT, false);
     pio_sm_set_enabled(host->pio, host->command_sm, true);
     dma_channel_start(host->dma_channel);
@@ -456,7 +458,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
             goto restore;
         }
-        tight_loop_contents();
+        pf_sd_card_idle();
     }
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) > 0u) {

@@ -34,11 +34,11 @@ bool pf_sd_spi_is_initialized(void);
 /** Return the card's number of 512-byte sectors, or zero if unavailable. */
 uint32_t pf_sd_spi_block_count(void);
 
-/** Read up to PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER sectors; byte alignment is sufficient. */
+/** Read sectors into a caller-owned buffer of any alignment. */
 pf_sd_card_result_t pf_sd_spi_read_blocks(uint32_t first_block, void *buffer,
                                          uint32_t block_count);
 
-/** Write up to PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER sectors; byte alignment is sufficient. */
+/** Write sectors from a caller-owned buffer of any alignment. */
 pf_sd_card_result_t pf_sd_spi_write_blocks(uint32_t first_block, const void *buffer,
                                           uint32_t block_count);
 

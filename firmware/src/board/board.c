@@ -61,7 +61,6 @@ bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
                            topology->data_gpio[2], topology->data_gpio[3] },
             .pio = (topology->pio_index == 0u) ? pio0 : pio1,
             .clock_hz = topology->clock_hz,
-            .dma_irq = 0u,
             .use_card_detect = topology->card_detect_enabled,
             .card_detect_gpio = topology->card_detect_gpio,
             .card_detect_active_high = topology->card_detect_active_high,

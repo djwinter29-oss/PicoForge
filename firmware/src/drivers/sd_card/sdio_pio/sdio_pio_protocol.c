@@ -97,115 +97,63 @@ bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)
     return pf_sd_card_csd_sector_count(csd, sector_count);
 }
 
+/*
+ * The four lane CRC16s are held bit-sliced: nibble p of the register is CRC bit p
+ * of lanes 0..3, so one shift/XOR advances all lanes by one data nibble.
+ */
+#define CRC16_TAPS ((1ull << 48u) | (1ull << 20u) | 1ull) /* x^12, x^5, x^0 of 0x1021 */
+
+static uint64_t crc16_4bit_nibble(uint64_t reg, uint8_t nibble)
+{
+    uint64_t feedback = ((reg >> 60u) ^ nibble) & 0x0fu;
+
+    return (reg << 4u) ^ (feedback * CRC16_TAPS);
+}
+
+static uint64_t crc16_4bit_byte(uint64_t reg, uint8_t value)
+{
+    return crc16_4bit_nibble(crc16_4bit_nibble(reg, (uint8_t)(value >> 4u)), value & 0x0fu);
+}
+
+static uint64_t crc16_4bit_block(const uint8_t block[512])
+{
+    uint64_t reg = 0u;
+
+    for (size_t index = 0u; index < 512u; index++) {
+        reg = crc16_4bit_byte(reg, block[index]);
+    }
+    return reg;
+}
+
+static uint8_t map_byte(const uint8_t nibble_map[16], uint8_t value)
+{
+    return (uint8_t)((nibble_map[value >> 4u] << 4u) | nibble_map[value & 0x0fu]);
+}
+
 void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4])
 {
+    uint64_t reg;
+
     if ((block == NULL) || (crc == NULL)) {
         return;
     }
 
+    reg = crc16_4bit_block(block);
     for (uint8_t lane = 0u; lane < 4u; lane++) {
         crc[lane] = 0u;
-    }
-
-    for (size_t byte_index = 0u; byte_index < 512u; byte_index++) {
-        uint8_t nibbles[2] = {
-            (uint8_t)(block[byte_index] >> 4u),
-            (uint8_t)(block[byte_index] & 0x0fu),
-        };
-
-        for (size_t nibble_index = 0u; nibble_index < 2u; nibble_index++) {
-            for (uint8_t lane = 0u; lane < 4u; lane++) {
-                bool feedback = (((crc[lane] >> 15u) & 1u) != 0u) ^
-                                (((nibbles[nibble_index] >> lane) & 1u) != 0u);
-                crc[lane] <<= 1u;
-                if (feedback) {
-                    crc[lane] ^= 0x1021u;
-                }
-            }
+        for (uint8_t bit = 0u; bit < 16u; bit++) {
+            crc[lane] |= (uint16_t)(((reg >> (4u * bit + lane)) & 1u) << bit);
         }
     }
 }
 
-void pf_sdio_pio_pack_data_block(const uint8_t block[512],
-                                    uint32_t words[PF_SDIO_PIO_TRANSFER_WORDS])
-{
-    uint16_t crc[4];
-
-    if ((block == NULL) || (words == NULL)) {
-        return;
-    }
-
-    for (size_t word_index = 0u; word_index < 128u; word_index++) {
-        uint32_t word = 0u;
-        for (size_t byte_index = 0u; byte_index < 4u; byte_index++) {
-            uint8_t value = block[word_index * 4u + byte_index];
-            word |= (uint32_t)(value >> 4u) << (28u - byte_index * 8u);
-            word |= (uint32_t)(value & 0x0fu) << (24u - byte_index * 8u);
-        }
-        words[word_index] = word;
-    }
-
-    words[128] = 0u;
-    words[129] = 0u;
-    pf_sdio_pio_crc16_4bit(block, crc);
-    for (size_t cycle = 0u; cycle < 16u; cycle++) {
-        uint8_t nibble = 0u;
-        for (uint8_t lane = 0u; lane < 4u; lane++) {
-            nibble |= (uint8_t)(((crc[lane] >> (15u - cycle)) & 1u) << lane);
-        }
-        size_t word_index = 128u + cycle / 8u;
-        size_t shift = 28u - (cycle % 8u) * 4u;
-        words[word_index] |= (uint32_t)nibble << shift;
-    }
-}
-
-bool pf_sdio_pio_unpack_data_block(const uint32_t words[PF_SDIO_PIO_TRANSFER_WORDS],
-                                      uint8_t block[512])
-{
-    uint16_t expected_crc[4];
-    uint16_t received_crc[4] = { 0u, 0u, 0u, 0u };
-
-    if ((words == NULL) || (block == NULL)) {
-        return false;
-    }
-
-    for (size_t word_index = 0u; word_index < 128u; word_index++) {
-        uint32_t word = words[word_index];
-        for (size_t byte_index = 0u; byte_index < 4u; byte_index++) {
-            uint8_t high_nibble = (uint8_t)((word >> (28u - byte_index * 8u)) & 0x0fu);
-            uint8_t low_nibble = (uint8_t)((word >> (24u - byte_index * 8u)) & 0x0fu);
-            block[word_index * 4u + byte_index] = (uint8_t)((high_nibble << 4u) | low_nibble);
-        }
-    }
-
-    for (size_t word_index = 0u; word_index < 2u; word_index++) {
-        uint32_t word = words[128u + word_index];
-        for (size_t nibble_index = 0u; nibble_index < 8u; nibble_index++) {
-            uint8_t nibble = (uint8_t)((word >> (28u - nibble_index * 4u)) & 0x0fu);
-            for (uint8_t lane = 0u; lane < 4u; lane++) {
-                received_crc[lane] = (uint16_t)((received_crc[lane] << 1u) |
-                    ((nibble >> lane) & 1u));
-            }
-        }
-    }
-
-    pf_sdio_pio_crc16_4bit(block, expected_crc);
-    for (uint8_t lane = 0u; lane < 4u; lane++) {
-        if (received_crc[lane] != expected_crc[lane]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool pf_sdio_pio_remap_data_lanes(uint32_t words[PF_SDIO_PIO_TRANSFER_WORDS],
-                              const uint32_t data_gpio[4], bool to_gpio_order)
+bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_gpio[4])
 {
     uint32_t gpio_base = UINT32_MAX;
     uint8_t lane_at_gpio_bit[4] = { 0u, 0u, 0u, 0u };
     bool lane_assigned[4] = { false, false, false, false };
 
-    if ((words == NULL) || (data_gpio == NULL)) {
+    if ((map == NULL) || (data_gpio == NULL)) {
         return false;
     }
 
@@ -223,24 +171,57 @@ bool pf_sdio_pio_remap_data_lanes(uint32_t words[PF_SDIO_PIO_TRANSFER_WORDS],
         lane_assigned[gpio_bit] = true;
     }
 
-    for (size_t word_index = 0u; word_index < PF_SDIO_PIO_TRANSFER_WORDS; word_index++) {
-        uint32_t remapped_word = 0u;
-        for (uint8_t nibble_index = 0u; nibble_index < 8u; nibble_index++) {
-            uint8_t shift = (uint8_t)(28u - nibble_index * 4u);
-            uint8_t nibble = (uint8_t)((words[word_index] >> shift) & 0x0fu);
-            uint8_t remapped_nibble = 0u;
-            for (uint8_t gpio_bit = 0u; gpio_bit < 4u; gpio_bit++) {
-                uint8_t lane = lane_at_gpio_bit[gpio_bit];
-                if (to_gpio_order) {
-                    remapped_nibble |= (uint8_t)(((nibble >> lane) & 1u) << gpio_bit);
-                } else {
-                    remapped_nibble |= (uint8_t)(((nibble >> gpio_bit) & 1u) << lane);
-                }
-            }
-            remapped_word |= (uint32_t)remapped_nibble << shift;
+    for (uint8_t nibble = 0u; nibble < 16u; nibble++) {
+        uint8_t to_gpio = 0u;
+        uint8_t from_gpio = 0u;
+
+        for (uint8_t gpio_bit = 0u; gpio_bit < 4u; gpio_bit++) {
+            uint8_t lane = lane_at_gpio_bit[gpio_bit];
+            to_gpio |= (uint8_t)(((nibble >> lane) & 1u) << gpio_bit);
+            from_gpio |= (uint8_t)(((nibble >> gpio_bit) & 1u) << lane);
         }
-        words[word_index] = remapped_word;
+        map->to_gpio[nibble] = to_gpio;
+        map->from_gpio[nibble] = from_gpio;
+    }
+    return true;
+}
+
+bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint8_t block[512],
+                                   uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
+{
+    uint64_t reg = 0u;
+
+    if ((map == NULL) || (block == NULL) || (image == NULL)) {
+        return false;
     }
 
+    for (size_t index = 0u; index < 512u; index++) {
+        reg = crc16_4bit_byte(reg, block[index]);
+        image[index] = map_byte(map->to_gpio, block[index]);
+    }
+    for (size_t index = 0u; index < 8u; index++) {
+        image[512u + index] = map_byte(map->to_gpio, (uint8_t)(reg >> (56u - 8u * index)));
+    }
     return true;
+}
+
+bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
+                                   const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512])
+{
+    uint64_t reg = 0u;
+    uint8_t mismatch = 0u;
+
+    if ((map == NULL) || (image == NULL) || (block == NULL)) {
+        return false;
+    }
+
+    for (size_t index = 0u; index < 512u; index++) {
+        block[index] = map_byte(map->from_gpio, image[index]);
+        reg = crc16_4bit_byte(reg, block[index]);
+    }
+    for (size_t index = 0u; index < 8u; index++) {
+        mismatch |= (uint8_t)(map_byte(map->from_gpio, image[512u + index]) ^
+                              (uint8_t)(reg >> (56u - 8u * index)));
+    }
+    return mismatch == 0u;
 }
