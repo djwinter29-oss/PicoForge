@@ -53,10 +53,13 @@ target_link_libraries(pf_sdio_backend PUBLIC
 
 add_library(pf_sd_card STATIC
     src/drivers/sd_card/sd_card.c
+    src/drivers/sd_card/spi/sdspi.c
+    src/drivers/sd_card/spi/sdspi_protocol.c
 )
 target_include_directories(pf_sd_card PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/spi"
 )
 target_link_libraries(pf_sd_card PUBLIC
     hardware_spi
@@ -125,6 +128,7 @@ add_library(pf_board STATIC
     src/board/board_resources.c
 )
 target_include_directories(pf_board PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_CURRENT_LIST_DIR}/src/board"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"

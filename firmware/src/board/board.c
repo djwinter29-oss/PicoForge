@@ -1,10 +1,17 @@
 #include "board.h"
 
+#include "config/config.h"
 #include "hardware/pio.h"
 #include "hardware/spi.h"
 #include "hardware/uart.h"
 #include "pico/stdio_uart.h"
 #include "led.h"
+
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+#define PF_CONFIGURED_SD_CARD_TRANSPORT PF_SD_CARD_TRANSPORT_SDIO_PIO
+#else
+#define PF_CONFIGURED_SD_CARD_TRANSPORT PF_SD_CARD_TRANSPORT_SPI
+#endif
 
 static bool monitor_uart_initialized;
 static bool led_initialized;
@@ -35,14 +42,12 @@ bool pf_board_init(void)
     return true;
 }
 
-bool pf_board_get_sd_card_config(pf_sd_card_transport_t transport,
-                                 pf_sd_card_config_t *config)
+bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
 {
     const pf_board_resources_t *topology = pf_board_resources_get();
+    const pf_sd_card_transport_t transport = PF_CONFIGURED_SD_CARD_TRANSPORT;
 
     if ((config == NULL) || !topology->sd_card_enabled ||
-        ((transport != PF_SD_CARD_TRANSPORT_SDIO_PIO) &&
-         (transport != PF_SD_CARD_TRANSPORT_SPI)) ||
         !pf_board_resources_validate(topology)) {
         return false;
     }

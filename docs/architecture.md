@@ -1,6 +1,6 @@
 # PicoForge Architecture
 
-> **Status:** The firmware builds for RP2040 and RP2350 and runs a single-core FreeRTOS task. Basic system, internal-temperature, board-LED, PIO SD block, and FatFs integration modules exist. Board support can construct SDIO-PIO or SPI card configurations; SDIO-PIO is implemented, while SPI remains unsupported. Startup does not initialize or mount a card, and physical wiring and I/O remain unvalidated. This is an evolving baseline, not a complete product framework.
+> **Status:** The firmware builds for RP2040 and RP2350 and runs a single-core FreeRTOS task. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, and FatFs integration modules exist. `firmware/src/config/config.h` statically selects the transport for board configuration. Startup does not initialize or mount a card, and neither transport has been validated on physical hardware. This is an evolving baseline, not a complete product framework.
 
 ## Current Firmware
 
@@ -63,4 +63,4 @@ Ceedling is configured by the repository-root `project.yml`. Host unit tests bel
 
 `host/python/tests/`, `host/dotnet/tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 
-Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow. The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support can construct either transport configuration; SDIO-PIO card initialization and physical I/O still require board validation, while SPI card I/O is not implemented. External QSPI flash is not currently supported.
+Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow. The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support can construct either transport configuration; SDIO-PIO and SPI card initialization and physical I/O still require board validation. External QSPI flash is not currently supported.

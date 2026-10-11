@@ -26,7 +26,7 @@ static const pf_board_resources_t board_resources = {
     .spi_mosi_gpio = 3u,
     .spi_miso_gpio = 4u,
     .spi_chip_select_gpio = 5u,
-    .spi_clock_hz = 400000u,
+    .spi_clock_hz = 0u,
     /* The selected breakout provides the DET bias; do not add an MCU pull. */
     .card_detect_enabled = true,
     .card_detect_gpio = 8u,

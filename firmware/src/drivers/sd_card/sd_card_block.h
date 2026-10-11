@@ -15,7 +15,6 @@ typedef enum {
     PF_SD_CARD_INIT_FAILED,
     PF_SD_CARD_NOT_READY,
     PF_SD_CARD_IO_ERROR,
-    PF_SD_CARD_UNSUPPORTED_TRANSPORT,
 } pf_sd_card_result_t;
 
 /** Return whether the selected card transport has initialized successfully. */

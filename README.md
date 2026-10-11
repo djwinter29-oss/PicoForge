@@ -30,7 +30,7 @@ The platform layer provides the shared foundation used by applications and middl
 Reusable components provide common product functionality without requiring each application to build it from scratch:
 
 - **FatFs:** file-system support for working with files on supported storage devices.
-- **SD-card block API:** transport-independent block access; SDIO-PIO is implemented and SPI is planned.
+- **SD-card block API:** transport-independent block access over implemented SDIO-PIO and SPI backends.
 - **CLI:** a command-line interface for device interaction and diagnostics.
 - **Storage:** reusable storage services for application data.
 - **USB services:** common USB functionality for connected devices and host systems.
@@ -109,7 +109,7 @@ tools/firmware/build.sh --board pico2
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The build defaults to the SDK submodule; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
 
-FatFs uses a transport-neutral SD-card block API. Select a transport with `pf_board_get_sd_card_config()`, then pass its config to `pf_storage_mount()`; FatFs itself does not know which bus is selected. SDIO-PIO is implemented. The SPI configuration is present, but its backend is not yet implemented and initialization reports it as unsupported. The example does not mount a volume or format media. See [the hardware setup options](docs/hardware-setup.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
+FatFs uses a transport-neutral SD-card block API. Select the static transport in `firmware/src/config/config.h`, get the matching config with `pf_board_get_sd_card_config()`, then pass it to `pf_storage_mount()`; FatFs itself does not know which bus is selected. SDIO-PIO and SPI backends implement initialization and block I/O, but neither has been validated on physical hardware. The example does not mount a volume or format media. See [the hardware setup options](docs/hardware-setup.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
 
 The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product identity, MCU, system clock, uptime, USB/CDC state, internal temperature, and board LED state, and accepts a set-LED command. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SD card use grouped subdirectories. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
 

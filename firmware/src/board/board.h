@@ -14,7 +14,6 @@ bool pf_board_init(void);
  *
  * Returns false while SD wiring is unassigned or if the topology is invalid.
  */
-bool pf_board_get_sd_card_config(pf_sd_card_transport_t transport,
-								 pf_sd_card_config_t *config);
+bool pf_board_get_sd_card_config(pf_sd_card_config_t *config);
 
 #endif
