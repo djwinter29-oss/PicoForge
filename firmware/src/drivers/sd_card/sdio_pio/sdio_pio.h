@@ -1,0 +1,50 @@
+#ifndef PF_SDIO_PIO_H
+#define PF_SDIO_PIO_H
+
+#include <stdint.h>
+
+#include "hardware/pio.h"
+#include "sd_card_block.h"
+
+/** Board-provided SD memory-card connection settings for the native PIO host. */
+typedef struct {
+    uint32_t command_gpio;
+    uint32_t clock_gpio;
+    uint32_t data_gpio[4];    /**< GPIO assignment for logical DAT0, DAT1, DAT2, DAT3. */
+    PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
+    uint32_t clock_hz;       /**< 0 selects clk_sys / 12; otherwise 400 kHz through 25 MHz. */
+    bool use_card_detect;
+    uint32_t card_detect_gpio;
+    bool card_detect_active_high;
+    bool card_detect_use_pull;
+    bool card_detect_pull_up;
+} pf_sdio_pio_config_t;
+
+/**
+ * Initialize the one configured SD memory card.
+ *
+ * The configuration is retained for the lifetime of the firmware and cannot be
+ * changed after first use. Repeating the same call retries card initialization.
+ */
+pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config);
+
+/** Return whether the card has initialized successfully. */
+bool pf_sdio_pio_is_initialized(void);
+
+/** Return the initialized card's number of 512-byte sectors, or zero. */
+uint32_t pf_sdio_pio_block_count(void);
+
+/** Read sectors into a caller-owned buffer of any alignment. */
+pf_sd_card_result_t pf_sdio_pio_read_blocks(uint32_t first_block, void *buffer,
+                                           uint32_t block_count);
+
+/** Write sectors from a caller-owned buffer of any alignment. */
+pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *buffer,
+                                            uint32_t block_count);
+
+/** Complete pending writes; current block writes are synchronous. */
+pf_sd_card_result_t pf_sdio_pio_sync(void);
+
+void pf_sdio_pio_get_info(pf_sd_card_info_t *info);
+
+#endif

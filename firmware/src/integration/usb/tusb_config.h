@@ -1,5 +1,5 @@
-#ifndef PICOFORGE_TUSB_CONFIG_H
-#define PICOFORGE_TUSB_CONFIG_H
+#ifndef PF_TUSB_CONFIG_H
+#define PF_TUSB_CONFIG_H
 
 #include "pico.h"
 #include "tusb_option.h"
@@ -20,5 +20,8 @@
 
 #define CFG_TUD_HID 1
 #define CFG_TUD_HID_EP_BUFSIZE 64
+
+#define CFG_TUD_MSC 1
+#define CFG_TUD_MSC_EP_BUFSIZE 512
 
 #endif

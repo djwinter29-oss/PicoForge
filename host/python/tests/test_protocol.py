@@ -1,19 +1,21 @@
 import struct
 import unittest
 
-from picoforge_host.protocol import (
-    BOARD_STATUS_REPORT_ID,
+from picoforge.protocol import (
     LED_COMMAND_REPORT_ID,
+    MSC_COMMAND_REPORT_ID,
     build_led_command_report,
-    parse_board_status_report,
+    build_msc_command_report,
     parse_info_report,
+    parse_memory_report,
+    parse_msc_status_report,
     parse_status_report,
 )
 
 
-def info_report(mcu=2, clock=150_000_000, name="PicoForge"):
+def info_report(mcu=2, name="PicoForge", serial="0123456789abcdef"):
     product = name.encode("ascii").ljust(20, b"\0")
-    return bytes([1]) + struct.pack("<BBI", 1, mcu, clock) + product
+    return bytes([1]) + struct.pack("<BB", 2, mcu) + product + serial.encode("ascii") + bytes(4)
 
 
 class ProtocolTests(unittest.TestCase):
@@ -21,11 +23,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(
             parse_info_report(info_report()),
             {
-                "version": 1,
+                "version": 2,
                 "mcu_id": 2,
                 "mcu": "RP2350",
-                "system_clock_hz": 150_000_000,
                 "product_name": "PicoForge",
+                "serial_number": "0123456789abcdef",
             },
         )
 
@@ -38,35 +40,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(parse_info_report(report)["product_name"], "PicoForge")
 
     def test_rejects_bad_info_reports(self):
-        for report in (b"", bytes(27), bytes([1, 2]) + bytes(25), info_report(clock=0)):
+        malformed_reserved = bytearray(info_report())
+        malformed_reserved[-1] = 1
+        for report in (b"", bytes(43), bytes([1, 1]) + bytes(41), malformed_reserved,
+                       info_report(serial="not-a-valid-id")):
             with self.subTest(report=report):
                 with self.assertRaises(ValueError):
                     parse_info_report(report)
 
     def test_decodes_live_status_and_flags(self):
-        payload = struct.pack("<BBIB", 1, 9, 123_456, 3)
+        payload = struct.pack("<BBIIBh", 2, 9, 123_456, 150_000_000, 0x1F, 2345)
         self.assertEqual(
             parse_status_report(bytes([2]) + payload),
             {
-                "version": 1,
+                "version": 2,
                 "sequence": 9,
                 "uptime_ms": 123_456,
+                "system_clock_hz": 150_000_000,
                 "usb_mounted": True,
                 "cdc_open": True,
-            },
-        )
-
-    def test_rejects_unknown_status_flags(self):
-        with self.assertRaisesRegex(ValueError, "unknown HID status flags"):
-            parse_status_report(bytes([2]) + struct.pack("<BBIB", 1, 0, 1, 0x80))
-
-    def test_decodes_board_temperature_and_led_feature_report(self):
-        payload = struct.pack("<BBh", 1, 0x07, 2345)
-        report = bytes([BOARD_STATUS_REPORT_ID]) + payload + bytes(2)
-        self.assertEqual(
-            parse_board_status_report(report),
-            {
-                "version": 1,
                 "temperature_valid": True,
                 "temperature_centidegrees": 2345,
                 "led_available": True,
@@ -74,15 +66,63 @@ class ProtocolTests(unittest.TestCase):
             },
         )
 
-    def test_builds_led_command_and_rejects_malformed_board_status(self):
-        self.assertEqual(build_led_command_report(True), bytes([LED_COMMAND_REPORT_ID, 1, 1]))
-        self.assertEqual(build_led_command_report(False), bytes([LED_COMMAND_REPORT_ID, 1, 0]))
+    def test_rejects_unknown_status_flags(self):
+        with self.assertRaisesRegex(ValueError, "unknown HID status flags"):
+            parse_status_report(bytes([2]) + struct.pack("<BBIIBh", 2, 0, 1, 125_000_000, 0x80, 0))
+
+    def test_builds_led_command_and_rejects_invalid_dynamic_led_state(self):
+        self.assertEqual(build_led_command_report(True), bytes([LED_COMMAND_REPORT_ID, 2, 1]))
+        self.assertEqual(build_led_command_report(False), bytes([LED_COMMAND_REPORT_ID, 2, 0]))
         with self.assertRaises(ValueError):
             build_led_command_report(1)
-        with self.assertRaisesRegex(ValueError, "unknown"):
-            parse_board_status_report(bytes([BOARD_STATUS_REPORT_ID, 1, 0x80, 0, 0]))
         with self.assertRaisesRegex(ValueError, "without an available LED"):
-            parse_board_status_report(bytes([BOARD_STATUS_REPORT_ID, 1, 0x04, 0, 0]))
+            parse_status_report(bytes([2]) + struct.pack("<BBIIBh", 2, 0, 1, 125_000_000, 0x10, 0))
+
+    def test_decodes_memory_report_with_sd_cid(self):
+        cid = bytes([0x1b]) + b"SD" + b"CARD1" + bytes([0x21]) + bytes.fromhex("12345678") + bytes([0x01, 0xaa, 0xff])
+        payload = struct.pack("<BBBBBII", 2, 7, 0x3f, 1, 2, 25_000_000, 4096) + cid
+        self.assertEqual(
+            parse_memory_report(bytes([3]) + payload),
+            {
+                "version": 2,
+                "sequence": 7,
+                "configured": True,
+                "presence_known": True,
+                "present": True,
+                "initialized": True,
+                "component_type": "sd-card",
+                "mode": "spi",
+                "bus_clock_hz": 25_000_000,
+                "block_count": 4096,
+                "capacity_bytes": 2_097_152,
+                "manufacturer": {
+                    "id": 0x1b,
+                    "oem_id": "SD",
+                    "product_name": "CARD1",
+                    "product_revision": "2.1",
+                    "serial_number": 0x12345678,
+                    "manufacture_year": 2026,
+                    "manufacture_month": 10,
+                },
+            },
+        )
+
+    def test_distinguishes_unknown_presence_before_initialization(self):
+        payload = struct.pack("<BBBBBII", 2, 0, 0x01, 1, 1, 0, 0) + bytes(16)
+        status = parse_memory_report(bytes([3]) + payload)
+        self.assertIsNone(status["present"])
+        self.assertIsNone(status["capacity_bytes"])
+        self.assertIsNone(status["manufacturer"])
+
+    def test_encodes_msc_toggle_and_decodes_status(self):
+        self.assertEqual(build_msc_command_report(True), bytes([MSC_COMMAND_REPORT_ID, 2, 1]))
+        self.assertEqual(build_msc_command_report(False), bytes([MSC_COMMAND_REPORT_ID, 2, 0]))
+        self.assertEqual(parse_msc_status_report(bytes([5, 2, 1, 0, 0])),
+                         {"enabled": True, "transition_pending": False, "request_rejected": False})
+        self.assertEqual(parse_msc_status_report(bytes([2, 0, 1, 1])),
+                         {"enabled": False, "transition_pending": True, "request_rejected": True})
+        with self.assertRaises(ValueError):
+            build_msc_command_report(1)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 import unittest
 
-from picoforge_host.web import create_app
+from picoforge.web import create_app
 
 
 class FakeMonitor:
@@ -12,15 +12,19 @@ class FakeMonitor:
                 "product_name": "PicoForge",
                 "mcu": "RP2040",
                 "mcu_id": 1,
-                "system_clock_hz": 125_000_000,
-                "serial_number": "board-1",
+                "serial_number": "0123456789abcdef",
             },
             "runtime": {
-                "version": 1,
+                "version": 2,
                 "sequence": 7,
                 "uptime_ms": 42_000,
+                "system_clock_hz": 125_000_000,
                 "usb_mounted": True,
                 "cdc_open": False,
+                "temperature_valid": True,
+                "temperature_centidegrees": 2345,
+                "led_available": True,
+                "led_on": False,
             },
             "board_status": {
                 "temperature_valid": True,
@@ -28,12 +32,16 @@ class FakeMonitor:
                 "led_available": True,
                 "led_on": False,
             },
+            "msc": {"enabled": False, "transition_pending": False, "request_rejected": False},
             "updated_at": "2026-10-10T12:00:00+00:00",
         }
 
     def set_led(self, on):
         return {"temperature_valid": True, "temperature_centidegrees": 2345,
                 "led_available": True, "led_on": on}
+
+    def set_msc(self, enabled):
+        return {"enabled": enabled, "transition_pending": True, "request_rejected": False}
 
 
 class WebTests(unittest.TestCase):
@@ -87,6 +95,14 @@ class WebTests(unittest.TestCase):
             "/api/led", json={"on": True}, base_url="http://127.0.0.1"
         )
         self.assertEqual(response.status_code, 409)
+
+    def test_requests_msc_mode_with_boolean_json(self):
+        response = create_app(FakeMonitor()).test_client().post(
+            "/api/msc", json={"enabled": True}, base_url="http://127.0.0.1"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["msc"]["enabled"])
+        self.assertTrue(response.json["msc"]["transition_pending"])
 
 
 if __name__ == "__main__":

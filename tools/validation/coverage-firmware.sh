@@ -22,4 +22,4 @@ if ! find "$FIRMWARE_TEST_DIR" -type f -name 'test_*.c' -print -quit | grep -q .
     exit 1
 fi
 
-exec "$REPO_ROOT/tools/firmware/setup-ceedling-testing.sh" gcov:all "$@"
+exec "$REPO_ROOT/tools/validation/setup-ceedling-testing.sh" gcov:all "$@"

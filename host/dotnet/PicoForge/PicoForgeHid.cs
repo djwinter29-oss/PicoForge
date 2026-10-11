@@ -10,6 +10,8 @@ internal sealed class PicoForgeHid : IDisposable
     public PicoForgeHid()
     {
         var candidates = DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId)
+            .Concat(DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId + 1))
+            .DistinctBy(candidate => candidate.DevicePath)
             .Where(HasPicoForgeUsage).ToArray();
         if (candidates.Length == 0)
             throw new InvalidOperationException("PicoForge HID interface not found; check USB connection and HID permissions");
@@ -27,7 +29,7 @@ internal sealed class PicoForgeHid : IDisposable
         var report = new byte[Math.Max(HidProtocol.InfoFeatureSize, device.GetMaxFeatureReportLength() + 1)];
         report[0] = HidProtocol.InfoReportId;
         stream.GetFeature(report);
-        return HidProtocol.ParseInfoReport(report, device.GetSerialNumber() ?? string.Empty);
+        return HidProtocol.ParseInfoReport(report);
     }
 
     public RuntimeStatusResponse? ReadStatus()
@@ -44,19 +46,34 @@ internal sealed class PicoForgeHid : IDisposable
         }
     }
 
-    public BoardStatusResponse ReadBoardStatus()
+    public InputReport? ReadInputReport()
     {
-        var report = new byte[Math.Max(HidProtocol.BoardStatusPayloadSize + 1,
-            device.GetMaxFeatureReportLength() + 1)];
-        report[0] = HidProtocol.BoardStatusReportId;
-        stream.GetFeature(report);
-        return HidProtocol.ParseBoardStatusReport(report);
+        var report = new byte[Math.Max(HidProtocol.MemoryPayloadSize + 1, device.GetMaxInputReportLength())];
+        try
+        {
+            var count = stream.Read(report, 0, report.Length);
+            if (count == 0) return null;
+            var data = report.AsSpan(0, count);
+            return data[0] switch
+            {
+                HidProtocol.StatusReportId => new(HidProtocol.ParseStatusReport(data), null, null),
+                HidProtocol.MemoryReportId => new(null, HidProtocol.ParseMemoryReport(data), null),
+                HidProtocol.MscCommandReportId => new(null, null, HidProtocol.ParseMscStatusReport(data)),
+                _ => throw new InvalidOperationException("unexpected HID input report ID")
+            };
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
     }
 
     public void SetLed(bool on)
     {
         stream.SetFeature(HidProtocol.BuildLedCommandReport(on));
     }
+
+    public void SetMsc(bool enabled) => stream.SetFeature(HidProtocol.BuildMscCommandReport(enabled));
 
     public void Dispose() => stream.Dispose();
 

@@ -4,16 +4,20 @@
 #include "tusb.h"
 
 #include "hid.h"
+#include "msc.h"
 #include "usb_task.h"
 
 #define USB_TASK_STACK_SIZE (1024U)
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
 #define USB_CDC_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
 #define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
+#define USB_HID_MEMORY_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
+#define USB_HID_MSC_REPORT_INTERVAL (pdMS_TO_TICKS(500U))
 
 static StaticTask_t usb_task_control_block;
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE];
 static uint8_t hid_sequence;
+static uint8_t memory_sequence;
 
 static void usb_task(void *context)
 {
@@ -21,11 +25,14 @@ static void usb_task(void *context)
     static const char cdc_greeting[] = "PicoForge CDC ready\r\n";
     TickType_t last_cdc_report = xTaskGetTickCount();
     TickType_t last_hid_report = last_cdc_report;
+    TickType_t last_memory_report = last_cdc_report;
+    TickType_t last_msc_report = last_cdc_report;
 
     while (true) {
         TickType_t now = xTaskGetTickCount();
 
         tud_task();
+        pf_usb_msc_task();
 
         if (tud_cdc_connected() &&
             ((TickType_t)(now - last_cdc_report) >= USB_CDC_REPORT_INTERVAL) &&
@@ -37,12 +44,33 @@ static void usb_task(void *context)
 
         if (tud_hid_ready() &&
             ((TickType_t)(now - last_hid_report) >= USB_HID_REPORT_INTERVAL)) {
-            picoforge_hid_status_report_t report;
+            pf_hid_status_report_t report;
 
-            picoforge_hid_build_status_report(&report, hid_sequence);
-            if (tud_hid_report(PICOFORGE_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
+            pf_hid_build_status_report(&report, hid_sequence);
+            if (tud_hid_report(PF_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
                 ++hid_sequence;
                 last_hid_report = now;
+            }
+        }
+
+        if (tud_hid_ready() &&
+            ((TickType_t)(now - last_memory_report) >= USB_HID_MEMORY_REPORT_INTERVAL)) {
+            pf_hid_memory_report_t report;
+
+            pf_hid_build_memory_report(&report, memory_sequence);
+            if (tud_hid_report(PF_HID_MEMORY_REPORT_ID, &report, sizeof(report))) {
+                ++memory_sequence;
+                last_memory_report = now;
+            }
+        }
+
+        if (tud_hid_ready() &&
+            ((TickType_t)(now - last_msc_report) >= USB_HID_MSC_REPORT_INTERVAL)) {
+            pf_hid_msc_status_report_t report;
+
+            pf_hid_build_msc_status_report(&report);
+            if (tud_hid_report(PF_HID_MSC_COMMAND_REPORT_ID, &report, sizeof(report))) {
+                last_msc_report = now;
             }
         }
 
@@ -50,7 +78,7 @@ static void usb_task(void *context)
     }
 }
 
-void picoforge_usb_start(void)
+void pf_usb_start(void)
 {
     if (!tusb_init()) {
         panic("Failed to initialize TinyUSB");

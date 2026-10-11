@@ -21,7 +21,6 @@
     </div>
   </header>
 
-  <main>
     <section class="page-heading">
       <div>
         <p class="eyebrow">HID STATUS / USB</p>
@@ -30,8 +29,11 @@
       <div class="actions">
         <button class="button" id="refresh" type="button">Refresh</button>
         <button class="button" id="led-control" type="button" disabled>Set LED</button>
+        <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
     </section>
+
+    <p id="msc-note" role="status">USB drive off; enable it to hand card access to the host. Safely eject before disabling.</p>
 
     <section class="identity" aria-label="Hardware identity">
       <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
@@ -50,11 +52,33 @@
       </div>
       <dl class="runtime-grid">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
+        <div><dt>System clock</dt><dd id="clock">--</dd></div>
         <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>USB device</dt><dd id="usb-state">--</dd></div>
         <div><dt>Report sequence</dt><dd id="sequence">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
         <div><dt>Onboard LED</dt><dd id="led-state">--</dd></div>
+      </dl>
+    </section>
+
+    <section class="runtime" aria-labelledby="memory-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">STORAGE REPORT</p>
+          <h2 id="memory-title">Memory component</h2>
+        </div>
+        <p class="sample-time">Updated with report ID 3</p>
+      </div>
+      <dl class="runtime-grid">
+        <div><dt>Presence</dt><dd id="memory-presence">--</dd></div>
+        <div><dt>Card state</dt><dd id="memory-state">--</dd></div>
+        <div><dt>Type</dt><dd id="memory-type">--</dd></div>
+        <div><dt>Mode</dt><dd id="memory-mode">--</dd></div>
+        <div><dt>Bus speed</dt><dd id="memory-speed">--</dd></div>
+        <div><dt>Capacity</dt><dd id="memory-size">--</dd></div>
+        <div><dt>Manufacturer ID</dt><dd id="memory-manufacturer">--</dd></div>
+        <div><dt>Product</dt><dd id="memory-product">--</dd></div>
+        <div><dt>Card serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
     </section>
 

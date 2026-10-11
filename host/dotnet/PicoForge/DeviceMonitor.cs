@@ -4,13 +4,14 @@ internal interface IDeviceMonitor
 {
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
+    MscStatusResponse? SetMsc(bool enabled);
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
     private readonly object gate = new();
     private PicoForgeHid? activeClient;
-    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null);
+    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
     public StatusResponse Snapshot
     {
@@ -23,8 +24,22 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             if (activeClient is null || snapshot.BoardStatus?.LedAvailable != true) return false;
             activeClient.SetLed(on);
-            snapshot = snapshot with { BoardStatus = activeClient.ReadBoardStatus() };
+            snapshot = snapshot with { BoardStatus = snapshot.BoardStatus with { LedOn = on } };
             return true;
+        }
+    }
+
+    public MscStatusResponse? SetMsc(bool enabled)
+    {
+        lock (gate)
+        {
+            if (activeClient is null) return null;
+            activeClient.SetMsc(enabled);
+            snapshot = snapshot with
+            {
+                Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false)
+            };
+            return snapshot.Msc;
         }
     }
 
@@ -37,21 +52,24 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 client = new PicoForgeHid();
                 var hardware = client.ReadInfo();
-                var boardStatus = client.ReadBoardStatus();
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, null, hardware, null, null, boardStatus);
+                    snapshot = new(true, null, hardware, null, null, null, null, null);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     lock (gate)
                     {
-                        var runtime = client.ReadStatus();
-                        boardStatus = client.ReadBoardStatus();
+                        var report = client.ReadInputReport();
+                        var runtime = report?.Runtime;
+                        var memory = report?.Memory;
+                        var msc = report?.Msc;
+                        var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
                         snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
-                            runtime is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus);
+                            report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
+                            memory ?? snapshot.Memory, msc ?? snapshot.Msc);
                     }
                 }
             }
@@ -60,7 +78,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = null;
-                    snapshot = new(false, error.Message, null, null, null, null);
+                    snapshot = new(false, error.Message, null, null, null, null, null, null);
                 }
             }
             finally

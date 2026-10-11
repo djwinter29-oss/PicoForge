@@ -18,8 +18,8 @@ export function renderStatus(snapshot) {
     ? "Attention" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
   document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
-  document.querySelector("#clock").textContent = hardware
-    ? `${(hardware.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
+  document.querySelector("#clock").textContent = runtime
+    ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
@@ -32,6 +32,16 @@ export function renderStatus(snapshot) {
   document.querySelector("#led-state").textContent = board?.led_available
     ? (board.led_on ? "On" : "Off") : "Unavailable";
   document.querySelector("#led-control").textContent = board?.led_on ? "Turn LED off" : "Turn LED on";
+  const msc = snapshot.msc;
+  const mscControl = document.querySelector("#msc-control");
+  mscControl.textContent = msc?.enabled ? "Disable USB drive" : "Enable USB drive";
+  mscControl.disabled = !connected || !msc || Boolean(msc.transition_pending);
+  document.querySelector("#msc-note").textContent = msc?.request_rejected
+    ? "Request refused. Safely eject the drive on the host before disabling."
+    : msc?.transition_pending ? "USB mode changing; the device will reconnect."
+      : msc?.enabled ? "Host owns the card. Safely eject before disabling or using it in firmware."
+        : "Firmware owns the card. Unmount firmware storage before enabling; the device then reconnects.";
+  renderMemory(snapshot.memory);
 
   const updatedAt = snapshot.updated_at ? new Date(snapshot.updated_at).toLocaleTimeString() : null;
   document.querySelector("#sample-time").textContent = updatedAt ? `Last report ${updatedAt}` : "Waiting for HID report";
@@ -40,6 +50,30 @@ export function renderStatus(snapshot) {
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = message;
+}
+
+function renderMemory(memory) {
+  const set = (id, value) => { document.querySelector(id).textContent = value; };
+  const manufacturer = memory?.manufacturer;
+  set("#memory-presence", !memory?.configured ? "Not configured"
+    : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown");
+  set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
+  set("#memory-type", memory?.component_type ?? "--");
+  set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
+  set("#memory-speed", memory?.bus_clock_hz
+    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
+    : "--");
+  set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
+  set("#memory-manufacturer", manufacturer ? `0x${manufacturer.id.toString(16).padStart(2, "0")} / ${manufacturer.oem_id}` : "--");
+  set("#memory-product", manufacturer
+    ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
+    : "--");
+  set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
+}
+
+function formatBytes(bytes) {
+  const gibibytes = bytes / (1024 ** 3);
+  return gibibytes >= 1 ? `${gibibytes.toFixed(2)} GiB` : `${(bytes / (1024 ** 2)).toFixed(0)} MiB`;
 }
 
 function setState(selector, label, active) {

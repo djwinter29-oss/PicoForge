@@ -6,7 +6,7 @@ Thanks for helping improve PicoForge. Contributions should keep changes focused,
 
 - Search existing issues and pull requests before starting a large or behavior-changing contribution.
 - For a substantial change, open an issue or discussion first so scope and hardware assumptions can be agreed.
-- Do not assume board GPIO assignments. Update the board topology and `docs/pinout.md` only from an identified board schematic and verified wiring.
+- Do not assume board GPIO assignments. Update the board topology and `docs/hardware-setup.md` only from an identified board schematic and verified wiring.
 - Keep board-specific configuration under `firmware/src/board/`, reusable drivers under `firmware/src/drivers/`, FatFs/Pico SDK integration under `firmware/src/integration/`, and application-facing services under `firmware/src/middleware/`.
 - Keep simple drivers flat in `firmware/src/drivers/`; use a named subdirectory for a multi-file or substantial driver such as SDIO.
 - Preserve third-party provenance and licenses. Do not edit vendored code except for a documented, necessary patch.
@@ -20,7 +20,7 @@ git submodule update --init --recursive
 tools/validation/validate.sh
 ```
 
-The validation script checks shell syntax, runs available Ceedling tests, and builds both `pico` and `pico2`. For host-only firmware unit tests, run `tools/firmware/setup-ceedling-testing.sh test:all`; for coverage, run `tools/validation/coverage-firmware.sh`.
+The validation script checks shell syntax, runs available Ceedling tests, and builds both `pico` and `pico2`. For host-only firmware unit tests, run `tools/validation/setup-ceedling-testing.sh test:all`; for coverage, run `tools/validation/coverage-firmware.sh`.
 
 Host application tests are hardware-free and run with:
 
