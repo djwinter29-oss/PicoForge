@@ -2,18 +2,16 @@ import struct
 import unittest
 
 from picoforge.protocol import (
-    BOARD_STATUS_REPORT_ID,
     LED_COMMAND_REPORT_ID,
     build_led_command_report,
-    parse_board_status_report,
     parse_info_report,
     parse_status_report,
 )
 
 
-def info_report(mcu=2, clock=150_000_000, name="PicoForge"):
+def info_report(mcu=2, name="PicoForge", serial="0123456789abcdef"):
     product = name.encode("ascii").ljust(20, b"\0")
-    return bytes([1]) + struct.pack("<BBI", 1, mcu, clock) + product
+    return bytes([1]) + struct.pack("<BB", 2, mcu) + product + serial.encode("ascii") + bytes(4)
 
 
 class ProtocolTests(unittest.TestCase):
@@ -21,11 +19,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(
             parse_info_report(info_report()),
             {
-                "version": 1,
+                "version": 2,
                 "mcu_id": 2,
                 "mcu": "RP2350",
-                "system_clock_hz": 150_000_000,
                 "product_name": "PicoForge",
+                "serial_number": "0123456789abcdef",
             },
         )
 
@@ -38,35 +36,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(parse_info_report(report)["product_name"], "PicoForge")
 
     def test_rejects_bad_info_reports(self):
-        for report in (b"", bytes(27), bytes([1, 2]) + bytes(25), info_report(clock=0)):
+        malformed_reserved = bytearray(info_report())
+        malformed_reserved[-1] = 1
+        for report in (b"", bytes(43), bytes([1, 1]) + bytes(41), malformed_reserved,
+                       info_report(serial="not-a-valid-id")):
             with self.subTest(report=report):
                 with self.assertRaises(ValueError):
                     parse_info_report(report)
 
     def test_decodes_live_status_and_flags(self):
-        payload = struct.pack("<BBIB", 1, 9, 123_456, 3)
+        payload = struct.pack("<BBIIBh", 2, 9, 123_456, 150_000_000, 0x1F, 2345)
         self.assertEqual(
             parse_status_report(bytes([2]) + payload),
             {
-                "version": 1,
+                "version": 2,
                 "sequence": 9,
                 "uptime_ms": 123_456,
+                "system_clock_hz": 150_000_000,
                 "usb_mounted": True,
                 "cdc_open": True,
-            },
-        )
-
-    def test_rejects_unknown_status_flags(self):
-        with self.assertRaisesRegex(ValueError, "unknown HID status flags"):
-            parse_status_report(bytes([2]) + struct.pack("<BBIB", 1, 0, 1, 0x80))
-
-    def test_decodes_board_temperature_and_led_feature_report(self):
-        payload = struct.pack("<BBh", 1, 0x07, 2345)
-        report = bytes([BOARD_STATUS_REPORT_ID]) + payload + bytes(2)
-        self.assertEqual(
-            parse_board_status_report(report),
-            {
-                "version": 1,
                 "temperature_valid": True,
                 "temperature_centidegrees": 2345,
                 "led_available": True,
@@ -74,15 +62,17 @@ class ProtocolTests(unittest.TestCase):
             },
         )
 
-    def test_builds_led_command_and_rejects_malformed_board_status(self):
-        self.assertEqual(build_led_command_report(True), bytes([LED_COMMAND_REPORT_ID, 1, 1]))
-        self.assertEqual(build_led_command_report(False), bytes([LED_COMMAND_REPORT_ID, 1, 0]))
+    def test_rejects_unknown_status_flags(self):
+        with self.assertRaisesRegex(ValueError, "unknown HID status flags"):
+            parse_status_report(bytes([2]) + struct.pack("<BBIIBh", 2, 0, 1, 125_000_000, 0x80, 0))
+
+    def test_builds_led_command_and_rejects_invalid_dynamic_led_state(self):
+        self.assertEqual(build_led_command_report(True), bytes([LED_COMMAND_REPORT_ID, 2, 1]))
+        self.assertEqual(build_led_command_report(False), bytes([LED_COMMAND_REPORT_ID, 2, 0]))
         with self.assertRaises(ValueError):
             build_led_command_report(1)
-        with self.assertRaisesRegex(ValueError, "unknown"):
-            parse_board_status_report(bytes([BOARD_STATUS_REPORT_ID, 1, 0x80, 0, 0]))
         with self.assertRaisesRegex(ValueError, "without an available LED"):
-            parse_board_status_report(bytes([BOARD_STATUS_REPORT_ID, 1, 0x04, 0, 0]))
+            parse_status_report(bytes([2]) + struct.pack("<BBIIBh", 2, 0, 1, 125_000_000, 0x10, 0))
 
 
 if __name__ == "__main__":

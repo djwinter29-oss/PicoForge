@@ -23,7 +23,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             if (activeClient is null || snapshot.BoardStatus?.LedAvailable != true) return false;
             activeClient.SetLed(on);
-            snapshot = snapshot with { BoardStatus = activeClient.ReadBoardStatus() };
+            snapshot = snapshot with { BoardStatus = snapshot.BoardStatus with { LedOn = on } };
             return true;
         }
     }
@@ -37,11 +37,10 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 client = new PicoForgeHid();
                 var hardware = client.ReadInfo();
-                var boardStatus = client.ReadBoardStatus();
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, null, hardware, null, null, boardStatus);
+                    snapshot = new(true, null, hardware, null, null, null);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
@@ -49,7 +48,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     lock (gate)
                     {
                         var runtime = client.ReadStatus();
-                        boardStatus = client.ReadBoardStatus();
+                        var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
                         snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
                             runtime is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus);
                     }

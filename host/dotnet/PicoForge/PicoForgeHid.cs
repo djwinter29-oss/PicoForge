@@ -27,7 +27,7 @@ internal sealed class PicoForgeHid : IDisposable
         var report = new byte[Math.Max(HidProtocol.InfoFeatureSize, device.GetMaxFeatureReportLength() + 1)];
         report[0] = HidProtocol.InfoReportId;
         stream.GetFeature(report);
-        return HidProtocol.ParseInfoReport(report, device.GetSerialNumber() ?? string.Empty);
+        return HidProtocol.ParseInfoReport(report);
     }
 
     public RuntimeStatusResponse? ReadStatus()
@@ -42,15 +42,6 @@ internal sealed class PicoForgeHid : IDisposable
         {
             return null;
         }
-    }
-
-    public BoardStatusResponse ReadBoardStatus()
-    {
-        var report = new byte[Math.Max(HidProtocol.BoardStatusPayloadSize + 1,
-            device.GetMaxFeatureReportLength() + 1)];
-        report[0] = HidProtocol.BoardStatusReportId;
-        stream.GetFeature(report);
-        return HidProtocol.ParseBoardStatusReport(report);
     }
 
     public void SetLed(bool on)

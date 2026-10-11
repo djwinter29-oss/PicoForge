@@ -6,24 +6,23 @@ import struct
 
 INFO_REPORT_ID = 1
 STATUS_REPORT_ID = 2
-BOARD_STATUS_REPORT_ID = 3
 LED_COMMAND_REPORT_ID = 4
-REPORT_VERSION = 1
-INFO_PAYLOAD_SIZE = 26
-STATUS_PAYLOAD_SIZE = 7
-BOARD_STATUS_PAYLOAD_SIZE = 4
+REPORT_VERSION = 2
+INFO_PAYLOAD_SIZE = 42
+STATUS_PAYLOAD_SIZE = 13
 PRODUCT_NAME_SIZE = 20
+SERIAL_NUMBER_SIZE = 16
 INFO_FEATURE_SIZE = INFO_PAYLOAD_SIZE + 1
 STATUS_INPUT_SIZE = STATUS_PAYLOAD_SIZE + 1
 
 MCU_NAMES = {1: "RP2040", 2: "RP2350"}
 STATUS_USB_MOUNTED = 1 << 0
 STATUS_CDC_OPEN = 1 << 1
-STATUS_KNOWN_FLAGS = STATUS_USB_MOUNTED | STATUS_CDC_OPEN
-BOARD_TEMPERATURE_VALID = 1 << 0
-BOARD_LED_AVAILABLE = 1 << 1
-BOARD_LED_ON = 1 << 2
-BOARD_STATUS_KNOWN_FLAGS = BOARD_TEMPERATURE_VALID | BOARD_LED_AVAILABLE | BOARD_LED_ON
+STATUS_TEMPERATURE_VALID = 1 << 2
+STATUS_LED_AVAILABLE = 1 << 3
+STATUS_LED_ON = 1 << 4
+STATUS_KNOWN_FLAGS = (STATUS_USB_MOUNTED | STATUS_CDC_OPEN | STATUS_TEMPERATURE_VALID
+                      | STATUS_LED_AVAILABLE | STATUS_LED_ON)
 
 
 def _feature_payload(report: bytes | bytearray | list[int], report_id: int, size: int) -> bytes:
@@ -43,25 +42,28 @@ def _feature_payload(report: bytes | bytearray | list[int], report_id: int, size
 
 
 def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
-    """Decode a report-ID-prefixed hardware/product Feature report."""
+    """Decode stable product, MCU, and USB serial identity from Feature report 1."""
     payload = _feature_payload(report, INFO_REPORT_ID, INFO_PAYLOAD_SIZE)
-    version, mcu_id, system_clock_hz = struct.unpack_from("<BBI", payload)
+    version, mcu_id = payload[:2]
     if version != REPORT_VERSION:
         raise ValueError(f"unsupported HID info report version {version}")
-    if system_clock_hz == 0:
-        raise ValueError("invalid system clock in HID info report")
     try:
-        product_name = payload[6 : 6 + PRODUCT_NAME_SIZE].split(b"\0", 1)[0].decode("ascii")
+        product_name = payload[2 : 2 + PRODUCT_NAME_SIZE].split(b"\0", 1)[0].decode("ascii")
+        serial_number = payload[22 : 22 + SERIAL_NUMBER_SIZE].decode("ascii")
     except UnicodeDecodeError as error:
-        raise ValueError("invalid product name in HID info report") from error
-    if not product_name:
-        raise ValueError("empty product name in HID info report")
+        raise ValueError("invalid text in HID identity report") from error
+    if not product_name or len(serial_number) != SERIAL_NUMBER_SIZE or any(
+        character not in "0123456789abcdefABCDEF" for character in serial_number
+    ):
+        raise ValueError("invalid product name or USB serial in HID identity report")
+    if any(payload[38:]):
+        raise ValueError("nonzero reserved bytes in HID identity report")
     return {
         "version": version,
         "mcu_id": mcu_id,
         "mcu": MCU_NAMES.get(mcu_id, f"Unknown MCU ({mcu_id})"),
-        "system_clock_hz": system_clock_hz,
         "product_name": product_name,
+        "serial_number": serial_number,
     }
 
 
@@ -73,36 +75,31 @@ def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, obje
     payload = data[1:STATUS_INPUT_SIZE]
     if any(data[STATUS_INPUT_SIZE:]):
         raise ValueError("unexpected HID status report padding")
-    version, sequence, uptime_ms, flags = struct.unpack("<BBIB", payload)
+    version, sequence, uptime_ms, system_clock_hz, flags, temperature_centidegrees = struct.unpack(
+        "<BBIIBh", payload
+    )
     if version != REPORT_VERSION:
         raise ValueError(f"unsupported HID status report version {version}")
+    if system_clock_hz == 0:
+        raise ValueError("invalid system clock in HID status report")
     if flags & ~STATUS_KNOWN_FLAGS:
         raise ValueError("unknown HID status flags")
+    temperature_valid = bool(flags & STATUS_TEMPERATURE_VALID)
+    led_available = bool(flags & STATUS_LED_AVAILABLE)
+    led_on = bool(flags & STATUS_LED_ON)
+    if led_on and not led_available:
+        raise ValueError("LED state reported without an available LED")
     return {
         "version": version,
         "sequence": sequence,
         "uptime_ms": uptime_ms,
+        "system_clock_hz": system_clock_hz,
         "usb_mounted": bool(flags & STATUS_USB_MOUNTED),
         "cdc_open": bool(flags & STATUS_CDC_OPEN),
-    }
-
-
-def parse_board_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
-    """Decode board temperature and LED state from HID Feature report 3."""
-    payload = _feature_payload(report, BOARD_STATUS_REPORT_ID, BOARD_STATUS_PAYLOAD_SIZE)
-    version, flags, temperature_centidegrees = struct.unpack("<BBh", payload)
-    if version != REPORT_VERSION:
-        raise ValueError(f"unsupported HID board-status report version {version}")
-    if flags & ~BOARD_STATUS_KNOWN_FLAGS:
-        raise ValueError("unknown HID board-status flags")
-    if (flags & BOARD_LED_ON) and not (flags & BOARD_LED_AVAILABLE):
-        raise ValueError("LED state reported without an available LED")
-    return {
-        "version": version,
-        "temperature_valid": bool(flags & BOARD_TEMPERATURE_VALID),
-        "temperature_centidegrees": temperature_centidegrees if flags & BOARD_TEMPERATURE_VALID else None,
-        "led_available": bool(flags & BOARD_LED_AVAILABLE),
-        "led_on": bool(flags & BOARD_LED_ON),
+        "temperature_valid": temperature_valid,
+        "temperature_centidegrees": temperature_centidegrees if temperature_valid else None,
+        "led_available": led_available,
+        "led_on": led_on,
     }
 
 

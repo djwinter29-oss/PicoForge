@@ -7,8 +7,9 @@ export const DEVICE_FILTER = Object.freeze({
 
 export const INFO_REPORT_ID = 1;
 export const STATUS_REPORT_ID = 2;
-export const BOARD_STATUS_REPORT_ID = 3;
 export const LED_COMMAND_REPORT_ID = 4;
+const INFO_PAYLOAD_SIZE = 42;
+const STATUS_PAYLOAD_SIZE = 13;
 
 function asView(report) {
   if (report instanceof DataView) return report;
@@ -37,59 +38,64 @@ function paddedText(view, offset, length) {
 }
 
 export function decodeInfoReport(report) {
-  const payload = featurePayload(report, INFO_REPORT_ID, 26);
+  const payload = featurePayload(report, INFO_REPORT_ID, INFO_PAYLOAD_SIZE);
   const version = payload.getUint8(0);
-  if (version !== 1) throw new Error(`Unsupported HID info report version ${version}`);
+  if (version !== 2) throw new Error(`Unsupported HID info report version ${version}`);
   const mcuId = payload.getUint8(1);
-  const systemClockHz = payload.getUint32(2, true);
-  const productName = paddedText(payload, 6, 20);
-  if (systemClockHz === 0 || !productName) throw new Error("Invalid HID hardware information");
+  const productName = paddedText(payload, 2, 20);
+  const serialNumber = paddedText(payload, 22, 16);
+  if (!productName || !/^[0-9a-f]{16}$/i.test(serialNumber)) {
+    throw new Error("Invalid HID product or serial identity");
+  }
+  for (let index = 38; index < INFO_PAYLOAD_SIZE; index++) {
+    if (payload.getUint8(index) !== 0) throw new Error("Unexpected nonzero HID identity reserved bytes");
+  }
   return {
     version,
     mcu_id: mcuId,
     mcu: ({ 1: "RP2040", 2: "RP2350" })[mcuId] ?? `Unknown MCU (${mcuId})`,
-    system_clock_hz: systemClockHz,
     product_name: productName,
+    serial_number: serialNumber,
   };
 }
 
 export function decodeStatusReport(reportId, report) {
   if (reportId !== STATUS_REPORT_ID) throw new Error(`Unexpected HID status report ID ${reportId}`);
-  let view = asView(report);
-  if (view.byteLength === 8 && view.getUint8(0) === STATUS_REPORT_ID) {
-    view = new DataView(view.buffer, view.byteOffset + 1, 7);
-  }
-  if (view.byteLength < 7) throw new Error("Unexpected HID status report size");
-  for (let index = 7; index < view.byteLength; index++) {
+  const view = asView(report);
+  if (view.byteLength < STATUS_PAYLOAD_SIZE) throw new Error("Unexpected HID status report size");
+  for (let index = STATUS_PAYLOAD_SIZE; index < view.byteLength; index++) {
     if (view.getUint8(index) !== 0) throw new Error("Unexpected HID status report padding");
   }
   const version = view.getUint8(0);
-  const flags = view.getUint8(6);
-  if (version !== 1) throw new Error(`Unsupported HID status report version ${version}`);
-  if ((flags & ~0x03) !== 0) throw new Error("Unknown HID status flags");
+  const flags = view.getUint8(10);
+  if (version !== 2) throw new Error(`Unsupported HID status report version ${version}`);
+  if ((flags & ~0x1f) !== 0) throw new Error("Unknown HID status flags");
+  const ledAvailable = Boolean(flags & 0x08);
+  const ledOn = Boolean(flags & 0x10);
+  if (ledOn && !ledAvailable) throw new Error("LED state reported without an available LED");
+  const temperatureValid = Boolean(flags & 0x04);
+  const systemClockHz = view.getUint32(6, true);
+  if (systemClockHz === 0) throw new Error("Invalid system clock in HID status report");
   return {
     version,
     sequence: view.getUint8(1),
     uptime_ms: view.getUint32(2, true),
+    system_clock_hz: systemClockHz,
     usb_mounted: Boolean(flags & 0x01),
     cdc_open: Boolean(flags & 0x02),
+    temperature_valid: temperatureValid,
+    temperature_centidegrees: temperatureValid ? view.getInt16(11, true) : null,
+    led_available: ledAvailable,
+    led_on: ledOn,
   };
 }
 
-export function decodeBoardStatusReport(report) {
-  const payload = featurePayload(report, BOARD_STATUS_REPORT_ID, 4);
-  const version = payload.getUint8(0);
-  const flags = payload.getUint8(1);
-  if (version !== 1) throw new Error(`Unsupported HID board-status report version ${version}`);
-  if ((flags & ~0x07) !== 0) throw new Error("Unknown HID board-status flags");
-  const ledAvailable = Boolean(flags & 0x02);
-  const ledOn = Boolean(flags & 0x04);
-  if (ledOn && !ledAvailable) throw new Error("LED state reported without an available LED");
+export function boardStatusFromRuntime(runtime) {
   return {
-    temperature_valid: Boolean(flags & 0x01),
-    temperature_centidegrees: flags & 0x01 ? payload.getInt16(2, true) : null,
-    led_available: ledAvailable,
-    led_on: ledOn,
+    temperature_valid: runtime.temperature_valid,
+    temperature_centidegrees: runtime.temperature_centidegrees,
+    led_available: runtime.led_available,
+    led_on: runtime.led_on,
   };
 }
 
@@ -116,7 +122,8 @@ export class PicoForgeWebHid {
     this.onInputReport = event => {
       if (event.device !== this.device || event.reportId !== STATUS_REPORT_ID) return;
       try {
-        this.update({ runtime: decodeStatusReport(event.reportId, event.data),
+        const runtime = decodeStatusReport(event.reportId, event.data);
+        this.update({ runtime, board_status: boardStatusFromRuntime(runtime),
           updated_at: new Date().toISOString(), error: null });
       } catch (error) {
         this.update({ error: error.message });
@@ -155,10 +162,8 @@ export class PicoForgeWebHid {
       selected.addEventListener("inputreport", this.onInputReport);
       this.device = selected;
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
-      const boardStatus = decodeBoardStatusReport(await selected.receiveFeatureReport(BOARD_STATUS_REPORT_ID));
-      hardware.serial_number = selected.serialNumber || "";
       this.update({ connected: true, busy: false, error: null, hardware,
-        runtime: null, board_status: boardStatus, updated_at: null });
+        runtime: null, board_status: null, updated_at: null });
     } catch (error) {
       selected?.removeEventListener("inputreport", this.onInputReport);
       if (selected?.opened) {
@@ -170,27 +175,15 @@ export class PicoForgeWebHid {
     }
   }
 
-  async refresh() {
-    if (!this.device || this.state.busy) return;
-    this.update({ busy: true, error: null });
-    try {
-      const hardware = decodeInfoReport(await this.device.receiveFeatureReport(INFO_REPORT_ID));
-      const boardStatus = decodeBoardStatusReport(await this.device.receiveFeatureReport(BOARD_STATUS_REPORT_ID));
-      hardware.serial_number = this.device.serialNumber || "";
-      this.update({ hardware, board_status: boardStatus, busy: false });
-    } catch (error) {
-      this.update({ busy: false, error: error.message });
-    }
-  }
-
   async setLed(on) {
     if (typeof on !== "boolean") throw new Error("LED state must be boolean");
     if (!this.device || this.state.busy || !this.state.board_status?.led_available) return;
     this.update({ busy: true, error: null });
     try {
       await this.device.sendFeatureReport(LED_COMMAND_REPORT_ID, Uint8Array.from([1, on ? 1 : 0]));
-      const boardStatus = decodeBoardStatusReport(await this.device.receiveFeatureReport(BOARD_STATUS_REPORT_ID));
-      this.update({ board_status: boardStatus, busy: false });
+      const boardStatus = { ...this.state.board_status, led_on: on };
+      const runtime = this.state.runtime ? { ...this.state.runtime, led_on: on } : null;
+      this.update({ runtime, board_status: boardStatus, busy: false });
     } catch (error) {
       this.update({ busy: false, error: error.message });
     }

@@ -18,8 +18,8 @@ export function renderStatus(snapshot) {
     ? "Attention" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
   document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
-  document.querySelector("#clock").textContent = hardware
-    ? `${(hardware.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
+  document.querySelector("#clock").textContent = runtime
+    ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";

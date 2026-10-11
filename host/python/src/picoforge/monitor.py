@@ -22,6 +22,15 @@ def _empty_snapshot() -> dict[str, object]:
     }
 
 
+def _board_status_from_runtime(runtime: dict[str, object]) -> dict[str, object]:
+    return {
+        "temperature_valid": runtime["temperature_valid"],
+        "temperature_centidegrees": runtime["temperature_centidegrees"],
+        "led_available": runtime["led_available"],
+        "led_on": runtime["led_on"],
+    }
+
+
 class DeviceMonitor:
     """Keep one HID handle open and publish an immutable status snapshot."""
 
@@ -58,8 +67,9 @@ class DeviceMonitor:
             if self._active_client is None:
                 raise RuntimeError("PicoForge HID is not connected")
             self._active_client.set_led(on)
-            board_status = self._active_client.read_board_status()
         with self._lock:
+            board_status = dict(self._snapshot["board_status"])
+            board_status["led_on"] = on
             self._snapshot["board_status"] = board_status
         return board_status
 
@@ -69,7 +79,6 @@ class DeviceMonitor:
             try:
                 client = self._client_factory()
                 hardware = client.read_info()
-                board_status = client.read_board_status()
                 with self._device_lock:
                     self._active_client = client
                 with self._lock:
@@ -78,14 +87,14 @@ class DeviceMonitor:
                         "error": None,
                         "hardware": hardware,
                         "runtime": None,
-                        "board_status": board_status,
+                        "board_status": None,
                         "updated_at": None,
                     }
                 while not self._stop.is_set():
                     with self._device_lock:
                         runtime = client.read_status(timeout_ms=250)
-                        board_status = client.read_board_status()
                     if runtime is not None:
+                        board_status = _board_status_from_runtime(runtime)
                         with self._lock:
                             self._snapshot.update(
                                 connected=True,

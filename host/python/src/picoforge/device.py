@@ -5,13 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from .protocol import (
-    BOARD_STATUS_PAYLOAD_SIZE,
-    BOARD_STATUS_REPORT_ID,
     INFO_PAYLOAD_SIZE,
     INFO_REPORT_ID,
     STATUS_INPUT_SIZE,
     build_led_command_report,
-    parse_board_status_report,
     parse_info_report,
     parse_status_report,
 )
@@ -86,15 +83,12 @@ class PicoForgeHid:
                 "(Linux setup: see host/python/README.md)"
             ) from error
         self._device = device
-        self.serial_number = info.get("serial_number") or ""
         self.closed = False
 
     def read_info(self) -> dict[str, object]:
         self._require_open()
         report = self._device.get_feature_report(INFO_REPORT_ID, INFO_PAYLOAD_SIZE + 1)
-        info = parse_info_report(report)
-        info["serial_number"] = self.serial_number
-        return info
+        return parse_info_report(report)
 
     def read_status(self, timeout_ms: int = 250) -> dict[str, object] | None:
         if timeout_ms < 0:
@@ -102,11 +96,6 @@ class PicoForgeHid:
         self._require_open()
         report = self._device.read(STATUS_INPUT_SIZE, timeout_ms)
         return parse_status_report(report) if report else None
-
-    def read_board_status(self) -> dict[str, object]:
-        self._require_open()
-        report = self._device.get_feature_report(BOARD_STATUS_REPORT_ID, BOARD_STATUS_PAYLOAD_SIZE + 1)
-        return parse_board_status_report(report)
 
     def set_led(self, on: bool) -> None:
         self._require_open()
