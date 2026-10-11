@@ -236,6 +236,9 @@ void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host)
 bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
 {
     float divider;
+    uint16_t divider_integer;
+    uint8_t divider_fraction;
+    uint32_t divider_ticks;
 
     if ((host == NULL) || (host->pio == NULL) || (clock_hz == 0u) ||
         (clock_hz > host->system_clock_hz / 2u)) {
@@ -244,7 +247,10 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
 
     divider = (float)host->system_clock_hz / (2.0f * (float)clock_hz);
     pio_sm_set_clkdiv(host->pio, host->command_sm, divider);
-    host->current_clock_hz = clock_hz;
+    pio_calculate_clkdiv_from_float(divider, &divider_integer, &divider_fraction);
+    divider_ticks = ((uint32_t)divider_integer << 8u) | divider_fraction;
+    host->current_clock_hz = (uint32_t)(((uint64_t)host->system_clock_hz * 128u) /
+                                        divider_ticks);
     return true;
 }
 

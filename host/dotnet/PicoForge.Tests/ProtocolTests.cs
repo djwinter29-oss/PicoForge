@@ -117,6 +117,19 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void ParsesMscStatusAndBuildsToggleCommand()
+    {
+        Assert.Equal(new MscStatusResponse(true, false, false),
+            HidProtocol.ParseMscStatusReport([5, 2, 1, 0, 0]));
+           Assert.Equal(new MscStatusResponse(false, true, true),
+               HidProtocol.ParseMscStatusReport([5, 2, 0, 1, 1]));
+        Assert.Equal(new byte[] { HidProtocol.MscCommandReportId, 2, 1 },
+            HidProtocol.BuildMscCommandReport(true));
+        Assert.Equal(new byte[] { HidProtocol.MscCommandReportId, 2, 0 },
+            HidProtocol.BuildMscCommandReport(false));
+    }
+
+    [Fact]
     public void RejectsUnsupportedVersionAndReservedIdentityBytes()
     {
         var report = CreateInfoReport();

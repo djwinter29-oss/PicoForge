@@ -23,6 +23,17 @@ int main(void)
 
     pf_temperature_init();
 
+    pf_sd_card_config_t sd_card_config;
+    if (pf_board_get_sd_card_config(&sd_card_config)) {
+        pf_sd_card_result_t sd_card_result = pf_sd_card_init(&sd_card_config);
+        if (sd_card_result == PF_SD_CARD_OK) {
+            PF_LOG_INFO("storage", "SD card initialized");
+        } else {
+            PF_LOG_WARNING("storage", "SD card unavailable (result %u)",
+                           (unsigned)sd_card_result);
+        }
+    }
+
     pf_usb_start();
     PF_LOG_INFO("usb", "CDC and HID interfaces initialized");
 

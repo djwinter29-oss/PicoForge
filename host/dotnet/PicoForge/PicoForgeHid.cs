@@ -10,6 +10,8 @@ internal sealed class PicoForgeHid : IDisposable
     public PicoForgeHid()
     {
         var candidates = DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId)
+            .Concat(DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId + 1))
+            .DistinctBy(candidate => candidate.DevicePath)
             .Where(HasPicoForgeUsage).ToArray();
         if (candidates.Length == 0)
             throw new InvalidOperationException("PicoForge HID interface not found; check USB connection and HID permissions");
@@ -54,8 +56,9 @@ internal sealed class PicoForgeHid : IDisposable
             var data = report.AsSpan(0, count);
             return data[0] switch
             {
-                HidProtocol.StatusReportId => new(HidProtocol.ParseStatusReport(data), null),
-                HidProtocol.MemoryReportId => new(null, HidProtocol.ParseMemoryReport(data)),
+                HidProtocol.StatusReportId => new(HidProtocol.ParseStatusReport(data), null, null),
+                HidProtocol.MemoryReportId => new(null, HidProtocol.ParseMemoryReport(data), null),
+                HidProtocol.MscCommandReportId => new(null, null, HidProtocol.ParseMscStatusReport(data)),
                 _ => throw new InvalidOperationException("unexpected HID input report ID")
             };
         }
@@ -69,6 +72,8 @@ internal sealed class PicoForgeHid : IDisposable
     {
         stream.SetFeature(HidProtocol.BuildLedCommandReport(on));
     }
+
+    public void SetMsc(bool enabled) => stream.SetFeature(HidProtocol.BuildMscCommandReport(enabled));
 
     public void Dispose() => stream.Dispose();
 

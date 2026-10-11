@@ -119,16 +119,9 @@ target_include_directories(pf_logging PUBLIC
 )
 target_link_libraries(pf_logging PUBLIC pico_stdlib)
 
-add_library(pf_fatfs STATIC
+add_library(pf_storage STATIC
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
-)
-target_include_directories(pf_fatfs PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
-    "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
-)
-
-add_library(pf_storage STATIC
     src/integration/fatfs/diskio.c
     src/middleware/storage/storage.c
 )
@@ -139,7 +132,6 @@ target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
 target_link_libraries(pf_storage PUBLIC
-    pf_fatfs
     pf_sd_card
 )
 
@@ -168,6 +160,7 @@ add_executable(pf_hello_world
     src/main.c
     src/usb/usb_descriptors.c
     src/usb/hid.c
+    src/usb/msc.c
     src/usb/task.c
 )
 

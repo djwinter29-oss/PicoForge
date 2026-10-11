@@ -16,6 +16,11 @@ typedef enum {
     PF_SD_CARD_IO_ERROR,
 } pf_sd_card_result_t;
 
+typedef enum {
+    PF_SD_CARD_OWNER_FIRMWARE = 0,
+    PF_SD_CARD_OWNER_USB_MSC,
+} pf_sd_card_owner_t;
+
 typedef struct {
     bool initialized;
     bool presence_known;
@@ -42,6 +47,20 @@ pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block, const void *bu
 
 /** Complete any pending write. */
 pf_sd_card_result_t pf_sd_card_sync(void);
+
+/** Select the only block-I/O client allowed to access the card. */
+pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t owner);
+
+/** Read blocks on behalf of the USB MSC host while it owns the card. */
+pf_sd_card_result_t pf_sd_card_msc_read_blocks(uint32_t first_block, void *buffer,
+                                               uint32_t block_count);
+
+/** Write blocks on behalf of the USB MSC host while it owns the card. */
+pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t first_block, const void *buffer,
+                                                uint32_t block_count);
+
+/** Flush writes on behalf of the USB MSC host while it owns the card. */
+pf_sd_card_result_t pf_sd_card_msc_sync(void);
 
 /** Snapshot initialized card telemetry; presence is unknown until detect or init succeeds. */
 void pf_sd_card_get_info(pf_sd_card_info_t *info);

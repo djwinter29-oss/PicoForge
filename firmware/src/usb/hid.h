@@ -10,6 +10,7 @@
 #define PF_HID_STATUS_REPORT_ID 2u
 #define PF_HID_MEMORY_REPORT_ID 3u
 #define PF_HID_LED_COMMAND_REPORT_ID 4u
+#define PF_HID_MSC_COMMAND_REPORT_ID 5u
 #define PF_HID_REPORT_VERSION 2u
 #define PF_HID_PRODUCT_NAME "PicoForge"
 #define PF_HID_PRODUCT_NAME_SIZE 20u
@@ -19,6 +20,8 @@
 #define PF_HID_STATUS_PAYLOAD_SIZE 13u
 #define PF_HID_MEMORY_PAYLOAD_SIZE 29u
 #define PF_HID_LED_COMMAND_PAYLOAD_SIZE 2u
+#define PF_HID_MSC_COMMAND_PAYLOAD_SIZE 2u
+#define PF_HID_MSC_STATUS_PAYLOAD_SIZE 4u
 
 #define PF_MCU_RP2040 PF_SYSTEM_MCU_RP2040
 #define PF_MCU_RP2350 PF_SYSTEM_MCU_RP2350
@@ -77,6 +80,18 @@ typedef struct __attribute__((packed)) {
     uint8_t on;
 } pf_hid_led_command_report_t;
 
+typedef struct __attribute__((packed)) {
+    uint8_t version;
+    uint8_t enable;
+} pf_hid_msc_command_report_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t version;
+    uint8_t enabled;
+    uint8_t transition_pending;
+    uint8_t request_rejected;
+} pf_hid_msc_status_report_t;
+
 _Static_assert(sizeof(pf_hid_info_report_t) == PF_HID_INFO_PAYLOAD_SIZE,
                "HID info report payload size changed");
 _Static_assert(sizeof(pf_hid_status_report_t) == PF_HID_STATUS_PAYLOAD_SIZE,
@@ -91,5 +106,6 @@ _Static_assert((sizeof(PF_HID_PRODUCT_NAME) - 1u) <= PF_HID_PRODUCT_NAME_SIZE,
 void pf_hid_build_info_report(pf_hid_info_report_t *report);
 void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence);
 void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence);
+void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report);
 
 #endif

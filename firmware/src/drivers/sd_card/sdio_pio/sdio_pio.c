@@ -253,7 +253,7 @@ static bool initialize_card(void)
     if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock)) {
         return false;
     }
-    card_bus_clock_hz = transfer_clock;
+    card_bus_clock_hz = sdio_pio_host.current_clock_hz;
     return true;
 }
 

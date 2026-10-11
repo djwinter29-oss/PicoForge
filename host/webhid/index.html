@@ -30,9 +30,12 @@
       <div class="actions">
         <button class="button" id="connect" type="button">Connect</button>
         <button class="button" id="led-control" type="button" disabled>Set LED</button>
+        <button class="button" id="msc-control" type="button" disabled>Enable USB drive</button>
         <button class="button button-secondary" id="disconnect" type="button" disabled>Disconnect</button>
       </div>
     </section>
+
+    <p id="msc-note" role="status">USB drive is disabled by default. Safely eject the host drive before disabling MSC.</p>
 
     <section class="identity" aria-label="Hardware identity">
       <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
@@ -69,6 +72,7 @@
       </div>
       <dl class="runtime-grid">
         <div><dt>Presence</dt><dd id="memory-presence">--</dd></div>
+        <div><dt>Card state</dt><dd id="memory-state">--</dd></div>
         <div><dt>Type</dt><dd id="memory-type">--</dd></div>
         <div><dt>Mode</dt><dd id="memory-mode">--</dd></div>
         <div><dt>Bus speed</dt><dd id="memory-speed">--</dd></div>

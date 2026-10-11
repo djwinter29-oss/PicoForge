@@ -32,6 +32,15 @@ export function renderStatus(snapshot) {
   document.querySelector("#led-state").textContent = board?.led_available
     ? (board.led_on ? "On" : "Off") : "Unavailable";
   document.querySelector("#led-control").textContent = board?.led_on ? "Turn LED off" : "Turn LED on";
+  const msc = snapshot.msc;
+  const mscControl = document.querySelector("#msc-control");
+  mscControl.textContent = msc?.enabled ? "Disable USB drive" : "Enable USB drive";
+  mscControl.disabled = !connected || !msc || Boolean(msc.transition_pending);
+  document.querySelector("#msc-note").textContent = msc?.request_rejected
+    ? "Request refused. Safely eject the drive on the host before disabling."
+    : msc?.transition_pending ? "USB mode changing; the device will reconnect."
+      : msc?.enabled ? "Host owns the card. Safely eject before disabling or using it in firmware."
+        : "Firmware owns the card. Unmount firmware storage before enabling; the device then reconnects.";
   renderMemory(snapshot.memory);
 
   const updatedAt = snapshot.updated_at ? new Date(snapshot.updated_at).toLocaleTimeString() : null;
@@ -48,6 +57,7 @@ function renderMemory(memory) {
   const manufacturer = memory?.manufacturer;
   set("#memory-presence", !memory?.configured ? "Not configured"
     : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown");
+  set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
   set("#memory-type", memory?.component_type ?? "--");
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
@@ -55,7 +65,9 @@ function renderMemory(memory) {
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   set("#memory-manufacturer", manufacturer ? `0x${manufacturer.id.toString(16).padStart(2, "0")} / ${manufacturer.oem_id}` : "--");
-  set("#memory-product", manufacturer ? `${manufacturer.product_name} rev ${manufacturer.product_revision}` : "--");
+  set("#memory-product", manufacturer
+    ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
+    : "--");
   set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
 }
 

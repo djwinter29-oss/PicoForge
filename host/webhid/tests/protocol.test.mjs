@@ -4,6 +4,7 @@ import {
   boardStatusFromRuntime,
   decodeInfoReport,
   decodeMemoryReport,
+  decodeMscStatus,
   decodeStatusReport,
   matchesPicoForge,
 } from "../js/device.mjs";
@@ -115,6 +116,16 @@ test("distinguish unknown presence before card initialization", () => {
   assert.equal(memory.manufacturer, null);
 });
 
+test("decode MSC enable transition status", () => {
+  assert.deepEqual(decodeMscStatus(Uint8Array.from([5, 2, 1, 0, 0])), {
+    enabled: true, transition_pending: false, request_rejected: false,
+  });
+  assert.deepEqual(decodeMscStatus(Uint8Array.from([2, 0, 1, 0])), {
+    enabled: false, transition_pending: true, request_rejected: false,
+  });
+  assert.throws(() => decodeMscStatus(Uint8Array.from([2, 2, 0, 0])), /Invalid/);
+});
+
 test("reject an LED-on dynamic status when no LED is available", () => {
   const payload = new Uint8Array(13);
   payload[0] = 2;
@@ -129,5 +140,7 @@ test("reject wrong versions, clocks, padding, and device identities", () => {
   assert.throws(() => decodeInfoReport(new DataView(badVersion.buffer)), /version/);
   assert.throws(() => decodeStatusReport(1, new DataView(new ArrayBuffer(7))), /report ID/);
   assert.equal(matchesPicoForge({ vendorId: 0xcafe, productId: 0x4011,
+    collections: [{ usagePage: 0xff00, usage: 1 }] }), true);
+  assert.equal(matchesPicoForge({ vendorId: 0xcafe, productId: 0x4012,
     collections: [{ usagePage: 0xff00, usage: 1 }] }), true);
 });

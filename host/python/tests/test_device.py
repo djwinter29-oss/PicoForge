@@ -28,6 +28,11 @@ class HidEnumerationTests(unittest.TestCase):
                 {"usage_page": 0, "usage": 0, "product_string": "Other HID device"}
             )
         )
+        self.assertTrue(
+            _matches_vendor_collection(
+                {"usage_page": 0, "usage": 0, "product_string": "PicoForge CDC + HID + MSC"}
+            )
+        )
 
 
 if __name__ == "__main__":

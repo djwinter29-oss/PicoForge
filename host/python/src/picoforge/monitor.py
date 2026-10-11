@@ -19,6 +19,7 @@ def _empty_snapshot() -> dict[str, object]:
         "runtime": None,
         "board_status": None,
         "memory": None,
+        "msc": None,
         "updated_at": None,
     }
 
@@ -74,6 +75,20 @@ class DeviceMonitor:
             self._snapshot["board_status"] = board_status
         return board_status
 
+    def set_msc(self, enable: bool) -> dict[str, object]:
+        if not isinstance(enable, bool):
+            raise ValueError("MSC enable state must be boolean")
+        with self._device_lock:
+            if self._active_client is None:
+                raise RuntimeError("PicoForge HID is not connected")
+            self._active_client.set_msc(enable)
+        with self._lock:
+            previous = self._snapshot.get("msc") or {}
+            status = {"enabled": previous.get("enabled", False),
+                      "transition_pending": True, "request_rejected": False}
+            self._snapshot["msc"] = status
+        return status
+
     def _run(self) -> None:
         while not self._stop.is_set():
             client = None
@@ -90,6 +105,7 @@ class DeviceMonitor:
                         "runtime": None,
                         "board_status": None,
                         "memory": None,
+                        "msc": None,
                         "updated_at": None,
                     }
                 while not self._stop.is_set():
@@ -112,6 +128,14 @@ class DeviceMonitor:
                                 connected=True,
                                 error=None,
                                 memory=item["data"],
+                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            )
+                    elif item is not None and item["kind"] == "msc":
+                        with self._lock:
+                            self._snapshot.update(
+                                connected=True,
+                                error=None,
+                                msc=item["data"],
                                 updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                             )
             except (OSError, RuntimeError, ValueError) as error:

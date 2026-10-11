@@ -29,12 +29,15 @@ public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool P
     bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
     uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer);
 
-internal sealed record InputReport(RuntimeStatusResponse? Runtime, MemoryStatusResponse? Memory);
+public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected);
+
+internal sealed record InputReport(RuntimeStatusResponse? Runtime, MemoryStatusResponse? Memory,
+    MscStatusResponse? Msc);
 
 /// <summary>Current HID connection and the most recent hardware/runtime reports.</summary>
 public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoResponse? Hardware,
     RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, BoardStatusResponse? BoardStatus,
-    MemoryStatusResponse? Memory);
+    MemoryStatusResponse? Memory, MscStatusResponse? Msc);
 
 internal static class HidProtocol
 {
@@ -44,11 +47,13 @@ internal static class HidProtocol
     public const byte InfoReportId = 1;
     public const byte StatusReportId = 2;
     public const byte MemoryReportId = 3;
+    public const byte MscCommandReportId = 5;
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
     public const int InfoPayloadSize = 42;
     public const int StatusPayloadSize = 13;
     public const int MemoryPayloadSize = 29;
+    public const int MscStatusPayloadSize = 4;
     public const int InfoFeatureSize = InfoPayloadSize + 1;
     public const int StatusInputSize = StatusPayloadSize + 1;
 
@@ -150,6 +155,17 @@ internal static class HidProtocol
             }, initialized ? busClockHz : null, capacityValid ? blockCount : null,
             capacityValid ? (ulong)blockCount * 512 : null, identity);
     }
+
+    public static MscStatusResponse ParseMscStatusReport(ReadOnlySpan<byte> report)
+    {
+        var payload = FeaturePayload(report, MscCommandReportId, MscStatusPayloadSize);
+        Require(payload[0] == ReportVersion && payload[1] <= 1 && payload[2] <= 1 && payload[3] <= 1,
+            "invalid HID MSC status report");
+        return new(payload[1] != 0, payload[2] != 0, payload[3] != 0);
+    }
+
+    public static byte[] BuildMscCommandReport(bool enabled) =>
+        [MscCommandReportId, ReportVersion, enabled ? (byte)1 : (byte)0];
 
     public static byte[] BuildLedCommandReport(bool on) =>
         [LedCommandReportId, ReportVersion, on ? (byte)1 : (byte)0];

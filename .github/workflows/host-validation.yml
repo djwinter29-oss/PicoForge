@@ -58,4 +58,4 @@ jobs:
           ruby-version: "3.4"
 
       - name: Setup and validate Ceedling project
-        run: tools/firmware/setup-ceedling-testing.sh help
+        run: tools/validation/setup-ceedling-testing.sh help

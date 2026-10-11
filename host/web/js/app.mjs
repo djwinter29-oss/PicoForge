@@ -2,6 +2,7 @@ import { renderStatus } from "./dashboard.mjs";
 
 const refresh = document.querySelector("#refresh");
 const ledControl = document.querySelector("#led-control");
+const mscControl = document.querySelector("#msc-control");
 let requestInProgress = false;
 let currentSnapshot = null;
 
@@ -21,6 +22,30 @@ async function updateStatus() {
     requestInProgress = false;
     refresh.disabled = false;
     ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
+    mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
+      || Boolean(currentSnapshot.msc.transition_pending);
+  }
+}
+
+async function setMsc() {
+  if (!currentSnapshot?.msc) return;
+  mscControl.disabled = true;
+  try {
+    const response = await fetch("/api/msc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !currentSnapshot.msc.enabled }),
+    });
+    if (!response.ok) throw new Error(`MSC endpoint returned HTTP ${response.status}`);
+    const result = await response.json();
+    currentSnapshot.msc = result.msc;
+    renderStatus(currentSnapshot);
+  } catch (error) {
+    currentSnapshot.error = error.message;
+    renderStatus(currentSnapshot);
+  } finally {
+    mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
+      || Boolean(currentSnapshot.msc.transition_pending);
   }
 }
 
@@ -47,5 +72,6 @@ async function setLed() {
 
 refresh.addEventListener("click", updateStatus);
 ledControl.addEventListener("click", setLed);
+mscControl.addEventListener("click", setMsc);
 void updateStatus();
 window.setInterval(updateStatus, 1000);

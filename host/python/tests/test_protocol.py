@@ -3,9 +3,12 @@ import unittest
 
 from picoforge.protocol import (
     LED_COMMAND_REPORT_ID,
+    MSC_COMMAND_REPORT_ID,
     build_led_command_report,
+    build_msc_command_report,
     parse_info_report,
     parse_memory_report,
+    parse_msc_status_report,
     parse_status_report,
 )
 
@@ -110,6 +113,16 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(status["present"])
         self.assertIsNone(status["capacity_bytes"])
         self.assertIsNone(status["manufacturer"])
+
+    def test_encodes_msc_toggle_and_decodes_status(self):
+        self.assertEqual(build_msc_command_report(True), bytes([MSC_COMMAND_REPORT_ID, 2, 1]))
+        self.assertEqual(build_msc_command_report(False), bytes([MSC_COMMAND_REPORT_ID, 2, 0]))
+        self.assertEqual(parse_msc_status_report(bytes([5, 2, 1, 0, 0])),
+                         {"enabled": True, "transition_pending": False, "request_rejected": False})
+        self.assertEqual(parse_msc_status_report(bytes([2, 0, 1, 1])),
+                         {"enabled": False, "transition_pending": True, "request_rejected": True})
+        with self.assertRaises(ValueError):
+            build_msc_command_report(1)
 
 
 if __name__ == "__main__":

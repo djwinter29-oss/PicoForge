@@ -55,6 +55,7 @@ function renderMemory(memory) {
   const manufacturer = memory?.manufacturer;
   set("#memory-presence", !memory?.configured ? "Not configured"
     : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown");
+  set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
   set("#memory-type", memory?.component_type ?? "--");
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
@@ -62,7 +63,9 @@ function renderMemory(memory) {
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   set("#memory-manufacturer", manufacturer ? `0x${manufacturer.id.toString(16).padStart(2, "0")} / ${manufacturer.oem_id}` : "--");
-  set("#memory-product", manufacturer ? `${manufacturer.product_name} rev ${manufacturer.product_revision}` : "--");
+  set("#memory-product", manufacturer
+    ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
+    : "--");
   set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
 }
 

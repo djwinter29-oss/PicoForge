@@ -8,6 +8,7 @@
 #include "drivers/sd_card/sd_card_block.h"
 #include "drivers/led.h"
 #include "drivers/temperature.h"
+#include "msc.h"
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {
@@ -81,6 +82,15 @@ void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
     }
 }
 
+void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report)
+{
+    memset(report, 0, sizeof(*report));
+    report->version = PF_HID_REPORT_VERSION;
+    report->enabled = pf_usb_msc_is_enabled();
+    report->transition_pending = pf_usb_msc_transition_pending();
+    report->request_rejected = pf_usb_msc_request_rejected();
+}
+
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
                                hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen)
@@ -113,6 +123,15 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
         return sizeof(report);
     }
 
+    if ((report_id == PF_HID_MSC_COMMAND_REPORT_ID) &&
+        (report_type == HID_REPORT_TYPE_INPUT) &&
+        (reqlen >= sizeof(pf_hid_msc_status_report_t))) {
+        pf_hid_msc_status_report_t report;
+        pf_hid_build_msc_status_report(&report);
+        memcpy(buffer, &report, sizeof(report));
+        return sizeof(report);
+    }
+
     return 0u;
 }
 
@@ -120,13 +139,18 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            hid_report_type_t report_type, uint8_t const *buffer,
                            uint16_t bufsize)
 {
-    if ((instance != 0u) || (report_id != PF_HID_LED_COMMAND_REPORT_ID) ||
-        (report_type != HID_REPORT_TYPE_FEATURE) ||
-        (buffer == NULL) || (bufsize < sizeof(pf_hid_led_command_report_t))) {
+    if ((instance != 0u) || (report_type != HID_REPORT_TYPE_FEATURE) ||
+        (buffer == NULL)) {
         return;
     }
 
-    if ((buffer[0] == PF_HID_REPORT_VERSION) && (buffer[1] <= 1u)) {
+    if ((report_id == PF_HID_LED_COMMAND_REPORT_ID) &&
+        (bufsize >= sizeof(pf_hid_led_command_report_t)) &&
+        (buffer[0] == PF_HID_REPORT_VERSION) && (buffer[1] <= 1u)) {
         (void)pf_led_set(buffer[1] != 0u);
+    } else if ((report_id == PF_HID_MSC_COMMAND_REPORT_ID) &&
+               (bufsize >= sizeof(pf_hid_msc_command_report_t)) &&
+               (buffer[0] == PF_HID_REPORT_VERSION) && (buffer[1] <= 1u)) {
+        pf_usb_msc_request(buffer[1] != 0u);
     }
 }

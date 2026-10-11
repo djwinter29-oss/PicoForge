@@ -4,13 +4,14 @@ internal interface IDeviceMonitor
 {
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
+    MscStatusResponse? SetMsc(bool enabled);
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
     private readonly object gate = new();
     private PicoForgeHid? activeClient;
-    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null);
+    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
     public StatusResponse Snapshot
     {
@@ -28,6 +29,20 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         }
     }
 
+    public MscStatusResponse? SetMsc(bool enabled)
+    {
+        lock (gate)
+        {
+            if (activeClient is null) return null;
+            activeClient.SetMsc(enabled);
+            snapshot = snapshot with
+            {
+                Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false)
+            };
+            return snapshot.Msc;
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -40,7 +55,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, null, hardware, null, null, null, null);
+                    snapshot = new(true, null, hardware, null, null, null, null, null);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
@@ -50,10 +65,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                         var report = client.ReadInputReport();
                         var runtime = report?.Runtime;
                         var memory = report?.Memory;
+                        var msc = report?.Msc;
                         var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
                         snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
                             report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
-                            memory ?? snapshot.Memory);
+                            memory ?? snapshot.Memory, msc ?? snapshot.Msc);
                     }
                 }
             }
@@ -62,7 +78,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = null;
-                    snapshot = new(false, error.Message, null, null, null, null, null);
+                    snapshot = new(false, error.Message, null, null, null, null, null, null);
                 }
             }
             finally

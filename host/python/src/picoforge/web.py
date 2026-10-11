@@ -65,6 +65,18 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         except OSError as error:
             return jsonify({"error": str(error)}), 503
 
+    @app.post("/api/msc")
+    def set_msc():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
+            return jsonify({"error": "Expected JSON with a boolean 'enabled' field"}), 400
+        try:
+            return jsonify({"msc": dashboard.set_msc(payload["enabled"])}), 200
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except OSError as error:
+            return jsonify({"error": str(error)}), 503
+
     app.extensions["picoforge_monitor"] = dashboard
     return app
 

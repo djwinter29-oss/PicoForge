@@ -37,18 +37,21 @@ def main(argv: list[str] | None = None) -> int:
             info = device.read_info()
             runtime = None
             memory = None
+            msc = None
             for _ in range(8):
                 item = device.read_input_report(timeout_ms=1500)
                 if item is None:
                     continue
                 if item["kind"] == "runtime":
                     runtime = item["data"]
-                else:
+                elif item["kind"] == "memory":
                     memory = item["data"]
-                if runtime is not None and memory is not None:
+                else:
+                    msc = item["data"]
+                if runtime is not None and memory is not None and msc is not None:
                     break
             print(json.dumps({"connected": True, "hardware": info, "runtime": runtime,
-                              "memory": memory}, sort_keys=True))
+                              "memory": memory, "msc": msc}, sort_keys=True))
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

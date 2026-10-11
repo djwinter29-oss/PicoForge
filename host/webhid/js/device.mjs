@@ -9,9 +9,11 @@ export const INFO_REPORT_ID = 1;
 export const STATUS_REPORT_ID = 2;
 export const MEMORY_REPORT_ID = 3;
 export const LED_COMMAND_REPORT_ID = 4;
+export const MSC_COMMAND_REPORT_ID = 5;
 const INFO_PAYLOAD_SIZE = 42;
 const STATUS_PAYLOAD_SIZE = 13;
 const MEMORY_PAYLOAD_SIZE = 29;
+const MSC_STATUS_SIZE = 4;
 
 function asView(report) {
   if (report instanceof DataView) return report;
@@ -159,6 +161,18 @@ export function decodeMemoryReport(reportId, report) {
   };
 }
 
+export function decodeMscStatus(report) {
+  const payload = featurePayload(report, MSC_COMMAND_REPORT_ID, MSC_STATUS_SIZE);
+  const version = payload.getUint8(0);
+  const enabled = payload.getUint8(1);
+  const pending = payload.getUint8(2);
+  const rejected = payload.getUint8(3);
+  if (version !== 2 || enabled > 1 || pending > 1 || rejected > 1) {
+    throw new Error("Invalid HID MSC status report");
+  }
+  return { enabled: Boolean(enabled), transition_pending: Boolean(pending), request_rejected: Boolean(rejected) };
+}
+
 export function boardStatusFromRuntime(runtime) {
   return {
     temperature_valid: runtime.temperature_valid,
@@ -169,7 +183,7 @@ export function boardStatusFromRuntime(runtime) {
 }
 
 export function matchesPicoForge(device) {
-  return device.vendorId === DEVICE_FILTER.vendorId && device.productId === DEVICE_FILTER.productId
+  return device.vendorId === DEVICE_FILTER.vendorId && [0x4011, 0x4012].includes(device.productId)
     && device.collections.some(collection => collection.usagePage === DEVICE_FILTER.usagePage
       && collection.usage === DEVICE_FILTER.usage);
 }
@@ -199,6 +213,9 @@ export class PicoForgeWebHid {
         } else if (event.reportId === MEMORY_REPORT_ID) {
           const memory = decodeMemoryReport(event.reportId, event.data);
           this.update({ memory, updated_at: new Date().toISOString(), error: null });
+        } else if (event.reportId === MSC_COMMAND_REPORT_ID) {
+          const msc = decodeMscStatus(event.data);
+          this.update({ msc, updated_at: new Date().toISOString(), error: null });
         }
       } catch (error) {
         this.update({ error: error.message });
@@ -209,7 +226,7 @@ export class PicoForgeWebHid {
       event.device.removeEventListener("inputreport", this.onInputReport);
       this.device = null;
       this.update({ connected: false, hardware: null, runtime: null, board_status: null, memory: null, updated_at: null,
-        busy: false, error: "Device disconnected" });
+        msc: null, busy: false, error: "Device disconnected" });
     };
     hid?.addEventListener("disconnect", this.onDisconnect);
   }
@@ -224,7 +241,9 @@ export class PicoForgeWebHid {
     this.update({ busy: true, error: null });
     let selected;
     try {
-      const devices = await this.hid.requestDevice({ filters: [{ ...DEVICE_FILTER }] });
+      const devices = await this.hid.requestDevice({ filters: [0x4011, 0x4012].map(productId => ({
+        ...DEVICE_FILTER, productId,
+      })) });
       if (devices.length === 0) {
         this.update({ busy: false });
         return;
@@ -238,7 +257,7 @@ export class PicoForgeWebHid {
       this.device = selected;
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
       this.update({ connected: true, busy: false, error: null, hardware,
-        runtime: null, board_status: null, memory: null, updated_at: null });
+        runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
     } catch (error) {
       selected?.removeEventListener("inputreport", this.onInputReport);
       if (selected?.opened) {
@@ -246,7 +265,7 @@ export class PicoForgeWebHid {
       }
       this.device = null;
       this.update({ connected: false, busy: false, error: error.message,
-        hardware: null, runtime: null, board_status: null, memory: null, updated_at: null });
+        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
     }
   }
 
@@ -264,6 +283,19 @@ export class PicoForgeWebHid {
     }
   }
 
+  async setMsc(enable) {
+    if (typeof enable !== "boolean") throw new Error("MSC state must be boolean");
+    if (!this.device || this.state.busy) return;
+    this.update({ busy: true, error: null });
+    try {
+      await this.device.sendFeatureReport(MSC_COMMAND_REPORT_ID, Uint8Array.from([2, enable ? 1 : 0]));
+      const msc = { ...(this.state.msc ?? {}), transition_pending: true, request_rejected: false };
+      this.update({ msc, busy: false });
+    } catch (error) {
+      this.update({ busy: false, error: error.message });
+    }
+  }
+
   async disconnect() {
     const device = this.device;
     if (!device || this.state.busy) return;
@@ -273,7 +305,7 @@ export class PicoForgeWebHid {
       if (device.opened) await device.close();
       this.device = null;
       this.update({ connected: false, busy: false, error: null,
-        hardware: null, runtime: null, board_status: null, memory: null, updated_at: null });
+        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
     } catch (error) {
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ busy: false, error: error.message });

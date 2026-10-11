@@ -8,6 +8,7 @@ INFO_REPORT_ID = 1
 STATUS_REPORT_ID = 2
 MEMORY_REPORT_ID = 3
 LED_COMMAND_REPORT_ID = 4
+MSC_COMMAND_REPORT_ID = 5
 REPORT_VERSION = 2
 INFO_PAYLOAD_SIZE = 42
 STATUS_PAYLOAD_SIZE = 13
@@ -174,3 +175,22 @@ def build_led_command_report(on: bool) -> bytes:
     if not isinstance(on, bool):
         raise ValueError("LED state must be boolean")
     return bytes((LED_COMMAND_REPORT_ID, REPORT_VERSION, int(on)))
+
+
+def parse_msc_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
+    data = bytes(report)
+    offset = 1 if len(data) >= 5 and data[0] == MSC_COMMAND_REPORT_ID else 0
+    payload = data[offset : offset + 4]
+    if len(payload) != 4 or any(data[offset + 4 :]):
+        raise ValueError("unexpected HID MSC status report length or padding")
+    version, enabled, pending, rejected = payload
+    if version != REPORT_VERSION or any(value > 1 for value in (enabled, pending, rejected)):
+        raise ValueError("invalid HID MSC status report")
+    return {"enabled": bool(enabled), "transition_pending": bool(pending),
+            "request_rejected": bool(rejected)}
+
+
+def build_msc_command_report(enable: bool) -> bytes:
+    if not isinstance(enable, bool):
+        raise ValueError("MSC enable state must be boolean")
+    return bytes((MSC_COMMAND_REPORT_ID, REPORT_VERSION, int(enable)))
