@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   boardStatusFromRuntime,
   decodeInfoReport,
+  decodeMemoryReport,
   decodeStatusReport,
   matchesPicoForge,
 } from "../js/device.mjs";
@@ -64,6 +65,54 @@ test("derive board status from the dynamic report", () => {
     led_available: true,
     led_on: true,
   }), { temperature_valid: true, temperature_centidegrees: 2345, led_available: true, led_on: true });
+});
+
+test("decode SD memory state, link settings, capacity, and CID", () => {
+  const payload = new Uint8Array(29);
+  const view = new DataView(payload.buffer);
+  payload[0] = 2;
+  payload[1] = 7;
+  payload[2] = 0x3f;
+  payload[3] = 1;
+  payload[4] = 2;
+  view.setUint32(5, 25_000_000, true);
+  view.setUint32(9, 4096, true);
+  payload.set([0x1b, 0x53, 0x44, 0x43, 0x41, 0x52, 0x44, 0x31,
+    0x21, 0x12, 0x34, 0x56, 0x78, 0x01, 0xaa, 0xff], 13);
+  assert.deepEqual(decodeMemoryReport(3, view), {
+    version: 2,
+    sequence: 7,
+    configured: true,
+    presence_known: true,
+    present: true,
+    initialized: true,
+    component_type: "sd-card",
+    mode: "spi",
+    bus_clock_hz: 25_000_000,
+    block_count: 4096,
+    capacity_bytes: 2_097_152,
+    manufacturer: {
+      id: 0x1b,
+      oem_id: "SD",
+      product_name: "CARD1",
+      product_revision: "2.1",
+      serial_number: 0x12345678,
+      manufacture_year: 2026,
+      manufacture_month: 10,
+    },
+  });
+});
+
+test("distinguish unknown presence before card initialization", () => {
+  const payload = new Uint8Array(29);
+  payload[0] = 2;
+  payload[2] = 0x01;
+  payload[3] = 1;
+  payload[4] = 1;
+  const memory = decodeMemoryReport(3, new DataView(payload.buffer));
+  assert.equal(memory.present, null);
+  assert.equal(memory.capacity_bytes, null);
+  assert.equal(memory.manufacturer, null);
 });
 
 test("reject an LED-on dynamic status when no LED is available", () => {

@@ -44,6 +44,27 @@ internal sealed class PicoForgeHid : IDisposable
         }
     }
 
+    public InputReport? ReadInputReport()
+    {
+        var report = new byte[Math.Max(HidProtocol.MemoryPayloadSize + 1, device.GetMaxInputReportLength())];
+        try
+        {
+            var count = stream.Read(report, 0, report.Length);
+            if (count == 0) return null;
+            var data = report.AsSpan(0, count);
+            return data[0] switch
+            {
+                HidProtocol.StatusReportId => new(HidProtocol.ParseStatusReport(data), null),
+                HidProtocol.MemoryReportId => new(null, HidProtocol.ParseMemoryReport(data)),
+                _ => throw new InvalidOperationException("unexpected HID input report ID")
+            };
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+    }
+
     public void SetLed(bool on)
     {
         stream.SetFeature(HidProtocol.BuildLedCommandReport(on));

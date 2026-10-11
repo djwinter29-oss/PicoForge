@@ -10,7 +10,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
     private readonly object gate = new();
     private PicoForgeHid? activeClient;
-    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null);
+    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null);
 
     public StatusResponse Snapshot
     {
@@ -40,17 +40,20 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, null, hardware, null, null, null);
+                    snapshot = new(true, null, hardware, null, null, null, null);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     lock (gate)
                     {
-                        var runtime = client.ReadStatus();
+                        var report = client.ReadInputReport();
+                        var runtime = report?.Runtime;
+                        var memory = report?.Memory;
                         var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
                         snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
-                            runtime is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus);
+                            report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
+                            memory ?? snapshot.Memory);
                     }
                 }
             }
@@ -59,7 +62,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = null;
-                    snapshot = new(false, error.Message, null, null, null, null);
+                    snapshot = new(false, error.Message, null, null, null, null, null);
                 }
             }
             finally

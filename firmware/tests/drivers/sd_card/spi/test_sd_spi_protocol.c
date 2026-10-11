@@ -23,6 +23,9 @@ void test_recognizes_start_block_token(void)
 
 void test_recognizes_accepted_write_response(void)
 {
+    TEST_ASSERT_TRUE(pf_sd_spi_write_response_is_pending(0xffu));
+    TEST_ASSERT_FALSE(pf_sd_spi_write_response_is_pending(0x05u));
+    TEST_ASSERT_FALSE(pf_sd_spi_write_response_is_pending(0x0bu));
     TEST_ASSERT_TRUE(pf_sd_spi_write_response_is_accepted(0x05u));
     TEST_ASSERT_TRUE(pf_sd_spi_write_response_is_accepted(0xe5u));
     TEST_ASSERT_FALSE(pf_sd_spi_write_response_is_accepted(0x0bu));

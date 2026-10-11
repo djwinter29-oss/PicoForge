@@ -45,4 +45,6 @@ pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *b
 /** Complete pending writes; current block writes are synchronous. */
 pf_sd_card_result_t pf_sdio_pio_sync(void);
 
+void pf_sdio_pio_get_info(pf_sd_card_info_t *info);
+
 #endif

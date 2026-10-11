@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
@@ -13,6 +14,8 @@
 static pf_sdio_pio_host_t sdio_pio_host;
 static pf_sdio_pio_config_t active_config;
 static uint32_t card_sector_count;
+static uint32_t card_bus_clock_hz;
+static uint8_t card_cid[16];
 static bool card_block_addressed;
 static bool configuration_set;
 static bool card_initialized;
@@ -207,6 +210,7 @@ static bool initialize_card(void)
         !pf_sdio_pio_validate_r2_response(response)) {
         return false;
     }
+    memcpy(card_cid, response + 1u, sizeof(card_cid));
     if (!command_response(3u, 0u, short_response, &response_argument)) {
         return false;
     }
@@ -246,7 +250,11 @@ static bool initialize_card(void)
     if (transfer_clock == 0u) {
         transfer_clock = clock_get_hz(clk_sys) / 12u;
     }
-    return pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock);
+    if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock)) {
+        return false;
+    }
+    card_bus_clock_hz = transfer_clock;
+    return true;
 }
 
 pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
@@ -297,6 +305,10 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
 
 bool pf_sdio_pio_is_initialized(void)
 {
+    if (card_initialized && active_config.use_card_detect &&
+        (((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high))) {
+        card_initialized = false;
+    }
     return card_initialized;
 }
 
@@ -360,4 +372,30 @@ pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *b
 pf_sd_card_result_t pf_sdio_pio_sync(void)
 {
     return card_initialized ? PF_SD_CARD_OK : PF_SD_CARD_NOT_READY;
+}
+
+void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
+{
+    if (info == NULL) {
+        return;
+    }
+    *info = (pf_sd_card_info_t){ 0 };
+    if (!configuration_set) {
+        return;
+    }
+    if (active_config.use_card_detect) {
+        info->presence_known = true;
+        info->present = ((gpio_get(active_config.card_detect_gpio) != 0u) ==
+                         active_config.card_detect_active_high);
+    } else if (pf_sdio_pio_is_initialized()) {
+        info->presence_known = true;
+        info->present = true;
+    }
+    info->initialized = pf_sdio_pio_is_initialized();
+    if (info->initialized) {
+        info->cid_valid = true;
+        info->bus_clock_hz = card_bus_clock_hz;
+        info->block_count = card_sector_count;
+        memcpy(info->cid, card_cid, sizeof(info->cid));
+    }
 }

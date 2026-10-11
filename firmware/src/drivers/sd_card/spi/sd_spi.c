@@ -18,6 +18,7 @@
 #define SD_CMD_GO_IDLE_STATE 0u
 #define SD_CMD_SEND_IF_COND 8u
 #define SD_CMD_SEND_CSD 9u
+#define SD_CMD_SEND_CID 10u
 #define SD_CMD_SET_BLOCKLEN 16u
 #define SD_CMD_READ_SINGLE_BLOCK 17u
 #define SD_CMD_WRITE_SINGLE_BLOCK 24u
@@ -39,6 +40,8 @@ static bool spi_configured;
 static bool card_initialized;
 static bool card_block_addressed;
 static uint32_t card_sector_count;
+static uint32_t card_bus_clock_hz;
+static uint8_t card_cid[16];
 
 static bool same_config(const pf_sd_spi_config_t *left,
                         const pf_sd_spi_config_t *right)
@@ -224,6 +227,21 @@ static bool read_data_block(uint8_t *data, size_t size)
     return card_crc == calculated_crc;
 }
 
+static bool receive_write_response(uint8_t *response)
+{
+    uint32_t start = time_us_32();
+
+    do {
+        *response = exchange_byte(0xffu);
+        if (!pf_sd_spi_write_response_is_pending(*response)) {
+            return pf_sd_spi_write_response_is_accepted(*response);
+        }
+        pf_sd_card_idle();
+    } while ((uint32_t)(time_us_32() - start) < SD_SPI_RESPONSE_TIMEOUT_US);
+
+    return false;
+}
+
 static bool read_csd(uint8_t csd[16])
 {
     uint8_t response;
@@ -239,11 +257,27 @@ static bool read_csd(uint8_t csd[16])
     return success;
 }
 
+static bool read_cid(uint8_t cid[16])
+{
+    uint8_t response;
+    bool success = false;
+
+    select_card();
+    if (wait_ready(SD_SPI_RESPONSE_TIMEOUT_US) &&
+        send_command_selected(SD_CMD_SEND_CID, 0u, &response) &&
+        (response == 0u) && read_data_block(cid, 16u)) {
+        success = true;
+    }
+    deselect_card();
+    return success;
+}
+
 static bool initialize_card(void)
 {
     uint8_t response;
     uint8_t response_data[4];
     uint8_t csd[16];
+    uint8_t cid[16];
     uint32_t response_argument;
     uint32_t ocr;
     uint32_t start;
@@ -324,6 +358,7 @@ static bool initialize_card(void)
         return false;
     }
     if (!read_csd(csd) ||
+        !read_cid(cid) ||
         !pf_sd_card_csd_sector_count(csd, &card_sector_count)) {
         return false;
     }
@@ -331,8 +366,12 @@ static bool initialize_card(void)
     uint32_t transfer_clock = (active_config.clock_hz == 0u)
         ? SD_SPI_DEFAULT_CLOCK_HZ
         : active_config.clock_hz;
-    return spi_set_baudrate(active_config.spi, transfer_clock) >=
-           SD_SPI_INIT_CLOCK_HZ;
+    card_bus_clock_hz = spi_set_baudrate(active_config.spi, transfer_clock);
+    if (card_bus_clock_hz < SD_SPI_INIT_CLOCK_HZ) {
+        return false;
+    }
+    memcpy(card_cid, cid, sizeof(card_cid));
+    return true;
 }
 
 static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
@@ -377,8 +416,7 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
         crc = pf_sd_card_crc16(write_buffer, PF_SD_CARD_BLOCK_SIZE);
         (void)exchange_byte((uint8_t)(crc >> 8u));
         (void)exchange_byte((uint8_t)crc);
-        data_response = exchange_byte(0xffu);
-        success = pf_sd_spi_write_response_is_accepted(data_response) &&
+        success = receive_write_response(&data_response) &&
                   wait_ready(SD_SPI_WRITE_TIMEOUT_US);
     }
 
@@ -512,4 +550,29 @@ pf_sd_card_result_t pf_sd_spi_sync(void)
     ready = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
     deselect_card();
     return ready ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+}
+
+void pf_sd_spi_get_info(pf_sd_card_info_t *info)
+{
+    if (info == NULL) {
+        return;
+    }
+    *info = (pf_sd_card_info_t){ 0 };
+    if (!configuration_set) {
+        return;
+    }
+    if (active_config.use_card_detect) {
+        info->presence_known = true;
+        info->present = card_is_present();
+    } else if (pf_sd_spi_is_initialized()) {
+        info->presence_known = true;
+        info->present = true;
+    }
+    info->initialized = pf_sd_spi_is_initialized();
+    if (info->initialized) {
+        info->cid_valid = true;
+        info->bus_clock_hz = card_bus_clock_hz;
+        info->block_count = card_sector_count;
+        memcpy(info->cid, card_cid, sizeof(info->cid));
+    }
 }

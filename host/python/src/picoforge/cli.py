@@ -35,8 +35,20 @@ def main(argv: list[str] | None = None) -> int:
 
         with PicoForgeHid(args.serial, args.device_path) as device:
             info = device.read_info()
-            runtime = device.read_status(timeout_ms=1500)
-            print(json.dumps({"connected": True, "hardware": info, "runtime": runtime}, sort_keys=True))
+            runtime = None
+            memory = None
+            for _ in range(8):
+                item = device.read_input_report(timeout_ms=1500)
+                if item is None:
+                    continue
+                if item["kind"] == "runtime":
+                    runtime = item["data"]
+                else:
+                    memory = item["data"]
+                if runtime is not None and memory is not None:
+                    break
+            print(json.dumps({"connected": True, "hardware": info, "runtime": runtime,
+                              "memory": memory}, sort_keys=True))
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

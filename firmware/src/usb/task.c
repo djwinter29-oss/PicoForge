@@ -10,10 +10,12 @@
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
 #define USB_CDC_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
 #define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
+#define USB_HID_MEMORY_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
 
 static StaticTask_t usb_task_control_block;
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE];
 static uint8_t hid_sequence;
+static uint8_t memory_sequence;
 
 static void usb_task(void *context)
 {
@@ -21,6 +23,7 @@ static void usb_task(void *context)
     static const char cdc_greeting[] = "PicoForge CDC ready\r\n";
     TickType_t last_cdc_report = xTaskGetTickCount();
     TickType_t last_hid_report = last_cdc_report;
+    TickType_t last_memory_report = last_cdc_report;
 
     while (true) {
         TickType_t now = xTaskGetTickCount();
@@ -43,6 +46,17 @@ static void usb_task(void *context)
             if (tud_hid_report(PF_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
                 ++hid_sequence;
                 last_hid_report = now;
+            }
+        }
+
+        if (tud_hid_ready() &&
+            ((TickType_t)(now - last_memory_report) >= USB_HID_MEMORY_REPORT_INTERVAL)) {
+            pf_hid_memory_report_t report;
+
+            pf_hid_build_memory_report(&report, memory_sequence);
+            if (tud_hid_report(PF_HID_MEMORY_REPORT_ID, &report, sizeof(report))) {
+                ++memory_sequence;
+                last_memory_report = now;
             }
         }
 

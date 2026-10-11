@@ -5,6 +5,7 @@ from picoforge.protocol import (
     LED_COMMAND_REPORT_ID,
     build_led_command_report,
     parse_info_report,
+    parse_memory_report,
     parse_status_report,
 )
 
@@ -73,6 +74,42 @@ class ProtocolTests(unittest.TestCase):
             build_led_command_report(1)
         with self.assertRaisesRegex(ValueError, "without an available LED"):
             parse_status_report(bytes([2]) + struct.pack("<BBIIBh", 2, 0, 1, 125_000_000, 0x10, 0))
+
+    def test_decodes_memory_report_with_sd_cid(self):
+        cid = bytes([0x1b]) + b"SD" + b"CARD1" + bytes([0x21]) + bytes.fromhex("12345678") + bytes([0x01, 0xaa, 0xff])
+        payload = struct.pack("<BBBBBII", 2, 7, 0x3f, 1, 2, 25_000_000, 4096) + cid
+        self.assertEqual(
+            parse_memory_report(bytes([3]) + payload),
+            {
+                "version": 2,
+                "sequence": 7,
+                "configured": True,
+                "presence_known": True,
+                "present": True,
+                "initialized": True,
+                "component_type": "sd-card",
+                "mode": "spi",
+                "bus_clock_hz": 25_000_000,
+                "block_count": 4096,
+                "capacity_bytes": 2_097_152,
+                "manufacturer": {
+                    "id": 0x1b,
+                    "oem_id": "SD",
+                    "product_name": "CARD1",
+                    "product_revision": "2.1",
+                    "serial_number": 0x12345678,
+                    "manufacture_year": 2026,
+                    "manufacture_month": 10,
+                },
+            },
+        )
+
+    def test_distinguishes_unknown_presence_before_initialization(self):
+        payload = struct.pack("<BBBBBII", 2, 0, 0x01, 1, 1, 0, 0) + bytes(16)
+        status = parse_memory_report(bytes([3]) + payload)
+        self.assertIsNone(status["present"])
+        self.assertIsNone(status["capacity_bytes"])
+        self.assertIsNone(status["manufacturer"])
 
 
 if __name__ == "__main__":

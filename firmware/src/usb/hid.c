@@ -4,6 +4,8 @@
 #include "pico/unique_id.h"
 #include "tusb.h"
 #include "hid.h"
+#include "board/board.h"
+#include "drivers/sd_card/sd_card_block.h"
 #include "drivers/led.h"
 #include "drivers/temperature.h"
 
@@ -46,6 +48,39 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
     }
 }
 
+void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence)
+{
+    pf_sd_card_config_t config;
+    pf_sd_card_info_t info;
+
+    memset(report, 0, sizeof(*report));
+    report->version = PF_HID_REPORT_VERSION;
+    report->sequence = sequence;
+    report->component_type = PF_HID_MEMORY_TYPE_SD_CARD;
+    if (pf_board_get_sd_card_config(&config)) {
+        report->flags |= PF_HID_MEMORY_CONFIGURED;
+        report->mode = (config.transport == PF_SD_CARD_TRANSPORT_SPI)
+            ? PF_HID_MEMORY_MODE_SPI
+            : PF_HID_MEMORY_MODE_SDIO;
+    }
+    pf_sd_card_get_info(&info);
+    if (info.presence_known) {
+        report->flags |= PF_HID_MEMORY_PRESENCE_KNOWN;
+    }
+    if (info.present) {
+        report->flags |= PF_HID_MEMORY_PRESENT;
+    }
+    if (info.initialized) {
+        report->flags |= PF_HID_MEMORY_INITIALIZED | PF_HID_MEMORY_CAPACITY_VALID;
+        report->bus_clock_hz = info.bus_clock_hz;
+        report->block_count = info.block_count;
+    }
+    if (info.cid_valid) {
+        report->flags |= PF_HID_MEMORY_CID_VALID;
+        memcpy(report->cid, info.cid, sizeof(report->cid));
+    }
+}
+
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
                                hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen)
@@ -66,6 +101,14 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
         (reqlen >= sizeof(pf_hid_status_report_t))) {
         pf_hid_status_report_t report;
         pf_hid_build_status_report(&report, 0u);
+        memcpy(buffer, &report, sizeof(report));
+        return sizeof(report);
+    }
+
+    if ((report_id == PF_HID_MEMORY_REPORT_ID) && (report_type == HID_REPORT_TYPE_INPUT) &&
+        (reqlen >= sizeof(pf_hid_memory_report_t))) {
+        pf_hid_memory_report_t report;
+        pf_hid_build_memory_report(&report, 0u);
         memcpy(buffer, &report, sizeof(report));
         return sizeof(report);
     }

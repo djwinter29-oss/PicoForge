@@ -7,9 +7,11 @@ export const DEVICE_FILTER = Object.freeze({
 
 export const INFO_REPORT_ID = 1;
 export const STATUS_REPORT_ID = 2;
+export const MEMORY_REPORT_ID = 3;
 export const LED_COMMAND_REPORT_ID = 4;
 const INFO_PAYLOAD_SIZE = 42;
 const STATUS_PAYLOAD_SIZE = 13;
+const MEMORY_PAYLOAD_SIZE = 29;
 
 function asView(report) {
   if (report instanceof DataView) return report;
@@ -90,6 +92,73 @@ export function decodeStatusReport(reportId, report) {
   };
 }
 
+export function decodeMemoryReport(reportId, report) {
+  if (reportId !== MEMORY_REPORT_ID) throw new Error(`Unexpected HID memory report ID ${reportId}`);
+  const view = asView(report);
+  if (view.byteLength < MEMORY_PAYLOAD_SIZE) throw new Error("Unexpected HID memory report size");
+  for (let index = MEMORY_PAYLOAD_SIZE; index < view.byteLength; index++) {
+    if (view.getUint8(index) !== 0) throw new Error("Unexpected HID memory report padding");
+  }
+  const version = view.getUint8(0);
+  const sequence = view.getUint8(1);
+  const flags = view.getUint8(2);
+  const componentType = view.getUint8(3);
+  const mode = view.getUint8(4);
+  const busClockHz = view.getUint32(5, true);
+  const blockCount = view.getUint32(9, true);
+  if (version !== 2) throw new Error(`Unsupported HID memory report version ${version}`);
+  if ((flags & ~0x3f) !== 0) throw new Error("Unknown HID memory flags");
+  if (componentType > 1 || mode > 2) throw new Error("Unknown HID memory type or mode");
+  const configured = Boolean(flags & 0x01);
+  const presenceKnown = Boolean(flags & 0x02);
+  const present = Boolean(flags & 0x04);
+  const initialized = Boolean(flags & 0x08);
+  const cidValid = Boolean(flags & 0x10);
+  const capacityValid = Boolean(flags & 0x20);
+  if (present && !presenceKnown) throw new Error("Memory reported present without known presence");
+  if (initialized && (!configured || !presenceKnown || !present)) {
+    throw new Error("Initialized memory requires a configured, present card");
+  }
+  if (cidValid !== initialized || capacityValid !== initialized
+    || initialized !== Boolean(busClockHz && blockCount)) {
+    throw new Error("Invalid memory metadata flags or values");
+  }
+  const cid = new Uint8Array(view.buffer, view.byteOffset + 13, 16);
+  if (!initialized && cid.some(byte => byte !== 0)) throw new Error("Unexpected CID without initialized card");
+  let manufacturer = null;
+  if (cidValid) {
+    const oemId = new TextDecoder("ascii").decode(cid.subarray(1, 3));
+    const productName = new TextDecoder("ascii").decode(cid.subarray(3, 8));
+    if (!/^[\x20-\x7e]{2}$/.test(oemId) || !/^[\x20-\x7e]{5}$/.test(productName)) {
+      throw new Error("Invalid text in SD CID");
+    }
+    const date = ((cid[13] & 0x0f) << 8) | cid[14];
+    manufacturer = {
+      id: cid[0],
+      oem_id: oemId,
+      product_name: productName,
+      product_revision: `${cid[8] >> 4}.${cid[8] & 0x0f}`,
+      serial_number: new DataView(cid.buffer, cid.byteOffset + 9, 4).getUint32(0, false),
+      manufacture_year: 2000 + (date >> 4),
+      manufacture_month: date & 0x0f,
+    };
+  }
+  return {
+    version,
+    sequence,
+    configured,
+    presence_known: presenceKnown,
+    present: presenceKnown ? present : null,
+    initialized,
+    component_type: componentType === 1 ? "sd-card" : null,
+    mode: ({ 1: "sdio", 2: "spi" })[mode] ?? null,
+    bus_clock_hz: initialized ? busClockHz : null,
+    block_count: capacityValid ? blockCount : null,
+    capacity_bytes: capacityValid ? blockCount * 512 : null,
+    manufacturer,
+  };
+}
+
 export function boardStatusFromRuntime(runtime) {
   return {
     temperature_valid: runtime.temperature_valid,
@@ -116,15 +185,21 @@ export class PicoForgeWebHid {
       hardware: null,
       runtime: null,
       board_status: null,
+      memory: null,
       updated_at: null,
       busy: false,
     };
     this.onInputReport = event => {
-      if (event.device !== this.device || event.reportId !== STATUS_REPORT_ID) return;
+      if (event.device !== this.device) return;
       try {
-        const runtime = decodeStatusReport(event.reportId, event.data);
-        this.update({ runtime, board_status: boardStatusFromRuntime(runtime),
-          updated_at: new Date().toISOString(), error: null });
+        if (event.reportId === STATUS_REPORT_ID) {
+          const runtime = decodeStatusReport(event.reportId, event.data);
+          this.update({ runtime, board_status: boardStatusFromRuntime(runtime),
+            updated_at: new Date().toISOString(), error: null });
+        } else if (event.reportId === MEMORY_REPORT_ID) {
+          const memory = decodeMemoryReport(event.reportId, event.data);
+          this.update({ memory, updated_at: new Date().toISOString(), error: null });
+        }
       } catch (error) {
         this.update({ error: error.message });
       }
@@ -133,7 +208,7 @@ export class PicoForgeWebHid {
       if (event.device !== this.device) return;
       event.device.removeEventListener("inputreport", this.onInputReport);
       this.device = null;
-      this.update({ connected: false, hardware: null, runtime: null, board_status: null, updated_at: null,
+      this.update({ connected: false, hardware: null, runtime: null, board_status: null, memory: null, updated_at: null,
         busy: false, error: "Device disconnected" });
     };
     hid?.addEventListener("disconnect", this.onDisconnect);
@@ -163,7 +238,7 @@ export class PicoForgeWebHid {
       this.device = selected;
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
       this.update({ connected: true, busy: false, error: null, hardware,
-        runtime: null, board_status: null, updated_at: null });
+        runtime: null, board_status: null, memory: null, updated_at: null });
     } catch (error) {
       selected?.removeEventListener("inputreport", this.onInputReport);
       if (selected?.opened) {
@@ -171,7 +246,7 @@ export class PicoForgeWebHid {
       }
       this.device = null;
       this.update({ connected: false, busy: false, error: error.message,
-        hardware: null, runtime: null, board_status: null, updated_at: null });
+        hardware: null, runtime: null, board_status: null, memory: null, updated_at: null });
     }
   }
 
@@ -198,7 +273,7 @@ export class PicoForgeWebHid {
       if (device.opened) await device.close();
       this.device = null;
       this.update({ connected: false, busy: false, error: null,
-        hardware: null, runtime: null, board_status: null, updated_at: null });
+        hardware: null, runtime: null, board_status: null, memory: null, updated_at: null });
     } catch (error) {
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ busy: false, error: error.message });

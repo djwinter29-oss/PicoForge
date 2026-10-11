@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 
 namespace PicoForge;
@@ -19,9 +20,21 @@ public sealed record RuntimeStatusResponse(byte Sequence, uint UptimeMs, uint Sy
 public sealed record BoardStatusResponse(bool TemperatureValid, short? TemperatureCentidegrees,
     bool LedAvailable, bool LedOn);
 
+/// <summary>Card identity decoded from the SD CID register.</summary>
+public sealed record SdCardIdentity(byte ManufacturerId, string OemId, string ProductName,
+    string ProductRevision, uint SerialNumber, int ManufactureYear, int ManufactureMonth);
+
+/// <summary>Presence, transport, negotiated bus, capacity, and card identity.</summary>
+public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool PresenceKnown,
+    bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
+    uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer);
+
+internal sealed record InputReport(RuntimeStatusResponse? Runtime, MemoryStatusResponse? Memory);
+
 /// <summary>Current HID connection and the most recent hardware/runtime reports.</summary>
 public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoResponse? Hardware,
-    RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, BoardStatusResponse? BoardStatus);
+    RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, BoardStatusResponse? BoardStatus,
+    MemoryStatusResponse? Memory);
 
 internal static class HidProtocol
 {
@@ -30,10 +43,12 @@ internal static class HidProtocol
     public const uint Usage = 0xFF000001;
     public const byte InfoReportId = 1;
     public const byte StatusReportId = 2;
+    public const byte MemoryReportId = 3;
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
     public const int InfoPayloadSize = 42;
     public const int StatusPayloadSize = 13;
+    public const int MemoryPayloadSize = 29;
     public const int InfoFeatureSize = InfoPayloadSize + 1;
     public const int StatusInputSize = StatusPayloadSize + 1;
 
@@ -82,6 +97,58 @@ internal static class HidProtocol
         return new(payload[1], ReadUInt32LittleEndian(payload[2..]), clockHz,
             (flags & 0x01) != 0, (flags & 0x02) != 0,
             temperatureValid, temperatureValid ? temperature : null, ledAvailable, ledOn);
+    }
+
+    public static MemoryStatusResponse ParseMemoryReport(ReadOnlySpan<byte> report)
+    {
+        Require(report.Length >= MemoryPayloadSize + 1 && report[0] == MemoryReportId,
+            "unexpected HID memory report length or ID");
+        Require(report[(MemoryPayloadSize + 1)..].IndexOfAnyExcept((byte)0) < 0,
+            "unexpected HID memory report padding");
+        var payload = report[1..];
+        Require(payload[0] == ReportVersion, "unsupported HID memory report version");
+        var flags = payload[2];
+        Require((flags & ~0x3f) == 0, "unknown HID memory flags");
+        var component = payload[3];
+        var mode = payload[4];
+        Require(component <= 1 && mode <= 2, "unknown HID memory type or mode");
+        var configured = (flags & 0x01) != 0;
+        var presenceKnown = (flags & 0x02) != 0;
+        var present = (flags & 0x04) != 0;
+        var initialized = (flags & 0x08) != 0;
+        var cidValid = (flags & 0x10) != 0;
+        var capacityValid = (flags & 0x20) != 0;
+        Require(!present || presenceKnown, "memory reported present without known presence");
+        Require(!initialized || (configured && presenceKnown && present),
+            "initialized memory requires a configured, present card");
+        Require(cidValid == initialized && capacityValid == initialized,
+            "initialized memory metadata flags disagree");
+        var busClockHz = ReadUInt32LittleEndian(payload[5..]);
+        var blockCount = ReadUInt32LittleEndian(payload[9..]);
+        var cid = payload.Slice(13, 16);
+        Require(initialized == (busClockHz != 0 && blockCount != 0) &&
+                (initialized || cid.IndexOfAnyExcept((byte)0) < 0),
+            "invalid memory metadata values");
+        SdCardIdentity? identity = null;
+        if (cidValid)
+        {
+            var oem = Encoding.ASCII.GetString(cid.Slice(1, 2));
+            var product = Encoding.ASCII.GetString(cid.Slice(3, 5));
+            Require(oem.All(character => character is >= ' ' and <= '~') &&
+                    product.All(character => character is >= ' ' and <= '~'), "invalid text in SD CID");
+            var revision = cid[8];
+            var date = ((cid[13] & 0x0f) << 8) | cid[14];
+            identity = new(cid[0], oem, product, $"{revision >> 4}.{revision & 0x0f}",
+                BinaryPrimitives.ReadUInt32BigEndian(cid[9..]), 2000 + (date >> 4), date & 0x0f);
+        }
+        return new(payload[1], configured, presenceKnown, presenceKnown ? present : null,
+            initialized, component == 1 ? "sd-card" : null, mode switch
+            {
+                1 => "sdio",
+                2 => "spi",
+                _ => null
+            }, initialized ? busClockHz : null, capacityValid ? blockCount : null,
+            capacityValid ? (ulong)blockCount * 512 : null, identity);
     }
 
     public static byte[] BuildLedCommandReport(bool on) =>

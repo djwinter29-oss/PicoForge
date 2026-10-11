@@ -89,3 +89,19 @@ pf_sd_card_result_t pf_sd_card_sync(void)
     }
     return pf_sdio_pio_sync();
 }
+
+void pf_sd_card_get_info(pf_sd_card_info_t *info)
+{
+    if (info == NULL) {
+        return;
+    }
+    *info = (pf_sd_card_info_t){ 0 };
+    if (!transport_selected) {
+        return;
+    }
+    if (active_transport == PF_SD_CARD_TRANSPORT_SPI) {
+        pf_sd_spi_get_info(info);
+    } else {
+        pf_sdio_pio_get_info(info);
+    }
+}

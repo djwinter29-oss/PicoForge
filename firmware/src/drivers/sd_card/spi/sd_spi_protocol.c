@@ -15,6 +15,11 @@ bool pf_sd_spi_read_token_is_valid(uint8_t token)
     return token == 0xfeu;
 }
 
+bool pf_sd_spi_write_response_is_pending(uint8_t response)
+{
+    return response == 0xffu;
+}
+
 bool pf_sd_spi_write_response_is_accepted(uint8_t response)
 {
     return (response & 0x1fu) == 0x05u;

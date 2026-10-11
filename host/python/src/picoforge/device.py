@@ -7,9 +7,12 @@ from typing import Any
 from .protocol import (
     INFO_PAYLOAD_SIZE,
     INFO_REPORT_ID,
+    MEMORY_INPUT_SIZE,
+    MEMORY_REPORT_ID,
     STATUS_INPUT_SIZE,
     build_led_command_report,
     parse_info_report,
+    parse_memory_report,
     parse_status_report,
 )
 
@@ -96,6 +99,17 @@ class PicoForgeHid:
         self._require_open()
         report = self._device.read(STATUS_INPUT_SIZE, timeout_ms)
         return parse_status_report(report) if report else None
+
+    def read_input_report(self, timeout_ms: int = 250) -> dict[str, object] | None:
+        if timeout_ms < 0:
+            raise ValueError("timeout_ms must not be negative")
+        self._require_open()
+        report = self._device.read(max(STATUS_INPUT_SIZE, MEMORY_INPUT_SIZE), timeout_ms)
+        if not report:
+            return None
+        if report[0] == MEMORY_REPORT_ID:
+            return {"kind": "memory", "data": parse_memory_report(report)}
+        return {"kind": "runtime", "data": parse_status_report(report)}
 
     def set_led(self, on: bool) -> None:
         self._require_open()

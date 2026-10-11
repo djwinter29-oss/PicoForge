@@ -18,6 +18,7 @@ def _empty_snapshot() -> dict[str, object]:
         "hardware": None,
         "runtime": None,
         "board_status": None,
+        "memory": None,
         "updated_at": None,
     }
 
@@ -88,12 +89,14 @@ class DeviceMonitor:
                         "hardware": hardware,
                         "runtime": None,
                         "board_status": None,
+                        "memory": None,
                         "updated_at": None,
                     }
                 while not self._stop.is_set():
                     with self._device_lock:
-                        runtime = client.read_status(timeout_ms=250)
-                    if runtime is not None:
+                        item = client.read_input_report(timeout_ms=250)
+                    if item is not None and item["kind"] == "runtime":
+                        runtime = item["data"]
                         board_status = _board_status_from_runtime(runtime)
                         with self._lock:
                             self._snapshot.update(
@@ -101,6 +104,14 @@ class DeviceMonitor:
                                 error=None,
                                 runtime=runtime,
                                 board_status=board_status,
+                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            )
+                    elif item is not None and item["kind"] == "memory":
+                        with self._lock:
+                            self._snapshot.update(
+                                connected=True,
+                                error=None,
+                                memory=item["data"],
                                 updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                             )
             except (OSError, RuntimeError, ValueError) as error:

@@ -16,6 +16,16 @@ typedef enum {
     PF_SD_CARD_IO_ERROR,
 } pf_sd_card_result_t;
 
+typedef struct {
+    bool initialized;
+    bool presence_known;
+    bool present;
+    bool cid_valid;
+    uint32_t bus_clock_hz;
+    uint32_t block_count;
+    uint8_t cid[16];
+} pf_sd_card_info_t;
+
 /** Return whether the selected card transport has initialized successfully. */
 bool pf_sd_card_is_initialized(void);
 
@@ -32,6 +42,9 @@ pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block, const void *bu
 
 /** Complete any pending write. */
 pf_sd_card_result_t pf_sd_card_sync(void);
+
+/** Snapshot initialized card telemetry; presence is unknown until detect or init succeeds. */
+void pf_sd_card_get_info(pf_sd_card_info_t *info);
 
 /**
  * Set a callback run between polls of card waits that can last milliseconds

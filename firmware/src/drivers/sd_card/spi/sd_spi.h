@@ -45,4 +45,6 @@ pf_sd_card_result_t pf_sd_spi_write_blocks(uint32_t first_block, const void *buf
 /** Wait for the card to finish its current write operation. */
 pf_sd_card_result_t pf_sd_spi_sync(void);
 
+void pf_sd_spi_get_info(pf_sd_card_info_t *info);
+
 #endif
