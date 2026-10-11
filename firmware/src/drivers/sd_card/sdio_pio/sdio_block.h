@@ -4,8 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PF_SD_CARD_BLOCK_SIZE 512u
-#define PF_SD_CARD_MAX_BLOCKS_PER_TRANSFER 256u
+#include "../sd_card_block.h"
 
 typedef enum {
     PF_SDIO_PIO_OK = 0,

@@ -10,7 +10,7 @@ PicoForge is an evolving embedded firmware framework for RP2040 and RP2350, buil
 
 - **Target platforms:** RP2040 and RP2350
 - **Platform services:** board support, version management, build configuration, configuration management, and logging
-- **Middleware:** FatFs, SDIO, command-line interface, storage, and USB services
+- **Middleware:** FatFs, transport-neutral SD-card storage, command-line interface, and USB services
 - **Current USB device:** CDC ACM plus HID status, board telemetry, and LED control
 - **Development workflow:** automated testing and CI/CD pipelines
 - **Intended use:** industrial, IoT, and other embedded products
@@ -30,7 +30,7 @@ The platform layer provides the shared foundation used by applications and middl
 Reusable components provide common product functionality without requiring each application to build it from scratch:
 
 - **FatFs:** file-system support for working with files on supported storage devices.
-- **SDIO:** an interface for integrating SDIO-compatible peripherals and storage.
+- **SD-card block API:** transport-independent block access; SDIO-PIO is implemented and SPI is planned.
 - **CLI:** a command-line interface for device interaction and diagnostics.
 - **Storage:** reusable storage services for application data.
 - **USB services:** common USB functionality for connected devices and host systems.
@@ -73,7 +73,7 @@ The repository follows a firmware-focused layout, with documentation, tests, and
 │   │   │   ├── system.c/h   # MCU identity, clock, and uptime
 │   │   │   ├── temperature.c/h # Internal sensor and conversion
 │   │   │   ├── led.c/h      # Board-configured LED control
-│   │   │   └── sdio/        # Multi-file PIO SD-card block driver
+│   │   │   └── sd_card/     # Shared block API with SDIO-PIO and SPI transport directories
 │   │   ├── middleware/
 │   │   │   └── storage/     # FatFs mount lifecycle API
 │   │   ├── board/           # Board topology and SD-card configuration
@@ -109,9 +109,9 @@ tools/firmware/build.sh --board pico2
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The build defaults to the SDK submodule; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
 
-The SD-card block driver is a PicoForge-owned 4-bit PIO SD memory-card host. Configure board-validated CMD and DAT0 pins before calling `picoforge_storage_mount()`; the host derives CLK and DAT1-DAT3 from DAT0. FatFs R0.16 is compiled and linked, but the example does not mount a volume or format media. See [the hardware setup options](docs/hardware-setup.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
+FatFs uses a transport-neutral SD-card block API. Select a transport with `pf_board_get_sd_card_config()`, then pass its config to `pf_storage_mount()`; FatFs itself does not know which bus is selected. SDIO-PIO is implemented. The SPI configuration is present, but its backend is not yet implemented and initialization reports it as unsupported. The example does not mount a volume or format media. See [the hardware setup options](docs/hardware-setup.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
 
-The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product identity, MCU, system clock, uptime, USB/CDC state, internal temperature, and board LED state, and accepts a set-LED command. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SDIO use grouped subdirectories. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
+The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product identity, MCU, system clock, uptime, USB/CDC state, internal temperature, and board LED state, and accepts a set-LED command. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SD card use grouped subdirectories. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
 
 To flash over a CMSIS-DAP debug probe, run `tools/firmware/load.sh --board pico` or `tools/firmware/load.sh --board pico2`. Alternatively, hold BOOTSEL while connecting USB and copy the matching UF2 file to the mounted drive. Start the Python dashboard separately with `tools/host/run-python.sh` after installing its dependencies. Host enumeration and physical sensor/LED behavior still need board validation.
 

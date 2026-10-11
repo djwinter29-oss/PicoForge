@@ -1,6 +1,6 @@
 # PicoForge Architecture
 
-> **Status:** The firmware builds for RP2040 and RP2350 and runs a single-core FreeRTOS task. Basic system, internal-temperature, board-LED, PIO SD block, and FatFs integration modules exist. The board profile declares the documented SDIO pins, but startup does not initialize or mount a card; physical wiring and I/O remain unvalidated. This is an evolving baseline, not a complete product framework.
+> **Status:** The firmware builds for RP2040 and RP2350 and runs a single-core FreeRTOS task. Basic system, internal-temperature, board-LED, PIO SD block, and FatFs integration modules exist. Board support can construct SDIO-PIO or SPI card configurations; SDIO-PIO is implemented, while SPI remains unsupported. Startup does not initialize or mount a card, and physical wiring and I/O remain unvalidated. This is an evolving baseline, not a complete product framework.
 
 ## Current Firmware
 
@@ -45,17 +45,17 @@ Provide reusable application-facing services. Storage middleware mounts FatFs ov
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem, as with `firmware/src/drivers/sd_card/sdio_pio/`. Storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. See the [SDIO block API](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.h) and [hardware setup options](hardware-setup.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sd_card/`. Storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. FatFs consumes the transport-neutral [SD-card block API](../firmware/src/drivers/sd_card/sd_card_block.h); transport configuration lives in [board support](../firmware/src/board/board.h). See the [hardware setup options](hardware-setup.md).
 
 ### Platform
 
-Own board support, configuration, logging, version metadata, and integration with the selected MCU and SDK. The board topology/configuration API lives in `firmware/src/board/`; board-specific pin mapping belongs here and must agree with [the hardware setup baseline](hardware-setup.md) and the board schematic. SD remains disabled in the current topology until the physical wiring is approved.
+Own board support, configuration, logging, version metadata, and integration with the selected MCU and SDK. The board topology/configuration API lives in `firmware/src/board/`; board-specific pin mapping belongs here and must agree with [the hardware setup baseline](hardware-setup.md) and the board schematic. The selected Pico profile exposes SDIO-PIO and SPI wiring for explicit transport selection; physical card operation still needs board validation.
 
 ## External Components
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The 4-bit PIO SD memory-card host is implemented in `firmware/src/drivers/sd_card/sdio_pio/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/`, configured and adapted under `firmware/src/integration/fatfs/`, and compiled into the firmware.
 
-`pf_storage_mount()` explicitly initializes the configured SD card and mounts the existing FAT/exFAT volume; it never formats the card. Mounting is not called during startup because the repository has no approved GPIO assignment. FatFs is configured without cross-task locking, so mount, unmount, and file operations must be serialized through one storage-owner task. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
+`pf_storage_mount()` explicitly initializes the configured SD card and mounts the existing FAT/exFAT volume; it never formats the card. No startup call currently selects a transport or mounts the volume. FatFs accesses media only through the transport-neutral SD-card block API and is configured without cross-task locking, so mount, unmount, and file operations must be serialized through one storage-owner task. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
 
 ## Testing and Validation
 
@@ -63,4 +63,4 @@ Ceedling is configured by the repository-root `project.yml`. Host unit tests bel
 
 `host/python/tests/`, `host/dotnet/tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 
-Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow. The pinout document records standard Pico/Pico 2 targets and the configured 4-bit SD breakout mapping. The SDIO configuration is available to storage, but card initialization and physical I/O still require board validation; external QSPI flash is not currently supported.
+Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow. The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support can construct either transport configuration; SDIO-PIO card initialization and physical I/O still require board validation, while SPI card I/O is not implemented. External QSPI flash is not currently supported.

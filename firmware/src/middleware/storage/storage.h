@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #include "ff.h"
-#include "sdio_pio.h"
+#include "sd_card.h"
 
 #define PF_STORAGE_VOLUME "0:"
 
@@ -13,7 +13,7 @@ typedef enum {
     PF_STORAGE_INVALID_ARGUMENT,
     PF_STORAGE_ALREADY_MOUNTED,
     PF_STORAGE_NOT_MOUNTED,
-    PF_STORAGE_SDIO_ERROR,
+    PF_STORAGE_SD_CARD_ERROR,
     PF_STORAGE_FILESYSTEM_ERROR,
 } pf_storage_result_t;
 
@@ -25,7 +25,7 @@ typedef enum {
  * The optional result pointer receives the underlying FatFs result code.
  */
 pf_storage_result_t pf_storage_mount(
-    const pf_sdio_config_t *sdio_config, FRESULT *filesystem_result);
+    const pf_sd_card_config_t *sd_card_config, FRESULT *filesystem_result);
 
 /** Unmount the volume after all open FatFs objects have been closed. */
 pf_storage_result_t pf_storage_unmount(FRESULT *filesystem_result);

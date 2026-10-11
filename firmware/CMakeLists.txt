@@ -51,6 +51,18 @@ target_link_libraries(pf_sdio_backend PUBLIC
     pico_stdlib
 )
 
+add_library(pf_sd_card STATIC
+    src/drivers/sd_card/sd_card.c
+)
+target_include_directories(pf_sd_card PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"
+)
+target_link_libraries(pf_sd_card PUBLIC
+    hardware_spi
+    pf_sdio_backend
+)
+
 add_library(pf_system STATIC
     src/drivers/system.c
 )
@@ -100,12 +112,11 @@ target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
     "${CMAKE_CURRENT_LIST_DIR}/src/middleware/storage"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
 target_link_libraries(pf_storage PUBLIC
     pf_fatfs
-    pf_sdio_backend
+    pf_sd_card
 )
 
 add_library(pf_board STATIC
@@ -121,6 +132,7 @@ target_include_directories(pf_board PUBLIC
 target_link_libraries(pf_board PUBLIC
     hardware_gpio
     hardware_pio
+    hardware_spi
     pico_stdio_uart
     pf_led
     pf_sdio_backend

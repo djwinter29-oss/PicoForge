@@ -1,6 +1,7 @@
 #include "board.h"
 
 #include "hardware/pio.h"
+#include "hardware/spi.h"
 #include "hardware/uart.h"
 #include "pico/stdio_uart.h"
 #include "led.h"
@@ -34,28 +35,51 @@ bool pf_board_init(void)
     return true;
 }
 
-bool pf_board_get_sdio_config(pf_sdio_config_t *config)
+bool pf_board_get_sd_card_config(pf_sd_card_transport_t transport,
+                                 pf_sd_card_config_t *config)
 {
     const pf_board_resources_t *topology = pf_board_resources_get();
 
-    if ((config == NULL) || !topology->sdio_enabled ||
+    if ((config == NULL) || !topology->sd_card_enabled ||
+        ((transport != PF_SD_CARD_TRANSPORT_SDIO_PIO) &&
+         (transport != PF_SD_CARD_TRANSPORT_SPI)) ||
         !pf_board_resources_validate(topology)) {
         return false;
     }
 
-    *config = (pf_sdio_config_t){
-        .command_gpio = topology->command_gpio,
-        .clock_gpio = topology->clock_gpio,
-        .data_gpio = { topology->data_gpio[0], topology->data_gpio[1],
-                       topology->data_gpio[2], topology->data_gpio[3] },
-        .pio = (topology->pio_index == 0u) ? pio0 : pio1,
-        .clock_hz = topology->clock_hz,
-        .dma_irq = 0u,
-        .use_card_detect = topology->card_detect_enabled,
-        .card_detect_gpio = topology->card_detect_gpio,
-        .card_detect_active_high = topology->card_detect_active_high,
-        .card_detect_use_pull = topology->card_detect_use_pull,
-        .card_detect_pull_up = topology->card_detect_pull_up,
-    };
-    return true;
+    config->transport = transport;
+    if (transport == PF_SD_CARD_TRANSPORT_SDIO_PIO) {
+        config->bus.sdio_pio = (pf_sdio_pio_config_t){
+            .command_gpio = topology->command_gpio,
+            .clock_gpio = topology->clock_gpio,
+            .data_gpio = { topology->data_gpio[0], topology->data_gpio[1],
+                           topology->data_gpio[2], topology->data_gpio[3] },
+            .pio = (topology->pio_index == 0u) ? pio0 : pio1,
+            .clock_hz = topology->clock_hz,
+            .dma_irq = 0u,
+            .use_card_detect = topology->card_detect_enabled,
+            .card_detect_gpio = topology->card_detect_gpio,
+            .card_detect_active_high = topology->card_detect_active_high,
+            .card_detect_use_pull = topology->card_detect_use_pull,
+            .card_detect_pull_up = topology->card_detect_pull_up,
+        };
+        return true;
+    }
+    if (transport == PF_SD_CARD_TRANSPORT_SPI) {
+        config->bus.spi = (pf_sdspi_config_t){
+            .spi = (topology->spi_index == 0u) ? spi0 : spi1,
+            .clock_gpio = topology->spi_clock_gpio,
+            .mosi_gpio = topology->spi_mosi_gpio,
+            .miso_gpio = topology->spi_miso_gpio,
+            .chip_select_gpio = topology->spi_chip_select_gpio,
+            .clock_hz = topology->spi_clock_hz,
+            .use_card_detect = topology->card_detect_enabled,
+            .card_detect_gpio = topology->card_detect_gpio,
+            .card_detect_active_high = topology->card_detect_active_high,
+            .card_detect_use_pull = topology->card_detect_use_pull,
+            .card_detect_pull_up = topology->card_detect_pull_up,
+        };
+        return true;
+    }
+    return false;
 }

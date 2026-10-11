@@ -10,12 +10,18 @@ static pf_board_resources_t valid_topology(void)
         .monitor_uart_tx_gpio = 0u,
         .monitor_uart_rx_gpio = 1u,
         .monitor_uart_baud_rate = 115200u,
-        .sdio_enabled = true,
+        .sd_card_enabled = true,
         .command_gpio = 3u,
         .clock_gpio = 2u,
         .data_gpio = { 4u, 7u, 6u, 5u },
         .pio_index = 0u,
         .clock_hz = 0u,
+        .spi_index = 0u,
+        .spi_clock_gpio = 2u,
+        .spi_mosi_gpio = 3u,
+        .spi_miso_gpio = 4u,
+        .spi_chip_select_gpio = 5u,
+        .spi_clock_hz = 400000u,
     };
 }
 
@@ -31,7 +37,7 @@ void test_accepts_unconfigured_sd_topology(void)
         .monitor_uart_tx_gpio = 0u,
         .monitor_uart_rx_gpio = 1u,
         .monitor_uart_baud_rate = 115200u,
-        .sdio_enabled = false,
+        .sd_card_enabled = false,
         .command_gpio = PF_BOARD_PIN_UNASSIGNED,
         .clock_gpio = PF_BOARD_PIN_UNASSIGNED,
         .data_gpio = { PF_BOARD_PIN_UNASSIGNED, PF_BOARD_PIN_UNASSIGNED,
@@ -46,6 +52,27 @@ void test_accepts_valid_four_bit_sd_topology(void)
     pf_board_resources_t topology = valid_topology();
 
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+}
+
+void test_accepts_valid_spi_sd_topology(void)
+{
+    pf_board_resources_t topology = valid_topology();
+
+    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+}
+
+void test_rejects_invalid_spi_sd_pin_assignments(void)
+{
+    pf_board_resources_t topology = valid_topology();
+
+    topology.spi_index = 2u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+    topology = valid_topology();
+    topology.spi_mosi_gpio = topology.spi_clock_gpio;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+    topology = valid_topology();
+    topology.spi_clock_gpio = topology.monitor_uart_tx_gpio;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 }
 
 void test_rejects_invalid_monitor_uart_assignment(void)
@@ -160,7 +187,7 @@ void test_validates_led_presence_and_sd_pin_collisions(void)
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 
     topology = valid_topology();
-    topology.sdio_enabled = false;
+    topology.sd_card_enabled = false;
     topology.led_enabled = true;
     topology.led_gpio = 30u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));

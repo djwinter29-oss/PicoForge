@@ -60,7 +60,7 @@ The lab uses two types of memory/storage breakout: the Adafruit microSD board an
 
 #### SD-Card Breakout
 
-The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. The board profile configures its active-high DET signal on GP8 and relies on the breakout's pull-up, without an MCU pull. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. The board profile provides this SDIO configuration, but startup does not initialize or mount the card; physical wiring and card I/O still require validation. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching. SD-SPI firmware is not implemented.
+The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup does not initialize or mount the card; physical wiring and SDIO card I/O still require validation. SD-SPI configuration is available, but its card backend is not implemented. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching.
 
 #### W25Q128 Flash Breakout
 
@@ -113,7 +113,7 @@ Firmware resources that do not use header GPIOs:
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
-When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. SDIO is available through the board configuration API but is not initialized or mounted automatically; validate the wiring on hardware before enabling storage use.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. The board API accepts an explicit SDIO-PIO or SPI transport choice, but storage is not initialized or mounted automatically. Validate the wiring on hardware before enabling storage use; SPI card I/O remains unimplemented.
 
 ## Electrical and Power Baseline
 
