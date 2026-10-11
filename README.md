@@ -111,7 +111,9 @@ Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmw
 
 The SD-card block driver is a PicoForge-owned 4-bit PIO SD memory-card host. Configure board-validated CMD and DAT0 pins before calling `picoforge_storage_mount()`; the host derives CLK and DAT1-DAT3 from DAT0. FatFs R0.16 is compiled and linked, but the example does not mount a volume or format media. See [the SDIO pinout constraints](docs/pinout.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
 
-The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product identity, MCU, system clock, uptime, USB/CDC state, internal temperature, and board LED state, and accepts a set-LED command. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SDIO use grouped subdirectories. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`. To flash it, hold the board's BOOTSEL button while connecting USB, then copy the matching UF2 file to the mounted BOOTSEL drive. Host enumeration and physical sensor/LED behavior still need board validation.
+The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product identity, MCU, system clock, uptime, USB/CDC state, internal temperature, and board LED state, and accepts a set-LED command. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SDIO use grouped subdirectories. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
+
+To flash over a CMSIS-DAP debug probe, run `tools/firmware/load.sh --board pico` or `tools/firmware/load.sh --board pico2`. Alternatively, hold BOOTSEL while connecting USB and copy the matching UF2 file to the mounted drive. Start the Python dashboard separately with `tools/host/run-python.sh` after installing its dependencies. Host enumeration and physical sensor/LED behavior still need board validation.
 
 ## Host Tools
 
@@ -125,11 +127,13 @@ picoforge status
 picoforge web
 ```
 
-The Python dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:
+`tools/host/run-python.sh` starts the dashboard by default; pass `status` or `web` and its options to run a specific command. The dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:
 
 ```sh
-dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
+tools/host/run-dotnet.sh
 ```
+
+Set `DOTNET` to select a .NET 10 SDK executable. Application arguments can be passed through the script.
 
 For a direct browser connection, serve the WebHID directory so the page opens at the origin root:
 

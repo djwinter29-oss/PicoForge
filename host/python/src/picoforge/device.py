@@ -46,9 +46,14 @@ def _path_string(path: Any) -> str:
 def _matches_vendor_collection(info: dict[str, Any]) -> bool:
     usage_page = info.get("usage_page")
     usage = info.get("usage")
-    if usage_page is not None and usage is not None:
+    if usage_page not in (None, 0) and usage not in (None, 0):
         return usage_page == USAGE_PAGE and usage == USAGE
-    return info.get("product_string") == PRODUCT_STRING
+    product_string = info.get("product_string")
+    if product_string:
+        return product_string == PRODUCT_STRING
+    # enumerate() is already restricted to our VID/PID; some HIDAPI backends
+    # leave usage and string metadata empty when the device is not readable.
+    return True
 
 
 def _select_device(serial_number: str | None, device_path: str | None) -> dict[str, Any]:
@@ -76,7 +81,10 @@ class PicoForgeHid:
         try:
             device.open_path(info["path"])
         except OSError as error:
-            raise RuntimeError("failed to open PicoForge HID interface; check HID device permissions") from error
+            raise RuntimeError(
+                "failed to open PicoForge HID interface; check device permissions "
+                "(Linux setup: see host/python/README.md)"
+            ) from error
         self._device = device
         self.serial_number = info.get("serial_number") or ""
         self.closed = False

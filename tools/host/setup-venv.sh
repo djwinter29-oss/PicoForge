@@ -86,5 +86,5 @@ if [[ ! -x "$GCOVR_BIN" ]] || [[ "$("$GCOVR_BIN" --version | sed -n '1p')" != "g
 fi
 
 printf 'Environment ready: %s\n' "$VENV_DIR"
-printf 'Activate with: source %s/bin/activate\n' "$VENV_DIR"
+printf 'To activate it in this shell, run: source %q\n' "$VENV_DIR/bin/activate"
 printf 'Check gcovr with: %s --version\n' "$GCOVR_BIN"

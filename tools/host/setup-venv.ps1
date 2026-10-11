@@ -84,6 +84,6 @@ try {
 $powershellActivate = Join-Path $VenvDir "Scripts/Activate.ps1"
 $commandPromptActivate = Join-Path $VenvDir "Scripts/activate.bat"
 Write-Host "Environment ready: $VenvDir"
-Write-Host "PowerShell: & `"$powershellActivate`""
+Write-Host "To activate in this PowerShell session, run: . `"$powershellActivate`""
 Write-Host "Command Prompt: `"$commandPromptActivate`""
 Write-Host "Check gcovr with: `"$gcovrExecutable`" --version"
