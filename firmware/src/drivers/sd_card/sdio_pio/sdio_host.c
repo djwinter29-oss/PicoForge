@@ -14,18 +14,18 @@
 #define SDIO_RESPONSE_IRQ 0u
 #define SDIO_DATA_READ_IRQ 1u
 #define SDIO_DATA_NIBBLE_COUNT 1040u
-#define SDIO_DATA_WORD_COUNT PF_SDIO_TRANSFER_WORDS
+#define SDIO_DATA_WORD_COUNT PF_SDIO_PIO_TRANSFER_WORDS
 
-static bool load_command_program(pf_sdio_host_t *host)
+static bool load_command_program(pf_sdio_pio_host_t *host)
 {
     pio_sm_config config;
 
-    if (!pio_can_add_program(host->pio, &pf_sdio_command_program)) {
+    if (!pio_can_add_program(host->pio, &pf_sdio_pio_command_program)) {
         return false;
     }
-    host->command_program_offset = pio_add_program(host->pio, &pf_sdio_command_program);
+    host->command_program_offset = pio_add_program(host->pio, &pf_sdio_pio_command_program);
     host->command_program_loaded = true;
-    config = pf_sdio_command_program_get_default_config(host->command_program_offset);
+    config = pf_sdio_pio_command_program_get_default_config(host->command_program_offset);
     sm_config_set_out_pins(&config, host->command_gpio, 1u);
     sm_config_set_set_pins(&config, host->command_gpio, 1u);
     sm_config_set_in_pins(&config, host->command_gpio);
@@ -39,15 +39,15 @@ static bool load_command_program(pf_sdio_host_t *host)
     return true;
 }
 
-static bool load_data_rx_program(pf_sdio_host_t *host)
+static bool load_data_rx_program(pf_sdio_pio_host_t *host)
 {
     pio_sm_config config;
 
-    if (!pio_can_add_program(host->pio, &pf_sdio_data_rx_program)) {
+    if (!pio_can_add_program(host->pio, &pf_sdio_pio_data_rx_program)) {
         return false;
     }
-    host->data_rx_program_offset = pio_add_program(host->pio, &pf_sdio_data_rx_program);
-    config = pf_sdio_data_rx_program_get_default_config(host->data_rx_program_offset);
+    host->data_rx_program_offset = pio_add_program(host->pio, &pf_sdio_pio_data_rx_program);
+    config = pf_sdio_pio_data_rx_program_get_default_config(host->data_rx_program_offset);
     sm_config_set_in_pins(&config, host->data_gpio_base);
     sm_config_set_in_shift(&config, false, true, 32u);
     sm_config_set_out_shift(&config, false, false, 32u);
@@ -57,18 +57,18 @@ static bool load_data_rx_program(pf_sdio_host_t *host)
     return true;
 }
 
-static bool restore_command_mode(pf_sdio_host_t *host)
+static bool restore_command_mode(pf_sdio_pio_host_t *host)
 {
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
 
     if (host->data_tx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_data_tx_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_data_tx_program,
                            host->data_tx_program_offset);
         host->data_tx_program_loaded = false;
     }
     if (host->clock_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_clock_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_clock_program,
                            host->clock_program_offset);
         host->clock_program_loaded = false;
     }
@@ -91,7 +91,7 @@ static bool restore_command_mode(pf_sdio_host_t *host)
     return true;
 }
 
-static bool wait_for_command_complete(pf_sdio_host_t *host,
+static bool wait_for_command_complete(pf_sdio_pio_host_t *host,
                                       uint32_t *response_words,
                                       size_t response_word_count)
 {
@@ -114,8 +114,8 @@ static bool wait_for_command_complete(pf_sdio_host_t *host,
     return words_read == response_word_count;
 }
 
-bool pf_sdio_host_init(pf_sdio_host_t *host,
-                              const pf_sdio_config_t *config)
+bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
+                              const pf_sdio_pio_config_t *config)
 {
     int state_machine;
     int dma_channel;
@@ -123,7 +123,7 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
 
     if ((host == NULL) || (config == NULL) ||
         (((config->pio != pio0) && (config->pio != pio1))) ||
-        !pio_can_add_program(config->pio, &pf_sdio_command_program)) {
+        !pio_can_add_program(config->pio, &pf_sdio_pio_command_program)) {
         return false;
     }
 
@@ -177,7 +177,7 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
     host->pio->input_sync_bypass |= host->input_sync_bypass_mask;
 
     if (!load_command_program(host) || !load_data_rx_program(host)) {
-        pf_sdio_host_deinit(host);
+        pf_sdio_pio_host_deinit(host);
         return false;
     }
 
@@ -186,8 +186,8 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
         gpio_pull_up(host->data_gpio_base + pin);
     }
 
-    if (!pf_sdio_host_set_clock(host, 400000u)) {
-        pf_sdio_host_deinit(host);
+    if (!pf_sdio_pio_host_set_clock(host, 400000u)) {
+        pf_sdio_pio_host_deinit(host);
         return false;
     }
 
@@ -195,7 +195,7 @@ bool pf_sdio_host_init(pf_sdio_host_t *host,
     return true;
 }
 
-void pf_sdio_host_deinit(pf_sdio_host_t *host)
+void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host)
 {
     if ((host == NULL) || (host->pio == NULL)) {
         return;
@@ -204,21 +204,21 @@ void pf_sdio_host_deinit(pf_sdio_host_t *host)
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
     if (host->data_rx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_data_rx_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_data_rx_program,
                            host->data_rx_program_offset);
         host->data_rx_program_loaded = false;
     }
     if (host->command_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_command_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_command_program,
                            host->command_program_offset);
         host->command_program_loaded = false;
     }
     if (host->data_tx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_data_tx_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_data_tx_program,
                            host->data_tx_program_offset);
     }
     if (host->clock_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_clock_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_clock_program,
                            host->clock_program_offset);
     }
     host->pio->input_sync_bypass =
@@ -230,7 +230,7 @@ void pf_sdio_host_deinit(pf_sdio_host_t *host)
     memset(host, 0, sizeof(*host));
 }
 
-bool pf_sdio_host_set_clock(pf_sdio_host_t *host, uint32_t clock_hz)
+bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
 {
     float divider;
 
@@ -245,7 +245,7 @@ bool pf_sdio_host_set_clock(pf_sdio_host_t *host, uint32_t clock_hz)
     return true;
 }
 
-bool pf_sdio_host_command(pf_sdio_host_t *host, uint8_t command,
+bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
                                  uint32_t argument, uint16_t response_bits,
                                  uint32_t *response_words, size_t response_word_capacity)
 {
@@ -259,7 +259,7 @@ bool pf_sdio_host_command(pf_sdio_host_t *host, uint8_t command,
          ((response_words == NULL) || (response_word_count > response_word_capacity))) ||
         (response_bits > 136u) ||
         ((response_bits != 0u) && (response_bits < 8u)) ||
-        !pf_sdio_build_command(command, argument, frame)) {
+        !pf_sdio_pio_build_command(command, argument, frame)) {
         return false;
     }
 
@@ -288,7 +288,7 @@ bool pf_sdio_host_command(pf_sdio_host_t *host, uint8_t command,
     return true;
 }
 
-bool pf_sdio_host_command_bytes(pf_sdio_host_t *host, uint8_t command,
+bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
                                        uint32_t argument, uint16_t response_bits,
                                        uint8_t *response, size_t response_capacity)
 {
@@ -299,19 +299,19 @@ bool pf_sdio_host_command_bytes(pf_sdio_host_t *host, uint8_t command,
     if ((response_size > response_capacity) ||
         ((response_size > 0u) && (response == NULL)) ||
         (response_word_count > sizeof(response_words) / sizeof(response_words[0])) ||
-        !pf_sdio_host_command(host, command, argument, response_bits,
+        !pf_sdio_pio_host_command(host, command, argument, response_bits,
                                      response_words, response_word_count)) {
         return false;
     }
 
-    return pf_sdio_response_words_to_bytes(response_words, response_bits,
+    return pf_sdio_pio_response_words_to_bytes(response_words, response_bits,
                                                   response, response_capacity);
 }
 
-bool pf_sdio_host_read_sector(pf_sdio_host_t *host, uint32_t sector,
+bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                      bool block_addressed, uint8_t block[512])
 {
-    uint32_t transfer_words[PF_SDIO_TRANSFER_WORDS] __attribute__((aligned(4)));
+    uint32_t transfer_words[PF_SDIO_PIO_TRANSFER_WORDS] __attribute__((aligned(4)));
     uint8_t response[6];
     uint32_t response_argument;
     uint32_t command_argument;
@@ -320,11 +320,11 @@ bool pf_sdio_host_read_sector(pf_sdio_host_t *host, uint32_t sector,
     bool success = false;
 
     if ((host == NULL) || (block == NULL) || !host->data_rx_program_loaded ||
-        (!block_addressed && (sector > (UINT32_MAX / PF_SDIO_BLOCK_SIZE)))) {
+        (!block_addressed && (sector > (UINT32_MAX / PF_SD_CARD_BLOCK_SIZE)))) {
         return false;
     }
 
-    command_argument = block_addressed ? sector : sector * PF_SDIO_BLOCK_SIZE;
+    command_argument = block_addressed ? sector : sector * PF_SD_CARD_BLOCK_SIZE;
     pio_sm_clear_fifos(host->pio, host->data_sm);
     pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
     pio_sm_put_blocking(host->pio, host->data_sm, SDIO_DATA_NIBBLE_COUNT - 1u);
@@ -339,9 +339,9 @@ bool pf_sdio_host_read_sector(pf_sdio_host_t *host, uint32_t sector,
     dma_channel_start(host->dma_channel);
     pio_sm_set_enabled(host->pio, host->data_sm, true);
 
-    if (!pf_sdio_host_command_bytes(host, 17u, command_argument, 48u,
+    if (!pf_sdio_pio_host_command_bytes(host, 17u, command_argument, 48u,
                                            response, sizeof(response)) ||
-        !pf_sdio_parse_response(17u, response, &response_argument, true)) {
+        !pf_sdio_pio_parse_response(17u, response, &response_argument, true)) {
         goto cleanup;
     }
 
@@ -355,8 +355,8 @@ bool pf_sdio_host_read_sector(pf_sdio_host_t *host, uint32_t sector,
     }
 
     dma_channel_wait_for_finish_blocking(host->dma_channel);
-    success = pf_sdio_remap_data_lanes(transfer_words, host->data_gpio, false) &&
-              pf_sdio_unpack_data_block(transfer_words, block);
+    success = pf_sdio_pio_remap_data_lanes(transfer_words, host->data_gpio, false) &&
+              pf_sdio_pio_unpack_data_block(transfer_words, block);
 
 cleanup:
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -371,10 +371,10 @@ cleanup:
     return success;
 }
 
-bool pf_sdio_host_write_sector(pf_sdio_host_t *host, uint32_t sector,
+bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                       bool block_addressed, const uint8_t block[512])
 {
-    uint32_t transfer_words[PF_SDIO_TRANSFER_WORDS] __attribute__((aligned(4))) = { 0u };
+    uint32_t transfer_words[PF_SDIO_PIO_TRANSFER_WORDS] __attribute__((aligned(4))) = { 0u };
     uint8_t response[6];
     uint32_t response_argument;
     uint32_t command_argument;
@@ -384,51 +384,51 @@ bool pf_sdio_host_write_sector(pf_sdio_host_t *host, uint32_t sector,
     bool success = false;
 
     if ((host == NULL) || (block == NULL) ||
-        (!block_addressed && (sector > (UINT32_MAX / PF_SDIO_BLOCK_SIZE)))) {
+        (!block_addressed && (sector > (UINT32_MAX / PF_SD_CARD_BLOCK_SIZE)))) {
         return false;
     }
-    pf_sdio_pack_data_block(block, transfer_words);
-    if (!pf_sdio_remap_data_lanes(transfer_words, host->data_gpio, true)) {
+    pf_sdio_pio_pack_data_block(block, transfer_words);
+    if (!pf_sdio_pio_remap_data_lanes(transfer_words, host->data_gpio, true)) {
         return false;
     }
 
-    command_argument = block_addressed ? sector : sector * PF_SDIO_BLOCK_SIZE;
-    if (!pf_sdio_host_command_bytes(host, 24u, command_argument, 48u,
+    command_argument = block_addressed ? sector : sector * PF_SD_CARD_BLOCK_SIZE;
+    if (!pf_sdio_pio_host_command_bytes(host, 24u, command_argument, 48u,
                                            response, sizeof(response)) ||
-        !pf_sdio_parse_response(24u, response, &response_argument, true)) {
+        !pf_sdio_pio_parse_response(24u, response, &response_argument, true)) {
         return false;
     }
 
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
     if (host->data_rx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_data_rx_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_data_rx_program,
                            host->data_rx_program_offset);
         host->data_rx_program_loaded = false;
     }
     if (host->command_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_command_program,
+        pio_remove_program(host->pio, &pf_sdio_pio_command_program,
                            host->command_program_offset);
         host->command_program_loaded = false;
     }
 
-    if (!pio_can_add_program(host->pio, &pf_sdio_clock_program) ||
-        !pio_can_add_program(host->pio, &pf_sdio_data_tx_program)) {
+    if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
+        !pio_can_add_program(host->pio, &pf_sdio_pio_data_tx_program)) {
         goto restore;
     }
-    host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_clock_program);
+    host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
     host->clock_program_loaded = true;
-    host->data_tx_program_offset = pio_add_program(host->pio, &pf_sdio_data_tx_program);
+    host->data_tx_program_offset = pio_add_program(host->pio, &pf_sdio_pio_data_tx_program);
     host->data_tx_program_loaded = true;
 
-    state_machine_config = pf_sdio_clock_program_get_default_config(host->clock_program_offset);
+    state_machine_config = pf_sdio_pio_clock_program_get_default_config(host->clock_program_offset);
     sm_config_set_sideset_pins(&state_machine_config, host->clock_gpio);
     pio_sm_init(host->pio, host->command_sm, host->clock_program_offset, &state_machine_config);
     pio_sm_set_consecutive_pindirs(host->pio, host->command_sm, host->clock_gpio, 1u, true);
     pio_sm_set_clkdiv(host->pio, host->command_sm,
                       (float)host->system_clock_hz / (2.0f * (float)host->current_clock_hz));
 
-    state_machine_config = pf_sdio_data_tx_program_get_default_config(host->data_tx_program_offset);
+    state_machine_config = pf_sdio_pio_data_tx_program_get_default_config(host->data_tx_program_offset);
     sm_config_set_out_pins(&state_machine_config, host->data_gpio_base, 4u);
     sm_config_set_set_pins(&state_machine_config, host->data_gpio_base, 4u);
     sm_config_set_in_pins(&state_machine_config, host->data_gpio_base);
@@ -461,7 +461,7 @@ bool pf_sdio_host_write_sector(pf_sdio_host_t *host, uint32_t sector,
     }
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) > 0u) {
-        success = pf_sdio_write_response_accepted(
+        success = pf_sdio_pio_write_response_accepted(
             pio_sm_get(host->pio, host->data_sm));
     }
 
