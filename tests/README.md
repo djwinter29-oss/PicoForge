@@ -9,7 +9,7 @@ This directory structure separates firmware unit tests, repository-level contrac
 - Name test files `test_*.c`.
 - Use Unity assertions and CMock for hardware-facing collaborators.
 - Keep Pico SDK, board support, timing, GPIO, USB, and SDIO behavior out of host-only tests; cover those on target or with hardware validation.
-- Use the repository-root `project.yml` and `tools/firmware/setup-ceedling-testing.sh` to configure and run Ceedling.
+- Use the repository-root `project.yml` and `tools/validation/setup-ceedling-testing.sh` to configure and run Ceedling.
 
 No firmware unit-test files have been added yet; `firmware/tests/README.md` documents the setup and commands.
 

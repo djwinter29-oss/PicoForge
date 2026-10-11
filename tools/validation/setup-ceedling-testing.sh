@@ -9,12 +9,12 @@ COVERAGE_VENV="$REPO_ROOT/build/coverage-tools"
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     cat <<'EOF'
-Usage: tools/firmware/setup-ceedling-testing.sh [Ceedling task and options]
+Usage: tools/validation/setup-ceedling-testing.sh [Ceedling task and options]
 
 Installs pinned Ceedling and gcovr, then runs Ceedling from the repository root.
 Requires Ruby 3+, GCC/gcov, and Python 3.10+ with venv support or uv.
 With no arguments, shows Ceedling help. For example:
-tools/firmware/setup-ceedling-testing.sh test:all
+tools/validation/setup-ceedling-testing.sh test:all
 EOF
     exit 0
 fi

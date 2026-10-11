@@ -38,7 +38,7 @@ if [ "$#" -gt 0 ]; then
     shift
 fi
 
-"$SCRIPT_DIR/check-hid-permissions.sh"
+"$SCRIPT_DIR/hid-permissions-check.sh"
 
 PYTHONPATH="$REPO_ROOT/host/python/src${PYTHONPATH:+:$PYTHONPATH}" \
     exec "$PYTHON_EXE" -m picoforge "$APP_COMMAND" "$@"

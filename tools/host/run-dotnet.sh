@@ -33,7 +33,7 @@ if [ ! -f "$PROJECT" ]; then
     exit 1
 fi
 
-"$SCRIPT_DIR/check-hid-permissions.sh"
+"$SCRIPT_DIR/hid-permissions-check.sh"
 
 exec "$DOTNET_EXE" run \
     --project "$PROJECT" \

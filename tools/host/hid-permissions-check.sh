@@ -17,7 +17,7 @@ for device_node in /dev/hidraw* /dev/bus/usb/*/*; do
 
     if [ ! -r "$device_node" ] || [ ! -w "$device_node" ]; then
         echo "No read/write permission for PicoForge device node: $device_node" >&2
-        echo "Run tools/host/setup-hid-permissions.sh, then reconnect the Pico." >&2
+        echo "Run tools/host/hid-permissions-setup.sh, then reconnect the Pico." >&2
         exit 1
     fi
 done

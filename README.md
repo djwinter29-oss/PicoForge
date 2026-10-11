@@ -48,7 +48,7 @@ PicoForge is intended to support the full embedded development cycle, from bring
 
 PicoForge is designed for teams building industrial controllers, connected IoT devices, and other embedded products that benefit from reusable platform services and a repeatable development workflow.
 
-See [docs/pinout.md](docs/pinout.md) for Pico/Pico 2 header wiring, a candidate SD-card breakout map, and external QSPI flash constraints.
+See [docs/hardware-setup.md](docs/hardware-setup.md) for Pico/Pico 2 header wiring, breakout options, and external flash constraints.
 See [docs/architecture.md](docs/architecture.md) for implemented status and intended module boundaries.
 
 ## Repository Layout
@@ -109,7 +109,7 @@ tools/firmware/build.sh --board pico2
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The build defaults to the SDK submodule; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
 
-The SD-card block driver is a PicoForge-owned 4-bit PIO SD memory-card host. Configure board-validated CMD and DAT0 pins before calling `picoforge_storage_mount()`; the host derives CLK and DAT1-DAT3 from DAT0. FatFs R0.16 is compiled and linked, but the example does not mount a volume or format media. See [the SDIO pinout constraints](docs/pinout.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
+The SD-card block driver is a PicoForge-owned 4-bit PIO SD memory-card host. Configure board-validated CMD and DAT0 pins before calling `picoforge_storage_mount()`; the host derives CLK and DAT1-DAT3 from DAT0. FatFs R0.16 is compiled and linked, but the example does not mount a volume or format media. See [the hardware setup options](docs/hardware-setup.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
 
 The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces. CDC sends a greeting when opened; HID reports product identity, MCU, system clock, uptime, USB/CDC state, internal temperature, and board LED state, and accepts a set-LED command. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SDIO use grouped subdirectories. Its VID/PID (`0xCAFE:0x4011`) is for development only and must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
 
@@ -140,7 +140,7 @@ tools/host/run-webhid.sh
 
 Open `http://localhost:8000/` in a WebHID-capable browser, connect the board, and grant access to its HID interface. Use `--port` or `--bind` to change the server settings.
 
-On Linux, if either launcher reports a HID permission error, run `tools/host/setup-hid-permissions.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session; both launchers check device-node permissions and exit with this instruction if access is blocked.
+On Linux, if either launcher reports a HID permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session; both launchers check device-node permissions and exit with this instruction if access is blocked.
 
 WebHID requires a secure browser context and a user-granted device permission. CDC remains available to serial terminal applications.
 

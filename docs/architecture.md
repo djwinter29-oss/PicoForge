@@ -45,11 +45,11 @@ Provide reusable application-facing services. Storage middleware mounts FatFs ov
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem, as with `firmware/src/drivers/sdio/`. Storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. See the [SDIO block API](../firmware/src/drivers/sdio/sdio_pio.h) and [pinout constraints](pinout.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem, as with `firmware/src/drivers/sdio/`. Storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. See the [SDIO block API](../firmware/src/drivers/sdio/sdio_pio.h) and [hardware setup options](hardware-setup.md).
 
 ### Platform
 
-Own board support, configuration, logging, version metadata, and integration with the selected MCU and SDK. The board topology/configuration API lives in `firmware/src/board/`; board-specific pin mapping belongs here and must agree with [the pinout baseline](pinout.md) and the board schematic. SD remains disabled in the current topology until the physical wiring is approved.
+Own board support, configuration, logging, version metadata, and integration with the selected MCU and SDK. The board topology/configuration API lives in `firmware/src/board/`; board-specific pin mapping belongs here and must agree with [the hardware setup baseline](hardware-setup.md) and the board schematic. SD remains disabled in the current topology until the physical wiring is approved.
 
 ## External Components
 

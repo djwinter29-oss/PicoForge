@@ -7,18 +7,18 @@ USB_RULE='SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="cafe", 
 HIDRAW_RULE='SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="cafe", ATTRS{idProduct}=="4011", GROUP="plugdev", MODE="0660", TAG+="uaccess"'
 RULE_CONTENT=$(printf '%s\n%s' "$USB_RULE" "$HIDRAW_RULE")
 LEGACY_RULE='SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="cafe", ATTRS{idProduct}=="4011", TAG+="uaccess"'
-PREVIOUS_RULE='SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="cafe", ATTRS{idProduct}=="4011", GROUP="plugdev", MODE="0660", TAG+="uaccess"'
+PREVIOUS_RULE="$HIDRAW_RULE"
 
 case "${1:-}" in
     -h|--help)
-        printf 'Usage: tools/host/setup-hid-permissions.sh\nInstall or update the PicoForge Linux HID udev rule. May prompt for sudo.\n'
+        printf 'Usage: tools/host/hid-permissions-setup.sh\nInstall or update the PicoForge Linux HID udev rule. May prompt for sudo.\n'
         exit 0
         ;;
     "")
         ;;
     *)
         echo "Unknown argument: $1" >&2
-        echo "Usage: tools/host/setup-hid-permissions.sh" >&2
+        echo "Usage: tools/host/hid-permissions-setup.sh" >&2
         exit 2
         ;;
 esac
@@ -37,7 +37,7 @@ if [ "$(id -u)" -ne 0 ]; then
         echo "sudo is required to install the PicoForge HID udev rule." >&2
         exit 1
     fi
-    exec sudo "$SCRIPT_DIR/setup-hid-permissions.sh" "$@"
+    exec sudo "$SCRIPT_DIR/hid-permissions-setup.sh" "$@"
 fi
 
 if [ -f "$RULE_TARGET" ]; then
