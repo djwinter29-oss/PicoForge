@@ -1,5 +1,5 @@
-#ifndef PICOFORGE_FREERTOS_CONFIG_H
-#define PICOFORGE_FREERTOS_CONFIG_H
+#ifndef PF_FREERTOS_CONFIG_H
+#define PF_FREERTOS_CONFIG_H
 
 #include <assert.h>
 #include <stddef.h>

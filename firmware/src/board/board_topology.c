@@ -9,10 +9,10 @@ static uint32_t topology_gpio_limit(uint32_t gpio_count)
 
 static bool pin_is_valid(uint32_t pin, uint32_t gpio_limit)
 {
-    return (pin != PICOFORGE_BOARD_PIN_UNASSIGNED) && (pin < gpio_limit);
+    return (pin != PF_BOARD_PIN_UNASSIGNED) && (pin < gpio_limit);
 }
 
-bool picoforge_board_topology_validate(const picoforge_board_topology_t *topology)
+bool pf_board_topology_validate(const pf_board_topology_t *topology)
 {
     uint32_t gpio_limit;
     uint32_t data3_gpio;

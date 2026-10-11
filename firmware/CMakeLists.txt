@@ -21,7 +21,7 @@ else()
     set(FREERTOS_KERNEL_PATH_VALUE "${CMAKE_CURRENT_LIST_DIR}/third_party/FreeRTOS-Kernel")
 endif()
 
-project(picoforge_hello_world C CXX ASM)
+project(pf_hello_world C CXX ASM)
 
 pico_sdk_init()
 
@@ -29,18 +29,18 @@ set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the
 set(FREERTOS_CONFIG_FILE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src/integration/freertos")
 include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 
-add_library(picoforge_sdio_backend STATIC
+add_library(pf_sdio_backend STATIC
     src/drivers/sdio/sdio_pio.c
     src/drivers/sdio/sdio_host.c
     src/drivers/sdio/sdio_protocol.c
 )
-pico_generate_pio_header(picoforge_sdio_backend
+pico_generate_pio_header(pf_sdio_backend
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio/sdio_host.pio"
 )
-target_include_directories(picoforge_sdio_backend
+target_include_directories(pf_sdio_backend
     PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio"
 )
-target_link_libraries(picoforge_sdio_backend PUBLIC
+target_link_libraries(pf_sdio_backend PUBLIC
     hardware_clocks
     hardware_dma
     hardware_gpio
@@ -49,99 +49,108 @@ target_link_libraries(picoforge_sdio_backend PUBLIC
     pico_stdlib
 )
 
-add_library(picoforge_system STATIC
+add_library(pf_system STATIC
     src/drivers/system.c
 )
-target_include_directories(picoforge_system PUBLIC
+target_include_directories(pf_system PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
 )
-target_link_libraries(picoforge_system PUBLIC hardware_clocks pico_stdlib)
+target_link_libraries(pf_system PUBLIC hardware_clocks pico_stdlib)
 
-add_library(picoforge_temperature STATIC
+add_library(pf_temperature STATIC
     src/drivers/temperature.c
 )
-target_include_directories(picoforge_temperature PUBLIC
+target_include_directories(pf_temperature PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
 )
-target_link_libraries(picoforge_temperature PUBLIC hardware_adc)
+target_link_libraries(pf_temperature PUBLIC hardware_adc)
 
-add_library(picoforge_led STATIC
+add_library(pf_led STATIC
     src/drivers/led.c
 )
-target_include_directories(picoforge_led PUBLIC
+target_include_directories(pf_led PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
 )
-target_link_libraries(picoforge_led PUBLIC hardware_gpio)
+target_link_libraries(pf_led PUBLIC hardware_gpio)
 
-add_library(picoforge_fatfs STATIC
+add_library(pf_logging STATIC
+    src/middleware/logging/logging.c
+)
+target_include_directories(pf_logging PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src"
+)
+target_link_libraries(pf_logging PUBLIC pico_stdlib)
+
+add_library(pf_fatfs STATIC
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
 )
-target_include_directories(picoforge_fatfs PUBLIC
+target_include_directories(pf_fatfs PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
 
-add_library(picoforge_storage STATIC
+add_library(pf_storage STATIC
     src/integration/fatfs/diskio.c
     src/middleware/storage/storage.c
 )
-target_include_directories(picoforge_storage PUBLIC
+target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
     "${CMAKE_CURRENT_LIST_DIR}/src/middleware/storage"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
-target_link_libraries(picoforge_storage PUBLIC
-    picoforge_fatfs
-    picoforge_sdio_backend
+target_link_libraries(pf_storage PUBLIC
+    pf_fatfs
+    pf_sdio_backend
 )
 
-add_library(picoforge_board STATIC
+add_library(pf_board STATIC
     src/board/board.c
     src/board/board_topology.c
 )
-target_include_directories(picoforge_board PUBLIC
+target_include_directories(pf_board PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/board"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdio"
 )
-target_link_libraries(picoforge_board PUBLIC
+target_link_libraries(pf_board PUBLIC
     hardware_gpio
     hardware_pio
-    picoforge_sdio_backend
+    pf_sdio_backend
 )
 
-add_executable(picoforge_hello_world
+add_executable(pf_hello_world
     src/main.c
     src/usb/usb_descriptors.c
     src/usb/hid.c
     src/usb/task.c
 )
 
-target_include_directories(picoforge_hello_world PRIVATE
+target_include_directories(pf_hello_world PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/usb"
     "${CMAKE_CURRENT_LIST_DIR}/src/usb"
 )
 
-target_link_libraries(picoforge_hello_world
+target_link_libraries(pf_hello_world
     pico_stdlib
     FreeRTOS-Kernel-Static
     pico_unique_id
     tinyusb_device
-    picoforge_system
-    picoforge_temperature
-    picoforge_led
-    picoforge_sdio_backend
-    picoforge_storage
-    picoforge_board
+    pf_system
+    pf_temperature
+    pf_led
+    pf_logging
+    pf_sdio_backend
+    pf_storage
+    pf_board
 )
 
-target_compile_definitions(picoforge_hello_world PRIVATE
+target_compile_definitions(pf_hello_world PRIVATE
     configNUMBER_OF_CORES=1
 )
 
-pico_enable_stdio_usb(picoforge_hello_world 0)
-pico_enable_stdio_uart(picoforge_hello_world 0)
+pico_enable_stdio_usb(pf_hello_world 0)
+pico_enable_stdio_uart(pf_hello_world 1)
 
-pico_add_extra_outputs(picoforge_hello_world)
+pico_add_extra_outputs(pf_hello_world)

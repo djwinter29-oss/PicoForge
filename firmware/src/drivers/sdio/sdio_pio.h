@@ -1,5 +1,5 @@
-#ifndef PICOFORGE_SDIO_PIO_H
-#define PICOFORGE_SDIO_PIO_H
+#ifndef PF_SDIO_PIO_H
+#define PF_SDIO_PIO_H
 
 #include <stdint.h>
 
@@ -18,7 +18,7 @@ typedef struct {
     bool card_detect_active_high;
     bool card_detect_use_pull;
     bool card_detect_pull_up;
-} picoforge_sdio_config_t;
+} pf_sdio_config_t;
 
 /**
  * Initialize the one configured SD memory card.
@@ -26,6 +26,6 @@ typedef struct {
  * The configuration is retained for the lifetime of the firmware and cannot be
  * changed after first use. Repeating the same call retries card initialization.
  */
-picoforge_sdio_result_t picoforge_sdio_init(const picoforge_sdio_config_t *config);
+pf_sdio_result_t pf_sdio_init(const pf_sdio_config_t *config);
 
 #endif

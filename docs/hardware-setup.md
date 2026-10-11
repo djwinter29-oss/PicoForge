@@ -22,7 +22,7 @@ Serial and SWD do not overlap the memory pins below. Share ground with the adapt
 | GP0 | 1 | TX |
 | GP1 | 2 | RX |
 
-Connect MCU TX to adapter RX and MCU RX to adapter TX. Use 3.3 V logic, never RS-232 levels. UART0 is a wiring allocation, not a guarantee of an enabled firmware console; no RTS/CTS pins are reserved.
+Connect MCU TX to adapter RX and MCU RX to adapter TX. Firmware uses UART0 as its monitor/logging port at 115200 baud, 8-N-1. Logs are output on TX; no command console or RTS/CTS flow control is implemented. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
 
 ### SWD
 

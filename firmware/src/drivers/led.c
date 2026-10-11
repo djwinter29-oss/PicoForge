@@ -7,7 +7,7 @@ static bool led_active_high;
 static bool led_available;
 static bool led_on;
 
-bool picoforge_led_init(uint32_t gpio, bool active_high)
+bool pf_led_init(uint32_t gpio, bool active_high)
 {
     if (gpio >= NUM_BANK0_GPIOS) {
         led_available = false;
@@ -25,12 +25,12 @@ bool picoforge_led_init(uint32_t gpio, bool active_high)
     return true;
 }
 
-bool picoforge_led_is_available(void)
+bool pf_led_is_available(void)
 {
     return led_available;
 }
 
-bool picoforge_led_set(bool on)
+bool pf_led_set(bool on)
 {
     if (!led_available) {
         return false;
@@ -41,7 +41,7 @@ bool picoforge_led_set(bool on)
     return true;
 }
 
-bool picoforge_led_is_on(void)
+bool pf_led_is_on(void)
 {
     return led_available && led_on;
 }

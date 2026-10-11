@@ -1,10 +1,10 @@
-#ifndef PICOFORGE_BOARD_TOPOLOGY_H
-#define PICOFORGE_BOARD_TOPOLOGY_H
+#ifndef PF_BOARD_TOPOLOGY_H
+#define PF_BOARD_TOPOLOGY_H
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PICOFORGE_BOARD_PIN_UNASSIGNED UINT32_MAX
+#define PF_BOARD_PIN_UNASSIGNED UINT32_MAX
 
 /** Hardware-independent SD-card resource assignment for one board. */
 typedef struct {
@@ -22,9 +22,9 @@ typedef struct {
     bool card_detect_active_high;
     bool card_detect_use_pull;
     bool card_detect_pull_up;
-} picoforge_board_topology_t;
+} pf_board_topology_t;
 
 /** Validate the board-owned SD pin and PIO assignment without accessing hardware. */
-bool picoforge_board_topology_validate(const picoforge_board_topology_t *topology);
+bool pf_board_topology_validate(const pf_board_topology_t *topology);
 
 #endif

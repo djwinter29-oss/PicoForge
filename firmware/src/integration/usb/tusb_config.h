@@ -1,5 +1,5 @@
-#ifndef PICOFORGE_TUSB_CONFIG_H
-#define PICOFORGE_TUSB_CONFIG_H
+#ifndef PF_TUSB_CONFIG_H
+#define PF_TUSB_CONFIG_H
 
 #include "pico.h"
 #include "tusb_option.h"

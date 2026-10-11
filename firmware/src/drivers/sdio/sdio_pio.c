@@ -9,15 +9,15 @@
 #include "sdio_host.h"
 #include "sdio_protocol.h"
 
-static picoforge_sdio_host_t sdio_host;
-static picoforge_sdio_config_t active_config;
+static pf_sdio_host_t sdio_host;
+static pf_sdio_config_t active_config;
 static uint32_t card_sector_count;
 static bool card_block_addressed;
 static bool configuration_set;
 static bool card_initialized;
 
-static bool same_config(const picoforge_sdio_config_t *left,
-                        const picoforge_sdio_config_t *right)
+static bool same_config(const pf_sdio_config_t *left,
+                        const pf_sdio_config_t *right)
 {
     return (left->command_gpio == right->command_gpio) &&
            (left->data0_gpio == right->data0_gpio) &&
@@ -31,7 +31,7 @@ static bool same_config(const picoforge_sdio_config_t *left,
            (left->card_detect_pull_up == right->card_detect_pull_up);
 }
 
-static bool pins_are_valid(const picoforge_sdio_config_t *config)
+static bool pins_are_valid(const pf_sdio_config_t *config)
 {
     uint32_t pin_limit = (NUM_BANK0_GPIOS < 32u) ? NUM_BANK0_GPIOS : 32u;
     uint32_t data3_gpio;
@@ -63,7 +63,7 @@ static bool pins_are_valid(const picoforge_sdio_config_t *config)
     return true;
 }
 
-static bool config_is_valid(const picoforge_sdio_config_t *config)
+static bool config_is_valid(const pf_sdio_config_t *config)
 {
     uint32_t clock_hz;
 
@@ -82,9 +82,9 @@ static bool config_is_valid(const picoforge_sdio_config_t *config)
 static bool command_response(uint8_t command, uint32_t argument, uint8_t response[6],
                              uint32_t *response_argument)
 {
-    if (!picoforge_sdio_host_command_bytes(&sdio_host, command, argument, 48u,
+    if (!pf_sdio_host_command_bytes(&sdio_host, command, argument, 48u,
                                           response, 6u) ||
-        !picoforge_sdio_parse_response(command, response, response_argument, true)) {
+        !pf_sdio_parse_response(command, response, response_argument, true)) {
         return false;
     }
     if (command == 8u) {
@@ -132,12 +132,12 @@ static bool initialize_card(void)
     bool supports_sd_v2;
 
     sleep_ms(2u);
-    if (!picoforge_sdio_host_command_bytes(&sdio_host, 0u, 0u, 0u, NULL, 0u)) {
+    if (!pf_sdio_host_command_bytes(&sdio_host, 0u, 0u, 0u, NULL, 0u)) {
         return false;
     }
 
     if (!command_response(8u, 0x1aau, short_response, &response_argument) ||
-        !picoforge_sdio_cmd8_supports_v2(response_argument, &supports_sd_v2)) {
+        !pf_sdio_cmd8_supports_v2(response_argument, &supports_sd_v2)) {
         return false;
     }
     if (supports_sd_v2) {
@@ -147,9 +147,9 @@ static bool initialize_card(void)
     start = time_us_32();
     do {
         if (!command_response(55u, 0u, short_response, &response_argument) ||
-            !picoforge_sdio_host_command_bytes(&sdio_host, 41u, acmd41_argument,
+            !pf_sdio_host_command_bytes(&sdio_host, 41u, acmd41_argument,
                                                48u, short_response, sizeof(short_response)) ||
-            !picoforge_sdio_parse_r3_response(short_response, &ocr)) {
+            !pf_sdio_parse_r3_response(short_response, &ocr)) {
             return false;
         }
         if ((ocr & 0x80000000u) != 0u) {
@@ -162,9 +162,9 @@ static bool initialize_card(void)
     }
     card_block_addressed = supports_sd_v2 && ((ocr & 0x40000000u) != 0u);
 
-    if (!picoforge_sdio_host_command_bytes(&sdio_host, 2u, 0u, 136u,
+    if (!pf_sdio_host_command_bytes(&sdio_host, 2u, 0u, 136u,
                                           response, sizeof(response)) ||
-        !picoforge_sdio_validate_r2_response(response)) {
+        !pf_sdio_validate_r2_response(response)) {
         return false;
     }
     if (!command_response(3u, 0u, short_response, &response_argument)) {
@@ -179,15 +179,15 @@ static bool initialize_card(void)
         return false;
     }
 
-    if (!picoforge_sdio_host_command_bytes(&sdio_host, 9u, relative_card_address,
+    if (!pf_sdio_host_command_bytes(&sdio_host, 9u, relative_card_address,
                                           136u, response, sizeof(response)) ||
-        !picoforge_sdio_validate_r2_response(response)) {
+        !pf_sdio_validate_r2_response(response)) {
         return false;
     }
     for (size_t byte_index = 0u; byte_index < sizeof(csd); byte_index++) {
         csd[byte_index] = response[byte_index + 1u];
     }
-    if (!picoforge_sdio_csd_sector_count(csd, &card_sector_count)) {
+    if (!pf_sdio_csd_sector_count(csd, &card_sector_count)) {
         return false;
     }
 
@@ -198,7 +198,7 @@ static bool initialize_card(void)
         return false;
     }
     if (!card_block_addressed &&
-        !command_response(16u, PICOFORGE_SDIO_BLOCK_SIZE, short_response, &response_argument)) {
+        !command_response(16u, PF_SDIO_BLOCK_SIZE, short_response, &response_argument)) {
         return false;
     }
 
@@ -206,18 +206,18 @@ static bool initialize_card(void)
     if (transfer_clock == 0u) {
         transfer_clock = clock_get_hz(clk_sys) / 12u;
     }
-    return picoforge_sdio_host_set_clock(&sdio_host, transfer_clock);
+    return pf_sdio_host_set_clock(&sdio_host, transfer_clock);
 }
 
-picoforge_sdio_result_t picoforge_sdio_init(const picoforge_sdio_config_t *config)
+pf_sdio_result_t pf_sdio_init(const pf_sdio_config_t *config)
 {
     if (!config_is_valid(config)) {
-        return PICOFORGE_SDIO_INVALID_ARGUMENT;
+        return PF_SDIO_INVALID_ARGUMENT;
     }
 
     if (configuration_set) {
         if (!same_config(&active_config, config)) {
-            return PICOFORGE_SDIO_CONFIG_LOCKED;
+            return PF_SDIO_CONFIG_LOCKED;
         }
     } else {
         active_config = *config;
@@ -235,91 +235,91 @@ picoforge_sdio_result_t picoforge_sdio_init(const picoforge_sdio_config_t *confi
                 }
             }
         }
-        if (!picoforge_sdio_host_init(&sdio_host, &active_config)) {
-            return PICOFORGE_SDIO_CARD_INIT_FAILED;
+        if (!pf_sdio_host_init(&sdio_host, &active_config)) {
+            return PF_SDIO_CARD_INIT_FAILED;
         }
     }
 
     if (active_config.use_card_detect &&
         ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
         card_initialized = false;
-        return PICOFORGE_SDIO_CARD_INIT_FAILED;
+        return PF_SDIO_CARD_INIT_FAILED;
     }
     if (!initialize_card()) {
         card_initialized = false;
-        return PICOFORGE_SDIO_CARD_INIT_FAILED;
+        return PF_SDIO_CARD_INIT_FAILED;
     }
 
     card_initialized = true;
-    return PICOFORGE_SDIO_OK;
+    return PF_SDIO_OK;
 }
 
-bool picoforge_sdio_is_initialized(void)
+bool pf_sdio_is_initialized(void)
 {
     return card_initialized;
 }
 
-uint32_t picoforge_sdio_block_count(void)
+uint32_t pf_sdio_block_count(void)
 {
     return card_initialized ? card_sector_count : 0u;
 }
 
-static picoforge_sdio_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer,
+static pf_sdio_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer,
                                                 const uint8_t *write_buffer, uint32_t block_count)
 {
     uint32_t block_limit;
 
     if (!card_initialized) {
-        return PICOFORGE_SDIO_NOT_READY;
+        return PF_SDIO_NOT_READY;
     }
     if (block_count == 0u) {
-        return PICOFORGE_SDIO_OK;
+        return PF_SDIO_OK;
     }
     if (((read_buffer == NULL) && (write_buffer == NULL)) ||
         (((uintptr_t)((read_buffer != NULL) ? (const void *)read_buffer : (const void *)write_buffer) & 3u) != 0u)) {
-        return PICOFORGE_SDIO_INVALID_ARGUMENT;
+        return PF_SDIO_INVALID_ARGUMENT;
     }
 
-    block_limit = picoforge_sdio_block_count();
+    block_limit = pf_sdio_block_count();
     if ((first_block >= block_limit) || (block_count > (block_limit - first_block))) {
-        return PICOFORGE_SDIO_INVALID_ARGUMENT;
+        return PF_SDIO_INVALID_ARGUMENT;
     }
 
     while (block_count > 0u) {
         if (active_config.use_card_detect &&
             ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
             card_initialized = false;
-            return PICOFORGE_SDIO_NOT_READY;
+            return PF_SDIO_NOT_READY;
         }
         bool transferred = (read_buffer != NULL)
-            ? picoforge_sdio_host_read_sector(&sdio_host, first_block, card_block_addressed, read_buffer)
-            : picoforge_sdio_host_write_sector(&sdio_host, first_block, card_block_addressed, write_buffer);
+            ? pf_sdio_host_read_sector(&sdio_host, first_block, card_block_addressed, read_buffer)
+            : pf_sdio_host_write_sector(&sdio_host, first_block, card_block_addressed, write_buffer);
         if (!transferred) {
-            return PICOFORGE_SDIO_IO_ERROR;
+            return PF_SDIO_IO_ERROR;
         }
         if (read_buffer != NULL) {
-            read_buffer += PICOFORGE_SDIO_BLOCK_SIZE;
+            read_buffer += PF_SDIO_BLOCK_SIZE;
         } else {
-            write_buffer += PICOFORGE_SDIO_BLOCK_SIZE;
+            write_buffer += PF_SDIO_BLOCK_SIZE;
         }
         first_block++;
         block_count--;
     }
-    return PICOFORGE_SDIO_OK;
+    return PF_SDIO_OK;
 }
 
-picoforge_sdio_result_t picoforge_sdio_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
+pf_sdio_result_t pf_sdio_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
 {
     return transfer_blocks(first_block, buffer, NULL, block_count);
 }
 
-picoforge_sdio_result_t picoforge_sdio_write_blocks(uint32_t first_block, const void *buffer,
+pf_sdio_result_t pf_sdio_write_blocks(uint32_t first_block, const void *buffer,
                                                     uint32_t block_count)
 {
     return transfer_blocks(first_block, NULL, buffer, block_count);
 }
 
-picoforge_sdio_result_t picoforge_sdio_sync(void)
+pf_sdio_result_t pf_sdio_sync(void)
 {
-    return card_initialized ? PICOFORGE_SDIO_OK : PICOFORGE_SDIO_NOT_READY;
+    return card_initialized ? PF_SDIO_OK : PF_SDIO_NOT_READY;
 }

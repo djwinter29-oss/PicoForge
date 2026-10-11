@@ -37,10 +37,10 @@ static void usb_task(void *context)
 
         if (tud_hid_ready() &&
             ((TickType_t)(now - last_hid_report) >= USB_HID_REPORT_INTERVAL)) {
-            picoforge_hid_status_report_t report;
+            pf_hid_status_report_t report;
 
-            picoforge_hid_build_status_report(&report, hid_sequence);
-            if (tud_hid_report(PICOFORGE_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
+            pf_hid_build_status_report(&report, hid_sequence);
+            if (tud_hid_report(PF_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
                 ++hid_sequence;
                 last_hid_report = now;
             }
@@ -50,7 +50,7 @@ static void usb_task(void *context)
     }
 }
 
-void picoforge_usb_start(void)
+void pf_usb_start(void)
 {
     if (!tusb_init()) {
         panic("Failed to initialize TinyUSB");

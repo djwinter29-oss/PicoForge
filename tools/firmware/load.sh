@@ -22,7 +22,7 @@ Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
 Options:
 --board NAME                 Pico SDK board (default: pico)
 --build-dir PATH             Build directory (default: build/firmware-NAME)
---elf PATH                   ELF to flash (default: picoforge_hello_world.elf in build dir)
+--elf PATH                   ELF to flash (default: pf_hello_world.elf in build dir)
 --openocd-exe PATH           OpenOCD executable (default: openocd)
 --openocd-target PATH        OpenOCD target config (default: inferred from board)
 --adapter-speed-khz KHZ      Debug probe speed (default: 5000)
@@ -117,7 +117,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 if [ -z "$ELF_PATH" ]; then
-    ELF_PATH="$BUILD_DIR/picoforge_hello_world.elf"
+    ELF_PATH="$BUILD_DIR/pf_hello_world.elf"
 elif [ "${ELF_PATH#/}" = "$ELF_PATH" ]; then
     ELF_PATH="$REPO_ROOT/$ELF_PATH"
 fi
