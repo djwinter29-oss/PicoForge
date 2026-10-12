@@ -116,6 +116,19 @@ void test_unpacks_partial_response_words_from_the_low_bits(void)
     TEST_ASSERT_FALSE(pf_sdio_pio_response_words_to_bytes(r1_words, 47u, r1, sizeof(r1)));
 }
 
+void test_aligns_one_bit_late_native_response_capture(void)
+{
+    uint8_t response[6] = { 0x10u, 0x00u, 0x00u, 0x03u, 0x54u, 0x27u };
+    uint32_t argument = 0u;
+
+    TEST_ASSERT_TRUE(pf_sdio_pio_align_response_frame(response, sizeof(response)));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(((uint8_t[]){0x08u, 0x00u, 0x00u, 0x01u, 0xaau, 0x13u}),
+                                 response, sizeof(response));
+    TEST_ASSERT_TRUE(pf_sdio_pio_parse_response(8u, response, &argument, true));
+    TEST_ASSERT_EQUAL_HEX32(0x000001aau, argument);
+    TEST_ASSERT_FALSE(pf_sdio_pio_align_response_frame(NULL, sizeof(response)));
+}
+
 void test_classifies_cmd8_v2_and_legacy_cards(void)
 {
     bool supports_v2;
@@ -154,7 +167,10 @@ void test_validates_r2_response_crc_and_end_bit(void)
     uint8_t response[17] = { 0u };
 
     response[0] = 0x3fu;
-    response[16] = (uint8_t)((pf_sdio_pio_crc7(response, 16u) << 1u) | 1u);
+    for (size_t index = 1u; index < 16u; index++) {
+        response[index] = (uint8_t)(index * 17u);
+    }
+    response[16] = (uint8_t)((pf_sdio_pio_crc7(response + 1u, 15u) << 1u) | 1u);
     TEST_ASSERT_TRUE(pf_sdio_pio_validate_r2_response(response));
     response[4] ^= 1u;
     TEST_ASSERT_FALSE(pf_sdio_pio_validate_r2_response(response));

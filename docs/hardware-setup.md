@@ -22,7 +22,7 @@ Serial and SWD do not overlap the memory pins below. Share ground with the adapt
 | GP0 | 1 | TX |
 | GP1 | 2 | RX |
 
-Connect MCU TX to adapter RX and MCU RX to adapter TX. Board support initializes the monitor UART from the selected topology; the Pico/Pico 2 profiles assign UART0 to GP0/GP1 at 115200 baud, 8-N-1. Logs are output on TX; no command console or RTS/CTS flow control is implemented. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
+Connect MCU TX to adapter RX and MCU RX to adapter TX, and connect GND. Board support initializes the monitor UART from the selected topology; the Pico/Pico 2 profiles assign UART0 to GP0/GP1 at 115200 baud, 8-N-1. UART logging has been verified on a Pico through the Raspberry Pi Debug Probe. The firmware emits boot messages and a heartbeat each second, including uptime and system clock. On Linux the probe's UART bridge appears as a serial device (for example `/dev/ttyACM0`; device numbering can vary), while PicoForge USB CDC is a separate port (for example `/dev/ttyACM1`). Open the probe UART at 115200 baud, for example with `screen /dev/ttyACM0 115200`. Reset the Pico after opening the terminal to see boot messages. No command console or RTS/CTS flow control is implemented; text sent to UART RX is not processed. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
 
 ### SWD
 

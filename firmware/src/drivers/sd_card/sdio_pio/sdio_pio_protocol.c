@@ -62,6 +62,21 @@ bool pf_sdio_pio_response_words_to_bytes(const uint32_t *words, uint16_t respons
     return true;
 }
 
+bool pf_sdio_pio_align_response_frame(uint8_t *response, size_t response_size)
+{
+    uint8_t carry = 0u;
+
+    if ((response == NULL) || (response_size == 0u)) {
+        return false;
+    }
+    for (size_t index = 0u; index < response_size; index++) {
+        uint8_t current = response[index];
+        response[index] = (uint8_t)((current >> 1u) | (carry << 7u));
+        carry = current & 1u;
+    }
+    return true;
+}
+
 bool pf_sdio_pio_parse_r3_response(const uint8_t frame[6], uint32_t *ocr)
 {
     if ((frame == NULL) || (ocr == NULL) ||
@@ -89,7 +104,7 @@ bool pf_sdio_pio_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2)
 bool pf_sdio_pio_validate_r2_response(const uint8_t frame[17])
 {
     return (frame != NULL) && ((frame[16] & 1u) != 0u) &&
-           ((frame[16] >> 1u) == pf_sdio_pio_crc7(frame, 16u));
+           ((frame[16] >> 1u) == pf_sdio_pio_crc7(frame + 1u, 15u));
 }
 
 bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)

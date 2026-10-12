@@ -99,11 +99,16 @@ static bool wait_for_command_complete(pf_sdio_pio_host_t *host,
     uint32_t start = time_us_32();
     size_t words_read = 0u;
 
+    host->last_response_word_count = 0u;
+    memset(host->last_response_words, 0, sizeof(host->last_response_words));
+
     while (!pio_interrupt_get(host->pio, SDIO_RESPONSE_IRQ) ||
            (words_read < response_word_count)) {
         while ((words_read < response_word_count) &&
                (pio_sm_get_rx_fifo_level(host->pio, host->command_sm) > 0u)) {
             response_words[words_read++] = pio_sm_get(host->pio, host->command_sm);
+            host->last_response_words[words_read - 1u] = response_words[words_read - 1u];
+            host->last_response_word_count = words_read;
         }
         if ((uint32_t)(time_us_32() - start) >= SDIO_COMMAND_TIMEOUT_US) {
             return false;
@@ -313,8 +318,12 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
         return false;
     }
 
-    return pf_sdio_pio_response_words_to_bytes(response_words, response_bits,
-                                                  response, response_capacity);
+    if (!pf_sdio_pio_response_words_to_bytes(response_words, response_bits,
+                                             response, response_capacity)) {
+        return false;
+    }
+    return (response_size == 0u) ||
+           pf_sdio_pio_align_response_frame(response, response_size);
 }
 
 bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,

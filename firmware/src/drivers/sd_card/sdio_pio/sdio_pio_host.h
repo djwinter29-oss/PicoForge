@@ -25,6 +25,8 @@ typedef struct {
     uint32_t current_clock_hz;
     uint32_t previous_input_sync_bypass;
     uint32_t input_sync_bypass_mask;
+    uint32_t last_response_words[5];
+    size_t last_response_word_count;
     bool command_program_loaded;
     bool data_rx_program_loaded;
     bool clock_program_loaded;

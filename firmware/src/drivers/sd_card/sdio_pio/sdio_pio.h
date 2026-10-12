@@ -2,6 +2,7 @@
 #define PF_SDIO_PIO_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include "hardware/pio.h"
 #include "sd_card_block.h"
@@ -20,6 +21,28 @@ typedef struct {
     bool card_detect_pull_up;
 } pf_sdio_pio_config_t;
 
+typedef enum {
+    PF_SDIO_PIO_INIT_STAGE_NONE = 0,
+    PF_SDIO_PIO_INIT_STAGE_IDLE,
+    PF_SDIO_PIO_INIT_STAGE_IF_CONDITION,
+    PF_SDIO_PIO_INIT_STAGE_OPERATING_CONDITION,
+    PF_SDIO_PIO_INIT_STAGE_CID,
+    PF_SDIO_PIO_INIT_STAGE_RCA,
+    PF_SDIO_PIO_INIT_STAGE_CSD,
+    PF_SDIO_PIO_INIT_STAGE_SELECT,
+    PF_SDIO_PIO_INIT_STAGE_BUS_WIDTH,
+    PF_SDIO_PIO_INIT_STAGE_BLOCK_LENGTH,
+    PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK,
+    PF_SDIO_PIO_INIT_STAGE_CMD8_RESPONSE,
+    PF_SDIO_PIO_INIT_STAGE_CMD8_CLASSIFY,
+    PF_SDIO_PIO_INIT_STAGE_CID_RESPONSE,
+    PF_SDIO_PIO_INIT_STAGE_CID_VALIDATE,
+    PF_SDIO_PIO_INIT_STAGE_SELECT_RESPONSE,
+    PF_SDIO_PIO_INIT_STAGE_SELECT_READY,
+    PF_SDIO_PIO_INIT_STAGE_BUS_WIDTH_PREFIX,
+    PF_SDIO_PIO_INIT_STAGE_SELECT_STATUS,
+} pf_sdio_pio_init_stage_t;
+
 /**
  * Initialize the one configured SD memory card.
  *
@@ -27,6 +50,15 @@ typedef struct {
  * changed after first use. Repeating the same call retries card initialization.
  */
 pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config);
+
+/** Return the stage that failed in the most recent card-init attempt. */
+pf_sdio_pio_init_stage_t pf_sdio_pio_get_init_stage(void);
+
+/** Copy the last six-byte short response captured during card initialization. */
+void pf_sdio_pio_get_init_response(uint8_t response[6]);
+void pf_sdio_pio_get_last_short_response(uint8_t *command, uint32_t *argument,
+                                         uint32_t *response_argument);
+void pf_sdio_pio_get_last_response_words(uint32_t words[5], size_t *word_count);
 
 /** Return whether the card has initialized successfully. */
 bool pf_sdio_pio_is_initialized(void);

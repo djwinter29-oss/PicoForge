@@ -14,6 +14,7 @@ bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t frame[6],
 								   uint32_t *argument, bool check_crc);
 bool pf_sdio_pio_response_words_to_bytes(const uint32_t *words, uint16_t response_bits,
                                             uint8_t *response, size_t response_capacity);
+bool pf_sdio_pio_align_response_frame(uint8_t *response, size_t response_size);
 bool pf_sdio_pio_parse_r3_response(const uint8_t frame[6], uint32_t *ocr);
 bool pf_sdio_pio_write_response_accepted(uint32_t response_word);
 bool pf_sdio_pio_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2);

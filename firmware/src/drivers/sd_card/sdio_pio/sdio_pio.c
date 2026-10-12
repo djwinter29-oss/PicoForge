@@ -19,6 +19,11 @@ static uint8_t card_cid[16];
 static bool card_block_addressed;
 static bool configuration_set;
 static bool card_initialized;
+static pf_sdio_pio_init_stage_t card_init_stage;
+static uint8_t card_init_response[6];
+static uint8_t last_short_command;
+static uint32_t last_short_argument;
+static uint32_t last_short_response_argument;
 
 static bool same_config(const pf_sdio_pio_config_t *left,
                         const pf_sdio_pio_config_t *right)
@@ -125,11 +130,18 @@ static bool config_is_valid(const pf_sdio_pio_config_t *config)
 static bool command_response(uint8_t command, uint32_t argument, uint8_t response[6],
                              uint32_t *response_argument)
 {
+    memset(card_init_response, 0, sizeof(card_init_response));
     if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, command, argument, 48u,
-                                          response, 6u) ||
-        !pf_sdio_pio_parse_response(command, response, response_argument, true)) {
+                                       response, 6u)) {
         return false;
     }
+    memcpy(card_init_response, response, sizeof(card_init_response));
+    if (!pf_sdio_pio_parse_response(command, response, response_argument, true)) {
+        return false;
+    }
+    last_short_command = command;
+    last_short_argument = argument;
+    last_short_response_argument = *response_argument;
     if (command == 8u) {
         return true;
     }
@@ -150,11 +162,11 @@ static bool send_application_command(uint8_t command, uint32_t argument,
            command_response(command, argument, response, response_argument);
 }
 
-static bool wait_command_line_ready(void)
+static bool wait_card_data_ready(void)
 {
     uint32_t start = time_us_32();
 
-    while (gpio_get(active_config.command_gpio) == 0u) {
+    while (gpio_get(active_config.data_gpio[0]) == 0u) {
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
             return false;
         }
@@ -174,19 +186,25 @@ static bool initialize_card(void)
     uint32_t acmd41_argument = 0x00ff8000u;
     bool supports_sd_v2;
 
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_IDLE;
     sleep_ms(2u);
     if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 0u, 0u, 0u, NULL, 0u)) {
         return false;
     }
 
-    if (!command_response(8u, 0x1aau, short_response, &response_argument) ||
-        !pf_sdio_pio_cmd8_supports_v2(response_argument, &supports_sd_v2)) {
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_CMD8_RESPONSE;
+    if (!command_response(8u, 0x1aau, short_response, &response_argument)) {
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_CMD8_CLASSIFY;
+    if (!pf_sdio_pio_cmd8_supports_v2(response_argument, &supports_sd_v2)) {
         return false;
     }
     if (supports_sd_v2) {
         acmd41_argument |= 0x40000000u;
     }
 
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_CONDITION;
     start = time_us_32();
     do {
         if (!command_response(55u, 0u, short_response, &response_argument) ||
@@ -205,12 +223,17 @@ static bool initialize_card(void)
     }
     card_block_addressed = supports_sd_v2 && ((ocr & 0x40000000u) != 0u);
 
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_CID_RESPONSE;
     if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 2u, 0u, 136u,
-                                          response, sizeof(response)) ||
-        !pf_sdio_pio_validate_r2_response(response)) {
+                                        response, sizeof(response))) {
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_CID_VALIDATE;
+    if (!pf_sdio_pio_validate_r2_response(response)) {
         return false;
     }
     memcpy(card_cid, response + 1u, sizeof(card_cid));
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_RCA;
     if (!command_response(3u, 0u, short_response, &response_argument)) {
         return false;
     }
@@ -223,6 +246,7 @@ static bool initialize_card(void)
         return false;
     }
 
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_CSD;
     if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 9u, relative_card_address,
                                           136u, response, sizeof(response)) ||
         !pf_sdio_pio_validate_r2_response(response)) {
@@ -235,12 +259,27 @@ static bool initialize_card(void)
         return false;
     }
 
-    if (!command_response(7u, relative_card_address, short_response, &response_argument) ||
-        !wait_command_line_ready() ||
-        !send_application_command(6u, 2u, relative_card_address,
-                      short_response, &response_argument)) {
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_RESPONSE;
+    if (!command_response(7u, relative_card_address, short_response, &response_argument)) {
         return false;
     }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_READY;
+    if (!wait_card_data_ready()) {
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_STATUS;
+    if (!command_response(13u, relative_card_address, short_response, &response_argument)) {
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_BUS_WIDTH_PREFIX;
+    if (!command_response(55u, relative_card_address, short_response, &response_argument)) {
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_BUS_WIDTH;
+    if (!command_response(6u, 2u, short_response, &response_argument)) {
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_BLOCK_LENGTH;
     if (!card_block_addressed &&
         !command_response(16u, PF_SD_CARD_BLOCK_SIZE, short_response, &response_argument)) {
         return false;
@@ -250,11 +289,50 @@ static bool initialize_card(void)
     if (transfer_clock == 0u) {
         transfer_clock = clock_get_hz(clk_sys) / 12u;
     }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;
     if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock)) {
         return false;
     }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
     card_bus_clock_hz = sdio_pio_host.current_clock_hz;
     return true;
+}
+
+pf_sdio_pio_init_stage_t pf_sdio_pio_get_init_stage(void)
+{
+    return card_init_stage;
+}
+
+void pf_sdio_pio_get_init_response(uint8_t response[6])
+{
+    if (response != NULL) {
+        memcpy(response, card_init_response, sizeof(card_init_response));
+    }
+}
+
+void pf_sdio_pio_get_last_short_response(uint8_t *command, uint32_t *argument,
+                                         uint32_t *response_argument)
+{
+    if (command != NULL) {
+        *command = last_short_command;
+    }
+    if (argument != NULL) {
+        *argument = last_short_argument;
+    }
+    if (response_argument != NULL) {
+        *response_argument = last_short_response_argument;
+    }
+}
+
+void pf_sdio_pio_get_last_response_words(uint32_t words[5], size_t *word_count)
+{
+    if (words != NULL) {
+        memcpy(words, sdio_pio_host.last_response_words,
+               sizeof(sdio_pio_host.last_response_words));
+    }
+    if (word_count != NULL) {
+        *word_count = sdio_pio_host.last_response_word_count;
+    }
 }
 
 pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)

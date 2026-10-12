@@ -22,11 +22,27 @@ typedef struct {
     bool card_detect_pull_up;
 } pf_sd_spi_config_t;
 
+typedef enum {
+    PF_SD_SPI_INIT_STAGE_NONE = 0,
+    PF_SD_SPI_INIT_STAGE_IDLE_CLOCKS,
+    PF_SD_SPI_INIT_STAGE_GO_IDLE,
+    PF_SD_SPI_INIT_STAGE_IF_CONDITION,
+    PF_SD_SPI_INIT_STAGE_OPERATING_CONDITION,
+    PF_SD_SPI_INIT_STAGE_READ_OCR,
+    PF_SD_SPI_INIT_STAGE_BLOCK_LENGTH,
+    PF_SD_SPI_INIT_STAGE_CSD,
+    PF_SD_SPI_INIT_STAGE_CID,
+    PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK,
+} pf_sd_spi_init_stage_t;
+
 /**
  * Initialize the configured card. The first successful SPI setup locks this
  * singleton to the supplied configuration; repeating it retries card init.
  */
 pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config);
+
+/** Return the stage that failed in the most recent card-init attempt. */
+pf_sd_spi_init_stage_t pf_sd_spi_get_init_stage(void);
 
 /** Return true while the initialized card remains present. */
 bool pf_sd_spi_is_initialized(void);

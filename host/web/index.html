@@ -38,7 +38,7 @@
     <section class="identity" aria-label="Hardware identity">
       <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
       <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
-      <div class="metric"><span>System clock</span><strong id="clock">--</strong></div>
+      <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
       <div class="metric"><span>USB serial</span><strong id="serial">--</strong></div>
     </section>
 
@@ -52,7 +52,7 @@
       </div>
       <dl class="runtime-grid">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
-        <div><dt>System clock</dt><dd id="clock">--</dd></div>
+        <div><dt>System clock</dt><dd id="runtime-clock">--</dd></div>
         <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>USB device</dt><dd id="usb-state">--</dd></div>
         <div><dt>Report sequence</dt><dd id="sequence">--</dd></div>
@@ -69,6 +69,7 @@
         </div>
         <p class="sample-time">Updated with report ID 3</p>
       </div>
+      <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
         <div><dt>Presence</dt><dd id="memory-presence">--</dd></div>
         <div><dt>Card state</dt><dd id="memory-state">--</dd></div>

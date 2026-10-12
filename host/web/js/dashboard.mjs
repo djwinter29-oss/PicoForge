@@ -18,9 +18,11 @@ export function renderStatus(snapshot) {
     ? "Attention" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
   document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
-  document.querySelector("#clock").textContent = runtime
+  const clock = runtime
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
+  document.querySelector("#identity-clock").textContent = clock;
+  document.querySelector("#runtime-clock").textContent = clock;
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
@@ -58,6 +60,12 @@ function renderMemory(memory) {
   set("#memory-presence", !memory?.configured ? "Not configured"
     : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown");
   set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
+  set("#memory-note", !memory?.configured ? "No SD-card transport configured"
+    : memory.presence_known && !memory.present
+      ? "No card detected. Check card insertion and the active-high DET connection on GP8."
+      : memory.present && !memory.initialized
+        ? "Card detected but not initialized; check UART logs and SD wiring."
+        : memory.initialized ? "Card metadata is available." : "Card presence has not been established.");
   set("#memory-type", memory?.component_type ?? "--");
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz

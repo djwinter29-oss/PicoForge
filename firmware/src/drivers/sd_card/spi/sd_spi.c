@@ -42,6 +42,7 @@ static bool card_block_addressed;
 static uint32_t card_sector_count;
 static uint32_t card_bus_clock_hz;
 static uint8_t card_cid[16];
+static pf_sd_spi_init_stage_t card_init_stage;
 
 static bool same_config(const pf_sd_spi_config_t *left,
                         const pf_sd_spi_config_t *right)
@@ -284,12 +285,14 @@ static bool initialize_card(void)
     bool supports_v2;
 
     uint8_t idle_clocks[10];
+    card_init_stage = PF_SD_SPI_INIT_STAGE_IDLE_CLOCKS;
     memset(idle_clocks, 0xff, sizeof(idle_clocks));
     if (spi_write_blocking(active_config.spi, idle_clocks,
                            sizeof(idle_clocks)) != (int)sizeof(idle_clocks)) {
         return false;
     }
 
+    card_init_stage = PF_SD_SPI_INIT_STAGE_GO_IDLE;
     for (uint32_t attempt = 0u; attempt < SD_SPI_COMMAND_RETRIES; attempt++) {
         if (send_command(SD_CMD_GO_IDLE_STATE, 0u, &response, NULL, 0u) &&
             (response == SD_R1_IDLE_STATE)) {
@@ -301,6 +304,7 @@ static bool initialize_card(void)
         sleep_ms(10u);
     }
 
+    card_init_stage = PF_SD_SPI_INIT_STAGE_IF_CONDITION;
     if (!send_command(SD_CMD_SEND_IF_COND, 0x000001aau, &response,
                       response_data, sizeof(response_data))) {
         return false;
@@ -319,6 +323,7 @@ static bool initialize_card(void)
         return false;
     }
 
+    card_init_stage = PF_SD_SPI_INIT_STAGE_OPERATING_CONDITION;
     start = time_us_32();
     do {
         if (!send_application_command(
@@ -337,6 +342,7 @@ static bool initialize_card(void)
         return false;
     }
 
+    card_init_stage = PF_SD_SPI_INIT_STAGE_READ_OCR;
     if (!send_command(SD_CMD_READ_OCR, 0u, &response,
                       response_data, sizeof(response_data)) ||
         (response != 0u)) {
@@ -352,13 +358,18 @@ static bool initialize_card(void)
     }
     card_block_addressed = supports_v2 && ((ocr & SD_OCR_CCS) != 0u);
 
+    card_init_stage = PF_SD_SPI_INIT_STAGE_BLOCK_LENGTH;
     if (!card_block_addressed &&
         (!send_command(SD_CMD_SET_BLOCKLEN, PF_SD_CARD_BLOCK_SIZE,
                        &response, NULL, 0u) || (response != 0u))) {
         return false;
     }
-    if (!read_csd(csd) ||
-        !read_cid(cid) ||
+    card_init_stage = PF_SD_SPI_INIT_STAGE_CSD;
+    if (!read_csd(csd)) {
+        return false;
+    }
+    card_init_stage = PF_SD_SPI_INIT_STAGE_CID;
+    if (!read_cid(cid) ||
         !pf_sd_card_csd_sector_count(csd, &card_sector_count)) {
         return false;
     }
@@ -366,12 +377,19 @@ static bool initialize_card(void)
     uint32_t transfer_clock = (active_config.clock_hz == 0u)
         ? SD_SPI_DEFAULT_CLOCK_HZ
         : active_config.clock_hz;
+    card_init_stage = PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK;
     card_bus_clock_hz = spi_set_baudrate(active_config.spi, transfer_clock);
     if (card_bus_clock_hz < SD_SPI_INIT_CLOCK_HZ) {
         return false;
     }
     memcpy(card_cid, cid, sizeof(card_cid));
+    card_init_stage = PF_SD_SPI_INIT_STAGE_NONE;
     return true;
+}
+
+pf_sd_spi_init_stage_t pf_sd_spi_get_init_stage(void)
+{
+    return card_init_stage;
 }
 
 static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
