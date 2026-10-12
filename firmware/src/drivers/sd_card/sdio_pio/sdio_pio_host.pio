@@ -20,23 +20,23 @@ wait_for_command:
 send_command_first_word:
     out pins, 1 side 0
     jmp x-- send_command_first_word side 1
-    set x, 15 side 0
+    set x, 15 side 1
 send_command_last_word:
-    out pins, 1 side 1
-    jmp x-- send_command_last_word side 0
-    set pindirs, 0 side 1
-    pull block side 0
-    out y, 8 side 1
-    jmp !y command_complete side 0
+    out pins, 1 side 0
+    jmp x-- send_command_last_word side 1
+    set pindirs, 0 side 0
+    pull block side 1
+    out y, 8 side 0
+    jmp !y command_complete side 1
 wait_for_response:
-    nop side 1
-    jmp pin wait_for_response side 0
+    nop side 0
+    jmp pin wait_for_response side 1
 read_response:
-    in pins, 1 side 1
-    jmp y-- read_response side 0
-    push block side 1
+    in pins, 1 side 0
+    jmp y-- read_response side 1
+    push block side 0
 command_complete:
-    irq set 0 side 0
+    irq set 0 side 1
 .wrap
 
 .program pf_sdio_pio_data_rx

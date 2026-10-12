@@ -52,7 +52,7 @@ Use GP2-GP7 for one memory device and choose one mode column below. Wiring stays
 - The board profile explicitly assigns CLK=GP2, CMD=GP3, and logical DAT0-DAT3 to GP4/GP7/GP6/GP5. PIO samples the contiguous GP4-GP7 window; the SDIO transfer code remaps the DAT1/DAT3 bit lanes to match this wiring.
 - The SD-SPI driver holds GPIO-controlled CS low across each complete card transaction, including data and busy-response phases. Verify CS timing, clock, and data with a logic analyzer during board validation.
 - GPIO-controlled CS on GP5 is the selected implementation and requires no rewiring. It does not satisfy an automatic hardware-CS requirement; if hardware CS is mandatory, the design remains unresolved until a suitable transaction-control approach is demonstrated.
-- Pin names follow the breakout guides below; wiring, signal integrity, and protocol operation remain unverified on hardware.
+- Pin names follow the breakout guides below. Pico 2 SDIO initialization is verified as recorded below; sector I/O, other interface modes, and signal integrity have not been validated.
 
 ### Lab Hardware Examples
 
@@ -60,7 +60,9 @@ The lab uses two types of memory/storage breakout: the Adafruit microSD board an
 
 #### SD-Card Breakout
 
-The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup does not initialize or mount the card; SDIO and SPI card I/O have not been validated on hardware. SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching.
+The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup attempts card initialization once but does not mount a filesystem. SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching.
+
+Pico 2 SDIO initialization was verified with the connected 16 GB card: UART reported `SD card initialized`, and HID reported `initialized=true`, 30,875,648 sectors (15,808,331,776 bytes), and a 12.5 MHz bus clock. The command PIO now drives all 48 command bits before rising clock edges and captures the response start bit without a software bit shift. Command completion allows at least eight idle clock cycles before the next command. Sector reads, writes, FAT32 mounting, and SPI initialization remain unverified; no card data was written during this check.
 
 #### W25Q128 Flash Breakout
 
@@ -113,7 +115,7 @@ Firmware resources that do not use header GPIOs:
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
-When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or SPI at build time in `firmware/src/config/config.h`; storage is not initialized or mounted automatically. Validate both wiring and card I/O on hardware before enabling storage use.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or SPI at build time in `firmware/src/config/config.h`; startup attempts initialization but does not mount a filesystem. Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

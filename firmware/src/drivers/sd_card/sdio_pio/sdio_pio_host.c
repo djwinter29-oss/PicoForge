@@ -299,6 +299,7 @@ bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
         return false;
     }
 
+    sleep_us((8000000u + host->current_clock_hz - 1u) / host->current_clock_hz);
     return true;
 }
 
@@ -318,12 +319,8 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
         return false;
     }
 
-    if (!pf_sdio_pio_response_words_to_bytes(response_words, response_bits,
-                                             response, response_capacity)) {
-        return false;
-    }
-    return (response_size == 0u) ||
-           pf_sdio_pio_align_response_frame(response, response_size);
+    return pf_sdio_pio_response_words_to_bytes(response_words, response_bits,
+                                               response, response_capacity);
 }
 
 bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,

@@ -207,12 +207,22 @@ static bool initialize_card(void)
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_CONDITION;
     start = time_us_32();
     do {
-        if (!command_response(55u, 0u, short_response, &response_argument) ||
-            !pf_sdio_pio_host_command_bytes(&sdio_pio_host, 41u, acmd41_argument,
-                                               48u, short_response, sizeof(short_response)) ||
-            !pf_sdio_pio_parse_r3_response(short_response, &ocr)) {
+        card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_PREFIX;
+        if (!command_response(55u, 0u, short_response, &response_argument)) {
             return false;
         }
+        card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_RESPONSE;
+        memset(card_init_response, 0, sizeof(card_init_response));
+        if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 41u, acmd41_argument,
+                                            48u, short_response, sizeof(short_response))) {
+            return false;
+        }
+        memcpy(card_init_response, short_response, sizeof(card_init_response));
+        card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_PARSE;
+        if (!pf_sdio_pio_parse_r3_response(short_response, &ocr)) {
+            return false;
+        }
+        card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_READY;
         if ((ocr & 0x80000000u) != 0u) {
             break;
         }
@@ -359,6 +369,8 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
                 } else {
                     gpio_pull_down(active_config.card_detect_gpio);
                 }
+            } else {
+                gpio_disable_pulls(active_config.card_detect_gpio);
             }
         }
         if (!pf_sdio_pio_host_init(&sdio_pio_host, &active_config)) {

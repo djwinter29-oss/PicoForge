@@ -43,6 +43,8 @@ pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config);
 
 /** Return the stage that failed in the most recent card-init attempt. */
 pf_sd_spi_init_stage_t pf_sd_spi_get_init_stage(void);
+void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
+                                      bool *received);
 
 /** Return true while the initialized card remains present. */
 bool pf_sd_spi_is_initialized(void);

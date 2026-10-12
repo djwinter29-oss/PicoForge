@@ -43,6 +43,9 @@ static uint32_t card_sector_count;
 static uint32_t card_bus_clock_hz;
 static uint8_t card_cid[16];
 static pf_sd_spi_init_stage_t card_init_stage;
+static uint8_t last_init_command;
+static uint8_t last_init_response;
+static bool last_init_response_received;
 
 static bool same_config(const pf_sd_spi_config_t *left,
                         const pf_sd_spi_config_t *right)
@@ -162,6 +165,9 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
         uint8_t value = exchange_byte(0xffu);
         if ((value & 0x80u) == 0u) {
             *response = value;
+            last_init_command = command;
+            last_init_response = value;
+            last_init_response_received = true;
             return true;
         }
     }
@@ -285,6 +291,9 @@ static bool initialize_card(void)
     bool supports_v2;
 
     uint8_t idle_clocks[10];
+    last_init_command = 0u;
+    last_init_response = 0xffu;
+    last_init_response_received = false;
     card_init_stage = PF_SD_SPI_INIT_STAGE_IDLE_CLOCKS;
     memset(idle_clocks, 0xff, sizeof(idle_clocks));
     if (spi_write_blocking(active_config.spi, idle_clocks,
@@ -392,6 +401,20 @@ pf_sd_spi_init_stage_t pf_sd_spi_get_init_stage(void)
     return card_init_stage;
 }
 
+void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
+                                      bool *received)
+{
+    if (command != NULL) {
+        *command = last_init_command;
+    }
+    if (response != NULL) {
+        *response = last_init_response;
+    }
+    if (received != NULL) {
+        *received = last_init_response_received;
+    }
+}
+
 static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
                                           const uint8_t *write_buffer)
 {
@@ -465,6 +488,8 @@ pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config)
                 } else {
                     gpio_pull_down(active_config.card_detect_gpio);
                 }
+            } else {
+                gpio_disable_pulls(active_config.card_detect_gpio);
             }
         }
 

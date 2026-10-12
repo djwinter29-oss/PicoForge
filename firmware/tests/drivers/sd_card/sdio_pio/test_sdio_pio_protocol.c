@@ -116,17 +116,30 @@ void test_unpacks_partial_response_words_from_the_low_bits(void)
     TEST_ASSERT_FALSE(pf_sdio_pio_response_words_to_bytes(r1_words, 47u, r1, sizeof(r1)));
 }
 
-void test_aligns_one_bit_late_native_response_capture(void)
+void test_decodes_native_cmd8_capture_without_bit_shift(void)
 {
-    uint8_t response[6] = { 0x10u, 0x00u, 0x00u, 0x03u, 0x54u, 0x27u };
+    const uint32_t words[] = { 0x08000001u, 0x0000aa13u };
+    uint8_t response[6];
     uint32_t argument = 0u;
 
-    TEST_ASSERT_TRUE(pf_sdio_pio_align_response_frame(response, sizeof(response)));
+    TEST_ASSERT_TRUE(pf_sdio_pio_response_words_to_bytes(words, 48u, response,
+                                                       sizeof(response)));
     TEST_ASSERT_EQUAL_HEX8_ARRAY(((uint8_t[]){0x08u, 0x00u, 0x00u, 0x01u, 0xaau, 0x13u}),
                                  response, sizeof(response));
     TEST_ASSERT_TRUE(pf_sdio_pio_parse_response(8u, response, &argument, true));
     TEST_ASSERT_EQUAL_HEX32(0x000001aau, argument);
-    TEST_ASSERT_FALSE(pf_sdio_pio_align_response_frame(NULL, sizeof(response)));
+}
+
+void test_decodes_native_acmd41_capture_without_bit_shift(void)
+{
+    const uint32_t words[] = { 0x3fc0ff80u, 0x000000ffu };
+    uint8_t response[6];
+    uint32_t ocr = 0u;
+
+    TEST_ASSERT_TRUE(pf_sdio_pio_response_words_to_bytes(words, 48u, response,
+                                                       sizeof(response)));
+    TEST_ASSERT_TRUE(pf_sdio_pio_parse_r3_response(response, &ocr));
+    TEST_ASSERT_EQUAL_HEX32(0xc0ff8000u, ocr);
 }
 
 void test_classifies_cmd8_v2_and_legacy_cards(void)

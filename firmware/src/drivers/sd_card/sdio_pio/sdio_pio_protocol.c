@@ -62,21 +62,6 @@ bool pf_sdio_pio_response_words_to_bytes(const uint32_t *words, uint16_t respons
     return true;
 }
 
-bool pf_sdio_pio_align_response_frame(uint8_t *response, size_t response_size)
-{
-    uint8_t carry = 0u;
-
-    if ((response == NULL) || (response_size == 0u)) {
-        return false;
-    }
-    for (size_t index = 0u; index < response_size; index++) {
-        uint8_t current = response[index];
-        response[index] = (uint8_t)((current >> 1u) | (carry << 7u));
-        carry = current & 1u;
-    }
-    return true;
-}
-
 bool pf_sdio_pio_parse_r3_response(const uint8_t frame[6], uint32_t *ocr)
 {
     if ((frame == NULL) || (ocr == NULL) ||
