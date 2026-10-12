@@ -2,7 +2,7 @@
 
 ## Device Interfaces
 
-The development device uses VID/PID `0xCAFE:0x4011` while MSC is disabled and `0xCAFE:0x4012` while MSC is enabled. Replace these unallocated development identities before product release.
+The development device uses VID/PID `0xCAFE:0x4011` in both configurations. Replace this unallocated development identity before product release. The HID interface remains interface 2; when MSC is enabled, its interface is appended as interface 3.
 
 - CDC ACM is the serial console; firmware sends `PicoForge CDC ready` after the host asserts DTR.
 - HID uses vendor usage page `0xFF00`, usage `0x01`.
@@ -67,7 +67,7 @@ Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED
 
 Feature report 5 controls USB Mass Storage Class (MSC) ownership. Its SET payload is 2 bytes: version `2`, then desired state (`0` disabled or `1` enabled). Input report 5 carries a 4-byte status payload every 500 ms: version `2`, enabled, transition-pending, and request-rejected; the last three fields are booleans.
 
-MSC is disabled at boot. Enabling requires an initialized card and an unmounted firmware filesystem. The device disconnects and re-enumerates with PID `0x4012` and a CDC/MSC/HID configuration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device disconnects and re-enumerates with PID `0x4011`, after which firmware owns the card again. A USB re-enumeration briefly interrupts HID, so hosts must reconnect and rediscover the device. Do not unplug the card or reset the device while the host is writing.
+MSC is disabled at boot. Enabling requires an initialized card and an unmounted firmware filesystem. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
 
 ## Host Implementations
 

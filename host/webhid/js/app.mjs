@@ -9,16 +9,18 @@ const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : 
 
 function render(state) {
   renderStatus(state);
-  connect.disabled = state.busy || state.connected || !navigator.hid;
+  connect.disabled = state.busy || state.connected || state.reconnecting || !navigator.hid;
   disconnect.disabled = state.busy || !state.connected;
   ledControl.disabled = state.busy || !state.connected || !state.board_status?.led_available;
   mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending);
   mscControl.textContent = state.msc?.enabled ? "Disable USB drive" : "Enable USB drive";
-  document.querySelector("#msc-note").textContent = state.msc?.request_rejected
+  document.querySelector("#msc-note").textContent = state.reconnecting
+    ? "USB interfaces are reconnecting; HID will resume automatically."
+    : state.msc?.request_rejected
     ? "Request refused. Safely eject the drive on the host before disabling."
-    : state.msc?.transition_pending ? "USB mode changing; reconnect to continue."
-      : state.msc?.enabled ? "Host owns the card. Safely eject before disabling or using it in firmware."
-        : "Firmware owns the card. Unmount firmware storage before enabling; the device then reconnects.";
+    : state.msc?.transition_pending ? "USB mode changing; HID reconnects automatically."
+      : state.msc?.enabled ? "Host owns the card. Safely eject before disabling to return ownership to Pico."
+        : "Pico owns the card. Unmount firmware storage before enabling the USB drive.";
 }
 
 connect.addEventListener("click", () => client.connect());

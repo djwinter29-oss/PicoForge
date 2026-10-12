@@ -6,7 +6,10 @@ import {
   decodeMemoryReport,
   decodeMscStatus,
   decodeStatusReport,
+  INFO_REPORT_ID,
   matchesPicoForge,
+  PicoForgeWebHid,
+  STATUS_REPORT_ID,
 } from "../js/device.mjs";
 
 function infoReport({ reportId = true, mcu = 2, name = "PicoForge", serial = "0123456789abcdef" } = {}) {
@@ -143,4 +146,103 @@ test("reject wrong versions, clocks, padding, and device identities", () => {
     collections: [{ usagePage: 0xff00, usage: 1 }] }), true);
   assert.equal(matchesPicoForge({ vendorId: 0xcafe, productId: 0x4012,
     collections: [{ usagePage: 0xff00, usage: 1 }] }), true);
+});
+
+test("reconnect the authorized HID device after the MSC USB re-enumeration", async () => {
+  class MockHidDevice extends EventTarget {
+    constructor() {
+      super();
+      this.vendorId = 0xcafe;
+      this.productId = 0x4011;
+      this.serialNumber = "0123456789abcdef";
+      this.collections = [{ usagePage: 0xff00, usage: 1 }];
+      this.opened = false;
+    }
+
+    async open() { this.opened = true; }
+    async close() { this.opened = false; }
+    async receiveFeatureReport(reportId) {
+      assert.equal(reportId, INFO_REPORT_ID);
+      return new DataView(infoReport().buffer);
+    }
+    async sendFeatureReport() {}
+  }
+
+  class MockHid extends EventTarget {
+    constructor() {
+      super();
+      this.allowed = [];
+      this.promptDevice = null;
+    }
+
+    async getDevices() { return this.allowed; }
+    async requestDevice() { return this.promptDevice ? [this.promptDevice] : []; }
+    emit(type, device) {
+      const event = new Event(type);
+      Object.defineProperty(event, "device", { value: device });
+      this.dispatchEvent(event);
+    }
+  }
+
+  const hid = new MockHid();
+  const firstDevice = new MockHidDevice();
+  hid.promptDevice = firstDevice;
+  const client = new PicoForgeWebHid(hid);
+
+  await client.connect();
+  assert.equal(client.state.connected, true, client.state.error);
+  await client.setMsc(true);
+  assert.equal(client.state.msc.transition_pending, true);
+
+  hid.emit("disconnect", firstDevice);
+  assert.equal(client.state.reconnecting, true);
+
+  const reenumeratedDevice = new MockHidDevice();
+  hid.allowed = [reenumeratedDevice];
+  hid.emit("connect", reenumeratedDevice);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(client.state.connected, true);
+  assert.equal(client.state.reconnecting, false);
+  assert.equal(client.state.msc.transition_pending, true);
+
+  const status = new Uint8Array(13);
+  status[0] = 2;
+  new DataView(status.buffer).setUint32(6, 150_000_000, true);
+  const inputReport = new Event("inputreport");
+  Object.defineProperties(inputReport, {
+    device: { value: reenumeratedDevice },
+    reportId: { value: STATUS_REPORT_ID },
+    data: { value: new DataView(status.buffer) },
+  });
+  reenumeratedDevice.dispatchEvent(inputReport);
+  assert.equal(client.state.runtime.system_clock_hz, 150_000_000);
+
+  const enabledReport = new Event("inputreport");
+  Object.defineProperties(enabledReport, {
+    device: { value: reenumeratedDevice },
+    reportId: { value: 5 },
+    data: { value: new DataView(Uint8Array.from([2, 1, 0, 0]).buffer) },
+  });
+  reenumeratedDevice.dispatchEvent(enabledReport);
+  assert.equal(client.state.msc.enabled, true);
+
+  await client.setMsc(false);
+  hid.emit("disconnect", reenumeratedDevice);
+  assert.equal(client.state.reconnecting, true);
+
+  const firmwareOwnedDevice = new MockHidDevice();
+  hid.allowed = [firmwareOwnedDevice];
+  hid.emit("connect", firmwareOwnedDevice);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(client.state.connected, true);
+
+  const disabledReport = new Event("inputreport");
+  Object.defineProperties(disabledReport, {
+    device: { value: firmwareOwnedDevice },
+    reportId: { value: 5 },
+    data: { value: new DataView(Uint8Array.from([2, 0, 0, 0]).buffer) },
+  });
+  firmwareOwnedDevice.dispatchEvent(disabledReport);
+  assert.equal(client.state.msc.enabled, false);
 });

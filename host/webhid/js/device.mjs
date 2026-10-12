@@ -195,6 +195,7 @@ export class PicoForgeWebHid {
     this.device = null;
     this.state = {
       connected: false,
+      reconnecting: false,
       error: hid ? null : "WebHID is unavailable; use a supported browser on localhost or HTTPS",
       hardware: null,
       runtime: null,
@@ -203,6 +204,7 @@ export class PicoForgeWebHid {
       updated_at: null,
       busy: false,
     };
+    this.reconnectSerial = null;
     this.onInputReport = event => {
       if (event.device !== this.device) return;
       try {
@@ -225,10 +227,21 @@ export class PicoForgeWebHid {
       if (event.device !== this.device) return;
       event.device.removeEventListener("inputreport", this.onInputReport);
       this.device = null;
-      this.update({ connected: false, hardware: null, runtime: null, board_status: null, memory: null, updated_at: null,
-        msc: null, busy: false, error: "Device disconnected" });
+      if (this.reconnectSerial) {
+        this.update({ connected: false, reconnecting: true, busy: false, error: null });
+      } else {
+        this.update({ connected: false, reconnecting: false, hardware: null, runtime: null,
+          board_status: null, memory: null, updated_at: null, msc: null, busy: false,
+          error: "Device disconnected" });
+      }
+    };
+    this.onConnect = event => {
+      if (!this.reconnectSerial || event.device.serialNumber !== this.reconnectSerial ||
+          !matchesPicoForge(event.device) || this.device) return;
+      void this.attachDevice(event.device);
     };
     hid?.addEventListener("disconnect", this.onDisconnect);
+    hid?.addEventListener("connect", this.onConnect);
   }
 
   update(changes) {
@@ -237,35 +250,48 @@ export class PicoForgeWebHid {
   }
 
   async connect() {
-    if (!this.hid || this.state.busy || this.device) return;
+    if (!this.hid || this.state.busy || this.device || this.state.reconnecting) return;
     this.update({ busy: true, error: null });
-    let selected;
     try {
-      const devices = await this.hid.requestDevice({ filters: [0x4011, 0x4012].map(productId => ({
-        ...DEVICE_FILTER, productId,
-      })) });
-      if (devices.length === 0) {
-        this.update({ busy: false });
-        return;
+      const allowed = (await this.hid.getDevices()).filter(matchesPicoForge);
+      let selected = allowed.length === 1 ? allowed[0] : null;
+      if (!selected) {
+        const devices = await this.hid.requestDevice({ filters: [0x4011, 0x4012].map(productId => ({
+          ...DEVICE_FILTER, productId,
+        })) });
+        if (devices.length === 0) {
+          this.update({ busy: false });
+          return;
+        }
+        if (devices.length !== 1 || !matchesPicoForge(devices[0])) {
+          throw new Error("Select one PicoForge vendor HID interface");
+        }
+        [selected] = devices;
       }
-      if (devices.length !== 1 || !matchesPicoForge(devices[0])) {
-        throw new Error("Select one PicoForge vendor HID interface");
-      }
-      selected = devices[0];
+      await this.attachDevice(selected);
+    } catch (error) {
+      this.update({ connected: false, busy: false, reconnecting: false, error: error.message,
+        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
+    }
+  }
+
+  async attachDevice(selected) {
+    this.update({ busy: true, error: null });
+    try {
       await selected.open();
       selected.addEventListener("inputreport", this.onInputReport);
       this.device = selected;
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
-      this.update({ connected: true, busy: false, error: null, hardware,
-        runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
+      this.reconnectSerial = selected.serialNumber || hardware.serial_number;
+      this.update({ connected: true, busy: false, reconnecting: false, error: null, hardware,
+        runtime: null, board_status: null, memory: null, updated_at: null });
     } catch (error) {
-      selected?.removeEventListener("inputreport", this.onInputReport);
-      if (selected?.opened) {
+      selected.removeEventListener("inputreport", this.onInputReport);
+      if (selected.opened) {
         try { await selected.close(); } catch { }
       }
-      this.device = null;
-      this.update({ connected: false, busy: false, error: error.message,
-        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
+      if (this.device === selected) this.device = null;
+      this.update({ connected: false, busy: false, reconnecting: false, error: error.message });
     }
   }
 
@@ -299,14 +325,17 @@ export class PicoForgeWebHid {
   async disconnect() {
     const device = this.device;
     if (!device || this.state.busy) return;
+    const reconnectSerial = this.reconnectSerial;
     this.update({ busy: true });
     device.removeEventListener("inputreport", this.onInputReport);
     try {
       if (device.opened) await device.close();
       this.device = null;
-      this.update({ connected: false, busy: false, error: null,
+      this.reconnectSerial = null;
+      this.update({ connected: false, busy: false, reconnecting: false, error: null,
         hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
     } catch (error) {
+      this.reconnectSerial = reconnectSerial;
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ busy: false, error: error.message });
     }

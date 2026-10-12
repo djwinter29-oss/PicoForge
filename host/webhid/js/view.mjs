@@ -22,7 +22,7 @@ export function renderStatus(snapshot) {
   const connection = document.querySelector("#connection");
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
   document.querySelector("#connection-label").textContent = snapshot.error
-    ? "Attention" : connected ? "Connected" : "Disconnected";
+    ? "Attention" : snapshot.reconnecting ? "Reconnecting" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
   document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
   document.querySelector("#runtime-clock").textContent = runtime
@@ -47,7 +47,8 @@ export function renderStatus(snapshot) {
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = snapshot.error
-    ?? (runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
+    ?? (snapshot.reconnecting ? "USB interfaces changing; reconnecting HID automatically"
+      : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
 }
 
 function renderMemory(memory) {
