@@ -7,6 +7,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
+#include "hardware/sync.h"
 #include "pico/stdlib.h"
 #include "sd_card_block.h"
 #include "sdio_pio_host.pio.h"
@@ -17,9 +18,24 @@
 #define SDIO_DATA_READ_IRQ 1u
 #define SDIO_DATA_NIBBLE_COUNT 1040u
 #define SDIO_DATA_WORD_COUNT PF_SDIO_PIO_TRANSFER_WORDS
-#define SDIO_READ_BATCH_BLOCKS 32u
+/* ponytail: synchronous batched DMA into one bounded buffer (ceiling 32 KiB of
+ * payload, 64 sectors); completed wire blocks are decoded while DMA still
+ * receives later blocks. No ping-pong or second DMA channel. Upgrade path: for
+ * larger batches or fully overlapped decode, add a second buffer with chained
+ * DMA channels (ping-pong) instead of raising this ceiling. */
+#define SDIO_READ_BATCH_BLOCKS 64u
 
 static uint32_t read_wire_buffer[SDIO_DATA_WORD_COUNT * SDIO_READ_BATCH_BLOCKS];
+
+/* PIO SET only has a 5-bit immediate, so counts above 31 are loaded from the
+ * TX FIFO through OSR: the pull/mov are injected before the RX program's own
+ * "pull block" fetches the nibble count. */
+static void load_batch_count(pf_sdio_pio_host_t *host, uint32_t batch_count)
+{
+    pio_sm_put_blocking(host->pio, host->data_sm, batch_count - 1u);
+    pio_sm_exec(host->pio, host->data_sm, pio_encode_pull(false, true));
+    pio_sm_exec(host->pio, host->data_sm, pio_encode_mov(pio_y, pio_osr));
+}
 
 static bool load_command_program(pf_sdio_pio_host_t *host)
 {
@@ -395,6 +411,33 @@ cleanup:
     return success;
 }
 
+/* Decodes wire blocks fully written by DMA; returns false on a bad write address or CRC. */
+static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
+                                    uint32_t batch_words, uint32_t *decoded_count)
+{
+    uint32_t write_addr = dma_channel_hw_addr(host->dma_channel)->write_addr;
+    uint32_t buffer_start = (uint32_t)(uintptr_t)read_wire_buffer;
+    uint32_t completed;
+
+    if ((write_addr < buffer_start) ||
+        (write_addr > buffer_start + batch_words * (uint32_t)sizeof(uint32_t)) ||
+        ((write_addr & (sizeof(uint32_t) - 1u)) != 0u)) {
+        return false;
+    }
+    completed = (write_addr - buffer_start) / sizeof(uint32_t) / SDIO_DATA_WORD_COUNT;
+    __dmb();
+    while (*decoded_count < completed) {
+        uint8_t *image = (uint8_t *)&read_wire_buffer[
+            *decoded_count * SDIO_DATA_WORD_COUNT];
+        if (!pf_sdio_pio_decode_data_block(&host->lane_map, image,
+                                           blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)) {
+            return false;
+        }
+        ++*decoded_count;
+    }
+    return true;
+}
+
 static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
 {
     uint8_t response[6];
@@ -436,6 +479,8 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         uint32_t start;
         bool command_sent;
         bool transfer_ok = false;
+        bool crc_failed = false;
+        uint32_t decoded_count = 0u;
         dma_channel_config dma_config;
 
         if (batch_count > SDIO_READ_BATCH_BLOCKS) {
@@ -463,8 +508,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         pio_sm_restart(host->pio, host->data_sm);
         pio_sm_exec(host->pio, host->data_sm,
                     pio_encode_jmp(host->data_rx_program_offset));
-        pio_sm_exec(host->pio, host->data_sm,
-                    pio_encode_set(pio_y, batch_count - 1u));
+        load_batch_count(host, batch_count);
         pio_sm_put_blocking(host->pio, host->data_sm,
                             SDIO_DATA_NIBBLE_COUNT - 1u);
 
@@ -491,10 +535,19 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
                 if ((uint32_t)(time_us_32() - start) > 1000000u) {
                     break;
                 }
+                if (!crc_failed &&
+                    !decode_completed_blocks(host, blocks, batch_words, &decoded_count)) {
+                    crc_failed = true;
+                }
                 pf_sd_card_idle();
             }
             transfer_ok = pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) &&
                           !dma_channel_is_busy(host->dma_channel);
+            if (transfer_ok && !crc_failed &&
+                (!decode_completed_blocks(host, blocks, batch_words, &decoded_count) ||
+                 (decoded_count != batch_count))) {
+                crc_failed = true;
+            }
         }
 
         pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -509,17 +562,8 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         pio_sm_restart(host->pio, host->data_sm);
         pio_sm_exec(host->pio, host->data_sm,
                     pio_encode_jmp(host->data_rx_program_offset));
-        if (!transfer_ok) {
+        if (!transfer_ok || crc_failed) {
             return false;
-        }
-
-        for (uint32_t block_index = 0u; block_index < batch_count; block_index++) {
-            uint8_t *image = (uint8_t *)&read_wire_buffer[
-                block_index * SDIO_DATA_WORD_COUNT];
-            if (!pf_sdio_pio_decode_data_block(&host->lane_map, image,
-                                                blocks + block_index * PF_SD_CARD_BLOCK_SIZE)) {
-                return false;
-            }
         }
 
         blocks += batch_count * PF_SD_CARD_BLOCK_SIZE;

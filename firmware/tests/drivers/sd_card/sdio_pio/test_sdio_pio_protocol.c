@@ -417,3 +417,144 @@ void test_handles_null_data_block_buffers(void)
     TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, NULL, block));
     TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, NULL));
 }
+static void reference_crc16_lanes(const uint8_t block[512], uint16_t crc[4])
+{
+    for (uint32_t lane = 0u; lane < 4u; lane++) {
+        crc[lane] = 0u;
+    }
+    for (size_t index = 0u; index < 512u; index++) {
+        for (uint32_t half = 0u; half < 2u; half++) {
+            uint8_t nibble = (uint8_t)(block[index] >> (half == 0u ? 4u : 0u));
+            for (uint32_t lane = 0u; lane < 4u; lane++) {
+                uint16_t feedback = (uint16_t)((crc[lane] >> 15u) ^ ((nibble >> lane) & 1u));
+                crc[lane] = (uint16_t)(crc[lane] << 1u);
+                if (feedback != 0u) {
+                    crc[lane] ^= 0x1021u;
+                }
+            }
+        }
+    }
+}
+
+/* Builds the wire image from the bitwise reference, independent of the production CRC. */
+static void reference_image(const uint8_t block[512], const uint32_t gpio[4],
+                            uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
+{
+    uint16_t crc[4];
+    uint32_t base = gpio[0];
+
+    for (uint32_t lane = 1u; lane < 4u; lane++) {
+        if (gpio[lane] < base) {
+            base = gpio[lane];
+        }
+    }
+    reference_crc16_lanes(block, crc);
+    for (size_t index = 0u; index < 512u; index++) {
+        uint8_t byte = 0u;
+        for (uint32_t half = 0u; half < 2u; half++) {
+            uint8_t nibble = (uint8_t)(block[index] >> (half == 0u ? 4u : 0u));
+            uint8_t wire = 0u;
+            for (uint32_t lane = 0u; lane < 4u; lane++) {
+                wire |= (uint8_t)(((nibble >> lane) & 1u) << (gpio[lane] - base));
+            }
+            byte |= (uint8_t)(wire << (half == 0u ? 4u : 0u));
+        }
+        image[index] = byte;
+    }
+    for (size_t index = 0u; index < 8u; index++) {
+        uint8_t byte = 0u;
+        for (uint32_t half = 0u; half < 2u; half++) {
+            uint32_t bit = 15u - (2u * (uint32_t)index + half);
+            uint8_t wire = 0u;
+            for (uint32_t lane = 0u; lane < 4u; lane++) {
+                wire |= (uint8_t)(((crc[lane] >> bit) & 1u) << (gpio[lane] - base));
+            }
+            byte |= (uint8_t)(wire << (half == 0u ? 4u : 0u));
+        }
+        image[512u + index] = byte;
+    }
+}
+
+void test_data_block_crc_matches_reference_for_every_lane_permutation(void)
+{
+    uint8_t source[512];
+    uint8_t destination[512];
+    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
+    uint8_t expected[PF_SDIO_PIO_IMAGE_SIZE];
+    uint32_t pattern = 0x1234567u;
+
+    for (uint32_t code = 0u; code < 256u; code++) {
+        uint32_t gpio[4] = { 4u + (code & 3u), 4u + ((code >> 2u) & 3u),
+                             4u + ((code >> 4u) & 3u), 4u + ((code >> 6u) & 3u) };
+        pf_sdio_pio_lane_map_t map;
+        bool valid = true;
+
+        for (uint32_t a = 0u; a < 4u; a++) {
+            for (uint32_t b = a + 1u; b < 4u; b++) {
+                valid = valid && (gpio[a] != gpio[b]);
+            }
+        }
+        if (!valid) {
+            continue;
+        }
+        for (size_t index = 0u; index < sizeof(source); index++) {
+            pattern = pattern * 1664525u + 1013904223u;
+            source[index] = (uint8_t)(pattern >> 24u);
+        }
+        reference_image(source, gpio, expected);
+        TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, gpio));
+        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, image, sizeof(image));
+        TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, expected, destination));
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
+    }
+}
+
+void test_decode_rejects_every_single_bit_crc_error_per_lane(void)
+{
+    pf_sdio_pio_lane_map_t map;
+    uint8_t source[512];
+    uint8_t destination[512];
+    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
+
+    fill_pattern(source);
+    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
+    for (size_t index = 512u; index < PF_SDIO_PIO_IMAGE_SIZE; index++) {
+        for (uint32_t bit = 0u; bit < 8u; bit++) {
+            image[index] ^= (uint8_t)(1u << bit);
+            TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, destination));
+            image[index] ^= (uint8_t)(1u << bit);
+        }
+    }
+    for (size_t index = 0u; index < 512u; index += 61u) {
+        for (uint32_t bit = 0u; bit < 8u; bit++) {
+            image[index] ^= (uint8_t)(1u << bit);
+            TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, destination));
+            image[index] ^= (uint8_t)(1u << bit);
+        }
+    }
+    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, image, destination));
+}
+
+
+void test_decode_byte_table_matches_nibble_map_for_all_byte_values(void)
+{
+    pf_sdio_pio_lane_map_t map;
+    uint8_t source[512];
+    uint8_t destination[512];
+    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
+    const uint32_t gpio[4] = { 7u, 5u, 4u, 6u };
+
+    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, gpio));
+    for (uint32_t value = 0u; value < 256u; value++) {
+        TEST_ASSERT_EQUAL_UINT8((uint8_t)((map.from_gpio[value >> 4u] << 4u) |
+                                          map.from_gpio[value & 0x0fu]),
+                                map.from_gpio_byte[value]);
+        source[value] = (uint8_t)value;
+        source[256u + value] = (uint8_t)(255u - value);
+    }
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, image, destination));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
+}

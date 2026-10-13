@@ -150,8 +150,28 @@ core; writes did not, because they were limited by CMD25 stream restarts (see be
 Increasing the SDIO CMD18 batch from 16 to 32 sectors and the self-test read
 buffer from 8 KiB to 16 KiB raised a stock-clock 32 MiB read/verify run to
 14,134 ms (2.26 MiB/s), up from 2.03 MiB/s in the preceding run. It passed with
-zero mismatches and removed the file. A 64-sector batch timed out during reads,
-and a 16.7 MHz SDIO profile failed its first write; neither setting is retained.
+zero mismatches and removed the file. An earlier 64-sector attempt timed out
+and used `set y` with an unsupported 63 operand (PIO SET has a 5-bit immediate).
+A 16.7 MHz SDIO profile failed its first write and is not retained.
+
+The read batch is now 64 sectors (32 KiB, matching the self-test buffer).
+The count is loaded through the TX FIFO (`pull`, `mov y, osr`) before the
+nibble count. Completed blocks are derived from DMA `write_addr`, checked to
+lie word-aligned within the wire buffer. After the CMD18 response is validated,
+decoding and CRC checks overlap DMA reception of later blocks in the same
+buffer. A CRC failure stops decoding, but the transfer still drains (subject
+to its timeout) and CMD12 is attempted before returning an error.
+
+CRC byte lookup and byte lane mapping reduce CPU work without removing checks.
+Additional static storage is about 34.5 KiB: 16 KiB self-test buffer growth,
+16.25 KiB wire buffer growth, 2 KiB CRC table and 256 bytes for lane mapping.
+Final Pico 2 hardware validation at 150 MHz CPU / 12.5 MHz SDIO passed three
+128 MiB write/read/verify runs: read 4.693–4.696 MB/s, write 5.032–5.169 MB/s,
+zero mismatches and successful cleanup. These are short filesystem benchmarks,
+not a continuous acquisition guarantee. See
+`tests/records/2026-10-13-sdio-read-throughput.md` for artifacts and scope.
+Run `python3 tools/validation/check-sdio-read-batch.py` for structural and
+compiled-helper DMA boundary regression checks.
 At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
 indicating some CPU-side cost, but the overclock is diagnostic only.
 

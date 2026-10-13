@@ -25,6 +25,7 @@ void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4]);
 typedef struct {
     uint8_t to_gpio[16];
     uint8_t from_gpio[16];
+    uint8_t from_gpio_byte[256];
 } pf_sdio_pio_lane_map_t;
 
 /** Build the lane map for a board's DAT0-DAT3 GPIOs; they must occupy four contiguous pins. */

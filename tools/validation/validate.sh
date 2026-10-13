@@ -96,6 +96,7 @@ fi
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "=== Ceedling project and unit tests ==="
+    python3 tools/validation/check-sdio-read-batch.py
     "$CEEDLING_SCRIPT" check
     if find firmware/tests -type f -name 'test_*.c' -print -quit | grep -q .; then
         "$CEEDLING_SCRIPT" test:all

@@ -108,15 +108,36 @@ static uint64_t crc16_4bit_nibble(uint64_t reg, uint8_t nibble)
     return (reg << 4u) ^ (feedback << 48u) ^ (feedback << 20u) ^ feedback;
 }
 
+/*
+ * The byte update is linear, so reg' = (reg << 8) ^ table[(reg >> 56) ^ value].
+ * The 2 KiB RAM table is built on first use (about 256 x 2 nibble steps).
+ */
+static uint64_t crc16_4bit_table[256];
+static bool crc16_4bit_table_ready;
+
+static void crc16_4bit_table_init(void)
+{
+    for (uint32_t index = 0u; index < 256u; index++) {
+        uint64_t reg = (uint64_t)index << 56u;
+
+        reg = crc16_4bit_nibble(reg, 0u);
+        crc16_4bit_table[index] = crc16_4bit_nibble(reg, 0u);
+    }
+    crc16_4bit_table_ready = true;
+}
+
 static uint64_t crc16_4bit_byte(uint64_t reg, uint8_t value)
 {
-    return crc16_4bit_nibble(crc16_4bit_nibble(reg, (uint8_t)(value >> 4u)), value & 0x0fu);
+    return (reg << 8u) ^ crc16_4bit_table[(uint8_t)(reg >> 56u) ^ value];
 }
 
 static uint64_t crc16_4bit_block(const uint8_t block[512])
 {
     uint64_t reg = 0u;
 
+    if (!crc16_4bit_table_ready) {
+        crc16_4bit_table_init();
+    }
     for (size_t index = 0u; index < 512u; index++) {
         reg = crc16_4bit_byte(reg, block[index]);
     }
@@ -181,6 +202,9 @@ bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_
         map->to_gpio[nibble] = to_gpio;
         map->from_gpio[nibble] = from_gpio;
     }
+    for (uint32_t value = 0u; value < 256u; value++) {
+        map->from_gpio_byte[value] = map_byte(map->from_gpio, (uint8_t)value);
+    }
     return true;
 }
 
@@ -191,6 +215,9 @@ bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint
 
     if ((map == NULL) || (block == NULL) || (image == NULL)) {
         return false;
+    }
+    if (!crc16_4bit_table_ready) {
+        crc16_4bit_table_init();
     }
 
     for (size_t index = 0u; index < 512u; index++) {
@@ -207,19 +234,28 @@ bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
                                    const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512])
 {
     uint64_t reg = 0u;
-    uint8_t mismatch = 0u;
+    uint64_t received = 0u;
 
     if ((map == NULL) || (image == NULL) || (block == NULL)) {
         return false;
     }
+    if (!crc16_4bit_table_ready) {
+        crc16_4bit_table_init();
+    }
 
+    /*
+     * The CRC update treats all four bit positions of a nibble identically, so it can
+     * run on wire-order bytes and be compared with the wire-order CRC bytes; only the
+     * 512 data bytes need a lane remap.
+     */
     for (size_t index = 0u; index < 512u; index++) {
-        block[index] = map_byte(map->from_gpio, image[index]);
-        reg = crc16_4bit_byte(reg, block[index]);
+        uint8_t wire = image[index];
+
+        reg = crc16_4bit_byte(reg, wire);
+        block[index] = map->from_gpio_byte[wire];
     }
     for (size_t index = 0u; index < 8u; index++) {
-        mismatch |= (uint8_t)(map_byte(map->from_gpio, image[512u + index]) ^
-                              (uint8_t)(reg >> (56u - 8u * index)));
+        received = (received << 8u) | image[512u + index];
     }
-    return mismatch == 0u;
+    return received == reg;
 }
