@@ -9,6 +9,7 @@
 #include "drivers/led.h"
 #include "drivers/temperature.h"
 #include "msc.h"
+#include "middleware/storage/storage.h"
 #include "middleware/storage/storage_worker.h"
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
@@ -80,6 +81,20 @@ void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
     if (info.cid_valid) {
         report->flags |= PF_HID_MEMORY_CID_VALID;
         memcpy(report->cid, info.cid, sizeof(report->cid));
+    }
+}
+
+void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t sequence)
+{
+    memset(report, 0, sizeof(*report));
+    report->version = PF_HID_REPORT_VERSION;
+    report->sequence = sequence;
+    switch (pf_storage_filesystem_format()) {
+    case PF_STORAGE_FILESYSTEM_FAT12: report->format = PF_HID_FILESYSTEM_FAT12; break;
+    case PF_STORAGE_FILESYSTEM_FAT16: report->format = PF_HID_FILESYSTEM_FAT16; break;
+    case PF_STORAGE_FILESYSTEM_FAT32: report->format = PF_HID_FILESYSTEM_FAT32; break;
+    case PF_STORAGE_FILESYSTEM_EXFAT: report->format = PF_HID_FILESYSTEM_EXFAT; break;
+    default: report->format = PF_HID_FILESYSTEM_UNKNOWN; break;
     }
 }
 

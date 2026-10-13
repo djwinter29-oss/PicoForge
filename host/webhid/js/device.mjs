@@ -11,10 +11,12 @@ export const MEMORY_REPORT_ID = 3;
 export const LED_COMMAND_REPORT_ID = 4;
 export const MSC_COMMAND_REPORT_ID = 5;
 export const SELF_TEST_REPORT_ID = 6;
+export const FILESYSTEM_REPORT_ID = 7;
 const INFO_PAYLOAD_SIZE = 42;
 const STATUS_PAYLOAD_SIZE = 13;
 const MEMORY_PAYLOAD_SIZE = 29;
 const MSC_STATUS_SIZE = 4;
+const FILESYSTEM_PAYLOAD_SIZE = 3;
 
 function asView(report) {
   if (report instanceof DataView) return report;
@@ -162,6 +164,22 @@ export function decodeMemoryReport(reportId, report) {
   };
 }
 
+export function decodeFilesystemReport(reportId, report) {
+  if (reportId !== FILESYSTEM_REPORT_ID) throw new Error(`Unexpected HID filesystem report ID ${reportId}`);
+  const view = asView(report);
+  if (view.byteLength < FILESYSTEM_PAYLOAD_SIZE) throw new Error("Unexpected HID filesystem report size");
+  for (let index = FILESYSTEM_PAYLOAD_SIZE; index < view.byteLength; index++) {
+    if (view.getUint8(index) !== 0) throw new Error("Unexpected HID filesystem report padding");
+  }
+  const version = view.getUint8(0);
+  const sequence = view.getUint8(1);
+  const formatId = view.getUint8(2);
+  const format = ["unknown", "fat12", "fat16", "fat32", "exfat"][formatId];
+  if (version !== 2) throw new Error(`Unsupported HID filesystem report version ${version}`);
+  if (format === undefined) throw new Error("Unknown HID filesystem format");
+  return { version, sequence, format };
+}
+
 export function decodeMscStatus(report) {
   const payload = featurePayload(report, MSC_COMMAND_REPORT_ID, MSC_STATUS_SIZE);
   const version = payload.getUint8(0);
@@ -247,6 +265,7 @@ export class PicoForgeWebHid {
       runtime: null,
       board_status: null,
       memory: null,
+      filesystem_format: null,
       self_test: null,
       self_test_command_pending: false,
       updated_at: null,
@@ -263,6 +282,9 @@ export class PicoForgeWebHid {
         } else if (event.reportId === MEMORY_REPORT_ID) {
           const memory = decodeMemoryReport(event.reportId, event.data);
           this.update({ memory, updated_at: new Date().toISOString(), error: null });
+        } else if (event.reportId === FILESYSTEM_REPORT_ID) {
+          const filesystem = decodeFilesystemReport(event.reportId, event.data);
+          this.update({ filesystem_format: filesystem.format, updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === MSC_COMMAND_REPORT_ID) {
           const msc = decodeMscStatus(event.data);
           this.update({ msc, updated_at: new Date().toISOString(), error: null });
@@ -280,10 +302,11 @@ export class PicoForgeWebHid {
       event.device.removeEventListener("inputreport", this.onInputReport);
       this.device = null;
       if (this.reconnectSerial) {
-        this.update({ connected: false, reconnecting: true, busy: false, error: null });
+        this.update({ connected: false, reconnecting: true, busy: false,
+          filesystem_format: null, error: null });
       } else {
         this.update({ connected: false, reconnecting: false, hardware: null, runtime: null,
-          board_status: null, memory: null, updated_at: null, msc: null, busy: false,
+          board_status: null, memory: null, filesystem_format: null, updated_at: null, msc: null, busy: false,
           error: "Device disconnected" });
       }
     };

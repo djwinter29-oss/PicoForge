@@ -39,7 +39,7 @@ export function renderStatus(snapshot) {
   document.querySelector("#led-state").textContent = board?.led_available
     ? (board.led_on ? "On" : "Off") : "Unavailable";
   document.querySelector("#led-control").textContent = board?.led_on ? "Turn LED off" : "Turn LED on";
-  renderMemory(snapshot.memory);
+  renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
   document.querySelector("#sample-time").textContent = snapshot.updated_at
     ? `Last report ${new Date(snapshot.updated_at).toLocaleTimeString()}` : "Waiting for HID report";
@@ -52,7 +52,7 @@ export function renderStatus(snapshot) {
       : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
 }
 
-function renderMemory(memory) {
+function renderMemory(memory, filesystemFormat) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const manufacturer = memory?.manufacturer;
   set("#memory-presence", !memory?.configured ? "Not configured"
@@ -70,6 +70,8 @@ function renderMemory(memory) {
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
+  const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
+  set("#memory-filesystem", filesystemLabels[filesystemFormat] ?? "Unknown");
   set("#memory-manufacturer", manufacturer ? `0x${manufacturer.id.toString(16).padStart(2, "0")} / ${manufacturer.oem_id}` : "--");
   set("#memory-product", manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`

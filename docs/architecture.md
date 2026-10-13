@@ -130,7 +130,7 @@ Embedded CLI is also pinned as a Git submodule. Its middleware is independent
 of the USB transport and RTOS; see [CDC CLI](cdc-cli.md) for the dependency pin,
 session lifecycle, command-extension rules, memory budget, and validation plan.
 
-`pf_storage_mount()` explicitly initializes the configured SD card and mounts the existing FAT/exFAT volume; it never formats the card. No startup call currently selects a transport or mounts the volume. FatFs accesses media only through the transport-neutral SD-card block API and is configured without cross-task locking, so mount, unmount, and file operations must be serialized through one storage-owner task. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
+`pf_storage_mount()` explicitly initializes the configured SD card and mounts the existing FAT/exFAT volume; it never formats the card. FatFs is built with exFAT and long-filename support enabled. The transport-neutral SD-card API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. A local exFAT-image smoke test passed mount, create/write/sync, read/verify, delete, and unmount. No startup call currently selects a transport or mounts the volume. FatFs accesses media only through the transport-neutral SD-card block API and is configured without cross-task locking, so mount, unmount, and file operations must be serialized through one storage-owner task. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
 
 ## Testing and Validation
 

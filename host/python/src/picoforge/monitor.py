@@ -19,6 +19,7 @@ def _empty_snapshot() -> dict[str, object]:
         "runtime": None,
         "board_status": None,
         "memory": None,
+        "filesystem_format": None,
         "msc": None,
         "self_test": None,
         "updated_at": None,
@@ -130,6 +131,14 @@ class DeviceMonitor:
                                 connected=True,
                                 error=None,
                                 memory=item["data"],
+                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            )
+                    elif item is not None and item["kind"] == "filesystem":
+                        with self._lock:
+                            self._snapshot.update(
+                                connected=True,
+                                error=None,
+                                filesystem_format=item["data"]["format"],
                                 updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                             )
                     elif item is not None and item["kind"] == "msc":

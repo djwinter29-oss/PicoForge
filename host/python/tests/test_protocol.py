@@ -8,6 +8,7 @@ from picoforge.protocol import (
     build_msc_command_report,
     parse_info_report,
     parse_memory_report,
+    parse_filesystem_report,
     parse_msc_status_report,
     parse_status_report,
 )
@@ -113,6 +114,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(status["present"])
         self.assertIsNone(status["capacity_bytes"])
         self.assertIsNone(status["manufacturer"])
+
+    def test_decodes_filesystem_format_report(self):
+        self.assertEqual(parse_filesystem_report(bytes([7, 2, 3, 4])),
+                         {"version": 2, "sequence": 3, "format": "exfat"})
+        self.assertEqual(parse_filesystem_report(bytes([7, 2, 3, 0]))["format"], "unknown")
+        with self.assertRaisesRegex(ValueError, "unknown HID filesystem format"):
+            parse_filesystem_report(bytes([7, 2, 3, 5]))
 
     def test_encodes_msc_toggle_and_decodes_status(self):
         self.assertEqual(build_msc_command_report(True), bytes([MSC_COMMAND_REPORT_ID, 2, 1]))

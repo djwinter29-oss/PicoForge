@@ -71,7 +71,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                         snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
                             report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
                             memory ?? snapshot.Memory, msc ?? snapshot.Msc,
-                            report?.SelfTest ?? snapshot.SelfTest);
+                            report?.SelfTest ?? snapshot.SelfTest,
+                            report?.FilesystemFormat ?? snapshot.FilesystemFormat);
                     }
                 }
             }

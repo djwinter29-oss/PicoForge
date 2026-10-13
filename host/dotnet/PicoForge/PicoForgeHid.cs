@@ -60,6 +60,7 @@ internal sealed class PicoForgeHid : IDisposable
                 HidProtocol.MemoryReportId => new(null, HidProtocol.ParseMemoryReport(data), null),
                 HidProtocol.MscCommandReportId => new(null, null, HidProtocol.ParseMscStatusReport(data)),
                 HidProtocol.SelfTestReportId => new(null, null, null, HidProtocol.ParseSelfTestReport(data)),
+                HidProtocol.FilesystemReportId => new(null, null, null, null, HidProtocol.ParseFilesystemReport(data)),
                 _ => throw new InvalidOperationException("unexpected HID input report ID")
             };
         }

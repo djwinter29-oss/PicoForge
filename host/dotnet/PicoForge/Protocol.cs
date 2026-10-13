@@ -43,12 +43,13 @@ public sealed record SelfTestStatusResponse(byte Sequence, string State, uint Ta
 }
 
 internal sealed record InputReport(RuntimeStatusResponse? Runtime, MemoryStatusResponse? Memory,
-    MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null);
+    MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null, string? FilesystemFormat = null);
 
 /// <summary>Current HID connection and the most recent hardware/runtime reports.</summary>
 public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoResponse? Hardware,
     RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, BoardStatusResponse? BoardStatus,
-    MemoryStatusResponse? Memory, MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null);
+    MemoryStatusResponse? Memory, MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null,
+    string? FilesystemFormat = null);
 
 internal static class HidProtocol
 {
@@ -60,12 +61,14 @@ internal static class HidProtocol
     public const byte MemoryReportId = 3;
     public const byte MscCommandReportId = 5;
     public const byte SelfTestReportId = 6;
+    public const byte FilesystemReportId = 7;
     public const int SelfTestPayloadSize = 32;
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
     public const int InfoPayloadSize = 42;
     public const int StatusPayloadSize = 13;
     public const int MemoryPayloadSize = 29;
+    public const int FilesystemPayloadSize = 3;
     public const int MscStatusPayloadSize = 4;
     public const int InfoFeatureSize = InfoPayloadSize + 1;
     public const int StatusInputSize = StatusPayloadSize + 1;
@@ -167,6 +170,25 @@ internal static class HidProtocol
                 _ => null
             }, initialized ? busClockHz : null, capacityValid ? blockCount : null,
             capacityValid ? (ulong)blockCount * 512 : null, identity);
+    }
+
+    public static string ParseFilesystemReport(ReadOnlySpan<byte> report)
+    {
+        Require(report.Length >= FilesystemPayloadSize + 1 && report[0] == FilesystemReportId,
+            "unexpected HID filesystem report length or ID");
+        Require(report[(FilesystemPayloadSize + 1)..].IndexOfAnyExcept((byte)0) < 0,
+            "unexpected HID filesystem report padding");
+        var payload = report[1..];
+        Require(payload[0] == ReportVersion, "unsupported HID filesystem report version");
+        return payload[2] switch
+        {
+            0 => "unknown",
+            1 => "fat12",
+            2 => "fat16",
+            3 => "fat32",
+            4 => "exfat",
+            _ => throw new InvalidOperationException("unknown HID filesystem format")
+        };
     }
 
     public static MscStatusResponse ParseMscStatusReport(ReadOnlySpan<byte> report)

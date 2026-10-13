@@ -8,6 +8,7 @@
 #include "drivers/sd_card/sd_card_block.h"
 #include "middleware/storage/storage.h"
 #include "middleware/storage/storage_worker.h"
+#include "middleware/storage/storage.h"
 
 static bool msc_enabled;
 static bool msc_ejected;
@@ -82,6 +83,7 @@ void pf_usb_msc_task(void)
             request_rejected = true;
             return;
         }
+        pf_storage_forget_filesystem_format();
         msc_ejected = false;
         removal_prevented = false;
         msc_enabled = true;

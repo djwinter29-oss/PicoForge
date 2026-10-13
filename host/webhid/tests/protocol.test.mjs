@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   boardStatusFromRuntime,
   decodeInfoReport,
+  decodeFilesystemReport,
   decodeMemoryReport,
   decodeMscStatus,
   decodeStatusReport,
@@ -130,6 +131,13 @@ test("decode SD memory state, link settings, capacity, and CID", () => {
       manufacture_month: 10,
     },
   });
+});
+
+test("decode mounted filesystem format reports", () => {
+  assert.deepEqual(decodeFilesystemReport(7, Uint8Array.from([2, 8, 4])), {
+    version: 2, sequence: 8, format: "exfat",
+  });
+  assert.throws(() => decodeFilesystemReport(7, Uint8Array.from([2, 8, 5])), /Unknown/);
 });
 
 test("distinguish unknown presence before card initialization", () => {

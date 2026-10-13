@@ -12,6 +12,7 @@
 #define PF_HID_LED_COMMAND_REPORT_ID 4u
 #define PF_HID_MSC_COMMAND_REPORT_ID 5u
 #define PF_HID_SELF_TEST_REPORT_ID 6u
+#define PF_HID_FILESYSTEM_REPORT_ID 7u
 #define PF_HID_REPORT_VERSION 2u
 #define PF_HID_PRODUCT_NAME "PicoForge"
 #define PF_HID_PRODUCT_NAME_SIZE 20u
@@ -25,6 +26,7 @@
 #define PF_HID_MSC_STATUS_PAYLOAD_SIZE 4u
 #define PF_HID_SELF_TEST_COMMAND_PAYLOAD_SIZE 6u
 #define PF_HID_SELF_TEST_STATUS_PAYLOAD_SIZE 32u
+#define PF_HID_FILESYSTEM_PAYLOAD_SIZE 3u
 
 #define PF_MCU_RP2040 PF_SYSTEM_MCU_RP2040
 #define PF_MCU_RP2350 PF_SYSTEM_MCU_RP2350
@@ -45,6 +47,12 @@
 #define PF_HID_MEMORY_MODE_UNKNOWN 0u
 #define PF_HID_MEMORY_MODE_SDIO 1u
 #define PF_HID_MEMORY_MODE_SPI 2u
+
+#define PF_HID_FILESYSTEM_UNKNOWN 0u
+#define PF_HID_FILESYSTEM_FAT12 1u
+#define PF_HID_FILESYSTEM_FAT16 2u
+#define PF_HID_FILESYSTEM_FAT32 3u
+#define PF_HID_FILESYSTEM_EXFAT 4u
 
 /** Stable product/device identity returned by HID Feature report 1. */
 typedef struct __attribute__((packed)) {
@@ -120,6 +128,13 @@ typedef struct __attribute__((packed)) {
     uint8_t reserved;
 } pf_hid_self_test_status_t;
 
+/** Last successfully mounted filesystem format; unknown until firmware mounts the volume. */
+typedef struct __attribute__((packed)) {
+    uint8_t version;
+    uint8_t sequence;
+    uint8_t format;
+} pf_hid_filesystem_report_t;
+
 _Static_assert(sizeof(pf_hid_self_test_command_t) == PF_HID_SELF_TEST_COMMAND_PAYLOAD_SIZE,
                "Self-test command size changed");
 _Static_assert(sizeof(pf_hid_self_test_status_t) == PF_HID_SELF_TEST_STATUS_PAYLOAD_SIZE,
@@ -139,6 +154,7 @@ _Static_assert((sizeof(PF_HID_PRODUCT_NAME) - 1u) <= PF_HID_PRODUCT_NAME_SIZE,
 void pf_hid_build_info_report(pf_hid_info_report_t *report);
 void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence);
 void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence);
+void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t sequence);
 void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report);
 void pf_hid_build_self_test_report(pf_hid_self_test_status_t *report, uint8_t sequence);
 

@@ -115,6 +115,14 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void ParsesFilesystemFormatReport()
+    {
+        Assert.Equal("exfat", HidProtocol.ParseFilesystemReport([7, 2, 4, 4]));
+        Assert.Equal("unknown", HidProtocol.ParseFilesystemReport([7, 2, 4, 0]));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseFilesystemReport([7, 2, 4, 5]));
+    }
+
+    [Fact]
     public void RejectsInitializedMemoryWithoutKnownPresence()
     {
         var report = CreateMemoryReport(0x3d, 1, 2, 25_000_000, 4096, new byte[16]);

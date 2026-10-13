@@ -44,7 +44,7 @@ export function renderStatus(snapshot) {
     : msc?.transition_pending ? "USB mode changing; the device will reconnect."
       : msc?.enabled ? "Host owns the card. Safely eject before disabling or using it in firmware."
         : "Firmware owns the card. Unmount firmware storage before enabling; the device then reconnects.";
-  renderMemory(snapshot.memory);
+  renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
 
   const updatedAt = snapshot.updated_at ? new Date(snapshot.updated_at).toLocaleTimeString() : null;
@@ -56,7 +56,7 @@ export function renderStatus(snapshot) {
   document.querySelector("#status-message").textContent = message;
 }
 
-function renderMemory(memory) {
+function renderMemory(memory, filesystemFormat) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const manufacturer = memory?.manufacturer;
   set("#memory-presence", !memory?.configured ? "Not configured"
@@ -74,6 +74,8 @@ function renderMemory(memory) {
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
+  const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
+  set("#memory-filesystem", filesystemLabels[filesystemFormat] ?? "Unknown");
   set("#memory-manufacturer", manufacturer ? `0x${(manufacturer.id ?? manufacturer.manufacturer_id).toString(16).padStart(2, "0")} / ${manufacturer.oem_id}` : "--");
   set("#memory-product", manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`

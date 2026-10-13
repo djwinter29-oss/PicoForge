@@ -10,8 +10,11 @@ MEMORY_REPORT_ID = 3
 LED_COMMAND_REPORT_ID = 4
 MSC_COMMAND_REPORT_ID = 5
 SELF_TEST_REPORT_ID = 6
+FILESYSTEM_REPORT_ID = 7
 SELF_TEST_PAYLOAD_SIZE = 32
 SELF_TEST_INPUT_SIZE = SELF_TEST_PAYLOAD_SIZE + 1
+FILESYSTEM_PAYLOAD_SIZE = 3
+FILESYSTEM_INPUT_SIZE = FILESYSTEM_PAYLOAD_SIZE + 1
 REPORT_VERSION = 2
 INFO_PAYLOAD_SIZE = 42
 STATUS_PAYLOAD_SIZE = 13
@@ -171,6 +174,23 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "capacity_bytes": blocks * 512 if capacity_valid else None,
         "manufacturer": manufacturer,
     }
+
+
+def parse_filesystem_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
+    """Decode the last successfully mounted filesystem type from Input report 7."""
+    data = bytes(report)
+    if len(data) < FILESYSTEM_INPUT_SIZE or data[0] != FILESYSTEM_REPORT_ID:
+        raise ValueError("unexpected HID filesystem report length or ID")
+    payload = data[1:FILESYSTEM_INPUT_SIZE]
+    if any(data[FILESYSTEM_INPUT_SIZE:]):
+        raise ValueError("unexpected HID filesystem report padding")
+    version, sequence, format_id = payload
+    if version != REPORT_VERSION:
+        raise ValueError(f"unsupported HID filesystem report version {version}")
+    formats = {0: "unknown", 1: "fat12", 2: "fat16", 3: "fat32", 4: "exfat"}
+    if format_id not in formats:
+        raise ValueError("unknown HID filesystem format")
+    return {"version": version, "sequence": sequence, "format": formats[format_id]}
 
 
 def build_led_command_report(on: bool) -> bytes:

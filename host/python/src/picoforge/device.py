@@ -9,6 +9,7 @@ from .protocol import (
     INFO_REPORT_ID,
     MEMORY_INPUT_SIZE,
     MEMORY_REPORT_ID,
+    FILESYSTEM_REPORT_ID,
     MSC_COMMAND_REPORT_ID,
     SELF_TEST_REPORT_ID,
     SELF_TEST_INPUT_SIZE,
@@ -18,6 +19,7 @@ from .protocol import (
     build_self_test_command_report,
     parse_info_report,
     parse_memory_report,
+    parse_filesystem_report,
     parse_msc_status_report,
     parse_self_test_report,
     parse_status_report,
@@ -118,6 +120,8 @@ class PicoForgeHid:
             return None
         if report[0] == MEMORY_REPORT_ID:
             return {"kind": "memory", "data": parse_memory_report(report)}
+        if report[0] == FILESYSTEM_REPORT_ID:
+            return {"kind": "filesystem", "data": parse_filesystem_report(report)}
         if report[0] == MSC_COMMAND_REPORT_ID:
             return {"kind": "msc", "data": parse_msc_status_report(report)}
         if report[0] == SELF_TEST_REPORT_ID:
