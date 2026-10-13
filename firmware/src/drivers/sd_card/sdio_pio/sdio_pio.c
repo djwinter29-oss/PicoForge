@@ -25,6 +25,15 @@ static uint8_t last_short_command;
 static uint32_t last_short_argument;
 static uint32_t last_short_response_argument;
 
+/* Capped so a faster system clock does not raise the card bus above the verified rate. */
+static uint32_t default_clock_hz(void)
+{
+    uint32_t clock_hz = clock_get_hz(clk_sys) / 12u;
+
+    return (clock_hz > PF_SDIO_PIO_DEFAULT_CLOCK_MAX_HZ) ? PF_SDIO_PIO_DEFAULT_CLOCK_MAX_HZ
+                                                         : clock_hz;
+}
+
 static bool same_config(const pf_sdio_pio_config_t *left,
                         const pf_sdio_pio_config_t *right)
 {
@@ -121,7 +130,7 @@ static bool config_is_valid(const pf_sdio_pio_config_t *config)
 
     clock_hz = config->clock_hz;
     if (clock_hz == 0u) {
-        clock_hz = clock_get_hz(clk_sys) / 12u;
+        clock_hz = default_clock_hz();
     }
     return (clock_hz >= 400000u) && (clock_hz <= 25000000u) &&
            (clock_hz <= (clock_get_hz(clk_sys) / 2u));
@@ -296,7 +305,7 @@ static bool initialize_card(void)
 
     uint32_t transfer_clock = active_config.clock_hz;
     if (transfer_clock == 0u) {
-        transfer_clock = clock_get_hz(clk_sys) / 12u;
+        transfer_clock = default_clock_hz();
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;
     if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock)) {
@@ -359,6 +368,8 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         configuration_set = true;
     }
 
+    /* A stream left open by a previous session must end before CMD0 re-initializes the card. */
+    (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
     if (!sdio_pio_host.pio) {
         if (active_config.use_card_detect) {
             gpio_init(active_config.card_detect_gpio);
@@ -397,6 +408,7 @@ bool pf_sdio_pio_is_initialized(void)
     if (card_initialized && active_config.use_card_detect &&
         (((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high))) {
         card_initialized = false;
+        (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
     }
     return card_initialized;
 }
@@ -424,7 +436,12 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
         return result;
     }
 
-    if ((write_buffer != NULL) && (block_count > 1u)) {
+    bool continues_write = (write_buffer != NULL) &&
+        pf_sdio_pio_host_write_stream_continues(&sdio_pio_host, first_block);
+    if (!continues_write && !pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
+        return PF_SD_CARD_IO_ERROR;
+    }
+    if ((write_buffer != NULL) && (continues_write || (block_count > 1u))) {
         return pf_sdio_pio_host_write_blocks(&sdio_pio_host, first_block,
                                               card_block_addressed, write_buffer,
                                               block_count)
@@ -473,7 +490,11 @@ pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *b
 
 pf_sd_card_result_t pf_sdio_pio_sync(void)
 {
-    return card_initialized ? PF_SD_CARD_OK : PF_SD_CARD_NOT_READY;
+    if (!card_initialized) {
+        return PF_SD_CARD_NOT_READY;
+    }
+    return pf_sdio_pio_host_write_stream_close(&sdio_pio_host)
+        ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
 }
 
 void pf_sdio_pio_get_info(pf_sd_card_info_t *info)

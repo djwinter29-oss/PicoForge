@@ -7,13 +7,16 @@
 #include "hardware/pio.h"
 #include "sd_card_block.h"
 
+/** Upper bound of the default bus clock selected by a zero pf_sdio_pio_config_t::clock_hz. */
+#define PF_SDIO_PIO_DEFAULT_CLOCK_MAX_HZ 12500000u
+
 /** Board-provided SD memory-card connection settings for the native PIO host. */
 typedef struct {
     uint32_t command_gpio;
     uint32_t clock_gpio;
     uint32_t data_gpio[4];    /**< GPIO assignment for logical DAT0, DAT1, DAT2, DAT3. */
     PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
-    uint32_t clock_hz;       /**< 0 selects clk_sys / 12; otherwise 400 kHz through 25 MHz. */
+    uint32_t clock_hz;       /**< 0 selects min(clk_sys / 12, 12.5 MHz); otherwise 400 kHz through 25 MHz. */
     bool use_card_detect;
     uint32_t card_detect_gpio;
     bool card_detect_active_high;

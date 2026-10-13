@@ -89,7 +89,12 @@ SPI response tokens remain in the SPI protocol. Both transports accept any buffe
 alignment and any sector count per call. Zero-sector transfers are no-ops after
 readiness checks. SDIO reads use CMD18 batches of up to 16 sectors, with CMD17
 for single-sector tails; writes use CMD25 for multi-sector runs and CMD24 for
-single sectors. SPI transfers use synchronous single-sector operations. Both
+single sectors. A CMD25 stream stays open after a write and is continued by a
+write at the next sector, because FatFs issues one cluster per call and
+restarting the stream for each cluster cuts throughput several-fold on the
+tested card. Any read, non-contiguous write, sync (`CTRL_SYNC`), re-init or card
+removal ends it with CMD12; the data is committed to the card only then, so
+callers that need durability must sync. SPI transfers use synchronous single-sector operations. Both
 transports require serialized access.
 
 SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data

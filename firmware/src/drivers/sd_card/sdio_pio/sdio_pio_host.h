@@ -28,6 +28,8 @@ typedef struct {
     uint32_t input_sync_bypass_mask;
     uint32_t last_response_words[5];
     size_t last_response_word_count;
+    uint32_t write_stream_next_sector;
+    bool write_stream_open;
     bool command_program_loaded;
     bool data_rx_program_loaded;
     bool clock_program_loaded;
@@ -51,8 +53,17 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
                                       uint32_t block_count);
 bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                       bool block_addressed, const uint8_t block[512]);
+/**
+ * Write blocks with CMD25. The transfer stays open after success so a call starting at the next
+ * sector continues it without a new CMD25; any other bus access must first call
+ * pf_sdio_pio_host_write_stream_close(), which is what commits the data on the card.
+ */
 bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,
                                       bool block_addressed, const uint8_t *blocks,
                                       uint32_t block_count);
+/** @return true when a write stream is open and a write at @p sector would continue it. */
+bool pf_sdio_pio_host_write_stream_continues(const pf_sdio_pio_host_t *host, uint32_t sector);
+/** Stop an open write stream (CMD12) and restore command mode; true if none was open. */
+bool pf_sdio_pio_host_write_stream_close(pf_sdio_pio_host_t *host);
 
 #endif

@@ -5,10 +5,30 @@
 
 static uint32_t test_buffer[PF_STORAGE_SELF_TEST_BUFFER_SIZE / sizeof(uint32_t)];
 
-static uint8_t pattern_byte(uint32_t offset)
+static uint32_t pattern_word(uint32_t offset)
 {
-    uint32_t word = (offset / 4u) ^ 0xa5c391f7u;
-    return (uint8_t)(word >> ((offset % 4u) * 8u));
+    return (offset / 4u) ^ 0xa5c391f7u;
+}
+
+/* Offsets and sizes are word multiples; the little-endian bytes of each word are the on-card pattern. */
+static void fill_pattern(uint32_t *words, uint32_t offset, uint32_t size)
+{
+    for (uint32_t index = 0u; index < size / 4u; ++index) {
+        words[index] = pattern_word(offset + index * 4u);
+    }
+}
+
+static uint32_t count_mismatched_bytes(const uint32_t *words, uint32_t offset, uint32_t size)
+{
+    uint32_t count = 0u;
+
+    for (uint32_t index = 0u; index < size / 4u; ++index) {
+        uint32_t difference = words[index] ^ pattern_word(offset + index * 4u);
+        for (; difference != 0u; difference >>= 8u) {
+            count += (difference & 0xffu) != 0u;
+        }
+    }
+    return count;
 }
 
 static void filesystem_error(pf_self_test_status_t *status, FRESULT result)
@@ -85,9 +105,7 @@ void pf_storage_self_test_run(const pf_sd_card_config_t *config, uint32_t size_m
             cancelled = true;
             break;
         }
-        for (uint32_t index = 0u; index < PF_STORAGE_SELF_TEST_BUFFER_SIZE; ++index) {
-            buffer[index] = pattern_byte(status.written_bytes + index);
-        }
+        fill_pattern(test_buffer, status.written_bytes, PF_STORAGE_SELF_TEST_BUFFER_SIZE);
         UINT written = 0u;
         result = f_write(&file, buffer, sizeof(test_buffer), &written);
         status.written_bytes += written;
@@ -130,11 +148,7 @@ void pf_storage_self_test_run(const pf_sd_card_config_t *config, uint32_t size_m
             filesystem_error(&status, result != FR_OK ? result : FR_DISK_ERR);
             break;
         }
-        for (uint32_t index = 0u; index < received; ++index) {
-            if (buffer[index] != pattern_byte(status.read_bytes + index)) {
-                ++status.mismatch_count;
-            }
-        }
+        status.mismatch_count += count_mismatched_bytes(test_buffer, status.read_bytes, received);
         status.read_bytes += received;
         status.read_elapsed_ms = clock_ms(context) - phase_start;
         if (status.mismatch_count != 0u) {

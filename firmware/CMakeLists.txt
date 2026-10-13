@@ -23,6 +23,43 @@ endif()
 
 project(pf_hello_world C CXX ASM)
 
+set(PF_SYS_CLK_MHZ 0 CACHE STRING
+    "Out-of-spec system clock in MHz (100-200, 12 MHz crystal); 0 keeps the SDK default")
+if(NOT PF_SYS_CLK_MHZ MATCHES "^[0-9]+$" OR
+   (NOT PF_SYS_CLK_MHZ EQUAL 0 AND (PF_SYS_CLK_MHZ LESS 100 OR PF_SYS_CLK_MHZ GREATER 200)))
+    message(FATAL_ERROR "PF_SYS_CLK_MHZ must be 0 or 100-200, got '${PF_SYS_CLK_MHZ}'")
+endif()
+if(NOT PF_SYS_CLK_MHZ EQUAL 0)
+    # Mirror the SDK's PLL search so the clock is applied during SDK runtime init, before USB and stdio start.
+    set(pf_best_vco 0)
+    foreach(pf_step RANGE 0 6)
+        math(EXPR pf_postdiv1 "7 - ${pf_step}")
+        foreach(pf_postdiv2 RANGE 1 ${pf_postdiv1})
+            math(EXPR pf_vco "${PF_SYS_CLK_MHZ} * ${pf_postdiv1} * ${pf_postdiv2}")
+            math(EXPR pf_vco_remainder "${pf_vco} % 12")
+            if(pf_vco_remainder EQUAL 0 AND pf_vco GREATER 749 AND pf_vco LESS 1601 AND
+               pf_vco GREATER pf_best_vco)
+                set(pf_best_vco ${pf_vco})
+                set(pf_best_postdiv1 ${pf_postdiv1})
+                set(pf_best_postdiv2 ${pf_postdiv2})
+            endif()
+        endforeach()
+    endforeach()
+    if(pf_best_vco EQUAL 0)
+        message(FATAL_ERROR "PF_SYS_CLK_MHZ=${PF_SYS_CLK_MHZ} cannot be derived from a 12 MHz crystal")
+    endif()
+    message(STATUS "Overclocking system clock to ${PF_SYS_CLK_MHZ} MHz (out of spec)")
+    # Raise the regulator during clock init so the core has voltage margin above the stock speed.
+    add_compile_definitions(
+        SYS_CLK_HZ=${PF_SYS_CLK_MHZ}000000
+        PLL_SYS_VCO_FREQ_HZ=${pf_best_vco}000000
+        PLL_SYS_POSTDIV1=${pf_best_postdiv1}
+        PLL_SYS_POSTDIV2=${pf_best_postdiv2}
+        SYS_CLK_VREG_VOLTAGE_AUTO_ADJUST=1
+        SYS_CLK_VREG_VOLTAGE_MIN=VREG_VOLTAGE_1_15
+    )
+endif()
+
 pico_sdk_init()
 
 set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the pinned FreeRTOS-Kernel checkout")

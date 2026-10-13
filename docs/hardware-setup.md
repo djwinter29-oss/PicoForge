@@ -10,6 +10,7 @@ Reference hardware setup for standard Pico/Pico 2 boards and external breakouts.
 | Alternate build target | Raspberry Pi Pico 2 (`PICO_BOARD=pico2`); the firmware build defaults to `pico` |
 | MCU | RP2040 on Pico; RP2350 on Pico 2 |
 | Reference power | USB through the board's USB connector |
+| Optional overclock | `tools/firmware/build.sh --board pico2 --sys-clk-mhz 200` (or `PF_SYS_CLK_MHZ=200` with `load.sh`); out of spec, range 100-200 MHz, default `0` keeps the SDK clock. The SDK applies it at boot and raises the regulator to 1.15 V. The default SDIO clock stays capped at 12.5 MHz. |
 
 ## Debug and Monitoring
 

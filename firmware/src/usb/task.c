@@ -15,6 +15,7 @@
 #define USB_CLI_TX_SIZE 2048U
 #define USB_CLI_OUTPUT_RESERVE 1024U
 #define USB_CLI_RX_BUDGET 32U
+#define USB_RECONNECT_DETACH_MS 250U
 #define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
 #define USB_HID_MEMORY_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
 #define USB_HID_MSC_REPORT_INTERVAL (pdMS_TO_TICKS(500U))
@@ -206,6 +207,10 @@ void pf_usb_start(void)
     if (!tusb_init()) {
         panic("Failed to initialize TinyUSB");
     }
+    /* A debugger or watchdog reset leaves the host on the old address; a visible detach forces re-enumeration. */
+    tud_disconnect();
+    sleep_ms(USB_RECONNECT_DETACH_MS);
+    tud_connect();
 
     if (xTaskCreateStatic(usb_task,
                           "USB",

@@ -131,6 +131,22 @@ file removal, and volume unmount. These single-run comparisons are indicative,
 not guaranteed gains; card latency varies. The CRC optimization is also checked
 against an independent bitwise per-lane reference in the host tests.
 
+The next write bottleneck was stream restarts, not the bus. On the same card,
+raw CMD25 bursts into fresh 8 MiB-aligned space ran at 0.81 MiB/s (8 KiB per
+burst), 3.81 MiB/s (32 KiB) and 4.71 MiB/s (128 KiB). FatFs issues one cluster
+(here 32 KiB) per `disk_write`, so the SDIO driver now keeps the CMD25 stream
+open across writes to consecutive sectors and ends it with CMD12 on any other
+access or sync. With that, the unchanged 8 KiB-write 32 MiB test at 150 MHz
+wrote in 7,165 ms (4.47 MiB/s, up from 0.89) and read/verified in 15,371 ms
+(2.08 MiB/s), with zero mismatches, file removal and volume unmount. The test
+also fills and checks its pattern a word at a time, which removed CPU time from
+both phases.
+
+With the Pico 2 built at `--sys-clk-mhz 200` and the SD bus unchanged at 12.5 MHz,
+the same 32 MiB test passed with zero mismatches: write 34,972 ms (0.915 MiB/s)
+and read/verify 15,904 ms (2.012 MiB/s). Reads gained about 16% from the faster
+core; writes did not, because they were limited by CMD25 stream restarts (see below), not CPU.
+
 A small HID-started run also passed. A separate cancellation check confirmed
 duplicate starts and MSC enable were rejected during writes, and Cancel removed
 the partial test file and unmounted successfully. The .NET dashboard started and
