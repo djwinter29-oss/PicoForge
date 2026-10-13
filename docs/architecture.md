@@ -87,15 +87,18 @@ validation. SDIO helper entry points delegate card-wide algorithms to this libra
 Native response parsing and the four-lane data CRC remain in the SDIO protocol;
 SPI response tokens remain in the SPI protocol. Both transports accept any buffer
 alignment and any sector count per call. Zero-sector transfers are no-ops after
-readiness checks. Both transports use synchronous single-sector operations
-internally and require serialized access.
+readiness checks. SDIO reads use CMD18 batches of up to 16 sectors, with CMD17
+for single-sector tails; writes use CMD25 for multi-sector runs and CMD24 for
+single sectors. SPI transfers use synchronous single-sector operations. Both
+transports require serialized access.
 
-SDIO data moves by DMA between the PIO FIFOs and a 520-byte on-stack wire image
-(512 data bytes plus four lane CRC16s). The DMA channel byte-swaps each word, so
-image byte order equals nibble transmission order. The CPU makes one pass per
-sector to map lanes to GPIO order and compute or check the four CRCs, which are
-held bit-sliced in one 64-bit register. SPI uses the CPU for the data phase and a
-table-driven CRC16.
+SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data
+bytes plus four lane CRC16s). Single-sector operations use an on-stack image;
+batched reads use a static buffer for 16 images. The DMA channel byte-swaps each
+word, so image byte order equals nibble transmission order. The CPU makes one
+pass per sector to map lanes to GPIO order and compute or check the four CRCs,
+which are held bit-sliced in one 64-bit register. SPI uses the CPU for the data
+phase and a table-driven CRC16.
 
 Long card waits (write busy, command-line busy) call an optional hook set with
 `pf_sd_card_set_idle_hook()`, so an RTOS application can yield instead of spinning;

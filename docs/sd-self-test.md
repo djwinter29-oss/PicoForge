@@ -60,17 +60,19 @@ phases display no speed rather than an infinite or invented value.
   that byte counter.
 
 These are application-level filesystem throughput measurements, not raw wire
-bandwidth. They include the firmware's current single-sector backend behavior
-and card programming delays. Results depend on card, transport, bus speed,
-allocation state, and runtime load. This implementation does not perform
-multi-block throughput optimization, endurance qualification, or power-loss tests.
+bandwidth. SDIO contiguous writes use CMD25 and reads use CMD18 batches of up to
+16 sectors; single-sector tails use CMD17/CMD24. SPI transfers remain
+single-sector operations. Results depend on card, transport, bus speed,
+allocation state, and runtime load. The implementation does not qualify
+endurance or power-loss behavior.
 
 The storage worker performs all FatFs operations; the USB task owns HID/CDC.
 Progress is copied under a short FreeRTOS critical section and emitted through
 HID Input Report 6 every 500 ms. Cancellation is checked between chunks and
-before creation; a current I/O operation completes before cleanup. Existing
-8 KiB worker stack allocation remains unchanged, with an additional 8 KiB static
-data buffer. No benchmark data is sent through HID or CDC.
+before creation; a current I/O operation completes before cleanup. The 8 KiB
+worker stack allocation remains unchanged. The test uses an 8 KiB static buffer;
+SDIO batched reads use an additional 8.1 KiB static wire buffer. No benchmark
+data is sent through HID or CDC.
 
 ## API
 
@@ -105,18 +107,19 @@ encoding, API status codes and OpenAPI generation, consent gating, progress,
 cleanup messages, and direct-client event handling. Run them through
 `tools/validation/test-host.sh` using the configured Python environment.
 
-On 2026-10-13 the connected Pico 2 and 16 GB card passed a real 32 MiB run in SDIO
-mode at 12.5 MHz, started through the Python dashboard in Chromium:
+On 2026-10-13, the same connected Pico 2 and 16 GB card passed the 32 MiB test
+before batching, after CMD25 writes, and after CMD18 reads were added, in SDIO
+mode at 12.5 MHz through the Python dashboard in Chromium:
 
-| Metric | Result |
-| --- | --- |
-| Written and verified | 33,554,432 bytes each |
-| Write time | 391,152 ms |
-| Read/verify time | 60,402 ms |
-| Average write | 0.082 MiB/s |
-| Average read | 0.530 MiB/s |
-| Mismatched bytes | 0 |
-| Cleanup | File removed, volume unmounted |
+| Metric | Single-block baseline | CMD25 writes | CMD25 + CMD18 |
+| --- | --- | --- | --- |
+| Written and verified | 33,554,432 bytes each | 33,554,432 bytes each | 33,554,432 bytes each |
+| Write time | 391,152 ms | 34,734 ms | 35,140 ms |
+| Read/verify time | 60,402 ms | 59,332 ms | 22,354 ms |
+| Average write | 0.082 MiB/s | 0.922 MiB/s | 0.911 MiB/s |
+| Average read | 0.530 MiB/s | 0.539 MiB/s | 1.432 MiB/s |
+| Mismatched bytes | 0 | 0 | 0 |
+| Cleanup | File removed, volume unmounted | File removed, volume unmounted | File removed, volume unmounted |
 
 A small HID-started run also passed. A separate cancellation check confirmed
 duplicate starts and MSC enable were rejected during writes, and Cancel removed

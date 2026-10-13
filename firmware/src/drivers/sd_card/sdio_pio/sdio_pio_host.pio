@@ -41,15 +41,17 @@ command_complete:
 
 .program pf_sdio_pio_data_rx
     pull block
-    out y, 32
+receive_block:
+    mov x, osr
     wait 0 pin 0
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
-    mov x, y
 receive_nibble:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     in pins, 4
     jmp x-- receive_nibble
+    wait 1 pin 0
+    jmp y-- receive_block
     irq set 1
 
 .program pf_sdio_pio_data_tx

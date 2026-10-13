@@ -425,6 +425,19 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
         return result;
     }
 
+    if ((write_buffer != NULL) && (block_count > 1u)) {
+        return pf_sdio_pio_host_write_blocks(&sdio_pio_host, first_block,
+                                              card_block_addressed, write_buffer,
+                                              block_count)
+            ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+    }
+    if ((read_buffer != NULL) && (block_count > 1u)) {
+        return pf_sdio_pio_host_read_blocks(&sdio_pio_host, first_block,
+                                             card_block_addressed, read_buffer,
+                                             block_count)
+            ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+    }
+
     while (block_count > 0u) {
         if (active_config.use_card_detect &&
             ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
