@@ -11,3 +11,7 @@ tools/validation/setup-ceedling-testing.sh
 The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin` directory to `PATH` and run it from the root. Name test files `test_*.c` and place them beneath the matching source subtree; for example, `firmware/src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c` is covered by `firmware/tests/drivers/sd_card/sdio_pio/test_sdio_pio_protocol.c`.
 
 Run `tools/validation/coverage-firmware.sh` to execute `gcov:all` and generate HTML and Cobertura reports under `build/ceedling/artifacts/gcov/gcovr/`. Coverage requires at least one unit test. Tests of SDK timing, GPIO, USB, SDIO, or interrupts still belong in target or hardware validation.
+
+CLI middleware tests compile the pinned Embedded CLI submodule, so initialize
+submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/cdc-cli.md#validation)
+for the focused command and board-only checks.

@@ -4,7 +4,7 @@
 
 The development device uses VID/PID `0xCAFE:0x4011` in both configurations. Replace this unallocated development identity before product release. The HID interface remains interface 2; when MSC is enabled, its interface is appended as interface 3.
 
-- CDC ACM is the serial console; firmware sends `PicoForge CDC ready` after the host asserts DTR.
+- CDC ACM is the interactive [Embedded CLI console](cdc-cli.md); the prompt appears after the host asserts DTR. UART debug logs remain separate.
 - HID uses vendor usage page `0xFF00`, usage `0x01`.
 - USB product string: `PicoForge CDC + HID`.
 - USB serial string: the Pico SDK unique board ID.

@@ -119,6 +119,21 @@ target_include_directories(pf_logging PUBLIC
 )
 target_link_libraries(pf_logging PUBLIC pico_stdlib)
 
+add_library(embedded_cli STATIC
+    third_party/embedded-cli/lib/src/embedded_cli.c
+)
+target_include_directories(embedded_cli PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/third_party/embedded-cli/lib/include"
+)
+
+add_library(pf_cli STATIC
+    src/middleware/cli/cli.c
+)
+target_include_directories(pf_cli PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src"
+)
+target_link_libraries(pf_cli PUBLIC embedded_cli)
+
 add_library(pf_storage STATIC
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
@@ -178,6 +193,7 @@ target_link_libraries(pf_hello_world
     pf_system
     pf_temperature
     pf_logging
+    pf_cli
     pf_sdio_backend
     pf_storage
     pf_board

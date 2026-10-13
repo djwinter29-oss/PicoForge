@@ -47,6 +47,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Initialize CLI dependency
+        run: git submodule update --init firmware/third_party/embedded-cli
+
       - name: Install coverage prerequisites
         run: |
           sudo apt-get update
