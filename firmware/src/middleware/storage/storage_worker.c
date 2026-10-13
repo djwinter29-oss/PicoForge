@@ -4,6 +4,7 @@
 #include "task.h"
 #include "queue.h"
 #include "drivers/sd_card/sd_card.h"
+#include "drivers/system.h"
 
 #include <string.h>
 
@@ -12,6 +13,7 @@
 
 typedef struct {
     uint32_t session;
+    uint32_t test_size_mib;
     bool host_owned;
     char family[3];
     char arguments[PF_STORAGE_COMMAND_ARGS_SIZE];
@@ -30,6 +32,39 @@ static bool config_available;
 static bool busy;
 static uint32_t active_session;
 static volatile bool cancelled;
+static pf_self_test_status_t self_test_status;
+static bool self_test_active;
+static bool self_test_finished;
+static bool self_test_cancelled;
+
+static void refresh_self_test_completion(void)
+{
+    taskENTER_CRITICAL();
+    if (self_test_active && self_test_finished) {
+        self_test_active = false;
+        self_test_finished = false;
+        busy = false;
+    }
+    taskEXIT_CRITICAL();
+}
+
+static uint32_t self_test_clock(void *context)
+{
+    (void)context;
+    return pf_system_uptime_ms();
+}
+
+static bool self_test_update(const pf_self_test_status_t *status, void *context)
+{
+    (void)context;
+    taskENTER_CRITICAL();
+    pf_self_test_error_t request_error = self_test_status.request_error;
+    self_test_status = *status;
+    self_test_status.request_error = request_error;
+    bool keep_running = !self_test_cancelled;
+    taskEXIT_CRITICAL();
+    return keep_running;
+}
 
 static bool send_reply(const char *line, void *context)
 {
@@ -55,6 +90,14 @@ static void storage_task(void *context)
 
     for (;;) {
         if (xQueueReceive(requests, &request, portMAX_DELAY) != pdPASS) {
+            continue;
+        }
+        if (request.test_size_mib != 0u) {
+            pf_storage_self_test_run(config_available ? &card_config : NULL, request.test_size_mib,
+                                      self_test_clock, self_test_update, NULL);
+            taskENTER_CRITICAL();
+            self_test_finished = true;
+            taskEXIT_CRITICAL();
             continue;
         }
         pf_storage_command_execute(config_available ? &card_config : NULL,
@@ -87,6 +130,7 @@ bool pf_storage_worker_submit(const char *family, const char *arguments,
 {
     storage_request_t request = { .session = session, .host_owned = host_owned };
 
+    refresh_self_test_completion();
     if (busy || (requests == NULL) || (family == NULL) || (arguments == NULL) ||
         ((strcmp(family, "sd") != 0) && (strcmp(family, "fs") != 0)) ||
         (strlen(arguments) > sizeof(request.arguments) - 2u)) {
@@ -106,11 +150,13 @@ bool pf_storage_worker_submit(const char *family, const char *arguments,
 
 bool pf_storage_worker_busy(void)
 {
+    refresh_self_test_completion();
     return busy;
 }
 
 bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply)
 {
+    refresh_self_test_completion();
     if ((reply == NULL) || (replies == NULL) || (xQueueReceive(replies, reply, 0u) != pdPASS)) {
         return false;
     }
@@ -122,7 +168,73 @@ bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply)
 
 void pf_storage_worker_cancel(uint32_t session)
 {
-    if (busy && (active_session == session)) {
+    if (busy && !self_test_active && (active_session == session)) {
         cancelled = true;
     }
+}
+
+bool pf_storage_worker_self_test_start(uint32_t size_mib, bool host_owned)
+{
+    pf_self_test_error_t rejection = PF_SELF_TEST_ERROR_NONE;
+    refresh_self_test_completion();
+    if (busy || (requests == NULL)) {
+        rejection = PF_SELF_TEST_ERROR_BUSY;
+    } else if (host_owned) {
+        rejection = PF_SELF_TEST_ERROR_USB_OWNER;
+    } else if ((size_mib == 0u) || (size_mib > PF_STORAGE_SELF_TEST_MAX_MIB)) {
+        rejection = PF_SELF_TEST_ERROR_SIZE;
+    } else if (!config_available || !pf_sd_card_is_initialized()) {
+        rejection = PF_SELF_TEST_ERROR_CARD;
+    } else if (pf_storage_is_mounted()) {
+        rejection = PF_SELF_TEST_ERROR_MOUNTED;
+    }
+    taskENTER_CRITICAL();
+    self_test_status.request_error = rejection;
+    if (rejection != PF_SELF_TEST_ERROR_NONE) {
+        taskEXIT_CRITICAL();
+        return false;
+    }
+    self_test_status = (pf_self_test_status_t){
+        .state = PF_SELF_TEST_QUEUED, .target_bytes = size_mib * 1024u * 1024u
+    };
+    self_test_active = true;
+    self_test_finished = self_test_cancelled = false;
+    busy = true;
+    taskEXIT_CRITICAL();
+    storage_request_t request = { .test_size_mib = size_mib };
+    if (xQueueSend(requests, &request, 0u) != pdPASS) {
+        taskENTER_CRITICAL();
+        busy = self_test_active = false;
+        self_test_status.state = PF_SELF_TEST_FAILED;
+        self_test_status.request_error = PF_SELF_TEST_ERROR_BUSY;
+        taskEXIT_CRITICAL();
+        return false;
+    }
+    return true;
+}
+
+bool pf_storage_worker_self_test_cancel(void)
+{
+    refresh_self_test_completion();
+    taskENTER_CRITICAL();
+    bool accepted = self_test_active && (self_test_status.state < PF_SELF_TEST_CLEANUP);
+    if (accepted) {
+        self_test_cancelled = true;
+        self_test_status.request_error = PF_SELF_TEST_ERROR_NONE;
+    } else {
+        self_test_status.request_error = PF_SELF_TEST_ERROR_BUSY;
+    }
+    taskEXIT_CRITICAL();
+    return accepted;
+}
+
+void pf_storage_worker_self_test_status(pf_self_test_status_t *status)
+{
+    if (status == NULL) {
+        return;
+    }
+    refresh_self_test_completion();
+    taskENTER_CRITICAL();
+    *status = self_test_status;
+    taskEXIT_CRITICAL();
 }

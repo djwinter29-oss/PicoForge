@@ -31,13 +31,24 @@ public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool P
 
 public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected);
 
+/// <summary>Verified SD-card file benchmark progress, elapsed times, and cleanup state.</summary>
+public sealed record SelfTestStatusResponse(byte Sequence, string State, uint TargetBytes,
+    uint WrittenBytes, uint ReadBytes, uint WriteElapsedMs, uint ReadElapsedMs, uint MismatchCount,
+    byte Error, byte FilesystemResult, byte RequestError, bool FileRemains, bool VolumeMounted)
+{
+    public bool Active => State is "queued" or "mounting" or "writing" or "reading" or "cleanup";
+    public double? WriteBytesPerSecond => WriteElapsedMs == 0 ? null : WrittenBytes * 1000.0 / WriteElapsedMs;
+    public double? ReadBytesPerSecond => ReadElapsedMs == 0 ? null : ReadBytes * 1000.0 / ReadElapsedMs;
+    public double ProgressPercent => TargetBytes == 0 ? 0 : ((double)WrittenBytes + ReadBytes) * 100 / (2.0 * TargetBytes);
+}
+
 internal sealed record InputReport(RuntimeStatusResponse? Runtime, MemoryStatusResponse? Memory,
-    MscStatusResponse? Msc);
+    MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null);
 
 /// <summary>Current HID connection and the most recent hardware/runtime reports.</summary>
 public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoResponse? Hardware,
     RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, BoardStatusResponse? BoardStatus,
-    MemoryStatusResponse? Memory, MscStatusResponse? Msc);
+    MemoryStatusResponse? Memory, MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null);
 
 internal static class HidProtocol
 {
@@ -48,6 +59,8 @@ internal static class HidProtocol
     public const byte StatusReportId = 2;
     public const byte MemoryReportId = 3;
     public const byte MscCommandReportId = 5;
+    public const byte SelfTestReportId = 6;
+    public const int SelfTestPayloadSize = 32;
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
     public const int InfoPayloadSize = 42;
@@ -169,6 +182,44 @@ internal static class HidProtocol
 
     public static byte[] BuildLedCommandReport(bool on) =>
         [LedCommandReportId, ReportVersion, on ? (byte)1 : (byte)0];
+
+    public static byte[] BuildSelfTestCommandReport(string action, uint sizeMib = 32)
+    {
+        Require(action is "start" or "cancel", "self-test action must be start or cancel");
+        if (action == "cancel") sizeMib = 0;
+        else Require(sizeMib is >= 1 and <= 128, "self-test size must be 1..128 MiB");
+        var command = new byte[7];
+        command[0] = SelfTestReportId;
+        command[1] = ReportVersion;
+        command[2] = action == "start" ? (byte)1 : (byte)0;
+        BinaryPrimitives.WriteUInt32LittleEndian(command.AsSpan(3), sizeMib);
+        return command;
+    }
+
+    public static SelfTestStatusResponse ParseSelfTestReport(ReadOnlySpan<byte> report)
+    {
+        var payload = FeaturePayload(report, SelfTestReportId, SelfTestPayloadSize);
+        var state = payload[2];
+        var flags = payload[3];
+        var target = ReadUInt32LittleEndian(payload[4..]);
+        var written = ReadUInt32LittleEndian(payload[8..]);
+        var read = ReadUInt32LittleEndian(payload[12..]);
+        var mismatches = ReadUInt32LittleEndian(payload[24..]);
+        Require(payload[0] == ReportVersion && state <= 8 && (flags & ~3) == 0 && payload[31] == 0
+                && payload[28] <= 10 && payload[29] <= 19 && payload[30] <= 10
+                && target <= 128u * 1024u * 1024u && written <= target && read <= written
+                && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0 && flags == 0 && payload[28] == 0)),
+            "invalid HID self-test report");
+        var name = state switch
+        {
+            0 => "idle", 1 => "queued", 2 => "mounting", 3 => "writing", 4 => "reading",
+            5 => "cleanup", 6 => "passed", 7 => "failed", _ => "cancelled"
+        };
+        return new(payload[1], name, target, written, read,
+            ReadUInt32LittleEndian(payload[16..]), ReadUInt32LittleEndian(payload[20..]),
+            mismatches, payload[28], payload[29], payload[30],
+            (flags & 1) != 0, (flags & 2) != 0);
+    }
 
     private static ReadOnlySpan<byte> FeaturePayload(ReadOnlySpan<byte> report, byte reportId, int size)
     {

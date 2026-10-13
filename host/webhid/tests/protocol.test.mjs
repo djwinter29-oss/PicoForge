@@ -10,7 +10,32 @@ import {
   matchesPicoForge,
   PicoForgeWebHid,
   STATUS_REPORT_ID,
+  buildSelfTestCommand,
+  decodeSelfTestReport,
 } from "../js/device.mjs";
+
+test("self-test start/cancel commands validate size and encode HID payloads", () => {
+  assert.deepEqual([...buildSelfTestCommand("start", 32)], [2, 1, 32, 0, 0, 0]);
+  assert.deepEqual([...buildSelfTestCommand("cancel")], [2, 0, 0, 0, 0, 0]);
+  for (const size of [0, 129, 1.5, NaN]) assert.throws(() => buildSelfTestCommand("start", size));
+});
+
+test("self-test telemetry decodes progress, speeds, and cleanup flags", () => {
+  const report = new Uint8Array(32);
+  const view = new DataView(report.buffer);
+  report[0] = 2;
+  report[2] = 6;
+  for (const offset of [4, 8, 12]) view.setUint32(offset, 33554432, true);
+  view.setUint32(16, 16000, true);
+  view.setUint32(20, 8000, true);
+  const status = decodeSelfTestReport(view);
+  assert.equal(status.state, "passed");
+  assert.equal(status.progress_percent, 100);
+  assert.equal(status.write_bytes_per_second, 2097152);
+  assert.equal(status.read_bytes_per_second, 4194304);
+  report[31] = 1;
+  assert.throws(() => decodeSelfTestReport(view), /Invalid/);
+});
 
 function infoReport({ reportId = true, mcu = 2, name = "PicoForge", serial = "0123456789abcdef" } = {}) {
   const payload = new Uint8Array(42);
@@ -165,7 +190,9 @@ test("reconnect the authorized HID device after the MSC USB re-enumeration", asy
       assert.equal(reportId, INFO_REPORT_ID);
       return new DataView(infoReport().buffer);
     }
-    async sendFeatureReport() {}
+    async sendFeatureReport(reportId, payload) {
+      this.lastFeature = { reportId, payload: [...payload] };
+    }
   }
 
   class MockHid extends EventTarget {
@@ -245,4 +272,22 @@ test("reconnect the authorized HID device after the MSC USB re-enumeration", asy
   });
   firmwareOwnedDevice.dispatchEvent(disabledReport);
   assert.equal(client.state.msc.enabled, false);
+
+  await client.setSelfTest("start", 32);
+  assert.deepEqual(firmwareOwnedDevice.lastFeature, { reportId: 6, payload: [2, 1, 32, 0, 0, 0] });
+  assert.equal(client.state.self_test_command_pending, true);
+  const benchmark = new Uint8Array(32);
+  benchmark[0] = 2;
+  benchmark[2] = 3;
+  new DataView(benchmark.buffer).setUint32(4, 33554432, true);
+  const benchmarkReport = new Event("inputreport");
+  Object.defineProperties(benchmarkReport, {
+    device: { value: firmwareOwnedDevice }, reportId: { value: 6 },
+    data: { value: new DataView(benchmark.buffer) },
+  });
+  firmwareOwnedDevice.dispatchEvent(benchmarkReport);
+  assert.equal(client.state.self_test.active, true);
+  assert.equal(client.state.self_test_command_pending, false);
+  await client.setSelfTest("cancel");
+  assert.deepEqual(firmwareOwnedDevice.lastFeature, { reportId: 6, payload: [2, 0, 0, 0, 0, 0] });
 });

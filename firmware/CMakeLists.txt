@@ -140,6 +140,7 @@ add_library(pf_storage STATIC
     src/integration/fatfs/diskio.c
     src/middleware/storage/storage.c
     src/middleware/storage/commands.c
+    src/middleware/storage/self_test.c
 )
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"

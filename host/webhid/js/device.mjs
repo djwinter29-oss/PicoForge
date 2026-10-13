@@ -10,6 +10,7 @@ export const STATUS_REPORT_ID = 2;
 export const MEMORY_REPORT_ID = 3;
 export const LED_COMMAND_REPORT_ID = 4;
 export const MSC_COMMAND_REPORT_ID = 5;
+export const SELF_TEST_REPORT_ID = 6;
 const INFO_PAYLOAD_SIZE = 42;
 const STATUS_PAYLOAD_SIZE = 13;
 const MEMORY_PAYLOAD_SIZE = 29;
@@ -182,6 +183,51 @@ export function boardStatusFromRuntime(runtime) {
   };
 }
 
+export function buildSelfTestCommand(action, sizeMiB = 32) {
+  if (action !== "start" && action !== "cancel") throw new Error("Self-test action must be start or cancel");
+  if (action === "cancel") sizeMiB = 0;
+  else if (!Number.isInteger(sizeMiB) || sizeMiB < 1 || sizeMiB > 128) {
+    throw new Error("Self-test size must be an integer from 1 to 128 MiB");
+  }
+  const command = new Uint8Array(6);
+  command[0] = 2;
+  command[1] = action === "start" ? 1 : 0;
+  new DataView(command.buffer).setUint32(2, sizeMiB, true);
+  return command;
+}
+
+export function decodeSelfTestReport(report) {
+  const payload = featurePayload(report, SELF_TEST_REPORT_ID, 32);
+  const state = payload.getUint8(2);
+  const flags = payload.getUint8(3);
+  const target = payload.getUint32(4, true);
+  const written = payload.getUint32(8, true);
+  const read = payload.getUint32(12, true);
+  const writeMs = payload.getUint32(16, true);
+  const readMs = payload.getUint32(20, true);
+  const error = payload.getUint8(28);
+  const filesystemResult = payload.getUint8(29);
+  const requestError = payload.getUint8(30);
+  const mismatches = payload.getUint32(24, true);
+  if (payload.getUint8(0) !== 2 || state > 8 || flags & ~3 || payload.getUint8(31)
+    || error > 10 || requestError > 10 || filesystemResult > 19
+    || target > 128 * 1024 * 1024 || written > target || read > written
+    || (state === 6 && (!target || written !== target || read !== target || mismatches || error || flags))) {
+    throw new Error("Invalid HID self-test report");
+  }
+  return {
+    version: 2, sequence: payload.getUint8(1),
+    state: ["idle", "queued", "mounting", "writing", "reading", "cleanup", "passed", "failed", "cancelled"][state],
+    active: state >= 1 && state <= 5, target_bytes: target, written_bytes: written, read_bytes: read,
+    write_elapsed_ms: writeMs, read_elapsed_ms: readMs,
+    write_bytes_per_second: writeMs ? written * 1000 / writeMs : null,
+    read_bytes_per_second: readMs ? read * 1000 / readMs : null,
+    progress_percent: target ? (written + read) * 100 / (2 * target) : 0,
+    mismatch_count: mismatches, error, filesystem_result: filesystemResult,
+    request_error: requestError, file_remains: Boolean(flags & 1), volume_mounted: Boolean(flags & 2),
+  };
+}
+
 export function matchesPicoForge(device) {
   return device.vendorId === DEVICE_FILTER.vendorId && [0x4011, 0x4012].includes(device.productId)
     && device.collections.some(collection => collection.usagePage === DEVICE_FILTER.usagePage
@@ -201,6 +247,8 @@ export class PicoForgeWebHid {
       runtime: null,
       board_status: null,
       memory: null,
+      self_test: null,
+      self_test_command_pending: false,
       updated_at: null,
       busy: false,
     };
@@ -218,6 +266,10 @@ export class PicoForgeWebHid {
         } else if (event.reportId === MSC_COMMAND_REPORT_ID) {
           const msc = decodeMscStatus(event.data);
           this.update({ msc, updated_at: new Date().toISOString(), error: null });
+        } else if (event.reportId === SELF_TEST_REPORT_ID) {
+          const selfTest = decodeSelfTestReport(event.data);
+          this.update({ self_test: selfTest, self_test_command_pending: false,
+            updated_at: new Date().toISOString(), error: null });
         }
       } catch (error) {
         this.update({ error: error.message });
@@ -284,7 +336,8 @@ export class PicoForgeWebHid {
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
       this.reconnectSerial = selected.serialNumber || hardware.serial_number;
       this.update({ connected: true, busy: false, reconnecting: false, error: null, hardware,
-        runtime: null, board_status: null, memory: null, updated_at: null });
+        runtime: null, board_status: null, memory: null, self_test: null,
+        self_test_command_pending: false, updated_at: null });
     } catch (error) {
       selected.removeEventListener("inputreport", this.onInputReport);
       if (selected.opened) {
@@ -338,6 +391,18 @@ export class PicoForgeWebHid {
       this.reconnectSerial = reconnectSerial;
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ busy: false, error: error.message });
+    }
+  }
+
+  async setSelfTest(action, sizeMiB = 32) {
+    const command = buildSelfTestCommand(action, sizeMiB);
+    if (!this.device || this.state.busy || this.state.self_test_command_pending) return;
+    this.update({ busy: true, error: null });
+    try {
+      await this.device.sendFeatureReport(SELF_TEST_REPORT_ID, command);
+      this.update({ busy: false, self_test_command_pending: true });
+    } catch (error) {
+      this.update({ busy: false, self_test_command_pending: false, error: error.message });
     }
   }
 }

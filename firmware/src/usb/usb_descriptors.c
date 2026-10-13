@@ -68,6 +68,13 @@ static uint8_t const hid_report_descriptor[] = {
     0x95, PF_HID_MSC_COMMAND_PAYLOAD_SIZE,
     0x09, 0x05,
     0xB1, 0x02,
+    0x85, PF_HID_SELF_TEST_REPORT_ID,
+    0x95, PF_HID_SELF_TEST_STATUS_PAYLOAD_SIZE,
+    0x09, 0x06,
+    0x81, 0x02,
+    0x95, PF_HID_SELF_TEST_COMMAND_PAYLOAD_SIZE,
+    0x09, 0x06,
+    0xB1, 0x02,
     0xC0,
 };
 

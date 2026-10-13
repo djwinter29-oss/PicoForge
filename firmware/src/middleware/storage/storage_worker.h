@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "middleware/storage/commands.h"
+#include "self_test.h"
 
 typedef struct {
     uint32_t session;
@@ -31,5 +32,16 @@ bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply);
  * Accepted mutations still finish safely; all replies must still be drained.
  */
 void pf_storage_worker_cancel(uint32_t session);
+
+/** Start a verified file benchmark from the USB task. False records rejection.
+ * Requires firmware ownership, initialized media, and no pending storage work.
+ */
+bool pf_storage_worker_self_test_start(uint32_t size_mib, bool host_owned);
+
+/** Request cancellation from USB; cleanup still runs before ownership release. */
+bool pf_storage_worker_self_test_cancel(void);
+
+/** Copy a coherent benchmark snapshot from the USB task; result persists. */
+void pf_storage_worker_self_test_status(pf_self_test_status_t *status);
 
 #endif

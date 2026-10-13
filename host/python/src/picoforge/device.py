@@ -10,12 +10,16 @@ from .protocol import (
     MEMORY_INPUT_SIZE,
     MEMORY_REPORT_ID,
     MSC_COMMAND_REPORT_ID,
+    SELF_TEST_REPORT_ID,
+    SELF_TEST_INPUT_SIZE,
     STATUS_INPUT_SIZE,
     build_led_command_report,
     build_msc_command_report,
+    build_self_test_command_report,
     parse_info_report,
     parse_memory_report,
     parse_msc_status_report,
+    parse_self_test_report,
     parse_status_report,
 )
 
@@ -109,13 +113,15 @@ class PicoForgeHid:
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
         self._require_open()
-        report = self._device.read(max(STATUS_INPUT_SIZE, MEMORY_INPUT_SIZE), timeout_ms)
+        report = self._device.read(max(STATUS_INPUT_SIZE, MEMORY_INPUT_SIZE, SELF_TEST_INPUT_SIZE), timeout_ms)
         if not report:
             return None
         if report[0] == MEMORY_REPORT_ID:
             return {"kind": "memory", "data": parse_memory_report(report)}
         if report[0] == MSC_COMMAND_REPORT_ID:
             return {"kind": "msc", "data": parse_msc_status_report(report)}
+        if report[0] == SELF_TEST_REPORT_ID:
+            return {"kind": "self_test", "data": parse_self_test_report(report)}
         return {"kind": "runtime", "data": parse_status_report(report)}
 
     def set_led(self, on: bool) -> None:
@@ -136,6 +142,12 @@ class PicoForgeHid:
         if not self.closed:
             self._device.close()
             self.closed = True
+
+    def set_self_test(self, action: str, size_mib: int = 32) -> None:
+        self._require_open()
+        result = self._device.send_feature_report(list(build_self_test_command_report(action, size_mib)))
+        if result < 0:
+            raise OSError("failed to send HID self-test command")
 
     def _require_open(self) -> None:
         if self.closed:

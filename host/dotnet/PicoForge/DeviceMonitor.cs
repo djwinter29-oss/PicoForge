@@ -5,6 +5,7 @@ internal interface IDeviceMonitor
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
     MscStatusResponse? SetMsc(bool enabled);
+    bool SetSelfTest(string action, uint sizeMib);
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
@@ -69,7 +70,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                         var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
                         snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
                             report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
-                            memory ?? snapshot.Memory, msc ?? snapshot.Msc);
+                            memory ?? snapshot.Memory, msc ?? snapshot.Msc,
+                            report?.SelfTest ?? snapshot.SelfTest);
                     }
                 }
             }
@@ -97,4 +99,14 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     private static bool IsDeviceError(Exception error) => error is IOException or InvalidOperationException
         or UnauthorizedAccessException or NotSupportedException or TimeoutException;
+
+    public bool SetSelfTest(string action, uint sizeMib)
+    {
+        lock (gate)
+        {
+            if (activeClient is null || snapshot.SelfTest is null) return false;
+            activeClient.SetSelfTest(action, sizeMib);
+            return true;
+        }
+    }
 }

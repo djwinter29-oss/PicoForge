@@ -84,6 +84,31 @@
       </dl>
     </section>
 
+    <section class="runtime self-test" aria-labelledby="self-test-title">
+      <div class="section-heading">
+        <h2 id="self-test-title">SD card self-test</h2>
+        <span class="sample-time">/PFTEST.BIN</span>
+      </div>
+      <div class="self-test-controls">
+        <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="128" step="1" value="32"></label>
+        <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
+        <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
+      </div>
+      <label class="self-test-consent"><input id="self-test-consent" type="checkbox">Allow temporary SD-card writes</label>
+      <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
+      <dl class="runtime-grid">
+        <div><dt>State</dt><dd id="self-test-state">Unavailable</dd></div>
+        <div><dt>Progress</dt><dd id="self-test-percent">0%</dd></div>
+        <div><dt>Average write</dt><dd id="self-test-write-speed">--</dd></div>
+        <div><dt>Average read</dt><dd id="self-test-read-speed">--</dd></div>
+        <div><dt>Written</dt><dd id="self-test-written">--</dd></div>
+        <div><dt>Verified</dt><dd id="self-test-read">--</dd></div>
+        <div><dt>Write time</dt><dd id="self-test-write-time">--</dd></div>
+        <div><dt>Read time</dt><dd id="self-test-read-time">--</dd></div>
+      </dl>
+      <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite">No result.</p>
+    </section>
+
     <footer class="status-line" role="status" aria-live="polite">
       <span class="status-mark" aria-hidden="true"></span>
       <span id="status-message">Select a PicoForge HID device</span>

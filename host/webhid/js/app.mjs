@@ -1,5 +1,5 @@
 import { PicoForgeWebHid } from "./device.mjs";
-import { renderStatus } from "./view.mjs";
+import { renderStatus, renderSelfTest } from "./view.mjs";
 
 const connect = document.querySelector("#connect");
 const disconnect = document.querySelector("#disconnect");
@@ -12,7 +12,8 @@ function render(state) {
   connect.disabled = state.busy || state.connected || state.reconnecting || !navigator.hid;
   disconnect.disabled = state.busy || !state.connected;
   ledControl.disabled = state.busy || !state.connected || !state.board_status?.led_available;
-  mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending);
+  mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending)
+    || Boolean(state.self_test?.active) || state.self_test_command_pending;
   mscControl.textContent = state.msc?.enabled ? "Disable USB drive" : "Enable USB drive";
   document.querySelector("#msc-note").textContent = state.reconnecting
     ? "USB interfaces are reconnecting; HID will resume automatically."
@@ -27,4 +28,13 @@ connect.addEventListener("click", () => client.connect());
 disconnect.addEventListener("click", () => client.disconnect());
 ledControl.addEventListener("click", () => client.setLed(!client.state.board_status?.led_on));
 mscControl.addEventListener("click", () => client.setMsc(!client.state.msc?.enabled));
+document.querySelector("#self-test-start").addEventListener("click", async () => {
+  await client.setSelfTest("start", document.querySelector("#self-test-size").valueAsNumber);
+  document.querySelector("#self-test-consent").checked = false;
+  render(client.state);
+});
+document.querySelector("#self-test-cancel").addEventListener("click", () => client.setSelfTest("cancel"));
+for (const selector of ["#self-test-size", "#self-test-consent"]) {
+  document.querySelector(selector).addEventListener("input", () => renderSelfTest(client.state));
+}
 render(client.state);

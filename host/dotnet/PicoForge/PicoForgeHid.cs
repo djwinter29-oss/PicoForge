@@ -48,7 +48,7 @@ internal sealed class PicoForgeHid : IDisposable
 
     public InputReport? ReadInputReport()
     {
-        var report = new byte[Math.Max(HidProtocol.MemoryPayloadSize + 1, device.GetMaxInputReportLength())];
+        var report = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
         try
         {
             var count = stream.Read(report, 0, report.Length);
@@ -59,6 +59,7 @@ internal sealed class PicoForgeHid : IDisposable
                 HidProtocol.StatusReportId => new(HidProtocol.ParseStatusReport(data), null, null),
                 HidProtocol.MemoryReportId => new(null, HidProtocol.ParseMemoryReport(data), null),
                 HidProtocol.MscCommandReportId => new(null, null, HidProtocol.ParseMscStatusReport(data)),
+                HidProtocol.SelfTestReportId => new(null, null, null, HidProtocol.ParseSelfTestReport(data)),
                 _ => throw new InvalidOperationException("unexpected HID input report ID")
             };
         }
@@ -74,6 +75,7 @@ internal sealed class PicoForgeHid : IDisposable
     }
 
     public void SetMsc(bool enabled) => stream.SetFeature(HidProtocol.BuildMscCommandReport(enabled));
+    public void SetSelfTest(string action, uint sizeMib) => stream.SetFeature(HidProtocol.BuildSelfTestCommandReport(action, sizeMib));
 
     public void Dispose() => stream.Dispose();
 

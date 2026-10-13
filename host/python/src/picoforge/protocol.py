@@ -9,6 +9,9 @@ STATUS_REPORT_ID = 2
 MEMORY_REPORT_ID = 3
 LED_COMMAND_REPORT_ID = 4
 MSC_COMMAND_REPORT_ID = 5
+SELF_TEST_REPORT_ID = 6
+SELF_TEST_PAYLOAD_SIZE = 32
+SELF_TEST_INPUT_SIZE = SELF_TEST_PAYLOAD_SIZE + 1
 REPORT_VERSION = 2
 INFO_PAYLOAD_SIZE = 42
 STATUS_PAYLOAD_SIZE = 13
@@ -194,3 +197,38 @@ def build_msc_command_report(enable: bool) -> bytes:
     if not isinstance(enable, bool):
         raise ValueError("MSC enable state must be boolean")
     return bytes((MSC_COMMAND_REPORT_ID, REPORT_VERSION, int(enable)))
+
+
+def build_self_test_command_report(action: str, size_mib: int = 32) -> bytes:
+    if action not in ("start", "cancel"):
+        raise ValueError("Self-test action must be start or cancel")
+    if action == "cancel":
+        size_mib = 0
+    elif not isinstance(size_mib, int) or isinstance(size_mib, bool) or not 1 <= size_mib <= 128:
+        raise ValueError("Self-test size must be an integer from 1 to 128 MiB")
+    return bytes((SELF_TEST_REPORT_ID, REPORT_VERSION, int(action == "start"))) + struct.pack("<I", size_mib)
+
+
+def parse_self_test_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
+    payload = _feature_payload(report, SELF_TEST_REPORT_ID, SELF_TEST_PAYLOAD_SIZE)
+    version, sequence, state, flags, target, written, read, write_ms, read_ms, mismatches, error, fs_result, request_error, reserved = struct.unpack(
+        "<BBBBIIIIIIBBBB", payload
+    )
+    if (version != REPORT_VERSION or state > 8 or flags & ~3 or reserved
+        or error > 10 or request_error > 10 or fs_result > 19
+        or target > 128 * 1024 * 1024 or written > target or read > written
+        or (state == 6 and (not target or written != target or read != target or mismatches or error or flags))):
+        raise ValueError("Invalid HID self-test report")
+    names = ("idle", "queued", "mounting", "writing", "reading", "cleanup", "passed", "failed", "cancelled")
+    return {
+        "version": version, "sequence": sequence, "state": names[state],
+        "active": 1 <= state <= 5, "target_bytes": target,
+        "written_bytes": written, "read_bytes": read,
+        "write_elapsed_ms": write_ms, "read_elapsed_ms": read_ms,
+        "write_bytes_per_second": written * 1000 / write_ms if write_ms else None,
+        "read_bytes_per_second": read * 1000 / read_ms if read_ms else None,
+        "progress_percent": (written + read) * 100 / (2 * target) if target else 0,
+        "mismatch_count": mismatches, "error": error, "filesystem_result": fs_result,
+        "request_error": request_error, "file_remains": bool(flags & 1),
+        "volume_mounted": bool(flags & 2),
+    }

@@ -7,6 +7,10 @@ internal static class StatusEndpoints
     public sealed record SetLedRequest(bool On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
     public sealed record SetMscRequest(bool Enabled);
+    /// <summary>Start a 1..128 MiB temporary-file test or request cancellation.</summary>
+    public sealed record SetSelfTestRequest(string Action, uint SizeMib = 32);
+    /// <summary>Command delivery acknowledgement; completion comes from HID telemetry.</summary>
+    public sealed record SelfTestAcceptedResponse(bool Accepted);
 
     public static IEndpointRouteBuilder MapDeviceStatus(this IEndpointRouteBuilder endpoints)
     {
@@ -25,6 +29,14 @@ internal static class StatusEndpoints
             .WithSummary("Request USB mass-storage mode")
             .Produces<MscStatusResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status409Conflict);
+        endpoints.MapPost("/api/self-test", SetSelfTest)
+            .WithName("RequestSdSelfTest")
+            .WithSummary("Start or cancel an SD-card file benchmark")
+            .WithDescription("Delivers a HID command; poll /api/status for verification, cleanup, and average read/write metrics.")
+            .Produces<SelfTestAcceptedResponse>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
         return endpoints;
     }
 
@@ -49,5 +61,24 @@ internal static class StatusEndpoints
         return status is null
             ? Results.Conflict(new { error = "PicoForge HID is disconnected" })
             : Results.Ok(status);
+    }
+
+    private static Results<Accepted<SelfTestAcceptedResponse>, ProblemHttpResult> SetSelfTest(
+        SetSelfTestRequest request, IDeviceMonitor monitor, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (request.Action is not ("start" or "cancel") ||
+            (request.Action == "start" && request.SizeMib is not (>= 1 and <= 128)))
+            return TypedResults.Problem(statusCode: 400, title: "Expected start/cancel and a size from 1 to 128 MiB");
+        try
+        {
+            if (!monitor.SetSelfTest(request.Action, request.SizeMib))
+                return TypedResults.Problem(statusCode: 409, title: "PicoForge HID self-test interface is unavailable");
+            return TypedResults.Accepted("/api/status", new SelfTestAcceptedResponse(true));
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
     }
 }

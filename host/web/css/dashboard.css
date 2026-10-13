@@ -119,6 +119,14 @@ h2 { margin-bottom: 0; font-size: 19px; font-weight: 620; }
 .runtime-grid dd[data-active="true"] { color: var(--green); }
 .runtime-grid dd[data-active="false"] { color: var(--muted); }
 
+.self-test-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 20px; }
+.self-test-controls label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.self-test-controls input { width: 100px; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; color: var(--ink); background: var(--surface); }
+.self-test-consent { display: flex; align-items: center; gap: 8px; margin: 18px 0; font-size: 13px; }
+.self-test progress { display: block; width: 100%; height: 12px; accent-color: var(--teal); }
+.self-test .runtime-grid { row-gap: 18px; }
+.self-test-message { margin-top: 20px; overflow-wrap: anywhere; }
+
 .status-line {
   display: flex;
   align-items: center;

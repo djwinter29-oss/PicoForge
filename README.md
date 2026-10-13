@@ -117,6 +117,9 @@ To flash over a CMSIS-DAP debug probe, run `tools/firmware/load.sh --board pico`
 
 ## Host Tools
 
+The dashboards can start/cancel the firmware's [SD-card file self-test](docs/sd-self-test.md)
+over HID and display verification progress and average filesystem read/write speeds.
+
 The Python launcher creates `build/picoforge` and installs the host package on first run, then opens HID and serves a loopback-only dashboard:
 
 ```sh

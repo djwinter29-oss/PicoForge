@@ -18,11 +18,13 @@
 #define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
 #define USB_HID_MEMORY_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
 #define USB_HID_MSC_REPORT_INTERVAL (pdMS_TO_TICKS(500U))
+#define USB_HID_SELF_TEST_INTERVAL (pdMS_TO_TICKS(500U))
 
 static StaticTask_t usb_task_control_block;
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE];
 static uint8_t hid_sequence;
 static uint8_t memory_sequence;
+static uint8_t self_test_sequence;
 static char cli_tx[USB_CLI_TX_SIZE];
 static uint32_t cli_tx_head;
 static uint32_t cli_tx_tail;
@@ -139,6 +141,7 @@ static void usb_task(void *context)
     TickType_t last_hid_report = xTaskGetTickCount();
     TickType_t last_memory_report = last_hid_report;
     TickType_t last_msc_report = last_hid_report;
+    TickType_t last_self_test_report = last_hid_report;
 
     while (true) {
         TickType_t now = xTaskGetTickCount();
@@ -176,6 +179,16 @@ static void usb_task(void *context)
             pf_hid_build_msc_status_report(&report);
             if (tud_hid_report(PF_HID_MSC_COMMAND_REPORT_ID, &report, sizeof(report))) {
                 last_msc_report = now;
+            }
+        }
+
+        if (tud_hid_ready() &&
+            ((TickType_t)(now - last_self_test_report) >= USB_HID_SELF_TEST_INTERVAL)) {
+            pf_hid_self_test_status_t report;
+            pf_hid_build_self_test_report(&report, self_test_sequence);
+            if (tud_hid_report(PF_HID_SELF_TEST_REPORT_ID, &report, sizeof(report))) {
+                ++self_test_sequence;
+                last_self_test_report = now;
             }
         }
 

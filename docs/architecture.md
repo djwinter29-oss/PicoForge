@@ -18,6 +18,12 @@ resource budgets, and validation limits.
 
 This is a buildable starting point, not yet the complete application framework. The example currently uses Pico SDK and FreeRTOS APIs directly; future modules should establish the boundaries below before more hardware and application behavior is added.
 
+HID Report 6 starts/cancels a large-file [SD self-test](sd-self-test.md) and
+publishes verification progress and phase timings. Its RTOS-independent engine
+lives beside storage middleware and runs in the same sole FatFs worker, with
+exclusive ownership and create-new/cleanup safeguards. Browser, Python, and
+.NET dashboards expose the controls and calculate average read/write metrics.
+
 ## Core and Runtime Policy
 
 The initial runtime uses FreeRTOS-Kernel 11.3.1 with `configNUMBER_OF_CORES=1`. PicoForge starts its scheduler on core 0 and does not launch framework work on core 1. Core 1 is left unused by this baseline and may be assigned by a product application in a future, explicitly designed mode.
