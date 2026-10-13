@@ -52,7 +52,7 @@ Use GP2-GP7 for one memory device and choose one mode column below. Wiring stays
 - The board profile explicitly assigns CLK=GP2, CMD=GP3, and logical DAT0-DAT3 to GP4/GP7/GP6/GP5. PIO samples the contiguous GP4-GP7 window; the SDIO transfer code remaps the DAT1/DAT3 bit lanes to match this wiring.
 - The SD-SPI driver holds GPIO-controlled CS low across each complete card transaction, including data and busy-response phases. Verify CS timing, clock, and data with a logic analyzer during board validation.
 - GPIO-controlled CS on GP5 is the selected implementation and requires no rewiring. It does not satisfy an automatic hardware-CS requirement; if hardware CS is mandatory, the design remains unresolved until a suitable transaction-control approach is demonstrated.
-- Pin names follow the breakout guides below. Pico 2 SDIO initialization is verified as recorded below; sector I/O, other interface modes, and signal integrity have not been validated.
+- Pin names follow the breakout guides below. Pico 2 SDIO and SPI filesystem CLI operations are verified as recorded below; other boards/interface modes and signal integrity have not been validated.
 
 ### Lab Hardware Examples
 
@@ -60,9 +60,31 @@ The lab uses two types of memory/storage breakout: the Adafruit microSD board an
 
 #### SD-Card Breakout
 
-The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup attempts card initialization once but does not mount a filesystem. SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching.
+The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup attempts card initialization once but does not mount a filesystem. SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power: an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.
 
-Pico 2 SDIO initialization was verified with the connected 16 GB card: UART reported `SD card initialized`, and HID reported `initialized=true`, 30,875,648 sectors (15,808,331,776 bytes), and a 12.5 MHz bus clock. The command PIO now drives all 48 command bits before rising clock edges and captures the response start bit without a software bit shift. Command completion allows at least eight idle clock cycles before the next command. Sector reads, writes, FAT32 mounting, and SPI initialization remain unverified; no card data was written during this check.
+Pico 2 SDIO initialization was verified with the connected 16 GB card: UART reported `SD card initialized`, and HID reported `initialized=true`, 30,875,648 sectors (15,808,331,776 bytes), and a 12.5 MHz bus clock. The command PIO now drives all 48 command bits before rising clock edges and captures the response start bit without a software bit shift. Command completion allows at least eight idle clock cycles before the next command. That initial check did not exercise sector I/O or filesystem mounting and wrote no card data; the full SDIO CLI qualification is recorded below.
+
+On 2026-10-13, the same Pico 2 and card were verified in SPI mode at 25 MHz after reboot. HID reported the same capacity and CID. The SPI driver explicitly pulls MISO high so released responses have a defined idle level; this test does not isolate that change from the reboot as the cause of successful initialization. The initial read-only CDC CLI check successfully mounted the existing filesystem, listed `/`, read directory metadata with `fs stat`, and reported total/free filesystem space with `fs df` (15,799,943,168 / 15,799,877,632 bytes). These operations exercised SPI sector reads and CRC checks. HID identity and runtime/memory/MSC input reports remained accessible during CDC use. The filesystem was explicitly unmounted afterward, with MSC disabled and Pico retaining card ownership. No files were changed or formatted during that initial check. SPI was explicitly selected for this qualification; select the intended transport before building.
+
+A subsequent authorized CDC CLI qualification on the same date passed 36 checks using only disposable files in `/pf-cli-test-e700f283`. Verified commands were `help fs`, `sd status`, `fs mount`, `unmount`, `ls`, `stat`, bounded/default `cat`, `df`, `mkdir`, `write`, `append`, `mv`, and confirmed `rm`. Writing and appending produced the exact expected readback (`hello world more text`, 21 bytes). Guard checks refused operations before mount, duplicate creation, write/rename overwrites, unsafe paths, invalid read limits, unconfirmed deletion, and directory deletion. HID identity and runtime/memory/MSC reports continued throughout. Both test files were deleted and their absence verified; only the empty test directory remains. The filesystem was unmounted, MSC disabled, and Pico retained ownership. Existing files were not changed and media was not formatted. This verifies the tested small-file SPI workflow, not sustained-write endurance, power-loss recovery, detailed backpressure, or the SPI MSC handoff lifecycle.
+
+The same 36-check suite subsequently passed in native SDIO mode at 12.5 MHz on
+2026-10-13. Switching from SPI first failed CMD8 after a warm MCU reset; a full
+card power cycle restored native initialization. Initial directory creation then
+failed with `DISK_ERR`. The write PIO had treated the CRC-status end bit as ready
+before the card entered its busy phase, allowing a subsequent CMD24 too early.
+The corrected program waits through the following falling/rising clock edges
+before waiting for DAT0 to release busy. Write start/stop and bus release also
+transition on falling edges. The focused directory write then succeeded, and
+the full suite passed on clean firmware with temporary diagnostics removed.
+Readback again matched `hello world more text` (21 bytes), all safety guards
+passed, and HID identity/runtime/memory/MSC reports stayed available. Test files
+were deleted and absence verified; empty `/pf-sdio-test-2efe1ac8` and diagnostic
+`/pf-sdio-diag-12d12bef` directories remain alongside the earlier SPI test
+directory. No existing file contents were changed and no formatting was done.
+SDIO remains selected, the filesystem is unmounted, MSC is disabled, and Pico
+owns the card. These checks do not qualify endurance, power-loss recovery,
+high-speed timing margins, or complete SDIO MSC handoff workflows.
 
 #### W25Q128 Flash Breakout
 

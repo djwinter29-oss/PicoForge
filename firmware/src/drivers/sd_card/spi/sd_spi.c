@@ -501,6 +501,7 @@ pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config)
         gpio_set_function(active_config.clock_gpio, GPIO_FUNC_SPI);
         gpio_set_function(active_config.mosi_gpio, GPIO_FUNC_SPI);
         gpio_set_function(active_config.miso_gpio, GPIO_FUNC_SPI);
+        gpio_pull_up(active_config.miso_gpio);
         spi_configured = true;
         configuration_set = true;
     }

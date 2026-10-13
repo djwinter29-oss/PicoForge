@@ -1,6 +1,6 @@
 # PicoForge Architecture
 
-> **Status:** The firmware builds for RP2040 and RP2350 and runs a single-core FreeRTOS task. UART logging has been verified on a Pico through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot; startup initializes the card for telemetry but does not mount a filesystem. MSC ownership is exclusive and requires host safe-eject before firmware regains the card. SD-card transports and MSC have not been validated on physical hardware.
+> **Status:** The firmware builds for RP2040 and RP2350 and runs single-core FreeRTOS tasks. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot; startup initializes the card for telemetry but does not mount a filesystem. MSC ownership is exclusive and requires host safe-eject before firmware regains the card. See [the hardware validation record](hardware-setup.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
 
 ## Current Firmware
 

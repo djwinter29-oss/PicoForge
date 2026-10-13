@@ -55,18 +55,21 @@ receive_nibble:
 .program pf_sdio_pio_data_tx
     pull block
     out x, 32
+    set pins, 15
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     set pindirs, 15
     set pins, 0
-    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
 transmit_nibble:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     out pins, 4
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     jmp x-- transmit_nibble
-    set pins, 15
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    set pins, 15
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     set pindirs, 0
     wait 0 pin 0
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
@@ -77,5 +80,7 @@ read_data_response:
     in pins, 1
     jmp x-- read_data_response
     push block
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin 0
     irq set 2
