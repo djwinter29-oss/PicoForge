@@ -10,7 +10,7 @@ typedef enum {
     PF_SD_CARD_TRANSPORT_SPI,
 } pf_sd_card_transport_t;
 
-typedef struct {
+typedef struct pf_sd_card_config {
     pf_sd_card_transport_t transport;
     union {
         pf_sdio_pio_config_t sdio_pio;

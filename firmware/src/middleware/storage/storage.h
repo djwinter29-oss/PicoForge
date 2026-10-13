@@ -4,7 +4,8 @@
 #include <stdbool.h>
 
 #include "ff.h"
-#include "sd_card.h"
+
+typedef struct pf_sd_card_config pf_sd_card_config_t;
 
 #define PF_STORAGE_VOLUME "0:"
 

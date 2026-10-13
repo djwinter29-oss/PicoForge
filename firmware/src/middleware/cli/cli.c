@@ -78,3 +78,15 @@ void pf_cli_process(void)
         embeddedCliProcess(cli);
     }
 }
+
+bool pf_cli_add_binding(CliCommandBinding binding)
+{
+    return (cli != NULL) && embeddedCliAddBinding(cli, binding);
+}
+
+void pf_cli_print(const char *line)
+{
+    if ((cli != NULL) && (line != NULL)) {
+        embeddedCliPrint(cli, line);
+    }
+}

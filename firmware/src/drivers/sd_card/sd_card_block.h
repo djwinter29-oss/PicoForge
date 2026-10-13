@@ -65,6 +65,11 @@ pf_sd_card_result_t pf_sd_card_msc_sync(void);
 /** Snapshot initialized card telemetry; presence is unknown until detect or init succeeds. */
 void pf_sd_card_get_info(pf_sd_card_info_t *info);
 
+/** Return the selected transport name (sdio, spi, or unconfigured).
+ * The returned string has static lifetime and must not be modified.
+ */
+const char *pf_sd_card_transport_name(void);
+
 /**
  * Set a callback run between polls of card waits that can last milliseconds
  * (write busy, command-line busy). Keep it short, such as taskYIELD(); NULL selects

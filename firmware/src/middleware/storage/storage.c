@@ -1,4 +1,5 @@
 #include "storage.h"
+#include "sd_card.h"
 
 static FATFS storage_filesystem;
 static bool storage_mounted;

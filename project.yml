@@ -9,6 +9,15 @@
   :enabled:
     - gcov
 
+:cmock:
+  :when_ptr: :compare_ptr
+  :plugins:
+    - ignore
+    - ignore_arg
+    - expect_any_args
+    - return_thru_ptr
+    - callback
+
 :gcov:
   :utilities:
     - gcovr

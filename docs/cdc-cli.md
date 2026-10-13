@@ -37,18 +37,79 @@ CR, LF, and CRLF are accepted.
 | `help` | List commands; `help <command>` displays command help. |
 | `version` | Show the PicoForge CLI and Embedded CLI version. |
 | `echo <text>` | Echo text for non-destructive transport checks. |
+| `sd status` | Show card presence, initialization, transport, capacity, clock, mounted state, and Pico/USB ownership. |
+| `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
+| `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
+| `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
+| `fs stat <path>` | Show size, attributes, and filesystem timestamps. |
+| `fs cat <path> [limit]` | Read at most 1024 bytes by default; limit accepts 1..4096 bytes. |
+| `fs df` | Show total and free filesystem bytes; scanning free space can take time. |
+| `fs mkdir <path>` | Create one directory; parents must exist. |
+| `fs write <path> <text>` | Create a new file; fail if it already exists. No newline is added. |
+| `fs append <path> <text>` | Append text, creating the file if absent. No newline is added. |
+| `fs mv <source> <destination>` | Rename a file/directory without overwriting an existing destination. |
+| `fs rm <path> --confirm` | Delete one file with explicit confirmation; directories are refused. |
 
-Commands do not read or write the SD card, mount a filesystem, or change MSC
-ownership. Closing CDC or USB re-enumeration discards the session's partial
-command, queued output, and history. Reopening starts a fresh prompt.
+Storage commands require absolute ASCII paths on volume 0, with no drive
+prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
+bytes and must fit the CLI's command buffer. Double-quote paths or text containing
+spaces. There is no current-directory state, recursive deletion, overwrite, or
+format command. File content is displayed in chunks of up to 48 bytes, with
+non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
+Long directory names are clipped in listings.
+
+`sd status` is available while USB owns the card. Every `fs` command is refused
+until the host safely ejects and disables MSC. File operations also require an
+explicit `fs mount`. Run `fs unmount` before enabling MSC; the firmware never
+automatically unmounts or remounts around a host handoff.
+
+Only one storage command can be outstanding. The CLI acknowledges that it was
+queued; this is not a success report. Wait for its result before the next storage
+command. FatFs results include their symbolic name and numeric code. A short
+write or sync/close failure is reported; a new or partially modified file may
+remain. Commands do not roll back writes or change MSC ownership.
+
+Closing CDC discards the session's partial command, output, and history. Reopening
+starts a fresh prompt. A disconnected session stops further listing/cat output,
+but accepted mount/unmount and file changes finish safely, with files closed.
+The filesystem remains mounted across terminal sessions until explicitly unmounted.
+USB re-enumeration likewise resets the CLI session, but a pending storage command
+prevents MSC handoff until it is complete and its replies are drained.
+
+Read-only bring-up sequence:
+
+```text
+sd status
+fs mount
+fs ls /
+fs stat /existing.txt
+fs cat /existing.txt 256
+fs df
+fs unmount
+```
+
+To exercise changes, use a disposable new path and wait for each result:
+
+```text
+fs mount
+fs mkdir /cli-test
+fs write /cli-test/new.txt "hello world"
+fs append /cli-test/new.txt " more text"
+fs mv /cli-test/new.txt /cli-test/renamed.txt
+fs rm /cli-test/renamed.txt --confirm
+fs unmount
+```
+
+These modification commands change the card. The example leaves the empty
+`/cli-test` directory in place because directory removal is deliberately unavailable.
 
 ## Integration
 
 [CLI middleware](../firmware/src/middleware/cli/cli.c) owns the static Embedded
 CLI instance and command bindings. It has no TinyUSB, board, or FreeRTOS
 dependency. Its output callback and input/process API are documented in
-[cli.h](../firmware/src/middleware/cli/cli.h). Add command bindings during
-`pf_cli_init()` using `embeddedCliAddBinding()`; argument-tokenization helpers
+[cli.h](../firmware/src/middleware/cli/cli.h). Add session bindings using
+`pf_cli_add_binding()` after initialization; argument-tokenization helpers
 come from the upstream framework. Callbacks execute in the USB task, so keep
 them bounded and non-blocking; do not run long operations there.
 
@@ -62,20 +123,39 @@ most 1 KiB; adding commands requires preserving that output budget. Exceeding th
 ring fails explicitly rather than silently dropping output. HID/MSC continue to
 be serviced by the same task.
 
+[The static storage worker](../firmware/src/middleware/storage/storage_worker.c)
+is the sole FatFs caller for CLI operations. It uses an 8 KiB stack, a one-request
+queue, and eight 256-byte reply slots. [The command dispatcher](../firmware/src/middleware/storage/commands.c)
+has no RTOS or USB dependency. The worker sends bounded lines through the queue;
+only the USB task calls CLI print APIs. Replies carry a session ID so old output
+does not leak into a newly opened terminal. Backpressure suspends the worker,
+not the USB task. Disconnect cancellation releases read-only output backpressure;
+accepted mutations are not abandoned midway. MSC transitions are rejected while
+the worker is busy and enabling is rejected while FatFs is mounted. New application
+filesystem clients must also be routed through this worker, not a second task.
+
 ## Validation
 
 Run the hardware-independent middleware tests:
 
 ```sh
 tools/validation/setup-ceedling-testing.sh test:test_cli
+tools/validation/setup-ceedling-testing.sh test:test_commands
 ```
 
 They cover prompt/help, commands, invalid arguments, unknown commands, session
-reset, completion/history, and the output reserve. They do not verify USB CDC
-enumeration or host backpressure.
+reset, completion/history, asynchronous binding registration, and the output
+reserve. Mocked FatFs tests cover commands, ownership/mount guards, safe paths,
+create-new/append modes, close/sync and partial-write errors, bounded cat output,
+directory cleanup, confirmed deletion, and cancellation. They do not verify actual
+card I/O, FreeRTOS queue scheduling, USB CDC enumeration, or host backpressure.
 
 For a board check, safely eject and disable any active MSC drive before flashing.
 Open CDC and run `help`, `version`, and `echo CDC test`. Close/reopen to verify a
 fresh prompt, and check that HID reports continue during commands. Stop reading
 CDC briefly, resume, and confirm output arrives without a board reset. No
-formatting, filesystem changes, or card writes are needed for this check.
+formatting or card writes are needed for the read-only check. Verify the storage
+commands first using an existing file and `fs unmount`; only test mutations on a
+disposable file after backing up the card. Verify that MSC enable is rejected
+while mounted or busy and allowed after unmount; after host eject/disable, confirm
+that `fs mount` works again. Do not reset while a filesystem command is in progress.

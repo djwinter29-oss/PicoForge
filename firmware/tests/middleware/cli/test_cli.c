@@ -93,3 +93,22 @@ void test_cli_long_echo_fits_cdc_output_reserve(void)
     send_command(command);
     TEST_ASSERT_NULL(strstr(captured, "Unknown command"));
 }
+
+static void queued_command(EmbeddedCli *instance, char *args, void *context)
+{
+    (void)instance;
+    TEST_ASSERT_EQUAL_STRING("fs", context);
+    TEST_ASSERT_EQUAL_STRING("write /a \"hello world\"", args);
+    pf_cli_print("Command queued.");
+}
+
+void test_cli_registers_async_command_and_preserves_raw_arguments(void)
+{
+    TEST_ASSERT_TRUE(pf_cli_add_binding((CliCommandBinding){
+        "fs", "Filesystem commands", false, "fs", queued_command
+    }));
+    send_command("fs write /a \"hello world\"\r");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "Command queued."));
+    pf_cli_print("FatFs: OK");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "FatFs: OK"));
+}

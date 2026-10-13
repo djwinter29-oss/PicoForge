@@ -139,6 +139,7 @@ add_library(pf_storage STATIC
     third_party/fatfs/source/ffunicode.c
     src/integration/fatfs/diskio.c
     src/middleware/storage/storage.c
+    src/middleware/storage/commands.c
 )
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
@@ -148,6 +149,7 @@ target_include_directories(pf_storage PUBLIC
 )
 target_link_libraries(pf_storage PUBLIC
     pf_sd_card
+    embedded_cli
 )
 
 add_library(pf_board STATIC
@@ -177,6 +179,7 @@ add_executable(pf_hello_world
     src/usb/hid.c
     src/usb/msc.c
     src/usb/task.c
+    src/middleware/storage/storage_worker.c
 )
 
 target_include_directories(pf_hello_world PRIVATE

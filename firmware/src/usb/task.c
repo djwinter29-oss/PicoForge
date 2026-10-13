@@ -7,6 +7,8 @@
 #include "msc.h"
 #include "usb_task.h"
 #include "middleware/cli/cli.h"
+#include "middleware/storage/storage_worker.h"
+#include "board/board.h"
 
 #define USB_TASK_STACK_SIZE (1024U)
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
@@ -26,6 +28,19 @@ static uint32_t cli_tx_head;
 static uint32_t cli_tx_tail;
 static uint32_t cli_tx_count;
 static bool cli_connected;
+static uint32_t cli_session;
+
+static void storage_command(EmbeddedCli *instance, char *args, void *context)
+{
+    (void)instance;
+    const char *family = context;
+    if (!pf_storage_worker_submit(family, args != NULL ? args : "",
+                                  pf_usb_msc_is_enabled(), cli_session)) {
+        pf_cli_print("Storage busy or command too long; wait for completion and retry.");
+    } else {
+        pf_cli_print("Storage command queued.");
+    }
+}
 
 static void cli_write_character(char character, void *context)
 {
@@ -64,6 +79,10 @@ static void cli_drain_output(void)
 static void cdc_cli_task(void)
 {
     if (!tud_cdc_connected()) {
+        pf_storage_worker_cancel(cli_session);
+        pf_storage_worker_reply_t reply;
+        while (pf_storage_worker_poll(&reply)) {
+        }
         cli_connected = false;
         cli_tx_head = 0u;
         cli_tx_tail = 0u;
@@ -76,11 +95,29 @@ static void cdc_cli_task(void)
         if (!pf_cli_init(cli_write_character, NULL)) {
             panic("Failed to initialize CDC CLI");
         }
+        if (!pf_cli_add_binding((CliCommandBinding){
+                "sd", "sd status: card presence, capacity, clock and owner", false,
+                "sd", storage_command
+            }) || !pf_cli_add_binding((CliCommandBinding){
+                "fs", "fs mount|unmount|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
+                      "fs mkdir <path>|write <path> <text>|append <path> <text>\r\n"
+                      "fs mv <source> <destination>|rm <path> --confirm", false,
+                "fs", storage_command
+            })) {
+            panic("Failed to register storage CLI commands");
+        }
+        ++cli_session;
         cli_connected = true;
         pf_cli_process();
     }
 
     cli_drain_output();
+    if ((USB_CLI_TX_SIZE - cli_tx_count) >= USB_CLI_OUTPUT_RESERVE) {
+        pf_storage_worker_reply_t reply;
+        if (pf_storage_worker_poll(&reply) && !reply.done && (reply.session == cli_session)) {
+            pf_cli_print(reply.line);
+        }
+    }
     for (uint32_t count = 0u; count < USB_CLI_RX_BUDGET; ++count) {
         if ((tud_cdc_available() == 0u) ||
             ((USB_CLI_TX_SIZE - cli_tx_count) < USB_CLI_OUTPUT_RESERVE)) {
@@ -148,6 +185,11 @@ static void usb_task(void *context)
 
 void pf_usb_start(void)
 {
+    pf_sd_card_config_t config;
+    bool configured = pf_board_get_sd_card_config(&config);
+    if (!pf_storage_worker_init(configured ? &config : NULL)) {
+        panic("Failed to create storage worker");
+    }
     if (!tusb_init()) {
         panic("Failed to initialize TinyUSB");
     }

@@ -172,3 +172,11 @@ void pf_sd_card_get_info(pf_sd_card_info_t *info)
         pf_sdio_pio_get_info(info);
     }
 }
+
+const char *pf_sd_card_transport_name(void)
+{
+    if (!transport_selected) {
+        return "unconfigured";
+    }
+    return active_transport == PF_SD_CARD_TRANSPORT_SPI ? "spi" : "sdio";
+}

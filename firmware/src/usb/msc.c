@@ -7,6 +7,7 @@
 #include "tusb.h"
 #include "drivers/sd_card/sd_card_block.h"
 #include "middleware/storage/storage.h"
+#include "middleware/storage/storage_worker.h"
 
 static bool msc_enabled;
 static bool msc_ejected;
@@ -55,6 +56,12 @@ void pf_usb_msc_task(void)
     request_pending = false;
     if (requested_enabled == msc_enabled) {
         transition_pending = false;
+        return;
+    }
+
+    if (pf_storage_worker_busy()) {
+        transition_pending = false;
+        request_rejected = true;
         return;
     }
 
