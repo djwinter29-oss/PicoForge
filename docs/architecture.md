@@ -94,7 +94,9 @@ transports require serialized access.
 
 SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data
 bytes plus four lane CRC16s). Single-sector operations use an on-stack image;
-batched reads use a static buffer for 16 images. The DMA channel byte-swaps each
+multi-sector writes alternate two on-stack images to encode the next sector
+while DMA and card programming complete for the current sector. Batched reads
+use a static buffer for 16 images. The DMA channel byte-swaps each
 word, so image byte order equals nibble transmission order. The CPU makes one
 pass per sector to map lanes to GPIO order and compute or check the four CRCs,
 which are held bit-sliced in one 64-bit register. SPI uses the CPU for the data

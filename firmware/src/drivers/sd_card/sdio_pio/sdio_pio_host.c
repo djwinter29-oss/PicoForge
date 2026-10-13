@@ -634,6 +634,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
                                       bool block_addressed, const uint8_t *blocks,
                                       uint32_t block_count)
 {
+    uint32_t images[2][PF_SDIO_PIO_TRANSFER_WORDS];
     uint32_t command_argument;
     uint32_t response_argument;
     uint8_t response[6];
@@ -644,6 +645,10 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
     if ((host == NULL) || (host->pio == NULL) || (blocks == NULL) ||
         (block_count < 2u) ||
         !pf_sd_card_block_argument(first_sector, block_addressed, &command_argument)) {
+        return false;
+    }
+    if (!pf_sdio_pio_encode_data_block(&host->lane_map, blocks,
+                                         (uint8_t *)images[0])) {
         return false;
     }
     if (!pf_sdio_pio_host_command_bytes(host, 25u, command_argument, 48u,
@@ -698,15 +703,9 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
 
     pio_sm_set_enabled(host->pio, host->command_sm, true);
     for (uint32_t block_index = 0u; block_index < block_count; block_index++) {
-        uint32_t image[PF_SDIO_PIO_TRANSFER_WORDS];
-        const uint8_t *block = blocks + block_index * PF_SD_CARD_BLOCK_SIZE;
+        uint32_t *image = images[block_index & 1u];
         uint32_t response_word = 0u;
         dma_channel_config dma_config;
-
-        if (!pf_sdio_pio_encode_data_block(&host->lane_map, block, (uint8_t *)image)) {
-            transfer_ok = false;
-            break;
-        }
 
         pio_sm_clear_fifos(host->pio, host->data_sm);
         pio_interrupt_clear(host->pio, 2u);
@@ -728,6 +727,12 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         pio_sm_set_enabled(host->pio, host->data_sm, true);
 
         start = time_us_32();
+        if ((block_index + 1u < block_count) &&
+            !pf_sdio_pio_encode_data_block(
+                &host->lane_map, blocks + (block_index + 1u) * PF_SD_CARD_BLOCK_SIZE,
+                (uint8_t *)images[(block_index + 1u) & 1u])) {
+            transfer_ok = false;
+        }
         while (!pio_interrupt_get(host->pio, 2u) ||
                dma_channel_is_busy(host->dma_channel)) {
             if ((uint32_t)(time_us_32() - start) > 1000000u) {

@@ -121,6 +121,16 @@ mode at 12.5 MHz through the Python dashboard in Chromium:
 | Mismatched bytes | 0 | 0 | 0 |
 | Cleanup | File removed, volume unmounted | File removed, volume unmounted | File removed, volume unmounted |
 
+Further same-card 32 MiB runs at 12.5 MHz tested two alternating write wire
+buffers, preparing the next sector during the current DMA/programming wait.
+With the original CRC arithmetic, writing took 41,023 ms (0.780 MiB/s) and
+read/verify took 22,363 ms (1.431 MiB/s). Replacing the CRC polynomial
+multiplication with equivalent shifted XOR terms reduced these to 36,080 ms
+(0.887 MiB/s) and 18,456 ms (1.734 MiB/s). Both runs passed with zero mismatches,
+file removal, and volume unmount. These single-run comparisons are indicative,
+not guaranteed gains; card latency varies. The CRC optimization is also checked
+against an independent bitwise per-lane reference in the host tests.
+
 A small HID-started run also passed. A separate cancellation check confirmed
 duplicate starts and MSC enable were rejected during writes, and Cancel removed
 the partial test file and unmounted successfully. The .NET dashboard started and

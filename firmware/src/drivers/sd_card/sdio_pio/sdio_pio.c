@@ -255,7 +255,6 @@ static bool initialize_card(void)
     if (relative_card_address == 0u) {
         return false;
     }
-
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_CSD;
     if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 9u, relative_card_address,
                                           136u, response, sizeof(response)) ||

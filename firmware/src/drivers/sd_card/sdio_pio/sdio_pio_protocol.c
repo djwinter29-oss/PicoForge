@@ -101,13 +101,11 @@ bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)
  * The four lane CRC16s are held bit-sliced: nibble p of the register is CRC bit p
  * of lanes 0..3, so one shift/XOR advances all lanes by one data nibble.
  */
-#define CRC16_TAPS ((1ull << 48u) | (1ull << 20u) | 1ull) /* x^12, x^5, x^0 of 0x1021 */
-
 static uint64_t crc16_4bit_nibble(uint64_t reg, uint8_t nibble)
 {
     uint64_t feedback = ((reg >> 60u) ^ nibble) & 0x0fu;
 
-    return (reg << 4u) ^ (feedback * CRC16_TAPS);
+    return (reg << 4u) ^ (feedback << 48u) ^ (feedback << 20u) ^ feedback;
 }
 
 static uint64_t crc16_4bit_byte(uint64_t reg, uint8_t value)

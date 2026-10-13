@@ -352,6 +352,35 @@ void test_calculates_known_four_lane_crc16_vector(void)
     TEST_ASSERT_EQUAL_UINT16_ARRAY(expected, crc, 4u);
 }
 
+void test_four_lane_crc_matches_independent_bitwise_reference(void)
+{
+    uint8_t block[512];
+    uint16_t actual[4];
+    uint32_t pattern = 0x953a7e21u;
+
+    for (uint32_t sample = 0u; sample < 8u; sample++) {
+        uint16_t expected[4] = { 0u };
+
+        for (size_t index = 0u; index < sizeof(block); index++) {
+            pattern = pattern * 1664525u + 1013904223u;
+            block[index] = (uint8_t)(pattern >> 24u);
+            for (uint32_t half = 0u; half < 2u; half++) {
+                uint8_t nibble = (uint8_t)(block[index] >> (half == 0u ? 4u : 0u));
+                for (uint32_t lane = 0u; lane < 4u; lane++) {
+                    uint16_t feedback = (uint16_t)((expected[lane] >> 15u) ^
+                                                  ((nibble >> lane) & 1u));
+                    expected[lane] = (uint16_t)(expected[lane] << 1u);
+                    if (feedback != 0u) {
+                        expected[lane] ^= 0x1021u;
+                    }
+                }
+            }
+        }
+        pf_sdio_pio_crc16_4bit(block, actual);
+        TEST_ASSERT_EQUAL_UINT16_ARRAY(expected, actual, 4u);
+    }
+}
+
 void test_detects_corrupt_data_and_crc_bytes(void)
 {
     pf_sdio_pio_lane_map_t map;
