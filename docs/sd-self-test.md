@@ -147,6 +147,14 @@ the same 32 MiB test passed with zero mismatches: write 34,972 ms (0.915 MiB/s)
 and read/verify 15,904 ms (2.012 MiB/s). Reads gained about 16% from the faster
 core; writes did not, because they were limited by CMD25 stream restarts (see below), not CPU.
 
+Increasing the SDIO CMD18 batch from 16 to 32 sectors and the self-test read
+buffer from 8 KiB to 16 KiB raised a stock-clock 32 MiB read/verify run to
+14,134 ms (2.26 MiB/s), up from 2.03 MiB/s in the preceding run. It passed with
+zero mismatches and removed the file. A 64-sector batch timed out during reads,
+and a 16.7 MHz SDIO profile failed its first write; neither setting is retained.
+At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
+indicating some CPU-side cost, but the overclock is diagnostic only.
+
 A small HID-started run also passed. A separate cancellation check confirmed
 duplicate starts and MSC enable were rejected during writes, and Cancel removed
 the partial test file and unmounted successfully. The .NET dashboard started and
