@@ -17,15 +17,15 @@ static const pf_board_resources_t board_resources = {
     .sd_card_enabled = true,
     .command_gpio = 3u,
     .clock_gpio = 2u,
-    /* Logical DAT0-DAT3 order; lane remapping handles physical GPIO order. */
-    .data_gpio = { 4u, 7u, 6u, 5u },
+    /* Logical DAT0-DAT3 now follow consecutive GPIO order. */
+    .data_gpio = { 4u, 5u, 6u, 7u },
     .pio_index = 0u,
     .clock_hz = 50000000u, /* Needs SYSCLK of at least 200 MHz; otherwise falls back to 25 MHz. */
     .spi_index = 0u,
     .spi_clock_gpio = 2u,
     .spi_mosi_gpio = 3u,
     .spi_miso_gpio = 4u,
-    .spi_chip_select_gpio = 5u,
+    .spi_chip_select_gpio = 7u,
     .spi_clock_hz = 0u,
     /* The selected breakout provides the DET bias; do not add an MCU pull. */
     .card_detect_enabled = true,

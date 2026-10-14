@@ -36,23 +36,23 @@ Connect probe SWDIO/SWCLK to the matching board pads. Verify their labels on the
 
 ## Memory and Storage Connections
 
-Use GP2-GP7 for one memory device and choose one mode column below. Wiring stays fixed between that device's PIO and SPI modes; both SPI modes use SPI0 with GPIO-controlled CS on GP5. This preserves fixed wiring but does not provide automatic hardware CS.
+Use GP2-GP7 for one memory device and choose one mode column below. GP7 is the CS pin in SD-SPI, QSPI-PIO, and SPI-NOR modes; it is controlled by GPIO/PIO, not automatic hardware CS. SDIO has no CS signal.
 
 | MCU GPIO | Header pin | SDIO-PIO | SD-SPI (SPI0) | QSPI-PIO | SPI-NOR flash (SPI0) |
 | --- | --- | --- | --- | --- | --- |
 | GP2 | 4 | CLK | CLK / SCK | CLK | CLK / SCK |
 | GP3 | 5 | CMD | SI / MOSI | IO0 | IO0 / MOSI |
 | GP4 | 6 | DAT0 | SO / MISO | IO1 | IO1 / MISO |
-| GP5 | 7 | DAT3 | CS (GPIO-controlled) | CS | CS (GPIO-controlled) |
+| GP5 | 7 | DAT1 | - | IO3 | HOLD (hold high) |
 | GP6 | 9 | DAT2 | - | IO2 | WP (hold high) |
-| GP7 | 10 | DAT1 | - | IO3 | HOLD (hold high) |
+| GP7 | 10 | DAT3 | CS (GPIO-controlled) | CS | CS (GPIO-controlled) |
 | GP8 | 11 | DET (optional) | DET (optional) | - | - |
 
 - `-` means unused in that mode, not necessarily disconnected. GP8 is optional SD-card detect.
 - Use 3.3 V and common ground, never 5 V. Power off before replacing a breakout.
-- The board profile explicitly assigns CLK=GP2, CMD=GP3, and logical DAT0-DAT3 to GP4/GP7/GP6/GP5. PIO samples the contiguous GP4-GP7 window; the SDIO transfer code remaps the DAT1/DAT3 bit lanes to match this wiring.
+- The board profile assigns CLK=GP2, CMD=GP3, and logical DAT0-DAT3 to GP4/GP5/GP6/GP7. PIO samples the contiguous GP4-GP7 window in logical lane order.
 - The SD-SPI driver holds GPIO-controlled CS low across each complete card transaction, including data and busy-response phases. Verify CS timing, clock, and data with a logic analyzer during board validation.
-- GPIO-controlled CS on GP5 is the selected implementation and requires no rewiring. It does not satisfy an automatic hardware-CS requirement; if hardware CS is mandatory, the design remains unresolved until a suitable transaction-control approach is demonstrated.
+- SDIO has no CS signal. In SD-SPI mode, the driver controls the breakout's DAT3/CS line on GP7 as ordinary GPIO; no automatic hardware CS is used.
 - Pin names follow the breakout guides below. Pico 2 SDIO and SPI filesystem CLI operations are verified as recorded below; other boards/interface modes and signal integrity have not been validated.
 
 ### Lab Hardware Examples
@@ -61,7 +61,7 @@ The lab uses two types of memory/storage breakout: the Adafruit microSD board an
 
 #### SD-Card Breakout
 
-The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup attempts card initialization once but does not mount a filesystem. SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power: an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.
+The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Wire DAT0/DAT1/DAT2/DAT3-CS to GP4/GP5/GP6/GP7 respectively in both modes. DAT1 and DAT2 are unused inputs in SD-SPI mode; GP7 drives CS in that mode. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup attempts card initialization once but does not mount a filesystem. SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power: an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.
 
 Pico 2 SDIO initialization was verified with the connected 16 GB card: UART reported `SD card initialized`, and HID reported `initialized=true`, 30,875,648 sectors (15,808,331,776 bytes), and a 12.5 MHz bus clock. The command PIO now drives all 48 command bits before rising clock edges and captures the response start bit without a software bit shift. Command completion allows at least eight idle clock cycles before the next command. That initial check did not exercise sector I/O or filesystem mounting and wrote no card data; the full SDIO CLI qualification is recorded below.
 
@@ -89,11 +89,11 @@ high-speed timing margins, or complete SDIO MSC handoff workflows.
 
 #### W25Q128 Flash Breakout
 
-The [Adafruit QSPI DIP Breakout - W25Q128](https://www.adafruit.com/product/5634) is a 3.3 V, 16 MB serial NOR flash supporting QSPI and SPI; see its [pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). Keep CLK, IO0, IO1, CS, IO2, and IO3 connected to GP2, GP3, GP4, GP5, GP6, and GP7 respectively in both modes. Use pull-ups on CS, IO2/WP, and IO3/HOLD to keep them high through reset; in SPI-NOR mode, keep GP6/GP7 high or as inputs with those external pull-ups. Never hard-tie IO2/IO3 to 3V3 when they are used as QSPI data signals. The future QSPI-PIO driver must support the nonconsecutive data mapping (IO0=GP3, IO1=GP4, IO2=GP6, IO3=GP7) and configure the flash's quad-enable setting before quad transfers. Mode changes require protocol reinitialization, not just changing the GPIO mux. PicoForge does not yet implement an external flash driver.
+The [Adafruit QSPI DIP Breakout - W25Q128](https://www.adafruit.com/product/5634) is a 3.3 V, 16 MB serial NOR flash supporting QSPI and SPI; see its [pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). Connect CLK, IO0, IO1, IO2, IO3, and CS to GP2, GP3, GP4, GP6, GP5, and GP7 respectively in both modes. This swaps the breakout's CS and IO3/HOLD connections so GP7 is shared as CS with the SD breakout. Use pull-ups on GP7/CS, GP6/IO2/WP, and GP5/IO3/HOLD to keep them high through reset; in SPI-NOR mode, keep GP5/GP6 high or as inputs with those external pull-ups. Never hard-tie IO2/IO3 to 3V3 when they are used as QSPI data signals. The future QSPI-PIO driver must support the nonconsecutive data mapping (IO0=GP3, IO1=GP4, IO2=GP6, IO3=GP5) and configure the flash's quad-enable setting before quad transfers. Mode changes require protocol reinitialization, not just changing the GPIO mux. PicoForge does not yet implement an external flash driver.
 
 ## User I/O Pin List
 
-This table identifies potential future user-expansion GPIOs after assigning UART0 to GP0/GP1, the memory interface to GP2-GP7, and optional SD-card detect to GP8; it does not imply these expansion features are implemented. SD-SPI leaves GP6/GP7 unused by the protocol but still connected to the card, so they remain reserved with fixed wiring. In SPI-NOR mode, GP6/GP7 remain reserved for the flash's WP/HOLD signals and must stay high. Availability of the listed pins and peripheral functions depends on the selected memory mode and other pin/controller assignments. All listed pins can also be used as digital GPIO or routed to PIO.
+This table identifies potential future user-expansion GPIOs after assigning UART0 to GP0/GP1, the memory interface to GP2-GP7, and optional SD-card detect to GP8; it does not imply these expansion features are implemented. In SD-SPI mode GP5 remains connected to DAT1 and GP6 to DAT2, while GP7 is CS. In SPI-NOR mode, GP5/GP6 remain reserved for HOLD/WP and GP7 is CS. These pins remain reserved with fixed wiring. Availability of the listed pins and peripheral functions depends on the selected memory mode and other pin/controller assignments. All listed pins can also be used as digital GPIO or routed to PIO.
 
 | Available digital GPIO | Header pin | Hardware peripheral functions |
 | --- | --- | --- |

@@ -15,14 +15,14 @@ static pf_board_resources_t valid_topology(void)
         .sd_card_enabled = true,
         .command_gpio = 3u,
         .clock_gpio = 2u,
-        .data_gpio = { 4u, 7u, 6u, 5u },
+        .data_gpio = { 4u, 5u, 6u, 7u },
         .pio_index = 0u,
         .clock_hz = 0u,
         .spi_index = 0u,
         .spi_clock_gpio = 2u,
         .spi_mosi_gpio = 3u,
         .spi_miso_gpio = 4u,
-        .spi_chip_select_gpio = 5u,
+        .spi_chip_select_gpio = 7u,
         .spi_clock_hz = 400000u,
     };
 }
