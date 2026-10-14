@@ -157,7 +157,7 @@ int main(void)
 def check_optional_variants():
     cc = os.environ.get("CC", "cc")
     include = SOURCE.parents[1]
-    adapter = ROOT / "firmware/src/integration/freertos/sd_card_wait.c"
+    adapter = ROOT / "firmware/src/drivers/sd_card/freertos/sd_card_wait.c"
     adapter_source = "\n".join(line for line in adapter.read_text().splitlines()
                                if not line.startswith("#include"))
     with tempfile.TemporaryDirectory() as scratch:

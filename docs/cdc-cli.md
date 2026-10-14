@@ -38,6 +38,7 @@ CR, LF, and CRLF are accepted.
 | `version` | Show the PicoForge CLI and Embedded CLI version. |
 | `echo <text>` | Echo text for non-destructive transport checks. |
 | `sd status` | Show card presence, initialization, transport, capacity, clock, mounted state, and Pico/USB ownership. |
+| `sd profile [status, on, off, reset]` | Show or control optional SD-card phase profiling; changes require Pico ownership. Counters are cumulative and not a total-latency breakdown. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |

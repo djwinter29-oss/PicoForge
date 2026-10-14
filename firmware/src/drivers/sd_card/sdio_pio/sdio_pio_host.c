@@ -857,8 +857,9 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
 
         command_sent = pf_sdio_pio_host_command_bytes(host, 18u, command_argument,
                                                        48u, response, sizeof(response));
-        bool response_ok = command_sent &&
-            pf_sdio_pio_parse_response(18u, response, &response_argument, true) &&
+        bool response_valid = command_sent &&
+            pf_sdio_pio_parse_response(18u, response, &response_argument, true);
+        bool response_ok = response_valid &&
             ((response_argument & 0xfdffe008u) == 0u);
         if (response_ok) {
             start = time_us_32();
@@ -890,13 +891,13 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         if (dma_channel_is_busy(host->dma_channel)) {
             dma_channel_abort(host->dma_channel);
         }
-        bool stop_ok = !command_sent || stop_multiblock_with_clock_fallback(host);
+        bool stop_ok = command_sent && stop_multiblock_with_clock_fallback(host);
         pio_sm_clear_fifos(host->pio, host->data_sm);
         pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
         pio_sm_restart(host->pio, host->data_sm);
         pio_sm_exec(host->pio, host->data_sm,
                     pio_encode_jmp(host->data_rx_program_offset));
-        if (!stop_ok || crc_failed || timed_out) {
+        if (!stop_ok || !response_valid || crc_failed || timed_out) {
             return false;
         }
         if (!transfer_ok) {
@@ -1066,6 +1067,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         start_tx_data(host);
 
         start = time_us_32();
+        uint32_t profile_start = pf_sd_card_profile_begin();
         if ((block_index + 1u < block_count) &&
             !pf_sdio_pio_encode_data_block(
                 blocks + (block_index + 1u) * PF_SD_CARD_BLOCK_SIZE,
@@ -1076,10 +1078,12 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
                dma_channel_is_busy(host->dma_channel)) {
             if ((uint32_t)(time_us_32() - start) > 1000000u) {
                 transfer_ok = false;
+                pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
                 break;
             }
             wait_data_idle(host, 2u);
         }
+        pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
         pio_sm_set_enabled(host->pio, host->data_sm, false);
         if (dma_channel_is_busy(host->dma_channel)) {
             dma_channel_abort(host->dma_channel);

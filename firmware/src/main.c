@@ -7,7 +7,7 @@
 #include "drivers/led.h"
 #include "drivers/temperature.h"
 #include "middleware/logging/logging.h"
-#include "integration/freertos/sd_card_wait.h"
+#include "drivers/sd_card/freertos/sd_card_wait.h"
 #include "usb/usb_task.h"
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)

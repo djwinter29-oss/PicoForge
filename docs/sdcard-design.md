@@ -173,7 +173,8 @@ Fast-mode requests require SYSCLK of at least four times the requested bus rate.
 Use SDK/board-supported clock settings; accepting a divider is not qualification
 of an overclocked MCU.
 
-The read-only probe covers at most 256 sectors in batches of at most 64. It
+The read-only probe CRC-checks and discards at most 256 sectors in batches of
+at most 64, without allocating a separate payload buffer. It
 rejects a candidate if recovery lowers the clock, and above 20 MHz also requires
 working multi-block reads. A failed qualification restarts identification at
 400 kHz with a lower limit. This short probe does not qualify writes, signal
@@ -190,26 +191,32 @@ flowchart TD
     Batch -->|Yes| CMD18[CMD18 and DMA batches of at most 64 sectors]
     CMD18 --> Decode[Decode completed 520-byte wire images while DMA receives later blocks]
     Decode --> CRC[Check four lane CRC16s and issue CMD12 stop]
-    CRC --> NativeOK{Successful read and stop}
+    CRC --> NativeOK{Read outcome}
     NativeOK -->|Yes| Done[Return result]
-    NativeOK -->|Batch or stop failure| Single[Disable batching for session and retry via CMD17]
+    NativeOK -->|Valid bulk rejection and clean stop| Single[Disable batching for session and retry via CMD17]
+    NativeOK -->|CRC, timeout, uncertain response, or stop failure| Recover[Reinitialize at 400 kHz with lower clock limit]
     Batch -->|No| Single
     Single --> Retry{CRC-checked read successful}
     Retry -->|Yes| Done
-    Retry -->|No| Recover[Reinitialize at 400 kHz with lower clock limit]
+    Retry -->|No| Recover
     Recover --> Identity{Presence, CID, and capacity still match}
     Identity -->|Yes, candidate available| Batch
     Identity -->|No or exhausted| Error[Return error]
-    Mode -->|SPI| SPIRead[CMD17 for each sector with CS held across transaction]
+    Mode -->|SPI| SPIRead[CMD18 for multi-sector requests or CMD17 for one sector]
     SPIRead --> SPICRC[Wait for data token, read payload, check serial CRC16]
-    SPICRC --> Done
+    SPICRC --> SPIStop[CMD12 and busy wait after CMD18; release CS]
+    SPIStop --> Done
 ```
 
-The native host has lower-level CMD17 fallback for batch/stop failures; the
-card layer performs clock-limited recovery if the resulting read still fails.
+The native host falls back to CMD17 only after a valid bulk rejection and a
+successful stop. CRC errors, timeouts, missing/malformed responses, and failed
+stops return to card-layer recovery without latching batching off. The card
+layer performs clock-limited recovery if a read fails.
 Recovered reads retain the lower clock. Identity checks prevent a retry from
-silently reading a replacement card. SPI does not implement CMD18 batching or
-the native clock-recovery ladder.
+silently reading a replacement card. SPI holds CS across a CMD18 transaction,
+stops with CMD12, discards CMD12's stuff byte, and waits for ready before release.
+An explicit illegal-command response permits single-sector fallback; other
+failures are not replayed. SPI does not implement the native clock-recovery ladder.
 
 ## Write Workflow
 
@@ -230,10 +237,11 @@ flowchart TD
     Sync --> Stop[Restore command mode and send CMD12; lower-clock stop retry if needed]
     Count -->|No| Single[CMD24, one DMA wire image, response and busy wait]
     Single --> Restore[Restore command and RX programs]
-    Mode -->|SPI| SPIWrite[CMD24 for each sector; hold GPIO CS]
+    Mode -->|SPI| SPIWrite[CMD25 for multi-sector requests or CMD24 for one sector; hold CS]
     SPIWrite --> Serial[Send payload and CRC16; check response and wait until ready]
     Restore --> Done[Return result]
-    Serial --> Done
+    Serial --> SPIStop[After CMD25 send stop token and wait for ready; release CS]
+    SPIStop --> Done
     Stop --> Done
 ```
 
@@ -243,6 +251,11 @@ token, and waits for card busy release. Multi-block writes overlap CPU encoding
 of the next image with transmission/programming of the current sector, but use
 only one DMA channel. Failed writes are not automatically replayed. Stop-command
 recovery is not a guarantee against data loss on power failure.
+
+SPI multi-block writes use the 0xFC block token and 0xFD stop token. They are
+closed within each call, not kept open across calls. Illegal-command fallback
+is allowed only before sending payload; partial writes and failed stop/busy
+waits return errors without replay. A failed stop invalidates initialization.
 
 ## Hardware Resource Inventory
 
@@ -292,7 +305,7 @@ controller; CS is an ordinary, independently controlled GPIO.
 | PIO programs in write mode | Clock program plus normal or fast TX program; same two SMs | None |
 | PIO FIFO resources | TX/RX FIFOs of both claimed SMs; data FIFO supplies DMA DREQ | None |
 | PIO completion flags | Internal flags 0: command, 1: receive, 2: transmit; polled by CPU | None |
-| CPU interrupt handlers | No driver-owned NVIC PIO/DMA handler | None |
+| CPU interrupt handlers | Default: none. Optional FreeRTOS adapter uses one shared handler on the selected PIO's IRQ0; no DMA IRQ handler | None |
 | DMA channels | One dynamically claimed channel, reused for RX and TX with 32-bit transfers and byte swap | None; CPU uses blocking SDK SPI calls |
 | SPI peripheral | None | One controller, 8-bit mode 0, MSB first; GPIO CS spans command, data, and busy phases |
 | GPIO input synchronization | Bypassed for the six native bus pins in selected PIO; previous settings saved/restored by host teardown | No PIO synchronization changes |
@@ -300,13 +313,13 @@ controller; CS is an ordinary, independently controlled GPIO.
 | Clock source | `clk_sys` drives SM dividers; effective rate is reported in telemetry | SDK SPI baud-rate configuration; actual rate is reported |
 | Timing source | SDK microsecond timer for bounded polling; SDK sleeps during identification | Same; no dedicated timer/alarm claimed |
 | Static receive wire buffer | 64 x 130 words x 4 bytes = 33,280 bytes | None |
-| Static initialization probe buffer | 64 x 512 bytes = 32,768 bytes, four-byte aligned | None |
-| Main static native transfer/probe buffers | 66,048 bytes total, excluding metadata | None |
+| Static initialization probe buffer | None; CRC-only reads reuse the receive wire buffer | None |
+| Main static native transfer buffer | 33,280 bytes total, excluding metadata | None |
 | Single-sector wire image | 520 bytes on stack for native single-block read/write paths | No full-sector bounce buffer |
 | Multi-block write wire images | Two x 520 bytes = 1,040 bytes on stack | None |
 | Other stack/static data | SCR/switch-status buffers, command responses, host/configuration state, CID and capacity; additional stack beyond images required | Small command/CSD/CID buffers and configuration/telemetry state |
 | Protocol lookup tables | 8,192 bytes of lazily initialized SRAM tables for four-lane CRC, plus the shared read-only CRC16 table; software CRC | Shared read-only CRC16 table; software CRC |
-| Main native buffers plus CRC tables | 74,240 bytes (72.5 KiB), excluding metadata and stack; the separate self-test buffer adds 32 KiB | No native wire/probe/CRC-slice storage used by SPI operations |
+| Main native buffer plus CRC tables | 41,472 bytes (40.5 KiB), excluding metadata and stack; the separate self-test buffer adds 32 KiB | No native wire/CRC-slice storage used by SPI operations |
 | Caller transfer buffers | Caller owns logical payload storage independently of wire/probe buffers | Caller owns logical payload storage |
 | Core/task/heap allocation | No dedicated core, driver task, or heap allocation | Same |
 
@@ -316,6 +329,50 @@ depends on available instruction memory and owns the listed completion flags.
 Resource-allocation failure returns initialization failure; internal host teardown
 unclaims its DMA/SMs and removes its programs. The public singleton retains its
 connection configuration and does not expose general resource hand-back.
+The facade still links both transports: unused native buffers may remain in a
+SPI firmware image, depending on linker reachability. An inactive transport
+does not claim its PIO/SM/DMA hardware. Use the link map for total image SRAM,
+not just this active-transport table.
+
+## Performance Controls And Status
+
+Profiling is disabled at boot. The storage-owner CLI supports `sd profile on`,
+`off`, `reset`, and `status` (or just `sd profile`). Snapshots report cumulative
+microseconds/calls for command, data, CRC/copy, busy, stop, and recovery work,
+plus CRC failures, batch fallbacks, timeouts, and recovery attempts. Changes
+require firmware ownership. Profiling adds measurement overhead; phases overlap
+and must not be summed to infer total latency. Native write data timing includes
+overlapped next-block encoding and the PIO's response/busy completion; it does
+not isolate the card's internal programming time. Snapshots use
+`pf_sd_card_get_profile()`; callers must serialize access just like block I/O.
+
+| Review improvement | Current status |
+| --- | --- |
+| Phase profiling and recovery diagnostics | Implemented, disabled by default; CLI and C API available |
+| Preserve batching after transient faults | Implemented; CRC/timeout/uncertain-stop failures enter bounded card recovery |
+| Remove initialization-only payload storage | Implemented; saves 32 KiB, retaining probe coverage and CRC checks |
+| Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
+| Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
+| SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; hardware qualification outstanding |
+| Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD self-test](sd-self-test.md) |
+| Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
+| SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
+
+The optional native wait integration lives in
+[sd_card_wait.c](../firmware/src/drivers/sd_card/freertos/sd_card_wait.c). It reserves
+task-notification slot 1 (slot 0 remains available), enables only the active data
+completion source, and blocks for at most one RTOS tick per wait, plus scheduler
+latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.
+The host still requires both PIO completion and DMA completion. Boot without a
+running scheduler retains polling. This adapter supports the current serialized,
+single-core runtime, not concurrent card callers or a second-core owner.
+
+Measure each option separately at the same supported clock, card, filesystem,
+file size, and timing boundary. Record effective clocks, error/recovery counts,
+CRC integrity, SRAM and stack high-water marks, CPU availability, and latency,
+not only average MB/s. Keep normal and preallocated filesystem results separate.
+CRC checks and bounded cleanup remain mandatory. Chained DMA and a faster bus
+are not assumed improvements, and no new hardware throughput claim is made.
 
 ## Ownership Workflow
 
@@ -350,7 +407,8 @@ tokens, native initialization/recovery/transfer routing, DMA batch decoding,
 and PIO timing models. Relevant checks live in
 [firmware SD-card tests](../firmware/tests/drivers/sd_card),
 [check-sdio-init.py](../tools/validation/check-sdio-init.py),
-[check-sdio-read-batch.py](../tools/validation/check-sdio-read-batch.py), and
+[check-sdio-read-batch.py](../tools/validation/check-sdio-read-batch.py),
+[check-sd-spi-transfer.py](../tools/validation/check-sd-spi-transfer.py), and
 [check-sdio-pio-timing.py](../tools/validation/check-sdio-pio-timing.py).
 Use the existing [test guidance](../firmware/tests/README.md) and
 [project validation entry point](../tools/validation/validate.sh).

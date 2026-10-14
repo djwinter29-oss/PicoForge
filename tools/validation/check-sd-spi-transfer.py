@@ -145,6 +145,10 @@ int main(void)
     assert(transfer_blocks(5u, buffer, NULL, 3u) == PF_SD_CARD_IO_ERROR);
     assert(!card_initialized && !selected);
     reset();
+    ready = false;
+    assert(transfer_blocks(5u, NULL, buffer, 3u) == PF_SD_CARD_IO_ERROR);
+    assert(!card_initialized && write_calls == 0u && !selected);
+    reset();
     present = false;
     assert(transfer_blocks(5u, NULL, buffer, 3u) == PF_SD_CARD_IO_ERROR);
     assert(!card_initialized && write_calls == 0u && !selected);

@@ -231,7 +231,7 @@ add_executable(pf_hello_world
     src/usb/msc.c
     src/usb/task.c
     src/middleware/storage/storage_worker.c
-    src/integration/freertos/sd_card_wait.c
+    src/drivers/sd_card/freertos/sd_card_wait.c
 )
 
 option(PF_SD_CARD_INTERRUPT_WAIT "Enable experimental FreeRTOS native PIO completion waits" OFF)

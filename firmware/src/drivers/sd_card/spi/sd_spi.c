@@ -600,6 +600,9 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
                                   argument, &response);
         if (!command_ok || response != 0u) {
             deselect_card();
+            if (!command_ok) {
+                card_initialized = false;
+            }
             if (!command_ok || response != SD_R1_ILLEGAL_COMMAND) {
                 return PF_SD_CARD_IO_ERROR;
             }

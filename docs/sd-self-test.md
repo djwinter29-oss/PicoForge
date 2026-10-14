@@ -61,10 +61,22 @@ phases display no speed rather than an infinite or invented value.
 
 These are application-level filesystem throughput measurements, not raw wire
 bandwidth. SDIO contiguous writes use CMD25 and reads use CMD18 batches of up to
-64 sectors; single-sector tails use CMD17/CMD24. SPI transfers remain
-single-sector operations. Results depend on card, transport, bus speed,
+64 sectors; single-sector tails use CMD17/CMD24. SPI multi-sector requests use
+CMD18/CMD25 transactions and single sectors use CMD17/CMD24. Results depend on card, transport, bus speed,
 allocation state, and runtime load. The implementation does not qualify
 endurance or power-loss behavior.
+
+## Contiguous Benchmark Mode
+
+The default test uses normal FatFs allocation. Configure
+`-DPF_STORAGE_SELF_TEST_PREALLOCATE=ON` to call `f_expand()` after creating
+the new test file and before starting write timing. The call asks FatFs for a
+contiguous allocation. Failure is reported as a filesystem error and still
+clears the test's own file; it never changes existing files. Allocation time is
+excluded from write averages, so record preallocated and normal results
+separately. This mode changes allocation and wear behavior, may need contiguous
+free space, and is not a raw-driver benchmark. Use `sd profile` with a stable
+build and card when attributing time to driver phases.
 
 The storage worker performs all FatFs operations; the USB task owns HID/CDC.
 Progress is copied under a short FreeRTOS critical section and emitted through

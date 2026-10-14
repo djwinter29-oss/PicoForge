@@ -130,7 +130,8 @@ typedef struct {
     bool data_rx_program_loaded, data_rx_multiblock_supported;
 } pf_sdio_pio_host_t;
 static uint32_t read_wire_buffer[130u * 64u];
-static bool response_ok, crc_ok, stop_ok, timeout;
+static bool response_ok, crc_ok, stop_ok, timeout, command_ok;
+static uint32_t response_status;
 static unsigned single_calls, stops;
 static uint32_t now;
 #define pio_sm_set_enabled(...) ((void)0)
@@ -160,10 +161,10 @@ static void wait_data_idle(pf_sdio_pio_host_t *host, uint32_t completion_flag)
 { (void)host; (void)completion_flag; }
 static bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
     uint32_t argument, unsigned bits, uint8_t *response, unsigned size)
-{ (void)host; (void)command; (void)argument; (void)bits; (void)response; (void)size; return true; }
+{ (void)host; (void)command; (void)argument; (void)bits; (void)response; (void)size; return command_ok; }
 static bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t *response,
                                       uint32_t *argument, bool crc)
-{ (void)command; (void)response; (void)crc; *argument = 0u; return response_ok; }
+{ (void)command; (void)response; (void)crc; *argument = response_status; return response_ok; }
 static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
                                      uint32_t words, uint32_t *decoded)
 { (void)host; (void)blocks; *decoded = words / SDIO_DATA_WORD_COUNT; return crc_ok; }
@@ -179,7 +180,7 @@ int main(void)
     pf_sdio_pio_host_t host = { .pio = &pio, .data_rx_program_loaded = true,
                                .data_rx_multiblock_supported = true };
     uint8_t blocks[1024];
-    response_ok = crc_ok = stop_ok = true;
+    response_ok = crc_ok = stop_ok = command_ok = true;
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
     assert(stops == 1u && single_calls == 0u);
     crc_ok = false;
@@ -195,7 +196,15 @@ int main(void)
     assert(host.data_rx_multiblock_supported && single_calls == 0u);
     stop_ok = true;
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, NULL, 2u));
+    command_ok = false;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    command_ok = true;
     response_ok = false;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    response_ok = true;
+    response_status = 1u << 22u;
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
     assert(!host.data_rx_multiblock_supported && single_calls == 1u);
     assert(pf_sdio_pio_host_read_blocks(&host, 2u, true, blocks, 2u));
