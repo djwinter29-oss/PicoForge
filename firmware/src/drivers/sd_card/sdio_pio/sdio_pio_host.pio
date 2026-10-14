@@ -55,23 +55,25 @@ receive_nibble:
     irq set 1
 
 .program pf_sdio_pio_data_tx
+; Launch after a rising edge; the card samples on the NEXT rising edge.
+; At 150 MHz / 25 MHz, falling-edge WAIT then OUT leaves too little setup.
+; Preload the start value before enabling outputs; preserve full start/end bits.
     pull block
     out x, 32
-    set pins, 15
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
-    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
-    set pindirs, 15
     set pins, 0
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    set pindirs, 15
 transmit_nibble:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
-    out pins, 4
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    out pins, 4
     jmp x-- transmit_nibble
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
-    set pins, 15
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    set pins, 15
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     set pindirs, 0
     wait 0 pin 0
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET

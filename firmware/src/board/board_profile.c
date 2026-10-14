@@ -20,7 +20,7 @@ static const pf_board_resources_t board_resources = {
     /* Logical DAT0-DAT3 order; lane remapping handles physical GPIO order. */
     .data_gpio = { 4u, 7u, 6u, 5u },
     .pio_index = 0u,
-    .clock_hz = 0u, /* Select the SDIO backend's default clock. */
+    .clock_hz = 25000000u, /* 25 MHz qualification build; CPU remains at 150 MHz. */
     .spi_index = 0u,
     .spi_clock_gpio = 2u,
     .spi_mosi_gpio = 3u,
