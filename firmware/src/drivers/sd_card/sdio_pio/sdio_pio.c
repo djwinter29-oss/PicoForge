@@ -332,6 +332,9 @@ static bool initialize_card(uint32_t *clock_limit_hz)
     if (requested_clock == 0u) {
         requested_clock = default_clock_hz();
     }
+    if (requested_clock > *clock_limit_hz) {
+        requested_clock = *clock_limit_hz;
+    }
     uint32_t transfer_clock = requested_clock;
     if (requested_clock > 25000000u) {
         uint8_t switch_status[PF_SDIO_PIO_SWITCH_STATUS_SIZE];
@@ -498,6 +501,54 @@ uint32_t pf_sdio_pio_block_count(void)
     return card_initialized ? card_sector_count : 0u;
 }
 
+static bool read_blocks_with_clock_fallback(uint32_t first_block, uint8_t *buffer,
+                                             uint32_t block_count)
+{
+    uint8_t expected_cid[sizeof(card_cid)];
+    uint32_t expected_sector_count = card_sector_count;
+    memcpy(expected_cid, card_cid, sizeof(expected_cid));
+
+    for (;;) {
+        if (!pf_sdio_pio_is_initialized()) {
+            return false;
+        }
+        uint32_t failed_clock_hz = sdio_pio_host.current_clock_hz;
+        if (pf_sdio_pio_host_read_blocks(&sdio_pio_host, first_block,
+                                          card_block_addressed, buffer, block_count)) {
+            return true;
+        }
+        bool recovered = false;
+        card_initialized = false;
+        for (size_t index = 0u;
+             index < sizeof(transfer_clock_steps_hz) / sizeof(transfer_clock_steps_hz[0]);
+             index++) {
+            if (transfer_clock_steps_hz[index] >= failed_clock_hz) {
+                continue;
+            }
+            if (active_config.use_card_detect &&
+                ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
+                return false;
+            }
+            uint32_t clock_limit_hz = transfer_clock_steps_hz[index];
+            if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u)) {
+                return false;
+            }
+            if (initialize_card(&clock_limit_hz)) {
+                if ((card_sector_count != expected_sector_count) ||
+                    (memcmp(card_cid, expected_cid, sizeof(expected_cid)) != 0)) {
+                    return false;
+                }
+                card_initialized = true;
+                recovered = true;
+                break;
+            }
+        }
+        if (!recovered) {
+            return false;
+        }
+    }
+}
+
 static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer,
                                                 const uint8_t *write_buffer, uint32_t block_count)
 {
@@ -527,10 +578,8 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
                                               block_count)
             ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
     }
-    if ((read_buffer != NULL) && (block_count > 1u)) {
-        return pf_sdio_pio_host_read_blocks(&sdio_pio_host, first_block,
-                                             card_block_addressed, read_buffer,
-                                             block_count)
+    if (read_buffer != NULL) {
+        return read_blocks_with_clock_fallback(first_block, read_buffer, block_count)
             ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
     }
 

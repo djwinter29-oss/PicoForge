@@ -112,6 +112,14 @@ read-only, CRC-checked probe of at most 128 KiB. A failed probe restarts card
 identification at 400 kHz before trying the next lower candidate. A candidate
 is rejected if recovery silently reduces its clock; rates above 20 MHz also
 require working CMD18 batching. Lower rates retain batching when it works.
+The short probe is not sustained qualification. If a later CRC-checked read
+fails, the driver reinitializes card protocol state at 400 kHz before retrying
+at descending supported clocks. The retry limit is applied before speed-mode
+negotiation, so requests at 25 MHz or below stay in normal-speed mode. Recovery
+checks card presence and verifies the original CID and capacity before retrying
+the read; it retains the lower rate on success and stops on exhaustion. Failed
+writes are not automatically replayed because some data may already have been
+committed.
 Initialization never writes card sectors; sustained read/write qualification
 uses the explicit file-based self-test. The former 64 MiB initialization scan
 could delay USB startup for minutes when forced through single-sector reads.
