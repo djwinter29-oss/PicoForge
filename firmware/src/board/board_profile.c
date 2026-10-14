@@ -20,7 +20,7 @@ static const pf_board_resources_t board_resources = {
     /* Logical DAT0-DAT3 now follow consecutive GPIO order. */
     .data_gpio = { 4u, 5u, 6u, 7u },
     .pio_index = 0u,
-    .clock_hz = 50000000u, /* Needs SYSCLK of at least 200 MHz; otherwise falls back to 25 MHz. */
+    .clock_hz = 50000000u,
     .spi_index = 0u,
     .spi_clock_gpio = 2u,
     .spi_mosi_gpio = 3u,

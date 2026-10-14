@@ -1,6 +1,6 @@
 # PicoForge Architecture
 
-> **Status:** The firmware builds for RP2040 and RP2350 and runs single-core FreeRTOS tasks. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot; startup initializes the card for telemetry but does not mount a filesystem. MSC ownership is exclusive and requires host safe-eject before firmware regains the card. See [the hardware validation record](hardware-setup.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
+> **Status:** The firmware builds for RP2040 and RP2350 and runs single-core FreeRTOS tasks. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot; startup initializes the card for telemetry but does not mount a filesystem. With card detect enabled, the idle storage worker debounces removal/insertion, unmounts stale FatFs state, and reinitializes the replacement without formatting; it remounts only if a volume was mounted before removal. MSC ownership is exclusive and requires host safe-eject before firmware regains the card. See [the hardware validation record](hardware-setup.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
 
 ## Current Firmware
 
@@ -87,19 +87,32 @@ validation. SDIO helper entry points delegate card-wide algorithms to this libra
 Native response parsing and the four-lane data CRC remain in the SDIO protocol;
 SPI response tokens remain in the SPI protocol. Both transports accept any buffer
 alignment and any sector count per call. Zero-sector transfers are no-ops after
-readiness checks. SDIO reads use CMD18 batches of up to 32 sectors, with CMD17
-for single-sector tails; writes use CMD25 for multi-sector runs and CMD24 for
-single sectors. A CMD25 stream stays open after a write and is continued by a
-write at the next sector, because FatFs issues one cluster per call and
-restarting the stream for each cluster cuts throughput several-fold on the
-tested card. Any read, non-contiguous write, sync (`CTRL_SYNC`), re-init or card
-removal ends it with CMD12; the data is committed to the card only then, so
-callers that need durability must sync. SPI transfers use synchronous single-sector operations. Both
-transports require serialized access.
+readiness checks. SDIO uses CMD18 batched DMA reads when multi-block stop has
+worked for the card; on CMD18/CMD12 failure it disables batching for that
+session and retries with CMD17 sector reads. Writes use CMD25 for multi-sector
+runs and CMD24 for single sectors. A CMD25 stream stays open after a write and
+is continued by a write at the next sector, because FatFs issues one cluster
+per call and restarting the stream for each cluster cuts throughput several-fold
+on the tested card. Any read, non-contiguous write, sync (`CTRL_SYNC`), re-init
+or card removal ends it with CMD12; failed CMD12 is retried at lower clocks so
+the write can be committed. SPI transfers use synchronous single-sector
+operations. Both transports require serialized access.
 
-After initialization the driver steps the bus clock down from the requested
-rate (50, 40, 33, 25, 20, 10, 5, 1 MHz) until a probe passes: it reads blocks 0-3,
-rewrites them with the same data, and reads them back.
+Initialization reads the CSD `TRAN_SPEED` field and SCR bus-width support before
+choosing a mode: SCR must advertise four-bit support before ACMD6, and normal
+speed is capped by the CSD rate. The driver tries CMD6 High Speed above 25 MHz
+and only applies that rate when the card confirms it. The board profile requests
+50 MHz. At 250 MHz SYSCLK, the tested 8 GB Class 10 card initialized after
+reading its CSD and SCR; the 32 MiB test exercised the lower-clock CMD12 retry
+and completed at about 33 MHz with zero mismatches (8.48 MB/s write, 9.91 MB/s
+read). The tested 16 GB Class 4 card is stable with
+a 20 MHz request (18.75 MHz actual), passing 32 MiB at 7.11 MB/s write and
+6.69 MB/s read. Requests above 20 MHz are tried in descending steps with a
+data-path probe that reads and rewrites sectors 0-3, then reads up to 64 MiB;
+the probe therefore writes those sectors back with their original contents.
+CMD18 read batching is disabled for the session when its CMD12 stop fails, and
+the request is retried through CMD17. Other cards and sustained endurance remain
+unqualified.
 
 SDIO clock requests above 25 MHz first check and switch SD CMD6 function group 1
 to High Speed; the driver only applies the higher clock when the card confirms
@@ -123,10 +136,9 @@ SYSCLK did not work with the card even at 25 MHz. The board profile requests
 50 MHz and falls back to 25 MHz when SYSCLK is too low.
 
 SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data
-bytes plus four lane CRC16s). Single-sector operations use an on-stack image;
+bytes plus four lane CRC16s). Reads use an on-stack image per sector;
 multi-sector writes alternate two on-stack images to encode the next sector
-while DMA and card programming complete for the current sector. Batched reads
-use a static buffer for 64 images. The DMA channel byte-swaps each
+while DMA and card programming complete for the current sector. The DMA channel byte-swaps each
 word, so image byte order equals nibble transmission order. The CPU makes one
 pass per sector to map lanes to GPIO order and compute or check the four CRCs,
 which are held bit-sliced in one 64-bit register. SPI uses the CPU for the data

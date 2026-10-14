@@ -19,5 +19,7 @@ typedef struct pf_sd_card_config {
 } pf_sd_card_config_t;
 
 pf_sd_card_result_t pf_sd_card_init(const pf_sd_card_config_t *config);
+pf_sd_card_owner_t pf_sd_card_get_owner(void);
+bool pf_sd_card_take_reinit_request(void);
 
 #endif

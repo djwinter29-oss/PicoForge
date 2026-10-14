@@ -162,6 +162,37 @@ bool pf_sd_card_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)
     return true;
 }
 
+bool pf_sd_card_csd_transfer_hz(const uint8_t csd[16], uint32_t *transfer_hz)
+{
+    static const uint8_t multiplier_tenths[16] = {
+        0u, 10u, 12u, 13u, 15u, 20u, 25u, 30u,
+        35u, 40u, 45u, 50u, 55u, 60u, 70u, 80u,
+    };
+    static const uint32_t unit_hz[4] = {
+        100000u, 1000000u, 10000000u, 100000000u,
+    };
+    uint8_t tran_speed;
+    uint8_t multiplier;
+    uint8_t unit;
+
+    if ((csd == NULL) || (transfer_hz == NULL) || ((csd[3] & 0x80u) != 0u)) {
+        return false;
+    }
+    tran_speed = csd[3];
+    multiplier = (tran_speed >> 3u) & 0x0fu;
+    unit = tran_speed & 0x07u;
+    if ((multiplier == 0u) || (unit >= (sizeof(unit_hz) / sizeof(unit_hz[0])))) {
+        return false;
+    }
+    *transfer_hz = ((uint32_t)multiplier_tenths[multiplier] * unit_hz[unit]) / 10u;
+    return *transfer_hz != 0u;
+}
+
+bool pf_sd_card_scr_supports_four_bit(const uint8_t scr[8])
+{
+    return (scr != NULL) && ((scr[1] & 0x04u) != 0u);
+}
+
 uint16_t pf_sd_card_crc16(const uint8_t *data, size_t size)
 {
     uint16_t crc = 0u;

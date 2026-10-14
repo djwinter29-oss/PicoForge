@@ -70,3 +70,32 @@ void test_shared_command_reference(void)
     TEST_ASSERT_FALSE(pf_sd_card_build_command(64u, 0u, frame));
     TEST_ASSERT_FALSE(pf_sd_card_build_command(0u, 0u, NULL));
 }
+
+void test_csd_transfer_speed_decodes_standard_units_and_multipliers(void)
+{
+    uint8_t csd[16] = { 0u };
+    uint32_t transfer_hz = 0u;
+
+    csd[3] = 0x32u;
+    TEST_ASSERT_TRUE(pf_sd_card_csd_transfer_hz(csd, &transfer_hz));
+    TEST_ASSERT_EQUAL_UINT32(25000000u, transfer_hz);
+    csd[3] = 0x5au;
+    TEST_ASSERT_TRUE(pf_sd_card_csd_transfer_hz(csd, &transfer_hz));
+    TEST_ASSERT_EQUAL_UINT32(50000000u, transfer_hz);
+    csd[3] = 0xb2u;
+    TEST_ASSERT_FALSE(pf_sd_card_csd_transfer_hz(csd, &transfer_hz));
+    csd[3] = 0x0fu;
+    TEST_ASSERT_FALSE(pf_sd_card_csd_transfer_hz(csd, &transfer_hz));
+    TEST_ASSERT_FALSE(pf_sd_card_csd_transfer_hz(NULL, &transfer_hz));
+    TEST_ASSERT_FALSE(pf_sd_card_csd_transfer_hz(csd, NULL));
+}
+
+void test_scr_reports_four_bit_bus_support(void)
+{
+    uint8_t scr[8] = { 0u };
+
+    TEST_ASSERT_FALSE(pf_sd_card_scr_supports_four_bit(scr));
+    scr[1] = 0x04u;
+    TEST_ASSERT_TRUE(pf_sd_card_scr_supports_four_bit(scr));
+    TEST_ASSERT_FALSE(pf_sd_card_scr_supports_four_bit(NULL));
+}

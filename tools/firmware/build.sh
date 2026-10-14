@@ -44,7 +44,7 @@ Options:
     --generator NAME  CMake generator (default: Ninja when available)
   --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
-  --sys-clk-mhz MHZ  Out-of-spec system clock, 100-200 (default: 0, SDK default)
+    --sys-clk-mhz MHZ  Out-of-spec system clock, 100-250 (default: 0, SDK default)
 EOF
             exit 0
             ;;

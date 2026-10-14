@@ -18,18 +18,10 @@
 #define SDIO_DATA_READ_IRQ 1u
 #define SDIO_DATA_NIBBLE_COUNT 1040u
 #define SDIO_DATA_WORD_COUNT PF_SDIO_PIO_TRANSFER_WORDS
-/* ponytail: synchronous batched DMA into one bounded buffer (ceiling 32 KiB of
- * payload, 64 sectors); completed wire blocks are decoded while DMA still
- * receives later blocks. No ping-pong or second DMA channel. Upgrade path: for
- * larger batches or fully overlapped decode, add a second buffer with chained
- * DMA channels (ping-pong) instead of raising this ceiling. */
 #define SDIO_READ_BATCH_BLOCKS 64u
 
 static uint32_t read_wire_buffer[SDIO_DATA_WORD_COUNT * SDIO_READ_BATCH_BLOCKS];
 
-/* PIO SET only has a 5-bit immediate, so counts above 31 are loaded from the
- * TX FIFO through OSR: the pull/mov are injected before the RX program's own
- * "pull block" fetches the nibble count. */
 static void load_batch_count(pf_sdio_pio_host_t *host, uint32_t batch_count)
 {
     pio_sm_put_blocking(host->pio, host->data_sm, batch_count - 1u);
@@ -37,6 +29,51 @@ static void load_batch_count(pf_sdio_pio_host_t *host, uint32_t batch_count)
     pio_sm_exec(host->pio, host->data_sm, pio_encode_mov(pio_y, pio_osr));
 }
 
+static bool read_single_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,
+                               bool block_addressed, uint8_t *blocks,
+                               uint32_t block_count)
+{
+    while (block_count > 0u) {
+        if (!pf_sdio_pio_host_read_sector(host, first_sector, block_addressed, blocks)) {
+            return false;
+        }
+        ++first_sector;
+        blocks += PF_SD_CARD_BLOCK_SIZE;
+        --block_count;
+    }
+    return true;
+}
+
+static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
+                                    uint32_t batch_words, uint32_t *decoded_count)
+{
+    uint32_t write_addr = dma_channel_hw_addr(host->dma_channel)->write_addr;
+    uint32_t buffer_start = (uint32_t)(uintptr_t)read_wire_buffer;
+    uint32_t completed;
+
+    if ((write_addr < buffer_start) ||
+        (write_addr > buffer_start + batch_words * (uint32_t)sizeof(uint32_t)) ||
+        ((write_addr & (sizeof(uint32_t) - 1u)) != 0u)) {
+        return false;
+    }
+    completed = (write_addr - buffer_start) / sizeof(uint32_t) / SDIO_DATA_WORD_COUNT;
+    __dmb();
+    while (*decoded_count < completed) {
+        uint8_t *image = (uint8_t *)&read_wire_buffer[
+            *decoded_count * SDIO_DATA_WORD_COUNT];
+        if (!pf_sdio_pio_decode_data_block(image,
+                blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)) {
+            return false;
+        }
+        ++*decoded_count;
+    }
+    return true;
+}
+/* ponytail: synchronous batched DMA into one bounded buffer (ceiling 32 KiB of
+ * payload, 64 sectors); completed wire blocks are decoded while DMA still
+ * receives later blocks. No ping-pong or second DMA channel. Upgrade path: for
+ * larger batches or fully overlapped decode, add a second buffer with chained
+ * DMA channels (ping-pong) instead of raising this ceiling. */
 static bool load_command_program(pf_sdio_pio_host_t *host)
 {
     pio_sm_config config;
@@ -241,6 +278,7 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
     host->pio = config->pio;
     host->command_gpio = config->command_gpio;
     host->data0_gpio = config->data_gpio[0];
+    host->data_rx_multiblock_supported = true;
     data_gpio_base = config->data_gpio[0];
     host->data_gpio_base = data_gpio_base;
     host->clock_gpio = config->clock_gpio;
@@ -473,8 +511,10 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     pio_sm_set_enabled(host->pio, host->data_sm, true);
 
     if (!pf_sdio_pio_host_command_bytes(host, 17u, command_argument, 48u,
-                                           response, sizeof(response)) ||
-        !pf_sdio_pio_parse_response(17u, response, &response_argument, true)) {
+                                         response, sizeof(response))) {
+        goto cleanup;
+    }
+    if (!pf_sdio_pio_parse_response(17u, response, &response_argument, true)) {
         goto cleanup;
     }
 
@@ -503,21 +543,23 @@ cleanup:
     return success;
 }
 
-bool pf_sdio_pio_host_read_switch_status(
-    pf_sdio_pio_host_t *host, uint32_t argument,
-    uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
+                            uint32_t argument, uint8_t *data, size_t data_size)
 {
-    enum { SWITCH_DATA_BYTES = PF_SDIO_PIO_SWITCH_STATUS_SIZE + 8u };
     uint32_t image[PF_SDIO_PIO_TRANSFER_WORDS];
     uint8_t response[6];
     uint32_t response_argument;
+    uint32_t wire_bytes;
     dma_channel_config dma_config;
     uint32_t start;
     bool success = false;
 
-    if ((host == NULL) || (status == NULL) || !host->data_rx_program_loaded) {
+    if ((host == NULL) || (data == NULL) || (data_size == 0u) ||
+        (data_size > PF_SD_CARD_BLOCK_SIZE) || ((data_size & 3u) != 0u) ||
+        !host->data_rx_program_loaded) {
         return false;
     }
+    wire_bytes = (uint32_t)data_size + 8u;
 
     pio_sm_set_enabled(host->pio, host->data_sm, false);
     pio_sm_clear_fifos(host->pio, host->data_sm);
@@ -526,7 +568,7 @@ bool pf_sdio_pio_host_read_switch_status(
     pio_sm_exec(host->pio, host->data_sm,
                 pio_encode_jmp(host->data_rx_program_offset));
     pio_sm_exec(host->pio, host->data_sm, pio_encode_set(pio_y, 0u));
-    pio_sm_put_blocking(host->pio, host->data_sm, (SWITCH_DATA_BYTES * 2u) - 1u);
+    pio_sm_put_blocking(host->pio, host->data_sm, (wire_bytes * 2u) - 1u);
 
     dma_config = dma_channel_get_default_config(host->dma_channel);
     channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
@@ -535,13 +577,13 @@ bool pf_sdio_pio_host_read_switch_status(
     channel_config_set_write_increment(&dma_config, true);
     channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, false));
     dma_channel_configure(host->dma_channel, &dma_config, image,
-                          &host->pio->rxf[host->data_sm], SWITCH_DATA_BYTES / 4u, false);
+                          &host->pio->rxf[host->data_sm], wire_bytes / 4u, false);
     dma_channel_start(host->dma_channel);
     pio_sm_set_enabled(host->pio, host->data_sm, true);
 
-    if (!pf_sdio_pio_host_command_bytes(host, 6u, argument, 48u,
+    if (!pf_sdio_pio_host_command_bytes(host, command, argument, 48u,
                                          response, sizeof(response)) ||
-        !pf_sdio_pio_parse_response(6u, response, &response_argument, true) ||
+        !pf_sdio_pio_parse_response(command, response, &response_argument, true) ||
         ((response_argument & 0xfdffe008u) != 0u)) {
         goto cleanup;
     }
@@ -554,10 +596,9 @@ bool pf_sdio_pio_host_read_switch_status(
         }
         pf_sd_card_idle();
     }
-
     dma_channel_wait_for_finish_blocking(host->dma_channel);
-    success = pf_sdio_pio_decode_data_block_sized((const uint8_t *)image, status,
-                                                   PF_SDIO_PIO_SWITCH_STATUS_SIZE);
+    success = pf_sdio_pio_decode_data_block_sized((const uint8_t *)image, data,
+                                                   data_size);
 
 cleanup:
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -572,31 +613,101 @@ cleanup:
     return success;
 }
 
-/* Decodes wire blocks fully written by DMA; returns false on a bad write address or CRC. */
-static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
-                                    uint32_t batch_words, uint32_t *decoded_count)
+bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_address,
+                               uint8_t scr[8])
 {
-    uint32_t write_addr = dma_channel_hw_addr(host->dma_channel)->write_addr;
-    uint32_t buffer_start = (uint32_t)(uintptr_t)read_wire_buffer;
-    uint32_t completed;
+    enum { SCR_DATA_BITS = 80u, SCR_DMA_WORDS = SCR_DATA_BITS / 8u };
+    uint32_t image[SCR_DMA_WORDS];
+    uint8_t response[6];
+    uint32_t response_argument;
+    dma_channel_config dma_config;
+    uint32_t start;
+    uint16_t received_crc = 0u;
+    bool success = false;
 
-    if ((write_addr < buffer_start) ||
-        (write_addr > buffer_start + batch_words * (uint32_t)sizeof(uint32_t)) ||
-        ((write_addr & (sizeof(uint32_t) - 1u)) != 0u)) {
+    if ((host == NULL) || (scr == NULL) || !host->data_rx_program_loaded) {
         return false;
     }
-    completed = (write_addr - buffer_start) / sizeof(uint32_t) / SDIO_DATA_WORD_COUNT;
-    __dmb();
-    while (*decoded_count < completed) {
-        uint8_t *image = (uint8_t *)&read_wire_buffer[
-            *decoded_count * SDIO_DATA_WORD_COUNT];
-        if (!pf_sdio_pio_decode_data_block(image,
-                           blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)) {
-            return false;
-        }
-        ++*decoded_count;
+
+    pio_sm_set_enabled(host->pio, host->data_sm, false);
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
+    pio_sm_restart(host->pio, host->data_sm);
+    pio_sm_exec(host->pio, host->data_sm,
+                pio_encode_jmp(host->data_rx_program_offset));
+    pio_sm_exec(host->pio, host->data_sm, pio_encode_set(pio_y, 0u));
+    pio_sm_put_blocking(host->pio, host->data_sm, SCR_DATA_BITS - 1u);
+
+    dma_config = dma_channel_get_default_config(host->dma_channel);
+    channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
+    channel_config_set_bswap(&dma_config, true);
+    channel_config_set_read_increment(&dma_config, false);
+    channel_config_set_write_increment(&dma_config, true);
+    channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, false));
+    dma_channel_configure(host->dma_channel, &dma_config, image,
+                          &host->pio->rxf[host->data_sm], SCR_DMA_WORDS, false);
+    dma_channel_start(host->dma_channel);
+    pio_sm_set_enabled(host->pio, host->data_sm, true);
+
+    if (!pf_sdio_pio_host_command_bytes(host, 55u, relative_card_address, 48u,
+                                         response, sizeof(response))) {
+        goto cleanup;
     }
-    return true;
+    if (!pf_sdio_pio_parse_response(55u, response, &response_argument, true) ||
+        ((response_argument & 0xfdffe008u) != 0u)) {
+        goto cleanup;
+    }
+    if (!pf_sdio_pio_host_command_bytes(host, 51u, 0u, 48u,
+                                         response, sizeof(response))) {
+        goto cleanup;
+    }
+    if (!pf_sdio_pio_parse_response(51u, response, &response_argument, true) ||
+        ((response_argument & 0xfdffe008u) != 0u)) {
+        goto cleanup;
+    }
+
+    start = time_us_32();
+    while (!pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) ||
+           dma_channel_is_busy(host->dma_channel)) {
+        if ((uint32_t)(time_us_32() - start) > 1000000u) {
+            goto cleanup;
+        }
+        pf_sd_card_idle();
+    }
+    dma_channel_wait_for_finish_blocking(host->dma_channel);
+    memset(scr, 0, 8u);
+    for (size_t bit_index = 0u; bit_index < SCR_DATA_BITS; bit_index++) {
+        uint8_t sample_byte = ((const uint8_t *)image)[bit_index / 2u];
+        uint8_t sample_nibble = (bit_index & 1u) == 0u
+            ? (uint8_t)(sample_byte >> 4u) : (uint8_t)(sample_byte & 0x0fu);
+        uint8_t bit = sample_nibble & 1u;
+
+        if (bit_index < 64u) {
+            scr[bit_index / 8u] = (uint8_t)((scr[bit_index / 8u] << 1u) | bit);
+        } else {
+            received_crc = (uint16_t)((received_crc << 1u) | bit);
+        }
+    }
+    success = received_crc == pf_sd_card_crc16(scr, 8u);
+cleanup:
+    pio_sm_set_enabled(host->pio, host->data_sm, false);
+    if (dma_channel_is_busy(host->dma_channel)) {
+        dma_channel_abort(host->dma_channel);
+    }
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
+    pio_sm_restart(host->pio, host->data_sm);
+    pio_sm_exec(host->pio, host->data_sm,
+                pio_encode_jmp(host->data_rx_program_offset));
+    return success;
+}
+
+bool pf_sdio_pio_host_read_switch_status(
+    pf_sdio_pio_host_t *host, uint32_t argument,
+    uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+{
+    return read_data_block(host, 6u, argument, status,
+                           PF_SDIO_PIO_SWITCH_STATUS_SIZE);
 }
 
 static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
@@ -606,9 +717,13 @@ static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
     uint32_t start;
 
     if (!pf_sdio_pio_host_command_bytes(host, 12u, 0u, 48u,
-                                         response, sizeof(response)) ||
-        !pf_sdio_pio_parse_response(12u, response, &response_argument, true) ||
-        ((response_argument & 0xfdffe008u) != 0u)) {
+                                         response, sizeof(response))) {
+        return false;
+    }
+    if (!pf_sdio_pio_parse_response(12u, response, &response_argument, true)) {
+        return false;
+    }
+    if ((response_argument & 0xfdffe008u) != 0u) {
         return false;
     }
 
@@ -622,13 +737,43 @@ static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
     return true;
 }
 
+static bool stop_multiblock_with_clock_fallback(pf_sdio_pio_host_t *host)
+{
+    static const uint32_t stop_clock_steps_hz[] = {
+        25000000u, 20000000u, 10000000u, 5000000u, 1000000u,
+    };
+
+    if (stop_multiblock_transfer(host)) {
+        return true;
+    }
+    for (size_t index = 0u;
+         index < (sizeof(stop_clock_steps_hz) / sizeof(stop_clock_steps_hz[0]));
+         index++) {
+        if ((stop_clock_steps_hz[index] >= host->current_clock_hz) ||
+            !pf_sdio_pio_host_set_clock(host, stop_clock_steps_hz[index])) {
+            continue;
+        }
+        if (stop_multiblock_transfer(host)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,
                                       bool block_addressed, uint8_t *blocks,
                                       uint32_t block_count)
 {
     if ((host == NULL) || (host->pio == NULL) || (blocks == NULL) ||
-        !host->data_rx_program_loaded || (block_count < 2u)) {
+        !host->data_rx_program_loaded) {
         return false;
+    }
+    if (block_count == 0u) {
+        return true;
+    }
+    if (!host->data_rx_multiblock_supported || (block_count == 1u)) {
+        return read_single_blocks(host, first_sector, block_addressed, blocks,
+                                  block_count);
     }
 
     while (block_count > 0u) {
@@ -647,22 +792,11 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         if (batch_count > SDIO_READ_BATCH_BLOCKS) {
             batch_count = SDIO_READ_BATCH_BLOCKS;
         }
-        if (batch_count == 1u) {
-            if (!pf_sdio_pio_host_read_sector(host, first_sector, block_addressed,
-                                               blocks)) {
-                return false;
-            }
-            ++first_sector;
-            blocks += PF_SD_CARD_BLOCK_SIZE;
-            --block_count;
-            continue;
-        }
         if (!pf_sd_card_block_argument(first_sector, block_addressed,
                                        &command_argument)) {
             return false;
         }
         batch_words = SDIO_DATA_WORD_COUNT * batch_count;
-
         pio_sm_set_enabled(host->pio, host->data_sm, false);
         pio_sm_clear_fifos(host->pio, host->data_sm);
         pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
@@ -687,9 +821,10 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
 
         command_sent = pf_sdio_pio_host_command_bytes(host, 18u, command_argument,
                                                        48u, response, sizeof(response));
-        if (command_sent &&
+        bool response_ok = command_sent &&
             pf_sdio_pio_parse_response(18u, response, &response_argument, true) &&
-            ((response_argument & 0xfdffe008u) == 0u)) {
+            ((response_argument & 0xfdffe008u) == 0u);
+        if (response_ok) {
             start = time_us_32();
             while (!pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) ||
                    dma_channel_is_busy(host->dma_channel)) {
@@ -715,7 +850,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         if (dma_channel_is_busy(host->dma_channel)) {
             dma_channel_abort(host->dma_channel);
         }
-        if (command_sent && !stop_multiblock_transfer(host)) {
+        if (command_sent && !stop_multiblock_with_clock_fallback(host)) {
             transfer_ok = false;
         }
         pio_sm_clear_fifos(host->pio, host->data_sm);
@@ -724,7 +859,9 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         pio_sm_exec(host->pio, host->data_sm,
                     pio_encode_jmp(host->data_rx_program_offset));
         if (!transfer_ok || crc_failed) {
-            return false;
+            host->data_rx_multiblock_supported = false;
+            return read_single_blocks(host, first_sector, block_addressed, blocks,
+                                      block_count);
         }
 
         blocks += batch_count * PF_SD_CARD_BLOCK_SIZE;
@@ -788,7 +925,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     }
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) > 0u) {
-                success = pf_sdio_pio_write_response_accepted(pio_sm_get(host->pio, host->data_sm));
+        success = pf_sdio_pio_write_response_accepted(pio_sm_get(host->pio, host->data_sm));
     }
 
 restore:
@@ -810,11 +947,14 @@ bool pf_sdio_pio_host_write_stream_close(pf_sdio_pio_host_t *host)
     if ((host == NULL) || !host->write_stream_open) {
         return true;
     }
-    host->write_stream_open = false;
     if (!restore_command_mode(host)) {
         return false;
     }
-    return stop_multiblock_transfer(host);
+    if (!stop_multiblock_with_clock_fallback(host)) {
+        return false;
+    }
+    host->write_stream_open = false;
+    return true;
 }
 
 bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,

@@ -63,6 +63,14 @@ until the host safely ejects and disables MSC. File operations also require an
 explicit `fs mount`. Run `fs unmount` before enabling MSC; the firmware never
 automatically unmounts or remounts around a host handoff.
 
+When board support provides card detect, the storage worker debounces presence
+and retries card initialization after insertion. Removing a card while its
+filesystem is mounted unmounts and invalidates the old volume; after reinsertion
+the firmware reinitializes it and attempts to remount only if a volume was
+mounted before removal. It never formats a replacement card. Eject and disable
+MSC before swapping cards. If a card is removed while MSC owns it, safely eject
+the device and disable MSC after removal so firmware can resume polling.
+
 Only one storage command can be outstanding. The CLI acknowledges that it was
 queued; this is not a success report. Wait for its result before the next storage
 command. FatFs results include their symbolic name and numeric code. A short

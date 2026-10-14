@@ -32,6 +32,7 @@ typedef struct {
     bool command_program_loaded;
     bool data_rx_program_loaded;
     bool data_rx_fast;
+    bool data_rx_multiblock_supported;
     bool clock_program_loaded;
     bool data_tx_program_loaded;
     bool data_tx_fast;
@@ -50,6 +51,9 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
                                        uint8_t *response, size_t response_capacity);
 bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                      bool block_addressed, uint8_t block[512]);
+/** Read and CRC-check the 8-byte SCR in the card's default one-bit mode. */
+bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_address,
+                               uint8_t scr[8]);
 /** Read and CRC-check the 64-byte data block returned by SD CMD6. */
 bool pf_sdio_pio_host_read_switch_status(pf_sdio_pio_host_t *host, uint32_t argument,
                                          uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE]);

@@ -6,6 +6,19 @@
 static bool transport_selected;
 static pf_sd_card_transport_t active_transport;
 static pf_sd_card_owner_t active_owner = PF_SD_CARD_OWNER_FIRMWARE;
+static bool reinit_after_usb_owner;
+
+pf_sd_card_owner_t pf_sd_card_get_owner(void)
+{
+    return active_owner;
+}
+
+bool pf_sd_card_take_reinit_request(void)
+{
+    bool requested = reinit_after_usb_owner;
+    reinit_after_usb_owner = false;
+    return requested;
+}
 
 pf_sd_card_result_t pf_sd_card_init(const pf_sd_card_config_t *config)
 {
@@ -110,6 +123,10 @@ pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t owner)
     }
     if ((owner == PF_SD_CARD_OWNER_USB_MSC) && !pf_sd_card_is_initialized()) {
         return PF_SD_CARD_NOT_READY;
+    }
+    if ((active_owner == PF_SD_CARD_OWNER_USB_MSC) &&
+        (owner == PF_SD_CARD_OWNER_FIRMWARE)) {
+        reinit_after_usb_owner = true;
     }
     active_owner = owner;
     return PF_SD_CARD_OK;

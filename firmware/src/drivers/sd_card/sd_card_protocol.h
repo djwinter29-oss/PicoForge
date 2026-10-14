@@ -15,6 +15,10 @@ bool pf_sd_card_build_command(uint8_t command, uint32_t argument, uint8_t frame[
 bool pf_sd_card_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2);
 /** Decode a caller-owned CSD v1/v2 register into a representable sector count. */
 bool pf_sd_card_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count);
+/** Decode the CSD TRAN_SPEED field into hertz, rejecting reserved encodings. */
+bool pf_sd_card_csd_transfer_hz(const uint8_t csd[16], uint32_t *transfer_hz);
+/** Return whether the SCR advertises native four-bit bus support. */
+bool pf_sd_card_scr_supports_four_bit(const uint8_t scr[8]);
 /** Calculate serial SD data CRC16; NULL input returns zero. */
 uint16_t pf_sd_card_crc16(const uint8_t *data, size_t size);
 

@@ -75,6 +75,7 @@ pf_storage_result_t pf_storage_unmount(FRESULT *filesystem_result)
     }
 
     storage_mounted = false;
+    atomic_store(&storage_format, PF_STORAGE_FILESYSTEM_UNKNOWN);
     return PF_STORAGE_OK;
 }
 

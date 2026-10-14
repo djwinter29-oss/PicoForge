@@ -88,8 +88,13 @@ void pf_usb_msc_task(void)
         removal_prevented = false;
         msc_enabled = true;
     } else {
+        pf_sd_card_info_t info;
+        bool media_absent;
+
+        pf_sd_card_get_info(&info);
+        media_absent = info.presence_known && !info.present;
         if (!msc_ejected || removal_prevented ||
-            (pf_sd_card_msc_sync() != PF_SD_CARD_OK)) {
+            ((pf_sd_card_msc_sync() != PF_SD_CARD_OK) && !media_absent)) {
             transition_pending = false;
             request_rejected = true;
             return;
