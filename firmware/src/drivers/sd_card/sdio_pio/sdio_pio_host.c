@@ -85,8 +85,8 @@ static bool load_data_rx_program(pf_sdio_pio_host_t *host)
                  ? pf_sdio_pio_data_rx_fast_program_get_default_config(host->data_rx_program_offset)
                  : pf_sdio_pio_data_rx_program_get_default_config(host->data_rx_program_offset);
     if (host->data_rx_fast) {
-        sm_config_set_clkdiv(&config, (float)host->system_clock_hz /
-                                         (4.0f * (float)host->current_clock_hz));
+        sm_config_set_clkdiv_int_frac(&config, (uint16_t)(host->clock_div_ticks >> 9u),
+                                      (uint8_t)((host->clock_div_ticks >> 1u) & 0xffu));
     }
     sm_config_set_in_pins(&config, host->data_gpio_base);
     sm_config_set_in_shift(&config, false, true, 32u);
@@ -127,15 +127,16 @@ static bool load_tx_programs(pf_sdio_pio_host_t *host)
     sm_config_set_sideset_pins(&config, host->clock_gpio);
     pio_sm_init(host->pio, host->command_sm, host->clock_program_offset, &config);
     pio_sm_set_consecutive_pindirs(host->pio, host->command_sm, host->clock_gpio, 1u, true);
-    pio_sm_set_clkdiv(host->pio, host->command_sm,
-                      (float)host->system_clock_hz / (2.0f * (float)host->current_clock_hz));
+    pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm,
+                               (uint16_t)(host->clock_div_ticks >> 8u),
+                               (uint8_t)(host->clock_div_ticks & 0xffu));
 
     config = host->data_tx_fast
                  ? pf_sdio_pio_data_tx_fast_program_get_default_config(host->data_tx_program_offset)
                  : pf_sdio_pio_data_tx_program_get_default_config(host->data_tx_program_offset);
     if (host->data_tx_fast) {
-        sm_config_set_clkdiv(&config, (float)host->system_clock_hz /
-                                         (4.0f * (float)host->current_clock_hz));
+        sm_config_set_clkdiv_int_frac(&config, (uint16_t)(host->clock_div_ticks >> 9u),
+                                      (uint8_t)((host->clock_div_ticks >> 1u) & 0xffu));
     }
     sm_config_set_out_pins(&config, host->data_gpio_base, 4u);
     sm_config_set_set_pins(&config, host->data_gpio_base, 4u);
@@ -188,8 +189,9 @@ static bool restore_command_mode(pf_sdio_pio_host_t *host)
     pio_sm_restart(host->pio, host->command_sm);
     pio_sm_exec(host->pio, host->command_sm,
                 pio_encode_jmp(host->command_program_offset));
-    pio_sm_set_clkdiv(host->pio, host->command_sm,
-                      (float)host->system_clock_hz / (2.0f * (float)host->current_clock_hz));
+    pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm,
+                               (uint16_t)(host->clock_div_ticks >> 8u),
+                               (uint8_t)(host->clock_div_ticks & 0xffu));
     pio_sm_set_enabled(host->pio, host->command_sm, true);
     return true;
 }
@@ -343,23 +345,25 @@ void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host)
 
 bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
 {
-    float divider;
-    uint16_t divider_integer;
-    uint8_t divider_fraction;
     uint32_t divider_ticks;
 
     if ((host == NULL) || (host->pio == NULL) || (clock_hz == 0u) ||
         (clock_hz > host->system_clock_hz / 2u) ||
-        ((clock_hz > 25000000u) &&
-         ((clock_hz > host->system_clock_hz / 4u) ||
-          ((host->system_clock_hz % (4u * clock_hz)) != 0u)))) {
+        ((clock_hz > 25000000u) && (clock_hz > host->system_clock_hz / 4u))) {
         return false;
     }
 
-    divider = (float)host->system_clock_hz / (2.0f * (float)clock_hz);
-    pio_sm_set_clkdiv(host->pio, host->command_sm, divider);
-    pio_calculate_clkdiv_from_float(divider, &divider_integer, &divider_fraction);
-    divider_ticks = ((uint32_t)divider_integer << 8u) | divider_fraction;
+    if (clock_hz > 25000000u) {
+        /* The data state machines run at half the clock divider; equal fractions keep them in lockstep. */
+        divider_ticks = 2u * (uint32_t)(((uint64_t)host->system_clock_hz * 64u +
+                                         clock_hz - 1u) / clock_hz);
+    } else {
+        divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz * 128u) / clock_hz);
+    }
+    host->clock_div_ticks = divider_ticks;
+    pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm,
+                               (uint16_t)(divider_ticks >> 8u),
+                               (uint8_t)(divider_ticks & 0xffu));
     host->current_clock_hz = (uint32_t)(((uint64_t)host->system_clock_hz * 128u) /
                                         divider_ticks);
     if (host->command_program_loaded) {

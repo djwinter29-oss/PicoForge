@@ -36,6 +36,7 @@ typedef struct {
     bool clock_program_loaded;
     bool data_tx_program_loaded;
     bool data_tx_fast;
+    uint32_t clock_div_ticks; /* Command/clock divider in 1/256 units. */
 } pf_sdio_pio_host_t;
 
 bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,

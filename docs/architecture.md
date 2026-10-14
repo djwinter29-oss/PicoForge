@@ -101,19 +101,22 @@ SDIO clock requests above 25 MHz first check and switch SD CMD6 function group 1
 to High Speed; the driver only applies the higher clock when the card confirms
 the switch, otherwise it uses 25 MHz. The high-speed receiver uses falling-edge
 sampling with a four-cycle data-state-machine clock period. Requests above
-25 MHz require SYSCLK to be an exact multiple of four times the requested clock;
-unsupported ratios fall back to 25 MHz. Thus 50 MHz needs at least 200 MHz
-SYSCLK, which is an out-of-spec diagnostic configuration on Pico 2.
+25 MHz need SYSCLK of at least four times the requested clock. The
+state-machine dividers are fractional; the data divider is half the clock
+divider with equal fractions so both stay in lockstep, and the bus runs at or
+just below the request. Thus 50 MHz needs at least 200 MHz SYSCLK, an
+out-of-spec diagnostic configuration on Pico 2.
 
 The high-speed transmitter is cycle-locked: the data and clock state machines
 start in the same cycle and data launches at a fixed offset from the clock edge.
 The slow transmitter launches data after observing the clock edge, which leaves
 no setup time at 50 MHz and made the card return CRC-error tokens.
 
-On the 128 GB SN128 card at 200 MHz SYSCLK / 50 MHz SDIO, 32 and 128 MiB
-self-tests passed with 0 mismatches (about 12.5 MB/s write, 9.5 MB/s read). At
-the stock 150 MHz / 25 MHz they give 9.5 MB/s write and 8.3 MB/s read. The board
-profile remains at 25 MHz because 200 MHz SYSCLK is out of spec.
+On the 128 GB SN128 card, 32 and 128 MiB self-tests passed with 0 mismatches:
+250 MHz SYSCLK / 50 MHz SDIO gives 15.9 MB/s write and 13.7 MB/s read; 200 MHz
+gives 12.5 / 9.5; the stock 150 MHz / 25 MHz gives 9.5 / 8.3. A 280 MHz
+SYSCLK did not work with the card even at 25 MHz. The board profile requests
+50 MHz and falls back to 25 MHz when SYSCLK is too low.
 
 SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data
 bytes plus four lane CRC16s). Single-sector operations use an on-stack image;
