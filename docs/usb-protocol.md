@@ -42,7 +42,7 @@ The sequence byte wraps modulo 256. Temperature comes from the MCU's internal se
 
 ## Input Report 3
 
-Input report 3 has a 29-byte payload and is published every 1000 ms. Its layout version is `2`. Startup initializes the selected SD-card transport to collect telemetry but does not mount or write a filesystem.
+Input report 3 has a 29-byte payload and is published every 1000 ms. Its layout version is `2`. Startup initializes the selected SD-card transport to collect telemetry; the storage worker then attempts to mount detected media according to [the mounting policy](cdc-cli.md).
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |

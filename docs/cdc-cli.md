@@ -59,15 +59,19 @@ non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
 
 `sd status` is available while USB owns the card. Every `fs` command is refused
-until the host safely ejects and disables MSC. File operations also require an
-explicit `fs mount`. Run `fs unmount` before enabling MSC; the firmware never
-automatically unmounts or remounts around a host handoff.
+until the host safely ejects and disables MSC. The storage worker automatically
+attempts to mount detected cards at boot, after insertion, and after MSC returns
+ownership. Failed attempts are retried five seconds after each attempt finishes.
+Run `fs unmount` before enabling MSC; a successful explicit unmount pauses
+automatic mounting until the next insertion or return from MSC. `fs mount`
+remains available for a manual retry.
 
 When board support provides card detect, the storage worker debounces presence
-and retries card initialization after insertion. Removing a card while its
-filesystem is mounted unmounts and invalidates the old volume; after reinsertion
-the firmware reinitializes it and attempts to remount only if a volume was
-mounted before removal. It never formats a replacement card. Eject and disable
+and retries card initialization and FatFs mounting after insertion. Removing a
+card while its filesystem is mounted unmounts and invalidates the old volume.
+It never formats or repairs a replacement card; unsupported or damaged
+filesystems can still fail to mount. Removing media during a write can corrupt
+the filesystem; unmount or safely eject before removal. Eject and disable
 MSC before swapping cards. If a card is removed while MSC owns it, safely eject
 the device and disable MSC after removal so firmware can resume polling.
 

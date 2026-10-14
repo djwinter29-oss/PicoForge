@@ -13,6 +13,7 @@
 #define STORAGE_REPLY_COUNT 8u
 #define CARD_PRESENCE_POLL_MS 100u
 #define CARD_PRESENCE_DEBOUNCE_SAMPLES 3u
+#define CARD_MOUNT_RETRY_MS 5000u
 
 typedef struct {
     uint32_t session;
@@ -45,13 +46,9 @@ static bool presence_sample;
 static uint8_t presence_sample_count;
 static bool stable_presence_valid;
 static bool stable_card_present;
-static bool remount_after_swap;
-static bool presence_sample_valid;
-static bool presence_sample;
-static uint8_t presence_sample_count;
-static bool stable_presence_valid;
-static bool stable_card_present;
-static bool remount_after_swap;
+static bool auto_mount_pending = true;
+static bool mount_retry_waiting;
+static uint32_t last_mount_attempt_ms;
 
 static void refresh_self_test_completion(void)
 {
@@ -134,11 +131,11 @@ static void service_card_presence(void)
     if (!stable_presence_valid || (stable_card_present != presence_sample)) {
         stable_presence_valid = true;
         stable_card_present = presence_sample;
+        auto_mount_pending = true;
+        mount_retry_waiting = false;
         if (!stable_card_present) {
-            remount_after_swap = pf_storage_is_mounted();
-            if (remount_after_swap &&
-                (pf_storage_unmount(NULL) != PF_STORAGE_OK)) {
-                remount_after_swap = false;
+            if (pf_storage_is_mounted()) {
+                (void)pf_storage_unmount(NULL);
             }
             pf_storage_forget_filesystem_format();
             (void)pf_sd_card_is_initialized();
@@ -151,20 +148,24 @@ static void service_card_presence(void)
     }
     reinitialize_after_usb = pf_sd_card_take_reinit_request();
     if (reinitialize_after_usb) {
-        if (pf_sd_card_init(&card_config) != PF_SD_CARD_OK) {
-            goto done;
-        }
-        pf_sd_card_get_info(&info);
+        auto_mount_pending = true;
+        mount_retry_waiting = false;
     }
-    if (remount_after_swap) {
-        pf_storage_result_t result = pf_storage_mount(&card_config, NULL);
-        if ((result == PF_STORAGE_OK) ||
-            (result == PF_STORAGE_FILESYSTEM_ERROR)) {
-            remount_after_swap = false;
-        }
-    } else if (!info.initialized) {
-        (void)pf_sd_card_init(&card_config);
+    if (pf_storage_is_mounted()) {
+        auto_mount_pending = false;
+        goto done;
     }
+    if (!auto_mount_pending) {
+        goto done;
+    }
+    if (mount_retry_waiting &&
+        ((uint32_t)(pf_system_uptime_ms() - last_mount_attempt_ms) < CARD_MOUNT_RETRY_MS)) {
+        goto done;
+    }
+    pf_storage_result_t result = pf_storage_mount(&card_config, NULL);
+    auto_mount_pending = (result != PF_STORAGE_OK) && (result != PF_STORAGE_ALREADY_MOUNTED);
+    last_mount_attempt_ms = pf_system_uptime_ms();
+    mount_retry_waiting = auto_mount_pending;
 
 done:
     taskENTER_CRITICAL();
@@ -191,9 +192,13 @@ static void storage_task(void *context)
             taskEXIT_CRITICAL();
             continue;
         }
+        bool previously_mounted = pf_storage_is_mounted();
         pf_storage_command_execute(config_available ? &card_config : NULL,
                                     request.host_owned, request.family, request.arguments,
                                     send_reply, &request);
+        if (previously_mounted && !pf_storage_is_mounted()) {
+            auto_mount_pending = false;
+        }
         pf_storage_worker_reply_t reply = { .session = request.session, .done = true };
         (void)xQueueSend(replies, &reply, portMAX_DELAY);
     }
