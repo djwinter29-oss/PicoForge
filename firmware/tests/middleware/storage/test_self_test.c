@@ -17,6 +17,7 @@ static DWORD available_clusters;
 static FRESULT sync_result;
 static FRESULT close_result;
 static FRESULT unlink_result;
+static FRESULT stale_unlink_result;
 static unsigned close_calls;
 static bool expect_preallocation;
 
@@ -98,6 +99,7 @@ static FRESULT close_file(FIL *file, int calls)
 static void prepare(void)
 {
     pf_storage_is_mounted_ExpectAndReturn(true);
+    f_unlink_ExpectAnyArgsAndReturn(stale_unlink_result);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
     if (expect_preallocation) {
@@ -123,6 +125,7 @@ void setUp(void)
     expect_preallocation = false;
     available_clusters = 100000u;
     sync_result = close_result = unlink_result = FR_OK;
+    stale_unlink_result = FR_NO_FILE;
     close_calls = 0u;
 }
 void tearDown(void) {}
@@ -156,6 +159,7 @@ void test_preallocation_failure_closes_and_removes_only_the_new_file(void)
 {
     pf_storage_self_test_set_preallocation_enabled(true);
     pf_storage_is_mounted_ExpectAndReturn(true);
+    f_unlink_ExpectAnyArgsAndReturn(FR_NO_FILE);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
     f_expand_ExpectAnyArgsAndReturn(FR_DENIED);
@@ -245,19 +249,30 @@ void test_self_test_short_write_is_not_a_pass(void)
     TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
 }
 
-void test_self_test_never_overwrites_or_deletes_an_existing_test_file(void)
+void test_self_test_removes_a_stale_test_file_and_continues(void)
+{
+    stale_unlink_result = FR_OK;
+    prepare();
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
+}
+
+void test_self_test_fails_without_creating_a_file_when_stale_file_cannot_be_removed(void)
 {
     pf_storage_is_mounted_ExpectAndReturn(true);
-    f_getfree_StubWithCallback(get_free);
-    f_open_ExpectAnyArgsAndReturn(FR_EXIST);
+    f_unlink_ExpectAnyArgsAndReturn(FR_DENIED);
     pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_EXISTS, final_status.error);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
+    TEST_ASSERT_EQUAL_UINT8(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
 }
 
 void test_self_test_insufficient_space_does_not_create_a_file(void)
 {
     available_clusters = 0u;
     pf_storage_is_mounted_ExpectAndReturn(true);
+    f_unlink_ExpectAnyArgsAndReturn(FR_NO_FILE);
     f_getfree_StubWithCallback(get_free);
     pf_storage_self_test_run(NULL, 32u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_SPACE, final_status.error);

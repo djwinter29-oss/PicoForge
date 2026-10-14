@@ -122,7 +122,7 @@ static bool config_is_valid(const pf_sdio_pio_config_t *config)
         clock_hz = default_clock_hz();
     }
     return (clock_hz >= 400000u) && (clock_hz <= 50000000u) &&
-           (clock_hz <= (clock_get_hz(clk_sys) / 2u));
+            (clock_hz <= (clock_get_hz(clk_sys) / 2u));
 }
 
 static bool command_response(uint8_t command, uint32_t argument, uint8_t response[6],

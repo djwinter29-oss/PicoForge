@@ -19,10 +19,11 @@ Do not reset, unplug, remove the card, or change transport while the test runs.
 This test writes flash and contributes to card wear. Back up important data
 before testing. It is not a filesystem repair or full-capacity authenticity test.
 
-The fixed filename is `/PFTEST.BIN`. The firmware uses create-new mode and refuses
-to run if that name already exists, regardless of capitalization on FAT. It
-never overwrites or deletes a pre-existing file. Insufficient free space is
-rejected before creation. The test's own file is closed and removed before
+The fixed filename is `/PFTEST.BIN`. A leftover file with that name (for example
+from an interrupted run) is deleted first, regardless of capitalization on FAT;
+if it cannot be deleted the test fails with a filesystem error. The firmware
+then creates the file in create-new mode and never overwrites. Insufficient
+free space is rejected before creation. The test's own file is closed and removed before
 completion is published; the filesystem remains mounted. If close/unlink fails,
 explicit status flags identify a possible remaining test file. An
 interrupted/power-lost run may leave the file; inspect it before deliberately

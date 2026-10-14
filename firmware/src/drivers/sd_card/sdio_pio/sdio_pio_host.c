@@ -271,7 +271,10 @@ static bool wait_for_command_complete(pf_sdio_pio_host_t *host,
             host->last_response_words[words_read - 1u] = response_words[words_read - 1u];
             host->last_response_word_count = words_read;
         }
-        if ((uint32_t)(time_us_32() - start) >= SDIO_COMMAND_TIMEOUT_US) {
+        /* A preempted poller must not fail a command that already completed. */
+        if (((uint32_t)(time_us_32() - start) >= SDIO_COMMAND_TIMEOUT_US) &&
+            (!pio_interrupt_get(host->pio, SDIO_RESPONSE_IRQ) ||
+             (words_read < response_word_count))) {
             pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
             return false;
         }
@@ -400,8 +403,7 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
     uint32_t divider_ticks;
 
     if ((host == NULL) || (host->pio == NULL) || (clock_hz == 0u) ||
-        (clock_hz > host->system_clock_hz / 2u) ||
-        ((clock_hz > 25000000u) && (clock_hz > host->system_clock_hz / 4u))) {
+        (clock_hz > host->system_clock_hz / 4u)) {
         return false;
     }
 
@@ -539,7 +541,8 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                          response, sizeof(response))) {
         goto cleanup;
     }
-    if (!pf_sdio_pio_parse_response(17u, response, &response_argument, true)) {
+    if (!pf_sdio_pio_parse_response(17u, response, &response_argument, true) ||
+        ((response_argument & 0xfdffe008u) != 0u)) {
         goto cleanup;
     }
 
@@ -938,7 +941,8 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
 
     if (!pf_sdio_pio_host_command_bytes(host, 24u, command_argument, 48u,
                                            response, sizeof(response)) ||
-        !pf_sdio_pio_parse_response(24u, response, &response_argument, true)) {
+        !pf_sdio_pio_parse_response(24u, response, &response_argument, true) ||
+        ((response_argument & 0xfdffe008u) != 0u)) {
         return false;
     }
 

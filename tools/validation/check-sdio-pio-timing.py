@@ -92,11 +92,11 @@ def check(ops, half, latency, phase):
         "Dropped/duplicated start, data or end sampling edge", half, latency, phase)
 
 
-def check_receive(ops, half, latency, phase):
-    count = 1040
-    pc, cycle, remaining = 4, 0, count - 1
-    samples = []
-    for _ in range(count * half * 4 + 100):
+def receive_samples(ops, half, latency, phase, pc, cycle, limit):
+    # Executes real WAIT/IN/JMP opcodes; the clock rises at cycles where
+    # (cycle + phase - half) % (2 * half) == 0.
+    samples, remaining = [], 1039
+    for _ in range(limit * half * 4 + 100):
         op = ops[pc]
         kind, dest, immediate = op >> 13, (op >> 5) & 7, op & 31
         next_pc = pc + 1
@@ -108,6 +108,8 @@ def check_receive(ops, half, latency, phase):
         elif kind == 2:
             assert dest == 0 and immediate == 4
             samples.append(cycle)
+            if len(samples) == limit:
+                break
         elif kind == 0:
             assert dest == 2
             if remaining:
@@ -119,10 +121,71 @@ def check_receive(ops, half, latency, phase):
             raise AssertionError("Unexpected RX-loop instruction")
         cycle += 1 + ((op >> 8) & 31)
         pc = next_pc
+    return samples
+
+
+def check_receive(ops, half, latency, phase):
+    count = 1040
+    samples = receive_samples(ops, half, latency, phase, 4, 0, count)
     assert len(samples) == count
     assert all(later - earlier == 2 * half
                for earlier, later in zip(samples, samples[1:])), (
         "RX skipped a nibble", half, latency, phase, samples[:8])
+
+
+def check_receive_framing(ops, half, first_pc):
+    # Start bit launched at the rising edge at cycle 0 and seen low `delay` cycles later.
+    # The following WAIT needs one more cycle, so delays up to period - 2 are absorbed (a
+    # card delay of 14 ns is 2 cycles at 100 MHz). Nibble 0 launches at 2*half and must be
+    # sampled in the second half of that bit (after the falling edge), never at the launch.
+    period = 2 * half
+    for delay in range(1, period - 1):
+        samples = receive_samples(ops, half, 0, half, first_pc, delay + 1, 3)
+        assert len(samples) == 3, (half, delay)
+        for index, cycle in enumerate(samples):
+            lo = period * (index + 1) + half
+            assert lo <= cycle < lo + half, (
+                "RX sample outside the second half of its bit", half, delay, index, cycle)
+
+
+def check_tx_status(ops, half):
+    # Slow TX CRC-status read: start bit launched at cycle 0 and seen low `delay` cycles later.
+    # Status bits are sampled mid-bit; the busy check lands after the end bit's launch.
+    # Same card-delay bound as the RX framing check.
+    period = 2 * half
+    for delay in range(1, period - 1):
+        pc, cycle, x, samples = 17, delay + 1, 0, []
+        for _ in range(period * 16):
+            op = ops[pc]
+            kind, dest, immediate = op >> 13, (op >> 5) & 7, op & 31
+            next_pc = pc + 1
+            if kind == 1 and immediate == 30:
+                if ((cycle + half) // half) % 2 != (op >> 7) & 1:
+                    cycle += 1
+                    continue
+            elif kind == 1:
+                break  # DAT0 busy wait
+            elif kind == 7:
+                assert dest == 1
+                x = immediate
+            elif kind == 2:
+                samples.append(cycle)
+            elif kind == 0:
+                if x:
+                    next_pc = immediate
+                x = (x - 1) & 0xffffffff
+            elif kind != 4:
+                raise AssertionError("Unexpected TX-status instruction")
+            cycle += 1
+            pc = next_pc
+        assert len(samples) == 4, (half, delay, samples)
+        for index, sampled in enumerate(samples):
+            lo = period * (index + 1) + half
+            assert lo <= sampled < lo + half, (
+                "TX status sample outside the second half of its bit", half, delay, index, sampled)
+        lo = period * 5 + half
+        assert cycle >= lo, (
+            "TX busy check before the card could drive busy", half, delay, cycle)
 
 
 def main():
@@ -131,18 +194,21 @@ def main():
         for latency in (0, 1):
             for phase in range(2 * half):
                 check(ops, half, latency, phase)
-        print(f"TX timing passed: half={half}, all launch phases, 0/1-cycle observation latency, 1040 nibbles")
+        check_tx_status(ops, half)
+        print(f"TX timing passed: half={half}, all launch phases, 0/1-cycle observation latency, 1040 nibbles, mid-bit status/busy")
     rx_ops = assemble("data_rx")
     for half in (6, 4, 3, 2):
         for latency in (0, 1):
             for phase in range(2 * half):
                 check_receive(rx_ops, half, latency, phase)
-        print(f"RX timing passed: half={half}, all phases, 1040 nibbles")
+        check_receive_framing(rx_ops, half, 3)
+        print(f"RX timing passed: half={half}, all phases, 1040 nibbles, falling-edge sampling")
     fast_rx_ops = assemble("data_rx_fast")
     for latency in (0, 1):
         for phase in range(4):
             check_receive(fast_rx_ops, 2, latency, phase)
-    print("Fast RX timing passed: half=2, all phases, 1040 nibbles")
+    check_receive_framing(fast_rx_ops, 2, 3)
+    print("Fast RX timing passed: half=2, all phases, 1040 nibbles, falling-edge sampling")
     print("SDIO PIO timing check passed (model only; HIL still required)")
 
 

@@ -169,7 +169,7 @@ Native clock candidates are 50, 40, 33, 25, 20, 10, 5, and 1 MHz. Candidates
 above the requested/card/recovery limit or unsupported by SYSCLK are skipped.
 Above 25 MHz, CMD6 must confirm High Speed; otherwise normal speed is used.
 Host divider rounding can make the actual rate lower than the candidate.
-Fast-mode requests require SYSCLK of at least four times the requested bus rate.
+Every native request requires SYSCLK of at least four times the requested bus rate.
 Use SDK/board-supported clock settings; accepting a divider is not qualification
 of an overclocked MCU.
 
@@ -217,6 +217,15 @@ silently reading a replacement card. SPI holds CS across a CMD18 transaction,
 stops with CMD12, discards CMD12's stuff byte, and waits for ready before release.
 An explicit illegal-command response permits single-sector fallback; other
 failures are not replayed. SPI does not implement the native clock-recovery ladder.
+
+The PIO programs have no timeouts of their own: the command, data, and busy
+waits are bounded by the host (100 ms for a command response, 1 s for data
+transfer and for DAT0 busy release), after which the state machines are
+restarted. A command that gets no response, such as CMD8 on a legacy card,
+therefore costs 100 ms; this affects only initialization and failure paths. A
+command that completes before a delayed poll is not reported as a timeout.
+In-PIO timeouts are not used because the command (19) and receive (11) programs
+leave only two of the 32 PIO instructions free.
 
 ## Write Workflow
 
@@ -439,7 +448,11 @@ of this documentation change or every compatible card:
 | 128 GB SN128, stock 150 MHz SYSCLK / 25 MHz SDIO | Recorded 9.5 MB/s write and 8.3 MB/s read |
 | 128 GB SN128, 280 MHz SYSCLK | Did not work with the card even at 25 MHz SDIO |
 
-High-speed RX uses falling-edge sampling; its data divider is half the
+All native RX programs sample data on the falling clock edge (mid-bit), and the
+slow TX CRC-status read does the same; the busy check runs one bit after the end
+bit. This replaces sampling one cycle after the rising edge, which is inside the
+card's 2.5-14 ns output-change window. High-speed RX uses a three-instruction
+loop; its data divider is half the
 command/clock divider with matched fractional timing. High-speed TX starts
 the clock and data state machines together and launches at a fixed cycle offset.
 The slow TX program is not suitable for 50 MHz: its observed-edge launch left

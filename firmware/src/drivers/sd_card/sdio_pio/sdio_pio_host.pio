@@ -38,14 +38,15 @@ command_complete:
 .wrap
 
 .program pf_sdio_pio_data_rx
+; Sample on the falling edge, mid-bit; after the rising edge the card's outputs are still changing.
     pull block
 receive_block:
     mov x, osr
     wait 0 pin 0
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
-receive_nibble:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+receive_nibble:
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     in pins, 4
     jmp x-- receive_nibble
     wait 1 pin 0
@@ -89,16 +90,17 @@ transmit_nibble:
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     set pindirs, 0
     wait 0 pin 0
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     set x, 3
 read_data_response:
-    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     in pins, 1
     jmp x-- read_data_response
     push block
-    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+; Check busy mid-bit after the end bit, once the card has had time to drive DAT0 low.
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin 0
     irq set 2
 
