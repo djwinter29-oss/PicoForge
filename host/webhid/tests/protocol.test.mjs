@@ -26,6 +26,7 @@ test("self-test telemetry decodes progress, speeds, and cleanup flags", () => {
   const view = new DataView(report.buffer);
   report[0] = 2;
   report[2] = 6;
+  report[3] = 2;
   for (const offset of [4, 8, 12]) view.setUint32(offset, 33554432, true);
   view.setUint32(16, 16000, true);
   view.setUint32(20, 8000, true);
@@ -34,6 +35,15 @@ test("self-test telemetry decodes progress, speeds, and cleanup flags", () => {
   assert.equal(status.progress_percent, 100);
   assert.equal(status.write_bytes_per_second, 2097152);
   assert.equal(status.read_bytes_per_second, 4194304);
+  assert.equal(status.volume_mounted, true);
+  report[3] = 3;
+  assert.throws(() => decodeSelfTestReport(view), /Invalid/);
+  report[3] = 2;
+  report[30] = 11;
+  assert.equal(decodeSelfTestReport(view).request_error, 11);
+  report[30] = 12;
+  assert.throws(() => decodeSelfTestReport(view), /Invalid/);
+  report[30] = 0;
   report[31] = 1;
   assert.throws(() => decodeSelfTestReport(view), /Invalid/);
 });

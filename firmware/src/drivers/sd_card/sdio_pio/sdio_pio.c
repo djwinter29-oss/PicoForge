@@ -14,7 +14,6 @@
 static pf_sdio_pio_host_t sdio_pio_host;
 static pf_sdio_pio_config_t active_config;
 static uint32_t card_sector_count;
-static uint32_t card_bus_clock_hz;
 static uint8_t card_cid[16];
 static bool card_block_addressed;
 static bool configuration_set;
@@ -177,52 +176,30 @@ static bool wait_card_data_ready(void)
 static const uint32_t transfer_clock_steps_hz[] = {
     50000000u, 40000000u, 33000000u, 25000000u, 20000000u, 10000000u, 5000000u, 1000000u,
 };
-/* Rewrites block 0..3 with their own content so both transfer directions are exercised at the candidate clock. */
 static bool probe_transfer(void)
 {
-    static uint8_t probe[4u * PF_SD_CARD_BLOCK_SIZE] __attribute__((aligned(4)));
-    static uint8_t verify[sizeof(probe)] __attribute__((aligned(4)));
     static uint8_t read_probe[64u * PF_SD_CARD_BLOCK_SIZE] __attribute__((aligned(4)));
-    bool passed;
+    uint32_t probe_clock_hz = sdio_pio_host.current_clock_hz;
+    uint32_t probe_sector_count = (card_sector_count < 256u) ? card_sector_count : 256u;
 
-    if (card_sector_count < 4u) {
-        return true;
-    }
-    passed = pf_sdio_pio_host_read_blocks(&sdio_pio_host, 0u, card_block_addressed,
-                                          probe, 4u);
-    if (passed && (sdio_pio_host.current_clock_hz > 25000000u) &&
-        !sdio_pio_host.data_rx_multiblock_supported) {
-        passed = false;
-    }
-    if (passed && (sdio_pio_host.current_clock_hz > 20000000u)) {
-        uint32_t probe_sector_count = (card_sector_count < 131072u)
-            ? card_sector_count : 131072u;
-
-        for (uint32_t first_sector = 0u;
-             passed && (first_sector < probe_sector_count);) {
-            uint32_t batch_count = probe_sector_count - first_sector;
-            if (batch_count > 64u) {
-                batch_count = 64u;
-            }
-            passed = pf_sdio_pio_host_read_blocks(&sdio_pio_host, first_sector,
-                                                   card_block_addressed, read_probe,
-                                                   batch_count);
-            first_sector += batch_count;
+    for (uint32_t first_sector = 0u; first_sector < probe_sector_count;) {
+        uint32_t batch_count = probe_sector_count - first_sector;
+        if (batch_count > 64u) {
+            batch_count = 64u;
         }
+        if (!pf_sdio_pio_host_read_blocks(&sdio_pio_host, first_sector,
+                                          card_block_addressed, read_probe, batch_count) ||
+            (sdio_pio_host.current_clock_hz != probe_clock_hz) ||
+            ((probe_clock_hz > 20000000u) &&
+             !sdio_pio_host.data_rx_multiblock_supported)) {
+            return false;
+        }
+        first_sector += batch_count;
     }
-    passed = passed &&
-             pf_sdio_pio_host_write_blocks(&sdio_pio_host, 0u, card_block_addressed, probe, 4u) &&
-             pf_sdio_pio_host_write_stream_close(&sdio_pio_host) &&
-             pf_sdio_pio_host_write_sector(&sdio_pio_host, 0u, card_block_addressed, probe) &&
-             pf_sdio_pio_host_read_blocks(&sdio_pio_host, 0u, card_block_addressed, verify, 4u) &&
-             (memcmp(probe, verify, sizeof(probe)) == 0);
-    if (!passed) {
-        (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
-    }
-    return passed;
+    return true;
 }
 
-static bool initialize_card(void)
+static bool initialize_card(uint32_t *clock_limit_hz)
 {
     uint8_t response[17];
     uint8_t short_response[6];
@@ -376,6 +353,9 @@ static bool initialize_card(void)
     } else if (transfer_clock > card_default_transfer_hz) {
         transfer_clock = card_default_transfer_hz;
     }
+    if (transfer_clock > *clock_limit_hz) {
+        transfer_clock = *clock_limit_hz;
+    }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;
     bool clock_ready = false;
     for (size_t index = 0u;
@@ -384,27 +364,21 @@ static bool initialize_card(void)
         if (transfer_clock_steps_hz[index] > transfer_clock) {
             continue;
         }
-        if (transfer_clock_steps_hz[index] <= 20000000u) {
-            clock_ready = pf_sdio_pio_host_set_clock(&sdio_pio_host,
-                                                      transfer_clock_steps_hz[index]);
-            if (clock_ready) {
-                break;
-            }
+        if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock_steps_hz[index])) {
             continue;
         }
-        sdio_pio_host.data_rx_multiblock_supported =
-            transfer_clock_steps_hz[index] > 25000000u;
-        if (pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock_steps_hz[index]) &&
-            probe_transfer()) {
-            clock_ready = true;
-            break;
+        sdio_pio_host.data_rx_multiblock_supported = true;
+        if (!probe_transfer()) {
+            *clock_limit_hz = transfer_clock_steps_hz[index] - 1u;
+            return false;
         }
+        clock_ready = true;
+        break;
     }
     if (!clock_ready) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
-    card_bus_clock_hz = sdio_pio_host.current_clock_hz;
     return true;
 }
 
@@ -486,13 +460,27 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         return PF_SD_CARD_INIT_FAILED;
     }
     card_initialized = false;
-    if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u) || !initialize_card()) {
-        card_initialized = false;
-        return PF_SD_CARD_INIT_FAILED;
+    uint32_t clock_limit_hz = active_config.clock_hz;
+    if (clock_limit_hz == 0u) {
+        clock_limit_hz = default_clock_hz();
     }
-
-    card_initialized = true;
-    return PF_SD_CARD_OK;
+    for (size_t attempt = 0u;
+         attempt < sizeof(transfer_clock_steps_hz) / sizeof(transfer_clock_steps_hz[0]);
+         attempt++) {
+        uint32_t previous_limit_hz = clock_limit_hz;
+        if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u)) {
+            break;
+        }
+        if (initialize_card(&clock_limit_hz)) {
+            card_initialized = true;
+            return PF_SD_CARD_OK;
+        }
+        if ((card_init_stage != PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK) ||
+            (clock_limit_hz >= previous_limit_hz)) {
+            break;
+        }
+    }
+    return PF_SD_CARD_INIT_FAILED;
 }
 
 bool pf_sdio_pio_is_initialized(void)
@@ -611,7 +599,7 @@ void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
     info->initialized = pf_sdio_pio_is_initialized();
     if (info->initialized) {
         info->cid_valid = true;
-        info->bus_clock_hz = card_bus_clock_hz;
+        info->bus_clock_hz = sdio_pio_host.current_clock_hz;
         info->block_count = card_sector_count;
         memcpy(info->cid, card_cid, sizeof(info->cid));
     }

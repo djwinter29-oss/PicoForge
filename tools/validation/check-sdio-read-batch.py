@@ -31,7 +31,7 @@ HARNESS = r"""
 #define SDIO_DATA_WORD_COUNT 4u
 #define PF_SD_CARD_BLOCK_SIZE 16u
 typedef struct { uint32_t write_addr; } dma_hw_t;
-typedef struct { unsigned dma_channel; int lane_map; } pf_sdio_pio_host_t;
+typedef struct { unsigned dma_channel; } pf_sdio_pio_host_t;
 static dma_hw_t hw;
 static uint32_t read_wire_buffer[SDIO_DATA_WORD_COUNT * 4u];
 #define BASE ((uint32_t)(uintptr_t)read_wire_buffer)
@@ -39,9 +39,8 @@ static int barriers, decodes, fail_at = -1;
 static int order[8];
 static dma_hw_t *dma_channel_hw_addr(unsigned c) { (void)c; return &hw; }
 static void __dmb(void) { ++barriers; }
-static bool pf_sdio_pio_decode_data_block(const int *m, const uint8_t *image, uint8_t *block)
+static bool pf_sdio_pio_decode_data_block(const uint8_t *image, uint8_t *block)
 {
-    (void)m;
     if (decodes == fail_at) { return false; }
     order[decodes++] = (int)((const uint32_t *)image - read_wire_buffer);
     block[0] = (uint8_t)decodes;
@@ -50,7 +49,7 @@ static bool pf_sdio_pio_decode_data_block(const int *m, const uint8_t *image, ui
 @HELPER@
 static int run(uint32_t words, uint32_t *decoded, uint8_t *blocks, bool *ok)
 {
-    pf_sdio_pio_host_t host = {0, 0};
+    pf_sdio_pio_host_t host = {0};
     hw.write_addr = BASE + words * 4u;
     *ok = decode_completed_blocks(&host, blocks, 16u, decoded);
     return 0;
@@ -82,11 +81,11 @@ int main(void)
     }
     reset(&d);
     hw.write_addr = BASE - 4u;                       /* underflow */
-    if (decode_completed_blocks(&(pf_sdio_pio_host_t){0, 0}, blocks, 16u, &d) || decodes) return 9;
+    if (decode_completed_blocks(&(pf_sdio_pio_host_t){0}, blocks, 16u, &d) || decodes) return 9;
     run(17u, &d, blocks, &ok);                       /* overflow */
     if (ok || d != 0 || decodes) return 10;
     hw.write_addr = BASE + 17u;                      /* unaligned */
-    if (decode_completed_blocks(&(pf_sdio_pio_host_t){0, 0}, blocks, 16u, &d) || decodes) return 11;
+    if (decode_completed_blocks(&(pf_sdio_pio_host_t){0}, blocks, 16u, &d) || decodes) return 11;
     fail_at = 1;
     run(16u, &d, blocks, &ok);                       /* CRC failure on block 1 */
     if (ok || d != 1 || decodes != 1) return 12;
@@ -159,7 +158,7 @@ def main():
     if reader.count("pf_sdio_pio_decode_data_block") or "block_index" in reader:
         errors.append("read_blocks must decode only via the overlap helper")
     wait = reader.find("while (!pio_interrupt_get")
-    if not 0 < reader.find("decode_completed_blocks", wait) < reader.find("stop_multiblock_transfer(host)"):
+    if not 0 < reader.find("decode_completed_blocks", wait) < reader.find("stop_multiblock_with_clock_fallback(host)"):
         errors.append("decode must overlap the DMA wait before CMD12")
     if "decoded_count != batch_count" not in reader or "crc_failed" not in reader:
         errors.append("final decode must verify all blocks decoded")

@@ -8,7 +8,7 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 ## Running
 
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
-2. Unmount any CLI/application filesystem using `fs unmount`.
+2. Ensure the filesystem is mounted; use `fs mount` if it is not already mounted.
 3. Open one dashboard and connect to its vendor HID interface.
 4. Choose an integer file size from 1 to 128 MiB; the default is 32 MiB.
 5. Check **Allow temporary SD-card writes**, then select **Start self-test**.
@@ -22,16 +22,16 @@ before testing. It is not a filesystem repair or full-capacity authenticity test
 The fixed filename is `/PFTEST.BIN`. The firmware uses create-new mode and refuses
 to run if that name already exists, regardless of capitalization on FAT. It
 never overwrites or deletes a pre-existing file. Insufficient free space is
-rejected before creation. The test's own file is closed, removed, and the volume
-unmounted before completion is published. If close/unlink/unmount fails, explicit
-status flags identify a possible remaining test file or mounted volume. An
+rejected before creation. The test's own file is closed and removed before
+completion is published; the filesystem remains mounted. If close/unlink fails,
+explicit status flags identify a possible remaining test file. An
 interrupted/power-lost run may leave the file; inspect it before deliberately
 removing it with the CLI. Do not assume cleanup after a reset.
 
 Only one storage operation can be outstanding. CLI storage commands, duplicate
 test starts, and MSC transitions are refused during the benchmark. Starting on
-an already mounted volume is refused rather than automatically unmounting another
-client's filesystem. Closing the dashboard or CDC does not cancel a HID-started
+an unmounted volume is refused, and Start is disabled until mounted-filesystem
+telemetry arrives. The test never mounts or unmounts the volume. Closing the dashboard or CDC does not cancel a HID-started
 test: use Cancel. Results persist until the next accepted test or a device reset.
 
 Use one active host monitor per board. On Linux, Python's libusb-backed HIDAPI can
@@ -53,10 +53,10 @@ phases display no speed rather than an infinite or invented value.
 - Write timing includes pattern generation, filesystem writes, final `f_sync`,
   and `f_close`.
 - Read timing includes filesystem reads, verification, and `f_close`.
-- Mount, free-space scanning, file open, deletion, and unmount are not included
+- Free-space scanning, file open, and deletion are not included
   in phase averages.
 - Progress is `(written + read) / (2 * target)`; writing occupies the first half
-  and verification the second half. Mount/cleanup may take time without advancing
+  and verification the second half. Preparation/cleanup may take time without advancing
   that byte counter.
 
 These are application-level filesystem throughput measurements, not raw wire

@@ -41,9 +41,9 @@ void pf_storage_self_test_run(const pf_sd_card_config_t *config, uint32_t size_m
                               pf_self_test_clock_t clock_ms, pf_self_test_update_t update,
                               void *context)
 {
+    (void)config;
     pf_self_test_status_t status = { .state = PF_SELF_TEST_MOUNTING };
     FIL file;
-    bool mounted = false;
     bool file_created = false;
     bool file_open = false;
     bool cancelled = false;
@@ -60,22 +60,15 @@ void pf_storage_self_test_run(const pf_sd_card_config_t *config, uint32_t size_m
         goto finish;
     }
     status.target_bytes = size_mib * 1024u * 1024u;
-    if (pf_storage_is_mounted()) {
-        status.error = PF_SELF_TEST_ERROR_MOUNTED;
+    if (!pf_storage_is_mounted()) {
+        status.error = PF_SELF_TEST_ERROR_NOT_MOUNTED;
         goto finish;
     }
+    status.flags |= PF_SELF_TEST_VOLUME_MOUNTED;
     if (!update(&status, context)) {
         cancelled = true;
         goto finish;
     }
-    pf_storage_result_t mount_result = pf_storage_mount(config, &result);
-    if (mount_result != PF_STORAGE_OK) {
-        status.error = mount_result == PF_STORAGE_FILESYSTEM_ERROR
-            ? PF_SELF_TEST_ERROR_FILESYSTEM : PF_SELF_TEST_ERROR_CARD;
-        status.filesystem_result = result;
-        goto finish;
-    }
-    mounted = true;
     DWORD free_clusters;
     FATFS *filesystem;
     result = f_getfree(PF_STORAGE_VOLUME, &free_clusters, &filesystem);
@@ -179,13 +172,6 @@ cleanup:
                 status.error = PF_SELF_TEST_ERROR_CLEANUP;
                 status.filesystem_result = result;
             }
-        }
-    }
-    if (mounted && (pf_storage_unmount(&result) != PF_STORAGE_OK)) {
-        status.flags |= PF_SELF_TEST_VOLUME_MOUNTED;
-        if (status.error == PF_SELF_TEST_ERROR_NONE) {
-            status.error = PF_SELF_TEST_ERROR_CLEANUP;
-            status.filesystem_result = result;
         }
     }
 finish:

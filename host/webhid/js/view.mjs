@@ -90,7 +90,7 @@ export function renderSelfTest(snapshot) {
   const speed = value => value == null ? "--" : `${(value / 1048576).toFixed(2)} MiB/s`;
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", mounting: "Mounting", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
-  const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed"];
+  const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
   set("#self-test-state", labels[status?.state] ?? "Unavailable");
   set("#self-test-percent", `${Math.floor(status?.progress_percent ?? 0)}%`);
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;
@@ -110,7 +110,8 @@ export function renderSelfTest(snapshot) {
     ? "Every byte verified; temporary file removed."
     : status?.state === "cancelled" ? "Cancelled; cleanup completed." : "No completed result."));
   const pending = Boolean(snapshot.self_test_command_pending);
-  const ready = snapshot.connected && snapshot.memory?.initialized && status && !snapshot.msc?.enabled;
+  const mounted = ["fat12", "fat16", "fat32", "exfat"].includes(snapshot.filesystem_format);
+  const ready = snapshot.connected && snapshot.memory?.initialized && mounted && status && !snapshot.msc?.enabled;
   const size = document.querySelector("#self-test-size");
   const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 128;
   document.querySelector("#self-test-start").disabled = !ready || status.active || pending || Boolean(snapshot.busy)

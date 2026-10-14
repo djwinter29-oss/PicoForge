@@ -228,9 +228,9 @@ export function decodeSelfTestReport(report) {
   const requestError = payload.getUint8(30);
   const mismatches = payload.getUint32(24, true);
   if (payload.getUint8(0) !== 2 || state > 8 || flags & ~3 || payload.getUint8(31)
-    || error > 10 || requestError > 10 || filesystemResult > 19
+    || error > 11 || requestError > 11 || filesystemResult > 19
     || target > 128 * 1024 * 1024 || written > target || read > written
-    || (state === 6 && (!target || written !== target || read !== target || mismatches || error || flags))) {
+    || (state === 6 && (!target || written !== target || read !== target || mismatches || error || flags & 1))) {
     throw new Error("Invalid HID self-test report");
   }
   return {

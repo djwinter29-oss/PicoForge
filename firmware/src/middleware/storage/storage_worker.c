@@ -292,8 +292,8 @@ bool pf_storage_worker_self_test_start(uint32_t size_mib, bool host_owned)
         rejection = PF_SELF_TEST_ERROR_SIZE;
     } else if (!config_available || !pf_sd_card_is_initialized()) {
         rejection = PF_SELF_TEST_ERROR_CARD;
-    } else if (pf_storage_is_mounted()) {
-        rejection = PF_SELF_TEST_ERROR_MOUNTED;
+    } else if (!pf_storage_is_mounted()) {
+        rejection = PF_SELF_TEST_ERROR_NOT_MOUNTED;
     }
     taskENTER_CRITICAL();
     if (busy || card_service_busy) {

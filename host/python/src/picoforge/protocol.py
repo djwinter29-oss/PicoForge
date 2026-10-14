@@ -235,9 +235,9 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> dict[str, o
         "<BBBBIIIIIIBBBB", payload
     )
     if (version != REPORT_VERSION or state > 8 or flags & ~3 or reserved
-        or error > 10 or request_error > 10 or fs_result > 19
+        or error > 11 or request_error > 11 or fs_result > 19
         or target > 128 * 1024 * 1024 or written > target or read > written
-        or (state == 6 and (not target or written != target or read != target or mismatches or error or flags))):
+        or (state == 6 and (not target or written != target or read != target or mismatches or error or flags & 1))):
         raise ValueError("Invalid HID self-test report")
     names = ("idle", "queued", "mounting", "writing", "reading", "cleanup", "passed", "failed", "cancelled")
     return {

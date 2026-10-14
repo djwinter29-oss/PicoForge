@@ -32,6 +32,7 @@ typedef enum {
     PF_SELF_TEST_ERROR_FILESYSTEM,
     PF_SELF_TEST_ERROR_VERIFY,
     PF_SELF_TEST_ERROR_CLEANUP,
+    PF_SELF_TEST_ERROR_NOT_MOUNTED,
 } pf_self_test_error_t;
 
 #define PF_SELF_TEST_FILE_REMAINS 1u
@@ -60,11 +61,11 @@ typedef uint32_t (*pf_self_test_clock_t)(void *context);
 typedef bool (*pf_self_test_update_t)(const pf_self_test_status_t *status, void *context);
 
 /** Write and verify a 1..128 MiB dedicated file from the sole storage task.
- * Requires an unmounted volume and firmware ownership (enforced by caller).
- * Never overwrites PFTEST.BIN if it already exists. Owns one static 8 KiB
+ * Requires a mounted volume and firmware ownership (enforced by caller).
+ * Never overwrites PFTEST.BIN if it already exists. Owns one static 32 KiB
  * buffer, so calls must be serialized. Timing covers pattern generation plus
  * write/sync/close, and read/verification/close; mount and cleanup are excluded.
- * The test's own file is removed and the volume unmounted before returning.
+ * The test's own file is removed; the existing volume remains mounted.
  * Status flags identify failed cleanup; existing files are never deleted.
  */
 void pf_storage_self_test_run(const pf_sd_card_config_t *config, uint32_t size_mib,

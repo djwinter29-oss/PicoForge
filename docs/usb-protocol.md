@@ -85,7 +85,7 @@ GET_REPORT with type Input can also retrieve it:
 | 0 | 1 | Version (`2`) |
 | 1 | 1 | Sequence |
 | 2 | 1 | State |
-| 3 | 1 | Cleanup flags: bit 0 test file remains, bit 1 volume remains mounted |
+| 3 | 1 | Status flags: bit 0 test file remains, bit 1 volume remains mounted (normal for mounted-only tests) |
 | 4 | 4 | Target bytes |
 | 8 | 4 | Written bytes |
 | 12 | 4 | Read/verified bytes |
@@ -100,7 +100,10 @@ GET_REPORT with type Input can also retrieve it:
 States are idle `0`, queued `1`, mounting `2`, writing `3`, reading/verifying `4`,
 cleanup `5`, passed `6`, failed `7`, cancelled `8`. Errors are none `0`, busy `1`,
 USB owner `2`, mounted filesystem `3`, size `4`, card unavailable `5`, space `6`,
-existing test file `7`, filesystem I/O `8`, verification `9`, cleanup `10`.
+existing test file `7`, filesystem I/O `8`, verification `9`, cleanup `10`,
+filesystem not mounted `11`. Error `3` is retained for compatibility but is no
+longer emitted. Starting requires an already-mounted filesystem; tests never
+mount or unmount it.
 Completion is published only after cleanup attempts. A command rejection does
 not replace an ongoing test or its retained result. Hosts compute averages from
 byte counters and durations; measurement boundaries and safety rules live in

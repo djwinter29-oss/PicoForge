@@ -176,6 +176,7 @@ public sealed class ProtocolTests
         report[0] = 6;
         report[1] = 2;
         report[3] = 6;
+        report[4] = 2;
         foreach (var offset in new[] { 5, 9, 13 }) BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(offset), 33554432);
         BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(17), 16000);
         BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(21), 8000);
@@ -184,6 +185,15 @@ public sealed class ProtocolTests
         Assert.Equal(100d, status.ProgressPercent);
         Assert.Equal(2097152d, status.WriteBytesPerSecond!.Value);
         Assert.Equal(4194304d, status.ReadBytesPerSecond!.Value);
+        Assert.True(status.VolumeMounted);
+        report[4] = 3;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        report[4] = 2;
+        report[31] = 11;
+        Assert.Equal((byte)11, HidProtocol.ParseSelfTestReport(report).RequestError);
+        report[31] = 12;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        report[31] = 0;
         report[^1] = 1;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
     }

@@ -107,9 +107,17 @@ reading its CSD and SCR; the 32 MiB test exercised the lower-clock CMD12 retry
 and completed at about 33 MHz with zero mismatches (8.48 MB/s write, 9.91 MB/s
 read). The tested 16 GB Class 4 card is stable with
 a 20 MHz request (18.75 MHz actual), passing 32 MiB at 7.11 MB/s write and
-6.69 MB/s read. Requests above 20 MHz are tried in descending steps with a
-data-path probe that reads and rewrites sectors 0-3, then reads up to 64 MiB;
-the probe therefore writes those sectors back with their original contents.
+6.69 MB/s read. Clock candidates are tried in descending steps with a
+read-only, CRC-checked probe of at most 128 KiB. A failed probe restarts card
+identification at 400 kHz before trying the next lower candidate. A candidate
+is rejected if recovery silently reduces its clock; rates above 20 MHz also
+require working CMD18 batching. Lower rates retain batching when it works.
+Initialization never writes card sectors; sustained read/write qualification
+uses the explicit file-based self-test. The former 64 MiB initialization scan
+could delay USB startup for minutes when forced through single-sector reads.
+On the 8 GB SD8GB card, stock 150 MHz SYSCLK mounted at 25 MHz SDIO and passed
+a complete 32 MiB self-test with zero mismatches (7.22 MB/s write, 1.45 MB/s
+read). Bus-clock telemetry reports the current host rate, including recovery.
 CMD18 read batching is disabled for the session when its CMD12 stop fails, and
 the request is retried through CMD17. Other cards and sustained endurance remain
 unqualified.
@@ -133,7 +141,8 @@ On the 128 GB SN128 card, 32 and 128 MiB self-tests passed with 0 mismatches:
 250 MHz SYSCLK / 50 MHz SDIO gives 15.9 MB/s write and 13.7 MB/s read; 200 MHz
 gives 12.5 / 9.5; the stock 150 MHz / 25 MHz gives 9.5 / 8.3. A 280 MHz
 SYSCLK did not work with the card even at 25 MHz. The board profile requests
-50 MHz and falls back to 25 MHz when SYSCLK is too low.
+50 MHz and skips candidates the current SYSCLK cannot generate; remaining
+candidates must pass the read-only probe.
 
 SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data
 bytes plus four lane CRC16s). Reads use an on-stack image per sector;

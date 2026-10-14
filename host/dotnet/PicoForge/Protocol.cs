@@ -228,9 +228,9 @@ internal static class HidProtocol
         var read = ReadUInt32LittleEndian(payload[12..]);
         var mismatches = ReadUInt32LittleEndian(payload[24..]);
         Require(payload[0] == ReportVersion && state <= 8 && (flags & ~3) == 0 && payload[31] == 0
-                && payload[28] <= 10 && payload[29] <= 19 && payload[30] <= 10
+                && payload[28] <= 11 && payload[29] <= 19 && payload[30] <= 11
                 && target <= 128u * 1024u * 1024u && written <= target && read <= written
-                && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0 && flags == 0 && payload[28] == 0)),
+                && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0 && (flags & 1) == 0 && payload[28] == 0)),
             "invalid HID self-test report");
         var name = state switch
         {

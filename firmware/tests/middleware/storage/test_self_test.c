@@ -96,8 +96,7 @@ static FRESULT close_file(FIL *file, int calls)
 
 static void prepare(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(false);
-    pf_storage_mount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
+    pf_storage_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
     f_write_StubWithCallback(write_file);
@@ -107,7 +106,6 @@ static void prepare(void)
     if (close_result == FR_OK) {
         f_unlink_ExpectAnyArgsAndReturn(unlink_result);
     }
-    pf_storage_unmount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
 }
 
 void setUp(void)
@@ -157,13 +155,50 @@ void test_self_test_cancel_finishes_sync_close_and_cleanup(void)
     TEST_ASSERT_EQUAL_UINT(1u, close_calls);
 }
 
-void test_self_test_rejects_invalid_size_and_existing_mount(void)
+void test_self_test_rejects_invalid_size(void)
 {
     pf_storage_self_test_run(NULL, 0u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_SIZE, final_status.error);
-    pf_storage_is_mounted_ExpectAndReturn(true);
-    pf_storage_self_test_run(NULL, 32u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_MOUNTED, final_status.error);
+}
+
+void test_self_test_reuses_existing_mount_and_leaves_it_mounted(void)
+{
+    prepare();
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+}
+
+void test_self_test_preserves_existing_mount_after_verification_failure(void)
+{
+    prepare();
+    corrupt = true;
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_VERIFY, final_status.error);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+}
+
+void test_self_test_preserves_existing_mount_after_cancellation(void)
+{
+    prepare();
+    cancel_write = true;
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_CANCELLED, final_status.state);
+    TEST_ASSERT_EQUAL_UINT(1u, close_calls);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+}
+
+void test_self_test_rejects_unmounted_volume_without_mounting_or_file_io(void)
+{
+    pf_storage_is_mounted_ExpectAndReturn(false);
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_NOT_MOUNTED, final_status.error);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.read_bytes);
+    TEST_ASSERT_EQUAL_UINT8(0u, final_status.flags);
 }
 
 void test_self_test_short_write_is_not_a_pass(void)
@@ -177,11 +212,9 @@ void test_self_test_short_write_is_not_a_pass(void)
 
 void test_self_test_never_overwrites_or_deletes_an_existing_test_file(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(false);
-    pf_storage_mount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
+    pf_storage_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_ExpectAnyArgsAndReturn(FR_EXIST);
-    pf_storage_unmount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
     pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_EXISTS, final_status.error);
 }
@@ -189,10 +222,8 @@ void test_self_test_never_overwrites_or_deletes_an_existing_test_file(void)
 void test_self_test_insufficient_space_does_not_create_a_file(void)
 {
     available_clusters = 0u;
-    pf_storage_is_mounted_ExpectAndReturn(false);
-    pf_storage_mount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
+    pf_storage_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
-    pf_storage_unmount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
     pf_storage_self_test_run(NULL, 32u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_SPACE, final_status.error);
 }
@@ -213,7 +244,7 @@ void test_self_test_close_failure_preserves_file_for_recovery(void)
     prepare();
     pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS, final_status.flags);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
 }
 
 void test_self_test_reports_unlink_cleanup_failure(void)
@@ -222,5 +253,5 @@ void test_self_test_reports_unlink_cleanup_failure(void)
     prepare();
     pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_CLEANUP, final_status.error);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS, final_status.flags);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
 }

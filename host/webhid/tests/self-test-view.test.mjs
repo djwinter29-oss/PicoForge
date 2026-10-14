@@ -15,13 +15,27 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
     const status = { state: "idle", active: false, target_bytes: 0, written_bytes: 0, read_bytes: 0,
       write_elapsed_ms: 0, read_elapsed_ms: 0, progress_percent: 0, write_bytes_per_second: null,
       read_bytes_per_second: null, error: 0, request_error: 0, mismatch_count: 0 };
-    const snapshot = { connected: true, memory: { initialized: true }, msc: { enabled: false }, self_test: status };
+    const snapshot = { connected: true, memory: { initialized: true }, filesystem_format: "exfat", msc: { enabled: false }, self_test: status };
     try {
       render(snapshot);
       assert.equal(element("#self-test-start").disabled, true);
       element("#self-test-consent").checked = true;
       render(snapshot);
       assert.equal(element("#self-test-start").disabled, false);
+      for (const format of [null, undefined, "unknown"]) {
+        snapshot.filesystem_format = format;
+        render(snapshot);
+        assert.equal(element("#self-test-start").disabled, true);
+      }
+      for (const format of ["fat12", "fat16", "fat32", "exfat"]) {
+        snapshot.filesystem_format = format;
+        render(snapshot);
+        assert.equal(element("#self-test-start").disabled, false);
+      }
+      status.request_error = 11;
+      render(snapshot);
+      assert.match(element("#self-test-message").textContent, /Filesystem not mounted/);
+      status.request_error = 0;
       snapshot.self_test = { ...status, state: "writing", active: true, target_bytes: 33554432,
         written_bytes: 16777216, write_elapsed_ms: 16000, write_bytes_per_second: 1048576, progress_percent: 25 };
       render(snapshot);
