@@ -558,3 +558,39 @@ void test_decode_byte_table_matches_nibble_map_for_all_byte_values(void)
     TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, image, destination));
     TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
 }
+
+void test_crc_and_encoded_image_do_not_depend_on_input_alignment(void)
+{
+    pf_sdio_pio_lane_map_t map;
+    uint8_t storage[512 + 3];
+    uint8_t aligned[512];
+    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
+    uint8_t expected[PF_SDIO_PIO_IMAGE_SIZE];
+    uint16_t crc_aligned[4];
+    uint16_t crc_offset[4];
+
+    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
+    fill_pattern(aligned);
+    for (size_t offset = 1u; offset < 4u; offset++) {
+        memcpy(storage + offset, aligned, sizeof(aligned));
+        pf_sdio_pio_crc16_4bit(aligned, crc_aligned);
+        pf_sdio_pio_crc16_4bit(storage + offset, crc_offset);
+        TEST_ASSERT_EQUAL_UINT16_ARRAY(crc_aligned, crc_offset, 4u);
+        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, storage + offset, image));
+        reference_image(aligned, documented_gpio, expected);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, image, sizeof(image));
+    }
+}
+
+void test_lane_map_byte_tables_match_nibble_maps(void)
+{
+    pf_sdio_pio_lane_map_t map;
+
+    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
+    for (uint32_t value = 0u; value < 256u; value++) {
+        TEST_ASSERT_EQUAL_UINT8((map.to_gpio[value >> 4u] << 4u) | map.to_gpio[value & 0x0fu],
+                                map.to_gpio_byte[value]);
+        TEST_ASSERT_EQUAL_UINT8((map.from_gpio[value >> 4u] << 4u) | map.from_gpio[value & 0x0fu],
+                                map.from_gpio_byte[value]);
+    }
+}

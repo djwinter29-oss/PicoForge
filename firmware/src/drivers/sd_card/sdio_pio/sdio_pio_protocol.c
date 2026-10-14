@@ -1,6 +1,8 @@
 #include "sdio_pio_protocol.h"
 #include "sd_card_protocol.h"
 
+#include <string.h>
+
 uint8_t pf_sdio_pio_crc7(const uint8_t *data, size_t size)
 {
     return pf_sd_card_crc7(data, size);
@@ -109,26 +111,68 @@ static uint64_t crc16_4bit_nibble(uint64_t reg, uint8_t nibble)
 }
 
 /*
- * The byte update is linear, so reg' = (reg << 8) ^ table[(reg >> 56) ^ value].
- * The 2 KiB RAM table is built on first use (about 256 x 2 nibble steps).
+ * The CRC step is linear, so four data bytes are folded at once: with x = reg ^ (word << 32),
+ * reg' = (x << 32) ^ slice[3][x >> 56] ^ slice[2][x >> 48] ^ slice[1][x >> 40] ^ slice[0][x >> 32]
+ * (byte indices 8 bits wide). slice[k][v] is v shifted through four byte steps. The 8 KiB RAM
+ * tables are built on first use. This replaces a per-byte loop that was measured to be a
+ * significant CPU cost, not proven to be the sole limit on 25 MHz transfers.
+ *
+ * Each table is kept as separate high and low uint32_t halves so every lookup is two plain
+ * word loads and no 64-bit shifts are needed on the 32-bit Cortex-M cores.
+ *
+ * load_be32() returns the four wire-order bytes as a big-endian word on supported hosts.
+ * ponytail: lazy initialization assumes serialized storage-worker calls, as before;
+ * concurrent callers would need explicit initialization before starting the workers.
+ * Tables are capped at 8 KiB (6 KiB more than the byte table): slicing-by-8 doubled
+ * RAM without reducing compiled instructions per byte on Cortex-M33. Revisit only
+ * with measured benefit and a board RAM budget, not by increasing slices blindly.
  */
-static uint64_t crc16_4bit_table[256];
+static uint32_t crc16_4bit_slice_hi[4][256];
+static uint32_t crc16_4bit_slice_lo[4][256];
 static bool crc16_4bit_table_ready;
 
 static void crc16_4bit_table_init(void)
 {
-    for (uint32_t index = 0u; index < 256u; index++) {
-        uint64_t reg = (uint64_t)index << 56u;
+    for (uint32_t slice = 0u; slice < 4u; slice++) {
+        for (uint32_t index = 0u; index < 256u; index++) {
+            uint64_t reg = (uint64_t)index << (32u + 8u * slice);
 
-        reg = crc16_4bit_nibble(reg, 0u);
-        crc16_4bit_table[index] = crc16_4bit_nibble(reg, 0u);
+            for (uint32_t step = 0u; step < 8u; step++) {
+                reg = crc16_4bit_nibble(reg, 0u);
+            }
+            crc16_4bit_slice_hi[slice][index] = (uint32_t)(reg >> 32u);
+            crc16_4bit_slice_lo[slice][index] = (uint32_t)reg;
+        }
     }
     crc16_4bit_table_ready = true;
 }
 
-static uint64_t crc16_4bit_byte(uint64_t reg, uint8_t value)
+/* @p word holds four wire-order bytes, first byte in the most significant position. */
+static inline uint64_t crc16_4bit_word(uint64_t reg, uint32_t word)
 {
-    return (reg << 8u) ^ crc16_4bit_table[(uint8_t)(reg >> 56u) ^ value];
+    uint32_t x = (uint32_t)(reg >> 32u) ^ word;
+    uint32_t b3 = x >> 24u;
+    uint32_t b2 = (x >> 16u) & 0xffu;
+    uint32_t b1 = (x >> 8u) & 0xffu;
+    uint32_t b0 = x & 0xffu;
+    uint32_t hi = (uint32_t)reg ^ crc16_4bit_slice_hi[3][b3] ^ crc16_4bit_slice_hi[2][b2] ^
+                  crc16_4bit_slice_hi[1][b1] ^ crc16_4bit_slice_hi[0][b0];
+    uint32_t lo = crc16_4bit_slice_lo[3][b3] ^ crc16_4bit_slice_lo[2][b2] ^
+                  crc16_4bit_slice_lo[1][b1] ^ crc16_4bit_slice_lo[0][b0];
+
+    return ((uint64_t)hi << 32u) | lo;
+}
+
+static inline uint32_t load_be32(const uint8_t *data)
+{
+    uint32_t word;
+
+    memcpy(&word, data, sizeof(word));
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    return word;
+#else
+    return __builtin_bswap32(word);
+#endif
 }
 
 static uint64_t crc16_4bit_block(const uint8_t block[512])
@@ -138,8 +182,8 @@ static uint64_t crc16_4bit_block(const uint8_t block[512])
     if (!crc16_4bit_table_ready) {
         crc16_4bit_table_init();
     }
-    for (size_t index = 0u; index < 512u; index++) {
-        reg = crc16_4bit_byte(reg, block[index]);
+    for (size_t index = 0u; index < 512u; index += 4u) {
+        reg = crc16_4bit_word(reg, load_be32(block + index));
     }
     return reg;
 }
@@ -203,6 +247,7 @@ bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_
         map->from_gpio[nibble] = from_gpio;
     }
     for (uint32_t value = 0u; value < 256u; value++) {
+        map->to_gpio_byte[value] = map_byte(map->to_gpio, (uint8_t)value);
         map->from_gpio_byte[value] = map_byte(map->from_gpio, (uint8_t)value);
     }
     return true;
@@ -220,9 +265,12 @@ bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint
         crc16_4bit_table_init();
     }
 
-    for (size_t index = 0u; index < 512u; index++) {
-        reg = crc16_4bit_byte(reg, block[index]);
-        image[index] = map_byte(map->to_gpio, block[index]);
+    for (size_t index = 0u; index < 512u; index += 4u) {
+        reg = crc16_4bit_word(reg, load_be32(block + index));
+        image[index] = map->to_gpio_byte[block[index]];
+        image[index + 1u] = map->to_gpio_byte[block[index + 1u]];
+        image[index + 2u] = map->to_gpio_byte[block[index + 2u]];
+        image[index + 3u] = map->to_gpio_byte[block[index + 3u]];
     }
     for (size_t index = 0u; index < 8u; index++) {
         image[512u + index] = map_byte(map->to_gpio, (uint8_t)(reg >> (56u - 8u * index)));
@@ -248,11 +296,12 @@ bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
      * run on wire-order bytes and be compared with the wire-order CRC bytes; only the
      * 512 data bytes need a lane remap.
      */
-    for (size_t index = 0u; index < 512u; index++) {
-        uint8_t wire = image[index];
-
-        reg = crc16_4bit_byte(reg, wire);
-        block[index] = map->from_gpio_byte[wire];
+    for (size_t index = 0u; index < 512u; index += 4u) {
+        reg = crc16_4bit_word(reg, load_be32(image + index));
+        block[index] = map->from_gpio_byte[image[index]];
+        block[index + 1u] = map->from_gpio_byte[image[index + 1u]];
+        block[index + 2u] = map->from_gpio_byte[image[index + 2u]];
+        block[index + 3u] = map->from_gpio_byte[image[index + 3u]];
     }
     for (size_t index = 0u; index < 8u; index++) {
         received = (received << 8u) | image[512u + index];
