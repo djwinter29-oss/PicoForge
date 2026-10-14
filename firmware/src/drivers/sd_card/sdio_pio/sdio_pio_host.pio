@@ -16,66 +16,122 @@ wait_for_command:
     pull block side 0
     set pins, 1 side 1
     set pindirs, 1 side 0
-    set x, 31 side 1
-send_command_first_word:
+    out x, 6 side 1
+send_command:
     out pins, 1 side 0
-    jmp x-- send_command_first_word side 1
-    set x, 15 side 0
-send_command_last_word:
-    out pins, 1 side 1
-    jmp x-- send_command_last_word side 0
-    set pindirs, 0 side 1
-    pull block side 0
-    out y, 8 side 1
-    jmp !y command_complete side 0
+    jmp x-- send_command side 1
+    set pindirs, 0 side 0
+    pull block side 1
+    out y, 8 side 0
+    jmp !y command_complete side 1
 wait_for_response:
-    nop side 1
-    jmp pin wait_for_response side 0
+    nop side 0
+    jmp pin wait_for_response side 1
+; The card changes CMD 2.5-14 ns after a rising edge; sample at the next one.
+    in null, 1 side 0
 read_response:
     in pins, 1 side 1
     jmp y-- read_response side 0
     push block side 1
 command_complete:
-    irq set 0 side 0
+    irq set 0 side 1
 .wrap
 
 .program pf_sdio_pio_data_rx
+; Sample on the falling edge, mid-bit; after the rising edge the card's outputs are still changing.
     pull block
-    out y, 32
+receive_block:
+    mov x, osr
     wait 0 pin 0
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
-    mov x, y
-receive_nibble:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+receive_nibble:
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     in pins, 4
     jmp x-- receive_nibble
+    wait 1 pin 0
+    jmp y-- receive_block
+    irq set 1
+
+.program pf_sdio_pio_data_rx_fast
+    pull block
+receive_block:
+    mov x, osr
+    wait 0 pin 0
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+receive_nibble:
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    in pins, 4
+    jmp x-- receive_nibble
+    wait 1 pin 0
+    jmp y-- receive_block
     irq set 1
 
 .program pf_sdio_pio_data_tx
+; Launch after a rising edge; the card samples on the NEXT rising edge.
+; At 150 MHz / 25 MHz, falling-edge WAIT then OUT leaves too little setup.
+; Preload the start value before enabling outputs; preserve full start/end bits.
     pull block
     out x, 32
-    set pindirs, 15
     set pins, 0
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    set pindirs, 15
 transmit_nibble:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
-    out pins, 4
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    out pins, 4
     jmp x-- transmit_nibble
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     set pins, 15
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     set pindirs, 0
     wait 0 pin 0
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    set x, 3
+read_data_response:
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    in pins, 1
+    jmp x-- read_data_response
+    push block
+; Check busy mid-bit after the end bit, once the card has had time to drive DAT0 low.
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin 0
+    irq set 2
+
+; Cycle-locked to the clock program: both start in sync, a period is 4 cycles at clkdiv
+; sys/(4*bus), the clock rises in cycle 2 and every launch is in cycle 3, one cycle after it.
+.program pf_sdio_pio_data_tx_fast
+    pull block
+    out x, 32
+    set y, 2
+    set pins, 0
+idle:
+    jmp y-- idle [3]
+    nop [2]
+    set pindirs, 15
+    nop [2]
+transmit_nibble:
+    out pins, 4 [1]
+    jmp x-- transmit_nibble [1]
+    set pins, 15
+    nop [2]
+    set pindirs, 0
+    wait 0 pin 0
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     set x, 3
 read_data_response:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     in pins, 1
     jmp x-- read_data_response
     push block
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin 0
     irq set 2

@@ -25,6 +25,7 @@
 #define configQUEUE_REGISTRY_SIZE 8
 #define configUSE_QUEUE_SETS 0
 #define configUSE_TASK_NOTIFICATIONS 1
+#define configTASK_NOTIFICATION_ARRAY_ENTRIES 2
 
 #define configUSE_TIMERS 1
 #define configTIMER_TASK_PRIORITY (configMAX_PRIORITIES - 1)

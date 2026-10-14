@@ -1,6 +1,12 @@
 using System.Buffers.Binary;
 using PicoForge;
 using Xunit;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace PicoForge.Tests;
 
@@ -109,6 +115,14 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void ParsesFilesystemFormatReport()
+    {
+        Assert.Equal("exfat", HidProtocol.ParseFilesystemReport([7, 2, 4, 4]));
+        Assert.Equal("unknown", HidProtocol.ParseFilesystemReport([7, 2, 4, 0]));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseFilesystemReport([7, 2, 4, 5]));
+    }
+
+    [Fact]
     public void RejectsInitializedMemoryWithoutKnownPresence()
     {
         var report = CreateMemoryReport(0x3d, 1, 2, 25_000_000, 4096, new byte[16]);
@@ -150,6 +164,84 @@ public sealed class ProtocolTests
         "PicoForge"u8.CopyTo(report.AsSpan(3));
         "0123456789abcdef"u8.CopyTo(report.AsSpan(23));
         return report;
+    }
+
+    [Fact]
+    public void SelfTestCommandsAndTimingsAreDecoded()
+    {
+        Assert.Equal(new byte[] { 6, 2, 1, 32, 0, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("start", 32));
+        Assert.Equal(new byte[] { 6, 2, 0, 0, 0, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("cancel"));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.BuildSelfTestCommandReport("start", 129));
+        var report = new byte[33];
+        report[0] = 6;
+        report[1] = 2;
+        report[3] = 6;
+        report[4] = 2;
+        foreach (var offset in new[] { 5, 9, 13 }) BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(offset), 33554432);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(17), 16000);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(21), 8000);
+        var status = HidProtocol.ParseSelfTestReport(report);
+        Assert.Equal("passed", status.State);
+        Assert.Equal(100d, status.ProgressPercent);
+        Assert.Equal(2097152d, status.WriteBytesPerSecond!.Value);
+        Assert.Equal(4194304d, status.ReadBytesPerSecond!.Value);
+        Assert.True(status.VolumeMounted);
+        report[4] = 3;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        report[4] = 2;
+        report[31] = 11;
+        Assert.Equal((byte)11, HidProtocol.ParseSelfTestReport(report).RequestError);
+        report[31] = 12;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        report[31] = 0;
+        report[^1] = 1;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+    }
+
+    [Fact]
+    public async Task SelfTestEndpointValidatesAndAcknowledgesCommandDelivery()
+    {
+        var monitor = new SelfTestMonitor();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+        builder.Services.AddOpenApi();
+        builder.Services.AddSingleton<IDeviceMonitor>(monitor);
+        await using var app = builder.Build();
+        app.MapDeviceStatus();
+        app.MapOpenApi();
+        await app.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var openApi = await client.GetStringAsync("/openapi/v1.json");
+        Assert.Contains("/api/self-test", openApi);
+        var response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 16 });
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(("start", 16u), monitor.LastCommand);
+        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 129 });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        monitor.Available = false;
+        response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        monitor.ExpectedError = new TimeoutException("HID timeout");
+        response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        await app.StopAsync();
+    }
+
+    private sealed class SelfTestMonitor : IDeviceMonitor
+    {
+        public bool Available { get; set; } = true;
+        public (string Action, uint Size) LastCommand { get; private set; }
+        public Exception? ExpectedError { get; set; }
+        public StatusResponse Snapshot => new(true, null, null, null, null, null, null, null);
+        public bool SetLed(bool on) => false;
+        public MscStatusResponse? SetMsc(bool enabled) => null;
+        public bool SetSelfTest(string action, uint sizeMib)
+        {
+            if (ExpectedError is not null) throw ExpectedError;
+            LastCommand = (action, sizeMib);
+            return Available;
+        }
     }
 
     private static byte[] CreateMemoryReport(byte flags, byte component, byte mode,

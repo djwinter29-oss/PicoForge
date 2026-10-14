@@ -1,3 +1,18 @@
+### Start a temporary-file benchmark (writes and removes /PFTEST.BIN)
+POST http://127.0.0.1:8766/api/self-test
+Content-Type: application/json
+
+{"action":"start","size_mib":32}
+
+### Cancel and clean up the benchmark
+POST http://127.0.0.1:8766/api/self-test
+Content-Type: application/json
+
+{"action":"cancel"}
+
+### Read benchmark progress and average speeds
+GET http://127.0.0.1:8766/api/status
+
 @baseUrl = http://127.0.0.1:8766
 
 ### Get current device state (200, including connected=false when no board is attached)

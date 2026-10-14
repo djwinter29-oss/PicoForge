@@ -2,9 +2,9 @@
 
 ## Device Interfaces
 
-The development device uses VID/PID `0xCAFE:0x4011` while MSC is disabled and `0xCAFE:0x4012` while MSC is enabled. Replace these unallocated development identities before product release.
+The development device uses VID/PID `0xCAFE:0x4011` in both configurations. Replace this unallocated development identity before product release. The HID interface remains interface 2; when MSC is enabled, its interface is appended as interface 3.
 
-- CDC ACM is the serial console; firmware sends `PicoForge CDC ready` after the host asserts DTR.
+- CDC ACM is the interactive [Embedded CLI console](cdc-cli.md); the prompt appears after the host asserts DTR. UART debug logs remain separate.
 - HID uses vendor usage page `0xFF00`, usage `0x01`.
 - USB product string: `PicoForge CDC + HID`.
 - USB serial string: the Pico SDK unique board ID.
@@ -42,7 +42,7 @@ The sequence byte wraps modulo 256. Temperature comes from the MCU's internal se
 
 ## Input Report 3
 
-Input report 3 has a 29-byte payload and is published every 1000 ms. Its layout version is `2`. Startup initializes the selected SD-card transport to collect telemetry but does not mount or write a filesystem.
+Input report 3 has a 29-byte payload and is published every 1000 ms. Its layout version is `2`. Startup initializes the selected SD-card transport to collect telemetry; the storage worker then attempts to mount detected media according to [the mounting policy](cdc-cli.md).
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |
@@ -67,7 +67,47 @@ Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED
 
 Feature report 5 controls USB Mass Storage Class (MSC) ownership. Its SET payload is 2 bytes: version `2`, then desired state (`0` disabled or `1` enabled). Input report 5 carries a 4-byte status payload every 500 ms: version `2`, enabled, transition-pending, and request-rejected; the last three fields are booleans.
 
-MSC is disabled at boot. Enabling requires an initialized card and an unmounted firmware filesystem. The device disconnects and re-enumerates with PID `0x4012` and a CDC/MSC/HID configuration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device disconnects and re-enumerates with PID `0x4011`, after which firmware owns the card again. A USB re-enumeration briefly interrupts HID, so hosts must reconnect and rediscover the device. Do not unplug the card or reset the device while the host is writing.
+MSC is disabled at boot. Enabling requires an initialized card, an unmounted firmware filesystem, and no outstanding CLI storage command. Both enable and disable requests are rejected while storage work or its replies are pending. Use the [CDC CLI](cdc-cli.md) to explicitly unmount before handoff. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
+
+## Report ID 6
+
+Feature Report 6 starts or cancels the [SD file self-test](sd-self-test.md).
+Its payload is exactly 6 bytes: version `2` (byte 0), action (byte 1: `1` start,
+`0` cancel), and little-endian size in MiB (bytes 2..5). Start accepts 1..128;
+Cancel requires size zero. Firmware rejects an unavailable card, USB ownership,
+an existing mount, invalid size, or pending storage work.
+
+Input Report 6 publishes this 32-byte little-endian snapshot every 500 ms;
+GET_REPORT with type Input can also retrieve it:
+
+| Offset | Bytes | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`2`) |
+| 1 | 1 | Sequence |
+| 2 | 1 | State |
+| 3 | 1 | Status flags: bit 0 test file remains, bit 1 volume remains mounted (normal for mounted-only tests) |
+| 4 | 4 | Target bytes |
+| 8 | 4 | Written bytes |
+| 12 | 4 | Read/verified bytes |
+| 16 | 4 | Write elapsed milliseconds |
+| 20 | 4 | Read/verify elapsed milliseconds |
+| 24 | 4 | Mismatched byte count |
+| 28 | 1 | Execution error |
+| 29 | 1 | FatFs FRESULT |
+| 30 | 1 | Most recent command rejection (zero for none) |
+| 31 | 1 | Reserved zero |
+
+States are idle `0`, queued `1`, mounting `2`, writing `3`, reading/verifying `4`,
+cleanup `5`, passed `6`, failed `7`, cancelled `8`. Errors are none `0`, busy `1`,
+USB owner `2`, mounted filesystem `3`, size `4`, card unavailable `5`, space `6`,
+existing test file `7`, filesystem I/O `8`, verification `9`, cleanup `10`,
+filesystem not mounted `11`. Error `3` is retained for compatibility but is no
+longer emitted. Starting requires an already-mounted filesystem; tests never
+mount or unmount it.
+Completion is published only after cleanup attempts. A command rejection does
+not replace an ongoing test or its retained result. Hosts compute averages from
+byte counters and durations; measurement boundaries and safety rules live in
+[the self-test guide](sd-self-test.md).
 
 ## Host Implementations
 

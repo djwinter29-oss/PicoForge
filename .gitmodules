@@ -4,3 +4,6 @@
 [submodule "firmware/third_party/pico-sdk"]
 	path = firmware/third_party/pico-sdk
 	url = https://github.com/raspberrypi/pico-sdk.git
+[submodule "firmware/third_party/embedded-cli"]
+	path = firmware/third_party/embedded-cli
+	url = https://github.com/funbiscuit/embedded-cli.git

@@ -6,6 +6,7 @@ BUILD_DIR=""
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
+SYS_CLK_MHZ="${PF_SYS_CLK_MHZ:-0}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -29,6 +30,10 @@ while [ "$#" -gt 0 ]; do
             FREERTOS_KERNEL_PATH_VALUE="$2"
             shift 2
             ;;
+        --sys-clk-mhz)
+            SYS_CLK_MHZ="$2"
+            shift 2
+            ;;
         --help)
             cat <<'EOF'
 Usage: tools/firmware/build.sh [options]
@@ -39,6 +44,7 @@ Options:
     --generator NAME  CMake generator (default: Ninja when available)
   --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
+    --sys-clk-mhz MHZ  Out-of-spec system clock, 100-250 (default: 0, SDK default)
 EOF
             exit 0
             ;;
@@ -96,5 +102,6 @@ fi
 cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" \
     -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \
-    -DPICO_BOARD="$BOARD"
+    -DPICO_BOARD="$BOARD" \
+    -DPF_SYS_CLK_MHZ="$SYS_CLK_MHZ"
 cmake --build "$BUILD_DIR" --parallel

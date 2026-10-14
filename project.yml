@@ -9,6 +9,15 @@
   :enabled:
     - gcov
 
+:cmock:
+  :when_ptr: :compare_ptr
+  :plugins:
+    - ignore
+    - ignore_arg
+    - expect_any_args
+    - return_thru_ptr
+    - callback
+
 :gcov:
   :utilities:
     - gcovr
@@ -24,9 +33,11 @@
     - -:firmware/tests/support
   :source:
     - +:firmware/src/**
+    - +:firmware/third_party/embedded-cli/lib/src
   :include:
     - firmware/src/**
     - firmware/third_party/fatfs/source
+    - firmware/third_party/embedded-cli/lib/include
   :support:
     - firmware/tests/support
 

@@ -7,6 +7,8 @@
 #include "tusb.h"
 #include "drivers/sd_card/sd_card_block.h"
 #include "middleware/storage/storage.h"
+#include "middleware/storage/storage_worker.h"
+#include "middleware/storage/storage.h"
 
 static bool msc_enabled;
 static bool msc_ejected;
@@ -58,6 +60,12 @@ void pf_usb_msc_task(void)
         return;
     }
 
+    if (pf_storage_worker_busy()) {
+        transition_pending = false;
+        request_rejected = true;
+        return;
+    }
+
     if (requested_enabled) {
         if (!pf_sd_card_is_initialized()) {
             transition_pending = false;
@@ -75,12 +83,18 @@ void pf_usb_msc_task(void)
             request_rejected = true;
             return;
         }
+        pf_storage_forget_filesystem_format();
         msc_ejected = false;
         removal_prevented = false;
         msc_enabled = true;
     } else {
+        pf_sd_card_info_t info;
+        bool media_absent;
+
+        pf_sd_card_get_info(&info);
+        media_absent = info.presence_known && !info.present;
         if (!msc_ejected || removal_prevented ||
-            (pf_sd_card_msc_sync() != PF_SD_CARD_OK)) {
+            ((pf_sd_card_msc_sync() != PF_SD_CARD_OK) && !media_absent)) {
             transition_pending = false;
             request_rejected = true;
             return;

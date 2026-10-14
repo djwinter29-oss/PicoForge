@@ -9,6 +9,7 @@ from typing import Any
 from flask import Flask, jsonify, request, send_from_directory
 
 from .monitor import DeviceMonitor
+from .protocol import build_self_test_command_report
 
 
 def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flask:
@@ -72,6 +73,24 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             return jsonify({"error": "Expected JSON with a boolean 'enabled' field"}), 400
         try:
             return jsonify({"msc": dashboard.set_msc(payload["enabled"])}), 200
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except OSError as error:
+            return jsonify({"error": str(error)}), 503
+
+    @app.post("/api/self-test")
+    def self_test():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Expected a self-test JSON command"}), 400
+        action = payload.get("action")
+        size_mib = payload.get("size_mib", 32)
+        try:
+            build_self_test_command_report(action, size_mib)
+            dashboard.set_self_test(action, size_mib)
+            return jsonify({"accepted": True}), 202
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
         except RuntimeError as error:
             return jsonify({"error": str(error)}), 409
         except OSError as error:

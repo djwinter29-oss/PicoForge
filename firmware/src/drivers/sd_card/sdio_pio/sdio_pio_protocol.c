@@ -1,6 +1,8 @@
 #include "sdio_pio_protocol.h"
 #include "sd_card_protocol.h"
 
+#include <string.h>
+
 uint8_t pf_sdio_pio_crc7(const uint8_t *data, size_t size)
 {
     return pf_sd_card_crc7(data, size);
@@ -89,7 +91,7 @@ bool pf_sdio_pio_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2)
 bool pf_sdio_pio_validate_r2_response(const uint8_t frame[17])
 {
     return (frame != NULL) && ((frame[16] & 1u) != 0u) &&
-           ((frame[16] >> 1u) == pf_sdio_pio_crc7(frame, 16u));
+           ((frame[16] >> 1u) == pf_sdio_pio_crc7(frame + 1u, 15u));
 }
 
 bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)
@@ -101,33 +103,99 @@ bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)
  * The four lane CRC16s are held bit-sliced: nibble p of the register is CRC bit p
  * of lanes 0..3, so one shift/XOR advances all lanes by one data nibble.
  */
-#define CRC16_TAPS ((1ull << 48u) | (1ull << 20u) | 1ull) /* x^12, x^5, x^0 of 0x1021 */
-
 static uint64_t crc16_4bit_nibble(uint64_t reg, uint8_t nibble)
 {
     uint64_t feedback = ((reg >> 60u) ^ nibble) & 0x0fu;
 
-    return (reg << 4u) ^ (feedback * CRC16_TAPS);
+    return (reg << 4u) ^ (feedback << 48u) ^ (feedback << 20u) ^ feedback;
 }
 
-static uint64_t crc16_4bit_byte(uint64_t reg, uint8_t value)
+/*
+ * The CRC step is linear, so four data bytes are folded at once: with x = reg ^ (word << 32),
+ * reg' = (x << 32) ^ slice[3][x >> 56] ^ slice[2][x >> 48] ^ slice[1][x >> 40] ^ slice[0][x >> 32]
+ * (byte indices 8 bits wide). slice[k][v] is v shifted through four byte steps. The 8 KiB RAM
+ * tables are built on first use. This replaces a per-byte loop that was measured to be a
+ * significant CPU cost, not proven to be the sole limit on 25 MHz transfers.
+ *
+ * Each table is kept as separate high and low uint32_t halves so every lookup is two plain
+ * word loads and no 64-bit shifts are needed on the 32-bit Cortex-M cores.
+ *
+ * load_be32() returns the four wire-order bytes as a big-endian word on supported hosts.
+ * ponytail: lazy initialization assumes serialized storage-worker calls, as before;
+ * concurrent callers would need explicit initialization before starting the workers.
+ * Tables are capped at 8 KiB (6 KiB more than the byte table): slicing-by-8 doubled
+ * RAM without reducing compiled instructions per byte on Cortex-M33. Revisit only
+ * with measured benefit and a board RAM budget, not by increasing slices blindly.
+ */
+static uint32_t crc16_4bit_slice_hi[4][256];
+static uint32_t crc16_4bit_slice_lo[4][256];
+static bool crc16_4bit_table_ready;
+
+static void crc16_4bit_table_init(void)
 {
-    return crc16_4bit_nibble(crc16_4bit_nibble(reg, (uint8_t)(value >> 4u)), value & 0x0fu);
+    for (uint32_t slice = 0u; slice < 4u; slice++) {
+        for (uint32_t index = 0u; index < 256u; index++) {
+            uint64_t reg = (uint64_t)index << (32u + 8u * slice);
+
+            for (uint32_t step = 0u; step < 8u; step++) {
+                reg = crc16_4bit_nibble(reg, 0u);
+            }
+            crc16_4bit_slice_hi[slice][index] = (uint32_t)(reg >> 32u);
+            crc16_4bit_slice_lo[slice][index] = (uint32_t)reg;
+        }
+    }
+    crc16_4bit_table_ready = true;
 }
+
+/* @p word holds four wire-order bytes, first byte in the most significant position. */
+static inline uint64_t crc16_4bit_word(uint64_t reg, uint32_t word)
+{
+    uint32_t x = (uint32_t)(reg >> 32u) ^ word;
+    uint32_t b3 = x >> 24u;
+    uint32_t b2 = (x >> 16u) & 0xffu;
+    uint32_t b1 = (x >> 8u) & 0xffu;
+    uint32_t b0 = x & 0xffu;
+    uint32_t hi = (uint32_t)reg ^ crc16_4bit_slice_hi[3][b3] ^ crc16_4bit_slice_hi[2][b2] ^
+                  crc16_4bit_slice_hi[1][b1] ^ crc16_4bit_slice_hi[0][b0];
+    uint32_t lo = crc16_4bit_slice_lo[3][b3] ^ crc16_4bit_slice_lo[2][b2] ^
+                  crc16_4bit_slice_lo[1][b1] ^ crc16_4bit_slice_lo[0][b0];
+
+    return ((uint64_t)hi << 32u) | lo;
+}
+
+static inline uint32_t load_be32(const uint8_t *data)
+{
+    uint32_t word;
+
+    memcpy(&word, data, sizeof(word));
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    return word;
+#else
+    return __builtin_bswap32(word);
+#endif
+}
+
+#if PF_SDIO_PIO_FUSED_COPY
+static inline void store_be32(uint8_t *data, uint32_t word)
+{
+#if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+    word = __builtin_bswap32(word);
+#endif
+    memcpy(data, &word, sizeof(word));
+}
+#endif
 
 static uint64_t crc16_4bit_block(const uint8_t block[512])
 {
     uint64_t reg = 0u;
 
-    for (size_t index = 0u; index < 512u; index++) {
-        reg = crc16_4bit_byte(reg, block[index]);
+    if (!crc16_4bit_table_ready) {
+        crc16_4bit_table_init();
+    }
+    for (size_t index = 0u; index < 512u; index += 4u) {
+        reg = crc16_4bit_word(reg, load_be32(block + index));
     }
     return reg;
-}
-
-static uint8_t map_byte(const uint8_t nibble_map[16], uint8_t value)
-{
-    return (uint8_t)((nibble_map[value >> 4u] << 4u) | nibble_map[value & 0x0fu]);
 }
 
 void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4])
@@ -147,81 +215,107 @@ void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4])
     }
 }
 
-bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_gpio[4])
+bool pf_sdio_pio_encode_data_block_sized(const uint8_t *block, size_t block_size,
+                                         uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
 {
-    uint32_t gpio_base = UINT32_MAX;
-    uint8_t lane_at_gpio_bit[4] = { 0u, 0u, 0u, 0u };
-    bool lane_assigned[4] = { false, false, false, false };
+    uint64_t reg = 0u;
 
-    if ((map == NULL) || (data_gpio == NULL)) {
+    if ((block == NULL) || (image == NULL) ||
+        (block_size == 0u) || (block_size > 512u) || ((block_size & 3u) != 0u)) {
         return false;
     }
-
-    for (uint8_t lane = 0u; lane < 4u; lane++) {
-        if (data_gpio[lane] < gpio_base) {
-            gpio_base = data_gpio[lane];
-        }
-    }
-    for (uint8_t lane = 0u; lane < 4u; lane++) {
-        uint32_t gpio_bit = data_gpio[lane] - gpio_base;
-        if ((gpio_bit >= 4u) || lane_assigned[gpio_bit]) {
-            return false;
-        }
-        lane_at_gpio_bit[gpio_bit] = lane;
-        lane_assigned[gpio_bit] = true;
+    if (!crc16_4bit_table_ready) {
+        crc16_4bit_table_init();
     }
 
-    for (uint8_t nibble = 0u; nibble < 16u; nibble++) {
-        uint8_t to_gpio = 0u;
-        uint8_t from_gpio = 0u;
-
-        for (uint8_t gpio_bit = 0u; gpio_bit < 4u; gpio_bit++) {
-            uint8_t lane = lane_at_gpio_bit[gpio_bit];
-            to_gpio |= (uint8_t)(((nibble >> lane) & 1u) << gpio_bit);
-            from_gpio |= (uint8_t)(((nibble >> gpio_bit) & 1u) << lane);
-        }
-        map->to_gpio[nibble] = to_gpio;
-        map->from_gpio[nibble] = from_gpio;
+    uint32_t profile_start = pf_sd_card_profile_begin();
+    for (size_t index = 0u; index < block_size; index += 4u) {
+        uint32_t word = load_be32(block + index);
+        reg = crc16_4bit_word(reg, word);
+    #if PF_SDIO_PIO_FUSED_COPY
+        store_be32(image + index, word);
+    #endif
     }
+    #if !PF_SDIO_PIO_FUSED_COPY
+    memcpy(image, block, block_size);
+    #endif
+    for (size_t index = 0u; index < 8u; index++) {
+        uint8_t crc_byte = (uint8_t)(reg >> (56u - 8u * index));
+        image[block_size + index] = crc_byte;
+    }
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
     return true;
 }
 
-bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint8_t block[512],
+bool pf_sdio_pio_encode_data_block(const uint8_t block[512],
                                    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
 {
-    uint64_t reg = 0u;
-
-    if ((map == NULL) || (block == NULL) || (image == NULL)) {
-        return false;
-    }
-
-    for (size_t index = 0u; index < 512u; index++) {
-        reg = crc16_4bit_byte(reg, block[index]);
-        image[index] = map_byte(map->to_gpio, block[index]);
-    }
-    for (size_t index = 0u; index < 8u; index++) {
-        image[512u + index] = map_byte(map->to_gpio, (uint8_t)(reg >> (56u - 8u * index)));
-    }
-    return true;
+    return pf_sdio_pio_encode_data_block_sized(block, 512u, image);
 }
 
-bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
-                                   const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512])
+static bool decode_data_block(const uint8_t *image, uint8_t *block, size_t block_size)
 {
     uint64_t reg = 0u;
-    uint8_t mismatch = 0u;
+    uint64_t received = 0u;
 
-    if ((map == NULL) || (image == NULL) || (block == NULL)) {
+    if ((image == NULL) ||
+        (block_size == 0u) || (block_size > 512u) || ((block_size & 3u) != 0u)) {
         return false;
     }
+    if (!crc16_4bit_table_ready) {
+        crc16_4bit_table_init();
+    }
 
-    for (size_t index = 0u; index < 512u; index++) {
-        block[index] = map_byte(map->from_gpio, image[index]);
-        reg = crc16_4bit_byte(reg, block[index]);
+    uint32_t profile_start = pf_sd_card_profile_begin();
+    for (size_t index = 0u; index < block_size; index += 4u) {
+        uint32_t word = load_be32(image + index);
+        reg = crc16_4bit_word(reg, word);
+#if PF_SDIO_PIO_FUSED_COPY
+        if (block != NULL) {
+            store_be32(block + index, word);
+        }
+#endif
     }
+#if !PF_SDIO_PIO_FUSED_COPY
+    if (block != NULL) {
+        memcpy(block, image, block_size);
+    }
+#endif
     for (size_t index = 0u; index < 8u; index++) {
-        mismatch |= (uint8_t)(map_byte(map->from_gpio, image[512u + index]) ^
-                              (uint8_t)(reg >> (56u - 8u * index)));
+        received = (received << 8u) | image[block_size + index];
     }
-    return mismatch == 0u;
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
+    if (received != reg) {
+        pf_sd_card_profile_event(PF_SD_CARD_PROFILE_CRC_FAILURE);
+    }
+    return received == reg;
+}
+
+bool pf_sdio_pio_decode_data_block_sized(const uint8_t *image, uint8_t *block,
+                                         size_t block_size)
+{
+    return block != NULL && decode_data_block(image, block, block_size);
+}
+
+bool pf_sdio_pio_verify_data_block(const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
+{
+    return decode_data_block(image, NULL, 512u);
+}
+
+bool pf_sdio_pio_decode_data_block(const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE],
+                                   uint8_t block[512])
+{
+    return pf_sdio_pio_decode_data_block_sized(image, block, 512u);
+}
+
+bool pf_sdio_pio_switch_supports_high_speed(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+{
+    return (status != NULL) && ((status[13] & 0x02u) != 0u);
+}
+
+bool pf_sdio_pio_switch_selected_high_speed(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+{
+    return (status != NULL) && ((status[16] & 0x0fu) == 1u);
 }

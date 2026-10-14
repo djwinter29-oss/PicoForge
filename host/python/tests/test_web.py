@@ -43,6 +43,9 @@ class FakeMonitor:
     def set_msc(self, enabled):
         return {"enabled": enabled, "transition_pending": True, "request_rejected": False}
 
+    def set_self_test(self, action, size_mib):
+        self.last_self_test = (action, size_mib)
+
 
 class WebTests(unittest.TestCase):
     def test_status_route_returns_snapshot_and_security_headers(self):
@@ -103,6 +106,24 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["msc"]["enabled"])
         self.assertTrue(response.json["msc"]["transition_pending"])
+
+    def test_self_test_endpoint_delivers_validated_async_commands(self):
+        monitor = FakeMonitor()
+        client = create_app(monitor).test_client()
+        response = client.post("/api/self-test", json={"action": "start", "size_mib": 32}, base_url="http://127.0.0.1")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(monitor.last_self_test, ("start", 32))
+        for payload in ({"action": "start", "size_mib": True}, {"action": "start", "size_mib": 129}, {"action": "invalid"}):
+            response = client.post("/api/self-test", json=payload, base_url="http://127.0.0.1")
+            self.assertEqual(response.status_code, 400)
+
+    def test_self_test_endpoint_reports_device_unavailability(self):
+        class DisconnectedMonitor(FakeMonitor):
+            def set_self_test(self, action, size_mib):
+                raise RuntimeError("PicoForge HID is not connected")
+        response = create_app(DisconnectedMonitor()).test_client().post(
+            "/api/self-test", json={"action": "cancel"}, base_url="http://127.0.0.1")
+        self.assertEqual(response.status_code, 409)
 
 
 if __name__ == "__main__":

@@ -50,6 +50,7 @@ PicoForge is designed for teams building industrial controllers, connected IoT d
 
 See [docs/hardware-setup.md](docs/hardware-setup.md) for Pico/Pico 2 header wiring, breakout options, and external flash constraints.
 See [docs/architecture.md](docs/architecture.md) for implemented status and intended module boundaries.
+See [docs/sdcard-design.md](docs/sdcard-design.md) for SDIO-PIO/SPI interfaces, workflows, and driver hardware resources.
 
 ## Repository Layout
 
@@ -111,11 +112,14 @@ Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmw
 
 FatFs uses a transport-neutral SD-card block API. Select the static transport in `firmware/src/config/config.h`, get the matching config with `pf_board_get_sd_card_config()`, then pass it to `pf_storage_mount()`; FatFs itself does not know which bus is selected. SDIO-PIO and SPI backends implement initialization and block I/O, but neither has been validated on physical hardware. The example does not mount a volume or format media. See [the hardware setup options](docs/hardware-setup.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
 
-The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces by default; HID can hand exclusive SD-card ownership to an optional MSC interface, which appears after USB re-enumeration. The host must safely eject before firmware regains the card. CDC sends a greeting when opened; HID reports product identity, runtime telemetry, board LED state, SD-card metadata, and MSC state/control. Startup initializes the selected card for telemetry but does not mount or modify its filesystem. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SD card use grouped subdirectories. Both development VID/PIDs (`0xCAFE:0x4011` and `0xCAFE:0x4012`) must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
+The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces by default; HID can hand exclusive SD-card ownership to an optional MSC interface, which appears after USB re-enumeration. HID retains the same PID and interface number in both configurations and reconnects after the brief transition. The host must safely eject before firmware regains the card. CDC provides the [Embedded CLI console](docs/cdc-cli.md); HID reports product identity, runtime telemetry, board LED state, SD-card metadata, and MSC state/control. Startup initializes the selected card for telemetry but does not mount or modify its filesystem. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SD card use grouped subdirectories. The development VID/PID (`0xCAFE:0x4011`) must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
 
 To flash over a CMSIS-DAP debug probe, run `tools/firmware/load.sh --board pico` or `tools/firmware/load.sh --board pico2`. Alternatively, hold BOOTSEL while connecting USB and copy the matching UF2 file to the mounted drive. Start the Python dashboard separately with `tools/host/run-python.sh` after installing its dependencies. Host enumeration and physical sensor/LED behavior still need board validation.
 
 ## Host Tools
+
+The dashboards can start/cancel the firmware's [SD-card file self-test](docs/sd-self-test.md)
+over HID and display verification progress and average filesystem read/write speeds.
 
 The Python launcher creates `build/picoforge` and installs the host package on first run, then opens HID and serves a loopback-only dashboard:
 

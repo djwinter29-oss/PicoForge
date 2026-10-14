@@ -31,6 +31,38 @@ typedef struct {
     uint8_t cid[16];
 } pf_sd_card_info_t;
 
+typedef enum {
+    PF_SD_CARD_PROFILE_COMMAND = 0,
+    PF_SD_CARD_PROFILE_DATA,
+    PF_SD_CARD_PROFILE_CRC,
+    PF_SD_CARD_PROFILE_BUSY,
+    PF_SD_CARD_PROFILE_STOP,
+    PF_SD_CARD_PROFILE_RECOVERY,
+    PF_SD_CARD_PROFILE_PHASE_COUNT,
+} pf_sd_card_profile_phase_t;
+
+typedef enum {
+    PF_SD_CARD_PROFILE_CRC_FAILURE = 0,
+    PF_SD_CARD_PROFILE_BATCH_FALLBACK,
+    PF_SD_CARD_PROFILE_TIMEOUT,
+    PF_SD_CARD_PROFILE_RECOVERY_ATTEMPT,
+    PF_SD_CARD_PROFILE_EVENT_COUNT,
+} pf_sd_card_profile_event_t;
+
+/** Serialized-driver profiling; phase timings overlap and must not be summed. */
+typedef struct {
+    uint64_t elapsed_us[PF_SD_CARD_PROFILE_PHASE_COUNT];
+    uint32_t calls[PF_SD_CARD_PROFILE_PHASE_COUNT];
+    uint32_t events[PF_SD_CARD_PROFILE_EVENT_COUNT];
+} pf_sd_card_profile_t;
+
+/** Enable optional profiling, disabled at boot; serialize with all card access. */
+void pf_sd_card_set_profiling_enabled(bool enabled);
+/** Clear accumulated metrics without changing profiling enablement. */
+void pf_sd_card_reset_profile(void);
+/** Copy metrics to caller-owned storage; NULL is ignored. Requires serialized access. */
+void pf_sd_card_get_profile(pf_sd_card_profile_t *profile);
+
 /** Return whether the selected card transport has initialized successfully. */
 bool pf_sd_card_is_initialized(void);
 
@@ -64,6 +96,11 @@ pf_sd_card_result_t pf_sd_card_msc_sync(void);
 
 /** Snapshot initialized card telemetry; presence is unknown until detect or init succeeds. */
 void pf_sd_card_get_info(pf_sd_card_info_t *info);
+
+/** Return the selected transport name (sdio, spi, or unconfigured).
+ * The returned string has static lifetime and must not be modified.
+ */
+const char *pf_sd_card_transport_name(void);
 
 /**
  * Set a callback run between polls of card waits that can last milliseconds

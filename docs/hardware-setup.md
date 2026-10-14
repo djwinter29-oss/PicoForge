@@ -10,6 +10,7 @@ Reference hardware setup for standard Pico/Pico 2 boards and external breakouts.
 | Alternate build target | Raspberry Pi Pico 2 (`PICO_BOARD=pico2`); the firmware build defaults to `pico` |
 | MCU | RP2040 on Pico; RP2350 on Pico 2 |
 | Reference power | USB through the board's USB connector |
+| Optional overclock | `tools/firmware/build.sh --board pico2 --sys-clk-mhz 200` (or `PF_SYS_CLK_MHZ=200` with `load.sh`); out of spec, range 100-250 MHz, default `0` keeps the SDK clock. The SDK applies it at boot and raises the regulator to 1.15 V above 150 MHz and 1.30 V above 200 MHz. The SDIO board profile requests 20 MHz; at the stock 150 MHz system clock the measured bus is 18.75 MHz. |
 
 ## Debug and Monitoring
 
@@ -22,7 +23,7 @@ Serial and SWD do not overlap the memory pins below. Share ground with the adapt
 | GP0 | 1 | TX |
 | GP1 | 2 | RX |
 
-Connect MCU TX to adapter RX and MCU RX to adapter TX. Board support initializes the monitor UART from the selected topology; the Pico/Pico 2 profiles assign UART0 to GP0/GP1 at 115200 baud, 8-N-1. Logs are output on TX; no command console or RTS/CTS flow control is implemented. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
+Connect MCU TX to adapter RX and MCU RX to adapter TX, and connect GND. Board support initializes the monitor UART from the selected topology; the Pico/Pico 2 profiles assign UART0 to GP0/GP1 at 115200 baud, 8-N-1. UART logging has been verified on a Pico through the Raspberry Pi Debug Probe. The firmware emits boot messages and a heartbeat each second, including uptime and system clock. On Linux the probe's UART bridge appears as a serial device (for example `/dev/ttyACM0`; device numbering can vary), while PicoForge USB CDC is a separate port (for example `/dev/ttyACM1`). Open the probe UART at 115200 baud, for example with `screen /dev/ttyACM0 115200`. Reset the Pico after opening the terminal to see boot messages. No command console or RTS/CTS flow control is implemented; text sent to UART RX is not processed. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
 
 ### SWD
 
@@ -35,24 +36,24 @@ Connect probe SWDIO/SWCLK to the matching board pads. Verify their labels on the
 
 ## Memory and Storage Connections
 
-Use GP2-GP7 for one memory device and choose one mode column below. Wiring stays fixed between that device's PIO and SPI modes; both SPI modes use SPI0 with GPIO-controlled CS on GP5. This preserves fixed wiring but does not provide automatic hardware CS.
+Use GP2-GP7 for one memory device and choose one mode column below. GP7 is the CS pin in SD-SPI, QSPI-PIO, and SPI-NOR modes; it is controlled by GPIO/PIO, not automatic hardware CS. SDIO has no CS signal.
 
 | MCU GPIO | Header pin | SDIO-PIO | SD-SPI (SPI0) | QSPI-PIO | SPI-NOR flash (SPI0) |
 | --- | --- | --- | --- | --- | --- |
 | GP2 | 4 | CLK | CLK / SCK | CLK | CLK / SCK |
 | GP3 | 5 | CMD | SI / MOSI | IO0 | IO0 / MOSI |
 | GP4 | 6 | DAT0 | SO / MISO | IO1 | IO1 / MISO |
-| GP5 | 7 | DAT3 | CS (GPIO-controlled) | CS | CS (GPIO-controlled) |
-| GP6 | 9 | DAT2 | - | IO2 | WP (hold high) |
-| GP7 | 10 | DAT1 | - | IO3 | HOLD (hold high) |
+| GP5 | 7 | DAT1 | - | IO2 | WP (hold high) |
+| GP6 | 9 | DAT2 | - | IO3 | HOLD (hold high) |
+| GP7 | 10 | DAT3 | CS (GPIO-controlled) | CS | CS (GPIO-controlled) |
 | GP8 | 11 | DET (optional) | DET (optional) | - | - |
 
 - `-` means unused in that mode, not necessarily disconnected. GP8 is optional SD-card detect.
 - Use 3.3 V and common ground, never 5 V. Power off before replacing a breakout.
-- The board profile explicitly assigns CLK=GP2, CMD=GP3, and logical DAT0-DAT3 to GP4/GP7/GP6/GP5. PIO samples the contiguous GP4-GP7 window; the SDIO transfer code remaps the DAT1/DAT3 bit lanes to match this wiring.
+- SDIO-PIO requires logical DAT0-DAT3 on four ascending consecutive GPIOs, in that order; lane swaps are unsupported. The board profile assigns CLK=GP2, CMD=GP3, and DAT0-DAT3 to GP4/GP5/GP6/GP7. PIO samples the contiguous GP4-GP7 window directly.
 - The SD-SPI driver holds GPIO-controlled CS low across each complete card transaction, including data and busy-response phases. Verify CS timing, clock, and data with a logic analyzer during board validation.
-- GPIO-controlled CS on GP5 is the selected implementation and requires no rewiring. It does not satisfy an automatic hardware-CS requirement; if hardware CS is mandatory, the design remains unresolved until a suitable transaction-control approach is demonstrated.
-- Pin names follow the breakout guides below; wiring, signal integrity, and protocol operation remain unverified on hardware.
+- SDIO has no CS signal. In SD-SPI mode, the driver controls the breakout's DAT3/CS line on GP7 as ordinary GPIO; no automatic hardware CS is used.
+- Pin names follow the breakout guides below. Pico 2 SDIO and SPI filesystem CLI operations are verified as recorded below; other boards/interface modes and signal integrity have not been validated.
 
 ### Lab Hardware Examples
 
@@ -60,15 +61,39 @@ The lab uses two types of memory/storage breakout: the Adafruit microSD board an
 
 #### SD-Card Breakout
 
-The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Keep the breakout's DAT3/CS connected to GP5 in both modes. DAT1/DAT2 remain connected to GP7/GP6; leave those GPIOs as inputs in SD-SPI mode rather than driving them for other functions. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. Startup does not initialize or mount the card; SDIO and SPI card I/O have not been validated on hardware. SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization and may require cycling card power; fixed wiring does not imply hot switching.
+The selected module is Adafruit's [Micro SD SPI or SDIO Card Breakout Board (P4682D)](https://www.adafruit.com/product/4682); see its [pinout guide](https://learn.adafruit.com/adafruit-microsd-spi-sdio/pinouts). It is 3.3 V only. Wire DAT0/DAT1/DAT2/DAT3-CS to GP4/GP5/GP6/GP7 respectively in both modes. DAT1 and DAT2 are unused inputs in SD-SPI mode; GP7 drives CS in that mode. Board support can construct either transport configuration and sets its active-high DET signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their combined strength. The storage worker initializes and mounts detected cards according to [the mounting policy](cdc-cli.md). SPI requests use single-block commands for each sector. Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power: an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.
+
+Pico 2 SDIO initialization was verified with the connected 16 GB card: UART reported `SD card initialized`, and HID reported `initialized=true`, 30,875,648 sectors (15,808,331,776 bytes), and a 12.5 MHz bus clock. The command PIO now drives all 48 command bits before rising clock edges and captures the response start bit without a software bit shift. Command completion allows at least eight idle clock cycles before the next command. That initial check did not exercise sector I/O or filesystem mounting and wrote no card data; the full SDIO CLI qualification is recorded below.
+
+On 2026-10-13, the same Pico 2 and card were verified in SPI mode at 25 MHz after reboot. HID reported the same capacity and CID. The SPI driver explicitly pulls MISO high so released responses have a defined idle level; this test does not isolate that change from the reboot as the cause of successful initialization. The initial read-only CDC CLI check successfully mounted the existing filesystem, listed `/`, read directory metadata with `fs stat`, and reported total/free filesystem space with `fs df` (15,799,943,168 / 15,799,877,632 bytes). These operations exercised SPI sector reads and CRC checks. HID identity and runtime/memory/MSC input reports remained accessible during CDC use. The filesystem was explicitly unmounted afterward, with MSC disabled and Pico retaining card ownership. No files were changed or formatted during that initial check. SPI was explicitly selected for this qualification; select the intended transport before building.
+
+A subsequent authorized CDC CLI qualification on the same date passed 36 checks using only disposable files in `/pf-cli-test-e700f283`. Verified commands were `help fs`, `sd status`, `fs mount`, `unmount`, `ls`, `stat`, bounded/default `cat`, `df`, `mkdir`, `write`, `append`, `mv`, and confirmed `rm`. Writing and appending produced the exact expected readback (`hello world more text`, 21 bytes). Guard checks refused operations before mount, duplicate creation, write/rename overwrites, unsafe paths, invalid read limits, unconfirmed deletion, and directory deletion. HID identity and runtime/memory/MSC reports continued throughout. Both test files were deleted and their absence verified; only the empty test directory remains. The filesystem was unmounted, MSC disabled, and Pico retained ownership. Existing files were not changed and media was not formatted. This verifies the tested small-file SPI workflow, not sustained-write endurance, power-loss recovery, detailed backpressure, or the SPI MSC handoff lifecycle.
+
+The same 36-check suite subsequently passed in native SDIO mode at 12.5 MHz on
+2026-10-13. Switching from SPI first failed CMD8 after a warm MCU reset; a full
+card power cycle restored native initialization. Initial directory creation then
+failed with `DISK_ERR`. The write PIO had treated the CRC-status end bit as ready
+before the card entered its busy phase, allowing a subsequent CMD24 too early.
+The corrected program waits through the following falling/rising clock edges
+before waiting for DAT0 to release busy. Write start/stop and bus release also
+transition on falling edges. The focused directory write then succeeded, and
+the full suite passed on clean firmware with temporary diagnostics removed.
+Readback again matched `hello world more text` (21 bytes), all safety guards
+passed, and HID identity/runtime/memory/MSC reports stayed available. Test files
+were deleted and absence verified; empty `/pf-sdio-test-2efe1ac8` and diagnostic
+`/pf-sdio-diag-12d12bef` directories remain alongside the earlier SPI test
+directory. No existing file contents were changed and no formatting was done.
+SDIO remains selected, the filesystem is unmounted, MSC is disabled, and Pico
+owns the card. These checks do not qualify endurance, power-loss recovery,
+high-speed timing margins, or complete SDIO MSC handoff workflows.
 
 #### W25Q128 Flash Breakout
 
-The [Adafruit QSPI DIP Breakout - W25Q128](https://www.adafruit.com/product/5634) is a 3.3 V, 16 MB serial NOR flash supporting QSPI and SPI; see its [pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). Keep CLK, IO0, IO1, CS, IO2, and IO3 connected to GP2, GP3, GP4, GP5, GP6, and GP7 respectively in both modes. Use pull-ups on CS, IO2/WP, and IO3/HOLD to keep them high through reset; in SPI-NOR mode, keep GP6/GP7 high or as inputs with those external pull-ups. Never hard-tie IO2/IO3 to 3V3 when they are used as QSPI data signals. The future QSPI-PIO driver must support the nonconsecutive data mapping (IO0=GP3, IO1=GP4, IO2=GP6, IO3=GP7) and configure the flash's quad-enable setting before quad transfers. Mode changes require protocol reinitialization, not just changing the GPIO mux. PicoForge does not yet implement an external flash driver.
+The [Adafruit QSPI DIP Breakout - W25Q128](https://www.adafruit.com/product/5634) is a 3.3 V, 16 MB serial NOR flash supporting QSPI and SPI; see its [pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). Connect CLK, IO0, IO1, IO2, IO3, and CS to GP2, GP3, GP4, GP5, GP6, and GP7 respectively in both modes. This keeps IO0-IO3 on consecutive GP3-GP6 and shares CS on GP7 with the SD breakout. Use pull-ups on GP7/CS, GP5/IO2/WP, and GP6/IO3/HOLD to keep them high through reset; in SPI-NOR mode, keep GP5/GP6 high or as inputs with those external pull-ups. Never hard-tie IO2/IO3 to 3V3 when they are used as QSPI data signals. The future QSPI-PIO driver can sample the contiguous data window GP3-GP6 and must configure the flash's quad-enable setting before quad transfers. Mode changes require protocol reinitialization, not just changing the GPIO mux. PicoForge does not yet implement an external flash driver.
 
 ## User I/O Pin List
 
-This table identifies potential future user-expansion GPIOs after assigning UART0 to GP0/GP1, the memory interface to GP2-GP7, and optional SD-card detect to GP8; it does not imply these expansion features are implemented. SD-SPI leaves GP6/GP7 unused by the protocol but still connected to the card, so they remain reserved with fixed wiring. In SPI-NOR mode, GP6/GP7 remain reserved for the flash's WP/HOLD signals and must stay high. Availability of the listed pins and peripheral functions depends on the selected memory mode and other pin/controller assignments. All listed pins can also be used as digital GPIO or routed to PIO.
+This table identifies potential future user-expansion GPIOs after assigning UART0 to GP0/GP1, the memory interface to GP2-GP7, and optional SD-card detect to GP8; it does not imply these expansion features are implemented. In SD-SPI mode GP5 remains connected to DAT1 and GP6 to DAT2, while GP7 is CS. In SPI-NOR mode, GP5/GP6 remain reserved for WP/HOLD and GP7 is CS. These pins remain reserved with fixed wiring. Availability of the listed pins and peripheral functions depends on the selected memory mode and other pin/controller assignments. All listed pins can also be used as digital GPIO or routed to PIO.
 
 | Available digital GPIO | Header pin | Hardware peripheral functions |
 | --- | --- | --- |
@@ -113,7 +138,7 @@ Firmware resources that do not use header GPIOs:
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
-When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or SPI at build time in `firmware/src/config/config.h`; storage is not initialized or mounted automatically. Validate both wiring and card I/O on hardware before enabling storage use.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or SPI at build time in `firmware/src/config/config.h`; detected cards are mounted by the storage worker as described in [the mounting policy](cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

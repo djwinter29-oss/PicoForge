@@ -9,6 +9,8 @@
 #include "drivers/led.h"
 #include "drivers/temperature.h"
 #include "msc.h"
+#include "middleware/storage/storage.h"
+#include "middleware/storage/storage_worker.h"
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {
@@ -82,6 +84,20 @@ void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
     }
 }
 
+void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t sequence)
+{
+    memset(report, 0, sizeof(*report));
+    report->version = PF_HID_REPORT_VERSION;
+    report->sequence = sequence;
+    switch (pf_storage_filesystem_format()) {
+    case PF_STORAGE_FILESYSTEM_FAT12: report->format = PF_HID_FILESYSTEM_FAT12; break;
+    case PF_STORAGE_FILESYSTEM_FAT16: report->format = PF_HID_FILESYSTEM_FAT16; break;
+    case PF_STORAGE_FILESYSTEM_FAT32: report->format = PF_HID_FILESYSTEM_FAT32; break;
+    case PF_STORAGE_FILESYSTEM_EXFAT: report->format = PF_HID_FILESYSTEM_EXFAT; break;
+    default: report->format = PF_HID_FILESYSTEM_UNKNOWN; break;
+    }
+}
+
 void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report)
 {
     memset(report, 0, sizeof(*report));
@@ -89,6 +105,26 @@ void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report)
     report->enabled = pf_usb_msc_is_enabled();
     report->transition_pending = pf_usb_msc_transition_pending();
     report->request_rejected = pf_usb_msc_request_rejected();
+}
+
+void pf_hid_build_self_test_report(pf_hid_self_test_status_t *report, uint8_t sequence)
+{
+    pf_self_test_status_t status;
+    pf_storage_worker_self_test_status(&status);
+    memset(report, 0, sizeof(*report));
+    report->version = PF_HID_REPORT_VERSION;
+    report->sequence = sequence;
+    report->state = (uint8_t)status.state;
+    report->flags = status.flags;
+    report->target_bytes = status.target_bytes;
+    report->written_bytes = status.written_bytes;
+    report->read_bytes = status.read_bytes;
+    report->write_elapsed_ms = status.write_elapsed_ms;
+    report->read_elapsed_ms = status.read_elapsed_ms;
+    report->mismatch_count = status.mismatch_count;
+    report->error = (uint8_t)status.error;
+    report->filesystem_result = (uint8_t)status.filesystem_result;
+    report->request_error = (uint8_t)status.request_error;
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
@@ -132,6 +168,14 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
         return sizeof(report);
     }
 
+    if ((report_id == PF_HID_SELF_TEST_REPORT_ID) && (report_type == HID_REPORT_TYPE_INPUT) &&
+        (reqlen >= sizeof(pf_hid_self_test_status_t))) {
+        pf_hid_self_test_status_t report;
+        pf_hid_build_self_test_report(&report, 0u);
+        memcpy(buffer, &report, sizeof(report));
+        return sizeof(report);
+    }
+
     return 0u;
 }
 
@@ -152,5 +196,15 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                (bufsize >= sizeof(pf_hid_msc_command_report_t)) &&
                (buffer[0] == PF_HID_REPORT_VERSION) && (buffer[1] <= 1u)) {
         pf_usb_msc_request(buffer[1] != 0u);
+    } else if ((report_id == PF_HID_SELF_TEST_REPORT_ID) &&
+               (bufsize == sizeof(pf_hid_self_test_command_t)) &&
+               (buffer[0] == PF_HID_REPORT_VERSION) && (buffer[1] <= 1u)) {
+        uint32_t size_mib = (uint32_t)buffer[2] | ((uint32_t)buffer[3] << 8u) |
+                           ((uint32_t)buffer[4] << 16u) | ((uint32_t)buffer[5] << 24u);
+        if (buffer[1] == 1u) {
+            (void)pf_storage_worker_self_test_start(size_mib, pf_usb_msc_is_enabled());
+        } else if (size_mib == 0u) {
+            (void)pf_storage_worker_self_test_cancel();
+        }
     }
 }

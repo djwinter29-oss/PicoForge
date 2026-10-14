@@ -19,7 +19,9 @@ def _empty_snapshot() -> dict[str, object]:
         "runtime": None,
         "board_status": None,
         "memory": None,
+        "filesystem_format": None,
         "msc": None,
+        "self_test": None,
         "updated_at": None,
     }
 
@@ -106,6 +108,7 @@ class DeviceMonitor:
                         "board_status": None,
                         "memory": None,
                         "msc": None,
+                        "self_test": None,
                         "updated_at": None,
                     }
                 while not self._stop.is_set():
@@ -130,12 +133,26 @@ class DeviceMonitor:
                                 memory=item["data"],
                                 updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                             )
+                    elif item is not None and item["kind"] == "filesystem":
+                        with self._lock:
+                            self._snapshot.update(
+                                connected=True,
+                                error=None,
+                                filesystem_format=item["data"]["format"],
+                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            )
                     elif item is not None and item["kind"] == "msc":
                         with self._lock:
                             self._snapshot.update(
                                 connected=True,
                                 error=None,
                                 msc=item["data"],
+                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            )
+                    elif item is not None and item["kind"] == "self_test":
+                        with self._lock:
+                            self._snapshot.update(
+                                connected=True, error=None, self_test=item["data"],
                                 updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                             )
             except (OSError, RuntimeError, ValueError) as error:
@@ -151,3 +168,9 @@ class DeviceMonitor:
                         except OSError:
                             pass
             self._stop.wait(1.0)
+
+    def set_self_test(self, action: str, size_mib: int = 32) -> None:
+        with self._device_lock:
+            if self._active_client is None:
+                raise RuntimeError("PicoForge HID is not connected")
+            self._active_client.set_self_test(action, size_mib)

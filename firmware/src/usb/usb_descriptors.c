@@ -7,15 +7,13 @@
 
 #define USB_VID 0xCAFEu
 #define USB_PID 0x4011u
-#define USB_PID_MSC 0x4012u
 #define USB_BCD_DEVICE 0x0100u
 
 enum {
     ITF_NUM_CDC = 0,
     ITF_NUM_CDC_DATA = 1,
-    ITF_NUM_MSC = 2,
-    ITF_NUM_HID_NO_MSC = 2,
-    ITF_NUM_HID_MSC = 3,
+    ITF_NUM_HID = 2,
+    ITF_NUM_MSC = 3,
     ITF_NUM_TOTAL_NO_MSC = 3,
     ITF_NUM_TOTAL_MSC = 4,
 };
@@ -70,6 +68,17 @@ static uint8_t const hid_report_descriptor[] = {
     0x95, PF_HID_MSC_COMMAND_PAYLOAD_SIZE,
     0x09, 0x05,
     0xB1, 0x02,
+    0x85, PF_HID_SELF_TEST_REPORT_ID,
+    0x95, PF_HID_SELF_TEST_STATUS_PAYLOAD_SIZE,
+    0x09, 0x06,
+    0x81, 0x02,
+    0x95, PF_HID_SELF_TEST_COMMAND_PAYLOAD_SIZE,
+    0x09, 0x06,
+    0xB1, 0x02,
+    0x85, PF_HID_FILESYSTEM_REPORT_ID,
+    0x95, PF_HID_FILESYSTEM_PAYLOAD_SIZE,
+    0x09, 0x07,
+    0x81, 0x02,
     0xC0,
 };
 
@@ -92,7 +101,6 @@ static tusb_desc_device_t desc_device = {
 
 uint8_t const *tud_descriptor_device_cb(void)
 {
-    desc_device.idProduct = pf_usb_msc_is_enabled() ? USB_PID_MSC : USB_PID;
     return (uint8_t const *)&desc_device;
 }
 
@@ -100,7 +108,7 @@ static uint8_t const desc_configuration_no_msc[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL_NO_MSC, 0, CONFIG_TOTAL_LEN_NO_MSC, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8,
                        EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
-    TUD_HID_DESCRIPTOR(ITF_NUM_HID_NO_MSC, STRID_HID, HID_ITF_PROTOCOL_NONE,
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID, STRID_HID, HID_ITF_PROTOCOL_NONE,
                        sizeof(hid_report_descriptor), EPNUM_HID_IN,
                        CFG_TUD_HID_EP_BUFSIZE, 10),
 };
@@ -109,10 +117,10 @@ static uint8_t const desc_configuration_msc[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL_MSC, 0, CONFIG_TOTAL_LEN_MSC, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8,
                        EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
-    TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, STRID_MSC, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
-    TUD_HID_DESCRIPTOR(ITF_NUM_HID_MSC, STRID_HID, HID_ITF_PROTOCOL_NONE,
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID, STRID_HID, HID_ITF_PROTOCOL_NONE,
                        sizeof(hid_report_descriptor), EPNUM_HID_IN,
                        CFG_TUD_HID_EP_BUFSIZE, 10),
+    TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, STRID_MSC, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
 };
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
@@ -161,11 +169,7 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
             string_desc_arr[index] == NULL) {
             return NULL;
         }
-        if (index == STRID_PRODUCT && pf_usb_msc_is_enabled()) {
-            string = "PicoForge CDC + HID + MSC";
-        } else {
-            string = string_desc_arr[index];
-        }
+        string = string_desc_arr[index];
         char_count = strlen(string);
         for (size_t i = 0u; i < char_count; i++) {
             desc_str[1u + i] = (uint16_t)(unsigned char)string[i];
