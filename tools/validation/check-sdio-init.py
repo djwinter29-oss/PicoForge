@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise SDIO qualification and retry control flow without a Pico SDK."""
+"""Exercise SDIO qualification, retry, and transfer routing without a Pico SDK."""
 import os
 from pathlib import Path
 import subprocess
@@ -27,9 +27,7 @@ HARNESS = r"""
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#define PF_SD_CARD_BLOCK_SIZE 512u
-#define PF_SD_CARD_OK 0
-#define PF_SD_CARD_INIT_FAILED 1
+#include "sd_card_protocol.h"
 #define PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK 1
 #define PF_SDIO_PIO_INIT_STAGE_NONE 0
 static struct {
@@ -51,7 +49,38 @@ static bool corrupt_fast, fail_reads, lose_batching, fail_identification;
 static bool runtime_read;
 static bool change_cid, change_capacity;
 static uint32_t fail_above_hz;
-static bool pf_sdio_pio_is_initialized(void) { return card_initialized; }
+static bool removed, continue_write, close_ok = true, write_ok = true;
+static unsigned closes, single_writes, batch_writes;
+static bool pf_sdio_pio_is_initialized(void) { return card_initialized && !removed; }
+static uint32_t pf_sdio_pio_block_count(void) { return card_sector_count; }
+static bool pf_sdio_pio_host_write_stream_continues(void *host, uint32_t first)
+{
+    (void)host; (void)first;
+    return continue_write;
+}
+static bool pf_sdio_pio_host_write_stream_close(void *host)
+{
+    (void)host;
+    ++closes;
+    return close_ok;
+}
+static bool pf_sdio_pio_host_write_sector(void *host, uint32_t first,
+                                          bool addressed, const uint8_t *buffer)
+{
+    (void)host; (void)first;
+    assert(addressed && buffer != NULL);
+    ++single_writes;
+    return write_ok;
+}
+static bool pf_sdio_pio_host_write_blocks(void *host, uint32_t first,
+                                          bool addressed, const uint8_t *buffer,
+                                          uint32_t count)
+{
+    (void)host; (void)first;
+    assert(addressed && buffer != NULL && count > 0u);
+    ++batch_writes;
+    return write_ok;
+}
 static unsigned gpio_get(unsigned pin) { (void)pin; return 1u; }
 static bool initialize_card(uint32_t *clock_limit_hz);
 static bool pf_sdio_pio_host_set_clock(void *host, uint32_t hz)
@@ -79,6 +108,8 @@ static uint32_t default_clock_hz(void) { return 10000000u; }
 @LADDER@
 @PROBE@
 @READ_RETRY@
+@TRANSFER@
+@VALIDATE_32@
 static bool initialize_card(uint32_t *clock_limit_hz)
 {
     ++attempts;
@@ -98,6 +129,9 @@ static int initialize(void)
 static void reset(void)
 {
     attempts = resets = reads = sectors = 0u;
+    closes = single_writes = batch_writes = 0u;
+    removed = continue_write = false;
+    close_ok = write_ok = true;
     high_speed_requests = 0u;
     card_init_stage = 0u;
     corrupt_fast = fail_reads = lose_batching = fail_identification = false;
@@ -173,7 +207,39 @@ int main(void)
     fail_reads = true;
     assert(!read_blocks_with_clock_fallback(4096u, buffer, 1u));
     assert(!card_initialized && attempts == 0u && reads == 1u);
-    puts("SDIO initialization checks passed");
+    reset();
+    runtime_read = card_initialized = true;
+    sdio_pio_host.current_clock_hz = 25000000u;
+    assert(transfer_blocks(0u, NULL, NULL, 0u) == PF_SD_CARD_OK && closes == 0u);
+    assert(transfer_blocks(0u, NULL, NULL, 1u) == PF_SD_CARD_INVALID_ARGUMENT);
+    assert(transfer_blocks(card_sector_count, buffer, NULL, 1u) == PF_SD_CARD_INVALID_ARGUMENT);
+    assert(closes == 0u && reads == 0u);
+    removed = true;
+    assert(transfer_blocks(0u, NULL, buffer, 2u) == PF_SD_CARD_NOT_READY);
+    assert(closes == 0u && batch_writes == 0u);
+    removed = false;
+    assert(transfer_blocks(0u, buffer, NULL, 1u) == PF_SD_CARD_OK);
+    assert(reads == 1u && closes == 1u && single_writes == 0u);
+    assert(transfer_blocks(0u, NULL, buffer, 1u) == PF_SD_CARD_OK);
+    assert(single_writes == 1u && closes == 2u);
+    assert(transfer_blocks(0u, NULL, buffer, 2u) == PF_SD_CARD_OK);
+    assert(batch_writes == 1u && closes == 3u);
+    continue_write = true;
+    assert(transfer_blocks(2u, NULL, buffer, 1u) == PF_SD_CARD_OK);
+    assert(batch_writes == 2u && closes == 3u && single_writes == 1u);
+    write_ok = false;
+    assert(transfer_blocks(3u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    continue_write = false;
+    assert(transfer_blocks(3u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    close_ok = false;
+    assert(transfer_blocks(0u, buffer, NULL, 1u) == PF_SD_CARD_IO_ERROR);
+    assert(reads == 1u && single_writes == 2u && batch_writes == 3u);
+        uint32_t max_blocks_32 = UINT32_MAX / PF_SD_CARD_BLOCK_SIZE;
+        assert(validate_transfer_32(0u, buffer, max_blocks_32, UINT32_MAX) == PF_SD_CARD_OK);
+        assert(validate_transfer_32(0u, buffer, max_blocks_32 + 1u, UINT32_MAX)
+            == PF_SD_CARD_INVALID_ARGUMENT);
+        assert(validate_transfer_32(UINT32_MAX, NULL, 0u, 0u) == PF_SD_CARD_OK);
+    puts("SDIO initialization and transfer routing checks passed");
 }
 """
 
@@ -182,6 +248,11 @@ def main():
     source = SOURCE.read_text()
     probe = function_source(source, "static bool probe_transfer(void)")
     read_retry = function_source(source, "static bool read_blocks_with_clock_fallback(")
+    transfer = function_source(source, "static pf_sd_card_result_t transfer_blocks(")
+    protocol = (SOURCE.parents[1] / "sd_card_protocol.c").read_text()
+    validate_32 = function_source(protocol, "pf_sd_card_result_t pf_sd_card_validate_transfer(")
+    validate_32 = validate_32.replace("pf_sd_card_validate_transfer", "validate_transfer_32")
+    validate_32 = validate_32.replace("SIZE_MAX", "UINT32_MAX")
     init = function_source(source, "static bool initialize_card(")
     request = init[init.index("    uint32_t requested_clock"):init.index("    uint32_t transfer_clock")]
     retry = function_source(source, "pf_sd_card_result_t pf_sdio_pio_init(")
@@ -191,6 +262,8 @@ def main():
     retry = retry[retry.index("card_initialized = false;\n    uint32_t clock_limit_hz"):-1]
     code = (HARNESS.replace("@LADDER@", ladder).replace("@PROBE@", probe)
             .replace("@READ_RETRY@", read_retry)
+            .replace("@TRANSFER@", transfer)
+            .replace("@VALIDATE_32@", validate_32)
             .replace("@REQUEST@", request)
             .replace("@SELECT@", selection).replace("@RETRY@", retry))
     with tempfile.TemporaryDirectory() as scratch:
@@ -198,7 +271,9 @@ def main():
         exe = Path(scratch) / "check"
         src.write_text(code)
         subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
-                        str(src), "-o", str(exe)], check=True)
+                        "-I", str(SOURCE.parents[1]),
+                        str(src), str(SOURCE.parents[1] / "sd_card_protocol.c"),
+                        "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
 
 

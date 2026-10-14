@@ -7,6 +7,7 @@
 #include "drivers/led.h"
 #include "drivers/temperature.h"
 #include "middleware/logging/logging.h"
+#include "integration/freertos/sd_card_wait.h"
 #include "usb/usb_task.h"
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
@@ -27,6 +28,7 @@ int main(void)
 
     pf_sd_card_config_t sd_card_config;
     if (pf_board_get_sd_card_config(&sd_card_config)) {
+        pf_sd_card_wait_init(&sd_card_config);
         pf_sd_card_result_t sd_card_result = pf_sd_card_init(&sd_card_config);
         if (sd_card_result == PF_SD_CARD_OK) {
             PF_LOG_INFO("storage", "SD card initialized");

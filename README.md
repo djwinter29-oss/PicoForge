@@ -50,6 +50,7 @@ PicoForge is designed for teams building industrial controllers, connected IoT d
 
 See [docs/hardware-setup.md](docs/hardware-setup.md) for Pico/Pico 2 header wiring, breakout options, and external flash constraints.
 See [docs/architecture.md](docs/architecture.md) for implemented status and intended module boundaries.
+See [docs/sdcard-design.md](docs/sdcard-design.md) for SDIO-PIO/SPI interfaces, workflows, and driver hardware resources.
 
 ## Repository Layout
 

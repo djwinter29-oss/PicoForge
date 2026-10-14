@@ -25,10 +25,19 @@ uint16_t pf_sd_card_crc16(const uint8_t *data, size_t size);
 /** Driver-internal: run the idle hook, if any, while polling a long card wait. */
 void pf_sd_card_idle(void);
 
+/** Driver-internal: install a wrapping microsecond clock with static lifetime. */
+void pf_sd_card_profile_set_clock(uint32_t (*clock_us)(void));
+/** Driver-internal: start an optional phase measurement. */
+uint32_t pf_sd_card_profile_begin(void);
+/** Driver-internal: finish a phase; durations must be shorter than one clock wrap. */
+void pf_sd_card_profile_end(pf_sd_card_profile_phase_t phase, uint32_t start);
+/** Driver-internal: count an event when profiling is enabled. */
+void pf_sd_card_profile_event(pf_sd_card_profile_event_t event);
+
 /** Convert a sector index to an SDHC block or SDSC byte address, rejecting overflow. */
 bool pf_sd_card_block_argument(uint32_t block, bool block_addressed, uint32_t *argument);
 
-/** Validate buffer and capacity bounds; zero-length transfers are no-ops. */
+/** Validate buffer, capacity, and size_t byte bounds; zero-length transfers are no-ops. */
 pf_sd_card_result_t pf_sd_card_validate_transfer(uint32_t first_block, const void *buffer,
 												uint32_t block_count, uint32_t capacity);
 

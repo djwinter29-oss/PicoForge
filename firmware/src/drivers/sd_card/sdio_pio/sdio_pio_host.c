@@ -21,6 +21,21 @@
 #define SDIO_READ_BATCH_BLOCKS 64u
 
 static uint32_t read_wire_buffer[SDIO_DATA_WORD_COUNT * SDIO_READ_BATCH_BLOCKS];
+static pf_sdio_pio_wait_hook_t data_wait_hook;
+
+void pf_sdio_pio_set_wait_hook(pf_sdio_pio_wait_hook_t hook)
+{
+    data_wait_hook = hook;
+}
+
+static void wait_data_idle(pf_sdio_pio_host_t *host, uint32_t completion_flag)
+{
+    if (data_wait_hook != NULL) {
+        data_wait_hook(host->pio, completion_flag);
+    } else {
+        pf_sd_card_idle();
+    }
+}
 
 static void load_batch_count(pf_sdio_pio_host_t *host, uint32_t batch_count)
 {
@@ -38,7 +53,9 @@ static bool read_single_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,
             return false;
         }
         ++first_sector;
-        blocks += PF_SD_CARD_BLOCK_SIZE;
+        if (blocks != NULL) {
+            blocks += PF_SD_CARD_BLOCK_SIZE;
+        }
         --block_count;
     }
     return true;
@@ -61,8 +78,11 @@ static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
     while (*decoded_count < completed) {
         uint8_t *image = (uint8_t *)&read_wire_buffer[
             *decoded_count * SDIO_DATA_WORD_COUNT];
-        if (!pf_sdio_pio_decode_data_block(image,
-                blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)) {
+        bool valid = blocks != NULL
+            ? pf_sdio_pio_decode_data_block(image,
+                blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)
+            : pf_sdio_pio_verify_data_block(image);
+        if (!valid) {
             return false;
         }
         ++*decoded_count;
@@ -252,6 +272,7 @@ static bool wait_for_command_complete(pf_sdio_pio_host_t *host,
             host->last_response_word_count = words_read;
         }
         if ((uint32_t)(time_us_32() - start) >= SDIO_COMMAND_TIMEOUT_US) {
+            pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
             return false;
         }
         tight_loop_contents();
@@ -274,6 +295,7 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
         return false;
     }
 
+    pf_sd_card_profile_set_clock(time_us_32);
     memset(host, 0, sizeof(*host));
     host->pio = config->pio;
     host->command_gpio = config->command_gpio;
@@ -442,7 +464,10 @@ bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
     pio_sm_put_blocking(host->pio, host->command_sm,
                         (response_bits == 0u) ? 0u : ((uint32_t)(response_bits - 2u) << 24u));
 
-    if (!wait_for_command_complete(host, response_words, response_word_count)) {
+    uint32_t profile_start = pf_sd_card_profile_begin();
+    bool command_ok = wait_for_command_complete(host, response_words, response_word_count);
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_COMMAND, profile_start);
+    if (!command_ok) {
         pio_sm_clear_fifos(host->pio, host->command_sm);
         pio_sm_restart(host->pio, host->command_sm);
         pio_sm_exec(host->pio, host->command_sm,
@@ -485,7 +510,7 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     uint32_t start;
     bool success = false;
 
-    if ((host == NULL) || (block == NULL) || !host->data_rx_program_loaded ||
+    if ((host == NULL) || !host->data_rx_program_loaded ||
         !pf_sd_card_block_argument(sector, block_addressed, &command_argument)) {
         return false;
     }
@@ -524,11 +549,13 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
             goto cleanup;
         }
-        tight_loop_contents();
+        wait_data_idle(host, SDIO_DATA_READ_IRQ);
     }
 
     dma_channel_wait_for_finish_blocking(host->dma_channel);
-    success = pf_sdio_pio_decode_data_block((const uint8_t *)image, block);
+    success = block != NULL
+        ? pf_sdio_pio_decode_data_block((const uint8_t *)image, block)
+        : pf_sdio_pio_verify_data_block((const uint8_t *)image);
 
 cleanup:
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -594,7 +621,7 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
             goto cleanup;
         }
-        pf_sd_card_idle();
+        wait_data_idle(host, SDIO_DATA_READ_IRQ);
     }
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     success = pf_sdio_pio_decode_data_block_sized((const uint8_t *)image, data,
@@ -728,12 +755,16 @@ static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
     }
 
     start = time_us_32();
+    uint32_t profile_start = pf_sd_card_profile_begin();
     while (gpio_get(host->data0_gpio) == 0u) {
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_BUSY, profile_start);
+            pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
             return false;
         }
         pf_sd_card_idle();
     }
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_BUSY, profile_start);
     return true;
 }
 
@@ -743,7 +774,9 @@ static bool stop_multiblock_with_clock_fallback(pf_sdio_pio_host_t *host)
         25000000u, 20000000u, 10000000u, 5000000u, 1000000u,
     };
 
+    uint32_t profile_start = pf_sd_card_profile_begin();
     if (stop_multiblock_transfer(host)) {
+        pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
         return true;
     }
     for (size_t index = 0u;
@@ -754,9 +787,11 @@ static bool stop_multiblock_with_clock_fallback(pf_sdio_pio_host_t *host)
             continue;
         }
         if (stop_multiblock_transfer(host)) {
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
             return true;
         }
     }
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
     return false;
 }
 
@@ -764,7 +799,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
                                       bool block_addressed, uint8_t *blocks,
                                       uint32_t block_count)
 {
-    if ((host == NULL) || (host->pio == NULL) || (blocks == NULL) ||
+    if ((host == NULL) || (host->pio == NULL) ||
         !host->data_rx_program_loaded) {
         return false;
     }
@@ -786,6 +821,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         bool command_sent;
         bool transfer_ok = false;
         bool crc_failed = false;
+        bool timed_out = false;
         uint32_t decoded_count = 0u;
         dma_channel_config dma_config;
 
@@ -826,17 +862,21 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
             ((response_argument & 0xfdffe008u) == 0u);
         if (response_ok) {
             start = time_us_32();
+            uint32_t profile_start = pf_sd_card_profile_begin();
             while (!pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) ||
                    dma_channel_is_busy(host->dma_channel)) {
                 if ((uint32_t)(time_us_32() - start) > 1000000u) {
+                    timed_out = true;
+                    pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
                     break;
                 }
                 if (!crc_failed &&
                     !decode_completed_blocks(host, blocks, batch_words, &decoded_count)) {
                     crc_failed = true;
                 }
-                pf_sd_card_idle();
+                wait_data_idle(host, SDIO_DATA_READ_IRQ);
             }
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
             transfer_ok = pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) &&
                           !dma_channel_is_busy(host->dma_channel);
             if (transfer_ok && !crc_failed &&
@@ -850,21 +890,25 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         if (dma_channel_is_busy(host->dma_channel)) {
             dma_channel_abort(host->dma_channel);
         }
-        if (command_sent && !stop_multiblock_with_clock_fallback(host)) {
-            transfer_ok = false;
-        }
+        bool stop_ok = !command_sent || stop_multiblock_with_clock_fallback(host);
         pio_sm_clear_fifos(host->pio, host->data_sm);
         pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
         pio_sm_restart(host->pio, host->data_sm);
         pio_sm_exec(host->pio, host->data_sm,
                     pio_encode_jmp(host->data_rx_program_offset));
-        if (!transfer_ok || crc_failed) {
+        if (!stop_ok || crc_failed || timed_out) {
+            return false;
+        }
+        if (!transfer_ok) {
+            pf_sd_card_profile_event(PF_SD_CARD_PROFILE_BATCH_FALLBACK);
             host->data_rx_multiblock_supported = false;
             return read_single_blocks(host, first_sector, block_addressed, blocks,
                                       block_count);
         }
 
-        blocks += batch_count * PF_SD_CARD_BLOCK_SIZE;
+        if (blocks != NULL) {
+            blocks += batch_count * PF_SD_CARD_BLOCK_SIZE;
+        }
         first_sector += batch_count;
         block_count -= batch_count;
     }
@@ -921,7 +965,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
             goto restore;
         }
-        pf_sd_card_idle();
+        wait_data_idle(host, 2u);
     }
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) > 0u) {
@@ -1034,7 +1078,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
                 transfer_ok = false;
                 break;
             }
-            pf_sd_card_idle();
+            wait_data_idle(host, 2u);
         }
         pio_sm_set_enabled(host->pio, host->data_sm, false);
         if (dma_channel_is_busy(host->dma_channel)) {

@@ -101,7 +101,7 @@ static void cdc_cli_task(void)
             panic("Failed to initialize CDC CLI");
         }
         if (!pf_cli_add_binding((CliCommandBinding){
-                "sd", "sd status: card presence, capacity, clock and owner", false,
+                "sd", "sd status | sd profile [status|on|off|reset]", false,
                 "sd", storage_command
             }) || !pf_cli_add_binding((CliCommandBinding){
                 "fs", "fs mount|unmount|ls [path]|stat <path>|cat <path> [limit]|df\r\n"

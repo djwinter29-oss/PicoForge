@@ -9,6 +9,10 @@
 #define PF_SDIO_PIO_IMAGE_SIZE (PF_SDIO_PIO_TRANSFER_WORDS * 4u)
 #define PF_SDIO_PIO_SWITCH_STATUS_SIZE 64u
 
+#ifndef PF_SDIO_PIO_FUSED_COPY
+#define PF_SDIO_PIO_FUSED_COPY 0
+#endif
+
 uint8_t pf_sdio_pio_crc7(const uint8_t *data, size_t size);
 bool pf_sdio_pio_build_command(uint8_t command, uint32_t argument, uint8_t frame[6]);
 bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t frame[6],
@@ -40,6 +44,8 @@ bool pf_sdio_pio_decode_data_block(const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE],
                                    uint8_t block[512]);
 bool pf_sdio_pio_decode_data_block_sized(const uint8_t *image, uint8_t *block,
                                          size_t block_size);
+/** Verify a 520-byte sector wire image without retaining its payload. */
+bool pf_sdio_pio_verify_data_block(const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE]);
 bool pf_sdio_pio_switch_supports_high_speed(
     const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE]);
 bool pf_sdio_pio_switch_selected_high_speed(

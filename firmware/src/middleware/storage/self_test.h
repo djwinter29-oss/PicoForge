@@ -8,6 +8,16 @@
 #define PF_STORAGE_SELF_TEST_MAX_MIB 128u
 #define PF_STORAGE_SELF_TEST_BUFFER_SIZE 32768u
 
+#ifndef PF_STORAGE_SELF_TEST_PREALLOCATE
+#define PF_STORAGE_SELF_TEST_PREALLOCATE 0
+#endif
+
+/** Select contiguous preallocation for subsequent tests; default is build-configured/off.
+ * Call only from the serialized storage owner while no test is running.
+ * Preallocation is excluded from write timing; allocation failure aborts with cleanup.
+ */
+void pf_storage_self_test_set_preallocation_enabled(bool enabled);
+
 typedef enum {
     PF_SELF_TEST_IDLE = 0,
     PF_SELF_TEST_QUEUED,

@@ -178,7 +178,6 @@ static const uint32_t transfer_clock_steps_hz[] = {
 };
 static bool probe_transfer(void)
 {
-    static uint8_t read_probe[64u * PF_SD_CARD_BLOCK_SIZE] __attribute__((aligned(4)));
     uint32_t probe_clock_hz = sdio_pio_host.current_clock_hz;
     uint32_t probe_sector_count = (card_sector_count < 256u) ? card_sector_count : 256u;
 
@@ -188,7 +187,7 @@ static bool probe_transfer(void)
             batch_count = 64u;
         }
         if (!pf_sdio_pio_host_read_blocks(&sdio_pio_host, first_sector,
-                                          card_block_addressed, read_probe, batch_count) ||
+                                          card_block_addressed, NULL, batch_count) ||
             (sdio_pio_host.current_clock_hz != probe_clock_hz) ||
             ((probe_clock_hz > 20000000u) &&
              !sdio_pio_host.data_rx_multiblock_supported)) {
@@ -530,10 +529,14 @@ static bool read_blocks_with_clock_fallback(uint32_t first_block, uint8_t *buffe
                 return false;
             }
             uint32_t clock_limit_hz = transfer_clock_steps_hz[index];
+            pf_sd_card_profile_event(PF_SD_CARD_PROFILE_RECOVERY_ATTEMPT);
             if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u)) {
                 return false;
             }
-            if (initialize_card(&clock_limit_hz)) {
+            uint32_t profile_start = pf_sd_card_profile_begin();
+            bool initialized = initialize_card(&clock_limit_hz);
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_RECOVERY, profile_start);
+            if (initialized) {
                 if ((card_sector_count != expected_sector_count) ||
                     (memcmp(card_cid, expected_cid, sizeof(expected_cid)) != 0)) {
                     return false;
@@ -550,11 +553,11 @@ static bool read_blocks_with_clock_fallback(uint32_t first_block, uint8_t *buffe
 }
 
 static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer,
-                                                const uint8_t *write_buffer, uint32_t block_count)
+                                           const uint8_t *write_buffer, uint32_t block_count)
 {
     pf_sd_card_result_t result;
 
-    if (!card_initialized) {
+    if (!pf_sdio_pio_is_initialized()) {
         return PF_SD_CARD_NOT_READY;
     }
     if (block_count == 0u) {
@@ -583,29 +586,9 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
             ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
     }
 
-    while (block_count > 0u) {
-        if (active_config.use_card_detect &&
-            ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
-            card_initialized = false;
-            return PF_SD_CARD_NOT_READY;
-        }
-        bool transferred = (read_buffer != NULL)
-            ? pf_sdio_pio_host_read_sector(&sdio_pio_host, first_block,
-                                            card_block_addressed, read_buffer)
-            : pf_sdio_pio_host_write_sector(&sdio_pio_host, first_block,
-                                             card_block_addressed, write_buffer);
-        if (!transferred) {
-            return PF_SD_CARD_IO_ERROR;
-        }
-        if (read_buffer != NULL) {
-            read_buffer += PF_SD_CARD_BLOCK_SIZE;
-        } else {
-            write_buffer += PF_SD_CARD_BLOCK_SIZE;
-        }
-        first_block++;
-        block_count--;
-    }
-    return PF_SD_CARD_OK;
+    return pf_sdio_pio_host_write_sector(&sdio_pio_host, first_block,
+                                          card_block_addressed, write_buffer)
+        ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
 }
 
 pf_sd_card_result_t pf_sdio_pio_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)

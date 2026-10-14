@@ -392,6 +392,21 @@ void test_detects_corrupt_data_and_crc_bytes(void)
     TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(image, destination));
 }
 
+void test_verify_only_checks_payload_and_crc_without_an_output_buffer(void)
+{
+    uint8_t block[512] = { 0u };
+    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
+
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(block, image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_verify_data_block(image));
+    image[17] ^= 0x01u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_verify_data_block(image));
+    image[17] ^= 0x01u;
+    image[519] ^= 0x80u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_verify_data_block(image));
+    TEST_ASSERT_FALSE(pf_sdio_pio_verify_data_block(NULL));
+}
+
 void test_handles_null_data_block_buffers(void)
 {
     uint16_t crc[4];

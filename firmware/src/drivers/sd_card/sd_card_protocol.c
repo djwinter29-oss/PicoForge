@@ -1,6 +1,8 @@
 #include "sd_card_protocol.h"
 #include "sd_card_block.h"
 
+#include <string.h>
+
 /* CRC-16/XMODEM (poly 0x1021, init 0), the SD data-block CRC. */
 static const uint16_t crc16_table[256] = {
     0x0000u, 0x1021u, 0x2042u, 0x3063u, 0x4084u, 0x50a5u, 0x60c6u, 0x70e7u,
@@ -38,6 +40,52 @@ static const uint16_t crc16_table[256] = {
 };
 
 static void (*idle_hook)(void);
+static uint32_t (*profile_clock)(void);
+static bool profiling_enabled;
+static pf_sd_card_profile_t profile_metrics;
+
+void pf_sd_card_set_profiling_enabled(bool enabled)
+{
+    profiling_enabled = enabled;
+}
+
+void pf_sd_card_reset_profile(void)
+{
+    memset(&profile_metrics, 0, sizeof(profile_metrics));
+}
+
+void pf_sd_card_get_profile(pf_sd_card_profile_t *profile)
+{
+    if (profile != NULL) {
+        *profile = profile_metrics;
+    }
+}
+
+void pf_sd_card_profile_set_clock(uint32_t (*clock_us)(void))
+{
+    profile_clock = clock_us;
+}
+
+uint32_t pf_sd_card_profile_begin(void)
+{
+    return profiling_enabled && profile_clock != NULL ? profile_clock() : 0u;
+}
+
+void pf_sd_card_profile_end(pf_sd_card_profile_phase_t phase, uint32_t start)
+{
+    if (profiling_enabled && profile_clock != NULL &&
+        ((unsigned)phase < PF_SD_CARD_PROFILE_PHASE_COUNT)) {
+        profile_metrics.elapsed_us[phase] += (uint32_t)(profile_clock() - start);
+        ++profile_metrics.calls[phase];
+    }
+}
+
+void pf_sd_card_profile_event(pf_sd_card_profile_event_t event)
+{
+    if (profiling_enabled && ((unsigned)event < PF_SD_CARD_PROFILE_EVENT_COUNT)) {
+        ++profile_metrics.events[event];
+    }
+}
 
 void pf_sd_card_set_idle_hook(void (*hook)(void))
 {
@@ -68,7 +116,8 @@ pf_sd_card_result_t pf_sd_card_validate_transfer(uint32_t first_block, const voi
         return PF_SD_CARD_OK;
     }
     if ((buffer == NULL) || (first_block >= capacity) ||
-        (block_count > capacity - first_block)) {
+        (block_count > capacity - first_block) ||
+        ((uint64_t)block_count * PF_SD_CARD_BLOCK_SIZE > SIZE_MAX)) {
         return PF_SD_CARD_INVALID_ARGUMENT;
     }
     return PF_SD_CARD_OK;
@@ -184,7 +233,7 @@ bool pf_sd_card_csd_transfer_hz(const uint8_t csd[16], uint32_t *transfer_hz)
     if ((multiplier == 0u) || (unit >= (sizeof(unit_hz) / sizeof(unit_hz[0])))) {
         return false;
     }
-    *transfer_hz = ((uint32_t)multiplier_tenths[multiplier] * unit_hz[unit]) / 10u;
+    *transfer_hz = (uint32_t)(((uint64_t)multiplier_tenths[multiplier] * unit_hz[unit]) / 10u);
     return *transfer_hz != 0u;
 }
 

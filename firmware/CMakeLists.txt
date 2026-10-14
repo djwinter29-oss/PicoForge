@@ -83,6 +83,10 @@ add_library(pf_sdio_backend STATIC
     src/drivers/sd_card/sdio_pio/sdio_pio_host.c
     src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c
 )
+option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
+target_compile_definitions(pf_sdio_backend PRIVATE
+    PF_SDIO_PIO_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>
+)
 pico_generate_pio_header(pf_sdio_backend
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio/sdio_pio_host.pio"
 )
@@ -184,6 +188,10 @@ add_library(pf_storage STATIC
     src/middleware/storage/commands.c
     src/middleware/storage/self_test.c
 )
+option(PF_STORAGE_SELF_TEST_PREALLOCATE "Preallocate contiguous self-test files outside write timing" OFF)
+target_compile_definitions(pf_storage PUBLIC
+    PF_STORAGE_SELF_TEST_PREALLOCATE=$<BOOL:${PF_STORAGE_SELF_TEST_PREALLOCATE}>
+)
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
     "${CMAKE_CURRENT_LIST_DIR}/src/middleware/storage"
@@ -223,6 +231,12 @@ add_executable(pf_hello_world
     src/usb/msc.c
     src/usb/task.c
     src/middleware/storage/storage_worker.c
+    src/integration/freertos/sd_card_wait.c
+)
+
+option(PF_SD_CARD_INTERRUPT_WAIT "Enable experimental FreeRTOS native PIO completion waits" OFF)
+target_compile_definitions(pf_hello_world PRIVATE
+    PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
 )
 
 target_include_directories(pf_hello_world PRIVATE
@@ -234,6 +248,7 @@ target_include_directories(pf_hello_world PRIVATE
 target_link_libraries(pf_hello_world
     pico_stdlib
     FreeRTOS-Kernel-Static
+    hardware_irq
     pico_unique_id
     tinyusb_device
     pf_system

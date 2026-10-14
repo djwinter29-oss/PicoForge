@@ -72,6 +72,43 @@ static void status_command(bool host_owned, pf_storage_reply_t reply, void *cont
     (void)reply(line, context);
 }
 
+static void profile_command(const char *action, bool host_owned,
+                            pf_storage_reply_t reply, void *context)
+{
+    if (action != NULL && strcmp(action, "status") != 0) {
+        if (host_owned) {
+            (void)reply("Profiling changes require firmware card ownership.", context);
+            return;
+        }
+        if (strcmp(action, "on") == 0 || strcmp(action, "off") == 0) {
+            pf_sd_card_set_profiling_enabled(strcmp(action, "on") == 0);
+        } else if (strcmp(action, "reset") == 0) {
+            pf_sd_card_reset_profile();
+        } else {
+            (void)reply("Usage: sd profile [status|on|off|reset]", context);
+            return;
+        }
+    }
+    static const char *const phase_names[] = { "command", "data", "crc_copy", "busy", "stop", "recovery" };
+    pf_sd_card_profile_t metrics;
+    pf_sd_card_get_profile(&metrics);
+    char line[PF_STORAGE_REPLY_SIZE];
+    for (unsigned phase = 0u; phase < PF_SD_CARD_PROFILE_PHASE_COUNT; ++phase) {
+        (void)snprintf(line, sizeof(line), "%s_us=%llu calls=%lu",
+                       phase_names[phase], (unsigned long long)metrics.elapsed_us[phase],
+                       (unsigned long)metrics.calls[phase]);
+        if (!reply(line, context)) {
+            return;
+        }
+    }
+    (void)snprintf(line, sizeof(line), "crc_failures=%lu batch_fallbacks=%lu timeouts=%lu recoveries=%lu",
+                   (unsigned long)metrics.events[PF_SD_CARD_PROFILE_CRC_FAILURE],
+                   (unsigned long)metrics.events[PF_SD_CARD_PROFILE_BATCH_FALLBACK],
+                   (unsigned long)metrics.events[PF_SD_CARD_PROFILE_TIMEOUT],
+                   (unsigned long)metrics.events[PF_SD_CARD_PROFILE_RECOVERY_ATTEMPT]);
+    (void)reply(line, context);
+}
+
 static void list_command(const char *path, pf_storage_reply_t reply, void *context)
 {
     DIR directory;
@@ -221,6 +258,11 @@ void pf_storage_command_execute(const pf_sd_card_config_t *config, bool host_own
     second = embeddedCliGetToken(tokens, 3u);
     if ((strcmp(family, "sd") == 0) && (count == 1u) && (strcmp(operation, "status") == 0)) {
         status_command(host_owned, reply, context);
+        return;
+    }
+    if (strcmp(family, "sd") == 0 && count >= 1u && count <= 2u &&
+        strcmp(operation, "profile") == 0) {
+        profile_command(count == 2u ? first : NULL, host_owned, reply, context);
         return;
     }
     if ((strcmp(family, "fs") != 0) || (count == 0u)) {

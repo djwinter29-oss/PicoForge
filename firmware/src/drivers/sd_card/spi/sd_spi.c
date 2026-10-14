@@ -21,7 +21,10 @@
 #define SD_CMD_SEND_CID 10u
 #define SD_CMD_SET_BLOCKLEN 16u
 #define SD_CMD_READ_SINGLE_BLOCK 17u
+#define SD_CMD_READ_MULTIPLE_BLOCK 18u
 #define SD_CMD_WRITE_SINGLE_BLOCK 24u
+#define SD_CMD_WRITE_MULTIPLE_BLOCK 25u
+#define SD_CMD_STOP_TRANSMISSION 12u
 #define SD_CMD_APP 55u
 #define SD_CMD_READ_OCR 58u
 #define SD_ACMD_SD_SEND_OP_COND 41u
@@ -29,6 +32,8 @@
 #define SD_R1_IDLE_STATE 0x01u
 #define SD_R1_ILLEGAL_COMMAND 0x04u
 #define SD_DATA_START_BLOCK 0xfeu
+#define SD_DATA_START_MULTIPLE 0xfcu
+#define SD_DATA_STOP_MULTIPLE 0xfdu
 #define SD_OCR_POWER_UP_STATUS (1u << 31u)
 #define SD_OCR_CCS (1u << 30u)
 #define SD_OCR_VOLTAGE_WINDOW 0x00ff8000u
@@ -138,14 +143,18 @@ static void deselect_card(void)
 static bool wait_ready(uint32_t timeout_us)
 {
     uint32_t start = time_us_32();
+    uint32_t profile_start = pf_sd_card_profile_begin();
 
     do {
         if (exchange_byte(0xffu) == 0xffu) {
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_BUSY, profile_start);
             return true;
         }
         pf_sd_card_idle();
     } while ((uint32_t)(time_us_32() - start) < timeout_us);
 
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_BUSY, profile_start);
+    pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
     return false;
 }
 
@@ -154,13 +163,18 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
 {
     uint8_t frame[6];
 
-    if ((response == NULL) ||
-        !pf_sd_card_build_command(command, argument, frame) ||
-        (spi_write_blocking(active_config.spi, frame, sizeof(frame)) !=
-         (int)sizeof(frame))) {
+    if ((response == NULL) || !pf_sd_card_build_command(command, argument, frame)) {
         return false;
     }
 
+    uint32_t profile_start = pf_sd_card_profile_begin();
+    bool success = false;
+    if (spi_write_blocking(active_config.spi, frame, sizeof(frame)) != (int)sizeof(frame)) {
+        goto done;
+    }
+    if (command == SD_CMD_STOP_TRANSMISSION) {
+        (void)exchange_byte(0xffu);
+    }
     for (uint32_t attempt = 0u; attempt < SD_SPI_COMMAND_RETRIES; attempt++) {
         uint8_t value = exchange_byte(0xffu);
         if ((value & 0x80u) == 0u) {
@@ -168,10 +182,13 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
             last_init_command = command;
             last_init_response = value;
             last_init_response_received = true;
-            return true;
+            success = true;
+            break;
         }
     }
-    return false;
+done:
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_COMMAND, profile_start);
+    return success;
 }
 
 static bool send_command(uint8_t command, uint32_t argument,
@@ -223,14 +240,25 @@ static bool read_data_block(uint8_t *data, size_t size)
         }
         pf_sd_card_idle();
     } while ((uint32_t)(time_us_32() - start) < SD_SPI_RESPONSE_TIMEOUT_US);
-    if (!pf_sd_spi_read_token_is_valid(token) ||
-        (spi_read_blocking(active_config.spi, 0xffu, data, size) != (int)size)) {
+    if (!pf_sd_spi_read_token_is_valid(token)) {
+        return false;
+    }
+
+    uint32_t profile_start = pf_sd_card_profile_begin();
+    bool received = spi_read_blocking(active_config.spi, 0xffu, data, size) == (int)size;
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
+    if (!received) {
         return false;
     }
 
     card_crc = (uint16_t)exchange_byte(0xffu) << 8u;
     card_crc |= exchange_byte(0xffu);
+    profile_start = pf_sd_card_profile_begin();
     calculated_crc = pf_sd_card_crc16(data, size);
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
+    if (card_crc != calculated_crc) {
+        pf_sd_card_profile_event(PF_SD_CARD_PROFILE_CRC_FAILURE);
+    }
     return card_crc == calculated_crc;
 }
 
@@ -415,6 +443,27 @@ void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
     }
 }
 
+static bool write_data_block(const uint8_t *buffer, uint8_t token)
+{
+    if (spi_write_blocking(active_config.spi, &token, 1u) != 1) {
+        return false;
+    }
+    uint32_t profile_start = pf_sd_card_profile_begin();
+    bool sent = spi_write_blocking(active_config.spi, buffer, PF_SD_CARD_BLOCK_SIZE)
+        == (int)PF_SD_CARD_BLOCK_SIZE;
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
+    if (!sent) {
+        return false;
+    }
+    profile_start = pf_sd_card_profile_begin();
+    uint16_t crc = pf_sd_card_crc16(buffer, PF_SD_CARD_BLOCK_SIZE);
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
+    (void)exchange_byte((uint8_t)(crc >> 8u));
+    (void)exchange_byte((uint8_t)crc);
+    uint8_t response;
+    return receive_write_response(&response) && wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+}
+
 static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
                                           const uint8_t *write_buffer)
 {
@@ -440,25 +489,11 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
             success = true;
         }
     } else {
-        uint16_t crc;
-        uint8_t data_response;
-        uint8_t token = SD_DATA_START_BLOCK;
-
         if (!send_command_selected(SD_CMD_WRITE_SINGLE_BLOCK, argument, &response) ||
             (response != 0u)) {
             goto transfer_done;
         }
-        if ((spi_write_blocking(active_config.spi, &token, 1u) != 1) ||
-            (spi_write_blocking(active_config.spi, write_buffer,
-                                PF_SD_CARD_BLOCK_SIZE) !=
-             (int)PF_SD_CARD_BLOCK_SIZE)) {
-            goto transfer_done;
-        }
-        crc = pf_sd_card_crc16(write_buffer, PF_SD_CARD_BLOCK_SIZE);
-        (void)exchange_byte((uint8_t)(crc >> 8u));
-        (void)exchange_byte((uint8_t)crc);
-        success = receive_write_response(&data_response) &&
-                  wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+        success = write_data_block(write_buffer, SD_DATA_START_BLOCK);
     }
 
 transfer_done:
@@ -474,6 +509,7 @@ pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config)
     if (configuration_set && !same_config(&active_config, config)) {
         return PF_SD_CARD_CONFIG_LOCKED;
     }
+    pf_sd_card_profile_set_clock(time_us_32);
     if (!configuration_set) {
         active_config = *config;
 
@@ -542,19 +578,76 @@ static pf_sd_card_result_t validate_transfer(uint32_t first_block,
     return pf_sd_card_validate_transfer(first_block, buffer, block_count, card_sector_count);
 }
 
-pf_sd_card_result_t pf_sd_spi_read_blocks(uint32_t first_block, void *buffer,
-                                         uint32_t block_count)
+static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer,
+                                           const uint8_t *write_buffer, uint32_t block_count)
 {
+    const void *buffer = read_buffer != NULL ? read_buffer : write_buffer;
     pf_sd_card_result_t result = validate_transfer(first_block, buffer, block_count);
 
     if (result != PF_SD_CARD_OK) {
         return result;
     }
+    if (block_count > 1u) {
+        uint32_t argument;
+        uint8_t response = 0xffu;
+        if (!pf_sd_card_block_argument(first_block, card_block_addressed, &argument)) {
+            return PF_SD_CARD_INVALID_ARGUMENT;
+        }
+        select_card();
+        bool command_ok = wait_ready(SD_SPI_WRITE_TIMEOUT_US) &&
+            send_command_selected(read_buffer != NULL ? SD_CMD_READ_MULTIPLE_BLOCK
+                                                      : SD_CMD_WRITE_MULTIPLE_BLOCK,
+                                  argument, &response);
+        if (!command_ok || response != 0u) {
+            deselect_card();
+            if (!command_ok || response != SD_R1_ILLEGAL_COMMAND) {
+                return PF_SD_CARD_IO_ERROR;
+            }
+            pf_sd_card_profile_event(PF_SD_CARD_PROFILE_BATCH_FALLBACK);
+        } else {
+            bool success = true;
+            for (uint32_t index = 0u; index < block_count; ++index) {
+                if (!card_is_present()) {
+                    card_initialized = false;
+                    success = false;
+                    break;
+                }
+                bool transferred = read_buffer != NULL
+                    ? read_data_block(read_buffer + (size_t)index * PF_SD_CARD_BLOCK_SIZE,
+                                      PF_SD_CARD_BLOCK_SIZE)
+                    : write_data_block(write_buffer + (size_t)index * PF_SD_CARD_BLOCK_SIZE,
+                                       SD_DATA_START_MULTIPLE);
+                if (!transferred) {
+                    success = false;
+                    break;
+                }
+            }
+            uint32_t profile_start = pf_sd_card_profile_begin();
+            bool stopped;
+            if (read_buffer != NULL) {
+                stopped = send_command_selected(SD_CMD_STOP_TRANSMISSION, 0u, &response) &&
+                    response == 0u && wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+            } else {
+                stopped = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+                if (stopped) {
+                    (void)exchange_byte(SD_DATA_STOP_MULTIPLE);
+                    stopped = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+                }
+            }
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
+            deselect_card();
+            if (!stopped) {
+                card_initialized = false;
+            }
+            return success && stopped ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+        }
+    }
     for (uint32_t index = 0u; index < block_count; index++) {
         result = transfer_block(first_block + index,
-                                (uint8_t *)buffer +
-                                    (size_t)index * PF_SD_CARD_BLOCK_SIZE,
-                                NULL);
+                                read_buffer != NULL
+                                    ? read_buffer + (size_t)index * PF_SD_CARD_BLOCK_SIZE : NULL,
+                                write_buffer != NULL
+                                    ? write_buffer + (size_t)index * PF_SD_CARD_BLOCK_SIZE : NULL);
         if (result != PF_SD_CARD_OK) {
             return result;
         }
@@ -562,24 +655,17 @@ pf_sd_card_result_t pf_sd_spi_read_blocks(uint32_t first_block, void *buffer,
     return PF_SD_CARD_OK;
 }
 
+pf_sd_card_result_t pf_sd_spi_read_blocks(uint32_t first_block, void *buffer,
+                                         uint32_t block_count)
+{
+    return transfer_blocks(first_block, buffer, NULL, block_count);
+}
+
 pf_sd_card_result_t pf_sd_spi_write_blocks(uint32_t first_block,
                                           const void *buffer,
                                           uint32_t block_count)
 {
-    pf_sd_card_result_t result = validate_transfer(first_block, buffer, block_count);
-
-    if (result != PF_SD_CARD_OK) {
-        return result;
-    }
-    for (uint32_t index = 0u; index < block_count; index++) {
-        result = transfer_block(first_block + index, NULL,
-                                (const uint8_t *)buffer +
-                                    (size_t)index * PF_SD_CARD_BLOCK_SIZE);
-        if (result != PF_SD_CARD_OK) {
-            return result;
-        }
-    }
-    return PF_SD_CARD_OK;
+    return transfer_blocks(first_block, NULL, buffer, block_count);
 }
 
 pf_sd_card_result_t pf_sd_spi_sync(void)

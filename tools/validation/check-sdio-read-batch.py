@@ -46,6 +46,11 @@ static bool pf_sdio_pio_decode_data_block(const uint8_t *image, uint8_t *block)
     block[0] = (uint8_t)decodes;
     return true;
 }
+static bool pf_sdio_pio_verify_data_block(const uint8_t *image)
+{
+    uint8_t discarded[PF_SD_CARD_BLOCK_SIZE];
+    return pf_sdio_pio_decode_data_block(image, discarded);
+}
 @HELPER@
 static int run(uint32_t words, uint32_t *decoded, uint8_t *blocks, bool *ok)
 {
@@ -90,6 +95,13 @@ int main(void)
     run(16u, &d, blocks, &ok);                       /* CRC failure on block 1 */
     if (ok || d != 1 || decodes != 1) return 12;
     if (barriers < 6) return 13;
+    reset(&d);
+    run(16u, &d, NULL, &ok);
+    if (!ok || d != 4 || decodes != 4) return 14;
+    reset(&d);
+    fail_at = 1;
+    run(16u, &d, NULL, &ok);
+    if (ok || d != 1 || decodes != 1) return 15;
     return 0;
 }
 """
@@ -98,6 +110,118 @@ int main(void)
 def helper_source(source):
     start = source.index("static bool decode_completed_blocks")
     return source[start:start + source[start:].index("\n}\n") + 3]
+
+
+READER_HARNESS = r"""
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include "sd_card_protocol.h"
+#define SDIO_DATA_READ_IRQ 1u
+#define SDIO_DATA_NIBBLE_COUNT 1040u
+#define SDIO_DATA_WORD_COUNT 130u
+#define SDIO_READ_BATCH_BLOCKS 64u
+#define DMA_SIZE_32 2u
+typedef int dma_channel_config;
+typedef struct { uint32_t rxf[4]; } fake_pio_t;
+typedef struct {
+    fake_pio_t *pio;
+    unsigned data_sm, dma_channel, data_rx_program_offset;
+    bool data_rx_program_loaded, data_rx_multiblock_supported;
+} pf_sdio_pio_host_t;
+static uint32_t read_wire_buffer[130u * 64u];
+static bool response_ok, crc_ok, stop_ok, timeout;
+static unsigned single_calls, stops;
+static uint32_t now;
+#define pio_sm_set_enabled(...) ((void)0)
+#define pio_sm_clear_fifos(...) ((void)0)
+#define pio_interrupt_clear(...) ((void)0)
+#define pio_sm_restart(...) ((void)0)
+#define pio_sm_exec(...) ((void)0)
+#define pio_sm_put_blocking(...) ((void)0)
+#define load_batch_count(...) ((void)0)
+#define pio_get_dreq(...) 0u
+#define channel_config_set_transfer_data_size(...) ((void)0)
+#define channel_config_set_bswap(...) ((void)0)
+#define channel_config_set_read_increment(...) ((void)0)
+#define channel_config_set_write_increment(...) ((void)0)
+#define channel_config_set_dreq(...) ((void)0)
+#define dma_channel_start(...) ((void)0)
+#define dma_channel_abort(...) ((void)0)
+#define pio_interrupt_get(...) (!timeout)
+#define dma_channel_is_busy(...) timeout
+static dma_channel_config dma_channel_get_default_config(unsigned channel)
+{ (void)channel; return 0; }
+static void dma_channel_configure(unsigned channel, const dma_channel_config *config,
+                                  void *target, const void *source, uint32_t count, bool start)
+{ (void)channel; (void)config; (void)target; (void)source; (void)count; (void)start; }
+static uint32_t time_us_32(void) { now += 1000001u; return now; }
+static void wait_data_idle(pf_sdio_pio_host_t *host, uint32_t completion_flag)
+{ (void)host; (void)completion_flag; }
+static bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
+    uint32_t argument, unsigned bits, uint8_t *response, unsigned size)
+{ (void)host; (void)command; (void)argument; (void)bits; (void)response; (void)size; return true; }
+static bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t *response,
+                                      uint32_t *argument, bool crc)
+{ (void)command; (void)response; (void)crc; *argument = 0u; return response_ok; }
+static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
+                                     uint32_t words, uint32_t *decoded)
+{ (void)host; (void)blocks; *decoded = words / SDIO_DATA_WORD_COUNT; return crc_ok; }
+static bool stop_multiblock_with_clock_fallback(pf_sdio_pio_host_t *host)
+{ (void)host; ++stops; return stop_ok; }
+static bool read_single_blocks(pf_sdio_pio_host_t *host, uint32_t sector,
+                               bool addressed, uint8_t *blocks, uint32_t count)
+{ (void)host; (void)sector; (void)addressed; (void)blocks; (void)count; ++single_calls; return true; }
+@READER@
+int main(void)
+{
+    fake_pio_t pio = {0};
+    pf_sdio_pio_host_t host = { .pio = &pio, .data_rx_program_loaded = true,
+                               .data_rx_multiblock_supported = true };
+    uint8_t blocks[1024];
+    response_ok = crc_ok = stop_ok = true;
+    assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(stops == 1u && single_calls == 0u);
+    crc_ok = false;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    crc_ok = true;
+    timeout = true;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    timeout = false;
+    stop_ok = false;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    stop_ok = true;
+    assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, NULL, 2u));
+    response_ok = false;
+    assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(!host.data_rx_multiblock_supported && single_calls == 1u);
+    assert(pf_sdio_pio_host_read_blocks(&host, 2u, true, blocks, 2u));
+    assert(single_calls == 2u);
+    return 0;
+}
+"""
+
+
+def reader_behavior_check(source):
+    signature = "bool pf_sdio_pio_host_read_blocks"
+    start = source.index(signature)
+    reader = source[start:source.index("{", start)] + function_body(source, signature) + "}"
+    with tempfile.TemporaryDirectory() as scratch:
+        src = Path(scratch) / "reader.c"
+        exe = Path(scratch) / "reader"
+        src.write_text(READER_HARNESS.replace("@READER@", reader))
+        include = HOST.parents[1]
+        build = subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
+                                "-I", str(include), str(src),
+                                str(include / "sd_card_protocol.c"), "-o", str(exe)],
+                               capture_output=True, text=True)
+        if build.returncode:
+            return ["reader harness compile failed: " + build.stderr]
+        result = subprocess.run([str(exe)])
+        return [] if result.returncode == 0 else ["reader recovery behavior failed"]
 
 
 def behavior_check(source):
@@ -119,7 +243,7 @@ def behavior_check(source):
 
 def main():
     source = HOST.read_text()
-    errors = behavior_check(source)
+    errors = behavior_check(source) + reader_behavior_check(source)
 
     batch = int(re.search(r"#define SDIO_READ_BATCH_BLOCKS (\d+)u", source).group(1))
     buffer_size = int(re.search(r"SELF_TEST_BUFFER_SIZE (\d+)u", SELF_TEST.read_text()).group(1))

@@ -18,6 +18,7 @@ static FRESULT sync_result;
 static FRESULT close_result;
 static FRESULT unlink_result;
 static unsigned close_calls;
+static bool expect_preallocation;
 
 static uint32_t clock_ms(void *context)
 {
@@ -99,6 +100,9 @@ static void prepare(void)
     pf_storage_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
+    if (expect_preallocation) {
+        f_expand_ExpectAnyArgsAndReturn(FR_OK);
+    }
     f_write_StubWithCallback(write_file);
     f_read_StubWithCallback(read_file);
     f_sync_ExpectAnyArgsAndReturn(sync_result);
@@ -110,11 +114,13 @@ static void prepare(void)
 
 void setUp(void)
 {
+    pf_storage_self_test_set_preallocation_enabled(false);
     memset(&final_status, 0, sizeof(final_status));
     memset(&filesystem, 0, sizeof(filesystem));
     filesystem.csize = 8u;
     timer = write_offset = read_offset = 0u;
     corrupt = cancel_write = short_write = false;
+    expect_preallocation = false;
     available_clusters = 100000u;
     sync_result = close_result = unlink_result = FR_OK;
     close_calls = 0u;
@@ -132,6 +138,35 @@ void test_self_test_writes_and_verifies_every_byte_then_cleans_up(void)
     TEST_ASSERT_GREATER_THAN_UINT32(0u, final_status.write_elapsed_ms);
     TEST_ASSERT_GREATER_THAN_UINT32(0u, final_status.read_elapsed_ms);
     TEST_ASSERT_EQUAL_UINT(2u, close_calls);
+}
+
+void test_preallocated_self_test_keeps_full_verification_and_cleanup(void)
+{
+    pf_storage_self_test_set_preallocation_enabled(true);
+    expect_preallocation = true;
+    prepare();
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
+    TEST_ASSERT_EQUAL_UINT(2u, close_calls);
+}
+
+void test_preallocation_failure_closes_and_removes_only_the_new_file(void)
+{
+    pf_storage_self_test_set_preallocation_enabled(true);
+    pf_storage_is_mounted_ExpectAndReturn(true);
+    f_getfree_StubWithCallback(get_free);
+    f_open_StubWithCallback(open_file);
+    f_expand_ExpectAnyArgsAndReturn(FR_DENIED);
+    f_close_StubWithCallback(close_file);
+    f_unlink_ExpectAnyArgsAndReturn(FR_OK);
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.write_elapsed_ms);
+    TEST_ASSERT_EQUAL_UINT(1u, close_calls);
 }
 
 void test_self_test_detects_corrupt_readback(void)

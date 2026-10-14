@@ -175,6 +175,16 @@ static inline uint32_t load_be32(const uint8_t *data)
 #endif
 }
 
+#if PF_SDIO_PIO_FUSED_COPY
+static inline void store_be32(uint8_t *data, uint32_t word)
+{
+#if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+    word = __builtin_bswap32(word);
+#endif
+    memcpy(data, &word, sizeof(word));
+}
+#endif
+
 static uint64_t crc16_4bit_block(const uint8_t block[512])
 {
     uint64_t reg = 0u;
@@ -218,14 +228,22 @@ bool pf_sdio_pio_encode_data_block_sized(const uint8_t *block, size_t block_size
         crc16_4bit_table_init();
     }
 
+    uint32_t profile_start = pf_sd_card_profile_begin();
     for (size_t index = 0u; index < block_size; index += 4u) {
-        reg = crc16_4bit_word(reg, load_be32(block + index));
+        uint32_t word = load_be32(block + index);
+        reg = crc16_4bit_word(reg, word);
+    #if PF_SDIO_PIO_FUSED_COPY
+        store_be32(image + index, word);
+    #endif
     }
+    #if !PF_SDIO_PIO_FUSED_COPY
     memcpy(image, block, block_size);
+    #endif
     for (size_t index = 0u; index < 8u; index++) {
         uint8_t crc_byte = (uint8_t)(reg >> (56u - 8u * index));
         image[block_size + index] = crc_byte;
     }
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
     return true;
 }
 
@@ -235,13 +253,12 @@ bool pf_sdio_pio_encode_data_block(const uint8_t block[512],
     return pf_sdio_pio_encode_data_block_sized(block, 512u, image);
 }
 
-bool pf_sdio_pio_decode_data_block_sized(const uint8_t *image, uint8_t *block,
-                                         size_t block_size)
+static bool decode_data_block(const uint8_t *image, uint8_t *block, size_t block_size)
 {
     uint64_t reg = 0u;
     uint64_t received = 0u;
 
-    if ((image == NULL) || (block == NULL) ||
+    if ((image == NULL) ||
         (block_size == 0u) || (block_size > 512u) || ((block_size & 3u) != 0u)) {
         return false;
     }
@@ -249,14 +266,40 @@ bool pf_sdio_pio_decode_data_block_sized(const uint8_t *image, uint8_t *block,
         crc16_4bit_table_init();
     }
 
+    uint32_t profile_start = pf_sd_card_profile_begin();
     for (size_t index = 0u; index < block_size; index += 4u) {
-        reg = crc16_4bit_word(reg, load_be32(image + index));
+        uint32_t word = load_be32(image + index);
+        reg = crc16_4bit_word(reg, word);
+#if PF_SDIO_PIO_FUSED_COPY
+        if (block != NULL) {
+            store_be32(block + index, word);
+        }
+#endif
     }
-    memcpy(block, image, block_size);
+#if !PF_SDIO_PIO_FUSED_COPY
+    if (block != NULL) {
+        memcpy(block, image, block_size);
+    }
+#endif
     for (size_t index = 0u; index < 8u; index++) {
         received = (received << 8u) | image[block_size + index];
     }
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
+    if (received != reg) {
+        pf_sd_card_profile_event(PF_SD_CARD_PROFILE_CRC_FAILURE);
+    }
     return received == reg;
+}
+
+bool pf_sdio_pio_decode_data_block_sized(const uint8_t *image, uint8_t *block,
+                                         size_t block_size)
+{
+    return block != NULL && decode_data_block(image, block, block_size);
+}
+
+bool pf_sdio_pio_verify_data_block(const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
+{
+    return decode_data_block(image, NULL, 512u);
 }
 
 bool pf_sdio_pio_decode_data_block(const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE],

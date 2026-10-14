@@ -4,6 +4,12 @@
 #include <string.h>
 
 static uint32_t test_buffer[PF_STORAGE_SELF_TEST_BUFFER_SIZE / sizeof(uint32_t)];
+static bool preallocate = PF_STORAGE_SELF_TEST_PREALLOCATE != 0;
+
+void pf_storage_self_test_set_preallocation_enabled(bool enabled)
+{
+    preallocate = enabled;
+}
 
 static uint32_t pattern_word(uint32_t offset)
 {
@@ -91,6 +97,13 @@ void pf_storage_self_test_run(const pf_sd_card_config_t *config, uint32_t size_m
         goto cleanup;
     }
     file_created = file_open = true;
+    if (preallocate) {
+        result = f_expand(&file, status.target_bytes, 1u);
+        if (result != FR_OK) {
+            filesystem_error(&status, result);
+            goto cleanup;
+        }
+    }
     status.state = PF_SELF_TEST_WRITING;
     phase_start = clock_ms(context);
     while (status.written_bytes < status.target_bytes) {

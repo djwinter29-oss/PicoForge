@@ -10,6 +10,14 @@
 /** Upper bound of the default bus clock selected by a zero pf_sdio_pio_config_t::clock_hz. */
 #define PF_SDIO_PIO_DEFAULT_CLOCK_MAX_HZ 12500000u
 
+/** Optional platform wait callback; completion flags remain owned by the host.
+ * Called only during bounded data waits. Must use a bounded wait,
+ * must not clear the PIO flag or access the card, and must tolerate boot before
+ * a scheduler starts. Set before card access; NULL retains plain polling.
+ */
+typedef void (*pf_sdio_pio_wait_hook_t)(PIO pio, uint32_t completion_flag);
+void pf_sdio_pio_set_wait_hook(pf_sdio_pio_wait_hook_t hook);
+
 /** Board-provided SD memory-card connection settings for the native PIO host. */
 typedef struct {
     uint32_t command_gpio;

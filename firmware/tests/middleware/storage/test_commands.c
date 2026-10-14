@@ -314,6 +314,32 @@ void test_status_is_available_during_host_ownership(void)
     TEST_ASSERT_NOT_NULL(strstr(output, "bytes=15808331776"));
 }
 
+void test_profile_enable_and_snapshot_are_serialized_commands(void)
+{
+    pf_sd_card_profile_t metrics = { 0 };
+    metrics.elapsed_us[PF_SD_CARD_PROFILE_CRC] = 1234u;
+    metrics.calls[PF_SD_CARD_PROFILE_CRC] = 8u;
+    metrics.events[PF_SD_CARD_PROFILE_TIMEOUT] = 2u;
+    pf_sd_card_set_profiling_enabled_Expect(true);
+    pf_sd_card_get_profile_ExpectAnyArgs();
+    pf_sd_card_get_profile_ReturnThruPtr_profile(&metrics);
+    pf_storage_command_execute(NULL, false, "sd", "profile on", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "crc_copy_us=1234 calls=8"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "timeouts=2"));
+}
+
+void test_profile_changes_are_rejected_during_usb_ownership(void)
+{
+    pf_storage_command_execute(NULL, true, "sd", "profile reset", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "firmware card ownership"));
+}
+
+void test_profile_rejects_unknown_actions(void)
+{
+    pf_storage_command_execute(NULL, false, "sd", "profile invalid", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Usage: sd profile"));
+}
+
 static bool disconnected_reply(const char *line, void *context)
 {
     (void)line;

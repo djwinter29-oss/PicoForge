@@ -1,8 +1,57 @@
 #include "unity.h"
 #include "sd_card_protocol.h"
 
-void setUp(void) {}
+void setUp(void)
+{
+    pf_sd_card_set_profiling_enabled(false);
+    pf_sd_card_profile_set_clock(NULL);
+    pf_sd_card_reset_profile();
+}
 void tearDown(void) {}
+
+static uint32_t profile_time;
+
+static uint32_t profile_clock(void)
+{
+    return profile_time;
+}
+
+void test_profile_is_optional_and_handles_clock_wrap(void)
+{
+    pf_sd_card_profile_t metrics;
+    pf_sd_card_profile_set_clock(profile_clock);
+    profile_time = 100u;
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, 0u);
+    pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
+    pf_sd_card_get_profile(&metrics);
+    TEST_ASSERT_EQUAL_UINT32(0u, metrics.calls[PF_SD_CARD_PROFILE_DATA]);
+    TEST_ASSERT_EQUAL_UINT32(0u, metrics.events[PF_SD_CARD_PROFILE_TIMEOUT]);
+
+    pf_sd_card_set_profiling_enabled(true);
+    profile_time = UINT32_MAX - 4u;
+    uint32_t start = pf_sd_card_profile_begin();
+    profile_time = 5u;
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, start);
+    pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
+    pf_sd_card_get_profile(&metrics);
+    TEST_ASSERT_EQUAL_UINT64(10u, metrics.elapsed_us[PF_SD_CARD_PROFILE_DATA]);
+    TEST_ASSERT_EQUAL_UINT32(1u, metrics.calls[PF_SD_CARD_PROFILE_DATA]);
+    TEST_ASSERT_EQUAL_UINT32(1u, metrics.events[PF_SD_CARD_PROFILE_TIMEOUT]);
+
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_PHASE_COUNT, start);
+    pf_sd_card_profile_end((pf_sd_card_profile_phase_t)-1, start);
+    pf_sd_card_profile_event(PF_SD_CARD_PROFILE_EVENT_COUNT);
+    pf_sd_card_profile_event((pf_sd_card_profile_event_t)-1);
+    pf_sd_card_get_profile(NULL);
+    pf_sd_card_reset_profile();
+    pf_sd_card_get_profile(&metrics);
+    TEST_ASSERT_EQUAL_UINT32(0u, metrics.calls[PF_SD_CARD_PROFILE_DATA]);
+    start = pf_sd_card_profile_begin();
+    profile_time = 8u;
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, start);
+    pf_sd_card_get_profile(&metrics);
+    TEST_ASSERT_EQUAL_UINT64(3u, metrics.elapsed_us[PF_SD_CARD_PROFILE_DATA]);
+}
 
 void test_shared_transfer_bounds_and_zero_count(void)
 {
@@ -14,6 +63,21 @@ void test_shared_transfer_bounds_and_zero_count(void)
     TEST_ASSERT_EQUAL(PF_SD_CARD_INVALID_ARGUMENT, pf_sd_card_validate_transfer(0u, NULL, 1u, 1u));
     TEST_ASSERT_EQUAL(PF_SD_CARD_INVALID_ARGUMENT,
                       pf_sd_card_validate_transfer(UINT32_MAX, buffer, 1u, UINT32_MAX));
+}
+
+void test_shared_transfer_byte_count_must_fit_size_t(void)
+{
+    uint8_t buffer[1];
+    uint32_t largest_transfer = (SIZE_MAX / PF_SD_CARD_BLOCK_SIZE < UINT32_MAX)
+        ? (uint32_t)(SIZE_MAX / PF_SD_CARD_BLOCK_SIZE) : UINT32_MAX;
+
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK,
+                      pf_sd_card_validate_transfer(0u, buffer, largest_transfer, UINT32_MAX));
+    if (largest_transfer < UINT32_MAX) {
+        TEST_ASSERT_EQUAL(PF_SD_CARD_INVALID_ARGUMENT,
+                          pf_sd_card_validate_transfer(0u, buffer, largest_transfer + 1u,
+                                                       UINT32_MAX));
+    }
 }
 
 void test_shared_serial_crc16_reference(void)
@@ -82,6 +146,9 @@ void test_csd_transfer_speed_decodes_standard_units_and_multipliers(void)
     csd[3] = 0x5au;
     TEST_ASSERT_TRUE(pf_sd_card_csd_transfer_hz(csd, &transfer_hz));
     TEST_ASSERT_EQUAL_UINT32(50000000u, transfer_hz);
+    csd[3] = 0x7bu;
+    TEST_ASSERT_TRUE(pf_sd_card_csd_transfer_hz(csd, &transfer_hz));
+    TEST_ASSERT_EQUAL_UINT32(800000000u, transfer_hz);
     csd[3] = 0xb2u;
     TEST_ASSERT_FALSE(pf_sd_card_csd_transfer_hz(csd, &transfer_hz));
     csd[3] = 0x0fu;
