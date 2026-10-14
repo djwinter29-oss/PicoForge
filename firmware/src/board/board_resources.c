@@ -17,24 +17,13 @@ static bool pin_is_valid(uint32_t pin, uint32_t gpio_limit)
 static bool data_pins_are_valid(const uint32_t data_gpio[4], uint32_t gpio_limit,
                                 uint32_t *gpio_base)
 {
-    bool used_offsets[4] = { false, false, false, false };
-    uint32_t base = UINT32_MAX;
+    uint32_t base = data_gpio[0];
 
     for (uint32_t lane = 0u; lane < 4u; lane++) {
-        if (!pin_is_valid(data_gpio[lane], gpio_limit)) {
+        if (!pin_is_valid(data_gpio[lane], gpio_limit) ||
+            (data_gpio[lane] != base + lane)) {
             return false;
         }
-        if (data_gpio[lane] < base) {
-            base = data_gpio[lane];
-        }
-    }
-
-    for (uint32_t lane = 0u; lane < 4u; lane++) {
-        uint32_t offset = data_gpio[lane] - base;
-        if ((offset >= 4u) || used_offsets[offset]) {
-            return false;
-        }
-        used_offsets[offset] = true;
     }
 
     *gpio_base = base;

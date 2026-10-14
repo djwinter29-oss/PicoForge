@@ -158,6 +158,10 @@ void test_rejects_pins_outside_sd_bus_constraints(void)
     topology.data_gpio[1] = topology.data_gpio[0];
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
+    topology.data_gpio[1] = 6u;
+    topology.data_gpio[2] = 5u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+    topology = valid_topology();
     topology.data_gpio[1] = 8u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 }

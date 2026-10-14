@@ -243,9 +243,6 @@ void test_rejects_invalid_v1_block_length_and_zero_capacity(void)
     TEST_ASSERT_EQUAL_UINT32(17u, sectors);
 }
 
-static const uint32_t identity_gpio[4] = { 4u, 5u, 6u, 7u };
-static const uint32_t documented_gpio[4] = { 4u, 7u, 6u, 5u };
-
 static void fill_pattern(uint8_t block[512])
 {
     for (size_t index = 0u; index < 512u; index++) {
@@ -255,59 +252,46 @@ static void fill_pattern(uint8_t block[512])
 
 void test_round_trips_zero_filled_data_block_and_lane_crcs(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint8_t source[512] = { 0u };
     uint8_t destination[512];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
 
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, identity_gpio));
-    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
-    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, image, destination));
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(source, image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(image, destination));
     TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
 }
 
-void test_round_trips_patterned_data_block_for_each_lane_order(void)
+void test_round_trips_patterned_data_block(void)
 {
-    const uint32_t *orders[] = { identity_gpio, documented_gpio };
     uint8_t source[512];
     uint8_t destination[512];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
 
     fill_pattern(source);
-    for (size_t order = 0u; order < 2u; order++) {
-        pf_sdio_pio_lane_map_t map;
-
-        TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, orders[order]));
-        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
-        memset(destination, 0, sizeof(destination));
-        TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, image, destination));
-        TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
-    }
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(source, image));
+    memset(destination, 0, sizeof(destination));
+    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(image, destination));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
 }
 
 void test_round_trips_64_byte_switch_status_and_checks_its_crc(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint8_t source[64];
     uint8_t destination[64];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
-    const uint32_t *orders[] = { identity_gpio, documented_gpio };
 
     for (size_t index = 0u; index < sizeof(source); index++) {
         source[index] = (uint8_t)(index * 29u + 7u);
     }
-    for (size_t order = 0u; order < 2u; order++) {
-        TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, orders[order]));
-        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block_sized(&map, source, sizeof(source), image));
-        TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block_sized(&map, image, destination,
-                                                             sizeof(destination)));
-        TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
-        image[sizeof(source)] ^= 1u;
-        TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block_sized(&map, image, destination,
-                                                              sizeof(destination)));
-        image[sizeof(source)] ^= 1u;
-    }
-    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block_sized(&map, image, destination, 65u));
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block_sized(source, sizeof(source), image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block_sized(image, destination,
+                                                         sizeof(destination)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
+    image[sizeof(source)] ^= 1u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block_sized(image, destination,
+                                                          sizeof(destination)));
+    image[sizeof(source)] ^= 1u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block_sized(image, destination, 65u));
 }
 
 void test_reads_high_speed_support_and_selected_function_from_cmd6_status(void)
@@ -328,14 +312,12 @@ void test_reads_high_speed_support_and_selected_function_from_cmd6_status(void)
 
 void test_encodes_data_nibbles_and_crc_in_wire_order(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint8_t source[512];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
     uint16_t crc[4];
 
     fill_pattern(source);
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, identity_gpio));
-    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(source, image));
     TEST_ASSERT_EQUAL_UINT8_ARRAY(source, image, sizeof(source));
 
     /* CRC nibble n carries bit (15 - n) of each lane, most significant nibble first. */
@@ -349,35 +331,6 @@ void test_encodes_data_nibbles_and_crc_in_wire_order(void)
         }
         TEST_ASSERT_EQUAL_HEX8(nibble, (cycle % 2u == 0u) ? (actual >> 4u) : (actual & 0x0fu));
     }
-}
-
-void test_maps_documented_dat_pin_order_and_back(void)
-{
-    pf_sdio_pio_lane_map_t map;
-    uint8_t source[512] = { 0x12u, 0x34u, 0x56u, 0x78u };
-    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
-
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
-    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
-    TEST_ASSERT_EQUAL_HEX8(0x18u, image[0]);
-    TEST_ASSERT_EQUAL_HEX8(0x94u, image[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x5cu, image[2]);
-    TEST_ASSERT_EQUAL_HEX8(0xd2u, image[3]);
-    for (uint8_t nibble = 0u; nibble < 16u; nibble++) {
-        TEST_ASSERT_EQUAL_HEX8(nibble, map.from_gpio[map.to_gpio[nibble]]);
-    }
-}
-
-void test_rejects_invalid_data_lane_gpio_mapping(void)
-{
-    pf_sdio_pio_lane_map_t map;
-    const uint32_t duplicate_gpio[4] = { 4u, 5u, 5u, 7u };
-    const uint32_t sparse_gpio[4] = { 4u, 6u, 7u, 8u };
-
-    TEST_ASSERT_FALSE(pf_sdio_pio_lane_map_init(&map, duplicate_gpio));
-    TEST_ASSERT_FALSE(pf_sdio_pio_lane_map_init(&map, sparse_gpio));
-    TEST_ASSERT_FALSE(pf_sdio_pio_lane_map_init(NULL, identity_gpio));
-    TEST_ASSERT_FALSE(pf_sdio_pio_lane_map_init(&map, NULL));
 }
 
 void test_calculates_known_four_lane_crc16_vector(void)
@@ -424,214 +377,86 @@ void test_four_lane_crc_matches_independent_bitwise_reference(void)
 
 void test_detects_corrupt_data_and_crc_bytes(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint8_t source[512] = { 0u };
     uint8_t destination[512];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
 
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
-    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(source, image));
     image[0] ^= 0x10u;
-    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, destination));
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(image, destination));
     image[0] ^= 0x10u;
     image[512] ^= 1u;
-    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, destination));
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(image, destination));
     image[512] ^= 1u;
     image[PF_SDIO_PIO_IMAGE_SIZE - 1u] ^= 0x80u;
-    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, destination));
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(image, destination));
 }
 
 void test_handles_null_data_block_buffers(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint16_t crc[4];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE] = { 0u };
     uint8_t block[512];
 
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, identity_gpio));
     pf_sdio_pio_crc16_4bit(NULL, crc);
     pf_sdio_pio_crc16_4bit(block, NULL);
-    TEST_ASSERT_FALSE(pf_sdio_pio_encode_data_block(NULL, block, image));
-    TEST_ASSERT_FALSE(pf_sdio_pio_encode_data_block(&map, NULL, image));
-    TEST_ASSERT_FALSE(pf_sdio_pio_encode_data_block(&map, block, NULL));
-    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(NULL, image, block));
-    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, NULL, block));
-    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, NULL));
+    TEST_ASSERT_FALSE(pf_sdio_pio_encode_data_block(NULL, image));
+    TEST_ASSERT_FALSE(pf_sdio_pio_encode_data_block(block, NULL));
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(NULL, block));
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(image, NULL));
 }
-static void reference_crc16_lanes(const uint8_t block[512], uint16_t crc[4])
-{
-    for (uint32_t lane = 0u; lane < 4u; lane++) {
-        crc[lane] = 0u;
-    }
-    for (size_t index = 0u; index < 512u; index++) {
-        for (uint32_t half = 0u; half < 2u; half++) {
-            uint8_t nibble = (uint8_t)(block[index] >> (half == 0u ? 4u : 0u));
-            for (uint32_t lane = 0u; lane < 4u; lane++) {
-                uint16_t feedback = (uint16_t)((crc[lane] >> 15u) ^ ((nibble >> lane) & 1u));
-                crc[lane] = (uint16_t)(crc[lane] << 1u);
-                if (feedback != 0u) {
-                    crc[lane] ^= 0x1021u;
-                }
-            }
-        }
-    }
-}
-
-/* Builds the wire image from the bitwise reference, independent of the production CRC. */
-static void reference_image(const uint8_t block[512], const uint32_t gpio[4],
-                            uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
-{
-    uint16_t crc[4];
-    uint32_t base = gpio[0];
-
-    for (uint32_t lane = 1u; lane < 4u; lane++) {
-        if (gpio[lane] < base) {
-            base = gpio[lane];
-        }
-    }
-    reference_crc16_lanes(block, crc);
-    for (size_t index = 0u; index < 512u; index++) {
-        uint8_t byte = 0u;
-        for (uint32_t half = 0u; half < 2u; half++) {
-            uint8_t nibble = (uint8_t)(block[index] >> (half == 0u ? 4u : 0u));
-            uint8_t wire = 0u;
-            for (uint32_t lane = 0u; lane < 4u; lane++) {
-                wire |= (uint8_t)(((nibble >> lane) & 1u) << (gpio[lane] - base));
-            }
-            byte |= (uint8_t)(wire << (half == 0u ? 4u : 0u));
-        }
-        image[index] = byte;
-    }
-    for (size_t index = 0u; index < 8u; index++) {
-        uint8_t byte = 0u;
-        for (uint32_t half = 0u; half < 2u; half++) {
-            uint32_t bit = 15u - (2u * (uint32_t)index + half);
-            uint8_t wire = 0u;
-            for (uint32_t lane = 0u; lane < 4u; lane++) {
-                wire |= (uint8_t)(((crc[lane] >> bit) & 1u) << (gpio[lane] - base));
-            }
-            byte |= (uint8_t)(wire << (half == 0u ? 4u : 0u));
-        }
-        image[512u + index] = byte;
-    }
-}
-
-void test_data_block_crc_matches_reference_for_every_lane_permutation(void)
-{
-    uint8_t source[512];
-    uint8_t destination[512];
-    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
-    uint8_t expected[PF_SDIO_PIO_IMAGE_SIZE];
-    uint32_t pattern = 0x1234567u;
-
-    for (uint32_t code = 0u; code < 256u; code++) {
-        uint32_t gpio[4] = { 4u + (code & 3u), 4u + ((code >> 2u) & 3u),
-                             4u + ((code >> 4u) & 3u), 4u + ((code >> 6u) & 3u) };
-        pf_sdio_pio_lane_map_t map;
-        bool valid = true;
-
-        for (uint32_t a = 0u; a < 4u; a++) {
-            for (uint32_t b = a + 1u; b < 4u; b++) {
-                valid = valid && (gpio[a] != gpio[b]);
-            }
-        }
-        if (!valid) {
-            continue;
-        }
-        for (size_t index = 0u; index < sizeof(source); index++) {
-            pattern = pattern * 1664525u + 1013904223u;
-            source[index] = (uint8_t)(pattern >> 24u);
-        }
-        reference_image(source, gpio, expected);
-        TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, gpio));
-        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
-        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, image, sizeof(image));
-        TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, expected, destination));
-        TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
-    }
-}
-
 void test_decode_rejects_every_single_bit_crc_error_per_lane(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint8_t source[512];
     uint8_t destination[512];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
 
     fill_pattern(source);
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
-    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(source, image));
     for (size_t index = 512u; index < PF_SDIO_PIO_IMAGE_SIZE; index++) {
         for (uint32_t bit = 0u; bit < 8u; bit++) {
             image[index] ^= (uint8_t)(1u << bit);
-            TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, destination));
+            TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(image, destination));
             image[index] ^= (uint8_t)(1u << bit);
         }
     }
     for (size_t index = 0u; index < 512u; index += 61u) {
         for (uint32_t bit = 0u; bit < 8u; bit++) {
             image[index] ^= (uint8_t)(1u << bit);
-            TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(&map, image, destination));
+            TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block(image, destination));
             image[index] ^= (uint8_t)(1u << bit);
         }
     }
-    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, image, destination));
+    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(image, destination));
 }
 
 
-void test_decode_byte_table_matches_nibble_map_for_all_byte_values(void)
+void test_round_trips_every_byte_value_without_lane_remapping(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint8_t source[512];
     uint8_t destination[512];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
-    const uint32_t gpio[4] = { 7u, 5u, 4u, 6u };
-
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, gpio));
     for (uint32_t value = 0u; value < 256u; value++) {
-        TEST_ASSERT_EQUAL_UINT8((uint8_t)((map.from_gpio[value >> 4u] << 4u) |
-                                          map.from_gpio[value & 0x0fu]),
-                                map.from_gpio_byte[value]);
         source[value] = (uint8_t)value;
         source[256u + value] = (uint8_t)(255u - value);
     }
-    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, source, image));
-    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(&map, image, destination));
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(source, image));
+    TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block(image, destination));
     TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
 }
 
 void test_crc_and_encoded_image_do_not_depend_on_input_alignment(void)
 {
-    pf_sdio_pio_lane_map_t map;
     uint8_t storage[512 + 3];
     uint8_t aligned[512];
     uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
     uint8_t expected[PF_SDIO_PIO_IMAGE_SIZE];
-    uint16_t crc_aligned[4];
-    uint16_t crc_offset[4];
 
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
     fill_pattern(aligned);
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(aligned, expected));
     for (size_t offset = 1u; offset < 4u; offset++) {
         memcpy(storage + offset, aligned, sizeof(aligned));
-        pf_sdio_pio_crc16_4bit(aligned, crc_aligned);
-        pf_sdio_pio_crc16_4bit(storage + offset, crc_offset);
-        TEST_ASSERT_EQUAL_UINT16_ARRAY(crc_aligned, crc_offset, 4u);
-        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(&map, storage + offset, image));
-        reference_image(aligned, documented_gpio, expected);
+        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(storage + offset, image));
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, image, sizeof(image));
-    }
-}
-
-void test_lane_map_byte_tables_match_nibble_maps(void)
-{
-    pf_sdio_pio_lane_map_t map;
-
-    TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, documented_gpio));
-    for (uint32_t value = 0u; value < 256u; value++) {
-        TEST_ASSERT_EQUAL_UINT8((map.to_gpio[value >> 4u] << 4u) | map.to_gpio[value & 0x0fu],
-                                map.to_gpio_byte[value]);
-        TEST_ASSERT_EQUAL_UINT8((map.from_gpio[value >> 4u] << 4u) | map.from_gpio[value & 0x0fu],
-                                map.from_gpio_byte[value]);
     }
 }

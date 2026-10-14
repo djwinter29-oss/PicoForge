@@ -188,11 +188,6 @@ static uint64_t crc16_4bit_block(const uint8_t block[512])
     return reg;
 }
 
-static uint8_t map_byte(const uint8_t nibble_map[16], uint8_t value)
-{
-    return (uint8_t)((nibble_map[value >> 4u] << 4u) | nibble_map[value & 0x0fu]);
-}
-
 void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4])
 {
     uint64_t reg;
@@ -210,56 +205,12 @@ void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4])
     }
 }
 
-bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_gpio[4])
-{
-    uint32_t gpio_base = UINT32_MAX;
-    uint8_t lane_at_gpio_bit[4] = { 0u, 0u, 0u, 0u };
-    bool lane_assigned[4] = { false, false, false, false };
-
-    if ((map == NULL) || (data_gpio == NULL)) {
-        return false;
-    }
-
-    for (uint8_t lane = 0u; lane < 4u; lane++) {
-        if (data_gpio[lane] < gpio_base) {
-            gpio_base = data_gpio[lane];
-        }
-    }
-    for (uint8_t lane = 0u; lane < 4u; lane++) {
-        uint32_t gpio_bit = data_gpio[lane] - gpio_base;
-        if ((gpio_bit >= 4u) || lane_assigned[gpio_bit]) {
-            return false;
-        }
-        lane_at_gpio_bit[gpio_bit] = lane;
-        lane_assigned[gpio_bit] = true;
-    }
-
-    for (uint8_t nibble = 0u; nibble < 16u; nibble++) {
-        uint8_t to_gpio = 0u;
-        uint8_t from_gpio = 0u;
-
-        for (uint8_t gpio_bit = 0u; gpio_bit < 4u; gpio_bit++) {
-            uint8_t lane = lane_at_gpio_bit[gpio_bit];
-            to_gpio |= (uint8_t)(((nibble >> lane) & 1u) << gpio_bit);
-            from_gpio |= (uint8_t)(((nibble >> gpio_bit) & 1u) << lane);
-        }
-        map->to_gpio[nibble] = to_gpio;
-        map->from_gpio[nibble] = from_gpio;
-    }
-    for (uint32_t value = 0u; value < 256u; value++) {
-        map->to_gpio_byte[value] = map_byte(map->to_gpio, (uint8_t)value);
-        map->from_gpio_byte[value] = map_byte(map->from_gpio, (uint8_t)value);
-    }
-    return true;
-}
-
-bool pf_sdio_pio_encode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
-                                         const uint8_t *block, size_t block_size,
+bool pf_sdio_pio_encode_data_block_sized(const uint8_t *block, size_t block_size,
                                          uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
 {
     uint64_t reg = 0u;
 
-    if ((map == NULL) || (block == NULL) || (image == NULL) ||
+    if ((block == NULL) || (image == NULL) ||
         (block_size == 0u) || (block_size > 512u) || ((block_size & 3u) != 0u)) {
         return false;
     }
@@ -269,32 +220,28 @@ bool pf_sdio_pio_encode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
 
     for (size_t index = 0u; index < block_size; index += 4u) {
         reg = crc16_4bit_word(reg, load_be32(block + index));
-        image[index] = map->to_gpio_byte[block[index]];
-        image[index + 1u] = map->to_gpio_byte[block[index + 1u]];
-        image[index + 2u] = map->to_gpio_byte[block[index + 2u]];
-        image[index + 3u] = map->to_gpio_byte[block[index + 3u]];
     }
+    memcpy(image, block, block_size);
     for (size_t index = 0u; index < 8u; index++) {
-        image[block_size + index] = map_byte(map->to_gpio,
-                                             (uint8_t)(reg >> (56u - 8u * index)));
+        uint8_t crc_byte = (uint8_t)(reg >> (56u - 8u * index));
+        image[block_size + index] = crc_byte;
     }
     return true;
 }
 
-bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint8_t block[512],
+bool pf_sdio_pio_encode_data_block(const uint8_t block[512],
                                    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
 {
-    return pf_sdio_pio_encode_data_block_sized(map, block, 512u, image);
+    return pf_sdio_pio_encode_data_block_sized(block, 512u, image);
 }
 
-bool pf_sdio_pio_decode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
-                                         const uint8_t *image, uint8_t *block,
+bool pf_sdio_pio_decode_data_block_sized(const uint8_t *image, uint8_t *block,
                                          size_t block_size)
 {
     uint64_t reg = 0u;
     uint64_t received = 0u;
 
-    if ((map == NULL) || (image == NULL) || (block == NULL) ||
+    if ((image == NULL) || (block == NULL) ||
         (block_size == 0u) || (block_size > 512u) || ((block_size & 3u) != 0u)) {
         return false;
     }
@@ -302,28 +249,20 @@ bool pf_sdio_pio_decode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
         crc16_4bit_table_init();
     }
 
-    /*
-     * The CRC update treats all four bit positions of a nibble identically, so it can
-     * run on wire-order bytes and be compared with the wire-order CRC bytes; only the
-     * 512 data bytes need a lane remap.
-     */
     for (size_t index = 0u; index < block_size; index += 4u) {
         reg = crc16_4bit_word(reg, load_be32(image + index));
-        block[index] = map->from_gpio_byte[image[index]];
-        block[index + 1u] = map->from_gpio_byte[image[index + 1u]];
-        block[index + 2u] = map->from_gpio_byte[image[index + 2u]];
-        block[index + 3u] = map->from_gpio_byte[image[index + 3u]];
     }
+    memcpy(block, image, block_size);
     for (size_t index = 0u; index < 8u; index++) {
         received = (received << 8u) | image[block_size + index];
     }
     return received == reg;
 }
 
-bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
-                                   const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512])
+bool pf_sdio_pio_decode_data_block(const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE],
+                                   uint8_t block[512])
 {
-    return pf_sdio_pio_decode_data_block_sized(map, image, block, 512u);
+    return pf_sdio_pio_decode_data_block_sized(image, block, 512u);
 }
 
 bool pf_sdio_pio_switch_supports_high_speed(

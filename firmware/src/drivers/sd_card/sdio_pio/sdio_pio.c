@@ -59,23 +59,13 @@ static bool same_config(const pf_sdio_pio_config_t *left,
 static bool data_gpio_window(const uint32_t data_gpio[4], uint32_t pin_limit,
                              uint32_t *gpio_base)
 {
-    bool used_offsets[4] = { false, false, false, false };
-    uint32_t base = UINT32_MAX;
+    uint32_t base = data_gpio[0];
 
     for (uint32_t lane = 0u; lane < 4u; lane++) {
-        if (data_gpio[lane] >= pin_limit) {
+        if ((data_gpio[lane] >= pin_limit) ||
+            (data_gpio[lane] != base + lane)) {
             return false;
         }
-        if (data_gpio[lane] < base) {
-            base = data_gpio[lane];
-        }
-    }
-    for (uint32_t lane = 0u; lane < 4u; lane++) {
-        uint32_t offset = data_gpio[lane] - base;
-        if ((offset >= 4u) || used_offsets[offset]) {
-            return false;
-        }
-        used_offsets[offset] = true;
     }
     *gpio_base = base;
     return true;

@@ -14,7 +14,7 @@
 typedef struct {
     uint32_t command_gpio;
     uint32_t clock_gpio;
-    uint32_t data_gpio[4];    /**< GPIO assignment for logical DAT0, DAT1, DAT2, DAT3. */
+    uint32_t data_gpio[4];    /**< DAT0-DAT3 GPIOs; must be ascending and consecutive. */
     PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
     uint32_t clock_hz;       /**< 0 selects the default; requests above 25 MHz use CMD6 high-speed negotiation, max 50 MHz. */
     bool use_card_detect;

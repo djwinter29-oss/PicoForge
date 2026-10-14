@@ -238,18 +238,10 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
     }
 
     memset(host, 0, sizeof(*host));
-    if (!pf_sdio_pio_lane_map_init(&host->lane_map, config->data_gpio)) {
-        return false;
-    }
     host->pio = config->pio;
     host->command_gpio = config->command_gpio;
     host->data0_gpio = config->data_gpio[0];
     data_gpio_base = config->data_gpio[0];
-    for (uint lane = 1u; lane < 4u; lane++) {
-        if (config->data_gpio[lane] < data_gpio_base) {
-            data_gpio_base = config->data_gpio[lane];
-        }
-    }
     host->data_gpio_base = data_gpio_base;
     host->clock_gpio = config->clock_gpio;
     host->system_clock_hz = clock_get_hz(clk_sys);
@@ -496,7 +488,7 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     }
 
     dma_channel_wait_for_finish_blocking(host->dma_channel);
-    success = pf_sdio_pio_decode_data_block(&host->lane_map, (const uint8_t *)image, block);
+    success = pf_sdio_pio_decode_data_block((const uint8_t *)image, block);
 
 cleanup:
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -564,8 +556,8 @@ bool pf_sdio_pio_host_read_switch_status(
     }
 
     dma_channel_wait_for_finish_blocking(host->dma_channel);
-    success = pf_sdio_pio_decode_data_block_sized(&host->lane_map, (const uint8_t *)image,
-                                                   status, PF_SDIO_PIO_SWITCH_STATUS_SIZE);
+    success = pf_sdio_pio_decode_data_block_sized((const uint8_t *)image, status,
+                                                   PF_SDIO_PIO_SWITCH_STATUS_SIZE);
 
 cleanup:
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -598,8 +590,8 @@ static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
     while (*decoded_count < completed) {
         uint8_t *image = (uint8_t *)&read_wire_buffer[
             *decoded_count * SDIO_DATA_WORD_COUNT];
-        if (!pf_sdio_pio_decode_data_block(&host->lane_map, image,
-                                           blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)) {
+        if (!pf_sdio_pio_decode_data_block(image,
+                           blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)) {
             return false;
         }
         ++*decoded_count;
@@ -758,7 +750,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         !pf_sd_card_block_argument(sector, block_addressed, &command_argument)) {
         return false;
     }
-    if (!pf_sdio_pio_encode_data_block(&host->lane_map, block, (uint8_t *)image)) {
+    if (!pf_sdio_pio_encode_data_block(block, (uint8_t *)image)) {
         return false;
     }
 
@@ -846,8 +838,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         !pf_sdio_pio_host_write_stream_close(host)) {
         return false;
     }
-    if (!pf_sdio_pio_encode_data_block(&host->lane_map, blocks,
-                                         (uint8_t *)images[0])) {
+    if (!pf_sdio_pio_encode_data_block(blocks, (uint8_t *)images[0])) {
         return false;
     }
     if (!continues) {
@@ -893,7 +884,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         start = time_us_32();
         if ((block_index + 1u < block_count) &&
             !pf_sdio_pio_encode_data_block(
-                &host->lane_map, blocks + (block_index + 1u) * PF_SD_CARD_BLOCK_SIZE,
+                blocks + (block_index + 1u) * PF_SD_CARD_BLOCK_SIZE,
                 (uint8_t *)images[(block_index + 1u) & 1u])) {
             transfer_ok = false;
         }

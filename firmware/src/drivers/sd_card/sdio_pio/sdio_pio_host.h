@@ -13,7 +13,6 @@ typedef struct {
     uint command_gpio;
     uint data_gpio_base;
     uint data0_gpio;
-    pf_sdio_pio_lane_map_t lane_map;
     uint clock_gpio;
     uint command_sm;
     uint data_sm;
