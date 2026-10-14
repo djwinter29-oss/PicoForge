@@ -184,6 +184,32 @@ static bool wait_card_data_ready(void)
     return true;
 }
 
+static const uint32_t transfer_clock_steps_hz[] = {
+    50000000u, 40000000u, 33000000u, 25000000u, 20000000u, 10000000u, 5000000u, 1000000u,
+};
+
+/* Rewrites block 0..3 with their own content so both transfer directions are exercised at the candidate clock. */
+static bool probe_transfer(void)
+{
+    static uint8_t probe[4u * PF_SD_CARD_BLOCK_SIZE] __attribute__((aligned(4)));
+    static uint8_t verify[sizeof(probe)] __attribute__((aligned(4)));
+    bool passed;
+
+    if (card_sector_count < 4u) {
+        return true;
+    }
+    passed = pf_sdio_pio_host_read_blocks(&sdio_pio_host, 0u, card_block_addressed, probe, 4u) &&
+             pf_sdio_pio_host_write_blocks(&sdio_pio_host, 0u, card_block_addressed, probe, 4u) &&
+             pf_sdio_pio_host_write_stream_close(&sdio_pio_host) &&
+             pf_sdio_pio_host_write_sector(&sdio_pio_host, 0u, card_block_addressed, probe) &&
+             pf_sdio_pio_host_read_blocks(&sdio_pio_host, 0u, card_block_addressed, verify, 4u) &&
+             (memcmp(probe, verify, sizeof(probe)) == 0);
+    if (!passed) {
+        (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
+    }
+    return passed;
+}
+
 static bool initialize_card(void)
 {
     uint8_t response[17];
@@ -324,11 +350,19 @@ static bool initialize_card(void)
         }
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;
-    if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock)) {
-        if ((transfer_clock <= 25000000u) ||
-            !pf_sdio_pio_host_set_clock(&sdio_pio_host, 25000000u)) {
-            return false;
+    bool clock_ready = false;
+    for (size_t index = 0u; index < (sizeof(transfer_clock_steps_hz) / sizeof(transfer_clock_steps_hz[0])); index++) {
+        if (transfer_clock_steps_hz[index] > transfer_clock) {
+            continue;
         }
+        if (pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock_steps_hz[index]) &&
+            probe_transfer()) {
+            clock_ready = true;
+            break;
+        }
+    }
+    if (!clock_ready) {
+        return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
     card_bus_clock_hz = sdio_pio_host.current_clock_hz;

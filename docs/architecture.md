@@ -97,6 +97,10 @@ removal ends it with CMD12; the data is committed to the card only then, so
 callers that need durability must sync. SPI transfers use synchronous single-sector operations. Both
 transports require serialized access.
 
+After initialization the driver steps the bus clock down from the requested
+rate (50, 40, 33, 25, 20, 10, 5, 1 MHz) until a probe passes: it reads blocks 0-3,
+rewrites them with the same data, and reads them back.
+
 SDIO clock requests above 25 MHz first check and switch SD CMD6 function group 1
 to High Speed; the driver only applies the higher clock when the card confirms
 the switch, otherwise it uses 25 MHz. The high-speed receiver uses falling-edge

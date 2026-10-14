@@ -358,7 +358,9 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
         divider_ticks = 2u * (uint32_t)(((uint64_t)host->system_clock_hz * 64u +
                                          clock_hz - 1u) / clock_hz);
     } else {
-        divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz * 128u) / clock_hz);
+        /* Slow-mode programs need whole system cycles; round the divider up. */
+        divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz + 2u * clock_hz - 1u) /
+                                   (2u * clock_hz)) * 256u;
     }
     host->clock_div_ticks = divider_ticks;
     pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm,
