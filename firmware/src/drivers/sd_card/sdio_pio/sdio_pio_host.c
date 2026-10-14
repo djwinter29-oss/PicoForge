@@ -411,6 +411,75 @@ cleanup:
     return success;
 }
 
+bool pf_sdio_pio_host_read_switch_status(
+    pf_sdio_pio_host_t *host, uint32_t argument,
+    uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+{
+    enum { SWITCH_DATA_BYTES = PF_SDIO_PIO_SWITCH_STATUS_SIZE + 8u };
+    uint32_t image[PF_SDIO_PIO_TRANSFER_WORDS];
+    uint8_t response[6];
+    uint32_t response_argument;
+    dma_channel_config dma_config;
+    uint32_t start;
+    bool success = false;
+
+    if ((host == NULL) || (status == NULL) || !host->data_rx_program_loaded) {
+        return false;
+    }
+
+    pio_sm_set_enabled(host->pio, host->data_sm, false);
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
+    pio_sm_restart(host->pio, host->data_sm);
+    pio_sm_exec(host->pio, host->data_sm,
+                pio_encode_jmp(host->data_rx_program_offset));
+    pio_sm_exec(host->pio, host->data_sm, pio_encode_set(pio_y, 0u));
+    pio_sm_put_blocking(host->pio, host->data_sm, (SWITCH_DATA_BYTES * 2u) - 1u);
+
+    dma_config = dma_channel_get_default_config(host->dma_channel);
+    channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
+    channel_config_set_bswap(&dma_config, true);
+    channel_config_set_read_increment(&dma_config, false);
+    channel_config_set_write_increment(&dma_config, true);
+    channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, false));
+    dma_channel_configure(host->dma_channel, &dma_config, image,
+                          &host->pio->rxf[host->data_sm], SWITCH_DATA_BYTES / 4u, false);
+    dma_channel_start(host->dma_channel);
+    pio_sm_set_enabled(host->pio, host->data_sm, true);
+
+    if (!pf_sdio_pio_host_command_bytes(host, 6u, argument, 48u,
+                                         response, sizeof(response)) ||
+        !pf_sdio_pio_parse_response(6u, response, &response_argument, true) ||
+        ((response_argument & 0xfdffe008u) != 0u)) {
+        goto cleanup;
+    }
+
+    start = time_us_32();
+    while (!pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) ||
+           dma_channel_is_busy(host->dma_channel)) {
+        if ((uint32_t)(time_us_32() - start) > 1000000u) {
+            goto cleanup;
+        }
+        pf_sd_card_idle();
+    }
+
+    dma_channel_wait_for_finish_blocking(host->dma_channel);
+    success = pf_sdio_pio_decode_data_block_sized(&host->lane_map, (const uint8_t *)image,
+                                                   status, PF_SDIO_PIO_SWITCH_STATUS_SIZE);
+
+cleanup:
+    pio_sm_set_enabled(host->pio, host->data_sm, false);
+    if (dma_channel_is_busy(host->dma_channel)) {
+        dma_channel_abort(host->dma_channel);
+    }
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
+    pio_sm_restart(host->pio, host->data_sm);
+    pio_sm_exec(host->pio, host->data_sm,
+                pio_encode_jmp(host->data_rx_program_offset));
+    return success;
+}
+
 /* Decodes wire blocks fully written by DMA; returns false on a bad write address or CRC. */
 static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
                                     uint32_t batch_words, uint32_t *decoded_count)

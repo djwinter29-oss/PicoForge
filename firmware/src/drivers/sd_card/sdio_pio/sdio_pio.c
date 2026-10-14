@@ -132,7 +132,7 @@ static bool config_is_valid(const pf_sdio_pio_config_t *config)
     if (clock_hz == 0u) {
         clock_hz = default_clock_hz();
     }
-    return (clock_hz >= 400000u) && (clock_hz <= 25000000u) &&
+    return (clock_hz >= 400000u) && (clock_hz <= 50000000u) &&
            (clock_hz <= (clock_get_hz(clk_sys) / 2u));
 }
 
@@ -303,9 +303,25 @@ static bool initialize_card(void)
         return false;
     }
 
-    uint32_t transfer_clock = active_config.clock_hz;
-    if (transfer_clock == 0u) {
-        transfer_clock = default_clock_hz();
+    uint32_t requested_clock = active_config.clock_hz;
+    if (requested_clock == 0u) {
+        requested_clock = default_clock_hz();
+    }
+    uint32_t transfer_clock = requested_clock;
+    if (requested_clock > 25000000u) {
+        uint8_t switch_status[PF_SDIO_PIO_SWITCH_STATUS_SIZE];
+
+        if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 25000000u)) {
+            return false;
+        }
+        if (!pf_sdio_pio_host_read_switch_status(&sdio_pio_host, 0x00fffff0u,
+                                                  switch_status) ||
+            !pf_sdio_pio_switch_supports_high_speed(switch_status) ||
+            !pf_sdio_pio_host_read_switch_status(&sdio_pio_host, 0x80fffff1u,
+                                                  switch_status) ||
+            !pf_sdio_pio_switch_selected_high_speed(switch_status)) {
+            transfer_clock = 25000000u;
+        }
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;
     if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock)) {

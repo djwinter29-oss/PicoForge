@@ -253,19 +253,21 @@ bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_
     return true;
 }
 
-bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint8_t block[512],
-                                   uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
+bool pf_sdio_pio_encode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
+                                         const uint8_t *block, size_t block_size,
+                                         uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
 {
     uint64_t reg = 0u;
 
-    if ((map == NULL) || (block == NULL) || (image == NULL)) {
+    if ((map == NULL) || (block == NULL) || (image == NULL) ||
+        (block_size == 0u) || (block_size > 512u) || ((block_size & 3u) != 0u)) {
         return false;
     }
     if (!crc16_4bit_table_ready) {
         crc16_4bit_table_init();
     }
 
-    for (size_t index = 0u; index < 512u; index += 4u) {
+    for (size_t index = 0u; index < block_size; index += 4u) {
         reg = crc16_4bit_word(reg, load_be32(block + index));
         image[index] = map->to_gpio_byte[block[index]];
         image[index + 1u] = map->to_gpio_byte[block[index + 1u]];
@@ -273,18 +275,27 @@ bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint
         image[index + 3u] = map->to_gpio_byte[block[index + 3u]];
     }
     for (size_t index = 0u; index < 8u; index++) {
-        image[512u + index] = map_byte(map->to_gpio, (uint8_t)(reg >> (56u - 8u * index)));
+        image[block_size + index] = map_byte(map->to_gpio,
+                                             (uint8_t)(reg >> (56u - 8u * index)));
     }
     return true;
 }
 
-bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
-                                   const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512])
+bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint8_t block[512],
+                                   uint8_t image[PF_SDIO_PIO_IMAGE_SIZE])
+{
+    return pf_sdio_pio_encode_data_block_sized(map, block, 512u, image);
+}
+
+bool pf_sdio_pio_decode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
+                                         const uint8_t *image, uint8_t *block,
+                                         size_t block_size)
 {
     uint64_t reg = 0u;
     uint64_t received = 0u;
 
-    if ((map == NULL) || (image == NULL) || (block == NULL)) {
+    if ((map == NULL) || (image == NULL) || (block == NULL) ||
+        (block_size == 0u) || (block_size > 512u) || ((block_size & 3u) != 0u)) {
         return false;
     }
     if (!crc16_4bit_table_ready) {
@@ -296,7 +307,7 @@ bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
      * run on wire-order bytes and be compared with the wire-order CRC bytes; only the
      * 512 data bytes need a lane remap.
      */
-    for (size_t index = 0u; index < 512u; index += 4u) {
+    for (size_t index = 0u; index < block_size; index += 4u) {
         reg = crc16_4bit_word(reg, load_be32(image + index));
         block[index] = map->from_gpio_byte[image[index]];
         block[index + 1u] = map->from_gpio_byte[image[index + 1u]];
@@ -304,7 +315,25 @@ bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
         block[index + 3u] = map->from_gpio_byte[image[index + 3u]];
     }
     for (size_t index = 0u; index < 8u; index++) {
-        received = (received << 8u) | image[512u + index];
+        received = (received << 8u) | image[block_size + index];
     }
     return received == reg;
+}
+
+bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
+                                   const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512])
+{
+    return pf_sdio_pio_decode_data_block_sized(map, image, block, 512u);
+}
+
+bool pf_sdio_pio_switch_supports_high_speed(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+{
+    return (status != NULL) && ((status[13] & 0x02u) != 0u);
+}
+
+bool pf_sdio_pio_switch_selected_high_speed(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+{
+    return (status != NULL) && ((status[16] & 0x0fu) == 1u);
 }

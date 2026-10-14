@@ -7,6 +7,7 @@
 
 #define PF_SDIO_PIO_TRANSFER_WORDS 130u
 #define PF_SDIO_PIO_IMAGE_SIZE (PF_SDIO_PIO_TRANSFER_WORDS * 4u)
+#define PF_SDIO_PIO_SWITCH_STATUS_SIZE 64u
 
 uint8_t pf_sdio_pio_crc7(const uint8_t *data, size_t size);
 bool pf_sdio_pio_build_command(uint8_t command, uint32_t argument, uint8_t frame[6]);
@@ -39,6 +40,9 @@ bool pf_sdio_pio_lane_map_init(pf_sdio_pio_lane_map_t *map, const uint32_t data_
  */
 bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint8_t block[512],
                                    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE]);
+bool pf_sdio_pio_encode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
+                                         const uint8_t *block, size_t block_size,
+                                         uint8_t image[PF_SDIO_PIO_IMAGE_SIZE]);
 
 /**
  * Restore a received wire image to a logical block and verify all four lane CRCs.
@@ -46,5 +50,12 @@ bool pf_sdio_pio_encode_data_block(const pf_sdio_pio_lane_map_t *map, const uint
  */
 bool pf_sdio_pio_decode_data_block(const pf_sdio_pio_lane_map_t *map,
                                    const uint8_t image[PF_SDIO_PIO_IMAGE_SIZE], uint8_t block[512]);
+bool pf_sdio_pio_decode_data_block_sized(const pf_sdio_pio_lane_map_t *map,
+                                         const uint8_t *image, uint8_t *block,
+                                         size_t block_size);
+bool pf_sdio_pio_switch_supports_high_speed(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE]);
+bool pf_sdio_pio_switch_selected_high_speed(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE]);
 
 #endif

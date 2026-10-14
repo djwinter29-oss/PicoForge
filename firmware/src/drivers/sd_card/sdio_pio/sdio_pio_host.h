@@ -48,6 +48,9 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
                                        uint8_t *response, size_t response_capacity);
 bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                      bool block_addressed, uint8_t block[512]);
+/** Read and CRC-check the 64-byte data block returned by SD CMD6. */
+bool pf_sdio_pio_host_read_switch_status(pf_sdio_pio_host_t *host, uint32_t argument,
+                                         uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE]);
 bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,
                                       bool block_addressed, uint8_t *blocks,
                                       uint32_t block_count);

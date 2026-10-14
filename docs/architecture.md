@@ -97,11 +97,18 @@ removal ends it with CMD12; the data is committed to the card only then, so
 callers that need durability must sync. SPI transfers use synchronous single-sector operations. Both
 transports require serialized access.
 
+SDIO clock requests above 25 MHz first check and switch SD CMD6 function group 1
+to High Speed; the driver only applies the higher clock when the card confirms
+the switch, otherwise it uses 25 MHz. A 50 MHz request was accepted by the
+128 GB SN128 card, but filesystem mount reads returned `DISK_ERR` on the
+qualified wiring. The board profile therefore remains at 25 MHz; 50 MHz is not
+currently qualified for data I/O.
+
 SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data
 bytes plus four lane CRC16s). Single-sector operations use an on-stack image;
 multi-sector writes alternate two on-stack images to encode the next sector
 while DMA and card programming complete for the current sector. Batched reads
-use a static buffer for 16 images. The DMA channel byte-swaps each
+use a static buffer for 64 images. The DMA channel byte-swaps each
 word, so image byte order equals nibble transmission order. The CPU makes one
 pass per sector to map lanes to GPIO order and compute or check the four CRCs,
 which are held bit-sliced in one 64-bit register. SPI uses the CPU for the data

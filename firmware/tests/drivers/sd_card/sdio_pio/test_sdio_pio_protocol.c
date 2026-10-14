@@ -285,6 +285,47 @@ void test_round_trips_patterned_data_block_for_each_lane_order(void)
     }
 }
 
+void test_round_trips_64_byte_switch_status_and_checks_its_crc(void)
+{
+    pf_sdio_pio_lane_map_t map;
+    uint8_t source[64];
+    uint8_t destination[64];
+    uint8_t image[PF_SDIO_PIO_IMAGE_SIZE];
+    const uint32_t *orders[] = { identity_gpio, documented_gpio };
+
+    for (size_t index = 0u; index < sizeof(source); index++) {
+        source[index] = (uint8_t)(index * 29u + 7u);
+    }
+    for (size_t order = 0u; order < 2u; order++) {
+        TEST_ASSERT_TRUE(pf_sdio_pio_lane_map_init(&map, orders[order]));
+        TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block_sized(&map, source, sizeof(source), image));
+        TEST_ASSERT_TRUE(pf_sdio_pio_decode_data_block_sized(&map, image, destination,
+                                                             sizeof(destination)));
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(source, destination, sizeof(source));
+        image[sizeof(source)] ^= 1u;
+        TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block_sized(&map, image, destination,
+                                                              sizeof(destination)));
+        image[sizeof(source)] ^= 1u;
+    }
+    TEST_ASSERT_FALSE(pf_sdio_pio_decode_data_block_sized(&map, image, destination, 65u));
+}
+
+void test_reads_high_speed_support_and_selected_function_from_cmd6_status(void)
+{
+    uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE] = { 0u };
+
+    TEST_ASSERT_FALSE(pf_sdio_pio_switch_supports_high_speed(status));
+    TEST_ASSERT_FALSE(pf_sdio_pio_switch_selected_high_speed(status));
+    status[13] = 0x02u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_switch_supports_high_speed(status));
+    status[16] = 0xf1u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_switch_selected_high_speed(status));
+    status[16] = 0xf2u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_switch_selected_high_speed(status));
+    TEST_ASSERT_FALSE(pf_sdio_pio_switch_supports_high_speed(NULL));
+    TEST_ASSERT_FALSE(pf_sdio_pio_switch_selected_high_speed(NULL));
+}
+
 void test_encodes_data_nibbles_and_crc_in_wire_order(void)
 {
     pf_sdio_pio_lane_map_t map;
