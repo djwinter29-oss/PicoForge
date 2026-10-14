@@ -325,7 +325,10 @@ static bool initialize_card(void)
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;
     if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, transfer_clock)) {
-        return false;
+        if ((transfer_clock <= 25000000u) ||
+            !pf_sdio_pio_host_set_clock(&sdio_pio_host, 25000000u)) {
+            return false;
+        }
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
     card_bus_clock_hz = sdio_pio_host.current_clock_hz;

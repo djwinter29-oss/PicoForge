@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check assembled TX start/data/end timing, not electrical qualification.
+"""Check assembled TX start/data/end timing and RX cadence, not electrical qualification.
 
 Model divider-1 data instructions, an integer-half-period clock, and 0/1
 cycle clock-observation latency with input_sync_bypass enabled. Pin writes
@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PIO = ROOT / "firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.pio"
 
 
-def assemble():
+def assemble(program="data_tx"):
     candidates = sorted(glob.glob(str(ROOT / "build/*/pioasm/pioasm")))
     assembler = os.environ.get("PIOASM") or (candidates[0] if candidates else None)
     assert assembler, "Build firmware first or set PIOASM"
@@ -24,7 +24,7 @@ def assemble():
         out = Path(tmp) / "program.h"
         subprocess.run([assembler, "-o", "c-sdk", str(PIO), str(out)], check=True)
         text = out.read_text()
-    start = text.index("pf_sdio_pio_data_tx_program_instructions[]")
+    start = text.index(f"pf_sdio_pio_{program}_program_instructions[]")
     body = text[text.index("{", start):text.index("};", start)]
     return [int(line.strip()[:6], 16) for line in body.splitlines()
             if line.strip().startswith("0x")]
@@ -92,13 +92,57 @@ def check(ops, half, latency, phase):
         "Dropped/duplicated start, data or end sampling edge", half, latency, phase)
 
 
+def check_receive(ops, half, latency, phase):
+    count = 1040
+    pc, cycle, remaining = 4, 0, count - 1
+    samples = []
+    for _ in range(count * half * 4 + 100):
+        op = ops[pc]
+        kind, dest, immediate = op >> 13, (op >> 5) & 7, op & 31
+        next_pc = pc + 1
+        if kind == 1:
+            assert immediate == 30, "Unexpected RX clock WAIT"
+            if ((cycle + phase - latency) // half) % 2 != (op >> 7) & 1:
+                cycle += 1
+                continue
+        elif kind == 2:
+            assert dest == 0 and immediate == 4
+            samples.append(cycle)
+        elif kind == 0:
+            assert dest == 2
+            if remaining:
+                next_pc = immediate
+            else:
+                break
+            remaining -= 1
+        else:
+            raise AssertionError("Unexpected RX-loop instruction")
+        cycle += 1 + ((op >> 8) & 31)
+        pc = next_pc
+    assert len(samples) == count
+    assert all(later - earlier == 2 * half
+               for earlier, later in zip(samples, samples[1:])), (
+        "RX skipped a nibble", half, latency, phase, samples[:8])
+
+
 def main():
     ops = assemble()
-    for half in (6, 4, 3):
+    for half in (6, 4, 3, 2):
         for latency in (0, 1):
             for phase in range(2 * half):
                 check(ops, half, latency, phase)
         print(f"TX timing passed: half={half}, all launch phases, 0/1-cycle observation latency, 1040 nibbles")
+    rx_ops = assemble("data_rx")
+    for half in (6, 4, 3, 2):
+        for latency in (0, 1):
+            for phase in range(2 * half):
+                check_receive(rx_ops, half, latency, phase)
+        print(f"RX timing passed: half={half}, all phases, 1040 nibbles")
+    fast_rx_ops = assemble("data_rx_fast")
+    for latency in (0, 1):
+        for phase in range(4):
+            check_receive(fast_rx_ops, 2, latency, phase)
+    print("Fast RX timing passed: half=2, all phases, 1040 nibbles")
     print("SDIO PIO timing check passed (model only; HIL still required)")
 
 

@@ -32,8 +32,10 @@ typedef struct {
     bool write_stream_open;
     bool command_program_loaded;
     bool data_rx_program_loaded;
+    bool data_rx_fast;
     bool clock_program_loaded;
     bool data_tx_program_loaded;
+    bool data_tx_fast;
 } pf_sdio_pio_host_t;
 
 bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,

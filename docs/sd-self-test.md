@@ -61,7 +61,7 @@ phases display no speed rather than an infinite or invented value.
 
 These are application-level filesystem throughput measurements, not raw wire
 bandwidth. SDIO contiguous writes use CMD25 and reads use CMD18 batches of up to
-16 sectors; single-sector tails use CMD17/CMD24. SPI transfers remain
+64 sectors; single-sector tails use CMD17/CMD24. SPI transfers remain
 single-sector operations. Results depend on card, transport, bus speed,
 allocation state, and runtime load. The implementation does not qualify
 endurance or power-loss behavior.

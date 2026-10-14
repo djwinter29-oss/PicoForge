@@ -99,10 +99,21 @@ transports require serialized access.
 
 SDIO clock requests above 25 MHz first check and switch SD CMD6 function group 1
 to High Speed; the driver only applies the higher clock when the card confirms
-the switch, otherwise it uses 25 MHz. A 50 MHz request was accepted by the
-128 GB SN128 card, but filesystem mount reads returned `DISK_ERR` on the
-qualified wiring. The board profile therefore remains at 25 MHz; 50 MHz is not
-currently qualified for data I/O.
+the switch, otherwise it uses 25 MHz. The high-speed receiver uses falling-edge
+sampling with a four-cycle data-state-machine clock period. Requests above
+25 MHz require SYSCLK to be an exact multiple of four times the requested clock;
+unsupported ratios fall back to 25 MHz. Thus 50 MHz needs at least 200 MHz
+SYSCLK, which is an out-of-spec diagnostic configuration on Pico 2.
+
+The high-speed transmitter is cycle-locked: the data and clock state machines
+start in the same cycle and data launches at a fixed offset from the clock edge.
+The slow transmitter launches data after observing the clock edge, which leaves
+no setup time at 50 MHz and made the card return CRC-error tokens.
+
+On the 128 GB SN128 card at 200 MHz SYSCLK / 50 MHz SDIO, 32 and 128 MiB
+self-tests passed with 0 mismatches (about 12.5 MB/s write, 9.5 MB/s read). At
+the stock 150 MHz / 25 MHz they give 9.5 MB/s write and 8.3 MB/s read. The board
+profile remains at 25 MHz because 200 MHz SYSCLK is out of spec.
 
 SDIO data moves by DMA between the PIO FIFOs and 520-byte wire images (512 data
 bytes plus four lane CRC16s). Single-sector operations use an on-stack image;

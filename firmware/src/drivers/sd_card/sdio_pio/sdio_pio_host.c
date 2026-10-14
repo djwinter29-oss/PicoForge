@@ -60,15 +60,34 @@ static bool load_command_program(pf_sdio_pio_host_t *host)
     return true;
 }
 
+static const pio_program_t *data_rx_program(const pf_sdio_pio_host_t *host)
+{
+    return host->data_rx_fast ? &pf_sdio_pio_data_rx_fast_program
+                             : &pf_sdio_pio_data_rx_program;
+}
+
+static const pio_program_t *data_tx_program(const pf_sdio_pio_host_t *host)
+{
+    return host->data_tx_fast ? &pf_sdio_pio_data_tx_fast_program
+                              : &pf_sdio_pio_data_tx_program;
+}
+
 static bool load_data_rx_program(pf_sdio_pio_host_t *host)
 {
     pio_sm_config config;
 
-    if (!pio_can_add_program(host->pio, &pf_sdio_pio_data_rx_program)) {
+    host->data_rx_fast = host->current_clock_hz > 25000000u;
+    if (!pio_can_add_program(host->pio, data_rx_program(host))) {
         return false;
     }
-    host->data_rx_program_offset = pio_add_program(host->pio, &pf_sdio_pio_data_rx_program);
-    config = pf_sdio_pio_data_rx_program_get_default_config(host->data_rx_program_offset);
+    host->data_rx_program_offset = pio_add_program(host->pio, data_rx_program(host));
+    config = host->data_rx_fast
+                 ? pf_sdio_pio_data_rx_fast_program_get_default_config(host->data_rx_program_offset)
+                 : pf_sdio_pio_data_rx_program_get_default_config(host->data_rx_program_offset);
+    if (host->data_rx_fast) {
+        sm_config_set_clkdiv(&config, (float)host->system_clock_hz /
+                                         (4.0f * (float)host->current_clock_hz));
+    }
     sm_config_set_in_pins(&config, host->data_gpio_base);
     sm_config_set_in_shift(&config, false, true, 32u);
     sm_config_set_out_shift(&config, false, false, 32u);
@@ -78,13 +97,76 @@ static bool load_data_rx_program(pf_sdio_pio_host_t *host)
     return true;
 }
 
+static bool load_tx_programs(pf_sdio_pio_host_t *host)
+{
+    pio_sm_config config;
+
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
+    pio_sm_set_enabled(host->pio, host->data_sm, false);
+    if (host->data_rx_program_loaded) {
+        pio_remove_program(host->pio, data_rx_program(host), host->data_rx_program_offset);
+        host->data_rx_program_loaded = false;
+    }
+    if (host->command_program_loaded) {
+        pio_remove_program(host->pio, &pf_sdio_pio_command_program,
+                           host->command_program_offset);
+        host->command_program_loaded = false;
+    }
+
+    host->data_tx_fast = host->current_clock_hz > 25000000u;
+    if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
+        !pio_can_add_program(host->pio, data_tx_program(host))) {
+        return false;
+    }
+    host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
+    host->clock_program_loaded = true;
+    host->data_tx_program_offset = pio_add_program(host->pio, data_tx_program(host));
+    host->data_tx_program_loaded = true;
+
+    config = pf_sdio_pio_clock_program_get_default_config(host->clock_program_offset);
+    sm_config_set_sideset_pins(&config, host->clock_gpio);
+    pio_sm_init(host->pio, host->command_sm, host->clock_program_offset, &config);
+    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm, host->clock_gpio, 1u, true);
+    pio_sm_set_clkdiv(host->pio, host->command_sm,
+                      (float)host->system_clock_hz / (2.0f * (float)host->current_clock_hz));
+
+    config = host->data_tx_fast
+                 ? pf_sdio_pio_data_tx_fast_program_get_default_config(host->data_tx_program_offset)
+                 : pf_sdio_pio_data_tx_program_get_default_config(host->data_tx_program_offset);
+    if (host->data_tx_fast) {
+        sm_config_set_clkdiv(&config, (float)host->system_clock_hz /
+                                         (4.0f * (float)host->current_clock_hz));
+    }
+    sm_config_set_out_pins(&config, host->data_gpio_base, 4u);
+    sm_config_set_set_pins(&config, host->data_gpio_base, 4u);
+    sm_config_set_in_pins(&config, host->data_gpio_base);
+    sm_config_set_out_shift(&config, false, true, 32u);
+    sm_config_set_in_shift(&config, false, false, 32u);
+    pio_sm_init(host->pio, host->data_sm, host->data_tx_program_offset, &config);
+    pio_sm_clear_fifos(host->pio, host->command_sm);
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    return true;
+}
+
+/* The fast TX program is cycle-locked to the clock, so both state machines restart together. */
+static void start_tx_data(pf_sdio_pio_host_t *host)
+{
+    if (!host->data_tx_fast) {
+        pio_sm_set_enabled(host->pio, host->data_sm, true);
+        return;
+    }
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
+    pio_sm_exec(host->pio, host->command_sm, pio_encode_jmp(host->clock_program_offset));
+    pio_enable_sm_mask_in_sync(host->pio, (1u << host->command_sm) | (1u << host->data_sm));
+}
+
 static bool restore_command_mode(pf_sdio_pio_host_t *host)
 {
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
 
     if (host->data_tx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_pio_data_tx_program,
+        pio_remove_program(host->pio, data_tx_program(host),
                            host->data_tx_program_offset);
         host->data_tx_program_loaded = false;
     }
@@ -233,7 +315,7 @@ void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host)
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
     if (host->data_rx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_pio_data_rx_program,
+        pio_remove_program(host->pio, data_rx_program(host),
                            host->data_rx_program_offset);
         host->data_rx_program_loaded = false;
     }
@@ -243,7 +325,7 @@ void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host)
         host->command_program_loaded = false;
     }
     if (host->data_tx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_pio_data_tx_program,
+        pio_remove_program(host->pio, data_tx_program(host),
                            host->data_tx_program_offset);
     }
     if (host->clock_program_loaded) {
@@ -267,7 +349,10 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
     uint32_t divider_ticks;
 
     if ((host == NULL) || (host->pio == NULL) || (clock_hz == 0u) ||
-        (clock_hz > host->system_clock_hz / 2u)) {
+        (clock_hz > host->system_clock_hz / 2u) ||
+        ((clock_hz > 25000000u) &&
+         ((clock_hz > host->system_clock_hz / 4u) ||
+          ((host->system_clock_hz % (4u * clock_hz)) != 0u)))) {
         return false;
     }
 
@@ -277,6 +362,14 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
     divider_ticks = ((uint32_t)divider_integer << 8u) | divider_fraction;
     host->current_clock_hz = (uint32_t)(((uint64_t)host->system_clock_hz * 128u) /
                                         divider_ticks);
+    if (host->command_program_loaded) {
+        pio_sm_set_enabled(host->pio, host->data_sm, false);
+        if (host->data_rx_program_loaded) {
+            pio_remove_program(host->pio, data_rx_program(host), host->data_rx_program_offset);
+        }
+        host->data_rx_program_loaded = false;
+        return load_data_rx_program(host);
+    }
     return true;
 }
 
@@ -285,6 +378,7 @@ bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
                                  uint32_t *response_words, size_t response_word_capacity)
 {
     uint8_t frame[6];
+    uint64_t frame_bits;
     uint32_t command_first_word;
     uint32_t command_last_word;
     size_t response_word_count = (response_bits + 31u) / 32u;
@@ -298,19 +392,19 @@ bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
         return false;
     }
 
-    command_first_word = ((uint32_t)frame[0] << 24u) |
-                         ((uint32_t)frame[1] << 16u) |
-                         ((uint32_t)frame[2] << 8u) |
-                         (uint32_t)frame[3];
-    command_last_word = ((uint32_t)frame[4] << 24u) |
-                        ((uint32_t)frame[5] << 16u);
+    /* The PIO program shifts a 6-bit loop count (47) before the 48 frame bits. */
+    frame_bits = ((uint64_t)frame[0] << 40u) | ((uint64_t)frame[1] << 32u) |
+                 ((uint64_t)frame[2] << 24u) | ((uint64_t)frame[3] << 16u) |
+                 ((uint64_t)frame[4] << 8u) | (uint64_t)frame[5];
+    command_first_word = (47u << 26u) | (uint32_t)(frame_bits >> 22u);
+    command_last_word = (uint32_t)(frame_bits & 0x3fffffu) << 10u;
 
     pio_sm_clear_fifos(host->pio, host->command_sm);
     pio_interrupt_clear(host->pio, SDIO_RESPONSE_IRQ);
     pio_sm_put_blocking(host->pio, host->command_sm, command_first_word);
     pio_sm_put_blocking(host->pio, host->command_sm, command_last_word);
     pio_sm_put_blocking(host->pio, host->command_sm,
-                        (response_bits == 0u) ? 0u : ((uint32_t)(response_bits - 1u) << 24u));
+                        (response_bits == 0u) ? 0u : ((uint32_t)(response_bits - 2u) << 24u));
 
     if (!wait_for_command_complete(host, response_words, response_word_count)) {
         pio_sm_clear_fifos(host->pio, host->command_sm);
@@ -668,44 +762,9 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         return false;
     }
 
-    pio_sm_set_enabled(host->pio, host->command_sm, false);
-    pio_sm_set_enabled(host->pio, host->data_sm, false);
-    if (host->data_rx_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_pio_data_rx_program,
-                           host->data_rx_program_offset);
-        host->data_rx_program_loaded = false;
-    }
-    if (host->command_program_loaded) {
-        pio_remove_program(host->pio, &pf_sdio_pio_command_program,
-                           host->command_program_offset);
-        host->command_program_loaded = false;
-    }
-
-    if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
-        !pio_can_add_program(host->pio, &pf_sdio_pio_data_tx_program)) {
+    if (!load_tx_programs(host)) {
         goto restore;
     }
-    host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
-    host->clock_program_loaded = true;
-    host->data_tx_program_offset = pio_add_program(host->pio, &pf_sdio_pio_data_tx_program);
-    host->data_tx_program_loaded = true;
-
-    state_machine_config = pf_sdio_pio_clock_program_get_default_config(host->clock_program_offset);
-    sm_config_set_sideset_pins(&state_machine_config, host->clock_gpio);
-    pio_sm_init(host->pio, host->command_sm, host->clock_program_offset, &state_machine_config);
-    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm, host->clock_gpio, 1u, true);
-    pio_sm_set_clkdiv(host->pio, host->command_sm,
-                      (float)host->system_clock_hz / (2.0f * (float)host->current_clock_hz));
-
-    state_machine_config = pf_sdio_pio_data_tx_program_get_default_config(host->data_tx_program_offset);
-    sm_config_set_out_pins(&state_machine_config, host->data_gpio_base, 4u);
-    sm_config_set_set_pins(&state_machine_config, host->data_gpio_base, 4u);
-    sm_config_set_in_pins(&state_machine_config, host->data_gpio_base);
-    sm_config_set_out_shift(&state_machine_config, false, true, 32u);
-    sm_config_set_in_shift(&state_machine_config, false, false, 32u);
-    pio_sm_init(host->pio, host->data_sm, host->data_tx_program_offset, &state_machine_config);
-    pio_sm_clear_fifos(host->pio, host->command_sm);
-    pio_sm_clear_fifos(host->pio, host->data_sm);
     pio_sm_put_blocking(host->pio, host->data_sm, SDIO_DATA_NIBBLE_COUNT - 1u);
     pio_interrupt_clear(host->pio, 2u);
 
@@ -720,7 +779,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                           SDIO_DATA_WORD_COUNT, false);
     pio_sm_set_enabled(host->pio, host->command_sm, true);
     dma_channel_start(host->dma_channel);
-    pio_sm_set_enabled(host->pio, host->data_sm, true);
+    start_tx_data(host);
 
     start = time_us_32();
     while (!pio_interrupt_get(host->pio, 2u) || dma_channel_is_busy(host->dma_channel)) {
@@ -731,8 +790,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     }
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) > 0u) {
-        success = pf_sdio_pio_write_response_accepted(
-            pio_sm_get(host->pio, host->data_sm));
+                success = pf_sdio_pio_write_response_accepted(pio_sm_get(host->pio, host->data_sm));
     }
 
 restore:
@@ -796,49 +854,10 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         host->write_stream_open = true;
         host->write_stream_next_sector = first_sector;
 
-        pio_sm_set_enabled(host->pio, host->command_sm, false);
-        pio_sm_set_enabled(host->pio, host->data_sm, false);
-        if (host->data_rx_program_loaded) {
-            pio_remove_program(host->pio, &pf_sdio_pio_data_rx_program,
-                               host->data_rx_program_offset);
-            host->data_rx_program_loaded = false;
-        }
-        if (host->command_program_loaded) {
-            pio_remove_program(host->pio, &pf_sdio_pio_command_program,
-                               host->command_program_offset);
-            host->command_program_loaded = false;
-        }
-
-        if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
-            !pio_can_add_program(host->pio, &pf_sdio_pio_data_tx_program)) {
+        if (!load_tx_programs(host)) {
             (void)pf_sdio_pio_host_write_stream_close(host);
             return false;
         }
-        host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
-        host->clock_program_loaded = true;
-        host->data_tx_program_offset = pio_add_program(host->pio, &pf_sdio_pio_data_tx_program);
-        host->data_tx_program_loaded = true;
-
-        pio_sm_config state_machine_config =
-            pf_sdio_pio_clock_program_get_default_config(host->clock_program_offset);
-        sm_config_set_sideset_pins(&state_machine_config, host->clock_gpio);
-        pio_sm_init(host->pio, host->command_sm, host->clock_program_offset,
-                    &state_machine_config);
-        pio_sm_set_consecutive_pindirs(host->pio, host->command_sm,
-                                       host->clock_gpio, 1u, true);
-        pio_sm_set_clkdiv(host->pio, host->command_sm,
-                          (float)host->system_clock_hz / (2.0f * (float)host->current_clock_hz));
-
-        state_machine_config =
-            pf_sdio_pio_data_tx_program_get_default_config(host->data_tx_program_offset);
-        sm_config_set_out_pins(&state_machine_config, host->data_gpio_base, 4u);
-        sm_config_set_set_pins(&state_machine_config, host->data_gpio_base, 4u);
-        sm_config_set_in_pins(&state_machine_config, host->data_gpio_base);
-        sm_config_set_out_shift(&state_machine_config, false, true, 32u);
-        sm_config_set_in_shift(&state_machine_config, false, false, 32u);
-        pio_sm_init(host->pio, host->data_sm, host->data_tx_program_offset,
-                    &state_machine_config);
-
         pio_sm_set_enabled(host->pio, host->command_sm, true);
     }
     for (uint32_t block_index = 0u; block_index < block_count; block_index++) {
@@ -863,7 +882,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
                               &host->pio->txf[host->data_sm], image,
                               SDIO_DATA_WORD_COUNT, false);
         dma_channel_start(host->dma_channel);
-        pio_sm_set_enabled(host->pio, host->data_sm, true);
+        start_tx_data(host);
 
         start = time_us_32();
         if ((block_index + 1u < block_count) &&
