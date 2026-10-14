@@ -75,5 +75,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
 bool pf_sdio_pio_host_write_stream_continues(const pf_sdio_pio_host_t *host, uint32_t sector);
 /** Stop an open write stream (CMD12) and restore command mode; true if none was open. */
 bool pf_sdio_pio_host_write_stream_close(pf_sdio_pio_host_t *host);
+/** Abandon an open stream after card detect reports removal; no card command is sent. */
+void pf_sdio_pio_host_forget_removed_card(pf_sdio_pio_host_t *host);
 
 #endif

@@ -9,6 +9,7 @@
 #include "middleware/cli/cli.h"
 #include "middleware/storage/storage_worker.h"
 #include "board/board.h"
+#include "drivers/sd_card/freertos/sd_card_wait.h"
 
 #define USB_TASK_STACK_SIZE (1024U)
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
@@ -214,6 +215,9 @@ void pf_usb_start(void)
 {
     pf_sd_card_config_t config;
     bool configured = pf_board_get_sd_card_config(&config);
+    if (configured) {
+        pf_sd_card_wait_init(&config);
+    }
     if (!pf_storage_worker_init(configured ? &config : NULL)) {
         panic("Failed to create storage worker");
     }

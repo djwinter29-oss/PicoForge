@@ -121,8 +121,6 @@ READER_HARNESS = r"""
 #define SDIO_DATA_NIBBLE_COUNT 1040u
 #define SDIO_DATA_WORD_COUNT 130u
 #define SDIO_READ_BATCH_BLOCKS 64u
-#define DMA_SIZE_32 2u
-typedef int dma_channel_config;
 typedef struct { uint32_t rxf[4]; } fake_pio_t;
 typedef struct {
     fake_pio_t *pio;
@@ -134,29 +132,21 @@ static bool response_ok, crc_ok, stop_ok, timeout, command_ok;
 static uint32_t response_status;
 static unsigned single_calls, stops;
 static uint32_t now;
-#define pio_sm_set_enabled(...) ((void)0)
-#define pio_sm_clear_fifos(...) ((void)0)
-#define pio_interrupt_clear(...) ((void)0)
-#define pio_sm_restart(...) ((void)0)
-#define pio_sm_exec(...) ((void)0)
-#define pio_sm_put_blocking(...) ((void)0)
-#define load_batch_count(...) ((void)0)
-#define pio_get_dreq(...) 0u
-#define channel_config_set_transfer_data_size(...) ((void)0)
-#define channel_config_set_bswap(...) ((void)0)
-#define channel_config_set_read_increment(...) ((void)0)
-#define channel_config_set_write_increment(...) ((void)0)
-#define channel_config_set_dreq(...) ((void)0)
-#define dma_channel_start(...) ((void)0)
-#define dma_channel_abort(...) ((void)0)
+static uint32_t rx_transfer_words, rx_nibble_count, rx_block_count;
 #define pio_interrupt_get(...) (!timeout)
 #define dma_channel_is_busy(...) timeout
-static dma_channel_config dma_channel_get_default_config(unsigned channel)
-{ (void)channel; return 0; }
-static void dma_channel_configure(unsigned channel, const dma_channel_config *config,
-                                  void *target, const void *source, uint32_t count, bool start)
-{ (void)channel; (void)config; (void)target; (void)source; (void)count; (void)start; }
 static uint32_t time_us_32(void) { now += 1000001u; return now; }
+static void start_data_rx(pf_sdio_pio_host_t *host, uint32_t *destination,
+                          uint32_t transfer_words, uint32_t nibble_count,
+                          uint32_t block_count)
+{
+    (void)host;
+    assert(destination == read_wire_buffer);
+    rx_transfer_words = transfer_words;
+    rx_nibble_count = nibble_count;
+    rx_block_count = block_count;
+}
+static void cleanup_data_rx(pf_sdio_pio_host_t *host) { (void)host; }
 static void wait_data_idle(pf_sdio_pio_host_t *host, uint32_t completion_flag)
 { (void)host; (void)completion_flag; }
 static bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
@@ -182,6 +172,8 @@ int main(void)
     uint8_t blocks[1024];
     response_ok = crc_ok = stop_ok = command_ok = true;
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+        assert(rx_transfer_words == 2u * SDIO_DATA_WORD_COUNT &&
+            rx_nibble_count == SDIO_DATA_NIBBLE_COUNT && rx_block_count == 2u);
     assert(stops == 1u && single_calls == 0u);
     crc_ok = false;
     assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
@@ -272,14 +264,25 @@ def main():
 
     reader = function_body(source, "bool pf_sdio_pio_host_read_blocks")
     positions = [reader.find(token) for token in (
-        "pio_encode_jmp(host->data_rx_program_offset)",
-        "load_batch_count(host, batch_count)",
-        "SDIO_DATA_NIBBLE_COUNT - 1u",
-        "pio_sm_set_enabled(host->pio, host->data_sm, true)")]
+        "start_data_rx(host, read_wire_buffer", "command_bytes(host, 18u",
+        "while (!pio_interrupt_get", "cleanup_data_rx(host)",
+        "stop_multiblock_with_clock_fallback(host)")]
     if min(positions) < 0 or positions != sorted(positions):
-        errors.append("order must be jmp, batch count, nibble count, enable")
-    if "pio_encode_set" in reader:
-        errors.append("read_blocks must not use SET for the batch count")
+        errors.append("batch RX setup, command, overlap wait, cleanup, and stop order is invalid")
+    rx_start = function_body(source, "static void start_data_rx")
+    start_order = [rx_start.find(token) for token in (
+        "pio_encode_jmp(host->data_rx_program_offset)",
+        "load_batch_count(host, block_count)", "nibble_count - 1u",
+        "dma_channel_configure", "dma_channel_start",
+        "pio_sm_set_enabled(host->pio, host->data_sm, true)")]
+    if min(start_order) < 0 or start_order != sorted(start_order):
+        errors.append("RX helper must load framing/count, configure DMA, start DMA, then enable PIO")
+    rx_cleanup = function_body(source, "static void cleanup_data_rx")
+    cleanup_order = [rx_cleanup.find(token) for token in (
+        "pio_sm_set_enabled", "dma_channel_abort", "pio_sm_clear_fifos",
+        "pio_interrupt_clear", "pio_sm_restart")]
+    if min(cleanup_order) < 0 or cleanup_order != sorted(cleanup_order):
+        errors.append("RX helper cleanup order is invalid")
 
     helper = function_body(source, "static bool decode_completed_blocks")
     for token in ("write_addr", "buffer_start", "__dmb()",

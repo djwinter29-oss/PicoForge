@@ -1,10 +1,31 @@
 #include "sd_card.h"
 
-#include "sdio_pio/sdio_pio.h"
+#include "config/config.h"
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
 #include "spi/sd_spi.h"
+#define PF_SELECTED_TRANSPORT PF_SD_CARD_TRANSPORT_SPI
+#define pf_selected_init(config) pf_sd_spi_init(&(config)->bus.spi)
+#define pf_selected_is_initialized() pf_sd_spi_is_initialized()
+#define pf_selected_block_count() pf_sd_spi_block_count()
+#define pf_selected_read(first, buffer, count) pf_sd_spi_read_blocks((first), (buffer), (count))
+#define pf_selected_write(first, buffer, count) pf_sd_spi_write_blocks((first), (buffer), (count))
+#define pf_selected_sync() pf_sd_spi_sync()
+#define pf_selected_get_info(info) pf_sd_spi_get_info(info)
+#define PF_SELECTED_TRANSPORT_NAME "spi"
+#else
+#include "sdio_pio/sdio_pio.h"
+#define PF_SELECTED_TRANSPORT PF_SD_CARD_TRANSPORT_SDIO_PIO
+#define pf_selected_init(config) pf_sdio_pio_init(&(config)->bus.sdio_pio)
+#define pf_selected_is_initialized() pf_sdio_pio_is_initialized()
+#define pf_selected_block_count() pf_sdio_pio_block_count()
+#define pf_selected_read(first, buffer, count) pf_sdio_pio_read_blocks((first), (buffer), (count))
+#define pf_selected_write(first, buffer, count) pf_sdio_pio_write_blocks((first), (buffer), (count))
+#define pf_selected_sync() pf_sdio_pio_sync()
+#define pf_selected_get_info(info) pf_sdio_pio_get_info(info)
+#define PF_SELECTED_TRANSPORT_NAME "sdio"
+#endif
 
 static bool transport_selected;
-static pf_sd_card_transport_t active_transport;
 static pf_sd_card_owner_t active_owner = PF_SD_CARD_OWNER_FIRMWARE;
 static bool reinit_after_usb_owner;
 
@@ -22,29 +43,14 @@ bool pf_sd_card_take_reinit_request(void)
 
 pf_sd_card_result_t pf_sd_card_init(const pf_sd_card_config_t *config)
 {
-    pf_sd_card_result_t result;
-
-    if (config == NULL) {
+    if ((config == NULL) || (config->transport != PF_SELECTED_TRANSPORT)) {
         return PF_SD_CARD_INVALID_ARGUMENT;
     }
     if (active_owner != PF_SD_CARD_OWNER_FIRMWARE) {
         return PF_SD_CARD_NOT_READY;
     }
-    if (config->transport == PF_SD_CARD_TRANSPORT_SPI) {
-        if (transport_selected && (active_transport != config->transport)) {
-            return PF_SD_CARD_CONFIG_LOCKED;
-        }
-        result = pf_sd_spi_init(&config->bus.spi);
-    } else if (config->transport == PF_SD_CARD_TRANSPORT_SDIO_PIO) {
-        if (transport_selected && (active_transport != config->transport)) {
-            return PF_SD_CARD_CONFIG_LOCKED;
-        }
-        result = pf_sdio_pio_init(&config->bus.sdio_pio);
-    } else {
-        return PF_SD_CARD_INVALID_ARGUMENT;
-    }
+    pf_sd_card_result_t result = pf_selected_init(config);
     if (result != PF_SD_CARD_INVALID_ARGUMENT) {
-        active_transport = config->transport;
         transport_selected = true;
     }
     return result;
@@ -55,10 +61,7 @@ bool pf_sd_card_is_initialized(void)
     if (!transport_selected) {
         return false;
     }
-    if (active_transport == PF_SD_CARD_TRANSPORT_SPI) {
-        return pf_sd_spi_is_initialized();
-    }
-    return pf_sdio_pio_is_initialized();
+    return pf_selected_is_initialized();
 }
 
 uint32_t pf_sd_card_block_count(void)
@@ -66,9 +69,7 @@ uint32_t pf_sd_card_block_count(void)
     if (!pf_sd_card_is_initialized()) {
         return 0u;
     }
-    return (active_transport == PF_SD_CARD_TRANSPORT_SPI)
-        ? pf_sd_spi_block_count()
-        : pf_sdio_pio_block_count();
+    return pf_selected_block_count();
 }
 
 pf_sd_card_result_t pf_sd_card_read_blocks(uint32_t first_block, void *buffer,
@@ -80,10 +81,7 @@ pf_sd_card_result_t pf_sd_card_read_blocks(uint32_t first_block, void *buffer,
     if (!transport_selected) {
         return PF_SD_CARD_NOT_CONFIGURED;
     }
-    if (active_transport == PF_SD_CARD_TRANSPORT_SPI) {
-        return pf_sd_spi_read_blocks(first_block, buffer, block_count);
-    }
-    return pf_sdio_pio_read_blocks(first_block, buffer, block_count);
+    return pf_selected_read(first_block, buffer, block_count);
 }
 
 pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block,
@@ -96,10 +94,7 @@ pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block,
     if (!transport_selected) {
         return PF_SD_CARD_NOT_CONFIGURED;
     }
-    if (active_transport == PF_SD_CARD_TRANSPORT_SPI) {
-        return pf_sd_spi_write_blocks(first_block, buffer, block_count);
-    }
-    return pf_sdio_pio_write_blocks(first_block, buffer, block_count);
+    return pf_selected_write(first_block, buffer, block_count);
 }
 
 pf_sd_card_result_t pf_sd_card_sync(void)
@@ -110,10 +105,7 @@ pf_sd_card_result_t pf_sd_card_sync(void)
     if (!transport_selected) {
         return PF_SD_CARD_NOT_CONFIGURED;
     }
-    if (active_transport == PF_SD_CARD_TRANSPORT_SPI) {
-        return pf_sd_spi_sync();
-    }
-    return pf_sdio_pio_sync();
+    return pf_selected_sync();
 }
 
 pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t owner)
@@ -141,9 +133,7 @@ pf_sd_card_result_t pf_sd_card_msc_read_blocks(uint32_t first_block, void *buffe
     if (!transport_selected) {
         return PF_SD_CARD_NOT_CONFIGURED;
     }
-    return (active_transport == PF_SD_CARD_TRANSPORT_SPI)
-        ? pf_sd_spi_read_blocks(first_block, buffer, block_count)
-        : pf_sdio_pio_read_blocks(first_block, buffer, block_count);
+    return pf_selected_read(first_block, buffer, block_count);
 }
 
 pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t first_block,
@@ -156,9 +146,7 @@ pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t first_block,
     if (!transport_selected) {
         return PF_SD_CARD_NOT_CONFIGURED;
     }
-    return (active_transport == PF_SD_CARD_TRANSPORT_SPI)
-        ? pf_sd_spi_write_blocks(first_block, buffer, block_count)
-        : pf_sdio_pio_write_blocks(first_block, buffer, block_count);
+    return pf_selected_write(first_block, buffer, block_count);
 }
 
 pf_sd_card_result_t pf_sd_card_msc_sync(void)
@@ -169,9 +157,7 @@ pf_sd_card_result_t pf_sd_card_msc_sync(void)
     if (!transport_selected) {
         return PF_SD_CARD_NOT_CONFIGURED;
     }
-    return (active_transport == PF_SD_CARD_TRANSPORT_SPI)
-        ? pf_sd_spi_sync()
-        : pf_sdio_pio_sync();
+    return pf_selected_sync();
 }
 
 void pf_sd_card_get_info(pf_sd_card_info_t *info)
@@ -183,11 +169,7 @@ void pf_sd_card_get_info(pf_sd_card_info_t *info)
     if (!transport_selected) {
         return;
     }
-    if (active_transport == PF_SD_CARD_TRANSPORT_SPI) {
-        pf_sd_spi_get_info(info);
-    } else {
-        pf_sdio_pio_get_info(info);
-    }
+    pf_selected_get_info(info);
 }
 
 const char *pf_sd_card_transport_name(void)
@@ -195,5 +177,5 @@ const char *pf_sd_card_transport_name(void)
     if (!transport_selected) {
         return "unconfigured";
     }
-    return active_transport == PF_SD_CARD_TRANSPORT_SPI ? "spi" : "sdio";
+    return PF_SELECTED_TRANSPORT_NAME;
 }

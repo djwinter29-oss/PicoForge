@@ -7,6 +7,7 @@ GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 SYS_CLK_MHZ="${PF_SYS_CLK_MHZ:-0}"
+SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -34,6 +35,10 @@ while [ "$#" -gt 0 ]; do
             SYS_CLK_MHZ="$2"
             shift 2
             ;;
+        --sd-card-transport)
+            SD_CARD_TRANSPORT="$2"
+            shift 2
+            ;;
         --help)
             cat <<'EOF'
 Usage: tools/firmware/build.sh [options]
@@ -45,6 +50,7 @@ Options:
   --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
     --sys-clk-mhz MHZ  Out-of-spec system clock, 100-250 (default: 0, SDK default)
+    --sd-card-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
 EOF
             exit 0
             ;;
@@ -103,5 +109,6 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" \
     -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \
     -DPICO_BOARD="$BOARD" \
-    -DPF_SYS_CLK_MHZ="$SYS_CLK_MHZ"
+    -DPF_SYS_CLK_MHZ="$SYS_CLK_MHZ" \
+    -DPF_SD_CARD_TRANSPORT="$SD_CARD_TRANSPORT"
 cmake --build "$BUILD_DIR" --parallel

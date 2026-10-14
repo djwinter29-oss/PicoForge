@@ -96,6 +96,14 @@ static bool send_reply(const char *line, void *context)
     return false;
 }
 
+static void attempt_auto_mount(void)
+{
+    pf_storage_result_t result = pf_storage_mount(&card_config, NULL);
+    auto_mount_pending = (result != PF_STORAGE_OK) && (result != PF_STORAGE_ALREADY_MOUNTED);
+    last_mount_attempt_ms = pf_system_uptime_ms();
+    mount_retry_waiting = auto_mount_pending;
+}
+
 static void service_card_presence(void)
 {
     pf_sd_card_info_t info;
@@ -114,7 +122,22 @@ static void service_card_presence(void)
     taskEXIT_CRITICAL();
 
     pf_sd_card_get_info(&info);
+    bool mounted_card_uninitialized = pf_storage_is_mounted() && !info.initialized;
+    if (mounted_card_uninitialized && (!info.presence_known || info.present)) {
+        if (pf_storage_unmount(NULL) != PF_STORAGE_OK) {
+            goto done;
+        }
+        pf_storage_forget_filesystem_format();
+        auto_mount_pending = true;
+        mount_retry_waiting = false;
+    }
     if (!info.presence_known) {
+        if (!auto_mount_pending ||
+            (mount_retry_waiting &&
+             ((uint32_t)(pf_system_uptime_ms() - last_mount_attempt_ms) < CARD_MOUNT_RETRY_MS))) {
+            goto done;
+        }
+        attempt_auto_mount();
         goto done;
     }
     if (!presence_sample_valid || (info.present != presence_sample)) {
@@ -162,10 +185,7 @@ static void service_card_presence(void)
         ((uint32_t)(pf_system_uptime_ms() - last_mount_attempt_ms) < CARD_MOUNT_RETRY_MS)) {
         goto done;
     }
-    pf_storage_result_t result = pf_storage_mount(&card_config, NULL);
-    auto_mount_pending = (result != PF_STORAGE_OK) && (result != PF_STORAGE_ALREADY_MOUNTED);
-    last_mount_attempt_ms = pf_system_uptime_ms();
-    mount_retry_waiting = auto_mount_pending;
+    attempt_auto_mount();
 
 done:
     taskENTER_CRITICAL();

@@ -18,6 +18,7 @@ static uint8_t card_cid[16];
 static bool card_block_addressed;
 static bool configuration_set;
 static bool card_initialized;
+static bool card_removal_handled;
 static pf_sdio_pio_init_stage_t card_init_stage;
 static uint8_t card_init_response[6];
 static uint8_t last_short_command;
@@ -436,8 +437,6 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         configuration_set = true;
     }
 
-    /* A stream left open by a previous session must end before CMD0 re-initializes the card. */
-    (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
     if (!sdio_pio_host.pio) {
         if (active_config.use_card_detect) {
             gpio_init(active_config.card_detect_gpio);
@@ -458,6 +457,14 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
 
     if (active_config.use_card_detect &&
         ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
+        card_initialized = false;
+        card_removal_handled = true;
+        pf_sdio_pio_host_forget_removed_card(&sdio_pio_host);
+        return PF_SD_CARD_INIT_FAILED;
+    }
+    card_removal_handled = false;
+    /* A stream left open by a previous session must end before CMD0 re-initializes the card. */
+    if (!pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
         card_initialized = false;
         return PF_SD_CARD_INIT_FAILED;
     }
@@ -487,10 +494,15 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
 
 bool pf_sdio_pio_is_initialized(void)
 {
-    if (card_initialized && active_config.use_card_detect &&
-        (((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high))) {
+    if (configuration_set && active_config.use_card_detect &&
+        ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
         card_initialized = false;
-        (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
+        if (!card_removal_handled) {
+            card_removal_handled = true;
+            pf_sdio_pio_host_forget_removed_card(&sdio_pio_host);
+        }
+    } else if (configuration_set && active_config.use_card_detect) {
+        card_removal_handled = false;
     }
     return card_initialized;
 }
@@ -573,13 +585,17 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
     bool continues_write = (write_buffer != NULL) &&
         pf_sdio_pio_host_write_stream_continues(&sdio_pio_host, first_block);
     if (!continues_write && !pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
+        card_initialized = false;
         return PF_SD_CARD_IO_ERROR;
     }
     if ((write_buffer != NULL) && (continues_write || (block_count > 1u))) {
-        return pf_sdio_pio_host_write_blocks(&sdio_pio_host, first_block,
-                                              card_block_addressed, write_buffer,
-                                              block_count)
-            ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+        bool success = pf_sdio_pio_host_write_blocks(&sdio_pio_host, first_block,
+                                                       card_block_addressed, write_buffer,
+                                                       block_count);
+        if (!success && sdio_pio_host.write_stream_open) {
+            card_initialized = false;
+        }
+        return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
     }
     if (read_buffer != NULL) {
         return read_blocks_with_clock_fallback(first_block, read_buffer, block_count)
@@ -607,8 +623,11 @@ pf_sd_card_result_t pf_sdio_pio_sync(void)
     if (!card_initialized) {
         return PF_SD_CARD_NOT_READY;
     }
-    return pf_sdio_pio_host_write_stream_close(&sdio_pio_host)
-        ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+    if (!pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
+        card_initialized = false;
+        return PF_SD_CARD_IO_ERROR;
+    }
+    return PF_SD_CARD_OK;
 }
 
 void pf_sdio_pio_get_info(pf_sd_card_info_t *info)

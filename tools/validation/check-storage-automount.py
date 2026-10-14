@@ -72,6 +72,7 @@ static pf_storage_result_t pf_storage_mount(const int *config, void *result)
     }
     return mount_result;
 }
+@ATTEMPT@
 @FUNCTION@
 static void poll(unsigned count)
 {
@@ -144,6 +145,37 @@ int main(void)
     now = 4000u;
     service_card_presence();
     assert(mount_calls == 6 && mounted);
+
+    mounted = false;
+    auto_mount_pending = true;
+    mount_retry_waiting = false;
+    stable_presence_valid = presence_sample_valid = false;
+    mount_result = PF_STORAGE_FILESYSTEM_ERROR;
+    media = (pf_sd_card_info_t){ false, false, false };
+    unsigned previous_mounts = mount_calls;
+    now = 0u;
+    service_card_presence();
+    assert(mount_calls == previous_mounts + 1u && mount_retry_waiting);
+    now = CARD_MOUNT_RETRY_MS - 1u;
+    service_card_presence();
+    assert(mount_calls == previous_mounts + 1u);
+    now = CARD_MOUNT_RETRY_MS;
+    mount_result = PF_STORAGE_OK;
+    service_card_presence();
+    assert(mount_calls == previous_mounts + 2u && mounted);
+
+    media = (pf_sd_card_info_t){ true, true, false };
+    mounted = true;
+    stable_presence_valid = presence_sample_valid = true;
+    stable_card_present = presence_sample = true;
+    presence_sample_count = CARD_PRESENCE_DEBOUNCE_SAMPLES;
+    auto_mount_pending = false;
+    mount_retry_waiting = false;
+    previous_mounts = mount_calls;
+    unsigned previous_unmounts = unmount_calls;
+    service_card_presence();
+    assert(unmount_calls == previous_unmounts + 1u);
+    assert(mount_calls == previous_mounts + 1u && mounted && media.initialized);
     puts("Storage auto-mount checks passed");
 }
 """
@@ -154,8 +186,9 @@ def main():
     state = source[source.index("static bool presence_sample_valid;"):
                    source.index("static void refresh_self_test_completion")]
     defines = "\n".join(re.findall(r"^#define CARD_.*$", source, re.MULTILINE))
-    harness = HARNESS.replace("@STATE@", defines + "\n" + state).replace(
-        "@FUNCTION@", function_source(source, "service_card_presence"))
+    harness = (HARNESS.replace("@STATE@", defines + "\n" + state)
+               .replace("@ATTEMPT@", function_source(source, "attempt_auto_mount"))
+               .replace("@FUNCTION@", function_source(source, "service_card_presence")))
     with tempfile.TemporaryDirectory() as directory:
         test_source = Path(directory) / "automount.c"
         executable = Path(directory) / "automount"

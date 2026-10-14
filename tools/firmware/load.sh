@@ -11,6 +11,7 @@ DEBUG_PROBE_SERIAL="${PICO_DEBUG_PROBE_SERIAL:-}"
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
+SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
 SKIP_BUILD=0
 
 usage() {
@@ -30,6 +31,7 @@ Options:
 --generator NAME             CMake generator
 --pico-sdk-path PATH         Override Pico SDK path
 --freertos-kernel-path PATH  Override FreeRTOS-Kernel path
+--sd-card-transport NAME     SDIO_PIO or SPI (default: SDIO_PIO)
 --skip-build                 Flash an existing ELF without building
 --help                       Show this help
 EOF
@@ -77,6 +79,10 @@ while [ "$#" -gt 0 ]; do
             FREERTOS_KERNEL_PATH_VALUE="$2"
             shift 2
             ;;
+        --sd-card-transport)
+            SD_CARD_TRANSPORT="$2"
+            shift 2
+            ;;
         --skip-build)
             SKIP_BUILD=1
             shift
@@ -113,6 +119,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ -n "$FREERTOS_KERNEL_PATH_VALUE" ]; then
         set -- "$@" --freertos-kernel-path "$FREERTOS_KERNEL_PATH_VALUE"
     fi
+    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT"
     "$@"
 fi
 

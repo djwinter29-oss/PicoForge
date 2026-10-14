@@ -48,19 +48,25 @@ flowchart TD
 | SPI response/token validation and pin-function checks | [sd_spi_protocol.c](../firmware/src/drivers/sd_card/spi/sd_spi_protocol.c) |
 | FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
 
-The facade links both backend libraries; each reuses the shared protocol library.
-Filesystem mounting, formatting policy, and RTOS scheduling do not belong in
-the reusable driver. The driver does not allocate its own task or heap buffers.
+The build selects one backend; it reuses the shared protocol library. SPI-only
+builds omit native SDIO code, including its 33,280-byte receive buffer and 8 KiB
+CRC tables. Filesystem mounting, formatting policy, and RTOS scheduling do not
+belong in the reusable driver. The driver does not allocate its own task or
+heap buffers.
+USB starts before card initialization. The FreeRTOS wait adapter is installed
+before the storage worker is created; that worker owns the single card-init and
+mount path, so a slow or absent card does not delay USB enumeration.
 
 ## Interfacing With The Driver
 
 ### Transport Selection
 
-[config.h](../firmware/src/config/config.h) defaults to
-`PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO`. Select
-`PF_CONFIG_SD_CARD_TRANSPORT_SPI` for SPI. Board support fills the corresponding
-member of `pf_sd_card_config_t.bus`; pin assignments belong in board support,
-not application code or reusable protocol helpers.
+The CMake cache variable `PF_SD_CARD_TRANSPORT` selects `SDIO_PIO` (default) or
+`SPI`; the build defines `PF_CONFIG_SD_CARD_TRANSPORT` consistently for board,
+facade, and backend code. Use `tools/firmware/build.sh --sd-card-transport SPI`
+or `-DPF_SD_CARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
+the selected member of `pf_sd_card_config_t.bus`; pin assignments belong in
+board support, not application code or reusable protocol helpers.
 
 | Interface | Native SDIO-PIO | SD-SPI |
 | --- | --- | --- |
@@ -168,8 +174,10 @@ ready/idle responses and checks OCR power-up and voltage compatibility.
 Native clock candidates are 50, 40, 33, 25, 20, 10, 5, and 1 MHz. Candidates
 above the requested/card/recovery limit or unsupported by SYSCLK are skipped.
 Above 25 MHz, CMD6 must confirm High Speed; otherwise normal speed is used.
-Host divider rounding can make the actual rate lower than the candidate.
-Every native request requires SYSCLK of at least four times the requested bus rate.
+Host divider rounding can make the actual rate lower than the candidate. The
+slow native PIO programs require SYSCLK of at least four times the selected
+effective bus rate; the requested clock is only an upper bound and may be
+reduced to a supported candidate.
 Use SDK/board-supported clock settings; accepting a divider is not qualification
 of an overclocked MCU.
 
@@ -261,6 +269,10 @@ of the next image with transmission/programming of the current sector, but use
 only one DMA channel. Failed writes are not automatically replayed. Stop-command
 recovery is not a guarantee against data loss on power failure.
 
+Any failed native multi-block write invalidates card initialization. If CMD12
+cannot be confirmed, the stream remains unresolved; subsequent I/O is blocked,
+and reinitialization must close the stream before issuing CMD0.
+
 SPI multi-block writes use the 0xFC block token and 0xFD stop token. They are
 closed within each call, not kept open across calls. Illegal-command fallback
 is allowed only before sending payload; partial writes and failed stop/busy
@@ -275,9 +287,9 @@ common ground, and the breakout's required biasing.
 
 ### Current Board Profile
 
-The source profile selects SDIO-PIO by default and requests 50 MHz. This is a
-request, not a guaranteed effective clock; identification and qualification can
-select a lower rate. SPI's zero clock request selects 25 MHz. See
+The default CMake transport is SDIO-PIO; the board profile requests 50 MHz.
+This is a request, not a guaranteed effective clock; identification and
+qualification can select a lower rate. SPI's zero clock request selects 25 MHz. See
 [board_profile.c](../firmware/src/board/board_profile.c) for authoritative values
 and [hardware setup](hardware-setup.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
@@ -321,14 +333,13 @@ controller; CS is an ordinary, independently controlled GPIO.
 | Internal pulls | CMD and all four DAT pins pulled up | MISO pulled up; CS initialized high |
 | Clock source | `clk_sys` drives SM dividers; effective rate is reported in telemetry | SDK SPI baud-rate configuration; actual rate is reported |
 | Timing source | SDK microsecond timer for bounded polling; SDK sleeps during identification | Same; no dedicated timer/alarm claimed |
-| Static receive wire buffer | 64 x 130 words x 4 bytes = 33,280 bytes | None |
+| Static native receive/transfer wire buffer | 64 x 130 words x 4 bytes = 33,280 bytes | None |
 | Static initialization probe buffer | None; CRC-only reads reuse the receive wire buffer | None |
-| Main static native transfer buffer | 33,280 bytes total, excluding metadata | None |
 | Single-sector wire image | 520 bytes on stack for native single-block read/write paths | No full-sector bounce buffer |
 | Multi-block write wire images | Two x 520 bytes = 1,040 bytes on stack | None |
 | Other stack/static data | SCR/switch-status buffers, command responses, host/configuration state, CID and capacity; additional stack beyond images required | Small command/CSD/CID buffers and configuration/telemetry state |
 | Protocol lookup tables | 8,192 bytes of lazily initialized SRAM tables for four-lane CRC, plus the shared read-only CRC16 table; software CRC | Shared read-only CRC16 table; software CRC |
-| Main native buffer plus CRC tables | 41,472 bytes (40.5 KiB), excluding metadata and stack; the separate self-test buffer adds 32 KiB | No native wire/CRC-slice storage used by SPI operations |
+| Main native buffer plus CRC tables | 41,472 bytes (40.5 KiB), excluding metadata and stack; the separate self-test buffer adds 32 KiB | SPI-only builds omit these 40.5 KiB of native SRAM |
 | Caller transfer buffers | Caller owns logical payload storage independently of wire/probe buffers | Caller owns logical payload storage |
 | Core/task/heap allocation | No dedicated core, driver task, or heap allocation | Same |
 
@@ -338,10 +349,9 @@ depends on available instruction memory and owns the listed completion flags.
 Resource-allocation failure returns initialization failure; internal host teardown
 unclaims its DMA/SMs and removes its programs. The public singleton retains its
 connection configuration and does not expose general resource hand-back.
-The facade still links both transports: unused native buffers may remain in a
-SPI firmware image, depending on linker reachability. An inactive transport
-does not claim its PIO/SM/DMA hardware. Use the link map for total image SRAM,
-not just this active-transport table.
+Only the selected backend is linked, so an SPI-only image omits the native
+wire buffer and CRC tables. Use the link map for total image SRAM, not just
+this active-transport table.
 
 ## Performance Controls And Status
 
