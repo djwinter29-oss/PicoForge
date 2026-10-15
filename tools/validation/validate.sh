@@ -55,7 +55,8 @@ while [ "$#" -gt 0 ]; do
 Usage: tools/validation/validate.sh [options]
 
 By default, syntax-check shell scripts, validate/run Ceedling tests, and build
-firmware for pico and pico2 with both SDIO_PIO and SPI.
+FreeRTOS firmware and bare-metal driver smoke targets for pico and pico2
+with both SDIO_PIO and SPI.
 PIO timing checks require a prior firmware build or PIOASM when builds are skipped.
 
 Options:
@@ -135,10 +136,14 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
         "$FIRMWARE_BUILD_SCRIPT" "$@"
         echo "=== $board_name / $transport_name / BAREMETAL ==="
         baremetal_dir="build/validation-$board_name-$transport_name-baremetal"
-        cmake -S firmware -B "$baremetal_dir" \
+        set -- -S firmware -B "$baremetal_dir" \
             -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" -DPICO_BOARD="$board_name" \
             -DPF_SD_CARD_TRANSPORT="$transport_name" -DPF_SD_CARD_PORT=BAREMETAL \
             -DPF_SD_CARD_INTERRUPT_WAIT=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        if [ -n "$GENERATOR" ]; then
+            set -- "$@" -G "$GENERATOR"
+        fi
+        cmake "$@"
         cmake --build "$baremetal_dir" --parallel
         python3 tools/validation/check-sd-ports.py --build-dir "$baremetal_dir"
     }

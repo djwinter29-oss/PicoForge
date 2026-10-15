@@ -124,6 +124,12 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 if [ -z "$ELF_PATH" ]; then
+    if [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
+       grep -q '^PF_SD_CARD_PORT:STRING=BAREMETAL$' "$BUILD_DIR/CMakeCache.txt"; then
+        echo "The selected build uses the bare-metal driver smoke target, not pf_hello_world." >&2
+        echo "Select a FreeRTOS application build directory or an explicit --elf." >&2
+        exit 1
+    fi
     ELF_PATH="$BUILD_DIR/pf_hello_world.elf"
 elif [ "${ELF_PATH#/}" = "$ELF_PATH" ]; then
     ELF_PATH="$REPO_ROOT/$ELF_PATH"

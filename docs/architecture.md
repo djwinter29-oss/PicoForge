@@ -67,7 +67,10 @@ Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple sy
 
 See [SD-Card Driver Design](sdcard-design.md) for the authoritative layer
 boundaries, SDIO-PIO and SPI interfaces, initialization/read/write/ownership
-workflows, and hardware resource inventory. Board wiring and physical
+workflows, explicitly selected FreeRTOS/bare-metal ports, and hardware resource
+inventory. The default USB/storage application remains FreeRTOS-only; the
+bare-metal configuration builds the reusable driver and its link-smoke target.
+Board wiring and physical
 qualification records remain in [hardware setup](hardware-setup.md#sd-card-breakout).
 
 ### Platform

@@ -39,6 +39,7 @@ flowchart TD
 | --- | --- |
 | Board-approved pins and controller selection | [board.c](../firmware/src/board/board.c), [board_profile.c](../firmware/src/board/board_profile.c) |
 | Singleton configuration, dispatch, diagnostics, and firmware/USB ownership | [sd_card.c](../firmware/src/drivers/sd_card/sd_card.c) |
+| Execution-environment selection, reservations, and optional waits | [sd_card_port.h](../firmware/src/drivers/sd_card/sd_card_port.h), [ports/](../firmware/src/drivers/sd_card/ports/) |
 | Block operations, result codes, and telemetry | [sd_card_block.h](../firmware/src/drivers/sd_card/sd_card_block.h) |
 | USB-only ownership and block capabilities | [sd_card_msc.h](../firmware/src/drivers/sd_card/sd_card_msc.h) |
 | CRC7, command framing, CMD8 classification, CSD decoding, serial CRC16, address conversion, and transfer bounds | [sd_card_protocol.c](../firmware/src/drivers/sd_card/sd_card_protocol.c) |
@@ -54,7 +55,8 @@ builds omit native SDIO code, including its 33,280-byte receive buffer and 8 KiB
 CRC tables. Filesystem mounting, formatting policy, and RTOS scheduling do not
 belong in the reusable driver. The driver does not allocate its own task or
 heap buffers.
-USB starts before card initialization. The FreeRTOS wait adapter is installed
+In the FreeRTOS application, USB starts before card initialization. The selected
+port is initialized and its optional wait adapter installed
 before the storage worker is created; that worker owns the single card-init and
 mount path. Background MSC transitions use a nonblocking card reservation and
 defer while another task holds it; an idle MSC task does not acquire the card
@@ -88,6 +90,67 @@ Transport and connection settings are locked after setup; repeating initializati
 with the same configuration retries card identification. There is no public
 runtime transport-switch or card-deinitialization API. Switching a card from SPI
 back to native mode can require removing card power, not just resetting the MCU.
+
+### Execution-Environment Ports
+
+`PF_SD_CARD_PORT=FREERTOS|BAREMETAL` explicitly selects exactly one port,
+independently of the transport. The default is `FREERTOS`, preserving the current
+application. There is one shared facade, protocol implementation, and selected
+transport backend, not separate RTOS and bare-metal drivers. Only
+[ports/freertos/](../firmware/src/drivers/sd_card/ports/freertos/) depends on
+FreeRTOS; [ports/baremetal/](../firmware/src/drivers/sd_card/ports/baremetal/)
+uses the Pico SDK backend without importing or linking the kernel. These are
+execution-environment ports, not filesystem/application integration.
+
+| Contract | `FREERTOS` | `BAREMETAL` |
+| --- | --- | --- |
+| Callers | Tasks with the scheduler running; no ISR callers | One foreground context; no ISR, callback reentry, or second-core callers |
+| Facade reservations | Static recursive mutex; try-lock never waits for its owner | No-ops; try-lock always succeeds because concurrency is forbidden |
+| Native data waits | Polling by default; optional bounded notification waits | Polling only |
+| Interrupt masking | Only short mutex/IRQ setup critical sections, not card transfers | No interrupt masking by the port |
+
+Call `pf_sd_card_port_init(&config)` once before card access or starting any
+card-using worker. It installs optional native FreeRTOS waits; it does not
+initialize or access the card and is a no-op in bare metal. It can run before the
+scheduler starts; subsequent facade operations in the FreeRTOS port require the
+scheduler to be running. The existing USB startup performs this step before
+creating the storage worker. Bare-metal startup must provide the board-approved
+configuration and call `pf_sd_card_init()` itself.
+
+The owner gate, diagnostics, synchronous block API, checked sync, and persistent
+native CMD25 behavior are identical in both ports. Bare metal does not make a
+write self-contained: explicitly sync before handing off the card or shutting
+down. A no-op reservation is not multicore protection. Interrupts can run during
+I/O, but their handlers must not call the driver.
+
+The USB/storage-worker application remains FreeRTOS-only. Selecting `BAREMETAL`
+in this repository builds the driver and
+[pf_sd_card_baremetal_smoke](../firmware/tests/ports/sd_card_baremetal_smoke.c),
+not a replacement USB, storage-worker, or filesystem application. The smoke
+executable links the production driver and checks unconfigured API paths without
+initializing hardware or touching media.
+
+```sh
+# Existing full application (default port).
+tools/firmware/build.sh --board pico2 --sd-card-port FREERTOS
+
+# Driver-only bare-metal link check; also supports --board pico and transport SPI.
+tools/firmware/build.sh --board pico2 --sd-card-port BAREMETAL \
+    --sd-card-transport SDIO_PIO
+```
+
+Bare-metal builds use `build/firmware-BOARD-baremetal` by default, separate from
+the application directory. Direct CMake builds use `-DPF_SD_CARD_PORT=BAREMETAL`.
+Invalid port names and bare metal with `PF_SD_CARD_INTERRUPT_WAIT=ON` are rejected;
+SPI also rejects that native-only option. There is no scheduler auto-detection
+or fallback to an unsynchronized port. `load.sh` builds the FreeRTOS application;
+it does not automatically select the bare-metal smoke target.
+
+`check-sd-ports.py` runs both bare-metal facade transports on the host, including
+byte-preserving transfers, recursive reservations, sync, and ownership rejection.
+`validate.sh` also builds both ports and transports for RP2040/RP2350 and inspects
+the bare-metal compilation database and ELF for kernel dependencies and a single
+selected port. These are host/build checks, not physical-card qualification.
 
 ### Block API
 
@@ -124,9 +187,10 @@ a mounted filesystem.
 - Nonempty requests require a non-NULL buffer, an in-capacity sector range, and
   a byte length representable by `size_t`. Zero-block calls are no-ops only
   after ownership/configuration/readiness checks.
-- Facade calls are synchronous and individually serialized by a recursive
-  FreeRTOS mutex. Direct SPI/SDIO backend and protocol calls bypass that mutex
-  and require external serialization, including lazy CRC-table initialization.
+- Facade calls are synchronous. The FreeRTOS port serializes them with a recursive
+  mutex; bare metal requires the single-context contract above. Direct SPI/SDIO
+  backend and protocol calls bypass port reservations and require external
+  serialization, including lazy CRC-table initialization.
   The owner flag controls access eligibility; it does not reserve a sequence of calls.
 - Reserve multi-call check/action sequences with `pf_sd_card_lock()` and
   `pf_sd_card_unlock()` where needed. Per-call locking does not serialize a
@@ -550,7 +614,7 @@ preallocated files), and card busy time before choosing further optimizations.
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
 The optional native wait integration lives in
-[sd_card_wait.c](../firmware/src/drivers/sd_card/freertos/sd_card_wait.c). It reserves
+[sd_card_wait.c](../firmware/src/drivers/sd_card/ports/freertos/sd_card_wait.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.
@@ -590,7 +654,8 @@ release, and block operations live in the dedicated MSC integration header;
 there is no arbitrary public owner setter. Acquisition still cannot inspect
 FatFs state without creating a cross-layer dependency, so the USB integration
 atomically checks worker activity and mount state before acquiring the card.
-Release similarly requires checked host eject/synchronization. A statically
+Release similarly requires checked host eject/synchronization. In the FreeRTOS
+application, a statically
 allocated FreeRTOS recursive mutex
 serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
