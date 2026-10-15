@@ -246,35 +246,42 @@ static bool send_application_command(uint8_t command, uint32_t argument,
 static bool read_data_block(uint8_t *data, size_t size)
 {
     uint32_t start = time_us_32();
-    uint8_t token;
-    uint16_t card_crc;
-    uint16_t calculated_crc;
+    /* DATA covers token wait, payload and wire CRC; CRC measures CPU validation. */
+    uint32_t profile_start = pf_sd_card_profile_begin();
+    uint8_t token, crc_high, crc_low;
+    bool received = false;
 
     do {
-        token = exchange_byte(0xffu);
+        if (!exchange_byte_checked(0xffu, &token)) {
+            goto data_done;
+        }
         if (pf_sd_spi_read_token_is_valid(token)) {
             break;
         }
         if (token != 0xffu) {
-            return false;
+            goto data_done;
         }
         pf_sd_card_idle();
     } while ((uint32_t)(time_us_32() - start) < SD_SPI_RESPONSE_TIMEOUT_US);
     if (!pf_sd_spi_read_token_is_valid(token)) {
-        return false;
+        pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
+        goto data_done;
     }
-
-    uint32_t profile_start = pf_sd_card_profile_begin();
-    bool received = spi_read_blocking(active_config.spi, 0xffu, data, size) == (int)size;
+    if (spi_read_blocking(active_config.spi, 0xffu, data, size) != (int)size ||
+        !exchange_byte_checked(0xffu, &crc_high) ||
+        !exchange_byte_checked(0xffu, &crc_low)) {
+        goto data_done;
+    }
+    received = true;
+data_done:
     pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
     if (!received) {
         return false;
     }
 
-    card_crc = (uint16_t)exchange_byte(0xffu) << 8u;
-    card_crc |= exchange_byte(0xffu);
+    uint16_t card_crc = ((uint16_t)crc_high << 8u) | crc_low;
     profile_start = pf_sd_card_profile_begin();
-    calculated_crc = pf_sd_card_crc16(data, size);
+    uint16_t calculated_crc = pf_sd_card_crc16(data, size);
     pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
     if (card_crc != calculated_crc) {
         pf_sd_card_profile_event(PF_SD_CARD_PROFILE_CRC_FAILURE);

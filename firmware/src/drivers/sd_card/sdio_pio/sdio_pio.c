@@ -146,7 +146,7 @@ static bool command_response(uint8_t command, uint32_t argument, uint8_t respons
     if (command == 3u) {
         return (*response_argument & 0xe000u) == 0u;
     }
-    return (*response_argument & 0xfdffe008u) == 0u;
+    return (*response_argument & PF_SDIO_PIO_R1_ERROR_MASK) == 0u;
 }
 
 static bool send_application_command(uint8_t command, uint32_t argument,

@@ -336,7 +336,7 @@ common ground, and the breakout's required biasing.
 
 ### Current Board Profile
 
-The default CMake transport is SDIO-PIO; the board profile requests 50 MHz.
+The default CMake transport is SDIO-PIO; the board profile requests 20 MHz (18.75 MHz at 150 MHz SYSCLK with the host divider).
 This is a request, not a guaranteed effective clock; identification and
 qualification can select a lower rate. SPI's zero clock request selects 25 MHz. See
 [board_profile.c](../firmware/src/board/board_profile.c) for authoritative values
@@ -411,7 +411,9 @@ plus CRC failures, batch fallbacks, timeouts, and recovery attempts. Changes
 require firmware ownership. Profiling adds measurement overhead; phases overlap
 and must not be summed to infer total latency. Native write data timing includes
 overlapped next-block encoding and the PIO's response/busy completion; it does
-not isolate the card's internal programming time. Snapshots use
+not isolate the card's internal programming time. SPI read DATA includes token
+waiting, payload transfer and both wire CRC bytes; CRC covers CPU validation
+separately. A token deadline emits one timeout event; I/O failures do not. Snapshots use
 `pf_sd_card_get_profile()`; callers must serialize access just like block I/O.
 
 The historical target records identify earlier artifacts, not this remediation.
@@ -430,7 +432,6 @@ preallocated files), and card busy time before choosing further optimizations.
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; hardware qualification outstanding |
 | Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD self-test](sd-self-test.md) |
-| Hoist per-block TX DMA configuration | Unchanged, unmeasured candidate; requires controlled before/after data with fixed card, clocks, payload, and timing boundaries |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 

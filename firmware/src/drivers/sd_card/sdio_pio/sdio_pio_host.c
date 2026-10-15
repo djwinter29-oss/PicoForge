@@ -584,7 +584,7 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
     if (!pf_sdio_pio_host_command_bytes(host, command, argument, 48u,
                                          response, sizeof(response)) ||
         !pf_sdio_pio_parse_response(command, response, &response_argument, true) ||
-        ((response_argument & 0xfdffe008u) != 0u)) {
+        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
         goto cleanup;
     }
 
@@ -630,7 +630,7 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
         goto cleanup;
     }
     if (!pf_sdio_pio_parse_response(55u, response, &response_argument, true) ||
-        ((response_argument & 0xfdffe008u) != 0u)) {
+        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
         goto cleanup;
     }
     if (!pf_sdio_pio_host_command_bytes(host, 51u, 0u, 48u,
@@ -638,7 +638,7 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
         goto cleanup;
     }
     if (!pf_sdio_pio_parse_response(51u, response, &response_argument, true) ||
-        ((response_argument & 0xfdffe008u) != 0u)) {
+        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
         goto cleanup;
     }
 
@@ -685,7 +685,7 @@ static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
     if (!pf_sdio_pio_parse_response(12u, response, &response_argument, true)) {
         return false;
     }
-    if ((response_argument & 0xfdffe008u) != 0u) {
+    if ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u) {
         return false;
     }
 
@@ -777,7 +777,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         bool response_valid = command_ok &&
             pf_sdio_pio_parse_response(18u, response, &response_argument, true);
         bool response_ok = response_valid &&
-            ((response_argument & 0xfdffe008u) == 0u);
+            ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) == 0u);
         if (response_ok) {
             start = time_us_32();
             uint32_t profile_start = pf_sd_card_profile_begin();
@@ -861,7 +861,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     if (!pf_sdio_pio_host_command_bytes(host, 24u, command_argument, 48u,
                                            response, sizeof(response)) ||
         !pf_sdio_pio_parse_response(24u, response, &response_argument, true) ||
-        ((response_argument & 0xfdffe008u) != 0u)) {
+        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
         return false;
     }
 
@@ -970,7 +970,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
             (void)pf_sdio_pio_host_recover(host);
             return false;
         }
-        if ((response_argument & 0xfdffe008u) != 0u) {
+        if ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u) {
             return false;
         }
         host->write_stream_open = true;

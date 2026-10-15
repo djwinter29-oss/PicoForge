@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Native R1 card-status error bits; not an R6 response mask. */
+#define PF_SDIO_PIO_R1_ERROR_MASK 0xfdffe008u
+
 #define PF_SDIO_PIO_TRANSFER_WORDS 130u
 #define PF_SDIO_PIO_IMAGE_SIZE (PF_SDIO_PIO_TRANSFER_WORDS * 4u)
 #define PF_SDIO_PIO_SWITCH_STATUS_SIZE 64u

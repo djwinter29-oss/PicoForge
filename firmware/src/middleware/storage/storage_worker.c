@@ -107,7 +107,6 @@ static void attempt_auto_mount(void)
 static void service_card_presence(void)
 {
     pf_sd_card_info_t info;
-    bool reinitialize_after_usb;
 
     if (!config_available) {
         return;
@@ -132,49 +131,41 @@ static void service_card_presence(void)
         auto_mount_pending = true;
         mount_retry_waiting = false;
     }
-    if (!info.presence_known) {
-        if (!firmware_owned) {
+    if (info.presence_known) {
+        if (!presence_sample_valid || (info.present != presence_sample)) {
+            presence_sample = info.present;
+            presence_sample_count = 1u;
+            presence_sample_valid = true;
+        } else if (presence_sample_count < CARD_PRESENCE_DEBOUNCE_SAMPLES) {
+            ++presence_sample_count;
+        }
+        if (presence_sample_count < CARD_PRESENCE_DEBOUNCE_SAMPLES) {
             goto done;
         }
-        if (!auto_mount_pending ||
-            (mount_retry_waiting &&
-             ((uint32_t)(pf_system_uptime_ms() - last_mount_attempt_ms) < CARD_MOUNT_RETRY_MS))) {
-            goto done;
-        }
-        attempt_auto_mount();
-        goto done;
-    }
-    if (!presence_sample_valid || (info.present != presence_sample)) {
-        presence_sample = info.present;
-        presence_sample_count = 1u;
-        presence_sample_valid = true;
-    } else if (presence_sample_count < CARD_PRESENCE_DEBOUNCE_SAMPLES) {
-        ++presence_sample_count;
-    }
-    if (presence_sample_count < CARD_PRESENCE_DEBOUNCE_SAMPLES) {
-        goto done;
-    }
 
-    if (!stable_presence_valid || (stable_card_present != presence_sample)) {
-        stable_presence_valid = true;
-        stable_card_present = presence_sample;
-        auto_mount_pending = true;
-        mount_retry_waiting = false;
-        if (!stable_card_present) {
-            pf_sd_card_confirm_removed();
-            if (pf_storage_is_mounted()) {
-                (void)pf_storage_unmount(NULL);
+        if (!stable_presence_valid || (stable_card_present != presence_sample)) {
+            stable_presence_valid = true;
+            stable_card_present = presence_sample;
+            auto_mount_pending = true;
+            mount_retry_waiting = false;
+            if (!stable_card_present) {
+                pf_sd_card_confirm_removed();
+                if (pf_storage_is_mounted()) {
+                    (void)pf_storage_unmount(NULL);
+                }
+                pf_storage_forget_filesystem_format();
+                goto done;
             }
-            pf_storage_forget_filesystem_format();
+        }
+
+        if (!stable_card_present) {
             goto done;
         }
     }
-
-    if (!stable_card_present || !firmware_owned) {
+    if (!firmware_owned) {
         goto done;
     }
-    reinitialize_after_usb = pf_sd_card_take_reinit_request();
-    if (reinitialize_after_usb) {
+    if (pf_sd_card_take_reinit_request()) {
         auto_mount_pending = true;
         mount_retry_waiting = false;
     }
@@ -210,7 +201,7 @@ static void storage_task(void *context)
             continue;
         }
         if (request.test_size_mib != 0u) {
-            pf_storage_self_test_run(config_available ? &card_config : NULL, request.test_size_mib,
+            pf_storage_self_test_run(request.test_size_mib,
                                       self_test_clock, self_test_update, NULL);
             taskENTER_CRITICAL();
             self_test_finished = true;

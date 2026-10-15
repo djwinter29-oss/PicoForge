@@ -117,6 +117,8 @@ READER_HARNESS = r"""
 #include <stdbool.h>
 #include <stdint.h>
 #include "sd_card_protocol.h"
+/* Match the public protocol mask used by the production extraction below. */
+#define PF_SDIO_PIO_R1_ERROR_MASK 0xfdffe008u
 #define SDIO_DATA_READ_IRQ 1u
 #define SDIO_DATA_NIBBLE_COUNT 1040u
 #define SDIO_DATA_WORD_COUNT 130u

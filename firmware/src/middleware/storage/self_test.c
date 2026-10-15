@@ -43,11 +43,10 @@ static void filesystem_error(pf_self_test_status_t *status, FRESULT result)
     status->filesystem_result = result;
 }
 
-void pf_storage_self_test_run(const pf_sd_card_config_t *config, uint32_t size_mib,
+void pf_storage_self_test_run(uint32_t size_mib,
                               pf_self_test_clock_t clock_ms, pf_self_test_update_t update,
                               void *context)
 {
-    (void)config;
     pf_self_test_status_t status = { .state = PF_SELF_TEST_MOUNTING };
     FIL file;
     bool file_created = false;

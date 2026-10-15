@@ -222,6 +222,29 @@ int main(void)
     service_card_presence();
     assert(mount_calls == previous_mounts + 2u && mounted);
 
+    /* No detect pin: initial mount completed; real MSC ownership return. */
+    assert(mounted && media.initialized && !auto_mount_pending);
+    mounted = false; /* firmware unmounts before handing media to USB */
+    pf_usb_msc_request(true);
+    pf_usb_msc_task();
+    assert(msc_enabled && active_owner == PF_SD_CARD_OWNER_USB_MSC);
+    poll(3);
+    assert(!mounted && !auto_mount_pending);
+    assert(tud_msc_start_stop_cb(0u, 0u, false, true));
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    assert(!msc_enabled && active_owner == PF_SD_CARD_OWNER_FIRMWARE && reinit_request);
+    busy = true;
+    poll(1);
+    assert(reinit_request && !mounted);
+    busy = false;
+    previous_mounts = mount_calls;
+    poll(1);
+    assert(!reinit_request && mounted && media.initialized && !auto_mount_pending);
+    assert(mount_calls == previous_mounts + 1u);
+    poll(60);
+    assert(mounted && mount_calls == previous_mounts + 1u);
+
     media = (pf_sd_card_info_t){ true, true, false };
     mounted = true;
     stable_presence_valid = presence_sample_valid = true;
