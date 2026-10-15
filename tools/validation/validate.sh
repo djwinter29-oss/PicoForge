@@ -55,7 +55,9 @@ while [ "$#" -gt 0 ]; do
 Usage: tools/validation/validate.sh [options]
 
 By default, syntax-check shell scripts, validate/run Ceedling tests, and build
-firmware for pico and pico2.
+FreeRTOS firmware and bare-metal driver smoke targets for pico and pico2
+with both SDIO_PIO and SPI.
+PIO timing checks require a prior firmware build or PIOASM when builds are skipped.
 
 Options:
   --board NAME          Build only the selected Pico SDK board
@@ -96,8 +98,13 @@ fi
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "=== Ceedling project and unit tests ==="
+    python3 tools/validation/check-sd-msc-production.py
     python3 tools/validation/check-storage-automount.py
+    python3 tools/validation/check-sd-serialization.py
+    python3 tools/validation/check-sd-ports.py
+    python3 tools/validation/check-usb-sd-responsiveness.py
     python3 tools/validation/check-sdio-init.py
+    python3 tools/validation/check-sdio-tx.py
     python3 tools/validation/check-sdio-read-batch.py
     python3 tools/validation/check-sd-spi-transfer.py
     "$CEEDLING_SCRIPT" check
@@ -117,18 +124,43 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
 
     build_firmware() {
         board_name="$1"
-        set -- --board "$board_name" --pico-sdk-path "$PICO_SDK_PATH_VALUE"
+        transport_name="$2"
+        echo "=== $board_name / $transport_name ==="
+        set -- --board "$board_name" --sd-card-transport "$transport_name" \
+            --sd-card-port FREERTOS \
+            --build-dir "build/validation-$board_name-$transport_name" \
+            --pico-sdk-path "$PICO_SDK_PATH_VALUE"
         if [ -n "$GENERATOR" ]; then
             set -- "$@" --generator "$GENERATOR"
         fi
         "$FIRMWARE_BUILD_SCRIPT" "$@"
+        echo "=== $board_name / $transport_name / BAREMETAL ==="
+        baremetal_dir="build/validation-$board_name-$transport_name-baremetal"
+        set -- -S firmware -B "$baremetal_dir" \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" -DPICO_BOARD="$board_name" \
+            -DPF_SD_CARD_TRANSPORT="$transport_name" -DPF_SD_CARD_PORT=BAREMETAL \
+            -DPF_SD_CARD_INTERRUPT_WAIT=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        if [ -n "$GENERATOR" ]; then
+            set -- "$@" -G "$GENERATOR"
+        fi
+        cmake "$@"
+        cmake --build "$baremetal_dir" --parallel
+        python3 tools/validation/check-sd-ports.py --build-dir "$baremetal_dir"
     }
 
     echo "=== Firmware builds ==="
     if [ -n "$BOARD" ]; then
-        build_firmware "$BOARD"
+        build_firmware "$BOARD" SDIO_PIO
+        build_firmware "$BOARD" SPI
     else
-        build_firmware pico
-        build_firmware pico2
+        build_firmware pico SDIO_PIO
+        build_firmware pico SPI
+        build_firmware pico2 SDIO_PIO
+        build_firmware pico2 SPI
     fi
+fi
+
+if [ "$SKIP_TESTS" -eq 0 ]; then
+    echo "=== Assembled SDIO PIO timing ==="
+    python3 tools/validation/check-sdio-pio-timing.py
 fi

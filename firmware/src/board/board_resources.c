@@ -2,7 +2,10 @@
 
 #include <stddef.h>
 
+#include "config/config.h"
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
 #include "sd_spi_protocol.h"
+#endif
 
 static uint32_t topology_gpio_limit(uint32_t gpio_count)
 {
@@ -14,6 +17,7 @@ static bool pin_is_valid(uint32_t pin, uint32_t gpio_limit)
     return (pin != PF_BOARD_PIN_UNASSIGNED) && (pin < gpio_limit);
 }
 
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
 static bool data_pins_are_valid(const uint32_t data_gpio[4], uint32_t gpio_limit,
                                 uint32_t *gpio_base)
 {
@@ -39,7 +43,9 @@ static bool pin_is_sdio_data(uint32_t pin, const uint32_t data_gpio[4])
     }
     return false;
 }
+#endif
 
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
 static bool spi_pins_are_valid(const pf_board_resources_t *topology,
                                uint32_t gpio_limit)
 {
@@ -77,18 +83,26 @@ static bool spi_pins_are_valid(const pf_board_resources_t *topology,
         }
     }
     if (topology->card_detect_enabled &&
-        !pin_is_valid(topology->card_detect_gpio, gpio_limit)) {
+        (!pin_is_valid(topology->card_detect_gpio, gpio_limit) ||
+         (topology->monitor_uart_enabled &&
+          ((topology->card_detect_gpio == topology->monitor_uart_tx_gpio) ||
+           (topology->card_detect_gpio == topology->monitor_uart_rx_gpio))) ||
+         (topology->led_enabled &&
+          (topology->card_detect_gpio == topology->led_gpio)))) {
         return false;
     }
     return pf_sd_spi_pins_match_controller(topology->spi_index, topology->spi_clock_gpio,
                                            topology->spi_mosi_gpio, topology->spi_miso_gpio);
 }
+#endif
 
 bool pf_board_resources_validate(const pf_board_resources_t *topology)
 {
     uint32_t gpio_limit;
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     uint32_t data_gpio_base;
     uint32_t clock_gpio;
+#endif
 
     if ((topology == NULL) || (topology->gpio_count == 0u)) {
         return false;
@@ -112,10 +126,9 @@ bool pf_board_resources_validate(const pf_board_resources_t *topology)
     if (!topology->sd_card_enabled) {
         return true;
     }
-    if (!spi_pins_are_valid(topology, gpio_limit)) {
-        return false;
-    }
-
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
+    return spi_pins_are_valid(topology, gpio_limit);
+#else
     if ((topology->pio_index > 1u) ||
         !data_pins_are_valid(topology->data_gpio, gpio_limit, &data_gpio_base) ||
         (data_gpio_base < 2u) || (data_gpio_base > 28u) ||
@@ -164,4 +177,5 @@ bool pf_board_resources_validate(const pf_board_resources_t *topology)
     }
 
     return true;
+#endif
 }

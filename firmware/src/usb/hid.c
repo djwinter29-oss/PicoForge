@@ -51,11 +51,16 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
     }
 }
 
-void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence)
+bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence)
 {
     pf_sd_card_config_t config;
     pf_sd_card_info_t info;
 
+    if (!pf_sd_card_try_lock()) {
+        return false;
+    }
+    pf_sd_card_get_info(&info);
+    pf_sd_card_unlock();
     memset(report, 0, sizeof(*report));
     report->version = PF_HID_REPORT_VERSION;
     report->sequence = sequence;
@@ -66,7 +71,6 @@ void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
             ? PF_HID_MEMORY_MODE_SPI
             : PF_HID_MEMORY_MODE_SDIO;
     }
-    pf_sd_card_get_info(&info);
     if (info.presence_known) {
         report->flags |= PF_HID_MEMORY_PRESENCE_KNOWN;
     }
@@ -82,6 +86,7 @@ void pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
         report->flags |= PF_HID_MEMORY_CID_VALID;
         memcpy(report->cid, info.cid, sizeof(report->cid));
     }
+    return true;
 }
 
 void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t sequence)
@@ -154,7 +159,9 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
     if ((report_id == PF_HID_MEMORY_REPORT_ID) && (report_type == HID_REPORT_TYPE_INPUT) &&
         (reqlen >= sizeof(pf_hid_memory_report_t))) {
         pf_hid_memory_report_t report;
-        pf_hid_build_memory_report(&report, 0u);
+        if (!pf_hid_build_memory_report(&report, 0u)) {
+            return 0u;
+        }
         memcpy(buffer, &report, sizeof(report));
         return sizeof(report);
     }

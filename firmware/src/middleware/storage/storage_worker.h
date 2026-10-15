@@ -25,6 +25,16 @@ bool pf_storage_worker_submit(const char *family, const char *arguments,
 /** True until all work and replies are drained. Only call from the USB task. */
 bool pf_storage_worker_busy(void);
 
+/** True only after the serialized worker confirms debounced removal. */
+bool pf_storage_worker_media_absent(void);
+
+/** Queue explicit fault recovery; caller reserves the card until USB detaches
+ * and firmware ownership is restored. Reinitializes only, never mounts.
+ * Initialization failure is retained in card diagnostics; telemetry reports
+ * readiness. Automatic mounting is blocked until a successful explicit fs mount.
+ */
+bool pf_storage_worker_recover_card(void);
+
 /** Poll one reply without blocking from the USB task; completion releases busy. */
 bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply);
 

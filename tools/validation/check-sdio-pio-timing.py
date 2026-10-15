@@ -92,7 +92,7 @@ def check(ops, half, latency, phase):
         "Dropped/duplicated start, data or end sampling edge", half, latency, phase)
 
 
-def receive_samples(ops, half, latency, phase, pc, cycle, limit):
+def receive_samples(ops, half, latency, phase, pc, cycle, limit, start_delay=None):
     # Executes real WAIT/IN/JMP opcodes; the clock rises at cycles where
     # (cycle + phase - half) % (2 * half) == 0.
     samples, remaining = [], 1039
@@ -111,12 +111,18 @@ def receive_samples(ops, half, latency, phase, pc, cycle, limit):
             if len(samples) == limit:
                 break
         elif kind == 0:
-            assert dest == 2
-            if remaining:
-                next_pc = immediate
+            if dest == 6:
+                assert start_delay is not None
+                observed = cycle - latency
+                if not start_delay <= observed < start_delay + 2 * half:
+                    next_pc = immediate
             else:
-                break
-            remaining -= 1
+                assert dest == 2
+                if remaining:
+                    next_pc = immediate
+                else:
+                    break
+                remaining -= 1
         else:
             raise AssertionError("Unexpected RX-loop instruction")
         cycle += 1 + ((op >> 8) & 31)
@@ -126,26 +132,67 @@ def receive_samples(ops, half, latency, phase, pc, cycle, limit):
 
 def check_receive(ops, half, latency, phase):
     count = 1040
-    samples = receive_samples(ops, half, latency, phase, 4, 0, count)
+    samples = receive_samples(ops, half, latency, phase, 5, 0, count)
     assert len(samples) == count
     assert all(later - earlier == 2 * half
                for earlier, later in zip(samples, samples[1:])), (
         "RX skipped a nibble", half, latency, phase, samples[:8])
 
 
-def check_receive_framing(ops, half, first_pc):
-    # Start bit launched at the rising edge at cycle 0 and seen low `delay` cycles later.
-    # The following WAIT needs one more cycle, so delays up to period - 2 are absorbed (a
-    # card delay of 14 ns is 2 cycles at 100 MHz). Nibble 0 launches at 2*half and must be
-    # sampled in the second half of that bit (after the falling edge), never at the launch.
+def check_receive_framing(ops, half):
+    # Exercise the actual start-detection loop, including DAT0 going low before
+    # the rising edge. The old asynchronous WAIT counted that start bit as data.
     period = 2 * half
-    for delay in range(1, period - 1):
-        samples = receive_samples(ops, half, 0, half, first_pc, delay + 1, 3)
+    # JMP PIN observes DAT0 one instruction after the falling-edge WAIT.
+    # Keep one cycle of setup/hold margin around that observation.
+    for delay in range(2 - half, half):
+        samples = receive_samples(ops, half, 0, half, 2, -2 * period, 3, delay)
         assert len(samples) == 3, (half, delay)
         for index, cycle in enumerate(samples):
             lo = period * (index + 1) + half
             assert lo <= cycle < lo + half, (
                 "RX sample outside the second half of its bit", half, delay, index, cycle)
+
+
+def check_command_response(ops):
+    # Execute the response suffix with card output changing just before/after
+    # each rising edge. The start bit must not enter the 48/136-bit response.
+    jump_pin = next(i for i, op in enumerate(ops)
+                    if op >> 13 == 0 and (op >> 5) & 7 == 6)
+    for bits in (48, 136):
+        expected = [0] + [((i * 7) ^ (i >> 2)) & 1 for i in range(bits - 2)] + [1]
+        for delay in (-0.25, 0.25):
+            pc, cycle, remaining = jump_pin - 1, 0, bits - 2
+            samples = []
+            for _ in range(bits * 2 + 20):
+                op = ops[pc]
+                kind, dest, immediate = op >> 13, (op >> 5) & 7, op & 31
+                next_pc = pc + 1
+                bit_index = int((cycle - delay) // 2)
+                pin = expected[bit_index] if 0 <= bit_index < bits else 1
+                if kind == 0 and dest == 6:
+                    assert ((op >> 12) & 1) == 0  # falling edge
+                    if pin:
+                        next_pc = immediate
+                elif kind == 2:
+                    if dest == 3:
+                        samples.append(0)  # start bit, supplied by IN NULL
+                    else:
+                        assert dest == 0 and ((op >> 12) & 1) == 0
+                        samples.append(pin)
+                elif kind == 0:
+                    assert dest == 4  # JMP Y--
+                    if remaining:
+                        next_pc = immediate
+                    remaining -= 1
+                elif kind == 4:
+                    break  # PUSH
+                else:
+                    assert kind == 5  # NOP (MOV)
+                pc = next_pc
+                cycle += 1
+            assert samples == expected, (bits, delay, samples[:16], expected[:16])
+    print("Command response framing passed: R1/R2, early/late card output, falling-edge sampling")
 
 
 def check_tx_status(ops, half):
@@ -201,13 +248,17 @@ def main():
         for latency in (0, 1):
             for phase in range(2 * half):
                 check_receive(rx_ops, half, latency, phase)
-        check_receive_framing(rx_ops, half, 3)
+        check_receive_framing(rx_ops, half)
         print(f"RX timing passed: half={half}, all phases, 1040 nibbles, falling-edge sampling")
     fast_rx_ops = assemble("data_rx_fast")
     for latency in (0, 1):
         for phase in range(4):
             check_receive(fast_rx_ops, 2, latency, phase)
-    check_receive_framing(fast_rx_ops, 2, 3)
+    check_receive_framing(fast_rx_ops, 2)
+    command_ops = assemble("command")
+    check_command_response(command_ops)
+    assert len(command_ops) + max(len(rx_ops), len(fast_rx_ops)) <= 32, (
+        "Command and receive programs exceed shared PIO instruction memory")
     print("Fast RX timing passed: half=2, all phases, 1040 nibbles, falling-edge sampling")
     print("SDIO PIO timing check passed (model only; HIL still required)")
 

@@ -20,7 +20,9 @@ static const pf_board_resources_t board_resources = {
     /* Logical DAT0-DAT3 now follow consecutive GPIO order. */
     .data_gpio = { 4u, 5u, 6u, 7u },
     .pio_index = 0u,
-    .clock_hz = 50000000u,
+    /* Qualified default for the 150 MHz Pico 2 profile. Transfer probing and
+       reinitialization at lower clocks remain required for other cards. */
+    .clock_hz = 25000000u,
     .spi_index = 0u,
     .spi_clock_gpio = 2u,
     .spi_mosi_gpio = 3u,

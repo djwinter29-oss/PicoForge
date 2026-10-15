@@ -19,11 +19,12 @@ Do not reset, unplug, remove the card, or change transport while the test runs.
 This test writes flash and contributes to card wear. Back up important data
 before testing. It is not a filesystem repair or full-capacity authenticity test.
 
-The fixed filename is `/PFTEST.BIN`. A leftover file with that name (for example
-from an interrupted run) is deleted first, regardless of capitalization on FAT;
-if it cannot be deleted the test fails with a filesystem error. The firmware
-then creates the file in create-new mode and never overwrites. Insufficient
-free space is rejected before creation. The test's own file is closed and removed before
+The fixed filename is `/PFTEST.BIN`. The firmware atomically creates it in
+create-new mode and refuses an existing file with the EXISTS error (`FR_EXIST`),
+regardless of capitalization on FAT. It never deletes or overwrites a pre-existing
+file, including a leftover from an interrupted run. Insufficient free space is
+rejected before creation. Only a file created by the current run is closed and
+removed during final cleanup before
 completion is published; the filesystem remains mounted. If close/unlink fails,
 explicit status flags identify a possible remaining test file. An
 interrupted/power-lost run may leave the file; inspect it before deliberately
@@ -41,7 +42,7 @@ and reconnect the safely idle board before changing host implementation.
 
 ## Measurement
 
-The worker uses a statically allocated, aligned 8 KiB buffer. Every four-byte word
+The worker uses a statically allocated, aligned 32 KiB buffer. Every four-byte word
 contains its file offset XORed with a fixed pattern, so block-offset mistakes and
 corruption can be detected. The entire requested file is verified, not sampled;
 a mismatch fails the run. Read/write short transfers, sync errors, and close
@@ -77,14 +78,31 @@ clears the test's own file; it never changes existing files. Allocation time is
 excluded from write averages, so record preallocated and normal results
 separately. This mode changes allocation and wear behavior, may need contiguous
 free space, and is not a raw-driver benchmark. Use `sd profile` with a stable
-build and card when attributing time to driver phases.
+build and card when inspecting driver instrumentation windows. These windows
+overlap and cannot be summed or directly compared across transports; see
+[profile measurement boundaries](sdcard-design.md#profile-measurement-boundaries).
+
+## CMD25 Persistence Decision
+
+Native SDIO keeps a successful CMD25 stream open across consecutive facade
+writes. This behavior is unconditional: there is no build option to close the
+stream after every facade call. A non-contiguous operation, synchronization,
+error, removal, or reinitialization still performs the required checked stream
+recovery.
+
+The [2026-10-15 controlled A/B measurement](tests/records/2026-10-15-cmd25-persistence.md)
+found a 40.93% median write-throughput gain from persistence across six passing
+128 MiB runs at 25 MHz SDIO with contiguous preallocation. This was well above
+the 5-10% threshold for retaining the additional stream state. See that record
+for the historical test variants, raw data, controls, and qualification limits.
 
 The storage worker performs all FatFs operations; the USB task owns HID/CDC.
 Progress is copied under a short FreeRTOS critical section and emitted through
 HID Input Report 6 every 500 ms. Cancellation is checked between chunks and
 before creation; a current I/O operation completes before cleanup. The 8 KiB
-worker stack allocation remains unchanged. The test uses an 8 KiB static buffer;
-SDIO batched reads use an additional 8.1 KiB static wire buffer. No benchmark
+worker stack allocation remains unchanged. The test uses a 32 KiB static buffer;
+SDIO batched reads use an additional 33,280-byte (32.5 KiB) static wire buffer.
+The SDIO CRC lookup tables occupy another 8 KiB. No benchmark
 data is sent through HID or CDC.
 
 ## API
@@ -202,3 +220,8 @@ The .NET development launch currently encounters an existing static-web-assets
 path issue in this workspace; its normal launch and generated OpenAPI endpoint
 test were verified. SPI benchmark performance, physical direct-WebHID access,
 long-duration endurance, media-removal, and power-loss recovery remain unverified.
+
+The 2026-10-15 static review follow-up fixes cached MSC transfer sense at handled
+BOT and bus resets. Data paths, clocks and buffer defaults are unchanged; no
+new throughput result is claimed. See [SD review scope and validation](sdcard-design.md#static-sd-review-follow-up-2026-10-15)
+for reset ordering, host-model limits, existing overlap and pending HIL comparisons.

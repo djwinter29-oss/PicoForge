@@ -4,6 +4,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/** Reservation shared by both transports, telemetry and removal.
+ * FreeRTOS: recursive, task-context only with a running scheduler.
+ * Bare metal: no-op, single foreground context only; no ISR/second-core calls.
+ * Pair every lock with unlock. Never hold across reply/USB waits.
+ * Backends must be accessed through the facade.
+ */
+void pf_sd_card_lock(void);
+/** Attempt a reservation without waiting; unlock only on success.
+ * Always succeeds under the bare-metal port's single-context contract.
+ */
+bool pf_sd_card_try_lock(void);
+void pf_sd_card_unlock(void);
+
 #define PF_SD_CARD_BLOCK_SIZE 512u
 
 typedef enum {
@@ -21,6 +34,11 @@ typedef enum {
     PF_SD_CARD_OWNER_USB_MSC,
 } pf_sd_card_owner_t;
 
+typedef enum {
+    PF_SD_CARD_TRANSPORT_SDIO_PIO = 0,
+    PF_SD_CARD_TRANSPORT_SPI,
+} pf_sd_card_transport_t;
+
 typedef struct {
     bool initialized;
     bool presence_known;
@@ -32,6 +50,11 @@ typedef struct {
 } pf_sd_card_info_t;
 
 typedef enum {
+    /* Inclusive instrumentation windows, NOT exclusive latency phases.
+     * DATA includes native TX response/busy and overlapped encode/decode;
+     * STOP includes command/busy, RECOVERY includes initialization windows.
+     * Never sum elapsed_us or compare phase values across transports directly.
+     * See docs/sdcard-design.md, Profile Measurement Boundaries. ABI preserved. */
     PF_SD_CARD_PROFILE_COMMAND = 0,
     PF_SD_CARD_PROFILE_DATA,
     PF_SD_CARD_PROFILE_CRC,
@@ -56,15 +79,47 @@ typedef struct {
     uint32_t events[PF_SD_CARD_PROFILE_EVENT_COUNT];
 } pf_sd_card_profile_t;
 
+typedef enum {
+    PF_SD_CARD_OPERATION_NONE = 0,
+    PF_SD_CARD_OPERATION_INIT,
+    PF_SD_CARD_OPERATION_READ,
+    PF_SD_CARD_OPERATION_WRITE,
+    PF_SD_CARD_OPERATION_SYNC,
+    PF_SD_CARD_OPERATION_MSC_ACQUIRE,
+    PF_SD_CARD_OPERATION_MSC_RELEASE,
+} pf_sd_card_operation_t;
+
+/** Last facade failure and the transport context captured when it occurred. */
+typedef struct {
+    uint32_t sequence;
+    pf_sd_card_operation_t operation;
+    pf_sd_card_result_t result;
+    pf_sd_card_owner_t owner;
+    pf_sd_card_transport_t transport;
+    uint32_t transport_init_stage;
+    pf_sd_card_profile_t profile;
+} pf_sd_card_diagnostics_t;
+
 /** Enable optional profiling, disabled at boot; serialize with all card access. */
 void pf_sd_card_set_profiling_enabled(bool enabled);
 /** Clear accumulated metrics without changing profiling enablement. */
 void pf_sd_card_reset_profile(void);
 /** Copy metrics to caller-owned storage; NULL is ignored. Requires serialized access. */
 void pf_sd_card_get_profile(pf_sd_card_profile_t *profile);
+/**
+ * Snapshot the most recent facade failure.
+ *
+ * Operation NONE means no failure is retained. A zero sequence means no failure
+ * has occurred since boot; clearing preserves the monotonic sequence.
+ */
+void pf_sd_card_get_diagnostics(pf_sd_card_diagnostics_t *diagnostics);
+/** Clear the retained failure while preserving its monotonic sequence number. */
+void pf_sd_card_clear_diagnostics(void);
 
 /** Return whether the selected card transport has initialized successfully. */
 bool pf_sd_card_is_initialized(void);
+/** Serialized storage owner notification after debounced card removal. */
+void pf_sd_card_confirm_removed(void);
 
 /** Return the initialized card's number of 512-byte sectors, or zero if unavailable. */
 uint32_t pf_sd_card_block_count(void);
@@ -79,20 +134,6 @@ pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block, const void *bu
 
 /** Complete any pending write. */
 pf_sd_card_result_t pf_sd_card_sync(void);
-
-/** Select the only block-I/O client allowed to access the card. */
-pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t owner);
-
-/** Read blocks on behalf of the USB MSC host while it owns the card. */
-pf_sd_card_result_t pf_sd_card_msc_read_blocks(uint32_t first_block, void *buffer,
-                                               uint32_t block_count);
-
-/** Write blocks on behalf of the USB MSC host while it owns the card. */
-pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t first_block, const void *buffer,
-                                                uint32_t block_count);
-
-/** Flush writes on behalf of the USB MSC host while it owns the card. */
-pf_sd_card_result_t pf_sd_card_msc_sync(void);
 
 /** Snapshot initialized card telemetry; presence is unknown until detect or init succeeds. */
 void pf_sd_card_get_info(pf_sd_card_info_t *info);

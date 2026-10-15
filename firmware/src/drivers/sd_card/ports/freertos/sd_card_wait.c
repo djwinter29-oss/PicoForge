@@ -1,4 +1,4 @@
-#include "sd_card_wait.h"
+#include "sd_card_port.h"
 #include "config/config.h"
 
 #if PF_CONFIG_SD_CARD_INTERRUPT_WAIT
@@ -48,7 +48,7 @@ static void wait_completion(PIO pio, uint32_t flag)
 }
 #endif
 
-void pf_sd_card_wait_init(const pf_sd_card_config_t *config)
+void pf_sd_card_port_init(const pf_sd_card_config_t *config)
 {
 #if PF_CONFIG_SD_CARD_INTERRUPT_WAIT
     if (config == NULL || config->transport != PF_SD_CARD_TRANSPORT_SDIO_PIO ||

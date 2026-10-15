@@ -146,7 +146,7 @@ static bool command_response(uint8_t command, uint32_t argument, uint8_t respons
     if (command == 3u) {
         return (*response_argument & 0xe000u) == 0u;
     }
-    return (*response_argument & 0xfdffe008u) == 0u;
+    return (*response_argument & PF_SDIO_PIO_R1_ERROR_MASK) == 0u;
 }
 
 static bool send_application_command(uint8_t command, uint32_t argument,
@@ -174,7 +174,7 @@ static bool wait_card_data_ready(void)
 }
 
 static const uint32_t transfer_clock_steps_hz[] = {
-    50000000u, 40000000u, 33000000u, 25000000u, 20000000u, 10000000u, 5000000u, 1000000u,
+    50000000u, 40000000u, 33000000u, 25000000u, 20000000u, 10000000u, 5000000u, 1000000u, 400000u,
 };
 static bool probe_transfer(void)
 {
@@ -198,6 +198,12 @@ static bool probe_transfer(void)
     return true;
 }
 
+static bool card_detect_present(void)
+{
+    return !active_config.use_card_detect ||
+        ((gpio_get(active_config.card_detect_gpio) != 0u) == active_config.card_detect_active_high);
+}
+
 static bool initialize_card(uint32_t *clock_limit_hz)
 {
     uint8_t response[17];
@@ -211,6 +217,9 @@ static bool initialize_card(uint32_t *clock_limit_hz)
     uint32_t acmd41_argument = 0x00ff8000u;
     bool supports_sd_v2;
 
+    if (!card_detect_present()) {
+        return false;
+    }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_IDLE;
     sleep_ms(2u);
     if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 0u, 0u, 0u, NULL, 0u)) {
@@ -305,8 +314,12 @@ static bool initialize_card(uint32_t *clock_limit_hz)
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SCR;
-    if (!pf_sdio_pio_host_read_scr(&sdio_pio_host, relative_card_address, scr) ||
-        !pf_sd_card_scr_supports_four_bit(scr)) {
+    if (!pf_sdio_pio_host_read_scr(&sdio_pio_host, relative_card_address, scr)) {
+        card_init_stage = sdio_pio_host.scr_stage;
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_SCR_BUS_WIDTH;
+    if (!pf_sd_card_scr_supports_four_bit(scr)) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_STATUS;
@@ -436,8 +449,6 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         configuration_set = true;
     }
 
-    /* A stream left open by a previous session must end before CMD0 re-initializes the card. */
-    (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
     if (!sdio_pio_host.pio) {
         if (active_config.use_card_detect) {
             gpio_init(active_config.card_detect_gpio);
@@ -456,8 +467,7 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         }
     }
 
-    if (active_config.use_card_detect &&
-        ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
+    if (!card_detect_present()) {
         card_initialized = false;
         return PF_SD_CARD_INIT_FAILED;
     }
@@ -470,6 +480,10 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
          attempt < sizeof(transfer_clock_steps_hz) / sizeof(transfer_clock_steps_hz[0]);
          attempt++) {
         uint32_t previous_limit_hz = clock_limit_hz;
+        /* Each attempt starts with CMD0, so a stream left by a prior session or probe must end first. */
+        if (!pf_sdio_pio_host_recover(&sdio_pio_host)) {
+            break;
+        }
         if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u)) {
             break;
         }
@@ -487,12 +501,18 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
 
 bool pf_sdio_pio_is_initialized(void)
 {
-    if (card_initialized && active_config.use_card_detect &&
-        (((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high))) {
+    if (sdio_pio_host.mode_restore_failed ||
+        (configuration_set && !card_detect_present())) {
+        /* Absence or broken host mode blocks I/O without discarding protocol state. */
         card_initialized = false;
-        (void)pf_sdio_pio_host_write_stream_close(&sdio_pio_host);
     }
     return card_initialized;
+}
+
+void pf_sdio_pio_confirm_card_removed(void)
+{
+    card_initialized = false;
+    pf_sdio_pio_host_forget_removed_card(&sdio_pio_host);
 }
 
 uint32_t pf_sdio_pio_block_count(void)
@@ -524,8 +544,10 @@ static bool read_blocks_with_clock_fallback(uint32_t first_block, uint8_t *buffe
             if (transfer_clock_steps_hz[index] >= failed_clock_hz) {
                 continue;
             }
-            if (active_config.use_card_detect &&
-                ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
+            if (!card_detect_present()) {
+                return false;
+            }
+            if (!pf_sdio_pio_host_recover(&sdio_pio_host)) {
                 return false;
             }
             uint32_t clock_limit_hz = transfer_clock_steps_hz[index];
@@ -572,23 +594,32 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
 
     bool continues_write = (write_buffer != NULL) &&
         pf_sdio_pio_host_write_stream_continues(&sdio_pio_host, first_block);
-    if (!continues_write && !pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
+    if (!continues_write && !pf_sdio_pio_host_recover(&sdio_pio_host)) {
+        card_initialized = false;
         return PF_SD_CARD_IO_ERROR;
     }
     if ((write_buffer != NULL) && (continues_write || (block_count > 1u))) {
-        return pf_sdio_pio_host_write_blocks(&sdio_pio_host, first_block,
-                                              card_block_addressed, write_buffer,
-                                              block_count)
-            ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+        bool success = pf_sdio_pio_host_write_blocks(&sdio_pio_host, first_block,
+                                                       card_block_addressed, write_buffer,
+                                                       block_count);
+        if (!success && sdio_pio_host.write_stream_open) {
+            card_initialized = false;
+        }
+        return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
     }
     if (read_buffer != NULL) {
         return read_blocks_with_clock_fallback(first_block, read_buffer, block_count)
             ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
     }
 
-    return pf_sdio_pio_host_write_sector(&sdio_pio_host, first_block,
-                                          card_block_addressed, write_buffer)
-        ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+    bool success = pf_sdio_pio_host_write_sector(&sdio_pio_host, first_block,
+                                                   card_block_addressed, write_buffer);
+    /* A lost command/data response or busy timeout cannot prove CMD24 complete.
+     * Restoration only repairs the host; require reinitialization, never replay. */
+    if (!success || sdio_pio_host.mode_restore_failed) {
+        card_initialized = false;
+    }
+    return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
 }
 
 pf_sd_card_result_t pf_sdio_pio_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
@@ -604,11 +635,14 @@ pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *b
 
 pf_sd_card_result_t pf_sdio_pio_sync(void)
 {
-    if (!card_initialized) {
+    if (!pf_sdio_pio_is_initialized()) {
         return PF_SD_CARD_NOT_READY;
     }
-    return pf_sdio_pio_host_write_stream_close(&sdio_pio_host)
-        ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+    if (!pf_sdio_pio_host_recover(&sdio_pio_host)) {
+        card_initialized = false;
+        return PF_SD_CARD_IO_ERROR;
+    }
+    return PF_SD_CARD_OK;
 }
 
 void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
@@ -622,8 +656,7 @@ void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
     }
     if (active_config.use_card_detect) {
         info->presence_known = true;
-        info->present = ((gpio_get(active_config.card_detect_gpio) != 0u) ==
-                         active_config.card_detect_active_high);
+        info->present = card_detect_present();
     } else if (pf_sdio_pio_is_initialized()) {
         info->presence_known = true;
         info->present = true;

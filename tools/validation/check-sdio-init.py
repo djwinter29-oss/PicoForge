@@ -7,6 +7,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c"
+BOARD_PROFILE = ROOT / "firmware/src/board/board_profile.c"
 
 VARIANT_HARNESS = r"""
 #include <assert.h>
@@ -124,11 +125,11 @@ int main(void)
 {
     fake_pio_t pio = {0}, foreign = {0};
     pf_sd_card_config_t config = { .transport = 1, .bus.sdio_pio.pio = &pio };
-    pf_sd_card_wait_init(NULL);
-    pf_sd_card_wait_init(&config);
+    pf_sd_card_port_init(NULL);
+    pf_sd_card_port_init(&config);
     assert(wait_hook == NULL);
     config.transport = 0;
-    pf_sd_card_wait_init(&config);
+    pf_sd_card_port_init(&config);
     assert(wait_hook != NULL && !pio.source[1] && !pio.source[2]);
     wait_hook(&pio, 1u);
     assert(blocked == 0u);
@@ -157,7 +158,7 @@ int main(void)
 def check_optional_variants():
     cc = os.environ.get("CC", "cc")
     include = SOURCE.parents[1]
-    adapter = ROOT / "firmware/src/drivers/sd_card/freertos/sd_card_wait.c"
+    adapter = ROOT / "firmware/src/drivers/sd_card/ports/freertos/sd_card_wait.c"
     adapter_source = "\n".join(line for line in adapter.read_text().splitlines()
                                if not line.startswith("#include"))
     with tempfile.TemporaryDirectory() as scratch:
@@ -201,35 +202,53 @@ HARNESS = r"""
 static struct {
     uint32_t current_clock_hz;
     bool data_rx_multiblock_supported;
+    bool write_stream_open;
+    bool read_stream_unresolved;
+    bool mode_restore_failed;
 } sdio_pio_host;
-static struct {
+typedef struct {
     uint32_t clock_hz;
     bool use_card_detect;
     unsigned card_detect_gpio;
     bool card_detect_active_high;
-} active_config = { .clock_hz = 50000000u };
+} pf_sdio_pio_config_t;
+static pf_sdio_pio_config_t active_config = { .clock_hz = 50000000u };
 static uint32_t card_sector_count = 15564800u;
 static uint8_t card_cid[16];
-static bool card_block_addressed = true, card_initialized;
+static bool card_block_addressed = true, card_initialized, configuration_set = true;
 static unsigned card_init_stage, attempts, resets, reads, sectors, high_speed_requests;
 static uint32_t system_hz = 150000000u;
 static bool corrupt_fast, fail_reads, lose_batching, fail_identification;
 static bool runtime_read;
 static bool change_cid, change_capacity;
 static uint32_t fail_above_hz;
-static bool removed, continue_write, close_ok = true, write_ok = true;
+static bool read_fail_unresolved;
+static unsigned recover_failure_call;
+static bool removed, continue_write, close_ok = true, write_ok = true, fail_write_restore;
 static unsigned closes, single_writes, batch_writes;
-static bool pf_sdio_pio_is_initialized(void) { return card_initialized && !removed; }
+static unsigned detect_gpio_level = 1u, forgotten_removed_cards;
 static uint32_t pf_sdio_pio_block_count(void) { return card_sector_count; }
+static void pf_sdio_pio_host_forget_removed_card(void *host)
+{
+    (void)host;
+    ++forgotten_removed_cards;
+    sdio_pio_host.write_stream_open = false;
+}
 static bool pf_sdio_pio_host_write_stream_continues(void *host, uint32_t first)
 {
     (void)host; (void)first;
     return continue_write;
 }
-static bool pf_sdio_pio_host_write_stream_close(void *host)
+static bool pf_sdio_pio_host_recover(void *host)
 {
     (void)host;
     ++closes;
+    if (recover_failure_call == closes) return false;
+    if (close_ok) {
+        sdio_pio_host.write_stream_open = false;
+        sdio_pio_host.read_stream_unresolved = false;
+        sdio_pio_host.mode_restore_failed = false;
+    }
     return close_ok;
 }
 static bool pf_sdio_pio_host_write_sector(void *host, uint32_t first,
@@ -238,7 +257,8 @@ static bool pf_sdio_pio_host_write_sector(void *host, uint32_t first,
     (void)host; (void)first;
     assert(addressed && buffer != NULL);
     ++single_writes;
-    return write_ok;
+    sdio_pio_host.mode_restore_failed = fail_write_restore;
+    return write_ok && !fail_write_restore;
 }
 static bool pf_sdio_pio_host_write_blocks(void *host, uint32_t first,
                                           bool addressed, const uint8_t *buffer,
@@ -247,9 +267,11 @@ static bool pf_sdio_pio_host_write_blocks(void *host, uint32_t first,
     (void)host; (void)first;
     assert(addressed && buffer != NULL && count > 0u);
     ++batch_writes;
+    sdio_pio_host.write_stream_open = write_ok || !close_ok;
     return write_ok;
 }
-static unsigned gpio_get(unsigned pin) { (void)pin; return 1u; }
+static unsigned gpio_get(unsigned pin) { (void)pin; return detect_gpio_level; }
+@IS_INITIALIZED@
 static bool initialize_card(uint32_t *clock_limit_hz);
 static bool pf_sdio_pio_host_set_clock(void *host, uint32_t hz)
 {
@@ -267,12 +289,17 @@ static bool pf_sdio_pio_host_read_blocks(void *host, uint32_t first,
     if (!runtime_read) assert(first == sectors);
     ++reads;
     sectors += count;
+    if (read_fail_unresolved && fail_reads) sdio_pio_host.read_stream_unresolved = true;
     if (corrupt_fast && sdio_pio_host.current_clock_hz > 25000000u)
         sdio_pio_host.current_clock_hz = 1000000u;
     if (lose_batching) sdio_pio_host.data_rx_multiblock_supported = false;
     return !fail_reads && (!fail_above_hz || sdio_pio_host.current_clock_hz <= fail_above_hz);
 }
 static uint32_t default_clock_hz(void) { return 10000000u; }
+#define clk_sys 0
+static uint32_t clock_get_hz(unsigned clk) { (void)clk; return system_hz; }
+static bool pins_are_valid(const pf_sdio_pio_config_t *config) { (void)config; return true; }
+@CONFIG_VALID@
 @LADDER@
 @PROBE@
 @READ_RETRY@
@@ -280,6 +307,7 @@ static uint32_t default_clock_hz(void) { return 10000000u; }
 @VALIDATE_32@
 static bool initialize_card(uint32_t *clock_limit_hz)
 {
+    assert(!sdio_pio_host.read_stream_unresolved);
     ++attempts;
     sectors = 0u;
     if (fail_identification) { card_init_stage = 99u; return false; }
@@ -299,14 +327,23 @@ static void reset(void)
     attempts = resets = reads = sectors = 0u;
     closes = single_writes = batch_writes = 0u;
     removed = continue_write = false;
+    configuration_set = true;
+    detect_gpio_level = 1u;
+    forgotten_removed_cards = 0u;
     close_ok = write_ok = true;
+    fail_write_restore = sdio_pio_host.mode_restore_failed = false;
     high_speed_requests = 0u;
+    sdio_pio_host.write_stream_open = sdio_pio_host.read_stream_unresolved = false;
+    read_fail_unresolved = false;
+    recover_failure_call = 0u;
+    card_initialized = false;
     card_init_stage = 0u;
     corrupt_fast = fail_reads = lose_batching = fail_identification = false;
     runtime_read = false;
     change_cid = change_capacity = false;
     memset(card_cid, 0, sizeof(card_cid));
     active_config.use_card_detect = false;
+    active_config.card_detect_active_high = true;
     fail_above_hz = 0u;
     active_config.clock_hz = 50000000u;
     card_sector_count = 15564800u;
@@ -326,7 +363,16 @@ int main(void)
     reset();
     fail_reads = true;
     assert(initialize() == PF_SD_CARD_INIT_FAILED && !card_initialized);
-    assert(attempts == 7u && reads == 6u && resets == 7u);
+    assert(attempts == 8u && reads == 7u && resets == 9u);
+    reset();
+    fail_reads = read_fail_unresolved = true;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED && !card_initialized);
+    assert(attempts == 8u && closes == 8u && !sdio_pio_host.read_stream_unresolved);
+    reset();
+    fail_reads = read_fail_unresolved = true;
+    recover_failure_call = 3u;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED && !card_initialized);
+    assert(attempts == 2u && closes == 3u && sdio_pio_host.read_stream_unresolved);
     reset();
     lose_batching = true;
     assert(initialize() == PF_SD_CARD_OK && sdio_pio_host.current_clock_hz == 20000000u);
@@ -337,6 +383,16 @@ int main(void)
     reset();
     card_sector_count = 3u;
     assert(initialize() == PF_SD_CARD_OK && sectors == 3u && reads == 1u);
+    for (unsigned i = 0; i < 3u; ++i) {
+        const uint32_t low_rates[] = {400000u, 999999u, 1000000u};
+        reset();
+        active_config.clock_hz = low_rates[i];
+        assert(config_is_valid(&active_config));
+        assert(initialize() == PF_SD_CARD_OK);
+        assert(sdio_pio_host.current_clock_hz == (i == 2u ? 1000000u : 400000u));
+    }
+    active_config.clock_hz = 399999u;
+    assert(!config_is_valid(&active_config));
     reset();
     active_config.clock_hz = 0u;
     assert(initialize() == PF_SD_CARD_OK && sdio_pio_host.current_clock_hz == 10000000u);
@@ -352,10 +408,10 @@ int main(void)
     assert(reads == 8u && sdio_pio_host.current_clock_hz == 20000000u);
     fail_reads = true;
     assert(!read_blocks_with_clock_fallback(4098u, buffer, 1u));
-    assert(!card_initialized && reads == 12u);
+    assert(!card_initialized && reads == 13u);
     card_initialized = false;
     assert(!read_blocks_with_clock_fallback(4098u, buffer, 1u));
-    assert(reads == 12u);
+    assert(reads == 13u);
     reset();
     runtime_read = card_initialized = change_cid = true;
     sdio_pio_host.current_clock_hz = 33000000u;
@@ -373,8 +429,9 @@ int main(void)
     active_config.use_card_detect = true;
     sdio_pio_host.current_clock_hz = 33000000u;
     fail_reads = true;
+    detect_gpio_level = 0u;
     assert(!read_blocks_with_clock_fallback(4096u, buffer, 1u));
-    assert(!card_initialized && attempts == 0u && reads == 1u);
+    assert(!card_initialized && attempts == 0u && reads == 0u);
     reset();
     runtime_read = card_initialized = true;
     sdio_pio_host.current_clock_hz = 25000000u;
@@ -383,9 +440,15 @@ int main(void)
     assert(transfer_blocks(card_sector_count, buffer, NULL, 1u) == PF_SD_CARD_INVALID_ARGUMENT);
     assert(closes == 0u && reads == 0u);
     removed = true;
+    active_config.use_card_detect = true;
+    active_config.card_detect_active_high = true;
+    detect_gpio_level = 0u;
     assert(transfer_blocks(0u, NULL, buffer, 2u) == PF_SD_CARD_NOT_READY);
     assert(closes == 0u && batch_writes == 0u);
     removed = false;
+    detect_gpio_level = 1u;
+    card_initialized = true;
+    assert(!sdio_pio_host.write_stream_open);
     assert(transfer_blocks(0u, buffer, NULL, 1u) == PF_SD_CARD_OK);
     assert(reads == 1u && closes == 1u && single_writes == 0u);
     assert(transfer_blocks(0u, NULL, buffer, 1u) == PF_SD_CARD_OK);
@@ -396,27 +459,214 @@ int main(void)
     assert(transfer_blocks(2u, NULL, buffer, 1u) == PF_SD_CARD_OK);
     assert(batch_writes == 2u && closes == 3u && single_writes == 1u);
     write_ok = false;
+    close_ok = true;
     assert(transfer_blocks(3u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    assert(card_initialized && !sdio_pio_host.write_stream_open);
     continue_write = false;
-    assert(transfer_blocks(3u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    write_ok = true;
+    assert(transfer_blocks(3u, NULL, buffer, 1u) == PF_SD_CARD_OK);
+    assert(single_writes == 2u && card_initialized);
+
+    continue_write = true;
+    write_ok = false;
     close_ok = false;
+    assert(transfer_blocks(4u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    continue_write = false;
+    assert(!card_initialized);
+    unsigned previous_batch_writes = batch_writes;
+    assert(transfer_blocks(4u, NULL, buffer, 1u) == PF_SD_CARD_NOT_READY);
+    assert(batch_writes == previous_batch_writes);
+    card_initialized = true;
+    sdio_pio_host.write_stream_open = true;
     assert(transfer_blocks(0u, buffer, NULL, 1u) == PF_SD_CARD_IO_ERROR);
-    assert(reads == 1u && single_writes == 2u && batch_writes == 3u);
-        uint32_t max_blocks_32 = UINT32_MAX / PF_SD_CARD_BLOCK_SIZE;
-        assert(validate_transfer_32(0u, buffer, max_blocks_32, UINT32_MAX) == PF_SD_CARD_OK);
-        assert(validate_transfer_32(0u, buffer, max_blocks_32 + 1u, UINT32_MAX)
-            == PF_SD_CARD_INVALID_ARGUMENT);
-        assert(validate_transfer_32(UINT32_MAX, NULL, 0u, 0u) == PF_SD_CARD_OK);
+    assert(!card_initialized);
+    assert(reads == 1u && single_writes == 2u && batch_writes == 4u);
+    reset();
+    card_initialized = true;
+    /* Failed CMD24 completion with successful command-mode restoration must
+     * invalidate readiness: neither sync nor another payload may succeed. */
+    write_ok = false;
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    assert(!card_initialized && !sdio_pio_host.mode_restore_failed);
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_NOT_READY);
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_NOT_READY);
+    assert(single_writes == 1u);
+    reset();
+    card_initialized = true;
+    fail_write_restore = true;
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    assert(!card_initialized && sdio_pio_host.mode_restore_failed && single_writes == 1u);
+    assert(!pf_sdio_pio_is_initialized());
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_NOT_READY);
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_NOT_READY);
+    close_ok = false;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED);
+    assert(single_writes == 1u && sdio_pio_host.mode_restore_failed);
+    close_ok = true;
+    fail_write_restore = false;
+    assert(initialize() == PF_SD_CARD_OK);
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_OK && single_writes == 1u);
+    assert(transfer_blocks(2u, NULL, buffer, 1u) == PF_SD_CARD_OK && single_writes == 2u);
+    reset();
+    card_initialized = true;
+    active_config.use_card_detect = true;
+    active_config.card_detect_active_high = true;
+    sdio_pio_host.write_stream_open = true;
+    detect_gpio_level = 0u;
+    pf_sd_card_info_t info;
+    pf_sdio_pio_get_info(&info);
+    assert(info.presence_known && !info.present && !info.initialized);
+    assert(!pf_sdio_pio_is_initialized());
+    assert(!card_initialized && sdio_pio_host.write_stream_open &&
+        forgotten_removed_cards == 0u);
+    unsigned previous_closes = closes;
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_NOT_READY);
+    assert(closes == previous_closes);
+    detect_gpio_level = 1u; /* bounce back: reinit must still close CMD25 */
+    assert(!pf_sdio_pio_is_initialized());
+    close_ok = false;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED);
+    assert(!card_initialized && sdio_pio_host.write_stream_open);
+    assert(attempts == 0u && resets == 0u);
+    close_ok = true;
+    assert(initialize() == PF_SD_CARD_OK);
+    assert(card_initialized && !sdio_pio_host.write_stream_open);
+    assert(attempts == 1u && resets == 1u);
+    sdio_pio_host.write_stream_open = true;
+    detect_gpio_level = 0u;
+    assert(!pf_sdio_pio_is_initialized());
+    pf_sdio_pio_confirm_card_removed();
+    assert(!sdio_pio_host.write_stream_open && forgotten_removed_cards == 1u);
+    assert(closes == previous_closes + 2u); /* confirmed removal sent no stop */
+    detect_gpio_level = 1u;
+    assert(initialize() == PF_SD_CARD_OK);
+    assert(card_initialized && !sdio_pio_host.write_stream_open);
+    assert(forgotten_removed_cards == 1u);
+    reset();
+    active_config.use_card_detect = true;
+    detect_gpio_level = 0u;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED && closes == 0u);
+    detect_gpio_level = 1u;
+    assert(initialize() == PF_SD_CARD_OK && card_initialized);
+    assert(!sdio_pio_host.write_stream_open && closes == 1u);
+    uint32_t max_blocks_32 = UINT32_MAX / PF_SD_CARD_BLOCK_SIZE;
+    assert(validate_transfer_32(0u, buffer, max_blocks_32, UINT32_MAX) == PF_SD_CARD_OK);
+    assert(validate_transfer_32(0u, buffer, max_blocks_32 + 1u, UINT32_MAX)
+        == PF_SD_CARD_INVALID_ARGUMENT);
+    assert(validate_transfer_32(UINT32_MAX, NULL, 0u, 0u) == PF_SD_CARD_OK);
     puts("SDIO initialization and transfer routing checks passed");
 }
 """
 
 
+def check_scr_diagnostics():
+    code = r"""
+#include <assert.h>
+#include <string.h>
+#include "sdio_pio_host.h"
+#include "sd_card_protocol.h"
+static unsigned failure, cleanups;
+static uint8_t *wire;
+static const uint8_t expected[8] = {0x02, 0xb5, 0, 0, 0, 0, 0, 0};
+static void start_data_rx(pf_sdio_pio_host_t *host, uint32_t *image,
+                         uint32_t words, uint32_t bits, uint32_t count)
+{
+    (void)host;
+    assert(words == 10 && bits == 80 && count == 1);
+    wire = (uint8_t *)image;
+}
+static void cleanup_data_rx(pf_sdio_pio_host_t *host) { (void)host; ++cleanups; }
+bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
+                                  uint32_t argument, uint16_t bits,
+                                  uint8_t *response, size_t capacity)
+{
+    (void)host;
+    assert((command == 55 && argument == 0x12340000) || (command == 51 && argument == 0));
+    assert(bits == 48 && capacity == 6);
+    if ((command == 55 && failure == 1) || (command == 51 && failure == 3)) return false;
+    memset(response, 0, 6);
+    response[0] = command;
+    if ((command == 55 && failure == 5) || (command == 51 && failure == 6))
+        response[2] = 0x40;  /* ILLEGAL_COMMAND */
+    response[5] = (uint8_t)((pf_sd_card_crc7(response, 5) << 1) | 1);
+    if ((command == 55 && failure == 2) || (command == 51 && failure == 4))
+        response[5] ^= 2;
+    return true;
+}
+static bool wait_data_rx(pf_sdio_pio_host_t *host, uint32_t timeout)
+{
+    (void)host;
+    assert(timeout == 1000000);
+    if (failure == 7) return false;
+    uint16_t crc = pf_sd_card_crc16(expected, sizeof(expected));
+    assert(crc == 0x0475);
+    memset(wire, 0, 40);
+    for (unsigned i = 0; i < 80; ++i) {
+        unsigned bit = i < 64 ? (expected[i / 8] >> (7 - i % 8)) & 1
+                              : (crc >> (79 - i)) & 1;
+        wire[i / 2] |= (uint8_t)((0xe | bit) << (i % 2 == 0 ? 4 : 0));
+    }
+    if (failure == 8) wire[39] ^= 1;
+    return true;
+}
+@READ_SCR@
+int main(void)
+{
+    pf_sdio_pio_host_t host = { .data_rx_program_loaded = true };
+    uint8_t scr[8];
+    const pf_sdio_pio_init_stage_t stages[] = {
+        PF_SDIO_PIO_INIT_STAGE_NONE, PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX,
+        PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX, PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE,
+        PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE, PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX,
+        PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE, PF_SDIO_PIO_INIT_STAGE_SCR_DATA,
+        PF_SDIO_PIO_INIT_STAGE_SCR_CRC
+    };
+    for (failure = 0; failure < sizeof(stages) / sizeof(stages[0]); ++failure) {
+        assert(pf_sdio_pio_host_read_scr(&host, 0x12340000, scr) == (failure == 0));
+        assert(host.scr_stage == stages[failure] && cleanups == failure + 1);
+        if (failure == 0) assert(memcmp(scr, expected, sizeof(scr)) == 0);
+    }
+    assert(!pf_sdio_pio_host_read_scr(NULL, 0, scr));
+    assert(!pf_sdio_pio_host_read_scr(&host, 0, NULL));
+    assert(host.scr_stage == PF_SDIO_PIO_INIT_STAGE_SCR);
+}
+"""
+    host_source = (SOURCE.parent / "sdio_pio_host.c").read_text()
+    code = code.replace("@READ_SCR@", function_source(
+        host_source, "bool pf_sdio_pio_host_read_scr("))
+    with tempfile.TemporaryDirectory() as scratch:
+        directory = Path(scratch)
+        (directory / "hardware").mkdir()
+        (directory / "hardware/pio.h").write_text("typedef unsigned uint;\ntypedef void *PIO;\n")
+        src, exe = directory / "scr.c", directory / "scr"
+        src.write_text(code)
+        subprocess.run([
+            os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
+            "-I", scratch, "-I", str(SOURCE.parents[1]), "-I", str(SOURCE.parent),
+            str(src), str(SOURCE.parents[1] / "sd_card_protocol.c"),
+            str(SOURCE.parent / "sdio_pio_protocol.c"), "-o", str(exe)
+        ], check=True)
+        subprocess.run([str(exe)], check=True)
+    print("SCR: captured card payload/CRC and prefix/response/data/CRC failure stages passed")
+
+
 def main():
+    profile = BOARD_PROFILE.read_text()
+    assert ".clock_hz = 25000000u," in profile, (
+        "The qualified stock Pico 2 SDIO profile must request 25 MHz")
+    divider = (150000000 + 2 * 25000000 - 1) // (2 * 25000000)
+    assert divider == 3 and 150000000 // (2 * divider) == 25000000
     check_optional_variants()
+    check_scr_diagnostics()
     source = SOURCE.read_text()
     probe = function_source(source, "static bool probe_transfer(void)")
     read_retry = function_source(source, "static bool read_blocks_with_clock_fallback(")
+    initialized = "\n".join(function_source(source, signature) for signature in (
+        "static bool card_detect_present(void)",
+        "bool pf_sdio_pio_is_initialized(void)",
+        "void pf_sdio_pio_confirm_card_removed(void)",
+        "pf_sd_card_result_t pf_sdio_pio_sync(void)",
+        "void pf_sdio_pio_get_info("))
     transfer = function_source(source, "static pf_sd_card_result_t transfer_blocks(")
     protocol = (SOURCE.parents[1] / "sd_card_protocol.c").read_text()
     validate_32 = function_source(protocol, "pf_sd_card_result_t pf_sd_card_validate_transfer(")
@@ -428,9 +678,11 @@ def main():
     ladder_start = source.index("static const uint32_t transfer_clock_steps_hz[]")
     ladder = source[ladder_start:source.index("};", ladder_start) + 2]
     selection = init[init.index("card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;"):-1]
-    retry = retry[retry.index("card_initialized = false;\n    uint32_t clock_limit_hz"):-1]
-    code = (HARNESS.replace("@LADDER@", ladder).replace("@PROBE@", probe)
+    retry = retry[retry.index("    if (!card_detect_present())"):-1]
+    code = (HARNESS.replace("@CONFIG_VALID@", function_source(source, "static bool config_is_valid("))
+            .replace("@LADDER@", ladder).replace("@PROBE@", probe)
             .replace("@READ_RETRY@", read_retry)
+            .replace("@IS_INITIALIZED@", initialized)
             .replace("@TRANSFER@", transfer)
             .replace("@VALIDATE_32@", validate_32)
             .replace("@REQUEST@", request)
@@ -439,10 +691,12 @@ def main():
         src = Path(scratch) / "check.c"
         exe = Path(scratch) / "check"
         src.write_text(code)
-        subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
-                        "-I", str(SOURCE.parents[1]),
-                        str(src), str(SOURCE.parents[1] / "sd_card_protocol.c"),
-                        "-o", str(exe)], check=True)
+        subprocess.run([
+            os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
+            "-I", str(SOURCE.parents[1]),
+            str(src), str(SOURCE.parents[1] / "sd_card_protocol.c"),
+            "-o", str(exe)
+        ], check=True)
         subprocess.run([str(exe)], check=True)
 
 

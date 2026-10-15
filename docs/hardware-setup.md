@@ -10,7 +10,7 @@ Reference hardware setup for standard Pico/Pico 2 boards and external breakouts.
 | Alternate build target | Raspberry Pi Pico 2 (`PICO_BOARD=pico2`); the firmware build defaults to `pico` |
 | MCU | RP2040 on Pico; RP2350 on Pico 2 |
 | Reference power | USB through the board's USB connector |
-| Optional overclock | `tools/firmware/build.sh --board pico2 --sys-clk-mhz 200` (or `PF_SYS_CLK_MHZ=200` with `load.sh`); out of spec, range 100-250 MHz, default `0` keeps the SDK clock. The SDK applies it at boot and raises the regulator to 1.15 V above 150 MHz and 1.30 V above 200 MHz. The SDIO board profile requests 20 MHz; at the stock 150 MHz system clock the measured bus is 18.75 MHz. |
+| Optional overclock | `tools/firmware/build.sh --board pico2 --sys-clk-mhz 200` (or `PF_SYS_CLK_MHZ=200` with `load.sh`); out of spec, range 100-250 MHz, default `0` keeps the SDK clock. The SDK applies it at boot and raises the regulator to 1.15 V above 150 MHz and 1.30 V above 200 MHz. The SDIO board profile requests 25 MHz; at the stock 150 MHz system clock its integer slow-mode divider produces exactly 25 MHz. |
 
 ## Debug and Monitoring
 
@@ -86,6 +86,33 @@ directory. No existing file contents were changed and no formatting was done.
 SDIO remains selected, the filesystem is unmounted, MSC is disabled, and Pico
 owns the card. These checks do not qualify endurance, power-loss recovery,
 high-speed timing margins, or complete SDIO MSC handoff workflows.
+
+##### Class 4 Read-Only Bring-Up (2026-10-15)
+
+The inserted Class 4 card initially reported `present=yes`, `initialized=0`,
+`mounted=0`, with native initialization failing at SCR stage 17. Finer diagnostics
+isolated a repeatable SCR CRC mismatch: payload `015a800000000000`, received CRC
+`023a`, computed CRC `8a2a`. These bits are the start bit followed by the valid
+SCR `02b5000000000000` and its CRC `0475`, truncated by one bit. The receiver was
+detecting DAT0 asynchronously and counting the start bit as payload. Correcting
+start detection then exposed a malformed CMD12 response during the third
+64-sector qualification batch; command-response sampling also needed moving
+away from the rising edge.
+
+With falling-edge-qualified receive start detection and falling-edge command
+response sampling, the connected Pico 2 at stock 150 MHz initialized the card at
+25 MHz, mounted the existing filesystem, and listed `/` successfully. Capacity
+was 30,875,648 sectors / 15,808,331,776 bytes. Clean firmware, without temporary
+UART instrumentation, passed ten consecutive `fs unmount` / `fs mount` / `sd status`
+/ `fs ls /` cycles. Each mount reinitialized the card and exercised its
+256-sector CRC-checked read qualification. Final diagnostics were
+`sequence=0 operation=none result=ok`, with the card left initialized and mounted,
+MSC disabled, and Pico ownership.
+
+No formatting, repair, file creation, or write self-test was performed. This
+qualifies the observed read-only bring-up on this card and wiring, not sustained
+writes, another card, high-speed timing margins, or power-loss recovery. The
+Class 4 marking is a speed rating, not the cause of the initialization failure.
 
 #### W25Q128 Flash Breakout
 

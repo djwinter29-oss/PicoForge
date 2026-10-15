@@ -57,6 +57,11 @@ typedef enum {
     PF_SDIO_PIO_INIT_STAGE_OPERATING_RESPONSE,
     PF_SDIO_PIO_INIT_STAGE_OPERATING_PARSE,
     PF_SDIO_PIO_INIT_STAGE_OPERATING_READY,
+    PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX,
+    PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE,
+    PF_SDIO_PIO_INIT_STAGE_SCR_DATA,
+    PF_SDIO_PIO_INIT_STAGE_SCR_CRC,
+    PF_SDIO_PIO_INIT_STAGE_SCR_BUS_WIDTH,
 } pf_sdio_pio_init_stage_t;
 
 /**
@@ -78,6 +83,8 @@ void pf_sdio_pio_get_last_response_words(uint32_t words[5], size_t *word_count);
 
 /** Return whether the card has initialized successfully. */
 bool pf_sdio_pio_is_initialized(void);
+/** Storage owner calls only after debounced removal; sends no card command. */
+void pf_sdio_pio_confirm_card_removed(void);
 
 /** Return the initialized card's number of 512-byte sectors, or zero. */
 uint32_t pf_sdio_pio_block_count(void);

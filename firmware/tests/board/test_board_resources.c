@@ -1,5 +1,6 @@
 #include "unity.h"
 #include "board_resources.h"
+#include "config/config.h"
 #include "sd_card_protocol.h"
 #include "sd_spi_protocol.h"
 
@@ -49,14 +50,7 @@ void test_accepts_unconfigured_sd_topology(void)
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
 }
 
-void test_accepts_valid_four_bit_sd_topology(void)
-{
-    pf_board_resources_t topology = valid_topology();
-
-    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
-}
-
-void test_accepts_valid_spi_sd_topology(void)
+void test_accepts_valid_selected_transport_topology(void)
 {
     pf_board_resources_t topology = valid_topology();
 
@@ -67,6 +61,7 @@ void test_rejects_invalid_spi_sd_pin_assignments(void)
 {
     pf_board_resources_t topology = valid_topology();
 
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
     topology.spi_index = 2u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
@@ -75,17 +70,28 @@ void test_rejects_invalid_spi_sd_pin_assignments(void)
     topology = valid_topology();
     topology.spi_clock_gpio = topology.monitor_uart_tx_gpio;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#else
+    topology.spi_index = 2u;
+    topology.spi_mosi_gpio = topology.spi_clock_gpio;
+    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+#endif
 }
 
 void test_rejects_spi_pins_that_do_not_match_the_controller(void)
 {
     pf_board_resources_t topology = valid_topology();
 
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
     topology.spi_index = 1u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
     topology.spi_mosi_gpio = 9u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#else
+    topology.spi_index = 2u;
+    topology.spi_mosi_gpio = topology.spi_clock_gpio;
+    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+#endif
 }
 
 void test_rejects_invalid_monitor_uart_assignment(void)
@@ -131,6 +137,7 @@ void test_rejects_invalid_topology_pointer_pio_and_clock(void)
     TEST_ASSERT_FALSE(pf_board_resources_validate(NULL));
     topology.gpio_count = 0u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     topology = valid_topology();
     topology.pio_index = 2u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
@@ -140,12 +147,20 @@ void test_rejects_invalid_topology_pointer_pio_and_clock(void)
     topology = valid_topology();
     topology.clock_gpio = 1u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#else
+    topology = valid_topology();
+    topology.pio_index = 2u;
+    topology.clock_hz = 399999u;
+    topology.clock_gpio = 1u;
+    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+#endif
 }
 
 void test_rejects_pins_outside_sd_bus_constraints(void)
 {
     pf_board_resources_t topology = valid_topology();
 
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     topology.data_gpio[0] = 1u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
@@ -164,17 +179,28 @@ void test_rejects_pins_outside_sd_bus_constraints(void)
     topology = valid_topology();
     topology.data_gpio[1] = 8u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#else
+    topology.data_gpio[0] = 1u;
+    topology.command_gpio = 31u;
+    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+#endif
 }
 
 void test_rejects_command_clock_and_data_pin_collisions(void)
 {
     pf_board_resources_t topology = valid_topology();
 
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     topology.command_gpio = 2u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
     topology.command_gpio = 5u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#else
+    topology.command_gpio = 2u;
+    topology.clock_gpio = 4u;
+    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+#endif
 }
 
 void test_validates_optional_card_detect_pin(void)
@@ -188,7 +214,11 @@ void test_validates_optional_card_detect_pin(void)
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
     topology.card_detect_gpio = topology.command_gpio;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     topology.card_detect_gpio = 6u;
+#else
+    topology.card_detect_gpio = 4u;
+#endif
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 }
 
