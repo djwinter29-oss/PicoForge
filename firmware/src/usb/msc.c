@@ -16,6 +16,53 @@ static bool request_pending;
 static bool requested_enabled;
 static bool transition_pending;
 static bool request_rejected;
+/* TinyUSB 0.18.0 overwrites READ10/WRITE10 error sense after our callback.
+ * Keep only that transfer's sense until REQUEST SENSE; later application sense
+ * supersedes it. USB callbacks run on the USB task (single LUN). */
+static bool transfer_sense_pending;
+static uint8_t transfer_sense_key, transfer_sense_asc;
+
+static void set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
+{
+    transfer_sense_pending = false;
+    tud_msc_set_sense(lun, key, asc, ascq);
+}
+
+static int32_t transfer_result(uint8_t lun, pf_sd_card_result_t result,
+                               uint32_t size, bool writing)
+{
+    if (result == PF_SD_CARD_OK) {
+        return (int32_t)size;
+    }
+    bool unavailable = (result == PF_SD_CARD_NOT_READY) ||
+                       (result == PF_SD_CARD_NOT_CONFIGURED);
+    uint8_t key = unavailable ? SCSI_SENSE_NOT_READY : SCSI_SENSE_MEDIUM_ERROR;
+    /* ASC 11: unrecovered read error; ASC 0C: write error. */
+    uint8_t asc = unavailable ? 0x3au : (writing ? 0x0cu : 0x11u);
+    set_sense(lun, key, asc, 0u);
+    transfer_sense_key = key;
+    transfer_sense_asc = asc;
+    transfer_sense_pending = true;
+    return -1;
+}
+
+int32_t tud_msc_request_sense_cb(uint8_t lun, void *buffer, uint16_t bufsize)
+{
+    /* TinyUSB supplies its 18-byte fixed response before calling us, then
+     * clears its sense. Preserve that response except for the pending error. */
+    if ((buffer == NULL) || (bufsize < 18u)) {
+        return -1;
+    }
+    if ((lun == 0u) && transfer_sense_pending) {
+        uint8_t *response = buffer;
+        response[2] = transfer_sense_key;
+        response[12] = transfer_sense_asc;
+        response[13] = 0u;
+        transfer_sense_pending = false;
+    }
+    return 18;
+}
+
 static uint8_t sector_buffer[PF_SD_CARD_BLOCK_SIZE] __attribute__((aligned(4)));
 
 bool pf_usb_msc_is_enabled(void)
@@ -119,6 +166,7 @@ void pf_usb_msc_task(void)
     apply_msc_request();
     pf_sd_card_unlock();
     if (was_enabled != msc_enabled) {
+        transfer_sense_pending = false;
         (void)tud_disconnect();
         sleep_ms(250u);
         (void)tud_connect();
@@ -130,7 +178,7 @@ static bool media_ready(uint8_t lun)
     if ((lun == 0u) && msc_enabled && !msc_ejected && pf_sd_card_is_initialized()) {
         return true;
     }
-    tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
+    set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
     return false;
 }
 
@@ -164,13 +212,13 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
     if (load_eject) {
         if (start) {
             if (!pf_sd_card_is_initialized()) {
-                tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
+                set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
                 return false;
             }
             msc_ejected = false;
         } else {
             if (removal_prevented) {
-                tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x53u, 0x02u);
+                set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x53u, 0x02u);
                 return false;
             }
             if (msc_ejected) {
@@ -182,9 +230,9 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
             pf_sd_card_result_t result = pf_sd_card_msc_sync();
             if (result != PF_SD_CARD_OK) {
                 if ((result == PF_SD_CARD_NOT_READY) || (result == PF_SD_CARD_NOT_CONFIGURED)) {
-                    tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
+                    set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
                 } else {
-                    tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
+                    set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
                 }
                 return false;
             }
@@ -202,7 +250,7 @@ bool tud_msc_prevent_allow_medium_removal_cb(uint8_t lun, uint8_t prohibit_remov
     }
     /* Persistent prevention (2/3) is unsupported; reserved bits are invalid. */
     if ((prohibit_removal > 1u) || (control != 0u)) {
-        tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u, 0x00u);
+        set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u, 0x00u);
         return false;
     }
     removal_prevented = prohibit_removal != 0u;
@@ -229,12 +277,12 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
         return -1;
     }
     if ((offset == 0u) && (bufsize == PF_SD_CARD_BLOCK_SIZE)) {
-        return (pf_sd_card_msc_read_blocks(lba, buffer, 1u) == PF_SD_CARD_OK)
-            ? (int32_t)bufsize
-            : -1;
+        return transfer_result(lun, pf_sd_card_msc_read_blocks(lba, buffer, 1u),
+                               bufsize, false);
     }
-    if ((pf_sd_card_msc_read_blocks(lba, sector_buffer, 1u) != PF_SD_CARD_OK)) {
-        return -1;
+    pf_sd_card_result_t result = pf_sd_card_msc_read_blocks(lba, sector_buffer, 1u);
+    if (result != PF_SD_CARD_OK) {
+        return transfer_result(lun, result, bufsize, false);
     }
     memcpy(buffer, sector_buffer + offset, bufsize);
     return (int32_t)bufsize;
@@ -247,17 +295,16 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
         return -1;
     }
     if ((offset == 0u) && (bufsize == PF_SD_CARD_BLOCK_SIZE)) {
-        return (pf_sd_card_msc_write_blocks(lba, buffer, 1u) == PF_SD_CARD_OK)
-            ? (int32_t)bufsize
-            : -1;
+        return transfer_result(lun, pf_sd_card_msc_write_blocks(lba, buffer, 1u),
+                               bufsize, true);
     }
-    if ((pf_sd_card_msc_read_blocks(lba, sector_buffer, 1u) != PF_SD_CARD_OK)) {
-        return -1;
+    pf_sd_card_result_t result = pf_sd_card_msc_read_blocks(lba, sector_buffer, 1u);
+    if (result != PF_SD_CARD_OK) {
+        return transfer_result(lun, result, bufsize, false);
     }
     memcpy(sector_buffer + offset, buffer, bufsize);
-    return (pf_sd_card_msc_write_blocks(lba, sector_buffer, 1u) == PF_SD_CARD_OK)
-        ? (int32_t)bufsize
-        : -1;
+    return transfer_result(lun, pf_sd_card_msc_write_blocks(lba, sector_buffer, 1u),
+                           bufsize, true);
 }
 
 void tud_msc_write10_complete_cb(uint8_t lun)
@@ -278,7 +325,7 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
     if (scsi_cmd[0] == 0x35u) {
         if ((scsi_cmd[1] != 0u) || (scsi_cmd[6] != 0u) ||
             (scsi_cmd[9] != 0u) || (bufsize != 0u)) {
-            tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u, 0x00u);
+            set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u, 0x00u);
             return -1;
         }
         if (!media_ready(lun)) {
@@ -291,20 +338,20 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
         uint32_t capacity = pf_sd_card_block_count();
         /* A zero count covers the remainder of the medium, not an invalid LBA. */
         if ((lba >= capacity) || (count > capacity - lba)) {
-            tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u, 0x00u);
+            set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u, 0x00u);
             return -1;
         }
         pf_sd_card_result_t result = pf_sd_card_msc_sync();
         if (result != PF_SD_CARD_OK) {
             if ((result == PF_SD_CARD_NOT_READY) || (result == PF_SD_CARD_NOT_CONFIGURED)) {
-                tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
+                set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
             } else {
-                tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
+                set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
             }
             return -1;
         }
         return 0;
     }
-    tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x20u, 0x00u);
+    set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x20u, 0x00u);
     return -1;
 }

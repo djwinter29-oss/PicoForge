@@ -42,7 +42,7 @@ and reconnect the safely idle board before changing host implementation.
 
 ## Measurement
 
-The worker uses a statically allocated, aligned 8 KiB buffer. Every four-byte word
+The worker uses a statically allocated, aligned 32 KiB buffer. Every four-byte word
 contains its file offset XORed with a fixed pattern, so block-offset mistakes and
 corruption can be detected. The entire requested file is verified, not sampled;
 a mismatch fails the run. Read/write short transfers, sync errors, and close
@@ -84,8 +84,9 @@ The storage worker performs all FatFs operations; the USB task owns HID/CDC.
 Progress is copied under a short FreeRTOS critical section and emitted through
 HID Input Report 6 every 500 ms. Cancellation is checked between chunks and
 before creation; a current I/O operation completes before cleanup. The 8 KiB
-worker stack allocation remains unchanged. The test uses an 8 KiB static buffer;
-SDIO batched reads use an additional 8.1 KiB static wire buffer. No benchmark
+worker stack allocation remains unchanged. The test uses a 32 KiB static buffer;
+SDIO batched reads use an additional 33,280-byte (32.5 KiB) static wire buffer.
+The SDIO CRC lookup tables occupy another 8 KiB. No benchmark
 data is sent through HID or CDC.
 
 ## API

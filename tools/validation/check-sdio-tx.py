@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise production CMD24/CMD25 TX control flow with independent DMA checks."""
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -15,9 +16,11 @@ HARNESS = r'''
 #include <string.h>
 #include "sdio_pio_protocol.h"
 #include "sd_card_protocol.h"
-#define PF_SDIO_PIO_TRANSFER_WORDS 130u
-#define SDIO_DATA_WORD_COUNT 130u
-#define SDIO_DATA_NIBBLE_COUNT 1042u
+@TRANSFER_CONTRACT@
+_Static_assert(SDIO_DATA_NIBBLE_COUNT == 512u * 2u + 16u,
+               "512-byte four-lane payload plus 16 CRC nibbles");
+_Static_assert(SDIO_DATA_WORD_COUNT * 8u == SDIO_DATA_NIBBLE_COUNT,
+               "DMA words cover exactly the payload and CRC");
 #define DMA_SIZE_32 2u
 typedef struct { uint32_t txf[4]; } pio_t;
 typedef struct {
@@ -41,7 +44,7 @@ static void dma_channel_configure(unsigned channel, const dma_channel_config *c,
                                   void *dest, const void *src, unsigned n, bool start)
 {
     assert(channel == 3 && dest && src && ((uintptr_t)src & 3) == 0);
-    assert(n == 130 && !start && c->size == DMA_SIZE_32 && c->swap);
+    assert(n == SDIO_DATA_WORD_COUNT && !start && c->size == DMA_SIZE_32 && c->swap);
     assert(c->read_inc && !c->write_inc && c->dreq == 7);
     assert(pf_sdio_pio_verify_data_block(src)); ++configurations;
 }
@@ -49,7 +52,7 @@ static void dma_channel_start(unsigned c) { assert(c == 3); ++starts; }
 static bool dma_channel_is_busy(unsigned c) { assert(c == 3); return timeout; }
 static void dma_channel_abort(unsigned c) { assert(c == 3); ++aborts; }
 static void dma_channel_wait_for_finish_blocking(unsigned c) { assert(c == 3 && !timeout); }
-static void pio_sm_put_blocking(pio_t *p, unsigned sm, uint32_t n) { assert(p && sm == 1 && n == 1041); }
+static void pio_sm_put_blocking(pio_t *p, unsigned sm, uint32_t n) { assert(p && sm == 1 && n == SDIO_DATA_NIBBLE_COUNT - 1u); }
 static void pio_interrupt_clear(pio_t *p, unsigned n) { assert(p && n == 2); }
 static bool pio_interrupt_get(pio_t *p, unsigned n) { assert(p && n == 2); return !timeout; }
 static void pio_sm_set_enabled(pio_t *p, unsigned sm, bool on) { assert(p && ((sm == 0 && on) || (sm == 1 && !on))); }
@@ -105,13 +108,15 @@ int main(void)
 
 def main():
     source = (ROOT / 'firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.c').read_text()
+    contract = '\n'.join(re.search(r'^#define ' + name + r' .+$', source, re.M).group(0)
+                         for name in ('SDIO_DATA_NIBBLE_COUNT', 'SDIO_DATA_WORD_COUNT'))
     names = ['bool pf_sdio_pio_host_write_stream_continues(', 'bool pf_sdio_pio_host_recover(',
              'bool pf_sdio_pio_host_write_sector(', 'bool pf_sdio_pio_host_write_blocks(']
     if 'static dma_channel_config tx_dma_config(' in source:
         names.insert(0, 'static dma_channel_config tx_dma_config(')
     functions = '\n'.join(extract(source, name) for name in names)
     with tempfile.TemporaryDirectory() as tmp:
-        d = Path(tmp); (d / 'test.c').write_text(HARNESS.replace('@FUNCTIONS@', functions))
+        d = Path(tmp); (d / 'test.c').write_text(HARNESS.replace('@FUNCTIONS@', functions).replace('@TRANSFER_CONTRACT@', contract))
         driver = ROOT / 'firmware/src/drivers/sd_card'
         subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-Wall', '-Wextra', '-Werror',
                         '-I' + str(driver / 'sdio_pio'), '-I' + str(driver), str(d / 'test.c'),

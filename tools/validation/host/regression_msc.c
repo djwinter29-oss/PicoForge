@@ -10,6 +10,7 @@ static bool pf_storage_worker_media_absent(void);
 #include "../../../firmware/src/usb/msc.c"
 static bool initialized=true, worker_busy, mounted;
 static unsigned locks, syncs, sense, asc;
+static pf_sd_card_result_t read_result=PF_SD_CARD_OK, write_result=PF_SD_CARD_OK;
 static pf_sd_card_result_t sync_result=PF_SD_CARD_OK, owner_result=PF_SD_CARD_OK;
 static pf_sd_card_owner_t owner=PF_SD_CARD_OWNER_USB_MSC;
 static bool pf_storage_is_mounted(void) { return mounted; }
@@ -23,12 +24,69 @@ uint32_t pf_sd_card_block_count(void) { return 128; }
 void pf_sd_card_get_info(pf_sd_card_info_t *i) { *i=(pf_sd_card_info_t){.present=true,.presence_known=true}; }
 pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t o) { if(owner_result==PF_SD_CARD_OK) owner=o; return owner_result; }
 pf_sd_card_result_t pf_sd_card_msc_sync(void) { ++syncs; return sync_result; }
-pf_sd_card_result_t pf_sd_card_msc_read_blocks(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return PF_SD_CARD_OK; }
-pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t l, const void *b, uint32_t n) { (void)l;(void)b;(void)n; return PF_SD_CARD_OK; }
+pf_sd_card_result_t pf_sd_card_msc_read_blocks(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return read_result; }
+pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t l, const void *b, uint32_t n) { (void)l;(void)b;(void)n; return write_result; }
 bool tud_msc_set_sense(uint8_t l, uint8_t s, uint8_t a, uint8_t q) { (void)l;(void)q; sense=s; asc=a; return true; }
+/* Callback-boundary model of the pinned source ordering, not a BOT test. */
+static void request_sense(unsigned expected_key, unsigned expected_asc)
+{
+ uint8_t response[18]={0xf0,0,0,0,0,0,0,10};
+ response[2]=sense; response[12]=asc;
+ assert(tud_msc_request_sense_cb(0,response,sizeof(response))==18);
+ assert(response[0]==0xf0 && response[7]==10 && response[2]==expected_key);
+ assert(response[12]==expected_asc && response[13]==0);
+ tud_msc_set_sense(0,0,0,0); /* TinyUSB clears after application response. */
+}
+static void transfer_failures(void)
+{
+ uint8_t block[512]={0};
+ for (unsigned partial=0; partial<2; ++partial) {
+  unsigned size=partial ? 16 : 512, offset=partial ? 4 : 0;
+  read_result=PF_SD_CARD_IO_ERROR;
+  assert(tud_msc_read10_cb(0,0,offset,block,size)==-1);
+  assert(sense==3 && asc==0x11);
+  tud_msc_set_sense(0,2,0x3a,0); /* Unconditional TinyUSB failure overwrite. */
+  uint8_t short_response[17]={0};
+  assert(tud_msc_request_sense_cb(0,short_response,17)==-1);
+  assert(tud_msc_request_sense_cb(0,NULL,18)==-1);
+  request_sense(3,0x11); request_sense(0,0);
+  /* Partial WRITE10 first reads the sector; report its read failure. */
+  if (partial) {
+   assert(tud_msc_write10_cb(0,0,offset,block,size)==-1);
+   tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x11);
+  }
+  read_result=PF_SD_CARD_OK; write_result=PF_SD_CARD_IO_ERROR;
+  assert(tud_msc_write10_cb(0,0,offset,block,size)==-1);
+  assert(sense==3 && asc==0x0c);
+  tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x0c); request_sense(0,0);
+  for (unsigned not_configured=0; not_configured<2; ++not_configured) {
+   read_result=write_result=not_configured ? PF_SD_CARD_NOT_CONFIGURED : PF_SD_CARD_NOT_READY;
+   assert(tud_msc_read10_cb(0,0,offset,block,size)==-1);
+   tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
+   read_result=PF_SD_CARD_OK;
+   assert(tud_msc_write10_cb(0,0,offset,block,size)==-1);
+   tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
+  }
+  read_result=write_result=PF_SD_CARD_OK;
+ }
+ /* A later application error supersedes pending transfer sense. */
+ read_result=PF_SD_CARD_IO_ERROR;
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ initialized=false;
+ assert(!tud_msc_test_unit_ready_cb(0)); request_sense(2,0x3a);
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
+ assert(tud_msc_write10_cb(0,0,0,block,512)==-1);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
+ initialized=true; read_result=PF_SD_CARD_OK;
+ assert(tud_msc_read10_cb(0,0,0,block,512)==512);
+ assert(tud_msc_write10_cb(0,0,0,block,512)==512);
+ request_sense(0,0);
+}
 int main(void)
 {
  uint8_t cmd[16]={0x35}; msc_enabled=true;
+ transfer_failures();
  assert(tud_msc_scsi_cb(0,cmd,NULL,0)==0 && syncs==1);
  unsigned range_before=syncs;
  cmd[5]=128; assert(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && asc==0x21 && syncs==range_before);
@@ -72,8 +130,8 @@ int main(void)
  worker_busy=true; pf_usb_msc_request(false); pf_usb_msc_task(); assert(msc_enabled);
  worker_busy=false; owner_result=PF_SD_CARD_IO_ERROR;
  pf_usb_msc_request(false); pf_usb_msc_task(); assert(msc_enabled && owner==PF_SD_CARD_OWNER_USB_MSC);
- owner_result=PF_SD_CARD_OK;
- pf_usb_msc_request(false); pf_usb_msc_task(); assert(!msc_enabled && owner==PF_SD_CARD_OWNER_FIRMWARE);
+ owner_result=PF_SD_CARD_OK; transfer_sense_pending=true;
+ pf_usb_msc_request(false); pf_usb_msc_task(); assert(!msc_enabled && owner==PF_SD_CARD_OWNER_FIRMWARE && !transfer_sense_pending);
  before=syncs; tud_msc_write10_complete_cb(0); assert(syncs==before);
  assert(locks==0 && !mounted);
  puts("Complete production MSC regression passed");

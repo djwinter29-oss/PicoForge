@@ -117,9 +117,14 @@ a mounted filesystem.
 - Nonempty requests require a non-NULL buffer, an in-capacity sector range, and
   a byte length representable by `size_t`. Zero-block calls are no-ops only
   after ownership/configuration/readiness checks.
-- Calls are synchronous but not thread-safe. Serialize initialization, transfers,
-  synchronization, telemetry access, and ownership changes; the owner flag is
-  not a mutex.
+- Facade calls are synchronous and individually serialized by a recursive
+  FreeRTOS mutex. Direct SPI/SDIO backend and protocol calls bypass that mutex
+  and require external serialization, including lazy CRC-table initialization.
+  The owner flag controls access eligibility; it does not reserve a sequence of calls.
+- Reserve multi-call check/action sequences with `pf_sd_card_lock()` and
+  `pf_sd_card_unlock()` where needed. Per-call locking does not serialize a
+  FatFs transaction: `FF_FS_REENTRANT` is disabled, and all FatFs operations
+  must remain in the storage-owner workflow with its busy/ownership reservation.
 - Use `pf_sd_card_sync()` after writes. A successful SDIO multi-block write can
   leave a CMD25 stream open; sync ends the stream and checks stop completion.
 - On read failure, buffer contents may be partially updated or invalid. A failed
@@ -414,7 +419,8 @@ overlapped next-block encoding and the PIO's response/busy completion; it does
 not isolate the card's internal programming time. SPI read DATA includes token
 waiting, payload transfer and both wire CRC bytes; CRC covers CPU validation
 separately. A token deadline emits one timeout event; I/O failures do not. Snapshots use
-`pf_sd_card_get_profile()`; callers must serialize access just like block I/O.
+`pf_sd_card_get_profile()`; the facade locks each snapshot, while direct backend
+profiling access requires external serialization.
 
 The historical target records identify earlier artifacts, not this remediation.
 Software models cannot measure PIO/DMA scheduling, command gaps, or card busy time.
@@ -477,7 +483,10 @@ storage/USB integration. A statically allocated FreeRTOS recursive mutex now
 serializes all facade operations for both transports, including telemetry and
 removal cleanup. Presence service and ownership handoff reserve their whole
 check/action sequences; reconnect delays and command replies run outside the
-reservation. Profile snapshots use the same reservation. Returning ownership sets a reinitialization
+reservation. These reservations protect those specific sequences, not every
+FatFs transaction. The storage worker's exclusive workflow and busy gating
+protect filesystem operations across multiple facade calls; the per-call mutex
+alone cannot do that. Profile snapshots use the same mutex. Returning ownership sets a reinitialization
 request because the host may have changed the filesystem. See
 [USB protocol and MSC lifecycle](usb-protocol.md) for transition rules.
 

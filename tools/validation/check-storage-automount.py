@@ -322,7 +322,8 @@ def main():
                      "pf_sd_card_get_owner", "pf_sd_card_set_owner",
                      "pf_sd_card_take_reinit_request", "pf_sd_card_confirm_removed")))
     connected = connected.replace("reinit_after_usb_owner", "reinit_request")
-    usb = "\n".join(function_source(msc, name) for name in (
+    usb = "static bool transfer_sense_pending;\n" + "\n".join(function_source(msc, name) for name in (
+        "set_sense",
         "pf_usb_msc_request", "apply_msc_request", "pf_usb_msc_task", "tud_msc_start_stop_cb",
         "tud_msc_prevent_allow_medium_removal_cb"))
     harness = (HARNESS.replace("@STATE@", defines + "\n" + state)
