@@ -18,12 +18,9 @@ static bool transition_pending;
 static bool request_rejected;
 /* TinyUSB 0.18.0 overwrites READ10/WRITE10 error sense after our callback.
  * Keep only that transfer's sense until REQUEST SENSE. It is dropped when any
- * later command callback runs, on unmount, and on USB bus reset. USB callbacks
- * run on the USB task (single LUN). */
+ * later command callback runs, on unmount, and on handled BOT/bus reset.
+ * USB callbacks run on the USB task (single LUN). */
 static bool transfer_sense_pending;
-/* BUS_RESET may be signalled from ISR context, so defer clearing app state to
- * the next USB task callback. */
-static volatile bool bus_reset_pending;
 static uint8_t transfer_sense_key, transfer_sense_asc;
 
 static void set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
@@ -37,17 +34,35 @@ static void fail_transfer(uint8_t lun, uint8_t key, uint8_t asc)
     set_sense(lun, key, asc, 0u);
     transfer_sense_key = key;
     transfer_sense_asc = asc;
-    bus_reset_pending = false;
     transfer_sense_pending = true;
 }
 
-void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr)
+/* GNU ld wraps the built-in MSC driver's external references in usbd.c.
+ * Both boundaries execute in tud_task, after queued events ahead of reset.
+ * Enqueue-time hooks can run in ISR context and are not reset barriers. */
+extern void __real_mscd_reset(uint8_t rhport);
+extern bool __real_mscd_control_xfer_cb(uint8_t rhport, uint8_t stage,
+                                      tusb_control_request_t const *request);
+
+void __wrap_mscd_reset(uint8_t rhport)
 {
-    (void)rhport;
-    (void)in_isr;
-    if (eventid == DCD_EVENT_BUS_RESET) {
-        bus_reset_pending = true;
+    __real_mscd_reset(rhport);
+    transfer_sense_pending = false;
+}
+
+bool __wrap_mscd_control_xfer_cb(uint8_t rhport, uint8_t stage,
+                               tusb_control_request_t const *request)
+{
+    bool accepted = __real_mscd_control_xfer_cb(rhport, stage, request);
+    /* Match the pinned driver's accepted BOT reset at SETUP only. Routing
+     * and validation remain TinyUSB's responsibility; ACK is too late. */
+    if (accepted && stage == CONTROL_STAGE_SETUP &&
+        request->bmRequestType_bit.type == TUSB_REQ_TYPE_CLASS &&
+        request->bRequest == MSC_REQ_RESET &&
+        request->wValue == 0u && request->wLength == 0u) {
+        transfer_sense_pending = false;
     }
+    return accepted;
 }
 
 void tud_mount_cb(void)
@@ -82,10 +97,6 @@ int32_t tud_msc_request_sense_cb(uint8_t lun, void *buffer, uint16_t bufsize)
     if ((buffer == NULL) || (bufsize < 18u)) {
         return -1;
     }
-    if (bus_reset_pending) {
-        transfer_sense_pending = false;
-    }
-    bus_reset_pending = false;
     if ((lun == 0u) && transfer_sense_pending) {
         uint8_t *response = buffer;
         response[2] = transfer_sense_key;

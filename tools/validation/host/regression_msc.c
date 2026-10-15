@@ -134,17 +134,38 @@ static void sense_lifecycle(void)
   assert(sense==2 && asc==0x3a);
  }
  initialized=true;
- /* Bus reset does not call mount/unmount; the event hook must drop it. */
+ /* Queued model dispatch calls the linked driver boundary, not a reset hook. */
+ extern void model_enqueue(unsigned);
+ extern void model_dispatch(void);
+ extern void model_control(uint8_t, const tusb_control_request_t *);
+ tusb_control_request_t reset={.bmRequestType=0x21,.bRequest=MSC_REQ_RESET};
  read_result=PF_SD_CARD_IO_ERROR;
  assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
- tud_event_hook_cb(0,DCD_EVENT_BUS_RESET,true);
- tud_msc_set_sense(0,0,0,0); request_sense(0,0);
+ tud_msc_set_sense(0,2,0x3a,0);
+ model_enqueue(1); /* BOT setup */
+ model_dispatch(); request_sense(0,0);
+ /* Failure already in queue before reset must not erase that reset. */
+ model_enqueue(0); model_enqueue(2); /* transfer failure, bus reset */
+ model_dispatch(); model_dispatch(); request_sense(0,0);
+ /* Reset enqueued while a previous transfer callback is still running. */
+ model_enqueue(2);
  assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
- tud_event_hook_cb(0,DCD_EVENT_UNPLUGGED,true);
- tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x11);
- /* A failure after the reset has been observed is a new command's sense. */
- assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
- tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x11);
+ tud_msc_set_sense(0,2,0x3a,0);
+ request_sense(3,0x11); /* enqueue is not a processing barrier */
+ model_dispatch(); request_sense(0,0);
+ /* A fresh failure after handled reset must survive. */
+ model_enqueue(2); model_enqueue(0);
+ model_dispatch(); model_dispatch(); request_sense(3,0x11);
+ /* Rejected requests and non-setup stages do not invalidate cached sense. */
+ for (unsigned invalid=0; invalid<4; ++invalid) {
+  model_enqueue(0); model_dispatch();
+  tusb_control_request_t req=reset;
+  if (invalid==0) req.wValue=1;
+  if (invalid==1) req.wLength=1;
+  if (invalid==2) req.bmRequestType=0x01;
+  model_control(invalid==3 ? CONTROL_STAGE_ACK : CONTROL_STAGE_SETUP,&req);
+  request_sense(3,0x11);
+ }
  read_result=PF_SD_CARD_OK;
 }
 int main(void)

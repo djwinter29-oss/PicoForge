@@ -204,3 +204,8 @@ The .NET development launch currently encounters an existing static-web-assets
 path issue in this workspace; its normal launch and generated OpenAPI endpoint
 test were verified. SPI benchmark performance, physical direct-WebHID access,
 long-duration endurance, media-removal, and power-loss recovery remain unverified.
+
+The 2026-10-15 static review follow-up fixes cached MSC transfer sense at handled
+BOT and bus resets. Data paths, clocks and buffer defaults are unchanged; no
+new throughput result is claimed. See [SD review scope and validation](sdcard-design.md#static-sd-review-follow-up-2026-10-15)
+for reset ordering, host-model limits, existing overlap and pending HIL comparisons.

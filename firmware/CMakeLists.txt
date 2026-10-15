@@ -281,6 +281,12 @@ target_compile_definitions(pf_hello_world PRIVATE
     configNUMBER_OF_CORES=1
 )
 
+# Interpose TinyUSB MSC reset processing without modifying the pinned SDK.
+target_link_options(pf_hello_world PRIVATE
+    "LINKER:--wrap=mscd_reset"
+    "LINKER:--wrap=mscd_control_xfer_cb"
+)
+
 pico_enable_stdio_usb(pf_hello_world 0)
 pico_enable_stdio_uart(pf_hello_world 0)
 
