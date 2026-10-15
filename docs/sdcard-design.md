@@ -427,6 +427,86 @@ separately. A token deadline emits one timeout event; I/O failures do not. Snaps
 `pf_sd_card_get_profile()`; the facade locks each snapshot, while direct backend
 profiling access requires external serialization.
 
+### Profile Measurement Boundaries
+
+The existing enum order, `elapsed_us`/`calls` arrays and CLI labels
+`command`, `data`, `crc_copy`, `busy`, `stop`, `recovery` are retained for ABI
+and historical log compatibility. They are **inclusive instrumentation windows**,
+not mutually exclusive stages. Reinterpreting them as exclusive phases would
+silently change existing results; no such reinterpretation is made.
+
+| Window | Current boundary and overlap |
+| --- | --- |
+| COMMAND | Command request/response helper; also counted inside STOP and recovery initialization |
+| SDIO CMD24 DATA | After TX starts, until both DMA and PIO completion (or timeout); PIO completion includes response token and DAT0 busy release; no separate BUSY measurement for that program |
+| SDIO CMD25 DATA | Per-block interval after TX starts through both completions; includes next-block CPU encoding, measured again under CRC/copy; also includes response and card busy |
+| SDIO RX DATA | CMD18 response accepted through DMA + PIO completion/timeout; completed-block decode/CRC/copy inside the wait is counted again as CRC/copy; final decode after completion lies outside DATA |
+| SPI DATA | Read token wait + payload + wire CRC; write payload only, excluding response and the separately timed ready wait |
+| CRC/copy | CPU encode/decode/CRC validation windows; may run while DMA/PIO is transferring; includes copy only for the native variants that perform it |
+| BUSY | Explicit ready wait; native TX PIO busy is already in DATA; explicit stop waits are also inside STOP |
+| STOP | Entire multiblock stop helper including command/response and busy; native clock-fallback attempts included |
+| RECOVERY | Native reinitialization attempt, including its command/data/CRC/busy windows; not all cleanup or retry time |
+
+Do not sum these values to obtain latency, subtract CRC/copy to infer physical
+wire time, or compare individual windows across transports. The CMD25 host
+regression uses real production encoding with a deterministic clock to assert
+nested DATA=119 ticks and CRC/copy=51 ticks for three blocks; these numbers are
+instrumentation evidence, not hardware microseconds. Existing CMD24 regression
+checks both completion sources and timeout accounting. RX decode and stop/busy
+boundaries above were source-reviewed; they have no new hardware timing evidence.
+
+### MSC Batching And Validation Boundary
+
+Pinned TinyUSB 0.18.0 `msc_device.c` uses
+`min(CFG_TUD_MSC_EP_BUFSIZE, remaining_command_bytes)` for READ10 and WRITE10
+staging; WRITE10 passes the actual received byte count. This repository sets
+`CFG_TUD_MSC_EP_BUFSIZE=512`. A SCSI command can contain multiple sectors, but
+its current callbacks carry at most one sector, with offsets for short transfers.
+The callback interface itself accepts larger buffers; complete 512-byte multiples
+at offset zero now reach the existing block backend as one count-preserving call.
+Partial calls must fit one sector and use synchronous RMW; zero-byte valid calls
+perform no I/O. Size is bounded by signed callback return range and card capacity.
+
+MSC reserves the recursive facade lock across validation, RMW and completion;
+firmware/FatFs I/O remains excluded by USB ownership. Diskio validates drive,
+nonzero count and address width and forwards multi-sector firmware requests;
+transport validation enforces card capacity. Both transports accept unaligned
+caller buffers: native SDIO encodes into the existing aligned double TX workspace
+and decodes from its bounded RX workspace; SPI blocking I/O consumes bytes.
+MSC retains only its existing aligned single-sector RMW scratch, with no new
+allocation, DMA buffer or cached callback pointer.
+
+Native multi-block writes can leave CMD25 open after accepted/busy-complete
+blocks. MSC therefore checks sync/STOP after a successful multi-block backend
+write and before returning success. A failed write is never replayed or synced
+as a recovery attempt. Sync errors return failure and write-error sense. Current
+one-sector callbacks retain their existing synchronous completion behavior.
+
+Cross-callback write aggregation is not implemented: TinyUSB's completion hook
+runs after CSW is queued, too late to fail the command on a flush error, and the
+application has no pre-CSW command boundary with total write input validity.
+Acknowledging cached data early would weaken the error/durability contract.
+Current 512-byte BOT staging remains a performance ceiling; no USB throughput
+gain is claimed from accepting larger callback inputs.
+
+`check-msc-batch.py` executes production MSC, facade and diskio against a
+data-bearing backend seam (actual bytes, ownership, RMW, batch counts, sense and
+checked completion). It does not execute TinyUSB's BOT state machine or physical
+SD transport. Existing SDK TinyUSB tests require an external test environment;
+there is no configured runnable full-stack host BOT integration in this repository.
+BOT reset/short-transfer/CSW error integration and real USB-to-card completion
+remain HIL validation gaps, including the review's GIL/integration gap; no Python
+GIL behavior is inferred from these C host tests. No dependencies were installed.
+
+For a future authorized controlled measurement, use the same board/card,
+firmware options, clock and contiguous LBA range on both revisions; record
+artifact hashes and actual bus clock, SCSI command sector counts and observed
+backend counts. Reset/enable profiles per run; record total wall time and bytes
+separately from inclusive counters, repeat read/write runs with matched sync and
+cache policy, and report distributions/errors. Changing staging requires its own
+BOT/short-input/abort validation before an A/B performance claim. Do not run this
+recipe on media without separate explicit authorization.
+
 The historical target records identify earlier artifacts, not this remediation.
 Software models cannot measure PIO/DMA scheduling, command gaps, or card busy time.
 No controlled before/after benchmark or HIL run is available for these changes,
@@ -563,10 +643,11 @@ source ordering and runs production application callbacks and linker wrappers
 against a separate host driver/queue model. TinyUSB itself is not linked in that
 host regression; it is not a real BOT integration or hardware qualification.
 
-The data paths are unchanged: SDIO CMD18 already overlaps completed-block
+At that reset-sense review, the data paths were unchanged: SDIO CMD18 already overlaps completed-block
 decode/CRC with later RX DMA, CMD25 alternates two wire buffers while preparing
 the next block during TX, and fused CRC/copy remains opt-in. FatFs passes
 multi-sector requests through and SPI already uses CMD18/CMD25. No safe small
-performance simplification was identified. Phase profiling and same-card,
+performance simplification was identified in that review. The later MSC callback
+batch-boundary repair is described above; the underlying overlap remains. Phase profiling and same-card,
 same-clock normal/preallocated and fused-copy A/B comparisons remain pending
 HIL; this change makes no throughput claim and changes no clocks or buffers.

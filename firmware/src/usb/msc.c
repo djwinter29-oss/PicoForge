@@ -319,26 +319,38 @@ static bool transfer_is_valid(uint8_t lun, uint32_t lba, uint32_t offset,
     if (!media_ready(lun)) {
         return false;
     }
-    if ((buffer == NULL) || (offset > PF_SD_CARD_BLOCK_SIZE) ||
-        (size > PF_SD_CARD_BLOCK_SIZE - offset)) {
+    /* Full sectors may be batched; partial transfers must fit one sector.
+     * ponytail: TinyUSB's current 512-byte staging limits actual BOT callbacks;
+     * keep synchronous calls until a pre-CSW flush/error boundary permits safe
+     * larger staging or aggregation. The callback adds no one-sector ceiling. */
+    bool full_sectors = (offset == 0u) && (size % PF_SD_CARD_BLOCK_SIZE == 0u);
+    if ((buffer == NULL) || (size > INT32_MAX) ||
+        (offset > PF_SD_CARD_BLOCK_SIZE) ||
+        (!full_sectors && (size > PF_SD_CARD_BLOCK_SIZE - offset))) {
         fail_transfer(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u);
         return false;
     }
-    if (lba >= pf_sd_card_block_count()) {
+    uint32_t capacity = pf_sd_card_block_count();
+    uint32_t blocks = full_sectors ? size / PF_SD_CARD_BLOCK_SIZE : 1u;
+    if ((lba >= capacity) || (blocks > capacity - lba)) {
         fail_transfer(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u);
         return false;
     }
     return true;
 }
 
-int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
-                          void *buffer, uint32_t bufsize)
+static int32_t read10(uint8_t lun, uint32_t lba, uint32_t offset,
+                      void *buffer, uint32_t bufsize)
 {
     if (!transfer_is_valid(lun, lba, offset, buffer, bufsize)) {
         return -1;
     }
-    if ((offset == 0u) && (bufsize == PF_SD_CARD_BLOCK_SIZE)) {
-        return transfer_result(lun, pf_sd_card_msc_read_blocks(lba, buffer, 1u),
+    if (bufsize == 0u) {
+        return 0;
+    }
+    if ((offset == 0u) && (bufsize % PF_SD_CARD_BLOCK_SIZE == 0u)) {
+        return transfer_result(lun, pf_sd_card_msc_read_blocks(
+                                   lba, buffer, bufsize / PF_SD_CARD_BLOCK_SIZE),
                                bufsize, false);
     }
     pf_sd_card_result_t result = pf_sd_card_msc_read_blocks(lba, sector_buffer, 1u);
@@ -349,15 +361,25 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
     return (int32_t)bufsize;
 }
 
-int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
-                           uint8_t *buffer, uint32_t bufsize)
+static int32_t write10(uint8_t lun, uint32_t lba, uint32_t offset,
+                       uint8_t *buffer, uint32_t bufsize)
 {
     if (!transfer_is_valid(lun, lba, offset, buffer, bufsize)) {
         return -1;
     }
-    if ((offset == 0u) && (bufsize == PF_SD_CARD_BLOCK_SIZE)) {
-        return transfer_result(lun, pf_sd_card_msc_write_blocks(lba, buffer, 1u),
-                               bufsize, true);
+    if (bufsize == 0u) {
+        return 0;
+    }
+    if ((offset == 0u) && (bufsize % PF_SD_CARD_BLOCK_SIZE == 0u)) {
+        uint32_t count = bufsize / PF_SD_CARD_BLOCK_SIZE;
+        pf_sd_card_result_t result = pf_sd_card_msc_write_blocks(lba, buffer, count);
+        /* SDIO CMD25 can retain an open stream. Close it before reporting
+         * success, while errors can still reach TinyUSB. Never retry or sync
+         * a failed, potentially accepted write. */
+        if ((result == PF_SD_CARD_OK) && (count > 1u)) {
+            result = pf_sd_card_msc_sync();
+        }
+        return transfer_result(lun, result, bufsize, true);
     }
     pf_sd_card_result_t result = pf_sd_card_msc_read_blocks(lba, sector_buffer, 1u);
     if (result != PF_SD_CARD_OK) {
@@ -366,6 +388,27 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
     memcpy(sector_buffer + offset, buffer, bufsize);
     return transfer_result(lun, pf_sd_card_msc_write_blocks(lba, sector_buffer, 1u),
                            bufsize, true);
+}
+
+/* Reserve validation, capacity, backend completion and partial-sector RMW
+ * as one transaction against owner handoff/removal and shared sector scratch.
+ * The facade mutex is recursive; no callback buffer survives this call. */
+int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
+                         void *buffer, uint32_t bufsize)
+{
+    pf_sd_card_lock();
+    int32_t result = read10(lun, lba, offset, buffer, bufsize);
+    pf_sd_card_unlock();
+    return result;
+}
+
+int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
+                          uint8_t *buffer, uint32_t bufsize)
+{
+    pf_sd_card_lock();
+    int32_t result = write10(lun, lba, offset, buffer, bufsize);
+    pf_sd_card_unlock();
+    return result;
 }
 
 void tud_msc_write10_complete_cb(uint8_t lun)

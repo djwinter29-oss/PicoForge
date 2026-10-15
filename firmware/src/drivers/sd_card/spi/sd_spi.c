@@ -131,22 +131,19 @@ static bool exchange_byte_checked(uint8_t value, uint8_t *received)
     return true;
 }
 
-static uint8_t exchange_byte(uint8_t value)
-{
-    uint8_t received = 0xffu;
-    (void)exchange_byte_checked(value, &received);
-    return received;
-}
-
 static void select_card(void)
 {
     gpio_put(active_config.chip_select_gpio, 0u);
 }
 
-static void deselect_card(void)
+static bool deselect_card(void)
 {
+    /* CS is high before the trailing clocks. The pinned blocking SDK returns
+     * len after receiving every byte; an alternate short-return seam gives no
+     * clock-completion guarantee. Invalidate and propagate, never recover/replay. */
     gpio_put(active_config.chip_select_gpio, 1u);
-    (void)exchange_byte(0xffu);
+    uint8_t ignored;
+    return exchange_byte_checked(0xffu, &ignored);
 }
 
 static bool wait_ready(uint32_t timeout_us)
@@ -229,8 +226,11 @@ static bool send_command(uint8_t command, uint32_t argument,
                    (spi_read_blocking(active_config.spi, 0xffu, extra,
                                       extra_size) == (int)extra_size));
     }
-    deselect_card();
-    return success;
+    bool deselected = deselect_card();
+    if (!deselected) {
+        card_initialized = false;
+    }
+    return success && deselected;
 }
 
 static bool send_application_command(uint8_t command, uint32_t argument,
@@ -318,8 +318,11 @@ static bool read_csd(uint8_t csd[16])
         (response == 0u) && read_data_block(csd, 16u)) {
         success = true;
     }
-    deselect_card();
-    return success;
+    bool deselected = deselect_card();
+    if (!deselected) {
+        card_initialized = false;
+    }
+    return success && deselected;
 }
 
 static bool read_cid(uint8_t cid[16])
@@ -333,8 +336,11 @@ static bool read_cid(uint8_t cid[16])
         (response == 0u) && read_data_block(cid, 16u)) {
         success = true;
     }
-    deselect_card();
-    return success;
+    bool deselected = deselect_card();
+    if (!deselected) {
+        card_initialized = false;
+    }
+    return success && deselected;
 }
 
 static bool initialize_card(void)
@@ -555,7 +561,10 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
     }
 
 transfer_done:
-    deselect_card();
+    if (!deselect_card()) {
+        card_initialized = false;
+        success = false;
+    }
     return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
 }
 
@@ -657,7 +666,11 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
                                                       : SD_CMD_WRITE_MULTIPLE_BLOCK,
                                   argument, &response);
         if (!command_ok || response != 0u) {
-            deselect_card();
+            bool deselected = deselect_card();
+            if (!deselected) {
+                card_initialized = false;
+                return PF_SD_CARD_IO_ERROR;
+            }
             if (!command_ok) {
                 card_initialized = false;
             }
@@ -697,7 +710,7 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
                 }
             }
             pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
-            deselect_card();
+            stopped = deselect_card() && stopped;
             if (!stopped) {
                 card_initialized = false;
             }
@@ -740,7 +753,7 @@ pf_sd_card_result_t pf_sd_spi_sync(void)
     }
     select_card();
     ready = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
-    deselect_card();
+    ready = deselect_card() && ready;
     if (!ready) {
         card_initialized = false;
     }

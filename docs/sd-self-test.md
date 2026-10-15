@@ -78,7 +78,9 @@ clears the test's own file; it never changes existing files. Allocation time is
 excluded from write averages, so record preallocated and normal results
 separately. This mode changes allocation and wear behavior, may need contiguous
 free space, and is not a raw-driver benchmark. Use `sd profile` with a stable
-build and card when attributing time to driver phases.
+build and card when inspecting driver instrumentation windows. These windows
+overlap and cannot be summed or directly compared across transports; see
+[profile measurement boundaries](sdcard-design.md#profile-measurement-boundaries).
 
 The storage worker performs all FatFs operations; the USB task owns HID/CDC.
 Progress is copied under a short FreeRTOS critical section and emitted through

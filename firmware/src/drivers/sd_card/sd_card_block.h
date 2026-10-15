@@ -39,6 +39,11 @@ typedef struct {
 } pf_sd_card_info_t;
 
 typedef enum {
+    /* Inclusive instrumentation windows, NOT exclusive latency phases.
+     * DATA includes native TX response/busy and overlapped encode/decode;
+     * STOP includes command/busy, RECOVERY includes initialization windows.
+     * Never sum elapsed_us or compare phase values across transports directly.
+     * See docs/sdcard-design.md, Profile Measurement Boundaries. ABI preserved. */
     PF_SD_CARD_PROFILE_COMMAND = 0,
     PF_SD_CARD_PROFILE_DATA,
     PF_SD_CARD_PROFILE_CRC,

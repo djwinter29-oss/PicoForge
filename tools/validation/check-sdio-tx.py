@@ -17,6 +17,10 @@ HARNESS = r'''
 #include "sdio_pio_protocol.h"
 #include "sd_card_protocol.h"
 @TRANSFER_CONTRACT@
+_Static_assert(PF_SD_CARD_PROFILE_COMMAND == 0 && PF_SD_CARD_PROFILE_DATA == 1 &&
+               PF_SD_CARD_PROFILE_CRC == 2 && PF_SD_CARD_PROFILE_BUSY == 3 &&
+               PF_SD_CARD_PROFILE_STOP == 4 && PF_SD_CARD_PROFILE_RECOVERY == 5 &&
+               PF_SD_CARD_PROFILE_PHASE_COUNT == 6, "historical profile array ABI");
 _Static_assert(SDIO_DATA_NIBBLE_COUNT == 512u * 2u + 16u,
                "512-byte four-lane payload plus 16 CRC nibbles");
 _Static_assert(SDIO_DATA_WORD_COUNT * 8u == SDIO_DATA_NIBBLE_COUNT,
@@ -33,6 +37,13 @@ static unsigned configurations, defaults, commands, starts, aborts, stops;
 static bool timeout, rejected, restore_ok = true, load_ok = true, command_ok = true;
 static unsigned dma_delay, pio_delay, waits;
 static uint32_t now, profile_now;
+static bool test_profiling_enabled;
+static void test_set_profiling_enabled(bool enabled)
+{
+    test_profiling_enabled = enabled;
+    pf_sd_card_set_profiling_enabled(enabled);
+}
+#define pf_sd_card_set_profiling_enabled test_set_profiling_enabled
 static uint32_t profile_clock(void) { profile_now += 17; return profile_now; }
 static void check_profile(unsigned calls, unsigned timeouts)
 {
@@ -56,7 +67,13 @@ static void dma_channel_configure(unsigned channel, const dma_channel_config *c,
     assert(channel == 3 && dest && src && ((uintptr_t)src & 3) == 0);
     assert(n == SDIO_DATA_WORD_COUNT && !start && c->size == DMA_SIZE_32 && c->swap);
     assert(c->read_inc && !c->write_inc && c->dreq == 7);
-    assert(pf_sdio_pio_verify_data_block(src)); ++configurations;
+    /* Verification is a test seam, not production TX work; exclude its
+     * decoder instrumentation so it cannot contaminate measured boundaries. */
+    bool enabled = test_profiling_enabled;
+    pf_sd_card_set_profiling_enabled(false);
+    assert(pf_sdio_pio_verify_data_block(src));
+    pf_sd_card_set_profiling_enabled(enabled);
+    ++configurations;
 }
 static void dma_channel_start(unsigned c) { assert(c == 3); ++starts; }
 static bool dma_channel_is_busy(unsigned c) { assert(c == 3); if (dma_delay) { --dma_delay; return true; } return timeout; }
@@ -112,7 +129,17 @@ int main(void)
     assert(aborts == 1 && !h.mode_restore_failed);
     check_profile(3, 1);
     timeout = false;
+    pf_sd_card_reset_profile();
     assert(pf_sdio_pio_host_write_blocks(&h, 4, true, blocks, 3));
+    /* Real production encoding uses the same synthetic clock. Two encodes
+     * nest in DATA (51 each); the final wait is 17. These inclusive windows
+     * must not be summed with CRC/copy to invent an exclusive breakdown. */
+    pf_sd_card_profile_t inclusive;
+    pf_sd_card_get_profile(&inclusive);
+    assert(inclusive.calls[PF_SD_CARD_PROFILE_DATA] == 3);
+    assert(inclusive.elapsed_us[PF_SD_CARD_PROFILE_DATA] == 119);
+    assert(inclusive.calls[PF_SD_CARD_PROFILE_CRC] == 3);
+    assert(inclusive.elapsed_us[PF_SD_CARD_PROFILE_CRC] == 51);
     assert(h.write_stream_open && h.write_stream_next_sector == 7);
     unsigned old_commands = commands;
     assert(pf_sdio_pio_host_write_blocks(&h, 7, true, blocks, 1));

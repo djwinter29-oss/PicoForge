@@ -47,7 +47,7 @@ static struct { void *spi; } active_config;
 static bool card_is_present(void) { return present; }
 static bool wait_ready(uint32_t timeout) { (void)timeout; return ready; }
 static void select_card(void) { assert(!selected); selected = true; ++selects; }
-static void deselect_card(void) { assert(selected); selected = false; ++deselects; }
+static bool deselect_card(void) { assert(selected); selected = false; ++deselects; return true; }
 static uint8_t exchange_byte(uint8_t value)
 {
     if (stuff_test) return stuff_bytes++ == 0u ? 0x00u : 0x04u;
@@ -179,7 +179,7 @@ static unsigned data_calls;
 static bool card_is_present(void) { return present; }
 static bool wait_ready(uint32_t timeout) { (void)timeout; return ready; }
 static void select_card(void) { assert(!selected); selected = true; }
-static void deselect_card(void) { assert(selected); selected = false; }
+static bool deselect_card(void) { assert(selected); selected = false; return true; }
 static bool send_command_selected(uint8_t command, uint32_t argument, uint8_t *response)
 {
     assert(selected && argument == 5u);

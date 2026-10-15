@@ -4,7 +4,7 @@
 spi_inst_t test_spi;
 static uint8_t queue[32];
 static unsigned pos, len, writes, stops;
-static bool busy, selected;
+static bool busy, selected, fail_trailing;
 static int short_size, short_exchange;
 static unsigned exchanges;
 uint32_t time_us_32(void) { static uint32_t t; return t += 100000u; }
@@ -15,7 +15,7 @@ int spi_read_blocking(spi_inst_t *s, uint8_t v, uint8_t *p, size_t n)
 { (void)s;(void)v; memset(p, 0, n); return (int)n; }
 int spi_write_read_blocking(spi_inst_t *s, const uint8_t *p, uint8_t *r, size_t n)
 { (void)s; assert(n == 1);
-  if ((int)exchanges++ == short_exchange) return 0;
+  if ((int)exchanges++ == short_exchange || (!selected && fail_trailing)) return 0;
   if (*p == 0xfdu) ++stops;
   *r = pos < len ? queue[pos++] : busy ? 0 : 0xff; return 1; }
 static void reset(uint8_t response)
@@ -23,7 +23,7 @@ static void reset(uint8_t response)
  card_initialized = card_block_addressed = true; card_sector_count = 128;
  active_config.spi = &test_spi; active_config.use_card_detect = false;
  pos = 0; len = 5; queue[0]=0xff; queue[1]=0; queue[2]=0xff; queue[3]=0xff; queue[4]=response;
- busy = selected = false; short_size = -1; writes = stops = exchanges = 0; short_exchange = -1;
+ busy = selected = fail_trailing = false; short_size = -1; writes = stops = exchanges = 0; short_exchange = -1;
 }
 int main(void)
 {
@@ -87,5 +87,33 @@ int main(void)
  reset(5); len=1; queue[0]=0; busy=true;
  assert(pf_sd_spi_sync()==PF_SD_CARD_IO_ERROR && !card_initialized);
  assert(pf_sd_spi_sync()==PF_SD_CARD_NOT_READY);
- puts("Complete production SPI write regression passed");
+ /* Deselect sets CS high before calling the SDK seam. A failed trailing
+  * exchange must never hide a completed-data error or trigger replay. */
+ for (unsigned count=1; count<=2; ++count) {
+  reset(5); len=9;
+  queue[5]=queue[6]=queue[7]=0xff; queue[8]=5;
+  fail_trailing=true;
+  assert(pf_sd_spi_write_blocks(0,data,count)==PF_SD_CARD_IO_ERROR);
+  assert(!selected && !card_initialized);
+  unsigned before=writes;
+  assert(pf_sd_spi_write_blocks(0,data,count)==PF_SD_CARD_NOT_READY && writes==before);
+ }
+ /* Even an explicit illegal CMD25 cannot authorize CMD24 fallback when
+  * the deselect seam fails: the transport's completion state is unknown. */
+ reset(5); queue[1]=SD_R1_ILLEGAL_COMMAND; fail_trailing=true;
+ assert(pf_sd_spi_write_blocks(0,data,2)==PF_SD_CARD_IO_ERROR);
+ assert(writes==1 && !card_initialized && !selected);
+ reset(5); fail_trailing=true;
+ assert(pf_sd_spi_sync()==PF_SD_CARD_IO_ERROR && !selected && !card_initialized);
+ for (unsigned count=1; count<=2; ++count) {
+  reset(0); len=10;
+  queue[5]=queue[6]=queue[7]=0xff; queue[8]=0xfe;
+  queue[9]=queue[10]=0xff; /* data CRC consumed before CS-high trailer */
+  fail_trailing=true;
+  assert(pf_sd_spi_read_blocks(0,data,count)==PF_SD_CARD_IO_ERROR);
+  assert(!selected && !card_initialized);
+  unsigned before=exchanges;
+  assert(pf_sd_spi_read_blocks(0,data,count)==PF_SD_CARD_NOT_READY && exchanges==before);
+ }
+ puts("Complete production SPI read/write regression passed");
 }

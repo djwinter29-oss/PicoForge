@@ -99,7 +99,7 @@ int main(void)
 
 source = (ROOT / 'firmware/src/drivers/sd_card/spi/sd_spi.c').read_text()
 functions = '\n'.join(function_source(source, sig) for sig in (
-    'static bool exchange_byte_checked(', 'static uint8_t exchange_byte(', 'static bool read_data_block('))
+    'static bool exchange_byte_checked(', 'static bool read_data_block('))
 functions = functions.replace('pf_sd_card_crc16(data, size)', 'checked_crc(data, size)')
 with tempfile.TemporaryDirectory() as tmp:
     src = Path(tmp) / 'test.c'
