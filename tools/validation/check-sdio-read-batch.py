@@ -280,7 +280,7 @@ RECOVERY_HARDWARE = r"""
 #define dma_channel_wait_for_finish_blocking(channel) ((void)0)
 typedef unsigned dma_channel_config;
 #define DMA_SIZE_32 0u
-#define dma_channel_get_default_config(channel) 0u
+#define dma_channel_get_default_config(channel) ((void)(channel), 0u)
 #define channel_config_set_transfer_data_size(config, value) ((void)(config))
 #define channel_config_set_bswap(config, value) ((void)(config))
 #define channel_config_set_read_increment(config, value) ((void)(config))
@@ -451,7 +451,7 @@ def production_recovery_check(source):
                       'bool pf_sdio_pio_host_command_bytes', 'static bool restore_command_mode',
                       'static bool stop_multiblock_transfer', 'static bool stop_multiblock_with_clock_fallback',
                       'bool pf_sdio_pio_host_recover', 'static bool read_data_block',
-                      'bool pf_sdio_pio_host_read_sector', 'bool pf_sdio_pio_host_write_sector', 'bool pf_sdio_pio_host_read_blocks'):
+                      'bool pf_sdio_pio_host_read_sector', 'static dma_channel_config tx_dma_config', 'bool pf_sdio_pio_host_write_sector', 'bool pf_sdio_pio_host_read_blocks'):
         start = source.index(signature + '(')
         code += source[start:source.index('{', start)] + function_body(source, signature) + '}\n'
     # Extract the card-layer init tail: actual stop-before-identification ordering.

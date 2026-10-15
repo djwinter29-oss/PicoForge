@@ -482,6 +482,16 @@ int main(void)
     assert(reads == 1u && single_writes == 2u && batch_writes == 4u);
     reset();
     card_initialized = true;
+    /* Failed CMD24 completion with successful command-mode restoration must
+     * invalidate readiness: neither sync nor another payload may succeed. */
+    write_ok = false;
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    assert(!card_initialized && !sdio_pio_host.mode_restore_failed);
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_NOT_READY);
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_NOT_READY);
+    assert(single_writes == 1u);
+    reset();
+    card_initialized = true;
     fail_write_restore = true;
     assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
     assert(!card_initialized && sdio_pio_host.mode_restore_failed && single_writes == 1u);

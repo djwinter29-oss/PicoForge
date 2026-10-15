@@ -120,6 +120,7 @@ static void service_card_presence(void)
     card_service_busy = true;
     taskEXIT_CRITICAL();
 
+    pf_sd_card_lock();
     pf_sd_card_get_info(&info);
     bool firmware_owned = pf_sd_card_get_owner() == PF_SD_CARD_OWNER_FIRMWARE;
     bool mounted_card_uninitialized = pf_storage_is_mounted() && !info.initialized;
@@ -191,6 +192,7 @@ static void service_card_presence(void)
     attempt_auto_mount();
 
 done:
+    pf_sd_card_unlock();
     taskENTER_CRITICAL();
     card_service_busy = false;
     taskEXIT_CRITICAL();

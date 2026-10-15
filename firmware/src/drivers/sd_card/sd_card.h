@@ -25,6 +25,10 @@ typedef struct pf_sd_card_config {
     } bus;
 } pf_sd_card_config_t;
 
+/* Reserve card transport access across task-level operations; recursive for nested facade calls. */
+void pf_sd_card_lock(void);
+void pf_sd_card_unlock(void);
+
 pf_sd_card_result_t pf_sd_card_init(const pf_sd_card_config_t *config);
 pf_sd_card_owner_t pf_sd_card_get_owner(void);
 bool pf_sd_card_take_reinit_request(void);

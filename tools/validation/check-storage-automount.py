@@ -30,6 +30,9 @@ HARNESS = r"""
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+static unsigned reservation_depth;
+static void pf_sd_card_lock(void) { ++reservation_depth; }
+static void pf_sd_card_unlock(void) { assert(reservation_depth); --reservation_depth; }
 #define taskENTER_CRITICAL() ((void)0)
 #define taskEXIT_CRITICAL() ((void)0)
 typedef enum { PF_SD_CARD_OWNER_FIRMWARE, PF_SD_CARD_OWNER_USB_MSC } owner_t;
@@ -291,7 +294,7 @@ def main():
                      "pf_sd_card_take_reinit_request", "pf_sd_card_confirm_removed")))
     connected = connected.replace("reinit_after_usb_owner", "reinit_request")
     usb = "\n".join(function_source(msc, name) for name in (
-        "pf_usb_msc_request", "pf_usb_msc_task", "tud_msc_start_stop_cb",
+        "pf_usb_msc_request", "apply_msc_request", "pf_usb_msc_task", "tud_msc_start_stop_cb",
         "tud_msc_prevent_allow_medium_removal_cb"))
     harness = (HARNESS.replace("@STATE@", defines + "\n" + state)
                .replace("@ATTEMPT@", function_source(source, "attempt_auto_mount"))

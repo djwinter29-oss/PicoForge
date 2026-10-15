@@ -232,13 +232,27 @@ failures are not replayed. SPI does not implement the native clock-recovery ladd
 The PIO programs have no timeouts of their own: the command, data, and busy
 waits are bounded by the host (100 ms for a command response, 1 s for data
 transfer and for DAT0 busy release), after which the state machines are
-restarted. A command that gets no response, such as CMD8 on a legacy card,
-therefore costs 100 ms; this affects only initialization and failure paths. A
+restarted. A command that gets no response costs 100 ms; this affects only
+initialization and failure paths. Native legacy compatibility currently requires
+an intact, CRC-valid CMD8 illegal-command response. A silent legacy card is
+rejected: the host's boolean completion result cannot distinguish silence from a
+partial frame, so neither timeout nor CRC/framing failure is accepted as legacy.
+A
 command that completes before a delayed poll is not reported as a timeout.
 In-PIO timeouts are not used because the command (19) and receive (11) programs
 leave only two of the 32 PIO instructions free.
 
 ## Write Workflow
+
+A failed native single-sector write invalidates readiness, even if restoring the
+host's command programs succeeds. CMD24 response loss, interrupted payload, and
+DAT0 timeout cannot prove the card completed the write. Sync and subsequent
+transfers return `NOT_READY` until explicit reinitialization; no payload is
+replayed automatically. This conservatively also invalidates ordinary rejection.
+
+CMD24 and CMD25 share TX DMA control-bit setup. CMD25 constructs those invariant
+bits once per call; payload DMA addresses/counts and completion/abort handling
+remain per sector. This reduces setup work but has no measured throughput claim.
 
 ```mermaid
 flowchart TD
@@ -457,8 +471,12 @@ sequenceDiagram
 ```
 
 The facade enforces which client may issue block operations; it does not itself
-close files, unmount FatFs, wait for host eject, or serialize tasks. Those checks
-belong to storage/USB integration. Returning ownership sets a reinitialization
+close files, unmount FatFs, or wait for host eject. Those checks belong to
+storage/USB integration. A statically allocated FreeRTOS recursive mutex now
+serializes all facade operations for both transports, including telemetry and
+removal cleanup. Presence service and ownership handoff reserve their whole
+check/action sequences; reconnect delays and command replies run outside the
+reservation. Profile snapshots use the same reservation. Returning ownership sets a reinitialization
 request because the host may have changed the filesystem. See
 [USB protocol and MSC lifecycle](usb-protocol.md) for transition rules.
 

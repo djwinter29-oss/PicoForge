@@ -55,7 +55,8 @@ while [ "$#" -gt 0 ]; do
 Usage: tools/validation/validate.sh [options]
 
 By default, syntax-check shell scripts, validate/run Ceedling tests, and build
-firmware for pico and pico2.
+firmware for pico and pico2 with both SDIO_PIO and SPI.
+PIO timing checks require a prior firmware build or PIOASM when builds are skipped.
 
 Options:
   --board NAME          Build only the selected Pico SDK board
@@ -97,7 +98,9 @@ fi
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "=== Ceedling project and unit tests ==="
     python3 tools/validation/check-storage-automount.py
+    python3 tools/validation/check-sd-serialization.py
     python3 tools/validation/check-sdio-init.py
+    python3 tools/validation/check-sdio-tx.py
     python3 tools/validation/check-sdio-read-batch.py
     python3 tools/validation/check-sd-spi-transfer.py
     "$CEEDLING_SCRIPT" check
@@ -117,7 +120,11 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
 
     build_firmware() {
         board_name="$1"
-        set -- --board "$board_name" --pico-sdk-path "$PICO_SDK_PATH_VALUE"
+        transport_name="$2"
+        echo "=== $board_name / $transport_name ==="
+        set -- --board "$board_name" --sd-card-transport "$transport_name" \
+            --build-dir "build/validation-$board_name-$transport_name" \
+            --pico-sdk-path "$PICO_SDK_PATH_VALUE"
         if [ -n "$GENERATOR" ]; then
             set -- "$@" --generator "$GENERATOR"
         fi
@@ -126,9 +133,17 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
 
     echo "=== Firmware builds ==="
     if [ -n "$BOARD" ]; then
-        build_firmware "$BOARD"
+        build_firmware "$BOARD" SDIO_PIO
+        build_firmware "$BOARD" SPI
     else
-        build_firmware pico
-        build_firmware pico2
+        build_firmware pico SDIO_PIO
+        build_firmware pico SPI
+        build_firmware pico2 SDIO_PIO
+        build_firmware pico2 SPI
     fi
+fi
+
+if [ "$SKIP_TESTS" -eq 0 ]; then
+    echo "=== Assembled SDIO PIO timing ==="
+    python3 tools/validation/check-sdio-pio-timing.py
 fi

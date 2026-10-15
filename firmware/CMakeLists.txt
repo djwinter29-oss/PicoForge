@@ -148,6 +148,7 @@ target_include_directories(pf_sd_card PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/spi"
 )
 target_link_libraries(pf_sd_card PUBLIC
+    FreeRTOS-Kernel-Static
     pf_sd_card_protocol
     ${PF_SD_CARD_BACKEND}
 )

@@ -610,7 +610,9 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
 
     bool success = pf_sdio_pio_host_write_sector(&sdio_pio_host, first_block,
                                                    card_block_addressed, write_buffer);
-    if (sdio_pio_host.mode_restore_failed) {
+    /* A lost command/data response or busy timeout cannot prove CMD24 complete.
+     * Restoration only repairs the host; require reinitialization, never replay. */
+    if (!success || sdio_pio_host.mode_restore_failed) {
         card_initialized = false;
     }
     return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
