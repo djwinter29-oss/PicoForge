@@ -329,3 +329,37 @@ void test_self_test_reports_unlink_cleanup_failure(void)
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_CLEANUP, final_status.error);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
 }
+void test_preallocation_and_close_failure_preserves_new_file(void)
+{
+    pf_storage_self_test_set_preallocation_enabled(true);
+    pf_storage_is_mounted_ExpectAndReturn(true);
+    f_getfree_StubWithCallback(get_free);
+    f_open_StubWithCallback(open_file);
+    f_expand_ExpectAnyArgsAndReturn(FR_DENIED);
+    close_result = FR_DISK_ERR;
+    f_close_StubWithCallback(close_file);
+    /* No unlink is permitted when FatFs could still hold the file open. */
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
+    TEST_ASSERT_EQUAL_UINT(1u, close_calls);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+}
+
+static FRESULT close_read_failure(FIL *file, int calls)
+{
+    (void)file;
+    ++close_calls;
+    return calls == 0 ? FR_OK : FR_DISK_ERR;
+}
+
+void test_read_close_failure_preserves_verified_file(void)
+{
+    prepare();
+    f_close_StubWithCallback(close_read_failure);
+    pf_storage_self_test_run(NULL, 1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
+    TEST_ASSERT_EQUAL_UINT(0u, unlink_calls);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+}

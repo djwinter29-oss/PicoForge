@@ -64,7 +64,7 @@ static pf_storage_result_t pf_storage_unmount(void *result)
     return PF_STORAGE_OK;
 }
 static void pf_storage_forget_filesystem_format(void) { ++forget_calls; }
-typedef enum { PF_SD_CARD_OK, PF_SD_CARD_INVALID_ARGUMENT, PF_SD_CARD_NOT_READY } pf_sd_card_result_t;
+typedef enum { PF_SD_CARD_OK, PF_SD_CARD_INVALID_ARGUMENT, PF_SD_CARD_NOT_READY, PF_SD_CARD_NOT_CONFIGURED } pf_sd_card_result_t;
 #define PF_CONFIG_SD_CARD_TRANSPORT 0
 #define PF_CONFIG_SD_CARD_TRANSPORT_SPI 1
 #define card_initialized media.initialized
@@ -80,6 +80,7 @@ static bool restore_command_mode(pf_sdio_pio_host_t *host)
 }
 static void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host) { host->pio = NULL; }
 @FACADE@
+#define SCSI_SENSE_NOT_READY 2u
 #define SCSI_SENSE_ILLEGAL_REQUEST 5
 #define SCSI_SENSE_MEDIUM_ERROR 3
 static void tud_msc_set_sense(unsigned l, unsigned s, unsigned a, unsigned q)

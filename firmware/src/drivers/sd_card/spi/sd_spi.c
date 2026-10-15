@@ -122,10 +122,19 @@ static bool card_is_present(void)
             active_config.card_detect_active_high);
 }
 
+static bool exchange_byte_checked(uint8_t value, uint8_t *received)
+{
+    if (spi_write_read_blocking(active_config.spi, &value, received, 1u) != 1) {
+        card_initialized = false;
+        return false;
+    }
+    return true;
+}
+
 static uint8_t exchange_byte(uint8_t value)
 {
     uint8_t received = 0xffu;
-    (void)spi_write_read_blocking(active_config.spi, &value, &received, 1u);
+    (void)exchange_byte_checked(value, &received);
     return received;
 }
 
@@ -146,7 +155,12 @@ static bool wait_ready(uint32_t timeout_us)
     uint32_t profile_start = pf_sd_card_profile_begin();
 
     do {
-        if (exchange_byte(0xffu) == 0xffu) {
+        uint8_t value;
+        if (!exchange_byte_checked(0xffu, &value)) {
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_BUSY, profile_start);
+            return false;
+        }
+        if (value == 0xffu) {
             pf_sd_card_profile_end(PF_SD_CARD_PROFILE_BUSY, profile_start);
             return true;
         }
@@ -173,10 +187,16 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
         goto done;
     }
     if (command == SD_CMD_STOP_TRANSMISSION) {
-        (void)exchange_byte(0xffu);
+        uint8_t ignored;
+        if (!exchange_byte_checked(0xffu, &ignored)) {
+            goto done;
+        }
     }
     for (uint32_t attempt = 0u; attempt < SD_SPI_COMMAND_RETRIES; attempt++) {
-        uint8_t value = exchange_byte(0xffu);
+        uint8_t value;
+        if (!exchange_byte_checked(0xffu, &value)) {
+            goto done;
+        }
         if ((value & 0x80u) == 0u) {
             *response = value;
             last_init_command = command;
@@ -267,7 +287,10 @@ static bool receive_write_response(uint8_t *response)
     uint32_t start = time_us_32();
 
     do {
-        *response = exchange_byte(0xffu);
+        if (!exchange_byte_checked(0xffu, response)) {
+            *response = 0xffu;
+            return false;
+        }
         if (!pf_sd_spi_write_response_is_pending(*response)) {
             return pf_sd_spi_write_response_is_accepted(*response);
         }
@@ -460,8 +483,11 @@ static bool write_data_block(const uint8_t *buffer, uint8_t token)
     profile_start = pf_sd_card_profile_begin();
     uint16_t crc = pf_sd_card_crc16(buffer, PF_SD_CARD_BLOCK_SIZE);
     pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
-    (void)exchange_byte((uint8_t)(crc >> 8u));
-    (void)exchange_byte((uint8_t)crc);
+    uint8_t ignored;
+    if (!exchange_byte_checked((uint8_t)(crc >> 8u), &ignored) ||
+        !exchange_byte_checked((uint8_t)crc, &ignored)) {
+        return false;
+    }
     uint8_t response = 0xffu;
     bool accepted = receive_write_response(&response);
     /* Only CRC/write-error tokens conclusively reject this block. A missing or
@@ -502,8 +528,12 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
             success = true;
         }
     } else {
-        if (!send_command_selected(SD_CMD_WRITE_SINGLE_BLOCK, argument, &response) ||
-            (response != 0u)) {
+        if (!send_command_selected(SD_CMD_WRITE_SINGLE_BLOCK, argument, &response)) {
+            /* The card may have entered its data phase despite a lost R1. */
+            card_initialized = false;
+            goto transfer_done;
+        }
+        if (response != 0u) {
             goto transfer_done;
         }
         success = write_data_block(write_buffer, SD_DATA_START_BLOCK);
@@ -646,8 +676,9 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
             } else {
                 stopped = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
                 if (stopped) {
-                    (void)exchange_byte(SD_DATA_STOP_MULTIPLE);
-                    stopped = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+                    uint8_t ignored;
+                    stopped = exchange_byte_checked(SD_DATA_STOP_MULTIPLE, &ignored) &&
+                        wait_ready(SD_SPI_WRITE_TIMEOUT_US);
                 }
             }
             pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);

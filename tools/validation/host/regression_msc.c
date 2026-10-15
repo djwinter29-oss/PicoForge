@@ -30,8 +30,16 @@ int main(void)
 {
  uint8_t cmd[16]={0x35}; msc_enabled=true;
  assert(tud_msc_scsi_cb(0,cmd,NULL,0)==0 && syncs==1);
+ unsigned range_before=syncs;
+ cmd[5]=128; assert(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && asc==0x21 && syncs==range_before);
+ cmd[5]=127; cmd[8]=2;
+ assert(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && syncs==range_before);
+ cmd[8]=1; assert(tud_msc_scsi_cb(0,cmd,NULL,0)==0);
+ cmd[5]=0; cmd[8]=0;
  sync_result=PF_SD_CARD_IO_ERROR;
  assert(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && sense==3);
+ sync_result=PF_SD_CARD_NOT_READY;
+ assert(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && sense==2);
  sync_result=PF_SD_CARD_OK;
  cmd[1]=2; assert(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && sense==5); cmd[1]=0;
  assert(tud_msc_scsi_cb(1,cmd,NULL,0)==-1);
@@ -47,11 +55,20 @@ int main(void)
  assert(!tud_msc_start_stop_cb(0,0,false,true));
  assert(!msc_ejected && syncs==before && asc==0x53);
  pf_usb_msc_request(false); pf_usb_msc_task(); assert(msc_enabled && request_rejected);
+ assert(!tud_msc_prevent_allow_medium_removal_cb(0,2,0) && removal_prevented);
+ assert(!tud_msc_prevent_allow_medium_removal_cb(0,0,1) && removal_prevented);
  assert(tud_msc_prevent_allow_medium_removal_cb(0,0,0));
  sync_result=PF_SD_CARD_IO_ERROR;
  assert(!tud_msc_start_stop_cb(0,0,false,true) && !msc_ejected);
+ sync_result=PF_SD_CARD_NOT_READY;
+ assert(!tud_msc_start_stop_cb(0,0,false,true) && !msc_ejected && sense==2);
  sync_result=PF_SD_CARD_OK;
  assert(tud_msc_start_stop_cb(0,0,false,true) && msc_ejected);
+ before=syncs;
+ assert(tud_msc_start_stop_cb(0,0,false,true) && syncs==before);
+ initialized=false;
+ assert(!tud_msc_start_stop_cb(0,0,true,true) && msc_ejected);
+ initialized=true;
  worker_busy=true; pf_usb_msc_request(false); pf_usb_msc_task(); assert(msc_enabled);
  worker_busy=false; owner_result=PF_SD_CARD_IO_ERROR;
  pf_usb_msc_request(false); pf_usb_msc_task(); assert(msc_enabled && owner==PF_SD_CARD_OWNER_USB_MSC);

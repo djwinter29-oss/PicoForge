@@ -55,6 +55,11 @@ static uint8_t exchange_byte(uint8_t value)
     ++stops;
     return 0xffu;
 }
+static bool exchange_byte_checked(uint8_t value, uint8_t *received)
+{
+    *received = exchange_byte(value);
+    return true;
+}
 static int spi_write_blocking(void *spi, const uint8_t *frame, unsigned size)
 { (void)spi; assert(size == 6u && frame[0] == 0x4cu); return (int)size; }
 @COMMAND@

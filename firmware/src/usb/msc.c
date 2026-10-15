@@ -163,17 +163,29 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
     }
     if (load_eject) {
         if (start) {
+            if (!pf_sd_card_is_initialized()) {
+                tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
+                return false;
+            }
             msc_ejected = false;
         } else {
             if (removal_prevented) {
                 tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x53u, 0x02u);
                 return false;
             }
+            if (msc_ejected) {
+                return true;
+            }
             if (!media_ready(lun)) {
                 return false;
             }
-            if (pf_sd_card_msc_sync() != PF_SD_CARD_OK) {
-                tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
+            pf_sd_card_result_t result = pf_sd_card_msc_sync();
+            if (result != PF_SD_CARD_OK) {
+                if ((result == PF_SD_CARD_NOT_READY) || (result == PF_SD_CARD_NOT_CONFIGURED)) {
+                    tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
+                } else {
+                    tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
+                }
                 return false;
             }
             msc_ejected = true;
@@ -185,8 +197,12 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
 bool tud_msc_prevent_allow_medium_removal_cb(uint8_t lun, uint8_t prohibit_removal,
                                              uint8_t control)
 {
-    (void)control;
     if (lun != 0u) {
+        return false;
+    }
+    /* Persistent prevention (2/3) is unsupported; reserved bits are invalid. */
+    if ((prohibit_removal > 1u) || (control != 0u)) {
+        tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u, 0x00u);
         return false;
     }
     removal_prevented = prohibit_removal != 0u;
@@ -268,8 +284,23 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
         if (!media_ready(lun)) {
             return -1;
         }
-        if (pf_sd_card_msc_sync() != PF_SD_CARD_OK) {
-            tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
+        uint32_t lba = ((uint32_t)scsi_cmd[2] << 24u) |
+                       ((uint32_t)scsi_cmd[3] << 16u) |
+                       ((uint32_t)scsi_cmd[4] << 8u) | scsi_cmd[5];
+        uint32_t count = ((uint32_t)scsi_cmd[7] << 8u) | scsi_cmd[8];
+        uint32_t capacity = pf_sd_card_block_count();
+        /* A zero count covers the remainder of the medium, not an invalid LBA. */
+        if ((lba >= capacity) || (count > capacity - lba)) {
+            tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u, 0x00u);
+            return -1;
+        }
+        pf_sd_card_result_t result = pf_sd_card_msc_sync();
+        if (result != PF_SD_CARD_OK) {
+            if ((result == PF_SD_CARD_NOT_READY) || (result == PF_SD_CARD_NOT_CONFIGURED)) {
+                tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
+            } else {
+                tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
+            }
             return -1;
         }
         return 0;
