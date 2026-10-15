@@ -266,6 +266,12 @@ replayed automatically. This conservatively also invalidates ordinary rejection.
 CMD24 and CMD25 share TX DMA control-bit setup. CMD25 constructs those invariant
 bits once per call; payload DMA addresses/counts and completion/abort handling
 remain per sector. This reduces setup work but has no measured throughput claim.
+Successful native CMD25 streams remain open across consecutive facade writes.
+The [same-card A/B benchmark](tests/records/2026-10-15-cmd25-persistence.md)
+measured 40.93% higher median write throughput with persistence, so this is
+unconditional behavior rather than a build option. Non-contiguous operations,
+synchronization, failures, removal, and reinitialization retain checked stream
+recovery.
 
 ```mermaid
 flowchart TD
@@ -531,6 +537,7 @@ preallocated files), and card busy time before choosing further optimizations.
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; hardware qualification outstanding |
+| Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](tests/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
 | Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD self-test](sd-self-test.md) |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |

@@ -82,6 +82,20 @@ build and card when inspecting driver instrumentation windows. These windows
 overlap and cannot be summed or directly compared across transports; see
 [profile measurement boundaries](sdcard-design.md#profile-measurement-boundaries).
 
+## CMD25 Persistence Decision
+
+Native SDIO keeps a successful CMD25 stream open across consecutive facade
+writes. This behavior is unconditional: there is no build option to close the
+stream after every facade call. A non-contiguous operation, synchronization,
+error, removal, or reinitialization still performs the required checked stream
+recovery.
+
+The [2026-10-15 controlled A/B measurement](tests/records/2026-10-15-cmd25-persistence.md)
+found a 40.93% median write-throughput gain from persistence across six passing
+128 MiB runs at 25 MHz SDIO with contiguous preallocation. This was well above
+the 5-10% threshold for retaining the additional stream state. See that record
+for the historical test variants, raw data, controls, and qualification limits.
+
 The storage worker performs all FatFs operations; the USB task owns HID/CDC.
 Progress is copied under a short FreeRTOS critical section and emitted through
 HID Input Report 6 every 500 ms. Cancellation is checked between chunks and

@@ -599,10 +599,12 @@ def main():
         src = Path(scratch) / "check.c"
         exe = Path(scratch) / "check"
         src.write_text(code)
-        subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
-                        "-I", str(SOURCE.parents[1]),
-                        str(src), str(SOURCE.parents[1] / "sd_card_protocol.c"),
-                        "-o", str(exe)], check=True)
+        subprocess.run([
+            os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
+            "-I", str(SOURCE.parents[1]),
+            str(src), str(SOURCE.parents[1] / "sd_card_protocol.c"),
+            "-o", str(exe)
+        ], check=True)
         subprocess.run([str(exe)], check=True)
 
 
