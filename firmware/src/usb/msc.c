@@ -165,7 +165,15 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
         if (start) {
             msc_ejected = false;
         } else {
+            if (removal_prevented) {
+                tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x53u, 0x02u);
+                return false;
+            }
+            if (!media_ready(lun)) {
+                return false;
+            }
             if (pf_sd_card_msc_sync() != PF_SD_CARD_OK) {
+                tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
                 return false;
             }
             msc_ejected = true;
@@ -238,17 +246,34 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
 
 void tud_msc_write10_complete_cb(uint8_t lun)
 {
-    if (lun == 0u) {
-        (void)pf_sd_card_msc_sync();
-    }
+    /* Both backends finish response checking and card busy before returning
+     * WRITE10 success. TinyUSB calls this after CSW, too late to report errors.
+     * Explicit SYNCHRONIZE CACHE and eject remain checked sync boundaries. */
+    (void)lun;
 }
 
 int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
                         uint16_t bufsize)
 {
     (void)buffer;
-    (void)bufsize;
+    /* SYNCHRONIZE CACHE(10): synchronous only; reject IMMED and reserved
+     * bits rather than promising an asynchronous operation we cannot provide.
+     * LBA/count are safely covered by syncing the entire device. */
+    if (scsi_cmd[0] == 0x35u) {
+        if ((scsi_cmd[1] != 0u) || (scsi_cmd[6] != 0u) ||
+            (scsi_cmd[9] != 0u) || (bufsize != 0u)) {
+            tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u, 0x00u);
+            return -1;
+        }
+        if (!media_ready(lun)) {
+            return -1;
+        }
+        if (pf_sd_card_msc_sync() != PF_SD_CARD_OK) {
+            tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
+            return -1;
+        }
+        return 0;
+    }
     tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x20u, 0x00u);
-    (void)scsi_cmd;
     return -1;
 }

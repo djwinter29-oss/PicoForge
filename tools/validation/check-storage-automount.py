@@ -80,6 +80,11 @@ static bool restore_command_mode(pf_sdio_pio_host_t *host)
 }
 static void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host) { host->pio = NULL; }
 @FACADE@
+#define SCSI_SENSE_ILLEGAL_REQUEST 5
+#define SCSI_SENSE_MEDIUM_ERROR 3
+static void tud_msc_set_sense(unsigned l, unsigned s, unsigned a, unsigned q)
+{ (void)l; (void)s; (void)a; (void)q; }
+static bool media_ready(unsigned lun) { return lun == 0 && media.initialized; }
 static bool msc_enabled, msc_ejected, removal_prevented, request_pending;
 static bool requested_enabled, transition_pending, request_rejected;
 static bool sync_ok = true;
@@ -240,7 +245,7 @@ int main(void)
     assert(!tud_msc_start_stop_cb(0u, 0u, false, true));
     sync_ok = true;
     assert(tud_msc_prevent_allow_medium_removal_cb(0u, 1u, 0u));
-    assert(tud_msc_start_stop_cb(0u, 0u, false, true));
+    assert(!tud_msc_start_stop_cb(0u, 0u, false, true));
     pf_usb_msc_request(false);
     pf_usb_msc_task();
     assert(msc_enabled && request_rejected); /* prevention still applies */

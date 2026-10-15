@@ -20,7 +20,10 @@ static const pf_board_resources_t board_resources = {
     /* Logical DAT0-DAT3 now follow consecutive GPIO order. */
     .data_gpio = { 4u, 5u, 6u, 7u },
     .pio_index = 0u,
-    .clock_hz = 50000000u,
+    /* 20 MHz request keeps the measured bus below 25 MHz on the verified
+       150 MHz sys-clk build; 50 MHz exceeds the board's signal-integrity margin
+       and leaves init stuck at TRANSFER_CLOCK. */
+    .clock_hz = 20000000u,
     .spi_index = 0u,
     .spi_clock_gpio = 2u,
     .spi_mosi_gpio = 3u,

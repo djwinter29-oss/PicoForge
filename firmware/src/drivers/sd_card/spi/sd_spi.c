@@ -446,6 +446,7 @@ void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
 static bool write_data_block(const uint8_t *buffer, uint8_t token)
 {
     if (spi_write_blocking(active_config.spi, &token, 1u) != 1) {
+        card_initialized = false;
         return false;
     }
     uint32_t profile_start = pf_sd_card_profile_begin();
@@ -453,6 +454,7 @@ static bool write_data_block(const uint8_t *buffer, uint8_t token)
         == (int)PF_SD_CARD_BLOCK_SIZE;
     pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
     if (!sent) {
+        card_initialized = false;
         return false;
     }
     profile_start = pf_sd_card_profile_begin();
@@ -460,8 +462,18 @@ static bool write_data_block(const uint8_t *buffer, uint8_t token)
     pf_sd_card_profile_end(PF_SD_CARD_PROFILE_CRC, profile_start);
     (void)exchange_byte((uint8_t)(crc >> 8u));
     (void)exchange_byte((uint8_t)crc);
-    uint8_t response;
-    return receive_write_response(&response) && wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+    uint8_t response = 0xffu;
+    bool accepted = receive_write_response(&response);
+    /* Only CRC/write-error tokens conclusively reject this block. A missing or
+     * malformed response may hide an accepted write; never replay it. Even a
+     * rejection must reach ready before another command is safe. */
+    bool rejected = ((response & 0x1fu) == 0x0bu) ||
+                    ((response & 0x1fu) == 0x0du);
+    bool ready = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
+    if ((!accepted && !rejected) || !ready) {
+        card_initialized = false;
+    }
+    return accepted && ready;
 }
 
 static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
@@ -481,6 +493,7 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
 
     select_card();
     if (!wait_ready(SD_SPI_WRITE_TIMEOUT_US)) {
+        card_initialized = false;
         goto transfer_done;
     }
     if (read_buffer != NULL) {
@@ -682,6 +695,9 @@ pf_sd_card_result_t pf_sd_spi_sync(void)
     select_card();
     ready = wait_ready(SD_SPI_WRITE_TIMEOUT_US);
     deselect_card();
+    if (!ready) {
+        card_initialized = false;
+    }
     return ready ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
 }
 

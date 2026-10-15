@@ -97,6 +97,7 @@ fi
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "=== Ceedling project and unit tests ==="
+    python3 tools/validation/check-sd-msc-production.py
     python3 tools/validation/check-storage-automount.py
     python3 tools/validation/check-sd-serialization.py
     python3 tools/validation/check-sdio-init.py
