@@ -297,8 +297,13 @@ restoration or CMD12 response/busy recovery failed). If cleanup succeeds, the
 card remains initialized; this does not mean the failed write was atomic or that
 no data reached the card. Earlier accepted blocks, and possibly the failing block,
 may already be programmed. CMD12 terminates the stream; it is not the first point
-at which blocks can reach media. Ordinary single-block card rejection does not
-invalidate initialization when command-mode restoration succeeds. Failed host
+at which blocks can reach media. In SDIO, ordinary single-block card rejection does not
+invalidate initialization when command-mode restoration succeeds. In SPI, a
+single-block command that returns a non-zero R1 keeps initialization (the card
+is known to be in command mode), but a lost R1 or any failed read data phase
+(token timeout/error, short read, CRC mismatch) invalidates it because the
+card's transfer state cannot be proven restored; failed writes follow the rules
+above. Recovery is reinitialization; failed transfers are not retried. Failed host
 restoration explicitly invalidates readiness, including after a single-block write;
 sync cannot report success. `pf_sdio_pio_host_recover()` resolves both pending
 streams and host restoration failure. Its false result retains either unresolved

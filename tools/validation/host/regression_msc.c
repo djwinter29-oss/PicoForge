@@ -83,11 +83,76 @@ static void transfer_failures(void)
  assert(tud_msc_write10_cb(0,0,0,block,512)==512);
  request_sense(0,0);
 }
+static void sense_lifecycle(void)
+{
+ uint8_t block[512]={0}, cmd[16]={0x35};
+ /* TinyUSB overwrites failed transfer sense; stale app sense must not leak. */
+ read_result=PF_SD_CARD_IO_ERROR;
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ read_result=PF_SD_CARD_OK;
+ assert(tud_msc_read10_cb(0,0,0,block,512)==512);
+ tud_msc_set_sense(0,0,0,0); request_sense(0,0);
+ read_result=PF_SD_CARD_IO_ERROR;
+ assert(tud_msc_write10_cb(0,0,4,block,16)==-1);
+ read_result=PF_SD_CARD_OK;
+ assert(tud_msc_scsi_cb(0,cmd,NULL,0)==0);
+ tud_msc_set_sense(0,0,0,0); request_sense(0,0);
+ read_result=PF_SD_CARD_IO_ERROR;
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ assert(tud_msc_read10_cb(0,128,0,block,512)==-1);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(5,0x21);
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ assert(tud_msc_write10_cb(0,0,0,NULL,512)==-1);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(5,0x24);
+ assert(tud_msc_read10_cb(0,0,513,block,0)==-1);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(5,0x24);
+ assert(tud_msc_write10_cb(0,128,0,block,512)==-1);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(5,0x21);
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ tud_umount_cb(); tud_msc_set_sense(0,0,0,0); request_sense(0,0);
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ tud_mount_cb(); tud_msc_set_sense(0,0,0,0); request_sense(0,0);
+ read_result=PF_SD_CARD_OK;
+ /* Built-in TinyUSB commands call these callbacks, not our SCSI hook. */
+ for (unsigned c=0; c<3; ++c) {
+  uint32_t blocks; uint16_t size;
+  read_result=PF_SD_CARD_IO_ERROR;
+  assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+  tud_msc_set_sense(0,2,0x3a,0);
+  if (c==0) assert(tud_msc_test_unit_ready_cb(0));
+  else if (c==1) { tud_msc_capacity_cb(0,&blocks,&size); assert(blocks==128 && size==512); }
+  else assert(tud_msc_is_writable_cb(0));
+  tud_msc_set_sense(0,0,0,0); request_sense(0,0);
+  read_result=PF_SD_CARD_OK;
+ }
+ /* Failure paths still report fresh NOT READY. */
+ initialized=false;
+ {
+  uint32_t blocks=9; uint16_t size;
+  assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+  tud_msc_capacity_cb(0,&blocks,&size); assert(blocks==0);
+  assert(sense==2 && asc==0x3a);
+ }
+ initialized=true;
+ /* Bus reset does not call mount/unmount; the event hook must drop it. */
+ read_result=PF_SD_CARD_IO_ERROR;
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ tud_event_hook_cb(0,DCD_EVENT_BUS_RESET,true);
+ tud_msc_set_sense(0,0,0,0); request_sense(0,0);
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ tud_event_hook_cb(0,DCD_EVENT_UNPLUGGED,true);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x11);
+ /* A failure after the reset has been observed is a new command's sense. */
+ assert(tud_msc_read10_cb(0,0,0,block,512)==-1);
+ tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x11);
+ read_result=PF_SD_CARD_OK;
+}
 int main(void)
 {
  uint8_t cmd[16]={0x35}; msc_enabled=true;
  transfer_failures();
- assert(tud_msc_scsi_cb(0,cmd,NULL,0)==0 && syncs==1);
+ sense_lifecycle();
+ assert(tud_msc_scsi_cb(0,cmd,NULL,0)==0 && syncs==2);
  unsigned range_before=syncs;
  cmd[5]=128; assert(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && asc==0x21 && syncs==range_before);
  cmd[5]=127; cmd[8]=2;

@@ -17,15 +17,47 @@ static bool requested_enabled;
 static bool transition_pending;
 static bool request_rejected;
 /* TinyUSB 0.18.0 overwrites READ10/WRITE10 error sense after our callback.
- * Keep only that transfer's sense until REQUEST SENSE; later application sense
- * supersedes it. USB callbacks run on the USB task (single LUN). */
+ * Keep only that transfer's sense until REQUEST SENSE. It is dropped when any
+ * later command callback runs, on unmount, and on USB bus reset. USB callbacks
+ * run on the USB task (single LUN). */
 static bool transfer_sense_pending;
+/* BUS_RESET may be signalled from ISR context, so defer clearing app state to
+ * the next USB task callback. */
+static volatile bool bus_reset_pending;
 static uint8_t transfer_sense_key, transfer_sense_asc;
 
 static void set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
 {
     transfer_sense_pending = false;
     tud_msc_set_sense(lun, key, asc, ascq);
+}
+
+static void fail_transfer(uint8_t lun, uint8_t key, uint8_t asc)
+{
+    set_sense(lun, key, asc, 0u);
+    transfer_sense_key = key;
+    transfer_sense_asc = asc;
+    bus_reset_pending = false;
+    transfer_sense_pending = true;
+}
+
+void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr)
+{
+    (void)rhport;
+    (void)in_isr;
+    if (eventid == DCD_EVENT_BUS_RESET) {
+        bus_reset_pending = true;
+    }
+}
+
+void tud_mount_cb(void)
+{
+    transfer_sense_pending = false;
+}
+
+void tud_umount_cb(void)
+{
+    transfer_sense_pending = false;
 }
 
 static int32_t transfer_result(uint8_t lun, pf_sd_card_result_t result,
@@ -39,10 +71,7 @@ static int32_t transfer_result(uint8_t lun, pf_sd_card_result_t result,
     uint8_t key = unavailable ? SCSI_SENSE_NOT_READY : SCSI_SENSE_MEDIUM_ERROR;
     /* ASC 11: unrecovered read error; ASC 0C: write error. */
     uint8_t asc = unavailable ? 0x3au : (writing ? 0x0cu : 0x11u);
-    set_sense(lun, key, asc, 0u);
-    transfer_sense_key = key;
-    transfer_sense_asc = asc;
-    transfer_sense_pending = true;
+    fail_transfer(lun, key, asc);
     return -1;
 }
 
@@ -53,6 +82,10 @@ int32_t tud_msc_request_sense_cb(uint8_t lun, void *buffer, uint16_t bufsize)
     if ((buffer == NULL) || (bufsize < 18u)) {
         return -1;
     }
+    if (bus_reset_pending) {
+        transfer_sense_pending = false;
+    }
+    bus_reset_pending = false;
     if ((lun == 0u) && transfer_sense_pending) {
         uint8_t *response = buffer;
         response[2] = transfer_sense_key;
@@ -186,6 +219,7 @@ void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8], uint8_t product_id[16
                         uint8_t product_rev[4])
 {
     (void)lun;
+    transfer_sense_pending = false;
     memcpy(vendor_id, "PicoForge", 8u);
     memcpy(product_id, "SD Card", 7u);
     memcpy(product_rev, "1.0", 3u);
@@ -193,11 +227,13 @@ void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8], uint8_t product_id[16
 
 bool tud_msc_test_unit_ready_cb(uint8_t lun)
 {
+    transfer_sense_pending = false;
     return media_ready(lun);
 }
 
 void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_size)
 {
+    transfer_sense_pending = false;
     *block_count = media_ready(lun) ? pf_sd_card_block_count() : 0u;
     *block_size = PF_SD_CARD_BLOCK_SIZE;
 }
@@ -206,6 +242,7 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
                            bool load_eject)
 {
     (void)power_condition;
+    transfer_sense_pending = false;
     if ((lun != 0u) || !msc_enabled) {
         return false;
     }
@@ -245,6 +282,7 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
 bool tud_msc_prevent_allow_medium_removal_cb(uint8_t lun, uint8_t prohibit_removal,
                                              uint8_t control)
 {
+    transfer_sense_pending = false;
     if (lun != 0u) {
         return false;
     }
@@ -259,21 +297,33 @@ bool tud_msc_prevent_allow_medium_removal_cb(uint8_t lun, uint8_t prohibit_remov
 
 bool tud_msc_is_writable_cb(uint8_t lun)
 {
+    transfer_sense_pending = false;
     return (lun == 0u) && msc_enabled && !msc_ejected;
 }
 
 static bool transfer_is_valid(uint8_t lun, uint32_t lba, uint32_t offset,
-                              uint32_t size)
+                              const void *buffer, uint32_t size)
 {
-    return media_ready(lun) && (lba < pf_sd_card_block_count()) &&
-           (offset <= PF_SD_CARD_BLOCK_SIZE) &&
-           (size <= PF_SD_CARD_BLOCK_SIZE - offset);
+    transfer_sense_pending = false;
+    if (!media_ready(lun)) {
+        return false;
+    }
+    if ((buffer == NULL) || (offset > PF_SD_CARD_BLOCK_SIZE) ||
+        (size > PF_SD_CARD_BLOCK_SIZE - offset)) {
+        fail_transfer(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u);
+        return false;
+    }
+    if (lba >= pf_sd_card_block_count()) {
+        fail_transfer(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u);
+        return false;
+    }
+    return true;
 }
 
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                           void *buffer, uint32_t bufsize)
 {
-    if ((buffer == NULL) || !transfer_is_valid(lun, lba, offset, bufsize)) {
+    if (!transfer_is_valid(lun, lba, offset, buffer, bufsize)) {
         return -1;
     }
     if ((offset == 0u) && (bufsize == PF_SD_CARD_BLOCK_SIZE)) {
@@ -291,7 +341,7 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
 int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                            uint8_t *buffer, uint32_t bufsize)
 {
-    if ((buffer == NULL) || !transfer_is_valid(lun, lba, offset, bufsize)) {
+    if (!transfer_is_valid(lun, lba, offset, buffer, bufsize)) {
         return -1;
     }
     if ((offset == 0u) && (bufsize == PF_SD_CARD_BLOCK_SIZE)) {
@@ -319,6 +369,7 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
                         uint16_t bufsize)
 {
     (void)buffer;
+    transfer_sense_pending = false;
     /* SYNCHRONIZE CACHE(10): synchronous only; reject IMMED and reserved
      * bits rather than promising an asynchronous operation we cannot provide.
      * LBA/count are safely covered by syncing the entire device. */

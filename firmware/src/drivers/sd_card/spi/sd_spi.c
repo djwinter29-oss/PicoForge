@@ -530,9 +530,17 @@ static pf_sd_card_result_t transfer_block(uint32_t block, uint8_t *read_buffer,
         goto transfer_done;
     }
     if (read_buffer != NULL) {
-        if (send_command_selected(SD_CMD_READ_SINGLE_BLOCK, argument, &response) &&
-            (response == 0u) && read_data_block(read_buffer, PF_SD_CARD_BLOCK_SIZE)) {
-            success = true;
+        if (!send_command_selected(SD_CMD_READ_SINGLE_BLOCK, argument, &response)) {
+            /* The card may have accepted the command despite a lost R1. */
+            card_initialized = false;
+        } else if (response == 0u) {
+            /* ponytail: any failed data phase (token timeout, short read, CRC)
+             * invalidates; a CRC-only failure could be preserved but is not
+             * distinguished. A non-zero R1 rejection keeps command mode known. */
+            success = read_data_block(read_buffer, PF_SD_CARD_BLOCK_SIZE);
+            if (!success) {
+                card_initialized = false;
+            }
         }
     } else {
         if (!send_command_selected(SD_CMD_WRITE_SINGLE_BLOCK, argument, &response)) {
