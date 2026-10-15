@@ -46,7 +46,7 @@ void pf_usb_msc_request(bool enabled)
     request_rejected = false;
 }
 
-void pf_usb_msc_task(void)
+static void apply_msc_request(void)
 {
     pf_sd_card_result_t result;
 
@@ -109,10 +109,20 @@ void pf_usb_msc_task(void)
         }
     }
 
-    (void)tud_disconnect();
-    sleep_ms(250u);
-    (void)tud_connect();
     transition_pending = false;
+}
+
+void pf_usb_msc_task(void)
+{
+    bool was_enabled = msc_enabled;
+    pf_sd_card_lock();
+    apply_msc_request();
+    pf_sd_card_unlock();
+    if (was_enabled != msc_enabled) {
+        (void)tud_disconnect();
+        sleep_ms(250u);
+        (void)tud_connect();
+    }
 }
 
 static bool media_ready(uint8_t lun)

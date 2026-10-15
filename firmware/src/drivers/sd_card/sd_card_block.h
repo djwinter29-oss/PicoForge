@@ -4,6 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/** Task-context reservation shared by both transports, telemetry and removal.
+ * Recursive; pair every lock with unlock. Never hold across reply/USB waits.
+ * Backends must be accessed through the facade after the scheduler starts.
+ */
+void pf_sd_card_lock(void);
+void pf_sd_card_unlock(void);
+
 #define PF_SD_CARD_BLOCK_SIZE 512u
 
 typedef enum {

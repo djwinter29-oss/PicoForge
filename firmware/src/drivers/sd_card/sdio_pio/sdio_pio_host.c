@@ -826,6 +826,19 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
     return true;
 }
 
+/* TX DMA control bits are invariant during a CMD24/CMD25 operation. Keep
+ * addresses, word count and trigger setup at the individual payload boundary. */
+static dma_channel_config tx_dma_config(const pf_sdio_pio_host_t *host)
+{
+    dma_channel_config dma_config = dma_channel_get_default_config(host->dma_channel);
+    channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
+    channel_config_set_bswap(&dma_config, true);
+    channel_config_set_read_increment(&dma_config, true);
+    channel_config_set_write_increment(&dma_config, false);
+    channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, true));
+    return dma_config;
+}
+
 bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
                                       bool block_addressed, const uint8_t block[512])
 {
@@ -858,12 +871,7 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     pio_sm_put_blocking(host->pio, host->data_sm, SDIO_DATA_NIBBLE_COUNT - 1u);
     pio_interrupt_clear(host->pio, 2u);
 
-    dma_config = dma_channel_get_default_config(host->dma_channel);
-    channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
-    channel_config_set_bswap(&dma_config, true);
-    channel_config_set_read_increment(&dma_config, true);
-    channel_config_set_write_increment(&dma_config, false);
-    channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, true));
+    dma_config = tx_dma_config(host);
     dma_channel_configure(host->dma_channel, &dma_config,
                           &host->pio->txf[host->data_sm], image,
                           SDIO_DATA_WORD_COUNT, false);
@@ -974,10 +982,10 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         }
         pio_sm_set_enabled(host->pio, host->command_sm, true);
     }
+    dma_channel_config dma_config = tx_dma_config(host);
     for (uint32_t block_index = 0u; block_index < block_count; block_index++) {
         uint32_t *image = images[block_index & 1u];
         uint32_t response_word = 0u;
-        dma_channel_config dma_config;
 
         pio_sm_clear_fifos(host->pio, host->data_sm);
         pio_interrupt_clear(host->pio, 2u);
@@ -986,12 +994,6 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
                     pio_encode_jmp(host->data_tx_program_offset));
         pio_sm_put_blocking(host->pio, host->data_sm, SDIO_DATA_NIBBLE_COUNT - 1u);
 
-        dma_config = dma_channel_get_default_config(host->dma_channel);
-        channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
-        channel_config_set_bswap(&dma_config, true);
-        channel_config_set_read_increment(&dma_config, true);
-        channel_config_set_write_increment(&dma_config, false);
-        channel_config_set_dreq(&dma_config, pio_get_dreq(host->pio, host->data_sm, true));
         dma_channel_configure(host->dma_channel, &dma_config,
                               &host->pio->txf[host->data_sm], image,
                               SDIO_DATA_WORD_COUNT, false);
