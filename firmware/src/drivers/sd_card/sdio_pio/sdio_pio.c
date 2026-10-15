@@ -467,11 +467,6 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         card_initialized = false;
         return PF_SD_CARD_INIT_FAILED;
     }
-    /* A stream left open by a previous session must end before CMD0 re-initializes the card. */
-    if (!pf_sdio_pio_host_recover(&sdio_pio_host)) {
-        card_initialized = false;
-        return PF_SD_CARD_INIT_FAILED;
-    }
     card_initialized = false;
     uint32_t clock_limit_hz = active_config.clock_hz;
     if (clock_limit_hz == 0u) {
@@ -481,6 +476,10 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
          attempt < sizeof(transfer_clock_steps_hz) / sizeof(transfer_clock_steps_hz[0]);
          attempt++) {
         uint32_t previous_limit_hz = clock_limit_hz;
+        /* Each attempt starts with CMD0, so a stream left by a prior session or probe must end first. */
+        if (!pf_sdio_pio_host_recover(&sdio_pio_host)) {
+            break;
+        }
         if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u)) {
             break;
         }

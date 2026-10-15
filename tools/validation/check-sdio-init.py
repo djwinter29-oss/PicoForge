@@ -202,6 +202,7 @@ static struct {
     uint32_t current_clock_hz;
     bool data_rx_multiblock_supported;
     bool write_stream_open;
+    bool read_stream_unresolved;
     bool mode_restore_failed;
 } sdio_pio_host;
 typedef struct {
@@ -220,6 +221,8 @@ static bool corrupt_fast, fail_reads, lose_batching, fail_identification;
 static bool runtime_read;
 static bool change_cid, change_capacity;
 static uint32_t fail_above_hz;
+static bool read_fail_unresolved;
+static unsigned recover_failure_call;
 static bool removed, continue_write, close_ok = true, write_ok = true, fail_write_restore;
 static unsigned closes, single_writes, batch_writes;
 static unsigned detect_gpio_level = 1u, forgotten_removed_cards;
@@ -239,8 +242,10 @@ static bool pf_sdio_pio_host_recover(void *host)
 {
     (void)host;
     ++closes;
+    if (recover_failure_call == closes) return false;
     if (close_ok) {
         sdio_pio_host.write_stream_open = false;
+        sdio_pio_host.read_stream_unresolved = false;
         sdio_pio_host.mode_restore_failed = false;
     }
     return close_ok;
@@ -283,6 +288,7 @@ static bool pf_sdio_pio_host_read_blocks(void *host, uint32_t first,
     if (!runtime_read) assert(first == sectors);
     ++reads;
     sectors += count;
+    if (read_fail_unresolved && fail_reads) sdio_pio_host.read_stream_unresolved = true;
     if (corrupt_fast && sdio_pio_host.current_clock_hz > 25000000u)
         sdio_pio_host.current_clock_hz = 1000000u;
     if (lose_batching) sdio_pio_host.data_rx_multiblock_supported = false;
@@ -300,6 +306,7 @@ static bool pins_are_valid(const pf_sdio_pio_config_t *config) { (void)config; r
 @VALIDATE_32@
 static bool initialize_card(uint32_t *clock_limit_hz)
 {
+    assert(!sdio_pio_host.read_stream_unresolved);
     ++attempts;
     sectors = 0u;
     if (fail_identification) { card_init_stage = 99u; return false; }
@@ -325,7 +332,9 @@ static void reset(void)
     close_ok = write_ok = true;
     fail_write_restore = sdio_pio_host.mode_restore_failed = false;
     high_speed_requests = 0u;
-    sdio_pio_host.write_stream_open = false;
+    sdio_pio_host.write_stream_open = sdio_pio_host.read_stream_unresolved = false;
+    read_fail_unresolved = false;
+    recover_failure_call = 0u;
     card_initialized = false;
     card_init_stage = 0u;
     corrupt_fast = fail_reads = lose_batching = fail_identification = false;
@@ -354,6 +363,15 @@ int main(void)
     fail_reads = true;
     assert(initialize() == PF_SD_CARD_INIT_FAILED && !card_initialized);
     assert(attempts == 8u && reads == 7u && resets == 9u);
+    reset();
+    fail_reads = read_fail_unresolved = true;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED && !card_initialized);
+    assert(attempts == 8u && closes == 8u && !sdio_pio_host.read_stream_unresolved);
+    reset();
+    fail_reads = read_fail_unresolved = true;
+    recover_failure_call = 3u;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED && !card_initialized);
+    assert(attempts == 2u && closes == 3u && sdio_pio_host.read_stream_unresolved);
     reset();
     lose_batching = true;
     assert(initialize() == PF_SD_CARD_OK && sdio_pio_host.current_clock_hz == 20000000u);
