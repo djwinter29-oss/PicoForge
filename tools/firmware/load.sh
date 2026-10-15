@@ -119,7 +119,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ -n "$FREERTOS_KERNEL_PATH_VALUE" ]; then
         set -- "$@" --freertos-kernel-path "$FREERTOS_KERNEL_PATH_VALUE"
     fi
-    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT"
+    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT" --sd-card-port FREERTOS
     "$@"
 fi
 

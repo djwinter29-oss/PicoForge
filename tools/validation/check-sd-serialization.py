@@ -65,6 +65,8 @@ static void *io(void *unused)
 static void *other(void *unused)
 {
     (void)unused; atomic_store(&contender_started, true);
+    /* Nonblocking USB reservations must fail, not wait for slow I/O. */
+    assert(!pf_sd_card_try_lock());
     if (contender == 0) pf_sd_card_confirm_removed();
     else if (contender == 1) { pf_sd_card_info_t info; pf_sd_card_get_info(&info); }
     else assert(pf_sd_card_msc_release() == PF_SD_CARD_OK);
@@ -84,6 +86,10 @@ static pf_sd_card_result_t call_operation(unsigned op, bool msc)
 static void check_contracts(void)
 {
     contract_test = true;
+    assert(pf_sd_card_try_lock());
+    assert(pf_sd_card_try_lock()); /* recursive on the owning task */
+    pf_sd_card_unlock();
+    pf_sd_card_unlock();
     /* Wrong owner wins over unconfigured and invalid transfer arguments. */
     for (unsigned op = 0; op < 3; ++op) {
         assert(call_operation(op, true) == PF_SD_CARD_NOT_READY);
@@ -174,7 +180,7 @@ int main(void)
 SHIMS = {
     'hardware/spi.h': 'typedef struct spi_inst spi_inst_t;\n',
     'hardware/pio.h': '#include <stdbool.h>\ntypedef void *PIO;\n',
-    'FreeRTOS.h': '#include <assert.h>\n#define configASSERT assert\n#define portMAX_DELAY 0\n#define pdTRUE 1\ntypedef int BaseType_t;\n',
+    'FreeRTOS.h': '#include <assert.h>\n#define configASSERT assert\n#define portMAX_DELAY 0xffffffffu\n#define pdTRUE 1\ntypedef int BaseType_t;\n',
     'task.h': '''#include <pthread.h>
 extern pthread_mutex_t creation_lock;
 #define taskENTER_CRITICAL() pthread_mutex_lock(&creation_lock)
@@ -189,7 +195,7 @@ static inline SemaphoreHandle_t xSemaphoreCreateRecursiveMutexStatic(StaticSemap
     assert(!pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE));
     assert(!pthread_mutex_init(m, &a)); pthread_mutexattr_destroy(&a); return m;
 }
-#define xSemaphoreTakeRecursive(m, timeout) (pthread_mutex_lock(m) == 0)
+#define xSemaphoreTakeRecursive(m, timeout) (((timeout) == 0 ? pthread_mutex_trylock(m) : pthread_mutex_lock(m)) == 0)
 #define xSemaphoreGiveRecursive(m) (pthread_mutex_unlock(m) == 0)
 ''',
 }
@@ -216,6 +222,7 @@ def main():
                             '-I' + str(ROOT / 'firmware/src'),
                             '-I' + str(ROOT / 'firmware/src/drivers/sd_card'),
                             str(ROOT / 'firmware/src/drivers/sd_card/sd_card.c'),
+                            str(ROOT / 'firmware/src/drivers/sd_card/ports/freertos/sd_card_port.c'),
                             str(d / 'test.c'), '-o', str(d / 'test')], check=True)
             subprocess.run([str(d / 'test')], check=True, timeout=15)
     print('Production facade (SDIO/SPI): owner/configuration/result forwarding and RX/TX/sync versus removal/telemetry/handoff passed')

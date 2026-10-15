@@ -37,6 +37,7 @@ def main():
                             '-Wall', '-Wextra', '-Werror', '-pthread',
                             *['-I' + str(p) for p in includes], str(d / 'test.c'),
                             str(ROOT / 'firmware/src/drivers/sd_card/sd_card.c'),
+                            str(ROOT / 'firmware/src/drivers/sd_card/ports/freertos/sd_card_port.c'),
                             '-o', str(d / 'test')], check=True)
             subprocess.run([str(d / 'test')], check=True, timeout=15)
             print('Data-bearing facade transport:', 'SPI' if transport else 'SDIO')

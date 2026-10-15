@@ -4,11 +4,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/** Task-context reservation shared by both transports, telemetry and removal.
- * Recursive; pair every lock with unlock. Never hold across reply/USB waits.
- * Backends must be accessed through the facade after the scheduler starts.
+/** Reservation shared by both transports, telemetry and removal.
+ * FreeRTOS: recursive, task-context only with a running scheduler.
+ * Bare metal: no-op, single foreground context only; no ISR/second-core calls.
+ * Pair every lock with unlock. Never hold across reply/USB waits.
+ * Backends must be accessed through the facade.
  */
 void pf_sd_card_lock(void);
+/** Attempt a reservation without waiting; unlock only on success.
+ * Always succeeds under the bare-metal port's single-context contract.
+ */
+bool pf_sd_card_try_lock(void);
 void pf_sd_card_unlock(void);
 
 #define PF_SD_CARD_BLOCK_SIZE 512u

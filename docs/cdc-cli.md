@@ -1,8 +1,9 @@
 # USB CDC CLI
 
 USB CDC ACM is the interactive command interface. UART remains the independent
-debug-log transport; neither HID telemetry nor MSC ownership is changed by CLI
-commands. The periodic CDC greeting has been removed.
+debug-log transport. Normal storage commands do not change MSC ownership;
+explicit confirmed fault recovery is the exception described below. The periodic
+CDC greeting has been removed.
 
 ## Dependency
 
@@ -40,6 +41,7 @@ CR, LF, and CRLF are accepted.
 | `sd status` | Show card presence, initialization, transport, capacity, clock, mounted state, and Pico/USB ownership. |
 | `sd profile [status, on, off, reset]` | Show or control optional SD-card phase profiling; changes require Pico ownership. Counters are cumulative and not a total-latency breakdown. |
 | `sd diagnostics [status, clear]` | Show the retained last facade failure, transport initialization stage, owner, and event-counter snapshot. Clearing requires Pico ownership. |
+| `sd recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
@@ -81,7 +83,41 @@ Only one storage command can be outstanding. The CLI acknowledges that it was
 queued; this is not a success report. Wait for its result before the next storage
 command. FatFs results include their symbolic name and numeric code. A short
 write or sync/close failure is reported; a new or partially modified file may
-remain. Commands do not roll back writes or change MSC ownership.
+remain. Commands do not roll back writes. Only explicit fault recovery changes
+MSC ownership.
+
+## Faulted MSC Recovery
+
+Use normal host eject followed by HID MSC disable whenever possible. If an I/O
+failure invalidates a still-connected card, eject/sync and normal disable may
+all fail. For that faulted state only:
+
+1. Stop host access to the drive and collect `sd diagnostics` before recovery.
+   Unsaved host data and partially accepted writes may already be lost.
+2. Enter exactly `sd recover --confirm` in the CDC CLI. This is a request, not
+   a successful clean eject or a promise that initialization will succeed.
+3. The request is rejected if MSC is disabled, the card is still initialized,
+   removal is prevented by the host, storage work is busy, or the recovery
+   request cannot be queued. The existing HID MSC status exposes pending and
+   rejected requests; rejected requests do not detach the device.
+4. Once accepted, USB detaches before returning card ownership to firmware.
+   CDC/HID reconnect without MSC; reopen the same board if necessary.
+   The worker attempts card initialization only. It does not retry the failed
+   payload, report a successful SCSI sync/eject, mount, format, or repair.
+5. After reconnect, use `sd status` to check initialization and confirm
+   `mounted=0`; use `sd diagnostics` to inspect retained failures. Successful
+   initialization does not erase the original I/O diagnostic. A new failed
+   initialization replaces it with the latest failure.
+6. Inspect/repair the filesystem with appropriate host tools before deliberately
+   running `fs mount`. An initialized card can be handed to MSC again for
+   inspection using normal enable/eject/disable. Automatic mounting remains
+   suppressed even across reinsertion and subsequent MSC returns until a
+   successful explicit `fs mount`. This suppression is not persistent over
+   MCU reset or loss of power.
+
+Reinitialization retains checked cleanup of unresolved native streams; it can
+fail and leave the card uninitialized. Recovery does not abandon a stream on a
+present card or fabricate durability guarantees.
 
 Closing CDC discards the session's partial command, output, and history. Reopening
 starts a fresh prompt. A disconnected session stops further listing/cat output,

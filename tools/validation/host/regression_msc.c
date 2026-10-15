@@ -7,6 +7,7 @@ static bool pf_storage_is_mounted(void);
 static void pf_storage_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
+static bool pf_storage_worker_recover_card(void);
 #include "../../../firmware/src/usb/msc.c"
 static bool initialized=true, worker_busy, mounted;
 static unsigned locks, syncs, sense, asc;
@@ -17,6 +18,8 @@ static bool pf_storage_is_mounted(void) { return mounted; }
 static void pf_storage_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
 static bool pf_storage_worker_media_absent(void) { return false; }
+static bool pf_storage_worker_recover_card(void) { return false; }
+bool pf_sd_card_try_lock(void) { ++locks; return true; }
 void pf_sd_card_lock(void) { ++locks; }
 void pf_sd_card_unlock(void) { assert(locks); --locks; }
 bool pf_sd_card_is_initialized(void) { return initialized; }

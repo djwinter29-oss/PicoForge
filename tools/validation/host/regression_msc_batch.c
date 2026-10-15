@@ -10,6 +10,7 @@ static bool pf_storage_is_mounted(void);
 static void pf_storage_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
+static bool pf_storage_worker_recover_card(void);
 #include "../../../firmware/src/usb/msc.c"
 #include "drivers/sd_card/sd_card.h"
 #include "drivers/sd_card/sdio_pio/sdio_pio.h"
@@ -27,6 +28,7 @@ static bool pf_storage_is_mounted(void) { return false; }
 static void pf_storage_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return false; }
 static bool pf_storage_worker_media_absent(void) { return false; }
+static bool pf_storage_worker_recover_card(void) { return false; }
 void __real_mscd_reset(uint8_t p) { (void)p; }
 bool __real_mscd_control_xfer_cb(uint8_t p,uint8_t s,const tusb_control_request_t *r)
 { (void)p; (void)s; (void)r; return false; }

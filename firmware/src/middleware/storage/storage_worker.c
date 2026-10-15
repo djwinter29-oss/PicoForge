@@ -19,6 +19,7 @@ typedef struct {
     uint32_t session;
     uint32_t test_size_mib;
     bool host_owned;
+    bool recover_card;
     char family[3];
     char arguments[PF_STORAGE_COMMAND_ARGS_SIZE];
 } storage_request_t;
@@ -47,6 +48,7 @@ static uint8_t presence_sample_count;
 static bool stable_presence_valid;
 static bool stable_card_present;
 static bool auto_mount_pending = true;
+static bool auto_mount_blocked;
 static bool mount_retry_waiting;
 static uint32_t last_mount_attempt_ms;
 
@@ -165,6 +167,9 @@ static void service_card_presence(void)
     if (!firmware_owned) {
         goto done;
     }
+    if (auto_mount_blocked) {
+        goto done;
+    }
     if (pf_sd_card_take_reinit_request()) {
         auto_mount_pending = true;
         mount_retry_waiting = false;
@@ -189,6 +194,20 @@ done:
     taskEXIT_CRITICAL();
 }
 
+static void recover_card(void)
+{
+    auto_mount_blocked = true;
+    auto_mount_pending = false;
+    pf_sd_card_lock();
+    (void)pf_sd_card_take_reinit_request();
+    /* Failure remains in facade diagnostics. Never mount or replay. */
+    (void)pf_sd_card_init(&card_config);
+    pf_sd_card_unlock();
+    taskENTER_CRITICAL();
+    busy = false;
+    taskEXIT_CRITICAL();
+}
+
 static void storage_task(void *context)
 {
     (void)context;
@@ -208,12 +227,19 @@ static void storage_task(void *context)
             taskEXIT_CRITICAL();
             continue;
         }
+        if (request.recover_card) {
+            recover_card();
+            continue;
+        }
         bool previously_mounted = pf_storage_is_mounted();
         pf_storage_command_execute(config_available ? &card_config : NULL,
                                     request.host_owned, request.family, request.arguments,
                                     send_reply, &request);
         if (previously_mounted && !pf_storage_is_mounted()) {
             auto_mount_pending = false;
+        }
+        if (pf_storage_is_mounted()) {
+            auto_mount_blocked = false;
         }
         pf_storage_worker_reply_t reply = { .session = request.session, .done = true };
         (void)xQueueSend(replies, &reply, portMAX_DELAY);
@@ -277,6 +303,26 @@ bool pf_storage_worker_busy(void)
     return is_busy;
 }
 
+bool pf_storage_worker_recover_card(void)
+{
+    storage_request_t request = { .recover_card = true };
+    refresh_self_test_completion();
+    taskENTER_CRITICAL();
+    if (busy || card_service_busy || !config_available || requests == NULL) {
+        taskEXIT_CRITICAL();
+        return false;
+    }
+    busy = true;
+    taskEXIT_CRITICAL();
+    if (xQueueSend(requests, &request, 0u) != pdPASS) {
+        taskENTER_CRITICAL();
+        busy = false;
+        taskEXIT_CRITICAL();
+        return false;
+    }
+    return true;
+}
+
 bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply)
 {
     refresh_self_test_completion();
@@ -306,10 +352,15 @@ bool pf_storage_worker_self_test_start(uint32_t size_mib, bool host_owned)
         rejection = PF_SELF_TEST_ERROR_USB_OWNER;
     } else if ((size_mib == 0u) || (size_mib > PF_STORAGE_SELF_TEST_MAX_MIB)) {
         rejection = PF_SELF_TEST_ERROR_SIZE;
-    } else if (!config_available || !pf_sd_card_is_initialized()) {
-        rejection = PF_SELF_TEST_ERROR_CARD;
-    } else if (!pf_storage_is_mounted()) {
-        rejection = PF_SELF_TEST_ERROR_NOT_MOUNTED;
+    } else if (!pf_sd_card_try_lock()) {
+        rejection = PF_SELF_TEST_ERROR_BUSY;
+    } else {
+        if (!config_available || !pf_sd_card_is_initialized()) {
+            rejection = PF_SELF_TEST_ERROR_CARD;
+        } else if (!pf_storage_is_mounted()) {
+            rejection = PF_SELF_TEST_ERROR_NOT_MOUNTED;
+        }
+        pf_sd_card_unlock();
     }
     taskENTER_CRITICAL();
     if (busy || card_service_busy) {

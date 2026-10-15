@@ -125,11 +125,11 @@ int main(void)
 {
     fake_pio_t pio = {0}, foreign = {0};
     pf_sd_card_config_t config = { .transport = 1, .bus.sdio_pio.pio = &pio };
-    pf_sd_card_wait_init(NULL);
-    pf_sd_card_wait_init(&config);
+    pf_sd_card_port_init(NULL);
+    pf_sd_card_port_init(&config);
     assert(wait_hook == NULL);
     config.transport = 0;
-    pf_sd_card_wait_init(&config);
+    pf_sd_card_port_init(&config);
     assert(wait_hook != NULL && !pio.source[1] && !pio.source[2]);
     wait_hook(&pio, 1u);
     assert(blocked == 0u);
@@ -158,7 +158,7 @@ int main(void)
 def check_optional_variants():
     cc = os.environ.get("CC", "cc")
     include = SOURCE.parents[1]
-    adapter = ROOT / "firmware/src/drivers/sd_card/freertos/sd_card_wait.c"
+    adapter = ROOT / "firmware/src/drivers/sd_card/ports/freertos/sd_card_wait.c"
     adapter_source = "\n".join(line for line in adapter.read_text().splitlines()
                                if not line.startswith("#include"))
     with tempfile.TemporaryDirectory() as scratch:

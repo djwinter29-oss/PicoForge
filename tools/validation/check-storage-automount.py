@@ -31,6 +31,15 @@ HARNESS = r"""
 #include <stdint.h>
 #include <stdio.h>
 static unsigned reservation_depth;
+static unsigned try_lock_calls;
+static bool lock_unavailable;
+static bool pf_sd_card_try_lock(void)
+{
+    ++try_lock_calls;
+    if (lock_unavailable) return false;
+    ++reservation_depth;
+    return true;
+}
 static void pf_sd_card_lock(void) { ++reservation_depth; }
 static void pf_sd_card_unlock(void) { assert(reservation_depth); --reservation_depth; }
 #define taskENTER_CRITICAL() ((void)0)
@@ -91,11 +100,13 @@ static void tud_msc_set_sense(unsigned l, unsigned s, unsigned a, unsigned q)
 static bool media_ready(unsigned lun) { return lun == 0 && media.initialized; }
 static bool msc_enabled, msc_ejected, removal_prevented, request_pending;
 static bool requested_enabled, transition_pending, request_rejected;
+static bool recovery_requested;
 static bool sync_ok = true;
 static unsigned sync_calls;
 static bool pf_storage_worker_busy(void) { return busy || card_service_busy; }
 static bool pf_storage_worker_media_absent(void);
-static bool tud_disconnect(void) { return true; }
+static unsigned disconnects;
+static bool tud_disconnect(void) { ++disconnects; return true; }
 static bool tud_connect(void) { return true; }
 static void sleep_ms(unsigned ms) { (void)ms; }
 static pf_sd_card_result_t pf_sd_card_msc_sync(void)
@@ -114,6 +125,29 @@ static pf_storage_result_t pf_storage_mount(const int *config, void *result)
     }
     return mount_result;
 }
+typedef struct { bool recover_card; } storage_request_t;
+static void *requests = (void *)1;
+static bool queued_recovery, queue_fails;
+static void refresh_self_test_completion(void) {}
+#define pdPASS 1
+static int xQueueSend(void *queue, const storage_request_t *request, unsigned timeout)
+{
+    assert(queue == requests && request->recover_card && timeout == 0);
+    if (queue_fails) return 0;
+    queued_recovery = true;
+    return pdPASS;
+}
+static unsigned init_calls;
+static bool init_fails;
+static pf_sd_card_result_t pf_sd_card_init(const int *config)
+{
+    assert(config == &card_config && active_owner == PF_SD_CARD_OWNER_FIRMWARE);
+    assert(disconnects && reservation_depth);
+    ++init_calls;
+    media.initialized = !init_fails;
+    return media.initialized ? PF_SD_CARD_OK : PF_SD_CARD_NOT_READY;
+}
+@RECOVERY@
 @ATTEMPT@
 @FUNCTION@
 @MSC@
@@ -305,6 +339,79 @@ int main(void)
     assert(mount_calls == previous_mounts);
     poll(1);
     assert(mount_calls == previous_mounts + 1u && media.initialized && !reinit_request);
+
+    /* A faulted present card cannot cleanly eject. Explicit recovery must
+     * detach first, never sync/replay, then initialize without mounting. */
+    mounted = false;
+    pf_usb_msc_request(true);
+    pf_usb_msc_task();
+    assert(msc_enabled && active_owner == PF_SD_CARD_OWNER_USB_MSC);
+    unsigned before_disconnects = disconnects;
+    pf_usb_msc_request_recovery(); /* healthy media cannot bypass eject */
+    pf_usb_msc_task();
+    assert(request_rejected && !queued_recovery && disconnects == before_disconnects);
+    media.initialized = false;
+    poll(100);
+    assert(!media.initialized);
+    assert(!tud_msc_start_stop_cb(0, 0, false, true));
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    assert(msc_enabled && request_rejected);
+    unsigned before_syncs = sync_calls;
+    lock_unavailable = true;
+    unsigned before_reservations = try_lock_calls;
+    pf_usb_msc_task(); /* no pending request does not even reserve */
+    assert(try_lock_calls == before_reservations);
+    pf_usb_msc_request_recovery();
+    pf_usb_msc_task(); /* busy card must not block USB */
+    assert(request_pending && transition_pending && !queued_recovery);
+    lock_unavailable = false;
+    busy = true;
+    pf_usb_msc_task();
+    assert(request_rejected && !queued_recovery);
+    busy = false;
+    removal_prevented = true;
+    pf_usb_msc_request_recovery();
+    pf_usb_msc_task();
+    assert(request_rejected && !queued_recovery);
+    removal_prevented = false;
+    queue_fails = true;
+    pf_usb_msc_request_recovery();
+    pf_usb_msc_task();
+    assert(request_rejected && !queued_recovery && !busy && msc_enabled);
+    queue_fails = false;
+    pf_usb_msc_request_recovery();
+    pf_usb_msc_task();
+    assert(!msc_enabled && !request_rejected && queued_recovery && busy);
+    assert(active_owner == PF_SD_CARD_OWNER_FIRMWARE && disconnects == before_disconnects + 1u);
+    assert(sync_calls == before_syncs);
+    queued_recovery = false;
+    recover_card();
+    assert(init_calls == 1 && !busy && media.initialized && !mounted && auto_mount_blocked);
+    previous_mounts = mount_calls;
+    poll(100);
+    assert(!mounted && mount_calls == previous_mounts);
+    /* Returning MSC ownership and reinsertion must not defeat the latch. */
+    pf_usb_msc_request(true);
+    pf_usb_msc_task();
+    assert(msc_enabled);
+    assert(tud_msc_start_stop_cb(0, 0, false, true));
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    poll(100);
+    assert(!msc_enabled && !mounted && mount_calls == previous_mounts);
+    media.present = false;
+    poll(3);
+    media.present = true;
+    poll(100);
+    assert(!mounted && mount_calls == previous_mounts && init_calls == 1);
+    /* Failure is also left unmounted without automatic retry. */
+    init_fails = true;
+    busy = true;
+    recover_card();
+    poll(100);
+    assert(!busy && !media.initialized && !mounted && init_calls == 2);
+    assert(mount_calls == previous_mounts);
     puts("Storage/MSC/facade/host removal lifecycle checks passed");
 }
 """
@@ -328,9 +435,11 @@ def main():
     connected = connected.replace("reinit_after_usb_owner", "reinit_request")
     usb = "static bool transfer_sense_pending;\n" + "\n".join(function_source(msc, name) for name in (
         "set_sense",
-        "pf_usb_msc_request", "apply_msc_request", "pf_usb_msc_task", "tud_msc_start_stop_cb",
+        "pf_usb_msc_request", "pf_usb_msc_request_recovery", "apply_msc_request", "pf_usb_msc_task", "tud_msc_start_stop_cb",
         "tud_msc_prevent_allow_medium_removal_cb"))
     harness = (HARNESS.replace("@STATE@", defines + "\n" + state)
+               .replace("@RECOVERY@", function_source(source, "pf_storage_worker_recover_card") + "\n" +
+                        function_source(source, "recover_card"))
                .replace("@ATTEMPT@", function_source(source, "attempt_auto_mount"))
                .replace("@FUNCTION@", function_source(source, "service_card_presence") + "\n" +
                         function_source(source, "pf_storage_worker_media_absent"))

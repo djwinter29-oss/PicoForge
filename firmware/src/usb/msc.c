@@ -17,6 +17,7 @@ static bool request_pending;
 static bool requested_enabled;
 static bool transition_pending;
 static bool request_rejected;
+static bool recovery_requested;
 /* TinyUSB 0.18.0 overwrites READ10/WRITE10 error sense after our callback.
  * Keep only that transfer's sense until REQUEST SENSE. It is dropped when any
  * later command callback runs, on unmount, and on handled BOT/bus reset.
@@ -132,9 +133,18 @@ bool pf_usb_msc_request_rejected(void)
 
 void pf_usb_msc_request(bool enabled)
 {
+    recovery_requested = false;
     requested_enabled = enabled;
     request_pending = true;
     transition_pending = enabled != msc_enabled;
+    request_rejected = false;
+}
+
+void pf_usb_msc_request_recovery(void)
+{
+    recovery_requested = true;
+    request_pending = true;
+    transition_pending = true;
     request_rejected = false;
 }
 
@@ -146,6 +156,31 @@ static void apply_msc_request(void)
         return;
     }
     request_pending = false;
+    if (recovery_requested) {
+        recovery_requested = false;
+        pf_sd_card_info_t info;
+        pf_sd_card_get_info(&info);
+        if (!msc_enabled || info.initialized || removal_prevented ||
+            pf_storage_worker_busy() || pf_storage_is_mounted() ||
+            !pf_storage_worker_recover_card()) {
+            transition_pending = false;
+            request_rejected = true;
+            return;
+        }
+        /* The queued worker waits for our reservation. Detach before handing
+         * it the card; this is never reported as successful SCSI eject/sync. */
+        (void)tud_disconnect();
+        result = pf_sd_card_msc_release();
+        if (result != PF_SD_CARD_OK) {
+            transition_pending = false;
+            request_rejected = true;
+            (void)tud_connect();
+            return;
+        }
+        msc_enabled = false;
+        transition_pending = false;
+        return;
+    }
     if (requested_enabled == msc_enabled) {
         transition_pending = false;
         return;
@@ -206,13 +241,21 @@ static void apply_msc_request(void)
 
 void pf_usb_msc_task(void)
 {
+    if (!request_pending) {
+        return;
+    }
+    if (!pf_sd_card_try_lock()) {
+        return;
+    }
     bool was_enabled = msc_enabled;
-    pf_sd_card_lock();
+    bool recovering = recovery_requested;
     apply_msc_request();
     pf_sd_card_unlock();
     if (was_enabled != msc_enabled) {
         transfer_sense_pending = false;
-        (void)tud_disconnect();
+        if (!recovering) {
+            (void)tud_disconnect();
+        }
         sleep_ms(250u);
         (void)tud_connect();
     }

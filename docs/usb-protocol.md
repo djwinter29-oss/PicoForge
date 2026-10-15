@@ -42,7 +42,12 @@ The sequence byte wraps modulo 256. Temperature comes from the MCU's internal se
 
 ## Input Report 3
 
-Input report 3 has a 29-byte payload and is published every 1000 ms. Its layout version is `2`. Startup initializes the selected SD-card transport to collect telemetry; the storage worker then attempts to mount detected media according to [the mounting policy](cdc-cli.md).
+Input report 3 has a 29-byte payload and is normally published every 1000 ms.
+Its layout version is `2`. The storage worker initializes and mounts detected
+media according to [the mounting policy](cdc-cli.md). If storage holds the card
+reservation, periodic memory reports are deferred and GET_REPORT returns no
+report rather than blocking USB on card initialization/recovery. Hosts should
+retry; no stale or fabricated memory snapshot is sent.
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |
@@ -57,7 +62,9 @@ Input report 3 has a 29-byte payload and is published every 1000 ms. Its layout 
 
 When presence-known is clear, the card's presence is unknown; do not treat it as absent. When no card-detect input is configured, successful initialization establishes presence. CID bytes decode as manufacturer ID (byte 0), OEM ID (1-2, ASCII), product name (3-7, ASCII), product revision (byte 8, high nibble major and low nibble minor), serial number (9-12, big-endian), and manufacturing date (13-14: year offset from 2000 in the upper 8 bits and month in the lower 4 bits). Byte 15 contains the CID CRC/end bits. The numeric manufacturer ID is reported without a vendor-name lookup.
 
-If initialized is set, configured, presence-known, present, CID-valid, and capacity-valid must also be set. The report supports `GET_REPORT` and is refreshed every second.
+If initialized is set, configured, presence-known, present, CID-valid, and
+capacity-valid must also be set. The report supports `GET_REPORT` when the card
+reservation is available.
 
 ## Feature Report 4
 
@@ -69,13 +76,19 @@ Feature report 5 controls USB Mass Storage Class (MSC) ownership. Its SET payloa
 
 MSC is disabled at boot. Enabling requires an initialized card, an unmounted firmware filesystem, and no outstanding CLI storage command. Both enable and disable requests are rejected while storage work or its replies are pending. Use the [CDC CLI](cdc-cli.md) to explicitly unmount before handoff. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
 
+For a card invalidated by an I/O failure, the explicit
+[CDC fault-recovery workflow](cdc-cli.md#faulted-msc-recovery) can detach faulted
+MSC without claiming clean eject or sync. It uses the existing pending/rejected
+status fields; normal HID enable/disable semantics are unchanged.
+
 ## Report ID 6
 
 Feature Report 6 starts or cancels the [SD file self-test](sd-self-test.md).
 Its payload is exactly 6 bytes: version `2` (byte 0), action (byte 1: `1` start,
 `0` cancel), and little-endian size in MiB (bytes 2..5). Start accepts 1..128;
 Cancel requires size zero. Firmware rejects an unavailable card, USB ownership,
-an existing mount, invalid size, or pending storage work.
+an unmounted filesystem, invalid size, pending storage work, or an unavailable
+card reservation. An existing mounted filesystem is required.
 
 Input Report 6 publishes this 32-byte little-endian snapshot every 500 ms;
 GET_REPORT with type Input can also retrieve it:

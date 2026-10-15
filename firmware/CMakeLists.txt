@@ -26,6 +26,14 @@ project(pf_hello_world C CXX ASM)
 set(PF_SD_CARD_TRANSPORT "SDIO_PIO" CACHE STRING "SD-card transport: SDIO_PIO or SPI")
 set_property(CACHE PF_SD_CARD_TRANSPORT PROPERTY STRINGS SDIO_PIO SPI)
 option(PF_SD_CARD_INTERRUPT_WAIT "Enable experimental FreeRTOS native PIO completion waits" OFF)
+set(PF_SD_CARD_PORT "FREERTOS" CACHE STRING "SD-card execution environment: FREERTOS or BAREMETAL")
+set_property(CACHE PF_SD_CARD_PORT PROPERTY STRINGS FREERTOS BAREMETAL)
+if(NOT PF_SD_CARD_PORT STREQUAL "FREERTOS" AND NOT PF_SD_CARD_PORT STREQUAL "BAREMETAL")
+    message(FATAL_ERROR "PF_SD_CARD_PORT must be FREERTOS or BAREMETAL")
+endif()
+if(PF_SD_CARD_INTERRUPT_WAIT AND NOT PF_SD_CARD_PORT STREQUAL "FREERTOS")
+    message(FATAL_ERROR "PF_SD_CARD_INTERRUPT_WAIT requires PF_SD_CARD_PORT=FREERTOS")
+endif()
 if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     set(PF_CONFIG_SD_CARD_TRANSPORT_VALUE 0)
 elseif(PF_SD_CARD_TRANSPORT STREQUAL "SPI")
@@ -82,9 +90,11 @@ endif()
 
 pico_sdk_init()
 
-set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the pinned FreeRTOS-Kernel checkout")
-set(FREERTOS_CONFIG_FILE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src/integration/freertos")
-include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
+if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
+    set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the pinned FreeRTOS-Kernel checkout")
+    set(FREERTOS_CONFIG_FILE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src/integration/freertos")
+    include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
+endif()
 
 add_library(pf_sd_card_protocol STATIC
     src/drivers/sd_card/sd_card_protocol.c
@@ -148,10 +158,32 @@ target_include_directories(pf_sd_card PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/spi"
 )
 target_link_libraries(pf_sd_card PUBLIC
-    FreeRTOS-Kernel-Static
     pf_sd_card_protocol
     ${PF_SD_CARD_BACKEND}
 )
+
+if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
+    target_sources(pf_sd_card PRIVATE
+        src/drivers/sd_card/ports/freertos/sd_card_port.c
+        src/drivers/sd_card/ports/freertos/sd_card_wait.c
+    )
+    target_compile_definitions(pf_sd_card PRIVATE
+        PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
+    )
+    target_link_libraries(pf_sd_card PRIVATE FreeRTOS-Kernel-Static hardware_irq)
+else()
+    target_sources(pf_sd_card PRIVATE
+        src/drivers/sd_card/ports/baremetal/sd_card_port.c
+    )
+    # The USB/storage application requires FreeRTOS; this target checks the
+    # reusable driver without importing the kernel or accessing card hardware.
+    add_executable(pf_sd_card_baremetal_smoke tests/ports/sd_card_baremetal_smoke.c)
+    target_link_libraries(pf_sd_card_baremetal_smoke PRIVATE pf_sd_card)
+    pico_enable_stdio_usb(pf_sd_card_baremetal_smoke 0)
+    pico_enable_stdio_uart(pf_sd_card_baremetal_smoke 0)
+    pico_add_extra_outputs(pf_sd_card_baremetal_smoke)
+    return()
+endif()
 
 add_library(pf_system STATIC
     src/drivers/system.c
@@ -250,11 +282,6 @@ add_executable(pf_hello_world
     src/usb/msc.c
     src/usb/task.c
     src/middleware/storage/storage_worker.c
-    src/drivers/sd_card/freertos/sd_card_wait.c
-)
-
-target_compile_definitions(pf_hello_world PRIVATE
-    PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
 )
 
 target_include_directories(pf_hello_world PRIVATE

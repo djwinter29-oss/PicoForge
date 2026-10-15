@@ -100,6 +100,8 @@ if [ "$SKIP_TESTS" -eq 0 ]; then
     python3 tools/validation/check-sd-msc-production.py
     python3 tools/validation/check-storage-automount.py
     python3 tools/validation/check-sd-serialization.py
+    python3 tools/validation/check-sd-ports.py
+    python3 tools/validation/check-usb-sd-responsiveness.py
     python3 tools/validation/check-sdio-init.py
     python3 tools/validation/check-sdio-tx.py
     python3 tools/validation/check-sdio-read-batch.py
@@ -124,12 +126,21 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
         transport_name="$2"
         echo "=== $board_name / $transport_name ==="
         set -- --board "$board_name" --sd-card-transport "$transport_name" \
+            --sd-card-port FREERTOS \
             --build-dir "build/validation-$board_name-$transport_name" \
             --pico-sdk-path "$PICO_SDK_PATH_VALUE"
         if [ -n "$GENERATOR" ]; then
             set -- "$@" --generator "$GENERATOR"
         fi
         "$FIRMWARE_BUILD_SCRIPT" "$@"
+        echo "=== $board_name / $transport_name / BAREMETAL ==="
+        baremetal_dir="build/validation-$board_name-$transport_name-baremetal"
+        cmake -S firmware -B "$baremetal_dir" \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" -DPICO_BOARD="$board_name" \
+            -DPF_SD_CARD_TRANSPORT="$transport_name" -DPF_SD_CARD_PORT=BAREMETAL \
+            -DPF_SD_CARD_INTERRUPT_WAIT=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        cmake --build "$baremetal_dir" --parallel
+        python3 tools/validation/check-sd-ports.py --build-dir "$baremetal_dir"
     }
 
     echo "=== Firmware builds ==="

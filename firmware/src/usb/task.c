@@ -9,7 +9,9 @@
 #include "middleware/cli/cli.h"
 #include "middleware/storage/storage_worker.h"
 #include "board/board.h"
-#include "drivers/sd_card/freertos/sd_card_wait.h"
+#include "drivers/sd_card/sd_card_port.h"
+
+#include <string.h>
 
 #define USB_TASK_STACK_SIZE (1024U)
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U)
@@ -40,6 +42,12 @@ static void storage_command(EmbeddedCli *instance, char *args, void *context)
 {
     (void)instance;
     const char *family = context;
+    if (strcmp(family, "sd") == 0 && args != NULL &&
+        strcmp(args, "recover --confirm") == 0) {
+        pf_usb_msc_request_recovery();
+        pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect the filesystem before fs mount. Check sd status and sd diagnostics after reconnect.");
+        return;
+    }
     if (!pf_storage_worker_submit(family, args != NULL ? args : "",
                                   pf_usb_msc_is_enabled(), cli_session)) {
         pf_cli_print("Storage busy or command too long; wait for completion and retry.");
@@ -102,7 +110,7 @@ static void cdc_cli_task(void)
             panic("Failed to initialize CDC CLI");
         }
         if (!pf_cli_add_binding((CliCommandBinding){
-                "sd", "sd status | sd profile [status|on|off|reset]", false,
+                "sd", "sd status | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
                 "sd", storage_command
             }) || !pf_cli_add_binding((CliCommandBinding){
                 "fs", "fs mount|unmount|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
@@ -170,8 +178,8 @@ static void usb_task(void *context)
             ((TickType_t)(now - last_memory_report) >= USB_HID_MEMORY_REPORT_INTERVAL)) {
             pf_hid_memory_report_t report;
 
-            pf_hid_build_memory_report(&report, memory_sequence);
-            if (tud_hid_report(PF_HID_MEMORY_REPORT_ID, &report, sizeof(report))) {
+            if (pf_hid_build_memory_report(&report, memory_sequence) &&
+                tud_hid_report(PF_HID_MEMORY_REPORT_ID, &report, sizeof(report))) {
                 ++memory_sequence;
                 last_memory_report = now;
             }
@@ -216,7 +224,7 @@ void pf_usb_start(void)
     pf_sd_card_config_t config;
     bool configured = pf_board_get_sd_card_config(&config);
     if (configured) {
-        pf_sd_card_wait_init(&config);
+        pf_sd_card_port_init(&config);
     }
     if (!pf_storage_worker_init(configured ? &config : NULL)) {
         panic("Failed to create storage worker");

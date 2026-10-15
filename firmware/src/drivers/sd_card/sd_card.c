@@ -1,33 +1,22 @@
 #include "sd_card.h"
 #include "sd_card_msc.h"
+#include "sd_card_port.h"
 
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"
+#include <stddef.h>
 
-static StaticSemaphore_t card_mutex_storage;
-static SemaphoreHandle_t card_mutex;
+bool pf_sd_card_try_lock(void)
+{
+    return pf_sd_card_port_try_lock();
+}
 
 void pf_sd_card_lock(void)
 {
-    /* Creation is also safe for the first telemetry call before initialization.
-     * The mutex is recursive because facade queries nest, and ownership/presence
-     * services reserve whole transactions containing several facade calls. */
-    taskENTER_CRITICAL();
-    if (card_mutex == NULL) {
-        card_mutex = xSemaphoreCreateRecursiveMutexStatic(&card_mutex_storage);
-    }
-    taskEXIT_CRITICAL();
-    BaseType_t taken = xSemaphoreTakeRecursive(card_mutex, portMAX_DELAY);
-    configASSERT(taken == pdTRUE);
-    (void)taken;
+    pf_sd_card_port_lock();
 }
 
 void pf_sd_card_unlock(void)
 {
-    BaseType_t given = xSemaphoreGiveRecursive(card_mutex);
-    configASSERT(given == pdTRUE);
-    (void)given;
+    pf_sd_card_port_unlock();
 }
 
 #include "config/config.h"

@@ -56,7 +56,13 @@ belong in the reusable driver. The driver does not allocate its own task or
 heap buffers.
 USB starts before card initialization. The FreeRTOS wait adapter is installed
 before the storage worker is created; that worker owns the single card-init and
-mount path, so a slow or absent card does not delay USB enumeration.
+mount path. Background MSC transitions use a nonblocking card reservation and
+defer while another task holds it; an idle MSC task does not acquire the card
+mutex. HID memory reports are skipped while that reservation is unavailable
+(GET_REPORT returns no report), rather than blocking USB on initialization or
+recovery. Self-test starts reject a busy reservation without waiting. Actual
+MSC data/sync callbacks remain synchronous and can still delay USB servicing
+for the duration of host-requested card I/O.
 
 ## Interfacing With The Driver
 
@@ -311,8 +317,9 @@ restoration or CMD12 response/busy recovery failed). If cleanup succeeds, the
 card remains initialized; this does not mean the failed write was atomic or that
 no data reached the card. Earlier accepted blocks, and possibly the failing block,
 may already be programmed. CMD12 terminates the stream; it is not the first point
-at which blocks can reach media. In SDIO, ordinary single-block card rejection does not
-invalidate initialization when command-mode restoration succeeds. In SPI, a
+at which blocks can reach media. Every failed native CMD24 write invalidates
+initialization, including ordinary card rejection, even if command-mode
+restoration succeeds; explicit reinitialization is required. In SPI, a
 single-block command that returns a non-zero R1 keeps initialization (the card
 is known to be in command mode), but a lost R1 or any failed read data phase
 (token timeout/error, short read, CRC mismatch) invalidates it because the
@@ -586,6 +593,13 @@ atomically checks worker activity and mount state before acquiring the card.
 Release similarly requires checked host eject/synchronization. A statically
 allocated FreeRTOS recursive mutex
 serializes those integration checks with the ownership transition.
+Explicit fault recovery is the exception to clean eject: the confirmed
+[CDC recovery workflow](cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
+before returning ownership and queues worker-only reinitialization. It never
+reports sync/eject success or replays writes. Automatic mounting remains
+inhibited until a successful explicit `fs mount`; presence debounce continues.
+The recovery latch is runtime-only and resets on reboot. The workflow cannot
+repair filesystem damage or guarantee recovery from an unresolved card stream.
 The same mutex serializes all facade operations for both transports, including
 telemetry and removal cleanup. Presence service and ownership handoff reserve their whole
 check/action sequences; reconnect delays and command replies run outside the
@@ -610,6 +624,12 @@ and PIO timing models. Relevant checks live in
 [check-sdio-read-batch.py](../tools/validation/check-sdio-read-batch.py),
 [check-sd-spi-transfer.py](../tools/validation/check-sd-spi-transfer.py), and
 [check-sdio-pio-timing.py](../tools/validation/check-sdio-pio-timing.py).
+The [USB responsiveness check](../tools/validation/check-usb-sd-responsiveness.py)
+exercises production memory-report/self-test-start functions with an unavailable
+reservation. The serialization check verifies nonblocking reservations against
+concurrent slow backend calls in both transports, and the automount check covers
+explicit MSC fault recovery, rejection, and the no-automount latch. These are
+host control-flow checks, not USB enumeration/scheduling or physical BOT tests.
 Use the existing [test guidance](../firmware/tests/README.md) and
 [project validation entry point](../tools/validation/validate.sh).
 
