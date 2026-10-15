@@ -31,7 +31,17 @@ typedef struct {
 typedef struct { unsigned size, dreq; bool swap, read_inc, write_inc; } dma_channel_config;
 static unsigned configurations, defaults, commands, starts, aborts, stops;
 static bool timeout, rejected, restore_ok = true, load_ok = true, command_ok = true;
-static uint32_t now;
+static unsigned dma_delay, pio_delay, waits;
+static uint32_t now, profile_now;
+static uint32_t profile_clock(void) { profile_now += 17; return profile_now; }
+static void check_profile(unsigned calls, unsigned timeouts)
+{
+    pf_sd_card_profile_t p;
+    pf_sd_card_get_profile(&p);
+    assert(p.calls[PF_SD_CARD_PROFILE_DATA] == calls);
+    assert(p.elapsed_us[PF_SD_CARD_PROFILE_DATA] == calls * 17u);
+    assert(p.events[PF_SD_CARD_PROFILE_TIMEOUT] == timeouts);
+}
 static dma_channel_config dma_channel_get_default_config(unsigned channel)
 { assert(channel == 3); ++defaults; return (dma_channel_config){0}; }
 static void channel_config_set_transfer_data_size(dma_channel_config *c, unsigned n) { c->size = n; }
@@ -49,12 +59,12 @@ static void dma_channel_configure(unsigned channel, const dma_channel_config *c,
     assert(pf_sdio_pio_verify_data_block(src)); ++configurations;
 }
 static void dma_channel_start(unsigned c) { assert(c == 3); ++starts; }
-static bool dma_channel_is_busy(unsigned c) { assert(c == 3); return timeout; }
+static bool dma_channel_is_busy(unsigned c) { assert(c == 3); if (dma_delay) { --dma_delay; return true; } return timeout; }
 static void dma_channel_abort(unsigned c) { assert(c == 3); ++aborts; }
 static void dma_channel_wait_for_finish_blocking(unsigned c) { assert(c == 3 && !timeout); }
 static void pio_sm_put_blocking(pio_t *p, unsigned sm, uint32_t n) { assert(p && sm == 1 && n == SDIO_DATA_NIBBLE_COUNT - 1u); }
 static void pio_interrupt_clear(pio_t *p, unsigned n) { assert(p && n == 2); }
-static bool pio_interrupt_get(pio_t *p, unsigned n) { assert(p && n == 2); return !timeout; }
+static bool pio_interrupt_get(pio_t *p, unsigned n) { assert(p && n == 2); if (pio_delay) { --pio_delay; return false; } return !timeout; }
 static void pio_sm_set_enabled(pio_t *p, unsigned sm, bool on) { assert(p && ((sm == 0 && on) || (sm == 1 && !on))); }
 static unsigned pio_sm_get_rx_fifo_level(pio_t *p, unsigned sm) { assert(p && sm == 1); return 1; }
 static uint32_t pio_sm_get(pio_t *p, unsigned sm) { assert(p && sm == 1); return rejected ? 0x0b : 0x05; }
@@ -63,7 +73,7 @@ static void pio_sm_restart(pio_t *p, unsigned sm) { assert(p && sm == 1); }
 static void pio_sm_exec(pio_t *p, unsigned sm, unsigned op) { assert(p && sm == 1 && op == 4); }
 static unsigned pio_encode_jmp(unsigned n) { return n; }
 static uint32_t time_us_32(void) { now += 500001; return now; }
-static void wait_data_idle(pf_sdio_pio_host_t *h, unsigned n) { assert(h && n == 2); }
+static void wait_data_idle(pf_sdio_pio_host_t *h, unsigned n) { assert(h && n == 2); ++waits; }
 static void start_tx_data(pf_sdio_pio_host_t *h) { assert(h); }
 static bool load_tx_programs(pf_sdio_pio_host_t *h) { assert(h); return load_ok; }
 static bool restore_command_mode(pf_sdio_pio_host_t *h) { h->mode_restore_failed = !restore_ok; return restore_ok; }
@@ -77,13 +87,30 @@ int main(void)
     pio_t pio = {0};
     pf_sdio_pio_host_t h = { .pio = &pio, .dma_channel = 3, .data_sm = 1, .data_tx_program_offset = 4 };
     uint8_t blocks[1536]; for (unsigned i = 0; i < sizeof(blocks); ++i) blocks[i] = i * 73u;
+    pf_sd_card_profile_set_clock(profile_clock);
+    pf_sd_card_set_profiling_enabled(true);
+    pf_sd_card_reset_profile();
     assert(pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    check_profile(1, 0);
     assert(configurations == 1 && starts == 1 && commands == 1);
+    /* IRQ alone and DMA alone must not complete the DATA phase. */
+    pf_sd_card_reset_profile();
+    dma_delay = 1; waits = 0;
+    assert(pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    assert(waits == 1 && dma_delay == 0);
+    check_profile(1, 0);
+    pf_sd_card_reset_profile();
+    pio_delay = 1; waits = 0;
+    assert(pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    assert(waits == 1 && pio_delay == 0);
+    check_profile(1, 0);
     rejected = true;
     assert(!pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    check_profile(2, 0);
     rejected = false; timeout = true;
     assert(!pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
     assert(aborts == 1 && !h.mode_restore_failed);
+    check_profile(3, 1);
     timeout = false;
     assert(pf_sdio_pio_host_write_blocks(&h, 4, true, blocks, 3));
     assert(h.write_stream_open && h.write_stream_next_sector == 7);
@@ -97,11 +124,29 @@ int main(void)
     timeout = false;
     assert(pf_sdio_pio_host_recover(&h));
     unsigned old_configurations = configurations;
+    pf_sd_card_reset_profile();
     load_ok = false;
     assert(!pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
     assert(configurations == old_configurations);
+    check_profile(0, 0);
+    command_ok = false;
+    assert(!pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    check_profile(0, 0);
+    command_ok = true;
+    assert(!pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    check_profile(0, 0);
     load_ok = true; restore_ok = false;
     assert(!pf_sdio_pio_host_write_sector(&h, 4, true, blocks) && h.mode_restore_failed);
+    check_profile(1, 0);
+    restore_ok = true;
+    pf_sd_card_reset_profile();
+    pf_sd_card_profile_set_clock(NULL);
+    assert(pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    check_profile(0, 0);
+    pf_sd_card_profile_set_clock(profile_clock);
+    pf_sd_card_set_profiling_enabled(false);
+    assert(pf_sdio_pio_host_write_sector(&h, 4, true, blocks));
+    check_profile(0, 0);
     assert(stops >= 2);
 }
 '''
@@ -123,7 +168,7 @@ def main():
                         str(driver / 'sdio_pio/sdio_pio_protocol.c'), str(driver / 'sd_card_protocol.c'),
                         '-o', str(d / 'test')], check=True)
         subprocess.run([str(d / 'test')], check=True)
-    print('Production TX: DMA bounds/CRC, CMD24 timeout, CMD25 continuation/recovery passed')
+    print('Production TX: DMA bounds/CRC, CMD24 dual completion/DATA/timeout accounting, CMD25 continuation/recovery passed')
 
 if __name__ == '__main__':
     main()

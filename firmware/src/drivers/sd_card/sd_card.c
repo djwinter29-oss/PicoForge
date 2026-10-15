@@ -118,11 +118,12 @@ uint32_t pf_sd_card_block_count(void)
     return result;
 }
 
-pf_sd_card_result_t pf_sd_card_read_blocks(uint32_t first_block, void *buffer,
-                                           uint32_t block_count)
+static pf_sd_card_result_t read_blocks_for_owner(pf_sd_card_owner_t owner,
+                                                uint32_t first_block, void *buffer,
+                                                uint32_t block_count)
 {
     pf_sd_card_lock();
-    if (active_owner != PF_SD_CARD_OWNER_FIRMWARE) {
+    if (active_owner != owner) {
         pf_sd_card_unlock();
         return PF_SD_CARD_NOT_READY;
     }
@@ -135,12 +136,18 @@ pf_sd_card_result_t pf_sd_card_read_blocks(uint32_t first_block, void *buffer,
     return result;
 }
 
-pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block,
-                                            const void *buffer,
-                                            uint32_t block_count)
+pf_sd_card_result_t pf_sd_card_read_blocks(uint32_t first_block, void *buffer,
+                                           uint32_t block_count)
+{
+    return read_blocks_for_owner(PF_SD_CARD_OWNER_FIRMWARE, first_block, buffer, block_count);
+}
+
+static pf_sd_card_result_t write_blocks_for_owner(pf_sd_card_owner_t owner,
+                                                 uint32_t first_block, const void *buffer,
+                                                 uint32_t block_count)
 {
     pf_sd_card_lock();
-    if (active_owner != PF_SD_CARD_OWNER_FIRMWARE) {
+    if (active_owner != owner) {
         pf_sd_card_unlock();
         return PF_SD_CARD_NOT_READY;
     }
@@ -153,10 +160,17 @@ pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block,
     return result;
 }
 
-pf_sd_card_result_t pf_sd_card_sync(void)
+pf_sd_card_result_t pf_sd_card_write_blocks(uint32_t first_block,
+                                            const void *buffer,
+                                            uint32_t block_count)
+{
+    return write_blocks_for_owner(PF_SD_CARD_OWNER_FIRMWARE, first_block, buffer, block_count);
+}
+
+static pf_sd_card_result_t sync_for_owner(pf_sd_card_owner_t owner)
 {
     pf_sd_card_lock();
-    if (active_owner != PF_SD_CARD_OWNER_FIRMWARE) {
+    if (active_owner != owner) {
         pf_sd_card_unlock();
         return PF_SD_CARD_NOT_READY;
     }
@@ -167,6 +181,11 @@ pf_sd_card_result_t pf_sd_card_sync(void)
     pf_sd_card_result_t result = pf_selected_sync();
     pf_sd_card_unlock();
     return result;
+}
+
+pf_sd_card_result_t pf_sd_card_sync(void)
+{
+    return sync_for_owner(PF_SD_CARD_OWNER_FIRMWARE);
 }
 
 pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t owner)
@@ -192,52 +211,19 @@ pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t owner)
 pf_sd_card_result_t pf_sd_card_msc_read_blocks(uint32_t first_block, void *buffer,
                                                uint32_t block_count)
 {
-    pf_sd_card_lock();
-    if (active_owner != PF_SD_CARD_OWNER_USB_MSC) {
-        pf_sd_card_unlock();
-        return PF_SD_CARD_NOT_READY;
-    }
-    if (!transport_selected) {
-        pf_sd_card_unlock();
-        return PF_SD_CARD_NOT_CONFIGURED;
-    }
-    pf_sd_card_result_t result = pf_selected_read(first_block, buffer, block_count);
-    pf_sd_card_unlock();
-    return result;
+    return read_blocks_for_owner(PF_SD_CARD_OWNER_USB_MSC, first_block, buffer, block_count);
 }
 
 pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t first_block,
                                                 const void *buffer,
                                                 uint32_t block_count)
 {
-    pf_sd_card_lock();
-    if (active_owner != PF_SD_CARD_OWNER_USB_MSC) {
-        pf_sd_card_unlock();
-        return PF_SD_CARD_NOT_READY;
-    }
-    if (!transport_selected) {
-        pf_sd_card_unlock();
-        return PF_SD_CARD_NOT_CONFIGURED;
-    }
-    pf_sd_card_result_t result = pf_selected_write(first_block, buffer, block_count);
-    pf_sd_card_unlock();
-    return result;
+    return write_blocks_for_owner(PF_SD_CARD_OWNER_USB_MSC, first_block, buffer, block_count);
 }
 
 pf_sd_card_result_t pf_sd_card_msc_sync(void)
 {
-    pf_sd_card_lock();
-    if (active_owner != PF_SD_CARD_OWNER_USB_MSC) {
-        pf_sd_card_unlock();
-        return PF_SD_CARD_NOT_READY;
-    }
-    if (!transport_selected) {
-        pf_sd_card_unlock();
-        return PF_SD_CARD_NOT_CONFIGURED;
-    }
-    pf_sd_card_result_t result = pf_selected_sync();
-    pf_sd_card_unlock();
-    return result;
+    return sync_for_owner(PF_SD_CARD_OWNER_USB_MSC);
 }
 
 void pf_sd_card_get_info(pf_sd_card_info_t *info)

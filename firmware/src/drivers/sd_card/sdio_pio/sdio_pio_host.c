@@ -880,12 +880,18 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     start_tx_data(host);
 
     start = time_us_32();
+    /* DATA includes the TX PIO program's response token and card-busy wait;
+     * these are not separately measured. Match the CMD25 measurement boundary. */
+    uint32_t profile_start = pf_sd_card_profile_begin();
     while (!pio_interrupt_get(host->pio, 2u) || dma_channel_is_busy(host->dma_channel)) {
         if ((uint32_t)(time_us_32() - start) > 1000000u) {
+            pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
             goto restore;
         }
         wait_data_idle(host, 2u);
     }
+    pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
     dma_channel_wait_for_finish_blocking(host->dma_channel);
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) > 0u) {
         success = pf_sdio_pio_write_response_accepted(pio_sm_get(host->pio, host->data_sm));
