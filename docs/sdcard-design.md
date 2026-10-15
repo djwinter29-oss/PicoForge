@@ -38,8 +38,9 @@ flowchart TD
 | Responsibility | Implementation |
 | --- | --- |
 | Board-approved pins and controller selection | [board.c](../firmware/src/board/board.c), [board_profile.c](../firmware/src/board/board_profile.c) |
-| Singleton configuration, dispatch, and firmware/USB ownership | [sd_card.c](../firmware/src/drivers/sd_card/sd_card.c) |
+| Singleton configuration, dispatch, diagnostics, and firmware/USB ownership | [sd_card.c](../firmware/src/drivers/sd_card/sd_card.c) |
 | Block operations, result codes, and telemetry | [sd_card_block.h](../firmware/src/drivers/sd_card/sd_card_block.h) |
+| USB-only ownership and block capabilities | [sd_card_msc.h](../firmware/src/drivers/sd_card/sd_card_msc.h) |
 | CRC7, command framing, CMD8 classification, CSD decoding, serial CRC16, address conversion, and transfer bounds | [sd_card_protocol.c](../firmware/src/drivers/sd_card/sd_card_protocol.c) |
 | Native card initialization and transfer policy | [sdio_pio.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c) |
 | Native response parsing and four-lane data encoding/CRC | [sdio_pio_protocol.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c) |
@@ -131,6 +132,13 @@ a mounted filesystem.
   write can have committed some sectors; do not blindly replay it.
 - `pf_sd_card_get_info()` reports presence, initialization, effective clock,
   capacity, and CID. Without card detect, presence is not independently known.
+- `pf_sd_card_get_diagnostics()` retains the most recent failed facade operation,
+  result, owner, selected transport, backend initialization stage, and a snapshot
+  of the profiling event counters. `sd diagnostics` exposes this without
+  changing profiling state; counters remain zero unless profiling was enabled
+  when those events occurred. A successful call does not erase the failure;
+  clear it explicitly after collection. The sequence remains monotonic across
+  clears so field logs can distinguish a cleared record from a fresh boot.
 - `pf_sd_card_set_idle_hook()` installs an optional short callback for long
   polling waits. Configure it before transfers; it is not synchronized and does
   not make all SDK calls nonblocking.
@@ -346,7 +354,8 @@ common ground, and the breakout's required biasing.
 
 ### Current Board Profile
 
-The default CMake transport is SDIO-PIO; the board profile requests 20 MHz (18.75 MHz at 150 MHz SYSCLK with the host divider).
+The default CMake transport is SDIO-PIO; the board profile requests 25 MHz.
+At 150 MHz SYSCLK, the slow-mode divider produces an exact 25 MHz bus.
 This is a request, not a guaranteed effective clock; identification and
 qualification can select a lower rate. SPI's zero clock request selects 25 MHz. See
 [board_profile.c](../firmware/src/board/board_profile.c) for authoritative values
@@ -562,11 +571,16 @@ sequenceDiagram
     FW->>FW: Invalidate cached filesystem state and reinitialize before remount
 ```
 
-The facade enforces which client may issue block operations; it does not itself
-close files, unmount FatFs, or wait for host eject. Those checks belong to
-storage/USB integration. A statically allocated FreeRTOS recursive mutex now
-serializes all facade operations for both transports, including telemetry and
-removal cleanup. Presence service and ownership handoff reserve their whole
+The generic block header exposes only firmware operations. USB-only acquire,
+release, and block operations live in the dedicated MSC integration header;
+there is no arbitrary public owner setter. Acquisition still cannot inspect
+FatFs state without creating a cross-layer dependency, so the USB integration
+atomically checks worker activity and mount state before acquiring the card.
+Release similarly requires checked host eject/synchronization. A statically
+allocated FreeRTOS recursive mutex
+serializes those integration checks with the ownership transition.
+The same mutex serializes all facade operations for both transports, including
+telemetry and removal cleanup. Presence service and ownership handoff reserve their whole
 check/action sequences; reconnect delays and command replies run outside the
 reservation. These reservations protect those specific sequences, not every
 FatFs transaction. The storage worker's exclusive workflow and busy gating
@@ -574,6 +588,10 @@ protect filesystem operations across multiple facade calls; the per-call mutex
 alone cannot do that. Profile snapshots use the same mutex. Returning ownership sets a reinitialization
 request because the host may have changed the filesystem. See
 [USB protocol and MSC lifecycle](usb-protocol.md) for transition rules.
+
+Backend headers remain available to their implementation and focused transport
+tests, but application and integration code must use the facade. Backend calls
+do not provide ownership or task serialization and are not an application API.
 
 ## Validation And Limits
 
@@ -597,6 +615,13 @@ recovery, complete MSC lifecycles, and sustained endurance require separate
 qualification. CSD v1/v2 capacity must fit the 32-bit block contract; SDUC,
 64-bit LBAs, asynchronous requests, and a one-bit native block backend are not
 implemented.
+
+Release qualification must record, for each supported board/card/transport
+combination, card initialization stability, read/write self-test results,
+effective clock, stack high-water marks, card removal during active I/O, checked
+USB host eject and BOT reset behavior, and power interruption during data and
+filesystem-metadata writes. Host regressions are prerequisites, not substitutes,
+for those hardware records.
 
 ### Previously Recorded Qualification
 

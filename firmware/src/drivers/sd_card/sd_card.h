@@ -9,11 +9,6 @@
 #include "sdio_pio/sdio_pio.h"
 #endif
 
-typedef enum {
-    PF_SD_CARD_TRANSPORT_SDIO_PIO = 0,
-    PF_SD_CARD_TRANSPORT_SPI,
-} pf_sd_card_transport_t;
-
 typedef struct pf_sd_card_config {
     pf_sd_card_transport_t transport;
     union {

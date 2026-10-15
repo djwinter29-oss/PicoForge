@@ -12,6 +12,7 @@ HARNESS = r'''
 #include <stdatomic.h>
 #include <sched.h>
 #include "sd_card.h"
+#include "sd_card_msc.h"
 static atomic_bool entered, release_io, contender_started, contender_done;
 static bool initialized;
 static bool contract_test;
@@ -21,6 +22,8 @@ static uint32_t expected_block, expected_count;
 static const void *expected_buffer;
 pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *c)
 { (void)c; initialized = true; return PF_SD_CARD_OK; }
+pf_sdio_pio_init_stage_t pf_sdio_pio_get_init_stage(void)
+{ return (pf_sdio_pio_init_stage_t)99; }
 bool pf_sdio_pio_is_initialized(void) { ++readiness_calls; return initialized; }
 uint32_t pf_sdio_pio_block_count(void) { return 100; }
 static pf_sd_card_result_t backend_access(unsigned op, uint32_t b, void *p, uint32_t n)
@@ -45,6 +48,12 @@ pf_sd_card_result_t pf_sdio_pio_sync(void)
 { return backend_access(2, 0, NULL, 0); }
 void pf_sdio_pio_get_info(pf_sd_card_info_t *p) { p->initialized = initialized; }
 void pf_sdio_pio_confirm_card_removed(void) { initialized = false; }
+void pf_sd_card_get_profile(pf_sd_card_profile_t *p) { *p = (pf_sd_card_profile_t){0}; }
+static pf_sd_card_result_t set_owner(pf_sd_card_owner_t owner)
+{
+    return owner == PF_SD_CARD_OWNER_USB_MSC
+        ? pf_sd_card_msc_acquire() : pf_sd_card_msc_release();
+}
 static unsigned operation, contender;
 static void *io(void *unused)
 {
@@ -58,7 +67,7 @@ static void *other(void *unused)
     (void)unused; atomic_store(&contender_started, true);
     if (contender == 0) pf_sd_card_confirm_removed();
     else if (contender == 1) { pf_sd_card_info_t info; pf_sd_card_get_info(&info); }
-    else assert(pf_sd_card_set_owner(PF_SD_CARD_OWNER_FIRMWARE) == PF_SD_CARD_OK);
+    else assert(pf_sd_card_msc_release() == PF_SD_CARD_OK);
     atomic_store(&contender_done, true); return NULL;
 }
 static pf_sd_card_result_t call_operation(unsigned op, bool msc)
@@ -88,10 +97,16 @@ static void check_contracts(void)
     config.transport = PF_SD_CARD_TRANSPORT_SDIO_PIO;
     assert(pf_sd_card_init(&config) == PF_SD_CARD_OK);
     initialized = false;
-    assert(pf_sd_card_set_owner(PF_SD_CARD_OWNER_USB_MSC) == PF_SD_CARD_NOT_READY);
+    assert(pf_sd_card_msc_acquire() == PF_SD_CARD_NOT_READY);
+    pf_sd_card_diagnostics_t diagnostics;
+    pf_sd_card_get_diagnostics(&diagnostics);
+    assert(diagnostics.sequence != 0);
+    assert(diagnostics.operation == PF_SD_CARD_OPERATION_MSC_ACQUIRE);
+    assert(diagnostics.result == PF_SD_CARD_NOT_READY);
+    assert(diagnostics.transport_init_stage == 99);
     for (unsigned owner = 0; owner < 2; ++owner) {
         initialized = true;
-        assert(pf_sd_card_set_owner((pf_sd_card_owner_t)owner) == PF_SD_CARD_OK);
+        assert(set_owner((pf_sd_card_owner_t)owner) == PF_SD_CARD_OK);
         for (unsigned op = 0; op < 3; ++op) {
             /* The facade forwards backend results without extra readiness calls
              * or validation, including uninitialized and invalid requests. */
@@ -115,7 +130,7 @@ static void check_contracts(void)
     backend_result = PF_SD_CARD_OK;
     for (unsigned owner = 0; owner < 2; ++owner) {
         initialized = true;
-        assert(pf_sd_card_set_owner((pf_sd_card_owner_t)owner) == PF_SD_CARD_OK);
+        assert(set_owner((pf_sd_card_owner_t)owner) == PF_SD_CARD_OK);
         expected_block = 7;
         expected_count = 2;
         expected_buffer = data;
@@ -125,7 +140,11 @@ static void check_contracts(void)
             assert(backend_calls == before + 1);
         }
     }
-    assert(pf_sd_card_set_owner(PF_SD_CARD_OWNER_FIRMWARE) == PF_SD_CARD_OK);
+    assert(pf_sd_card_msc_release() == PF_SD_CARD_OK);
+    pf_sd_card_clear_diagnostics();
+    pf_sd_card_get_diagnostics(&diagnostics);
+    assert(diagnostics.sequence != 0);
+    assert(diagnostics.operation == PF_SD_CARD_OPERATION_NONE);
     contract_test = false;
 }
 int main(void)
@@ -134,9 +153,9 @@ int main(void)
     for (operation = 0; operation < 3; ++operation) {
         for (contender = 0; contender < 3; ++contender) {
             pf_sd_card_config_t config = { .transport = PF_SD_CARD_TRANSPORT_SDIO_PIO };
-            assert(pf_sd_card_set_owner(PF_SD_CARD_OWNER_FIRMWARE) == PF_SD_CARD_OK);
+            assert(pf_sd_card_msc_release() == PF_SD_CARD_OK);
             assert(pf_sd_card_init(&config) == PF_SD_CARD_OK);
-            assert(pf_sd_card_set_owner(PF_SD_CARD_OWNER_USB_MSC) == PF_SD_CARD_OK);
+            assert(pf_sd_card_msc_acquire() == PF_SD_CARD_OK);
             entered = release_io = contender_started = contender_done = false;
             pthread_t a, b;
             assert(!pthread_create(&a, NULL, io, NULL));

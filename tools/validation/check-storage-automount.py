@@ -65,6 +65,9 @@ static pf_storage_result_t pf_storage_unmount(void *result)
 }
 static void pf_storage_forget_filesystem_format(void) { ++forget_calls; }
 typedef enum { PF_SD_CARD_OK, PF_SD_CARD_INVALID_ARGUMENT, PF_SD_CARD_NOT_READY, PF_SD_CARD_NOT_CONFIGURED } pf_sd_card_result_t;
+#define PF_SD_CARD_OPERATION_MSC_ACQUIRE 5u
+static pf_sd_card_result_t record_failure(unsigned operation, pf_sd_card_result_t result)
+{ (void)operation; return result; }
 #define PF_CONFIG_SD_CARD_TRANSPORT 0
 #define PF_CONFIG_SD_CARD_TRANSPORT_SPI 1
 #define card_initialized media.initialized
@@ -319,7 +322,8 @@ def main():
     connected = (function_source(host, "pf_sdio_pio_host_forget_removed_card") + "\n" +
                  function_source(card, "pf_sdio_pio_confirm_card_removed") + "\n" +
                  "\n".join(function_source(facade, name) for name in (
-                     "pf_sd_card_get_owner", "pf_sd_card_set_owner",
+                     "pf_sd_card_get_owner", "pf_sd_card_msc_acquire",
+                     "pf_sd_card_msc_release",
                      "pf_sd_card_take_reinit_request", "pf_sd_card_confirm_removed")))
     connected = connected.replace("reinit_after_usb_owner", "reinit_request")
     usb = "static bool transfer_sense_pending;\n" + "\n".join(function_source(msc, name) for name in (

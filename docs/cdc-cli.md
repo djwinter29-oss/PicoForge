@@ -39,6 +39,7 @@ CR, LF, and CRLF are accepted.
 | `echo <text>` | Echo text for non-destructive transport checks. |
 | `sd status` | Show card presence, initialization, transport, capacity, clock, mounted state, and Pico/USB ownership. |
 | `sd profile [status, on, off, reset]` | Show or control optional SD-card phase profiling; changes require Pico ownership. Counters are cumulative and not a total-latency breakdown. |
+| `sd diagnostics [status, clear]` | Show the retained last facade failure, transport initialization stage, owner, and event-counter snapshot. Clearing requires Pico ownership. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |

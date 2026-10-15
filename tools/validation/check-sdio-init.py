@@ -7,6 +7,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c"
+BOARD_PROFILE = ROOT / "firmware/src/board/board_profile.c"
 
 VARIANT_HARNESS = r"""
 #include <assert.h>
@@ -559,6 +560,11 @@ int main(void)
 
 
 def main():
+    profile = BOARD_PROFILE.read_text()
+    assert ".clock_hz = 25000000u," in profile, (
+        "The qualified stock Pico 2 SDIO profile must request 25 MHz")
+    divider = (150000000 + 2 * 25000000 - 1) // (2 * 25000000)
+    assert divider == 3 and 150000000 // (2 * divider) == 25000000
     check_optional_variants()
     source = SOURCE.read_text()
     probe = function_source(source, "static bool probe_transfer(void)")

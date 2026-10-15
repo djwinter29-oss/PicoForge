@@ -342,6 +342,47 @@ void test_profile_rejects_unknown_actions(void)
     TEST_ASSERT_NOT_NULL(strstr(output, "Usage: sd profile"));
 }
 
+void test_diagnostics_reports_last_failure(void)
+{
+    pf_sd_card_diagnostics_t diagnostics = {
+        .sequence = 7u,
+        .operation = PF_SD_CARD_OPERATION_WRITE,
+        .result = PF_SD_CARD_IO_ERROR,
+        .owner = PF_SD_CARD_OWNER_USB_MSC,
+        .transport = PF_SD_CARD_TRANSPORT_SPI,
+        .transport_init_stage = 9u,
+    };
+    diagnostics.profile.events[PF_SD_CARD_PROFILE_CRC_FAILURE] = 2u;
+    diagnostics.profile.events[PF_SD_CARD_PROFILE_TIMEOUT] = 3u;
+    pf_sd_card_get_diagnostics_ExpectAnyArgs();
+    pf_sd_card_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
+
+    pf_storage_command_execute(NULL, true, "sd", "diagnostics", reply, NULL);
+
+    TEST_ASSERT_NOT_NULL(strstr(
+        output, "sequence=7 operation=write result=io_error owner=USB transport=spi init_stage=9"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "crc_failures=2"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "timeouts=3"));
+}
+
+void test_diagnostics_clear_requires_firmware_ownership(void)
+{
+    pf_storage_command_execute(NULL, true, "sd", "diagnostics clear", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "requires firmware card ownership"));
+}
+
+void test_diagnostics_clear_resets_then_reports(void)
+{
+    pf_sd_card_diagnostics_t diagnostics = { 0 };
+    pf_sd_card_clear_diagnostics_Expect();
+    pf_sd_card_get_diagnostics_ExpectAnyArgs();
+    pf_sd_card_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
+
+    pf_storage_command_execute(NULL, false, "sd", "diagnostics clear", reply, NULL);
+
+    TEST_ASSERT_NOT_NULL(strstr(output, "sequence=0 operation=none result=ok"));
+}
+
 static bool disconnected_reply(const char *line, void *context)
 {
     (void)line;

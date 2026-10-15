@@ -34,6 +34,8 @@ bool tud_msc_set_sense(uint8_t l,uint8_t k,uint8_t a,uint8_t q)
 { (void)l; (void)k; (void)a; (void)q; return true; }
 pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *c)
 { (void)c; initialized=true; return PF_SD_CARD_OK; }
+pf_sdio_pio_init_stage_t pf_sdio_pio_get_init_stage(void)
+{ return (pf_sdio_pio_init_stage_t)99; }
 bool pf_sdio_pio_is_initialized(void) { return initialized; }
 uint32_t pf_sdio_pio_block_count(void) { return capacity; }
 void pf_sdio_pio_get_info(pf_sd_card_info_t *i) { memset(i,0,sizeof(*i)); }
@@ -54,6 +56,7 @@ pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t l,const void *b,uint32_t n
 }
 pf_sd_card_result_t pf_sdio_pio_sync(void)
 { ++syncs; assert(!uncertain); return sync_error; }
+void pf_sd_card_get_profile(pf_sd_card_profile_t *p) { *p=(pf_sd_card_profile_t){0}; }
 int main(void)
 {
  pf_sd_card_config_t c={.transport=PF_SD_CARD_TRANSPORT_SDIO_PIO};
@@ -103,7 +106,7 @@ int main(void)
  sync_error=PF_SD_CARD_OK; write_error=PF_SD_CARD_IO_ERROR;
  assert(tud_msc_write10_cb(0,0,0,data,1024)==-1 && writes==w+2 && syncs==s+1);
  assert(uncertain && transfer_sense_asc==0x0c); /* no sync/replay after uncertain write */
- assert(pf_sd_card_set_owner(PF_SD_CARD_OWNER_FIRMWARE)==PF_SD_CARD_OK);
+ assert(pf_sd_card_msc_release()==PF_SD_CARD_OK);
  assert(tud_msc_read10_cb(0,0,0,readback,1024)==-1 && reads==r+1);
  puts("MSC batch: production facade, bytes, bounds, RMW, ownership and checked completion passed");
 }

@@ -22,7 +22,10 @@ void pf_sd_card_unlock(void) { assert(locks); --locks; }
 bool pf_sd_card_is_initialized(void) { return initialized; }
 uint32_t pf_sd_card_block_count(void) { return 128; }
 void pf_sd_card_get_info(pf_sd_card_info_t *i) { *i=(pf_sd_card_info_t){.present=true,.presence_known=true}; }
-pf_sd_card_result_t pf_sd_card_set_owner(pf_sd_card_owner_t o) { if(owner_result==PF_SD_CARD_OK) owner=o; return owner_result; }
+pf_sd_card_result_t pf_sd_card_msc_acquire(void)
+{ if(owner_result==PF_SD_CARD_OK) owner=PF_SD_CARD_OWNER_USB_MSC; return owner_result; }
+pf_sd_card_result_t pf_sd_card_msc_release(void)
+{ if(owner_result==PF_SD_CARD_OK) owner=PF_SD_CARD_OWNER_FIRMWARE; return owner_result; }
 pf_sd_card_result_t pf_sd_card_msc_sync(void) { ++syncs; return sync_result; }
 pf_sd_card_result_t pf_sd_card_msc_read_blocks(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return read_result; }
 pf_sd_card_result_t pf_sd_card_msc_write_blocks(uint32_t l, const void *b, uint32_t n) { (void)l;(void)b;(void)n; return write_result; }

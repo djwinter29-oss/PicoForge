@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 #include "tusb.h"
 #include "drivers/sd_card/sd_card_block.h"
+#include "drivers/sd_card/sd_card_msc.h"
 #include "middleware/storage/storage.h"
 #include "middleware/storage/storage_worker.h"
 
@@ -167,7 +168,7 @@ static void apply_msc_request(void)
             request_rejected = true;
             return;
         }
-        result = pf_sd_card_set_owner(PF_SD_CARD_OWNER_USB_MSC);
+        result = pf_sd_card_msc_acquire();
         if (result != PF_SD_CARD_OK) {
             transition_pending = false;
             request_rejected = true;
@@ -191,7 +192,7 @@ static void apply_msc_request(void)
             return;
         }
         msc_enabled = false;
-        result = pf_sd_card_set_owner(PF_SD_CARD_OWNER_FIRMWARE);
+        result = pf_sd_card_msc_release();
         if (result != PF_SD_CARD_OK) {
             msc_enabled = true;
             transition_pending = false;

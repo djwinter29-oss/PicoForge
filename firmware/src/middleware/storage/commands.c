@@ -111,6 +111,57 @@ static void profile_command(const char *action, bool host_owned,
     (void)reply(line, context);
 }
 
+static void diagnostics_command(const char *action, bool host_owned,
+                                pf_storage_reply_t reply, void *context)
+{
+    if ((action != NULL) && (strcmp(action, "status") != 0)) {
+        if (strcmp(action, "clear") != 0) {
+            (void)reply("Usage: sd diagnostics [status|clear]", context);
+            return;
+        }
+        if (host_owned) {
+            (void)reply("Clearing diagnostics requires firmware card ownership.", context);
+            return;
+        }
+        pf_sd_card_clear_diagnostics();
+    }
+
+    static const char *const operation_names[] = {
+        "none", "init", "read", "write", "sync", "msc_acquire", "msc_release"
+    };
+    static const char *const result_names[] = {
+        "ok", "invalid_argument", "config_locked", "not_configured",
+        "init_failed", "not_ready", "io_error"
+    };
+    pf_sd_card_diagnostics_t diagnostics;
+    pf_sd_card_get_diagnostics(&diagnostics);
+    unsigned operation = (unsigned)diagnostics.operation;
+    unsigned result = (unsigned)diagnostics.result;
+    char line[PF_STORAGE_REPLY_SIZE];
+    (void)snprintf(
+        line, sizeof(line),
+        "sequence=%lu operation=%s result=%s owner=%s transport=%s init_stage=%lu",
+        (unsigned long)diagnostics.sequence,
+        operation < sizeof(operation_names) / sizeof(operation_names[0])
+            ? operation_names[operation] : "unknown",
+        result < sizeof(result_names) / sizeof(result_names[0])
+            ? result_names[result] : "unknown",
+        diagnostics.owner == PF_SD_CARD_OWNER_USB_MSC ? "USB" : "Pico",
+        diagnostics.transport == PF_SD_CARD_TRANSPORT_SPI ? "spi" : "sdio",
+        (unsigned long)diagnostics.transport_init_stage);
+    if (!reply(line, context)) {
+        return;
+    }
+    (void)snprintf(
+        line, sizeof(line),
+        "crc_failures=%lu batch_fallbacks=%lu timeouts=%lu recoveries=%lu",
+        (unsigned long)diagnostics.profile.events[PF_SD_CARD_PROFILE_CRC_FAILURE],
+        (unsigned long)diagnostics.profile.events[PF_SD_CARD_PROFILE_BATCH_FALLBACK],
+        (unsigned long)diagnostics.profile.events[PF_SD_CARD_PROFILE_TIMEOUT],
+        (unsigned long)diagnostics.profile.events[PF_SD_CARD_PROFILE_RECOVERY_ATTEMPT]);
+    (void)reply(line, context);
+}
+
 static void list_command(const char *path, pf_storage_reply_t reply, void *context)
 {
     DIR directory;
@@ -267,8 +318,13 @@ void pf_storage_command_execute(const pf_sd_card_config_t *config, bool host_own
         profile_command(count == 2u ? first : NULL, host_owned, reply, context);
         return;
     }
+    if (strcmp(family, "sd") == 0 && count >= 1u && count <= 2u &&
+        strcmp(operation, "diagnostics") == 0) {
+        diagnostics_command(count == 2u ? first : NULL, host_owned, reply, context);
+        return;
+    }
     if ((strcmp(family, "fs") != 0) || (count == 0u)) {
-        (void)reply("Usage: sd status | fs <mount|unmount|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
+        (void)reply("Usage: sd <status|profile|diagnostics> | fs <mount|unmount|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
         return;
     }
     if (host_owned) {
