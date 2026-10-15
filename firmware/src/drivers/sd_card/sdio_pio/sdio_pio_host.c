@@ -204,6 +204,7 @@ static bool load_data_rx_program(pf_sdio_pio_host_t *host)
                                       (uint8_t)((host->clock_div_ticks >> 1u) & 0xffu));
     }
     sm_config_set_in_pins(&config, host->data_gpio_base);
+    sm_config_set_jmp_pin(&config, host->data0_gpio);
     sm_config_set_in_shift(&config, false, true, 32u);
     sm_config_set_out_shift(&config, false, false, 32u);
     pio_sm_init(host->pio, host->data_sm, host->data_rx_program_offset, &config);
@@ -619,12 +620,16 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
     uint16_t received_crc = 0u;
     bool success = false;
 
+    if (host != NULL) {
+        host->scr_stage = PF_SDIO_PIO_INIT_STAGE_SCR;
+    }
     if ((host == NULL) || (scr == NULL) || !host->data_rx_program_loaded) {
         return false;
     }
 
     start_data_rx(host, image, SCR_DMA_WORDS, SCR_DATA_BITS, 1u);
 
+    host->scr_stage = PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX;
     if (!pf_sdio_pio_host_command_bytes(host, 55u, relative_card_address, 48u,
                                          response, sizeof(response))) {
         goto cleanup;
@@ -633,6 +638,7 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
         ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
         goto cleanup;
     }
+    host->scr_stage = PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE;
     if (!pf_sdio_pio_host_command_bytes(host, 51u, 0u, 48u,
                                          response, sizeof(response))) {
         goto cleanup;
@@ -642,6 +648,7 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
         goto cleanup;
     }
 
+    host->scr_stage = PF_SDIO_PIO_INIT_STAGE_SCR_DATA;
     if (!wait_data_rx(host, 1000000u)) {
         goto cleanup;
     }
@@ -658,7 +665,11 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
             received_crc = (uint16_t)((received_crc << 1u) | bit);
         }
     }
+    host->scr_stage = PF_SDIO_PIO_INIT_STAGE_SCR_CRC;
     success = received_crc == pf_sd_card_crc16(scr, 8u);
+    if (success) {
+        host->scr_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
+    }
 cleanup:
     cleanup_data_rx(host);
     return success;

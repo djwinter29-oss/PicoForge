@@ -216,6 +216,11 @@ a mounted filesystem.
 Result codes distinguish invalid arguments, locked configuration, unconfigured
 transport, unready media/ownership, initialization failure, and I/O failure.
 Neither initialization nor recovery formats media or writes card sectors.
+Native initialization diagnostics distinguish SCR failures: stage 24 is CMD55
+prefix/response validation, 25 is ACMD51 response validation, 26 is SCR data
+completion, 27 is SCR CRC validation, and 28 is unsupported SCR bus width.
+Stage 17 remains the generic SCR setup failure; existing stage numbers are
+unchanged.
 
 ## Initialization Workflow
 
@@ -322,8 +327,13 @@ rejected: the host's boolean completion result cannot distinguish silence from a
 partial frame, so neither timeout nor CRC/framing failure is accepted as legacy.
 A
 command that completes before a delayed poll is not reported as a timeout.
-In-PIO timeouts are not used because the command (19) and receive (11) programs
-leave only two of the 32 PIO instructions free.
+In-PIO timeouts are not used because the command (20) and receive (12) programs
+use all 32 PIO instructions. Receive start detection qualifies DAT0 at a falling
+clock edge rather than treating any asynchronous low level as the start bit.
+This avoids including an early-asserted start bit in the SCR or sector payload.
+Command responses are also sampled at falling edges, away from rising-edge card
+output transitions. Both paths retain framing/CRC validation; see the
+[Class 4 read-only check](hardware-setup.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
 

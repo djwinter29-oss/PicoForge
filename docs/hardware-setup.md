@@ -87,6 +87,33 @@ SDIO remains selected, the filesystem is unmounted, MSC is disabled, and Pico
 owns the card. These checks do not qualify endurance, power-loss recovery,
 high-speed timing margins, or complete SDIO MSC handoff workflows.
 
+##### Class 4 Read-Only Bring-Up (2026-10-15)
+
+The inserted Class 4 card initially reported `present=yes`, `initialized=0`,
+`mounted=0`, with native initialization failing at SCR stage 17. Finer diagnostics
+isolated a repeatable SCR CRC mismatch: payload `015a800000000000`, received CRC
+`023a`, computed CRC `8a2a`. These bits are the start bit followed by the valid
+SCR `02b5000000000000` and its CRC `0475`, truncated by one bit. The receiver was
+detecting DAT0 asynchronously and counting the start bit as payload. Correcting
+start detection then exposed a malformed CMD12 response during the third
+64-sector qualification batch; command-response sampling also needed moving
+away from the rising edge.
+
+With falling-edge-qualified receive start detection and falling-edge command
+response sampling, the connected Pico 2 at stock 150 MHz initialized the card at
+25 MHz, mounted the existing filesystem, and listed `/` successfully. Capacity
+was 30,875,648 sectors / 15,808,331,776 bytes. Clean firmware, without temporary
+UART instrumentation, passed ten consecutive `fs unmount` / `fs mount` / `sd status`
+/ `fs ls /` cycles. Each mount reinitialized the card and exercised its
+256-sector CRC-checked read qualification. Final diagnostics were
+`sequence=0 operation=none result=ok`, with the card left initialized and mounted,
+MSC disabled, and Pico ownership.
+
+No formatting, repair, file creation, or write self-test was performed. This
+qualifies the observed read-only bring-up on this card and wiring, not sustained
+writes, another card, high-speed timing margins, or power-loss recovery. The
+Class 4 marking is a speed rating, not the cause of the initialization failure.
+
 #### W25Q128 Flash Breakout
 
 The [Adafruit QSPI DIP Breakout - W25Q128](https://www.adafruit.com/product/5634) is a 3.3 V, 16 MB serial NOR flash supporting QSPI and SPI; see its [pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). Connect CLK, IO0, IO1, IO2, IO3, and CS to GP2, GP3, GP4, GP5, GP6, and GP7 respectively in both modes. This keeps IO0-IO3 on consecutive GP3-GP6 and shares CS on GP7 with the SD breakout. Use pull-ups on GP7/CS, GP5/IO2/WP, and GP6/IO3/HOLD to keep them high through reset; in SPI-NOR mode, keep GP5/GP6 high or as inputs with those external pull-ups. Never hard-tie IO2/IO3 to 3V3 when they are used as QSPI data signals. The future QSPI-PIO driver can sample the contiguous data window GP3-GP6 and must configure the flash's quad-enable setting before quad transfers. Mode changes require protocol reinitialization, not just changing the GPIO mux. PicoForge does not yet implement an external flash driver.

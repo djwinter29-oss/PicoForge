@@ -314,8 +314,12 @@ static bool initialize_card(uint32_t *clock_limit_hz)
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SCR;
-    if (!pf_sdio_pio_host_read_scr(&sdio_pio_host, relative_card_address, scr) ||
-        !pf_sd_card_scr_supports_four_bit(scr)) {
+    if (!pf_sdio_pio_host_read_scr(&sdio_pio_host, relative_card_address, scr)) {
+        card_init_stage = sdio_pio_host.scr_stage;
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_SCR_BUS_WIDTH;
+    if (!pf_sd_card_scr_supports_four_bit(scr)) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_STATUS;

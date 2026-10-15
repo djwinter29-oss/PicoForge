@@ -559,6 +559,97 @@ int main(void)
 """
 
 
+def check_scr_diagnostics():
+    code = r"""
+#include <assert.h>
+#include <string.h>
+#include "sdio_pio_host.h"
+#include "sd_card_protocol.h"
+static unsigned failure, cleanups;
+static uint8_t *wire;
+static const uint8_t expected[8] = {0x02, 0xb5, 0, 0, 0, 0, 0, 0};
+static void start_data_rx(pf_sdio_pio_host_t *host, uint32_t *image,
+                         uint32_t words, uint32_t bits, uint32_t count)
+{
+    (void)host;
+    assert(words == 10 && bits == 80 && count == 1);
+    wire = (uint8_t *)image;
+}
+static void cleanup_data_rx(pf_sdio_pio_host_t *host) { (void)host; ++cleanups; }
+bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
+                                  uint32_t argument, uint16_t bits,
+                                  uint8_t *response, size_t capacity)
+{
+    (void)host;
+    assert((command == 55 && argument == 0x12340000) || (command == 51 && argument == 0));
+    assert(bits == 48 && capacity == 6);
+    if ((command == 55 && failure == 1) || (command == 51 && failure == 3)) return false;
+    memset(response, 0, 6);
+    response[0] = command;
+    if ((command == 55 && failure == 5) || (command == 51 && failure == 6))
+        response[2] = 0x40;  /* ILLEGAL_COMMAND */
+    response[5] = (uint8_t)((pf_sd_card_crc7(response, 5) << 1) | 1);
+    if ((command == 55 && failure == 2) || (command == 51 && failure == 4))
+        response[5] ^= 2;
+    return true;
+}
+static bool wait_data_rx(pf_sdio_pio_host_t *host, uint32_t timeout)
+{
+    (void)host;
+    assert(timeout == 1000000);
+    if (failure == 7) return false;
+    uint16_t crc = pf_sd_card_crc16(expected, sizeof(expected));
+    assert(crc == 0x0475);
+    memset(wire, 0, 40);
+    for (unsigned i = 0; i < 80; ++i) {
+        unsigned bit = i < 64 ? (expected[i / 8] >> (7 - i % 8)) & 1
+                              : (crc >> (79 - i)) & 1;
+        wire[i / 2] |= (uint8_t)((0xe | bit) << (i % 2 == 0 ? 4 : 0));
+    }
+    if (failure == 8) wire[39] ^= 1;
+    return true;
+}
+@READ_SCR@
+int main(void)
+{
+    pf_sdio_pio_host_t host = { .data_rx_program_loaded = true };
+    uint8_t scr[8];
+    const pf_sdio_pio_init_stage_t stages[] = {
+        PF_SDIO_PIO_INIT_STAGE_NONE, PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX,
+        PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX, PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE,
+        PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE, PF_SDIO_PIO_INIT_STAGE_SCR_PREFIX,
+        PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE, PF_SDIO_PIO_INIT_STAGE_SCR_DATA,
+        PF_SDIO_PIO_INIT_STAGE_SCR_CRC
+    };
+    for (failure = 0; failure < sizeof(stages) / sizeof(stages[0]); ++failure) {
+        assert(pf_sdio_pio_host_read_scr(&host, 0x12340000, scr) == (failure == 0));
+        assert(host.scr_stage == stages[failure] && cleanups == failure + 1);
+        if (failure == 0) assert(memcmp(scr, expected, sizeof(scr)) == 0);
+    }
+    assert(!pf_sdio_pio_host_read_scr(NULL, 0, scr));
+    assert(!pf_sdio_pio_host_read_scr(&host, 0, NULL));
+    assert(host.scr_stage == PF_SDIO_PIO_INIT_STAGE_SCR);
+}
+"""
+    host_source = (SOURCE.parent / "sdio_pio_host.c").read_text()
+    code = code.replace("@READ_SCR@", function_source(
+        host_source, "bool pf_sdio_pio_host_read_scr("))
+    with tempfile.TemporaryDirectory() as scratch:
+        directory = Path(scratch)
+        (directory / "hardware").mkdir()
+        (directory / "hardware/pio.h").write_text("typedef unsigned uint;\ntypedef void *PIO;\n")
+        src, exe = directory / "scr.c", directory / "scr"
+        src.write_text(code)
+        subprocess.run([
+            os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
+            "-I", scratch, "-I", str(SOURCE.parents[1]), "-I", str(SOURCE.parent),
+            str(src), str(SOURCE.parents[1] / "sd_card_protocol.c"),
+            str(SOURCE.parent / "sdio_pio_protocol.c"), "-o", str(exe)
+        ], check=True)
+        subprocess.run([str(exe)], check=True)
+    print("SCR: captured card payload/CRC and prefix/response/data/CRC failure stages passed")
+
+
 def main():
     profile = BOARD_PROFILE.read_text()
     assert ".clock_hz = 25000000u," in profile, (
@@ -566,6 +657,7 @@ def main():
     divider = (150000000 + 2 * 25000000 - 1) // (2 * 25000000)
     assert divider == 3 and 150000000 // (2 * divider) == 25000000
     check_optional_variants()
+    check_scr_diagnostics()
     source = SOURCE.read_text()
     probe = function_source(source, "static bool probe_transfer(void)")
     read_retry = function_source(source, "static bool read_blocks_with_clock_fallback(")

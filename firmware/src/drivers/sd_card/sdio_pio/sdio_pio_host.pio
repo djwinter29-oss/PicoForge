@@ -24,15 +24,16 @@ send_command:
     pull block side 1
     out y, 8 side 0
     jmp !y command_complete side 1
-wait_for_response:
     nop side 0
-    jmp pin wait_for_response side 1
-; The card changes CMD 2.5-14 ns after a rising edge; sample at the next one.
-    in null, 1 side 0
+wait_for_response:
+    nop side 1
+    jmp pin wait_for_response side 0
+; Sample responses mid-bit, away from the card's rising-edge output changes.
+    in null, 1 side 1
 read_response:
-    in pins, 1 side 1
-    jmp y-- read_response side 0
-    push block side 1
+    in pins, 1 side 0
+    jmp y-- read_response side 1
+    push block side 0
 command_complete:
     irq set 0 side 1
 .wrap
@@ -42,8 +43,11 @@ command_complete:
     pull block
 receive_block:
     mov x, osr
-    wait 0 pin 0
+; Detect start at a falling edge, whether DAT0 went low before or after the rising edge.
+wait_for_start:
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    jmp pin wait_for_start
 receive_nibble:
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
@@ -57,8 +61,10 @@ receive_nibble:
     pull block
 receive_block:
     mov x, osr
-    wait 0 pin 0
+wait_for_start:
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    jmp pin wait_for_start
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
 receive_nibble:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET

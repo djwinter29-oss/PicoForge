@@ -27,6 +27,7 @@ typedef struct {
     uint32_t input_sync_bypass_mask;
     uint32_t last_response_words[5];
     size_t last_response_word_count;
+    pf_sdio_pio_init_stage_t scr_stage;
     uint32_t write_stream_next_sector;
     bool write_stream_open;
     bool read_stream_unresolved;
