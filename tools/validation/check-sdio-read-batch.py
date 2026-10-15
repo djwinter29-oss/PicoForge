@@ -125,12 +125,12 @@ typedef struct { uint32_t rxf[4]; } fake_pio_t;
 typedef struct {
     fake_pio_t *pio;
     unsigned data_sm, dma_channel, data_rx_program_offset;
-    bool data_rx_program_loaded, data_rx_multiblock_supported;
+    bool data_rx_program_loaded, data_rx_multiblock_supported, read_stream_unresolved, write_stream_open;
 } pf_sdio_pio_host_t;
 static uint32_t read_wire_buffer[130u * 64u];
 static bool response_ok, crc_ok, stop_ok, timeout, command_ok;
 static uint32_t response_status;
-static unsigned single_calls, stops;
+static unsigned single_calls, stops, commands;
 static uint32_t now;
 static uint32_t rx_transfer_words, rx_nibble_count, rx_block_count;
 #define pio_interrupt_get(...) (!timeout)
@@ -151,7 +151,8 @@ static void wait_data_idle(pf_sdio_pio_host_t *host, uint32_t completion_flag)
 { (void)host; (void)completion_flag; }
 static bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
     uint32_t argument, unsigned bits, uint8_t *response, unsigned size)
-{ (void)host; (void)command; (void)argument; (void)bits; (void)response; (void)size; return command_ok; }
+{ assert(!host->read_stream_unresolved && command == 18u); ++commands;
+  (void)argument; (void)bits; (void)response; (void)size; return command_ok; }
 static bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t *response,
                                       uint32_t *argument, bool crc)
 { (void)command; (void)response; (void)crc; *argument = response_status; return response_ok; }
@@ -163,6 +164,8 @@ static bool stop_multiblock_with_clock_fallback(pf_sdio_pio_host_t *host)
 static bool read_single_blocks(pf_sdio_pio_host_t *host, uint32_t sector,
                                bool addressed, uint8_t *blocks, uint32_t count)
 { (void)host; (void)sector; (void)addressed; (void)blocks; (void)count; ++single_calls; return true; }
+static bool restore_command_mode(pf_sdio_pio_host_t *host) { (void)host; return true; }
+@CLOSE@
 @READER@
 int main(void)
 {
@@ -170,6 +173,7 @@ int main(void)
     pf_sdio_pio_host_t host = { .pio = &pio, .data_rx_program_loaded = true,
                                .data_rx_multiblock_supported = true };
     uint8_t blocks[1024];
+    unsigned previous_stops;
     response_ok = crc_ok = stop_ok = command_ok = true;
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
         assert(rx_transfer_words == 2u * SDIO_DATA_WORD_COUNT &&
@@ -183,19 +187,49 @@ int main(void)
     assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
     assert(host.data_rx_multiblock_supported && single_calls == 0u);
     timeout = false;
+    command_ok = false;
+    previous_stops = stops;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    assert(stops == previous_stops + 1u && !host.read_stream_unresolved);
+    command_ok = true;
+    response_ok = false;
+    previous_stops = stops;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    assert(stops == previous_stops + 1u && !host.read_stream_unresolved);
+    response_ok = true;
     stop_ok = false;
     assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
     assert(host.data_rx_multiblock_supported && single_calls == 0u);
+    assert(host.read_stream_unresolved);
+    previous_stops = stops;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(stops == previous_stops); /* cannot issue more I/O before recovery */
+    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(host.read_stream_unresolved);
     stop_ok = true;
+    assert(pf_sdio_pio_host_write_stream_close(&host));
+    assert(!host.read_stream_unresolved);
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, NULL, 2u));
-    command_ok = false;
-    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
-    assert(host.data_rx_multiblock_supported && single_calls == 0u);
-    command_ok = true;
-    response_ok = false;
-    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
-    assert(host.data_rx_multiblock_supported && single_calls == 0u);
-    response_ok = true;
+    for (unsigned failure = 0u; failure < 2u; ++failure) {
+        command_ok = failure != 0u;
+        response_ok = failure == 0u;
+        stop_ok = false;
+        assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+        assert(host.read_stream_unresolved);
+        unsigned previous_commands = commands;
+        previous_stops = stops;
+        assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 1u));
+        assert(commands == previous_commands && stops == previous_stops);
+        assert(!pf_sdio_pio_host_write_stream_close(&host));
+        assert(host.read_stream_unresolved);
+        stop_ok = true;
+        assert(pf_sdio_pio_host_write_stream_close(&host));
+        assert(!host.read_stream_unresolved);
+        command_ok = response_ok = true;
+        assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    }
     response_status = 1u << 22u;
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
     assert(!host.data_rx_multiblock_supported && single_calls == 1u);
@@ -213,7 +247,11 @@ def reader_behavior_check(source):
     with tempfile.TemporaryDirectory() as scratch:
         src = Path(scratch) / "reader.c"
         exe = Path(scratch) / "reader"
-        src.write_text(READER_HARNESS.replace("@READER@", reader))
+        close_signature = "bool pf_sdio_pio_host_write_stream_close"
+        close_start = source.index(close_signature)
+        close = (source[close_start:source.index("{", close_start)] +
+                 function_body(source, close_signature) + "}")
+        src.write_text(READER_HARNESS.replace("@READER@", reader).replace("@CLOSE@", close))
         include = HOST.parents[1]
         build = subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
                                 "-I", str(include), str(src),
@@ -223,6 +261,172 @@ def reader_behavior_check(source):
             return ["reader harness compile failed: " + build.stderr]
         result = subprocess.run([str(exe)])
         return [] if result.returncode == 0 else ["reader recovery behavior failed"]
+
+
+# Run the production command gate, CMD12 validation/busy loop, clock fallback,
+# and mode restoration together with the reader. Only hardware/program loading,
+# response decoding and payload decoding are injected at their boundaries.
+RECOVERY_HARDWARE = r"""
+#define SDIO_RESPONSE_IRQ 0u
+#define pio_sm_set_enabled(...) ((void)0)
+#define pio_sm_clear_fifos(...) ((void)0)
+#define pio_interrupt_clear(...) ((void)0)
+#define pio_sm_restart(...) ((void)0)
+#define pio_sm_exec(...) ((void)0)
+#define pio_sm_set_clkdiv_int_frac(...) ((void)0)
+#define pio_remove_program(...) ((void)0)
+static unsigned fifo_puts, last_command, stop_attempts;
+static bool load_ok = true, stop_response_ok, busy_low, cmd18_wire_ok = true;
+static void sleep_us(uint32_t us) { (void)us; }
+static unsigned gpio_get(unsigned gpio) { (void)gpio; return !busy_low; }
+static bool load_command_program(pf_sdio_pio_host_t *host)
+{ host->command_program_loaded = load_ok; return load_ok; }
+static bool load_data_rx_program(pf_sdio_pio_host_t *host)
+{ host->data_rx_program_loaded = load_ok; return load_ok; }
+static void pio_sm_put_blocking(fake_pio_t *pio, unsigned sm, uint32_t word)
+{
+    (void)pio; (void)sm;
+    if (fifo_puts++ % 3u == 0u) last_command = (word >> 18u) & 63u;
+}
+static bool wait_for_command_complete(pf_sdio_pio_host_t *host,
+                                      uint32_t *words, size_t count)
+{
+    (void)host; (void)words; (void)count;
+    ++commands;
+    if (last_command == 12u) ++stop_attempts;
+    return last_command != 18u || cmd18_wire_ok;
+}
+static bool pf_sdio_pio_response_words_to_bytes(const uint32_t *words,
+    uint16_t bits, uint8_t *bytes, size_t capacity)
+{ (void)words; (void)bits; (void)bytes; (void)capacity; return true; }
+static bool pf_sdio_pio_build_command(uint8_t command, uint32_t arg, uint8_t frame[6])
+{ (void)arg; memset(frame, 0, 6u); frame[0] = 0x40u | command; return true; }
+static bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t *response,
+                                      uint32_t *argument, bool crc)
+{ (void)response; assert(crc); *argument = response_status;
+  return command == 12u ? stop_response_ok : response_ok; }
+"""
+
+RECOVERY_MAIN = r"""
+int main(void)
+{
+    fake_pio_t pio = {0};
+    pf_sdio_pio_host_t host = { .pio = &pio, .data_rx_program_loaded = true,
+        .command_program_loaded = true, .data_rx_multiblock_supported = true,
+        .system_clock_hz = 200000000u, .current_clock_hz = 50000000u };
+    uint8_t blocks[1024];
+    crc_ok = true;
+    /* CMD18 response lost; all six CMD12 response validations fail. */
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(stop_attempts == 6u && host.read_stream_unresolved);
+    unsigned previous = commands;
+    assert(!pf_sdio_pio_host_command(&host, 0u, 0u, 0u, NULL, 0u));
+    unsigned previous_init = init_calls;
+    assert(card_reinit(&host) == PF_SD_CARD_INIT_FAILED);
+    assert(init_calls == previous_init && host.read_stream_unresolved);
+    previous = commands;
+    assert(!pf_sdio_pio_host_command(&host, 13u, 0u, 0u, NULL, 0u));
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 1u));
+    assert(commands == previous);
+    /* Even a valid CMD12 response cannot resolve DAT0 busy timeout. */
+    stop_response_ok = true;
+    busy_low = true;
+    host.current_clock_hz = 50000000u;
+    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(stop_attempts == 13u && host.read_stream_unresolved);
+    /* Failure to reload either command or RX program preserves both streams. */
+    busy_low = false;
+    host.write_stream_open = true;
+    load_ok = false;
+    host.command_program_loaded = false;
+    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(host.read_stream_unresolved && host.write_stream_open && stop_attempts == 13u);
+    host.command_program_loaded = true;
+    host.data_rx_program_loaded = false;
+    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(host.read_stream_unresolved && host.write_stream_open && stop_attempts == 13u);
+    load_ok = true;
+    assert(card_reinit(&host) == PF_SD_CARD_OK);
+    assert(card_initialized && init_calls == previous_init + 1u);
+    assert(!host.read_stream_unresolved && !host.write_stream_open && stop_attempts == 14u);
+    assert(pf_sdio_pio_host_command(&host, 0u, 0u, 0u, NULL, 0u));
+    response_ok = true;
+    assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    /* Lost command completion also follows real CMD18 cleanup and stop retries. */
+    cmd18_wire_ok = stop_response_ok = false;
+    host.current_clock_hz = 50000000u;
+    unsigned previous_stops = stop_attempts;
+    assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
+    assert(host.read_stream_unresolved && stop_attempts == previous_stops + 6u);
+    stop_response_ok = true;
+    assert(card_reinit(&host) == PF_SD_CARD_OK && !host.read_stream_unresolved);
+    puts("Production SDIO command/stop recovery checks passed");
+    return 0;
+}
+"""
+
+
+def production_recovery_check(source):
+    code = READER_HARNESS[:READER_HARNESS.index("int main(void)")]
+    for name in ("pf_sdio_pio_host_command_bytes", "pf_sdio_pio_parse_response",
+                 "stop_multiblock_with_clock_fallback", "restore_command_mode"):
+        start = code.index("static bool " + name + "(")
+        body = function_body(code, "static bool " + name)
+        end = code.index("{", start) + len(body) + 1
+        code = code[:start] + code[end:]
+    code = code.replace('#include <stdint.h>', '#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n#include <string.h>')
+    code = code.replace('unsigned data_sm, dma_channel, data_rx_program_offset;',
+        'unsigned data_sm, dma_channel, data_rx_program_offset, command_sm, data0_gpio;\n'
+        'uint32_t system_clock_hz, current_clock_hz, clock_div_ticks;\n'
+        'bool command_program_loaded, data_tx_program_loaded, clock_program_loaded;')
+    code = code.replace('response_ok, crc_ok, stop_ok, timeout, command_ok', 'response_ok, crc_ok, timeout')
+    code = code.replace('single_calls, stops, commands', 'single_calls, commands')
+    code = code.replace('@CLOSE@\n@READER@', RECOVERY_HARDWARE)
+    for signature in ('bool pf_sdio_pio_host_set_clock', 'bool pf_sdio_pio_host_command',
+                      'bool pf_sdio_pio_host_command_bytes', 'static bool restore_command_mode',
+                      'static bool stop_multiblock_transfer', 'static bool stop_multiblock_with_clock_fallback',
+                      'bool pf_sdio_pio_host_write_stream_close', 'bool pf_sdio_pio_host_read_blocks'):
+        start = source.index(signature + '(')
+        code += source[start:source.index('{', start)] + function_body(source, signature) + '}\n'
+    # Extract the card-layer init tail: actual stop-before-identification ordering.
+    # Identification itself is a stub that issues real host CMD0; no enumeration claim.
+    card_source = (HOST.parent / 'sdio_pio.c').read_text()
+    init_body = function_body(card_source, 'pf_sd_card_result_t pf_sdio_pio_init')
+    init_tail = init_body[init_body.index('    if (!card_detect_present())'):]
+    init_tail = init_tail.replace('&sdio_pio_host', 'host')
+    code += r"""
+static bool card_initialized;
+static unsigned init_calls, card_init_stage;
+#define PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK 1u
+static struct { uint32_t clock_hz; } active_config = { 25000000u };
+static const uint32_t transfer_clock_steps_hz[] = {25000000u, 10000000u};
+static pf_sdio_pio_host_t *initializing_host;
+static bool card_detect_present(void) { return true; }
+static uint32_t default_clock_hz(void) { return 10000000u; }
+static bool initialize_card(uint32_t *limit)
+{
+    (void)limit;
+    ++init_calls;
+    assert(!initializing_host->read_stream_unresolved);
+    assert(initializing_host->current_clock_hz == 400000u);
+    return pf_sdio_pio_host_command(initializing_host, 0u, 0u, 0u, NULL, 0u);
+}
+static pf_sd_card_result_t card_reinit(pf_sdio_pio_host_t *host)
+{
+    initializing_host = host;
+""" + init_tail + '}\n'
+    code += RECOVERY_MAIN
+    with tempfile.TemporaryDirectory() as scratch:
+        src, exe = Path(scratch) / 'recovery.c', Path(scratch) / 'recovery'
+        src.write_text(code)
+        include = HOST.parents[1]
+        build = subprocess.run([os.environ.get('CC', 'cc'), '-Wall', '-Wextra', '-Werror',
+                                '-I', str(include), str(src), str(include / 'sd_card_protocol.c'),
+                                '-o', str(exe)], capture_output=True, text=True)
+        if build.returncode:
+            return ['production recovery compile failed: ' + build.stderr]
+        result = subprocess.run([str(exe)])
+        return [] if result.returncode == 0 else ['production recovery behavior failed']
 
 
 def behavior_check(source):
@@ -244,7 +448,7 @@ def behavior_check(source):
 
 def main():
     source = HOST.read_text()
-    errors = behavior_check(source) + reader_behavior_check(source)
+    errors = behavior_check(source) + reader_behavior_check(source) + production_recovery_check(source)
 
     batch = int(re.search(r"#define SDIO_READ_BATCH_BLOCKS (\d+)u", source).group(1))
     buffer_size = int(re.search(r"SELF_TEST_BUFFER_SIZE (\d+)u", SELF_TEST.read_text()).group(1))

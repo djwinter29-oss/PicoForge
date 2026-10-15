@@ -65,6 +65,8 @@ void pf_sd_card_get_profile(pf_sd_card_profile_t *profile);
 
 /** Return whether the selected card transport has initialized successfully. */
 bool pf_sd_card_is_initialized(void);
+/** Serialized storage owner notification after debounced card removal. */
+void pf_sd_card_confirm_removed(void);
 
 /** Return the initialized card's number of 512-byte sectors, or zero if unavailable. */
 uint32_t pf_sd_card_block_count(void);

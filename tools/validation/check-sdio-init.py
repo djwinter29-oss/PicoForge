@@ -212,7 +212,6 @@ static struct {
 static uint32_t card_sector_count = 15564800u;
 static uint8_t card_cid[16];
 static bool card_block_addressed = true, card_initialized, configuration_set = true;
-static bool card_removal_handled;
 static unsigned card_init_stage, attempts, resets, reads, sectors, high_speed_requests;
 static uint32_t system_hz = 150000000u;
 static bool corrupt_fast, fail_reads, lose_batching, fail_identification;
@@ -311,11 +310,12 @@ static void reset(void)
     closes = single_writes = batch_writes = 0u;
     removed = continue_write = false;
     configuration_set = true;
-    card_removal_handled = false;
     detect_gpio_level = 1u;
     forgotten_removed_cards = 0u;
     close_ok = write_ok = true;
     high_speed_requests = 0u;
+    sdio_pio_host.write_stream_open = false;
+    card_initialized = false;
     card_init_stage = 0u;
     corrupt_fast = fail_reads = lose_batching = fail_identification = false;
     runtime_read = false;
@@ -441,28 +441,53 @@ int main(void)
     assert(transfer_blocks(0u, buffer, NULL, 1u) == PF_SD_CARD_IO_ERROR);
     assert(!card_initialized);
     assert(reads == 1u && single_writes == 2u && batch_writes == 4u);
-        reset();
-        card_initialized = true;
-        active_config.use_card_detect = true;
-        active_config.card_detect_active_high = true;
-        sdio_pio_host.write_stream_open = true;
-        detect_gpio_level = 0u;
-        assert(!pf_sdio_pio_is_initialized());
-        assert(!card_initialized && !sdio_pio_host.write_stream_open &&
-            forgotten_removed_cards == 1u);
-        assert(!pf_sdio_pio_is_initialized() && forgotten_removed_cards == 1u);
-        detect_gpio_level = 1u;
-        assert(!pf_sdio_pio_is_initialized() && !card_removal_handled);
-        card_initialized = true;
-        sdio_pio_host.write_stream_open = true;
-        detect_gpio_level = 0u;
-        assert(!pf_sdio_pio_is_initialized());
-        assert(!sdio_pio_host.write_stream_open && forgotten_removed_cards == 2u);
-        uint32_t max_blocks_32 = UINT32_MAX / PF_SD_CARD_BLOCK_SIZE;
-        assert(validate_transfer_32(0u, buffer, max_blocks_32, UINT32_MAX) == PF_SD_CARD_OK);
-        assert(validate_transfer_32(0u, buffer, max_blocks_32 + 1u, UINT32_MAX)
-            == PF_SD_CARD_INVALID_ARGUMENT);
-        assert(validate_transfer_32(UINT32_MAX, NULL, 0u, 0u) == PF_SD_CARD_OK);
+    reset();
+    card_initialized = true;
+    active_config.use_card_detect = true;
+    active_config.card_detect_active_high = true;
+    sdio_pio_host.write_stream_open = true;
+    detect_gpio_level = 0u;
+    pf_sd_card_info_t info;
+    pf_sdio_pio_get_info(&info);
+    assert(info.presence_known && !info.present && !info.initialized);
+    assert(!pf_sdio_pio_is_initialized());
+    assert(!card_initialized && sdio_pio_host.write_stream_open &&
+        forgotten_removed_cards == 0u);
+    unsigned previous_closes = closes;
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_NOT_READY);
+    assert(closes == previous_closes);
+    detect_gpio_level = 1u; /* bounce back: reinit must still close CMD25 */
+    assert(!pf_sdio_pio_is_initialized());
+    close_ok = false;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED);
+    assert(!card_initialized && sdio_pio_host.write_stream_open);
+    assert(attempts == 0u && resets == 0u);
+    close_ok = true;
+    assert(initialize() == PF_SD_CARD_OK);
+    assert(card_initialized && !sdio_pio_host.write_stream_open);
+    assert(attempts == 1u && resets == 1u);
+    sdio_pio_host.write_stream_open = true;
+    detect_gpio_level = 0u;
+    assert(!pf_sdio_pio_is_initialized());
+    pf_sdio_pio_confirm_card_removed();
+    assert(!sdio_pio_host.write_stream_open && forgotten_removed_cards == 1u);
+    assert(closes == previous_closes + 2u); /* confirmed removal sent no stop */
+    detect_gpio_level = 1u;
+    assert(initialize() == PF_SD_CARD_OK);
+    assert(card_initialized && !sdio_pio_host.write_stream_open);
+    assert(forgotten_removed_cards == 1u);
+    reset();
+    active_config.use_card_detect = true;
+    detect_gpio_level = 0u;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED && closes == 0u);
+    detect_gpio_level = 1u;
+    assert(initialize() == PF_SD_CARD_OK && card_initialized);
+    assert(!sdio_pio_host.write_stream_open && closes == 1u);
+    uint32_t max_blocks_32 = UINT32_MAX / PF_SD_CARD_BLOCK_SIZE;
+    assert(validate_transfer_32(0u, buffer, max_blocks_32, UINT32_MAX) == PF_SD_CARD_OK);
+    assert(validate_transfer_32(0u, buffer, max_blocks_32 + 1u, UINT32_MAX)
+        == PF_SD_CARD_INVALID_ARGUMENT);
+    assert(validate_transfer_32(UINT32_MAX, NULL, 0u, 0u) == PF_SD_CARD_OK);
     puts("SDIO initialization and transfer routing checks passed");
 }
 """
@@ -473,7 +498,12 @@ def main():
     source = SOURCE.read_text()
     probe = function_source(source, "static bool probe_transfer(void)")
     read_retry = function_source(source, "static bool read_blocks_with_clock_fallback(")
-    initialized = function_source(source, "bool pf_sdio_pio_is_initialized(void)")
+    initialized = "\n".join(function_source(source, signature) for signature in (
+        "static bool card_detect_present(void)",
+        "bool pf_sdio_pio_is_initialized(void)",
+        "void pf_sdio_pio_confirm_card_removed(void)",
+        "pf_sd_card_result_t pf_sdio_pio_sync(void)",
+        "void pf_sdio_pio_get_info("))
     transfer = function_source(source, "static pf_sd_card_result_t transfer_blocks(")
     protocol = (SOURCE.parents[1] / "sd_card_protocol.c").read_text()
     validate_32 = function_source(protocol, "pf_sd_card_result_t pf_sd_card_validate_transfer(")
@@ -485,7 +515,7 @@ def main():
     ladder_start = source.index("static const uint32_t transfer_clock_steps_hz[]")
     ladder = source[ladder_start:source.index("};", ladder_start) + 2]
     selection = init[init.index("card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;"):-1]
-    retry = retry[retry.index("card_initialized = false;\n    uint32_t clock_limit_hz"):-1]
+    retry = retry[retry.index("    if (!card_detect_present())"):-1]
     code = (HARNESS.replace("@LADDER@", ladder).replace("@PROBE@", probe)
             .replace("@READ_RETRY@", read_retry)
             .replace("@IS_INITIALIZED@", initialized)

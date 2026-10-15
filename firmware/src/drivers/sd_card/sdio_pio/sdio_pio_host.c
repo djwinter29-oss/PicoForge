@@ -350,7 +350,7 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
     int dma_channel;
     uint32_t data_gpio_base;
 
-    if ((host == NULL) || (config == NULL) ||
+    if ((host == NULL) || (host->pio != NULL) || (config == NULL) ||
         (((config->pio != pio0) && (config->pio != pio1))) ||
         !pio_can_add_program(config->pio, &pf_sdio_pio_command_program)) {
         return false;
@@ -502,6 +502,7 @@ bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
     size_t response_word_count = (response_bits + 31u) / 32u;
 
     if ((host == NULL) || (host->pio == NULL) ||
+        (host->read_stream_unresolved && (command != 12u)) ||
         ((response_bits != 0u) &&
          ((response_words == NULL) || (response_word_count > response_word_capacity))) ||
         (response_bits > 136u) ||
@@ -607,7 +608,7 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
 
     if ((host == NULL) || (data == NULL) || (data_size == 0u) ||
         (data_size > PF_SD_CARD_BLOCK_SIZE) || ((data_size & 3u) != 0u) ||
-        !host->data_rx_program_loaded) {
+        !host->data_rx_program_loaded || host->read_stream_unresolved) {
         return false;
     }
     wire_bytes = (uint32_t)data_size + 8u;
@@ -758,7 +759,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
                                       uint32_t block_count)
 {
     if ((host == NULL) || (host->pio == NULL) ||
-        !host->data_rx_program_loaded) {
+        !host->data_rx_program_loaded || host->read_stream_unresolved) {
         return false;
     }
     if (block_count == 0u) {
@@ -776,7 +777,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         uint32_t batch_count = block_count;
         uint32_t batch_words;
         uint32_t start;
-        bool command_sent;
+        bool command_ok;
         bool transfer_ok = false;
         bool crc_failed = false;
         bool timed_out = false;
@@ -793,9 +794,11 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         start_data_rx(host, read_wire_buffer, batch_words, SDIO_DATA_NIBBLE_COUNT,
                       batch_count);
 
-        command_sent = pf_sdio_pio_host_command_bytes(host, 18u, command_argument,
-                                                       48u, response, sizeof(response));
-        bool response_valid = command_sent &&
+        /* CMD18 may reach the wire even if its response fails. Stop every attempt. */
+        command_ok = pf_sdio_pio_host_command_bytes(host, 18u, command_argument,
+                                                     48u, response, sizeof(response));
+        host->read_stream_unresolved = true;
+        bool response_valid = command_ok &&
             pf_sdio_pio_parse_response(18u, response, &response_argument, true);
         bool response_ok = response_valid &&
             ((response_argument & 0xfdffe008u) == 0u);
@@ -826,7 +829,8 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         }
 
         cleanup_data_rx(host);
-        bool stop_ok = command_sent && stop_multiblock_with_clock_fallback(host);
+        bool stop_ok = stop_multiblock_with_clock_fallback(host);
+        host->read_stream_unresolved = !stop_ok;
         if (!stop_ok || !response_valid || crc_failed || timed_out) {
             return false;
         }
@@ -920,7 +924,7 @@ bool pf_sdio_pio_host_write_stream_continues(const pf_sdio_pio_host_t *host, uin
 
 bool pf_sdio_pio_host_write_stream_close(pf_sdio_pio_host_t *host)
 {
-    if ((host == NULL) || !host->write_stream_open) {
+    if ((host == NULL) || (!host->write_stream_open && !host->read_stream_unresolved)) {
         return true;
     }
     if (!restore_command_mode(host)) {
@@ -930,6 +934,7 @@ bool pf_sdio_pio_host_write_stream_close(pf_sdio_pio_host_t *host)
         return false;
     }
     host->write_stream_open = false;
+    host->read_stream_unresolved = false;
     return true;
 }
 
@@ -939,6 +944,7 @@ void pf_sdio_pio_host_forget_removed_card(pf_sdio_pio_host_t *host)
         return;
     }
     host->write_stream_open = false;
+    host->read_stream_unresolved = false;
     if (!restore_command_mode(host)) {
         pf_sdio_pio_host_deinit(host);
     }

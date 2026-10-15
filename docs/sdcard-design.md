@@ -250,7 +250,7 @@ flowchart TD
     Stream --> Encode[Alternate two wire images; encode next block during current DMA and busy wait]
     Encode --> Accept[Check card data-response token and DAT0 busy release]
     Accept --> Pending[Return success with stream open at next sector]
-    Pending --> Sync[Sync, read, noncontiguous write, reinit, or removal closes stream]
+    Pending --> Sync[Sync, read, noncontiguous write, or reinit closes stream]
     Sync --> Stop[Restore command mode and send CMD12; lower-clock stop retry if needed]
     Count -->|No| Single[CMD24, one DMA wire image, response and busy wait]
     Single --> Restore[Restore command and RX programs]
@@ -269,9 +269,28 @@ of the next image with transmission/programming of the current sector, but use
 only one DMA channel. Failed writes are not automatically replayed. Stop-command
 recovery is not a guarantee against data loss on power failure.
 
-Any failed native multi-block write invalidates card initialization. If CMD12
-cannot be confirmed, the stream remains unresolved; subsequent I/O is blocked,
-and reinitialization must close the stream before issuing CMD0.
+A failed native multi-block write returns an error without replay. Initialization
+is invalidated when cleanup leaves the CMD25 stream unresolved (command-mode
+restoration or CMD12 response/busy recovery failed). If cleanup succeeds, the
+card remains initialized; this does not mean the failed write was atomic or that
+no data reached the card. Earlier accepted blocks, and possibly the failing block,
+may already be programmed. CMD12 terminates the stream; it is not the first point
+at which blocks can reach media. Single-block write errors return an error without
+automatically invalidating initialization.
+
+Raw card-detect absence immediately invalidates readiness and blocks transfers,
+sync, and initialization, while preserving unresolved protocol state. A bounce
+back requires reinitialization to close that state before CMD0. Only the serialized
+storage worker's debounced removal notification abandons streams and restores host
+mode without sending CMD12 to the absent card. This notification precedes unmount.
+
+CMD18 response timeout or malformed response does not prove the command was never
+sent. Every validated multi-block read attempt cleans up RX/DMA and attempts CMD12,
+including those response failures. A failed stop retains an unresolved read flag;
+the host rejects new reads and non-stop commands. Card-layer recovery first closes
+that state successfully before identification or retry. Exhausted stop recovery
+leaves initialization invalid and subsequent I/O blocked. A confirmed removal may
+abandon this state without a card command.
 
 SPI multi-block writes use the 0xFC block token and 0xFD stop token. They are
 closed within each call, not kept open across calls. Illegal-command fallback

@@ -18,7 +18,6 @@ static uint8_t card_cid[16];
 static bool card_block_addressed;
 static bool configuration_set;
 static bool card_initialized;
-static bool card_removal_handled;
 static pf_sdio_pio_init_stage_t card_init_stage;
 static uint8_t card_init_response[6];
 static uint8_t last_short_command;
@@ -199,6 +198,12 @@ static bool probe_transfer(void)
     return true;
 }
 
+static bool card_detect_present(void)
+{
+    return !active_config.use_card_detect ||
+        ((gpio_get(active_config.card_detect_gpio) != 0u) == active_config.card_detect_active_high);
+}
+
 static bool initialize_card(uint32_t *clock_limit_hz)
 {
     uint8_t response[17];
@@ -212,6 +217,10 @@ static bool initialize_card(uint32_t *clock_limit_hz)
     uint32_t acmd41_argument = 0x00ff8000u;
     bool supports_sd_v2;
 
+    if (!card_detect_present() ||
+        !pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
+        return false;
+    }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_IDLE;
     sleep_ms(2u);
     if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 0u, 0u, 0u, NULL, 0u)) {
@@ -455,14 +464,10 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         }
     }
 
-    if (active_config.use_card_detect &&
-        ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
+    if (!card_detect_present()) {
         card_initialized = false;
-        card_removal_handled = true;
-        pf_sdio_pio_host_forget_removed_card(&sdio_pio_host);
         return PF_SD_CARD_INIT_FAILED;
     }
-    card_removal_handled = false;
     /* A stream left open by a previous session must end before CMD0 re-initializes the card. */
     if (!pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
         card_initialized = false;
@@ -494,17 +499,17 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
 
 bool pf_sdio_pio_is_initialized(void)
 {
-    if (configuration_set && active_config.use_card_detect &&
-        ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
+    if (configuration_set && !card_detect_present()) {
+        /* Suspected removal blocks I/O, but cannot discard an unresolved stream. */
         card_initialized = false;
-        if (!card_removal_handled) {
-            card_removal_handled = true;
-            pf_sdio_pio_host_forget_removed_card(&sdio_pio_host);
-        }
-    } else if (configuration_set && active_config.use_card_detect) {
-        card_removal_handled = false;
     }
     return card_initialized;
+}
+
+void pf_sdio_pio_confirm_card_removed(void)
+{
+    card_initialized = false;
+    pf_sdio_pio_host_forget_removed_card(&sdio_pio_host);
 }
 
 uint32_t pf_sdio_pio_block_count(void)
@@ -536,8 +541,10 @@ static bool read_blocks_with_clock_fallback(uint32_t first_block, uint8_t *buffe
             if (transfer_clock_steps_hz[index] >= failed_clock_hz) {
                 continue;
             }
-            if (active_config.use_card_detect &&
-                ((gpio_get(active_config.card_detect_gpio) != 0u) != active_config.card_detect_active_high)) {
+            if (!card_detect_present()) {
+                return false;
+            }
+            if (!pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
                 return false;
             }
             uint32_t clock_limit_hz = transfer_clock_steps_hz[index];
@@ -620,7 +627,7 @@ pf_sd_card_result_t pf_sdio_pio_write_blocks(uint32_t first_block, const void *b
 
 pf_sd_card_result_t pf_sdio_pio_sync(void)
 {
-    if (!card_initialized) {
+    if (!pf_sdio_pio_is_initialized()) {
         return PF_SD_CARD_NOT_READY;
     }
     if (!pf_sdio_pio_host_write_stream_close(&sdio_pio_host)) {
@@ -641,8 +648,7 @@ void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
     }
     if (active_config.use_card_detect) {
         info->presence_known = true;
-        info->present = ((gpio_get(active_config.card_detect_gpio) != 0u) ==
-                         active_config.card_detect_active_high);
+        info->present = card_detect_present();
     } else if (pf_sdio_pio_is_initialized()) {
         info->presence_known = true;
         info->present = true;

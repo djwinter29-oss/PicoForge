@@ -157,11 +157,11 @@ static void service_card_presence(void)
         auto_mount_pending = true;
         mount_retry_waiting = false;
         if (!stable_card_present) {
+            pf_sd_card_confirm_removed();
             if (pf_storage_is_mounted()) {
                 (void)pf_storage_unmount(NULL);
             }
             pf_storage_forget_filesystem_format();
-            (void)pf_sd_card_is_initialized();
             goto done;
         }
     }

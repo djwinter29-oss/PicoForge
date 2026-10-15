@@ -179,3 +179,15 @@ const char *pf_sd_card_transport_name(void)
     }
     return PF_SELECTED_TRANSPORT_NAME;
 }
+
+void pf_sd_card_confirm_removed(void)
+{
+    if (!transport_selected) {
+        return;
+    }
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
+    /* SPI operations are per-call; there is no persistent stream to abandon. */
+#else
+    pf_sdio_pio_confirm_card_removed();
+#endif
+}

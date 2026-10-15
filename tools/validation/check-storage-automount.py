@@ -41,7 +41,7 @@ static owner_t owner = PF_SD_CARD_OWNER_FIRMWARE;
 static pf_sd_card_info_t media = { true, true, false };
 static uint32_t now;
 static bool mounted, reinit_request;
-static unsigned mount_calls, unmount_calls, forget_calls;
+static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
 static pf_storage_result_t mount_result = PF_STORAGE_OK;
 static owner_t pf_sd_card_get_owner(void) { return owner; }
 static void pf_sd_card_get_info(pf_sd_card_info_t *info) { *info = media; }
@@ -49,12 +49,15 @@ static bool pf_storage_is_mounted(void) { return mounted; }
 static pf_storage_result_t pf_storage_unmount(void *result)
 {
     (void)result;
+    if (media.presence_known && !media.present) {
+        assert(removals == expected_removals && !media.initialized);
+    }
     ++unmount_calls;
     mounted = false;
     return PF_STORAGE_OK;
 }
 static void pf_storage_forget_filesystem_format(void) { ++forget_calls; }
-static bool pf_sd_card_is_initialized(void) { return media.initialized; }
+static void pf_sd_card_confirm_removed(void) { ++removals; media.initialized = false; }
 static bool pf_sd_card_take_reinit_request(void)
 {
     bool requested = reinit_request;
@@ -97,8 +100,16 @@ int main(void)
     assert(mount_calls == 1);
 
     media.present = false;
-    poll(3);
-    assert(forget_calls == 1);
+    poll(2);
+    assert(removals == 0u); /* suspicious samples cannot abandon protocol state */
+    media.present = true;
+    poll(1);
+    assert(removals == 0u);
+    media.present = false;
+    poll(2);
+    assert(removals == 0u);
+    poll(1);
+    assert(removals == 1u && forget_calls == 1);
     media.present = true;
     mount_result = PF_STORAGE_FILESYSTEM_ERROR;
     poll(3);
@@ -110,6 +121,8 @@ int main(void)
     assert(mount_calls == 3 && mounted);
 
     media.present = false;
+    expected_removals = removals + 1u;
+    assert(media.initialized);
     poll(3);
     assert(unmount_calls == 1 && !mounted);
     media.present = true;

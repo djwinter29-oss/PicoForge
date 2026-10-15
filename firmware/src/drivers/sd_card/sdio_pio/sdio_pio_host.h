@@ -29,6 +29,7 @@ typedef struct {
     size_t last_response_word_count;
     uint32_t write_stream_next_sector;
     bool write_stream_open;
+    bool read_stream_unresolved;
     bool command_program_loaded;
     bool data_rx_program_loaded;
     bool data_rx_fast;
@@ -39,6 +40,12 @@ typedef struct {
     uint32_t clock_div_ticks; /* Command/clock divider in 1/256 units. */
 } pf_sdio_pio_host_t;
 
+/**
+ * First use requires a zero-initialized host (static storage or {0}); this function
+ * reads host->pio before clearing the structure. Never pass an indeterminate host.
+ * Duplicate init of a live host returns false without changing it or its resources.
+ * Deinit releases resources and zeroes the host, allowing init again.
+ */
 bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
                               const pf_sdio_pio_config_t *config);
 void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host);
@@ -66,16 +73,16 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
 /**
  * Write blocks with CMD25. The transfer stays open after success so a call starting at the next
  * sector continues it without a new CMD25; any other bus access must first call
- * pf_sdio_pio_host_write_stream_close(), which is what commits the data on the card.
+ * pf_sdio_pio_host_write_stream_close(), which terminates the stream; earlier blocks may already be programmed.
  */
 bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,
                                       bool block_addressed, const uint8_t *blocks,
                                       uint32_t block_count);
 /** @return true when a write stream is open and a write at @p sector would continue it. */
 bool pf_sdio_pio_host_write_stream_continues(const pf_sdio_pio_host_t *host, uint32_t sector);
-/** Stop an open write stream (CMD12) and restore command mode; true if none was open. */
+/** Stop an open write or unresolved read stream (CMD12) and restore command mode; true if none was open. */
 bool pf_sdio_pio_host_write_stream_close(pf_sdio_pio_host_t *host);
-/** Abandon an open stream after card detect reports removal; no card command is sent. */
+/** Abandon an open stream after the storage owner confirms debounced removal; no card command is sent. */
 void pf_sdio_pio_host_forget_removed_card(pf_sdio_pio_host_t *host);
 
 #endif

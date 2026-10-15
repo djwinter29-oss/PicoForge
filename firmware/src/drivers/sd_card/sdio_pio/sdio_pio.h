@@ -78,6 +78,8 @@ void pf_sdio_pio_get_last_response_words(uint32_t words[5], size_t *word_count);
 
 /** Return whether the card has initialized successfully. */
 bool pf_sdio_pio_is_initialized(void);
+/** Storage owner calls only after debounced removal; sends no card command. */
+void pf_sdio_pio_confirm_card_removed(void);
 
 /** Return the initialized card's number of 512-byte sectors, or zero. */
 uint32_t pf_sdio_pio_block_count(void);
