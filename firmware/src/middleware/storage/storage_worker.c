@@ -109,8 +109,7 @@ static void service_card_presence(void)
     pf_sd_card_info_t info;
     bool reinitialize_after_usb;
 
-    if (!config_available ||
-        (pf_sd_card_get_owner() != PF_SD_CARD_OWNER_FIRMWARE)) {
+    if (!config_available) {
         return;
     }
     taskENTER_CRITICAL();
@@ -122,8 +121,9 @@ static void service_card_presence(void)
     taskEXIT_CRITICAL();
 
     pf_sd_card_get_info(&info);
+    bool firmware_owned = pf_sd_card_get_owner() == PF_SD_CARD_OWNER_FIRMWARE;
     bool mounted_card_uninitialized = pf_storage_is_mounted() && !info.initialized;
-    if (mounted_card_uninitialized && (!info.presence_known || info.present)) {
+    if (firmware_owned && mounted_card_uninitialized && (!info.presence_known || info.present)) {
         if (pf_storage_unmount(NULL) != PF_STORAGE_OK) {
             goto done;
         }
@@ -132,6 +132,9 @@ static void service_card_presence(void)
         mount_retry_waiting = false;
     }
     if (!info.presence_known) {
+        if (!firmware_owned) {
+            goto done;
+        }
         if (!auto_mount_pending ||
             (mount_retry_waiting &&
              ((uint32_t)(pf_system_uptime_ms() - last_mount_attempt_ms) < CARD_MOUNT_RETRY_MS))) {
@@ -166,7 +169,7 @@ static void service_card_presence(void)
         }
     }
 
-    if (!stable_card_present) {
+    if (!stable_card_present || !firmware_owned) {
         goto done;
     }
     reinitialize_after_usb = pf_sd_card_take_reinit_request();
@@ -367,4 +370,12 @@ void pf_storage_worker_self_test_status(pf_self_test_status_t *status)
     taskENTER_CRITICAL();
     *status = self_test_status;
     taskEXIT_CRITICAL();
+}
+
+bool pf_storage_worker_media_absent(void)
+{
+    taskENTER_CRITICAL();
+    bool absent = !card_service_busy && stable_presence_valid && !stable_card_present;
+    taskEXIT_CRITICAL();
+    return absent;
 }

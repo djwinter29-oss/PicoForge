@@ -202,13 +202,15 @@ static struct {
     uint32_t current_clock_hz;
     bool data_rx_multiblock_supported;
     bool write_stream_open;
+    bool mode_restore_failed;
 } sdio_pio_host;
-static struct {
+typedef struct {
     uint32_t clock_hz;
     bool use_card_detect;
     unsigned card_detect_gpio;
     bool card_detect_active_high;
-} active_config = { .clock_hz = 50000000u };
+} pf_sdio_pio_config_t;
+static pf_sdio_pio_config_t active_config = { .clock_hz = 50000000u };
 static uint32_t card_sector_count = 15564800u;
 static uint8_t card_cid[16];
 static bool card_block_addressed = true, card_initialized, configuration_set = true;
@@ -218,7 +220,7 @@ static bool corrupt_fast, fail_reads, lose_batching, fail_identification;
 static bool runtime_read;
 static bool change_cid, change_capacity;
 static uint32_t fail_above_hz;
-static bool removed, continue_write, close_ok = true, write_ok = true;
+static bool removed, continue_write, close_ok = true, write_ok = true, fail_write_restore;
 static unsigned closes, single_writes, batch_writes;
 static unsigned detect_gpio_level = 1u, forgotten_removed_cards;
 static uint32_t pf_sdio_pio_block_count(void) { return card_sector_count; }
@@ -233,11 +235,14 @@ static bool pf_sdio_pio_host_write_stream_continues(void *host, uint32_t first)
     (void)host; (void)first;
     return continue_write;
 }
-static bool pf_sdio_pio_host_write_stream_close(void *host)
+static bool pf_sdio_pio_host_recover(void *host)
 {
     (void)host;
     ++closes;
-    if (close_ok) sdio_pio_host.write_stream_open = false;
+    if (close_ok) {
+        sdio_pio_host.write_stream_open = false;
+        sdio_pio_host.mode_restore_failed = false;
+    }
     return close_ok;
 }
 static bool pf_sdio_pio_host_write_sector(void *host, uint32_t first,
@@ -246,7 +251,8 @@ static bool pf_sdio_pio_host_write_sector(void *host, uint32_t first,
     (void)host; (void)first;
     assert(addressed && buffer != NULL);
     ++single_writes;
-    return write_ok;
+    sdio_pio_host.mode_restore_failed = fail_write_restore;
+    return write_ok && !fail_write_restore;
 }
 static bool pf_sdio_pio_host_write_blocks(void *host, uint32_t first,
                                           bool addressed, const uint8_t *buffer,
@@ -283,6 +289,10 @@ static bool pf_sdio_pio_host_read_blocks(void *host, uint32_t first,
     return !fail_reads && (!fail_above_hz || sdio_pio_host.current_clock_hz <= fail_above_hz);
 }
 static uint32_t default_clock_hz(void) { return 10000000u; }
+#define clk_sys 0
+static uint32_t clock_get_hz(unsigned clk) { (void)clk; return system_hz; }
+static bool pins_are_valid(const pf_sdio_pio_config_t *config) { (void)config; return true; }
+@CONFIG_VALID@
 @LADDER@
 @PROBE@
 @READ_RETRY@
@@ -313,6 +323,7 @@ static void reset(void)
     detect_gpio_level = 1u;
     forgotten_removed_cards = 0u;
     close_ok = write_ok = true;
+    fail_write_restore = sdio_pio_host.mode_restore_failed = false;
     high_speed_requests = 0u;
     sdio_pio_host.write_stream_open = false;
     card_initialized = false;
@@ -342,7 +353,7 @@ int main(void)
     reset();
     fail_reads = true;
     assert(initialize() == PF_SD_CARD_INIT_FAILED && !card_initialized);
-    assert(attempts == 7u && reads == 6u && resets == 7u);
+    assert(attempts == 8u && reads == 7u && resets == 9u);
     reset();
     lose_batching = true;
     assert(initialize() == PF_SD_CARD_OK && sdio_pio_host.current_clock_hz == 20000000u);
@@ -353,6 +364,16 @@ int main(void)
     reset();
     card_sector_count = 3u;
     assert(initialize() == PF_SD_CARD_OK && sectors == 3u && reads == 1u);
+    for (unsigned i = 0; i < 3u; ++i) {
+        const uint32_t low_rates[] = {400000u, 999999u, 1000000u};
+        reset();
+        active_config.clock_hz = low_rates[i];
+        assert(config_is_valid(&active_config));
+        assert(initialize() == PF_SD_CARD_OK);
+        assert(sdio_pio_host.current_clock_hz == (i == 2u ? 1000000u : 400000u));
+    }
+    active_config.clock_hz = 399999u;
+    assert(!config_is_valid(&active_config));
     reset();
     active_config.clock_hz = 0u;
     assert(initialize() == PF_SD_CARD_OK && sdio_pio_host.current_clock_hz == 10000000u);
@@ -368,10 +389,10 @@ int main(void)
     assert(reads == 8u && sdio_pio_host.current_clock_hz == 20000000u);
     fail_reads = true;
     assert(!read_blocks_with_clock_fallback(4098u, buffer, 1u));
-    assert(!card_initialized && reads == 12u);
+    assert(!card_initialized && reads == 13u);
     card_initialized = false;
     assert(!read_blocks_with_clock_fallback(4098u, buffer, 1u));
-    assert(reads == 12u);
+    assert(reads == 13u);
     reset();
     runtime_read = card_initialized = change_cid = true;
     sdio_pio_host.current_clock_hz = 33000000u;
@@ -441,6 +462,22 @@ int main(void)
     assert(transfer_blocks(0u, buffer, NULL, 1u) == PF_SD_CARD_IO_ERROR);
     assert(!card_initialized);
     assert(reads == 1u && single_writes == 2u && batch_writes == 4u);
+    reset();
+    card_initialized = true;
+    fail_write_restore = true;
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_IO_ERROR);
+    assert(!card_initialized && sdio_pio_host.mode_restore_failed && single_writes == 1u);
+    assert(!pf_sdio_pio_is_initialized());
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_NOT_READY);
+    assert(transfer_blocks(1u, NULL, buffer, 1u) == PF_SD_CARD_NOT_READY);
+    close_ok = false;
+    assert(initialize() == PF_SD_CARD_INIT_FAILED);
+    assert(single_writes == 1u && sdio_pio_host.mode_restore_failed);
+    close_ok = true;
+    fail_write_restore = false;
+    assert(initialize() == PF_SD_CARD_OK);
+    assert(pf_sdio_pio_sync() == PF_SD_CARD_OK && single_writes == 1u);
+    assert(transfer_blocks(2u, NULL, buffer, 1u) == PF_SD_CARD_OK && single_writes == 2u);
     reset();
     card_initialized = true;
     active_config.use_card_detect = true;
@@ -516,7 +553,8 @@ def main():
     ladder = source[ladder_start:source.index("};", ladder_start) + 2]
     selection = init[init.index("card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;"):-1]
     retry = retry[retry.index("    if (!card_detect_present())"):-1]
-    code = (HARNESS.replace("@LADDER@", ladder).replace("@PROBE@", probe)
+    code = (HARNESS.replace("@CONFIG_VALID@", function_source(source, "static bool config_is_valid("))
+            .replace("@LADDER@", ladder).replace("@PROBE@", probe)
             .replace("@READ_RETRY@", read_retry)
             .replace("@IS_INITIALIZED@", initialized)
             .replace("@TRANSFER@", transfer)

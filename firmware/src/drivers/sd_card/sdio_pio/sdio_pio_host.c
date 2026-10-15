@@ -278,6 +278,7 @@ static void start_tx_data(pf_sdio_pio_host_t *host)
 
 static bool restore_command_mode(pf_sdio_pio_host_t *host)
 {
+    host->mode_restore_failed = true;
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
 
@@ -308,6 +309,7 @@ static bool restore_command_mode(pf_sdio_pio_host_t *host)
                                (uint16_t)(host->clock_div_ticks >> 8u),
                                (uint8_t)(host->clock_div_ticks & 0xffu));
     pio_sm_set_enabled(host->pio, host->command_sm, true);
+    host->mode_restore_failed = false;
     return true;
 }
 
@@ -501,7 +503,7 @@ bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
     uint32_t command_last_word;
     size_t response_word_count = (response_bits + 31u) / 32u;
 
-    if ((host == NULL) || (host->pio == NULL) ||
+    if ((host == NULL) || (host->pio == NULL) || host->mode_restore_failed ||
         (host->read_stream_unresolved && (command != 12u)) ||
         ((response_bits != 0u) &&
          ((response_words == NULL) || (response_word_count > response_word_capacity))) ||
@@ -560,43 +562,6 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
                                                response, response_capacity);
 }
 
-bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
-                                     bool block_addressed, uint8_t block[512])
-{
-    uint32_t image[PF_SDIO_PIO_TRANSFER_WORDS];
-    uint8_t response[6];
-    uint32_t response_argument;
-    uint32_t command_argument;
-    bool success = false;
-
-    if ((host == NULL) || !host->data_rx_program_loaded ||
-        !pf_sd_card_block_argument(sector, block_addressed, &command_argument)) {
-        return false;
-    }
-
-    start_data_rx(host, image, SDIO_DATA_WORD_COUNT, SDIO_DATA_NIBBLE_COUNT, 1u);
-
-    if (!pf_sdio_pio_host_command_bytes(host, 17u, command_argument, 48u,
-                                         response, sizeof(response))) {
-        goto cleanup;
-    }
-    if (!pf_sdio_pio_parse_response(17u, response, &response_argument, true) ||
-        ((response_argument & 0xfdffe008u) != 0u)) {
-        goto cleanup;
-    }
-
-    if (!wait_data_rx(host, 1000000u)) {
-        goto cleanup;
-    }
-    success = block != NULL
-        ? pf_sdio_pio_decode_data_block((const uint8_t *)image, block)
-        : pf_sdio_pio_verify_data_block((const uint8_t *)image);
-
-cleanup:
-    cleanup_data_rx(host);
-    return success;
-}
-
 static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
                             uint32_t argument, uint8_t *data, size_t data_size)
 {
@@ -606,7 +571,8 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
     uint32_t wire_bytes;
     bool success = false;
 
-    if ((host == NULL) || (data == NULL) || (data_size == 0u) ||
+    if ((host == NULL) || ((data == NULL) && (data_size != PF_SD_CARD_BLOCK_SIZE)) ||
+        (data_size == 0u) ||
         (data_size > PF_SD_CARD_BLOCK_SIZE) || ((data_size & 3u) != 0u) ||
         !host->data_rx_program_loaded || host->read_stream_unresolved) {
         return false;
@@ -625,12 +591,22 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
     if (!wait_data_rx(host, 1000000u)) {
         goto cleanup;
     }
-    success = pf_sdio_pio_decode_data_block_sized((const uint8_t *)image, data,
-                                                   data_size);
+    success = data != NULL
+        ? pf_sdio_pio_decode_data_block_sized((const uint8_t *)image, data, data_size)
+        : pf_sdio_pio_verify_data_block((const uint8_t *)image);
 
 cleanup:
     cleanup_data_rx(host);
     return success;
+}
+
+bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector,
+                                     bool block_addressed, uint8_t block[512])
+{
+    uint32_t argument;
+
+    return pf_sd_card_block_argument(sector, block_addressed, &argument) &&
+           read_data_block(host, 17u, argument, block, PF_SD_CARD_BLOCK_SIZE);
 }
 
 bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_address,
@@ -858,7 +834,6 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
     uint32_t response_argument;
     uint32_t command_argument;
     dma_channel_config dma_config;
-    pio_sm_config state_machine_config;
     uint32_t start;
     bool success = false;
 
@@ -922,15 +897,17 @@ bool pf_sdio_pio_host_write_stream_continues(const pf_sdio_pio_host_t *host, uin
            (host->write_stream_next_sector == sector);
 }
 
-bool pf_sdio_pio_host_write_stream_close(pf_sdio_pio_host_t *host)
+bool pf_sdio_pio_host_recover(pf_sdio_pio_host_t *host)
 {
-    if ((host == NULL) || (!host->write_stream_open && !host->read_stream_unresolved)) {
+    if ((host == NULL) || (!host->write_stream_open && !host->read_stream_unresolved &&
+                            !host->mode_restore_failed)) {
         return true;
     }
     if (!restore_command_mode(host)) {
         return false;
     }
-    if (!stop_multiblock_with_clock_fallback(host)) {
+    if ((host->write_stream_open || host->read_stream_unresolved) &&
+        !stop_multiblock_with_clock_fallback(host)) {
         return false;
     }
     host->write_stream_open = false;
@@ -968,7 +945,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         return false;
     }
     if (host->write_stream_open && !continues &&
-        !pf_sdio_pio_host_write_stream_close(host)) {
+        !pf_sdio_pio_host_recover(host)) {
         return false;
     }
     if (!pf_sdio_pio_encode_data_block(blocks, (uint8_t *)images[0])) {
@@ -982,7 +959,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         if (!response_valid) {
             host->write_stream_open = true;
             host->write_stream_next_sector = first_sector;
-            (void)pf_sdio_pio_host_write_stream_close(host);
+            (void)pf_sdio_pio_host_recover(host);
             return false;
         }
         if ((response_argument & 0xfdffe008u) != 0u) {
@@ -992,7 +969,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         host->write_stream_next_sector = first_sector;
 
         if (!load_tx_programs(host)) {
-            (void)pf_sdio_pio_host_write_stream_close(host);
+            (void)pf_sdio_pio_host_recover(host);
             return false;
         }
         pio_sm_set_enabled(host->pio, host->command_sm, true);
@@ -1058,6 +1035,6 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         host->write_stream_next_sector = first_sector + block_count;
         return true;
     }
-    (void)pf_sdio_pio_host_write_stream_close(host);
+    (void)pf_sdio_pio_host_recover(host);
     return false;
 }

@@ -11,7 +11,10 @@ WORKER = ROOT / "firmware/src/middleware/storage/storage_worker.c"
 
 
 def function_source(source, name):
-    start = source.index("static void " + name + "(void)")
+    match = re.search(r"^(?:static )?[\w]+ " + name + r"\(", source, re.MULTILINE)
+    if match is None:
+        raise ValueError(name)
+    start = match.start()
     brace = source.index("{", start)
     depth = 0
     for index in range(brace, len(source)):
@@ -37,13 +40,14 @@ typedef struct { bool presence_known, present, initialized; } pf_sd_card_info_t;
 static int card_config;
 static bool config_available = true, busy, card_service_busy;
 @STATE@
-static owner_t owner = PF_SD_CARD_OWNER_FIRMWARE;
+static owner_t active_owner = PF_SD_CARD_OWNER_FIRMWARE;
 static pf_sd_card_info_t media = { true, true, false };
 static uint32_t now;
 static bool mounted, reinit_request;
 static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
 static pf_storage_result_t mount_result = PF_STORAGE_OK;
-static owner_t pf_sd_card_get_owner(void) { return owner; }
+typedef owner_t pf_sd_card_owner_t;
+static bool pf_sd_card_is_initialized(void) { return media.initialized; }
 static void pf_sd_card_get_info(pf_sd_card_info_t *info) { *info = media; }
 static bool pf_storage_is_mounted(void) { return mounted; }
 static pf_storage_result_t pf_storage_unmount(void *result)
@@ -57,12 +61,35 @@ static pf_storage_result_t pf_storage_unmount(void *result)
     return PF_STORAGE_OK;
 }
 static void pf_storage_forget_filesystem_format(void) { ++forget_calls; }
-static void pf_sd_card_confirm_removed(void) { ++removals; media.initialized = false; }
-static bool pf_sd_card_take_reinit_request(void)
+typedef enum { PF_SD_CARD_OK, PF_SD_CARD_INVALID_ARGUMENT, PF_SD_CARD_NOT_READY } pf_sd_card_result_t;
+#define PF_CONFIG_SD_CARD_TRANSPORT 0
+#define PF_CONFIG_SD_CARD_TRANSPORT_SPI 1
+#define card_initialized media.initialized
+static bool transport_selected = true;
+typedef struct { void *pio; bool write_stream_open, read_stream_unresolved, mode_restore_failed; } pf_sdio_pio_host_t;
+static pf_sdio_pio_host_t sdio_pio_host = { .pio = (void *)1 };
+static bool restore_command_mode(pf_sdio_pio_host_t *host)
 {
-    bool requested = reinit_request;
-    reinit_request = false;
-    return requested;
+    assert(!host->write_stream_open && !host->read_stream_unresolved);
+    ++removals;
+    host->mode_restore_failed = false;
+    return true;
+}
+static void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host) { host->pio = NULL; }
+@FACADE@
+static bool msc_enabled, msc_ejected, removal_prevented, request_pending;
+static bool requested_enabled, transition_pending, request_rejected;
+static bool sync_ok = true;
+static unsigned sync_calls;
+static bool pf_storage_worker_busy(void) { return busy || card_service_busy; }
+static bool pf_storage_worker_media_absent(void);
+static bool tud_disconnect(void) { return true; }
+static bool tud_connect(void) { return true; }
+static void sleep_ms(unsigned ms) { (void)ms; }
+static pf_sd_card_result_t pf_sd_card_msc_sync(void)
+{
+    ++sync_calls;
+    return media.initialized && sync_ok ? PF_SD_CARD_OK : PF_SD_CARD_NOT_READY;
 }
 static uint32_t pf_system_uptime_ms(void) { return now; }
 static pf_storage_result_t pf_storage_mount(const int *config, void *result)
@@ -77,6 +104,7 @@ static pf_storage_result_t pf_storage_mount(const int *config, void *result)
 }
 @ATTEMPT@
 @FUNCTION@
+@MSC@
 static void poll(unsigned count)
 {
     while (count-- != 0u) {
@@ -137,10 +165,18 @@ int main(void)
 
     mounted = false;
     reinit_request = true;
-    owner = PF_SD_CARD_OWNER_USB_MSC;
+    active_owner = PF_SD_CARD_OWNER_USB_MSC;
     poll(60);
     assert(mount_calls == 4 && reinit_request);
-    owner = PF_SD_CARD_OWNER_FIRMWARE;
+    media.present = false;
+    poll(2);
+    assert(removals == 2u);
+    poll(1);
+    assert(removals == 3u && !media.initialized);
+    media.present = true;
+    poll(3);
+    assert(mount_calls == 4u && !media.initialized);
+    active_owner = PF_SD_CARD_OWNER_FIRMWARE;
     busy = true;
     poll(3);
     assert(mount_calls == 4 && reinit_request);
@@ -189,7 +225,52 @@ int main(void)
     service_card_presence();
     assert(unmount_calls == previous_unmounts + 1u);
     assert(mount_calls == previous_mounts + 1u && mounted && media.initialized);
-    puts("Storage auto-mount checks passed");
+    /* Connected production worker -> facade -> host abandonment -> MSC release. */
+    mounted = false;
+    pf_usb_msc_request(true);
+    pf_usb_msc_task();
+    assert(msc_enabled && active_owner == PF_SD_CARD_OWNER_USB_MSC && !msc_ejected);
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    assert(request_rejected && msc_enabled); /* present media needs eject */
+    sync_ok = false;
+    assert(!tud_msc_start_stop_cb(0u, 0u, false, true));
+    sync_ok = true;
+    assert(tud_msc_prevent_allow_medium_removal_cb(0u, 1u, 0u));
+    assert(tud_msc_start_stop_cb(0u, 0u, false, true));
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    assert(msc_enabled && request_rejected); /* prevention still applies */
+    assert(tud_msc_prevent_allow_medium_removal_cb(0u, 0u, 0u));
+    assert(tud_msc_start_stop_cb(0u, 0u, true, true));
+    sdio_pio_host.write_stream_open = sdio_pio_host.read_stream_unresolved = true;
+    unsigned old_removals = removals;
+    media.present = false;
+    poll(2);
+    assert(!pf_storage_worker_media_absent() && removals == old_removals);
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    assert(msc_enabled && request_rejected);
+    poll(1);
+    assert(pf_storage_worker_media_absent() && removals == old_removals + 1u);
+    assert(!sdio_pio_host.write_stream_open && !sdio_pio_host.read_stream_unresolved);
+    unsigned old_syncs = sync_calls;
+    assert(tud_msc_prevent_allow_medium_removal_cb(0u, 1u, 0u));
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    assert(msc_enabled && request_rejected);
+    assert(tud_msc_prevent_allow_medium_removal_cb(0u, 0u, 0u));
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    assert(!msc_enabled && active_owner == PF_SD_CARD_OWNER_FIRMWARE && reinit_request);
+    assert(sync_calls == old_syncs); /* absent media cannot be synced */
+    previous_mounts = mount_calls;
+    media.present = true;
+    poll(2);
+    assert(mount_calls == previous_mounts);
+    poll(1);
+    assert(mount_calls == previous_mounts + 1u && media.initialized && !reinit_request);
+    puts("Storage/MSC/facade/host removal lifecycle checks passed");
 }
 """
 
@@ -199,9 +280,24 @@ def main():
     state = source[source.index("static bool presence_sample_valid;"):
                    source.index("static void refresh_self_test_completion")]
     defines = "\n".join(re.findall(r"^#define CARD_.*$", source, re.MULTILINE))
+    facade = (ROOT / "firmware/src/drivers/sd_card/sd_card.c").read_text()
+    card = (ROOT / "firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c").read_text()
+    host = (ROOT / "firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.c").read_text()
+    msc = (ROOT / "firmware/src/usb/msc.c").read_text()
+    connected = (function_source(host, "pf_sdio_pio_host_forget_removed_card") + "\n" +
+                 function_source(card, "pf_sdio_pio_confirm_card_removed") + "\n" +
+                 "\n".join(function_source(facade, name) for name in (
+                     "pf_sd_card_get_owner", "pf_sd_card_set_owner",
+                     "pf_sd_card_take_reinit_request", "pf_sd_card_confirm_removed")))
+    connected = connected.replace("reinit_after_usb_owner", "reinit_request")
+    usb = "\n".join(function_source(msc, name) for name in (
+        "pf_usb_msc_request", "pf_usb_msc_task", "tud_msc_start_stop_cb",
+        "tud_msc_prevent_allow_medium_removal_cb"))
     harness = (HARNESS.replace("@STATE@", defines + "\n" + state)
                .replace("@ATTEMPT@", function_source(source, "attempt_auto_mount"))
-               .replace("@FUNCTION@", function_source(source, "service_card_presence")))
+               .replace("@FUNCTION@", function_source(source, "service_card_presence") + "\n" +
+                        function_source(source, "pf_storage_worker_media_absent"))
+               .replace("@FACADE@", connected).replace("@MSC@", usb))
     with tempfile.TemporaryDirectory() as directory:
         test_source = Path(directory) / "automount.c"
         executable = Path(directory) / "automount"

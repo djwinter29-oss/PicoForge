@@ -171,7 +171,10 @@ every identification failure. Native mode requires SCR-advertised four-bit
 support; there is no one-bit sector-I/O fallback. SPI accepts its supported
 ready/idle responses and checks OCR power-up and voltage compatibility.
 
-Native clock candidates are 50, 40, 33, 25, 20, 10, 5, and 1 MHz. Candidates
+Native clock candidates are 50, 40, 33, 25, 20, 10, 5, and 1 MHz, then
+400 kHz. Requests from 400 kHz through 999,999 Hz select the 400 kHz
+candidate and run the same CRC-checked read probe; requests below 400 kHz
+are rejected. Candidates
 above the requested/card/recovery limit or unsupported by SYSCLK are skipped.
 Above 25 MHz, CMD6 must confirm High Speed; otherwise normal speed is used.
 Host divider rounding can make the actual rate lower than the candidate. The
@@ -275,14 +278,27 @@ restoration or CMD12 response/busy recovery failed). If cleanup succeeds, the
 card remains initialized; this does not mean the failed write was atomic or that
 no data reached the card. Earlier accepted blocks, and possibly the failing block,
 may already be programmed. CMD12 terminates the stream; it is not the first point
-at which blocks can reach media. Single-block write errors return an error without
-automatically invalidating initialization.
+at which blocks can reach media. Ordinary single-block card rejection does not
+invalidate initialization when command-mode restoration succeeds. Failed host
+restoration explicitly invalidates readiness, including after a single-block write;
+sync cannot report success. `pf_sdio_pio_host_recover()` resolves both pending
+streams and host restoration failure. Its false result retains either unresolved
+stream state or the explicit unusable-host flag. Reinitialization retries restoration
+before identification, without replaying the uncertain write. Single-sector and
+CMD6 reads share RX setup/cleanup and response checks; SCR keeps its one-bit CRC
+and command sequence.
 
 Raw card-detect absence immediately invalidates readiness and blocks transfers,
 sync, and initialization, while preserving unresolved protocol state. A bounce
 back requires reinitialization to close that state before CMD0. Only the serialized
 storage worker's debounced removal notification abandons streams and restores host
 mode without sending CMD12 to the absent card. This notification precedes unmount.
+The worker continues presence debounce under USB ownership, but never initializes
+or mounts while USB owns the card. MSC disable permits release before host eject
+only when the worker has confirmed absence and raw detect still reports absence;
+removal prevention still blocks release. Present media still requires eject and
+successful sync. Ownership return requests reinitialization, and debounced
+reinsertion permits the firmware worker to initialize and mount again.
 
 CMD18 response timeout or malformed response does not prove the command was never
 sent. Every validated multi-block read attempt cleans up RX/DMA and attempts CMD12,
@@ -384,6 +400,13 @@ overlapped next-block encoding and the PIO's response/busy completion; it does
 not isolate the card's internal programming time. Snapshots use
 `pf_sd_card_get_profile()`; callers must serialize access just like block I/O.
 
+The historical target records identify earlier artifacts, not this remediation.
+Software models cannot measure PIO/DMA scheduling, command gaps, or card busy time.
+No controlled before/after benchmark or HIL run is available for these changes,
+including the new low-end candidate. No hardware qualification or throughput gain
+is claimed. Profile command gaps, CRC/copy, filesystem allocation (normal versus
+preallocated files), and card busy time before choosing further optimizations.
+
 | Review improvement | Current status |
 | --- | --- |
 | Phase profiling and recovery diagnostics | Implemented, disabled by default; CLI and C API available |
@@ -393,6 +416,7 @@ not isolate the card's internal programming time. Snapshots use
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; hardware qualification outstanding |
 | Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD self-test](sd-self-test.md) |
+| Hoist per-block TX DMA configuration | Unchanged, unmeasured candidate; requires controlled before/after data with fixed card, clocks, payload, and timing boundaries |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 

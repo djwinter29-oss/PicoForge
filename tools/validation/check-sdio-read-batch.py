@@ -121,16 +121,16 @@ READER_HARNESS = r"""
 #define SDIO_DATA_NIBBLE_COUNT 1040u
 #define SDIO_DATA_WORD_COUNT 130u
 #define SDIO_READ_BATCH_BLOCKS 64u
-typedef struct { uint32_t rxf[4]; } fake_pio_t;
+typedef struct { uint32_t rxf[4], txf[4]; } fake_pio_t;
 typedef struct {
     fake_pio_t *pio;
     unsigned data_sm, dma_channel, data_rx_program_offset;
-    bool data_rx_program_loaded, data_rx_multiblock_supported, read_stream_unresolved, write_stream_open;
+    bool data_rx_program_loaded, data_rx_multiblock_supported, read_stream_unresolved, write_stream_open, mode_restore_failed;
 } pf_sdio_pio_host_t;
 static uint32_t read_wire_buffer[130u * 64u];
 static bool response_ok, crc_ok, stop_ok, timeout, command_ok;
 static uint32_t response_status;
-static unsigned single_calls, stops, commands;
+static unsigned single_calls, stops, commands, cleanup_calls;
 static uint32_t now;
 static uint32_t rx_transfer_words, rx_nibble_count, rx_block_count;
 #define pio_interrupt_get(...) (!timeout)
@@ -141,12 +141,13 @@ static void start_data_rx(pf_sdio_pio_host_t *host, uint32_t *destination,
                           uint32_t block_count)
 {
     (void)host;
-    assert(destination == read_wire_buffer);
+    assert(destination != NULL);
+    if (block_count > 1u) assert(destination == read_wire_buffer);
     rx_transfer_words = transfer_words;
     rx_nibble_count = nibble_count;
     rx_block_count = block_count;
 }
-static void cleanup_data_rx(pf_sdio_pio_host_t *host) { (void)host; }
+static void cleanup_data_rx(pf_sdio_pio_host_t *host) { (void)host; ++cleanup_calls; }
 static void wait_data_idle(pf_sdio_pio_host_t *host, uint32_t completion_flag)
 { (void)host; (void)completion_flag; }
 static bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command,
@@ -206,10 +207,10 @@ int main(void)
     previous_stops = stops;
     assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
     assert(stops == previous_stops); /* cannot issue more I/O before recovery */
-    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(!pf_sdio_pio_host_recover(&host));
     assert(host.read_stream_unresolved);
     stop_ok = true;
-    assert(pf_sdio_pio_host_write_stream_close(&host));
+    assert(pf_sdio_pio_host_recover(&host));
     assert(!host.read_stream_unresolved);
     assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, NULL, 2u));
     for (unsigned failure = 0u; failure < 2u; ++failure) {
@@ -222,10 +223,10 @@ int main(void)
         previous_stops = stops;
         assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 1u));
         assert(commands == previous_commands && stops == previous_stops);
-        assert(!pf_sdio_pio_host_write_stream_close(&host));
+        assert(!pf_sdio_pio_host_recover(&host));
         assert(host.read_stream_unresolved);
         stop_ok = true;
-        assert(pf_sdio_pio_host_write_stream_close(&host));
+        assert(pf_sdio_pio_host_recover(&host));
         assert(!host.read_stream_unresolved);
         command_ok = response_ok = true;
         assert(pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
@@ -247,7 +248,7 @@ def reader_behavior_check(source):
     with tempfile.TemporaryDirectory() as scratch:
         src = Path(scratch) / "reader.c"
         exe = Path(scratch) / "reader"
-        close_signature = "bool pf_sdio_pio_host_write_stream_close"
+        close_signature = "bool pf_sdio_pio_host_recover"
         close_start = source.index(close_signature)
         close = (source[close_start:source.index("{", close_start)] +
                  function_body(source, close_signature) + "}")
@@ -275,6 +276,33 @@ RECOVERY_HARDWARE = r"""
 #define pio_sm_exec(...) ((void)0)
 #define pio_sm_set_clkdiv_int_frac(...) ((void)0)
 #define pio_remove_program(...) ((void)0)
+#define PF_SDIO_PIO_TRANSFER_WORDS 130u
+#define dma_channel_wait_for_finish_blocking(channel) ((void)0)
+typedef unsigned dma_channel_config;
+#define DMA_SIZE_32 0u
+#define dma_channel_get_default_config(channel) 0u
+#define channel_config_set_transfer_data_size(config, value) ((void)(config))
+#define channel_config_set_bswap(config, value) ((void)(config))
+#define channel_config_set_read_increment(config, value) ((void)(config))
+#define channel_config_set_write_increment(config, value) ((void)(config))
+#define channel_config_set_dreq(config, value) ((void)(config))
+#define dma_channel_configure(channel, config, dest, source, count, start) ((void)(config))
+#define dma_channel_start(channel) ((void)0)
+#define dma_channel_abort(channel) ((void)0)
+#define pio_sm_get_rx_fifo_level(pio, sm) 1u
+#define pio_sm_get(pio, sm) 0u
+static bool wait_data_rx(pf_sdio_pio_host_t *host, uint32_t deadline)
+{ (void)host; (void)deadline; return !timeout; }
+static bool pf_sdio_pio_decode_data_block_sized(const uint8_t *image, uint8_t *data, size_t size)
+{ (void)image; (void)data; (void)size; return crc_ok; }
+static bool pf_sdio_pio_verify_data_block(const uint8_t *image) { (void)image; return crc_ok; }
+static bool accepted_ok = true;
+static bool pf_sdio_pio_write_response_accepted(unsigned token) { (void)token; return accepted_ok; }
+static bool pf_sdio_pio_encode_data_block(const uint8_t *block, uint8_t *image)
+{ memcpy(image, block, 512u); return true; }
+static bool load_tx_programs(pf_sdio_pio_host_t *host)
+{ host->command_program_loaded = host->data_rx_program_loaded = false; return true; }
+static void start_tx_data(pf_sdio_pio_host_t *host) { (void)host; }
 static unsigned fifo_puts, last_command, stop_attempts;
 static bool load_ok = true, stop_response_ok, busy_low, cmd18_wire_ok = true;
 static void sleep_us(uint32_t us) { (void)us; }
@@ -285,7 +313,8 @@ static bool load_data_rx_program(pf_sdio_pio_host_t *host)
 { host->data_rx_program_loaded = load_ok; return load_ok; }
 static void pio_sm_put_blocking(fake_pio_t *pio, unsigned sm, uint32_t word)
 {
-    (void)pio; (void)sm;
+    (void)pio;
+    if (sm != 0u) return;
     if (fifo_puts++ % 3u == 0u) last_command = (word >> 18u) & 63u;
 }
 static bool wait_for_command_complete(pf_sdio_pio_host_t *host,
@@ -313,9 +342,45 @@ int main(void)
     fake_pio_t pio = {0};
     pf_sdio_pio_host_t host = { .pio = &pio, .data_rx_program_loaded = true,
         .command_program_loaded = true, .data_rx_multiblock_supported = true,
-        .system_clock_hz = 200000000u, .current_clock_hz = 50000000u };
+        .data_sm = 1u, .system_clock_hz = 200000000u, .current_clock_hz = 50000000u };
     uint8_t blocks[1024];
+    uint8_t payload[512] = {0};
+    response_ok = true;
+    /* A real single-sector write accepts data but fails program restoration. */
+    load_ok = false;
+    assert(!pf_sdio_pio_host_write_sector(&host, 0u, true, payload));
+    assert(host.mode_restore_failed && !host.write_stream_open && !host.read_stream_unresolved);
+    assert(!pf_sdio_pio_host_recover(&host));
+    unsigned failed_commands = commands;
+    assert(!pf_sdio_pio_host_command(&host, 0u, 0u, 0u, NULL, 0u));
+    assert(commands == failed_commands);
+    load_ok = true;
+    assert(card_reinit(&host) == PF_SD_CARD_OK);
+    assert(!host.mode_restore_failed && !host.read_stream_unresolved);
+    /* An ordinary card rejection restores successfully and remains distinct. */
+    accepted_ok = false;
+    assert(!pf_sdio_pio_host_write_sector(&host, 1u, true, payload));
+    assert(!host.mode_restore_failed);
+    assert(pf_sdio_pio_host_recover(&host));
+    accepted_ok = true;
+    init_calls = 0u;
+    response_ok = false;
+    host.current_clock_hz = 50000000u;
     crc_ok = true;
+    response_ok = true;
+    unsigned old_cleanups = cleanup_calls;
+    assert(pf_sdio_pio_host_read_sector(&host, 0u, true, payload));
+    assert(pf_sdio_pio_host_read_sector(&host, 0u, true, NULL));
+    assert(rx_transfer_words == 130u && rx_nibble_count == 1040u && rx_block_count == 1u);
+    crc_ok = false;
+    assert(!pf_sdio_pio_host_read_sector(&host, 0u, true, payload));
+    assert(!pf_sdio_pio_host_read_sector(&host, 0u, true, NULL));
+    crc_ok = true;
+    response_ok = false;
+    assert(!pf_sdio_pio_host_read_sector(&host, 0u, true, payload));
+    assert(cleanup_calls == old_cleanups + 5u);
+    assert(!read_data_block(&host, 6u, 0u, NULL, 64u));
+    assert(cleanup_calls == old_cleanups + 5u);
     /* CMD18 response lost; all six CMD12 response validations fail. */
     assert(!pf_sdio_pio_host_read_blocks(&host, 0u, true, blocks, 2u));
     assert(stop_attempts == 6u && host.read_stream_unresolved);
@@ -332,18 +397,18 @@ int main(void)
     stop_response_ok = true;
     busy_low = true;
     host.current_clock_hz = 50000000u;
-    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(!pf_sdio_pio_host_recover(&host));
     assert(stop_attempts == 13u && host.read_stream_unresolved);
     /* Failure to reload either command or RX program preserves both streams. */
     busy_low = false;
     host.write_stream_open = true;
     load_ok = false;
     host.command_program_loaded = false;
-    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(!pf_sdio_pio_host_recover(&host));
     assert(host.read_stream_unresolved && host.write_stream_open && stop_attempts == 13u);
     host.command_program_loaded = true;
     host.data_rx_program_loaded = false;
-    assert(!pf_sdio_pio_host_write_stream_close(&host));
+    assert(!pf_sdio_pio_host_recover(&host));
     assert(host.read_stream_unresolved && host.write_stream_open && stop_attempts == 13u);
     load_ok = true;
     assert(card_reinit(&host) == PF_SD_CARD_OK);
@@ -385,7 +450,8 @@ def production_recovery_check(source):
     for signature in ('bool pf_sdio_pio_host_set_clock', 'bool pf_sdio_pio_host_command',
                       'bool pf_sdio_pio_host_command_bytes', 'static bool restore_command_mode',
                       'static bool stop_multiblock_transfer', 'static bool stop_multiblock_with_clock_fallback',
-                      'bool pf_sdio_pio_host_write_stream_close', 'bool pf_sdio_pio_host_read_blocks'):
+                      'bool pf_sdio_pio_host_recover', 'static bool read_data_block',
+                      'bool pf_sdio_pio_host_read_sector', 'bool pf_sdio_pio_host_write_sector', 'bool pf_sdio_pio_host_read_blocks'):
         start = source.index(signature + '(')
         code += source[start:source.index('{', start)] + function_body(source, signature) + '}\n'
     # Extract the card-layer init tail: actual stop-before-identification ordering.

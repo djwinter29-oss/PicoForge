@@ -8,7 +8,6 @@
 #include "drivers/sd_card/sd_card_block.h"
 #include "middleware/storage/storage.h"
 #include "middleware/storage/storage_worker.h"
-#include "middleware/storage/storage.h"
 
 static bool msc_enabled;
 static bool msc_ejected;
@@ -92,9 +91,10 @@ void pf_usb_msc_task(void)
         bool media_absent;
 
         pf_sd_card_get_info(&info);
-        media_absent = info.presence_known && !info.present;
-        if (!msc_ejected || removal_prevented ||
-            ((pf_sd_card_msc_sync() != PF_SD_CARD_OK) && !media_absent)) {
+        media_absent = info.presence_known && !info.present &&
+                       pf_storage_worker_media_absent();
+        if (removal_prevented ||
+            (!media_absent && (!msc_ejected || pf_sd_card_msc_sync() != PF_SD_CARD_OK))) {
             transition_pending = false;
             request_rejected = true;
             return;

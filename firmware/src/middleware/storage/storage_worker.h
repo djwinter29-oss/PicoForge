@@ -25,6 +25,9 @@ bool pf_storage_worker_submit(const char *family, const char *arguments,
 /** True until all work and replies are drained. Only call from the USB task. */
 bool pf_storage_worker_busy(void);
 
+/** True only after the serialized worker confirms debounced removal. */
+bool pf_storage_worker_media_absent(void);
+
 /** Poll one reply without blocking from the USB task; completion releases busy. */
 bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply);
 
