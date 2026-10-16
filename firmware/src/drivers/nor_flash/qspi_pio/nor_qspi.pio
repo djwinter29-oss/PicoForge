@@ -1,0 +1,17 @@
+.program pf_nor_single
+.side_set 1
+.wrap_target
+pull block side 0
+out pins, 1 side 0
+in pins, 1 side 1
+push block side 0
+.wrap
+
+.program pf_nor_quad
+.side_set 1
+.wrap_target
+pull block side 0
+out pins, 4 side 0
+in pins, 4 side 1
+push block side 0
+.wrap

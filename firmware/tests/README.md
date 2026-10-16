@@ -57,6 +57,10 @@ traffic. Electrical timing, sustained card transfers, real interrupt behavior,
 and board/probe interactions still require hardware validation. Passing the
 host suite does not qualify a card at 50 MHz.
 
+Raw NOR protocol tests live under [drivers/nor_flash](drivers/nor_flash).
+See [external NOR support](../../docs/nor-flash.md#tests-and-remaining-qualification)
+for the standalone SPI/QSPI smoke builds, PIO model and hardware-test boundaries.
+
 CLI middleware tests compile the pinned Embedded CLI submodule, so initialize
 submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/cdc-cli.md#validation)
 for the focused command and board-only checks.
