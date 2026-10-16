@@ -31,6 +31,7 @@
   :test:
     - +:firmware/tests/**
     - -:firmware/tests/support
+    - -:firmware/tests/support/**
   :source:
     - +:firmware/src/**
     - +:firmware/third_party/embedded-cli/lib/src

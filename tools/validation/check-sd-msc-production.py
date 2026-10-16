@@ -1,23 +1,9 @@
 #!/usr/bin/env python3
-"""Compile complete production translation units with host hardware seams."""
-import os
+"""Check the pinned TinyUSB source ordering modeled by MSC Unity tests."""
 from pathlib import Path
-import subprocess
-import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 
-
-def required_regressions(root):
-    inputs = [(name, root / f'tools/validation/host/regression_{name}.c')
-              for name in ('spi_write', 'msc')]
-    missing = [str(path) for _, path in inputs if not path.is_file()]
-    if missing:
-        raise FileNotFoundError('Missing required production regression source(s): ' + ', '.join(missing))
-    return inputs
-
-
 def main():
-    inputs = required_regressions(ROOT)
     # Keep the callback-boundary model honest about the pinned TinyUSB ordering.
     # This inspects source; it does not execute the USB BOT state machine.
     tinyusb = (ROOT / 'firmware/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c').read_text()
@@ -43,23 +29,6 @@ def main():
     for symbol in ('mscd_reset', 'mscd_control_xfer_cb'):
         assert f'"LINKER:--wrap={symbol}"' in cmake
     print('Pinned TinyUSB source ordering checked (callback-boundary tests, not BOT integration)')
-    with tempfile.TemporaryDirectory() as tmp:
-        for name, test in inputs:
-            exe = Path(tmp) / name
-            args = [os.environ.get('CC', 'cc'), '-std=c11', '-Wall', '-Wextra', '-Werror',
-                    '-I' + str(ROOT / 'tools/validation/host/stubs'),
-                    '-I' + str(ROOT / 'firmware/src'),
-                    '-I' + str(ROOT / 'firmware/src/drivers/sd_card'), str(test)]
-            if name == 'msc':
-                args += [str(ROOT / 'tools/validation/host/msc_reset_model.c'),
-                         str(ROOT / 'tools/validation/host/msc_reset_queue.c'),
-                         '-Wl,--wrap=mscd_reset', '-Wl,--wrap=mscd_control_xfer_cb']
-            if name == 'spi_write':
-                args += [str(ROOT / 'firmware/src/drivers/sd_card/sd_card_protocol.c'),
-                         str(ROOT / 'firmware/src/drivers/sd_card/spi/sd_spi_protocol.c')]
-            subprocess.run(args + ['-o', str(exe)], check=True)
-            subprocess.run([str(exe)], check=True)
-            print(f'Executed required regression: {test}', flush=True)
 
 
 if __name__ == '__main__':

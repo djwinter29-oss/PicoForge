@@ -1,0 +1,3 @@
+#ifndef STORAGE_TEST_GPIO_H
+#define STORAGE_TEST_GPIO_H
+#endif

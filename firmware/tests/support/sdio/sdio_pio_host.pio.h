@@ -1,0 +1,20 @@
+#ifndef PF_TEST_SDIO_PIO_HOST_PIO_H
+#define PF_TEST_SDIO_PIO_HOST_PIO_H
+
+#include "hardware/pio.h"
+
+extern const pio_program_t pf_sdio_pio_clock_program;
+extern const pio_program_t pf_sdio_pio_command_program;
+extern const pio_program_t pf_sdio_pio_data_rx_program;
+extern const pio_program_t pf_sdio_pio_data_rx_fast_program;
+extern const pio_program_t pf_sdio_pio_data_tx_program;
+extern const pio_program_t pf_sdio_pio_data_tx_fast_program;
+
+pio_sm_config pf_sdio_pio_clock_program_get_default_config(uint offset);
+pio_sm_config pf_sdio_pio_command_program_get_default_config(uint offset);
+pio_sm_config pf_sdio_pio_data_rx_program_get_default_config(uint offset);
+pio_sm_config pf_sdio_pio_data_rx_fast_program_get_default_config(uint offset);
+pio_sm_config pf_sdio_pio_data_tx_program_get_default_config(uint offset);
+pio_sm_config pf_sdio_pio_data_tx_fast_program_get_default_config(uint offset);
+
+#endif

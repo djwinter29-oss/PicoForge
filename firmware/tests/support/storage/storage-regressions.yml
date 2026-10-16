@@ -1,0 +1,19 @@
+:project:
+  :build_root: build/ceedling-storage
+:flags:
+  :test:
+    :compile:
+      '*':
+        - -std=c11
+        - -ffunction-sections
+        - -fdata-sections
+      '/test_sd_card_serialization/':
+        - -D_XOPEN_SOURCE=700
+        - -pthread
+      '/test_sd_card_.*_spi/':
+        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+    :link:
+      '*':
+        - -Wl,--gc-sections
+      '/test_sd_card_serialization/':
+        - -pthread
