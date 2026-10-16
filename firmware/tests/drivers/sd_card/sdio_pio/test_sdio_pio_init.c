@@ -37,6 +37,7 @@ static bool switch_selected;
 static bool change_cid_on_reinit;
 static bool change_capacity_on_reinit;
 static unsigned card_init_calls;
+static uint8_t fail_command;
 static bool single_write_ok;
 static bool batch_write_ok;
 
@@ -70,6 +71,7 @@ void setUp(void)
     switch_supported = switch_selected = true;
     change_cid_on_reinit = change_capacity_on_reinit = false;
     card_init_calls = 0u;
+    fail_command = 0u;
     pf_test_sdio_gpio_level = 1u;
     pf_test_sdio_can_add_program = true;
     pf_test_sdio_removed_programs = 0u;
@@ -95,6 +97,7 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command, u
                                     uint16_t bits, uint8_t *response, size_t capacity)
 {
     (void)host;
+    if ((fail_command != 0u) && (command == fail_command)) return false;
     (void)argument;
     if (command == 0u) ++card_init_calls;
     if ((bits == 0u) && (response == NULL) && (capacity == 0u)) return true;
@@ -359,6 +362,48 @@ void test_card_init_bounded_failures_recover_streams_and_disable_batching_safely
     TEST_ASSERT_EQUAL_UINT(8u, reads);
 }
 
+void test_card_init_uses_default_and_minimum_supported_transfer_clocks(void)
+{
+    const uint32_t requested_rates[] = {400000u, 999999u, 1000000u};
+    const uint32_t selected_rates[] = {400000u, 400000u, 1000000u};
+
+    setUp();
+    active_config.clock_hz = 0u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT32(10000000u, sdio_pio_host.current_clock_hz);
+
+    for (unsigned i = 0u; i < sizeof(requested_rates) / sizeof(requested_rates[0]); ++i) {
+        setUp();
+        active_config.clock_hz = requested_rates[i];
+        TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+        TEST_ASSERT_EQUAL_UINT32(selected_rates[i], sdio_pio_host.current_clock_hz);
+    }
+
+    setUp();
+    fail_command = 2u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_FALSE(card_initialized);
+    TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, reads);
+}
+
+void test_card_init_retries_after_clock_change_and_falls_back_without_switch_support(void)
+{
+    setUp();
+    active_config.clock_hz = 50000000u;
+    requested_system_hz = 250000000u;
+    corrupt_fast = true;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.current_clock_hz);
+
+    setUp();
+    active_config.clock_hz = 50000000u;
+    requested_system_hz = 250000000u;
+    switch_selected = false;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.current_clock_hz);
+}
+
 void test_runtime_read_fallback_reinitializes_at_lower_clock_without_replaying_writes(void)
 {
     uint8_t block[PF_SD_CARD_BLOCK_SIZE] = {0};
@@ -408,6 +453,20 @@ void test_runtime_read_fallback_rejects_changed_card_and_removed_media(void)
     TEST_ASSERT_FALSE(read_blocks_with_clock_fallback(4096u, block, 1u));
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_EQUAL_UINT(2u, card_init_calls);
+
+    setUp();
+    active_config.clock_hz = 50000000u;
+    requested_system_hz = 250000000u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    reads = 0u;
+    sectors_read = 0u;
+    sdio_pio_host.pio = pio0;
+    sdio_pio_host.current_clock_hz = 33000000u;
+    card_initialized = true;
+    fail_above_hz = 25000000u;
+    change_capacity_on_reinit = true;
+    TEST_ASSERT_FALSE(read_blocks_with_clock_fallback(4096u, block, 1u));
+    TEST_ASSERT_FALSE(card_initialized);
 
     setUp();
     active_config.use_card_detect = true;

@@ -2,6 +2,7 @@
 """Focused subprocess regressions using copied sources and real ELF binutils."""
 import hashlib
 import os
+import runpy
 from pathlib import Path
 import shutil
 import struct
@@ -79,7 +80,7 @@ class Integrity(unittest.TestCase):
     def test_source_order_checker_needs_no_compiler_and_rejects_changed_ordering(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = [VALIDATION / 'check-sd-msc-production.py'] + [ROOT / p for p in (
+            files = [VALIDATION / 'check-tinyusb-msc-contract.py'] + [ROOT / p for p in (
                 'firmware/CMakeLists.txt',
                 'firmware/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c',
                 'firmware/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c')]
@@ -87,7 +88,7 @@ class Integrity(unittest.TestCase):
                 dest = root / source.relative_to(ROOT)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, dest)
-            runner = root / 'tools/validation/check-sd-msc-production.py'
+            runner = root / 'tools/validation/check-tinyusb-msc-contract.py'
             env = dict(os.environ, CC='/nonexistent/compiler', PYTHONDONTWRITEBYTECODE='1')
             result = self.run_script(runner, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -105,7 +106,8 @@ class Integrity(unittest.TestCase):
             elf_fixture(first)
             elf_fixture(second)
             env = dict(os.environ, CC='/nonexistent/compiler', PYTHONDONTWRITEBYTECODE='1')
-            checker = VALIDATION / 'check-msc-elf.py'
+            checker = root / 'check-msc-elf.py'
+            shutil.copyfile(VALIDATION / checker.name, checker)
             result = self.run_script(checker, first, second, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for path in (first, second):
@@ -141,6 +143,21 @@ class Integrity(unittest.TestCase):
             self.assertIn(f'{second}: actual MSC', result.stdout)
             result = self.run_script(checker, env=env)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_elf_checker_rejects_malformed_dwarf_and_each_wrong_callback(self):
+        checker = runpy.run_path(str(VALIDATION / 'check-msc-elf.py'))
+        with self.assertRaisesRegex(ValueError, 'missing or conflicting DWARF'):
+            checker['driver_layout']('malformed DWARF')
+        layout = (12, 0, 4, 8)
+        symbols = {'mscd_open': (0x2100, 2), '__wrap_mscd_reset': (0x2200, 2),
+                   '__wrap_mscd_control_xfer_cb': (0x2300, 2)}
+        table = struct.pack('<III', 0x2101, 0x2201, 0x2301)
+        self.assertEqual(checker['check_table'](table, layout, symbols), 0)
+        for offset, name in ((4, '__wrap_mscd_reset'), (8, '__wrap_mscd_control_xfer_cb')):
+            broken = bytearray(table)
+            struct.pack_into('<I', broken, offset, 0)
+            with self.subTest(callback=name), self.assertRaisesRegex(ValueError, name):
+                checker['check_table'](broken, layout, symbols)
 
 
 if __name__ == '__main__':

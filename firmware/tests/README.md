@@ -47,6 +47,25 @@ checking pinned vendor-source ordering, inspecting ELF/build artifacts, and
 testing those Python validation tools. These are distinct from C behavior
 tests and are not substitutes for them.
 
+The remaining `check*.py` scripts have these specific roles:
+
+| Script | Role |
+| --- | --- |
+| [check-sdio-pio-timing.py](../../tools/validation/check-sdio-pio-timing.py) | Assemble PIO and model instruction timing |
+| [check-sd-ports.py](../../tools/validation/check-sd-ports.py) | Inspect bare-metal compilation manifests and linked symbols |
+| [check-tinyusb-msc-contract.py](../../tools/validation/check-tinyusb-msc-contract.py) | Verify pinned TinyUSB source ordering and linker-wrapper configuration |
+| [check-msc-elf.py](../../tools/validation/check-msc-elf.py) | Inspect MSC callback pointers in final ARM ELF artifacts |
+| [check-validation-integrity.py](../../tools/validation/check-validation-integrity.py) | Test the Python contract/artifact checkers, including deliberately broken inputs |
+
+`validate.sh` checks the final MSC callback pointers after each application
+firmware build. Bare-metal driver smoke targets have no USB interface and are
+not inputs to the MSC ELF checker. The checker requires an unstripped ARM ELF
+with DWARF and the Arm GNU `nm`/`readelf` tools; it never builds or flashes.
+
+Board clock defaults and executed RX/DMA setup, overlap, and cleanup sequencing
+are Ceedling tests, not Python source-text checks. Dated test records retain
+historical command names.
+
 Host fakes do not execute physical GPIO, DMA, interrupt scheduling or USB BOT
 traffic. Electrical timing, sustained card transfers, real interrupt behavior,
 and board/probe interactions still require hardware validation. Passing the

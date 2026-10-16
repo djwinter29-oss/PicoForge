@@ -766,7 +766,7 @@ enqueue-time hook mutates this cache. Earlier queued failures cannot erase a
 reset, and failures after handled reset retain their fresh sense. Rejected
 requests, skipped SETUP events, and DATA/ACK stages do not clear it.
 
-`python3 tools/validation/check-sd-msc-production.py` checks pinned
+`python3 tools/validation/check-tinyusb-msc-contract.py` checks pinned
 source ordering. Ceedling runs production application callbacks and linker wrappers
 against a separate host driver/queue model. TinyUSB itself is not linked in that
 host regression; it is not a real BOT integration or hardware qualification.

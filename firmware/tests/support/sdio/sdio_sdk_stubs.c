@@ -10,6 +10,19 @@
 #include "pico/stdlib.h"
 #include "sdio_pio_host.pio.h"
 
+pf_test_sdio_event_t pf_test_sdio_events[256];
+unsigned pf_test_sdio_event_count;
+bool pf_test_sdio_trace_enabled;
+void (*pf_test_sdio_dma_poll_hook)(void);
+
+static void trace_event(pf_test_sdio_event_t event)
+{
+    if (pf_test_sdio_trace_enabled) {
+        TEST_ASSERT_LESS_THAN_UINT(256u, pf_test_sdio_event_count);
+        pf_test_sdio_events[pf_test_sdio_event_count++] = event;
+    }
+}
+
 const pio_program_t pf_sdio_pio_clock_program = { 0 };
 const pio_program_t pf_sdio_pio_command_program = { 0 };
 const pio_program_t pf_sdio_pio_data_rx_program = { 0 };
@@ -33,6 +46,7 @@ unsigned pf_test_sdio_dma_busy_delay;
 unsigned pf_test_sdio_data_irq_delay;
 unsigned pf_test_sdio_data_irq_queries;
 unsigned pf_test_sdio_dma_busy_queries;
+unsigned pf_test_sdio_dma_abort_count;
 uint8_t pf_test_sdio_rx_wire[40];
 size_t pf_test_sdio_rx_wire_size;
 bool pf_test_sdio_data_wait_ok = true;
@@ -81,6 +95,7 @@ void pio_sm_init(PIO pio, uint sm, uint offset, const pio_sm_config *config)
 { (void)pio; (void)sm; (void)offset; (void)config; }
 void pio_sm_set_enabled(PIO pio, uint sm, bool enabled)
 {
+    if (sm == 1u) trace_event(enabled ? PF_TEST_RX_ENABLE : PF_TEST_RX_DISABLE);
     (void)pio; (void)sm; (void)enabled;
     if (pf_test_sdio_expect_streams_cleared && pf_test_sdio_observed_host != NULL) {
         pf_test_sdio_streams_were_cleared =
@@ -94,11 +109,14 @@ void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value)
 {
     (void)pio;
     if (sm == 1u && pf_test_sdio_pio_trace_count < 32u) {
+        trace_event(PF_TEST_RX_PUT);
         pf_test_sdio_pio_trace[pf_test_sdio_pio_trace_count++] = 0x10000000u | value;
     }
     if (sm == 0u) {
         if (pf_test_sdio_command_word_count == 0u) {
             pf_test_sdio_last_command = (uint8_t)((value >> 18u) & 0x3fu);
+            if (pf_test_sdio_last_command == 18u) trace_event(PF_TEST_CMD18);
+            if (pf_test_sdio_last_command == 12u) trace_event(PF_TEST_CMD12);
             ++pf_test_sdio_command_count;
         }
         ++pf_test_sdio_command_word_count;
@@ -127,12 +145,14 @@ void pio_sm_exec(PIO pio, uint sm, uint instruction)
 {
     (void)pio;
     if (sm == 1u && pf_test_sdio_pio_trace_count < 32u) {
+        trace_event(PF_TEST_RX_EXEC);
         pf_test_sdio_pio_trace[pf_test_sdio_pio_trace_count++] = 0x20000000u | instruction;
     }
 }
-void pio_sm_clear_fifos(PIO pio, uint sm) { (void)pio; (void)sm; }
+void pio_sm_clear_fifos(PIO pio, uint sm)
+{ (void)pio; if (sm == 1u) trace_event(PF_TEST_RX_CLEAR); }
 void pio_sm_restart(PIO pio, uint sm)
-{ (void)pio; if (sm == 1u) ++pf_test_sdio_pio_restart_calls; }
+{ (void)pio; if (sm == 1u) { ++pf_test_sdio_pio_restart_calls; trace_event(PF_TEST_RX_RESTART); } }
 uint pio_sm_get_rx_fifo_level(PIO pio, uint sm)
 {
     (void)pio;
@@ -153,7 +173,11 @@ uint32_t pio_sm_get(PIO pio, uint sm)
 void pio_sm_set_clkdiv_int_frac(PIO pio, uint sm, uint16_t integer, uint8_t fraction)
 { (void)pio; (void)sm; (void)integer; (void)fraction; }
 void pio_interrupt_clear(PIO pio, uint index)
-{ (void)pio; if (index == 0u) pf_test_sdio_command_word_count = 0u; }
+{
+    (void)pio;
+    if (index == 0u) pf_test_sdio_command_word_count = 0u;
+    if (index == 1u) trace_event(PF_TEST_RX_IRQ_CLEAR);
+}
 bool pio_interrupt_get(PIO pio, uint index)
 {
     (void)pio;
@@ -173,7 +197,8 @@ bool pio_interrupt_get(PIO pio, uint index)
 uint pio_encode_jmp(uint address) { return address; }
 uint pio_encode_pull(bool if_empty, bool block) { return (uint)if_empty | ((uint)block << 1u); }
 uint pio_encode_mov(uint destination, uint source) { return destination | (source << 8u); }
-uint pio_encode_set(uint destination, uint value) { return destination | (value << 8u); }
+uint pio_encode_set(uint destination, uint value)
+{ TEST_ASSERT_LESS_OR_EQUAL_UINT(31u, value); return destination | (value << 8u); }
 pio_sm_config pio_get_default_sm_config(void) { return (pio_sm_config){0}; }
 uint pio_encode_in(uint source, uint count) { return source | (count << 8u); }
 uint pio_encode_out(uint destination, uint count) { return destination | (count << 8u); }
@@ -219,6 +244,7 @@ void dma_channel_configure(unsigned channel, const dma_channel_config *config,
                            unsigned transfer_count, bool start)
 {
     (void)channel; (void)read_addr; (void)start;
+    trace_event(PF_TEST_DMA_CONFIGURE);
     pf_test_sdio_last_dma_config = *config;
     pf_test_sdio_dma_word_count = transfer_count;
     if (config->write_inc) {
@@ -234,10 +260,11 @@ void dma_channel_configure(unsigned channel, const dma_channel_config *config,
             (uintptr_t)write_addr + transfer_count * sizeof(uint32_t);
     }
 }
-void dma_channel_start(unsigned channel) { (void)channel; }
+void dma_channel_start(unsigned channel) { (void)channel; trace_event(PF_TEST_DMA_START); }
 bool dma_channel_is_busy(unsigned channel)
 {
     (void)channel;
+    if (pf_test_sdio_dma_poll_hook != NULL) pf_test_sdio_dma_poll_hook();
     ++pf_test_sdio_dma_busy_queries;
     if (pf_test_sdio_dma_busy_delay != 0u) {
         --pf_test_sdio_dma_busy_delay;
@@ -245,7 +272,12 @@ bool dma_channel_is_busy(unsigned channel)
     }
     return pf_test_sdio_dma_busy;
 }
-void dma_channel_abort(unsigned channel) { (void)channel; }
+void dma_channel_abort(unsigned channel)
+{
+    (void)channel;
+    ++pf_test_sdio_dma_abort_count;
+    trace_event(PF_TEST_DMA_ABORT);
+}
 void dma_channel_wait_for_finish_blocking(unsigned channel) { (void)channel; }
 dma_hw_t *dma_channel_hw_addr(unsigned channel) { (void)channel; return &pf_test_sdio_dma_registers; }
 int dma_claim_unused_channel(bool required) { (void)required; return 0; }
@@ -257,7 +289,7 @@ void gpio_pull_up(unsigned pin) { (void)pin; }
 void gpio_init(unsigned pin) { (void)pin; }
 void gpio_pull_down(unsigned pin) { (void)pin; }
 void gpio_disable_pulls(unsigned pin) { (void)pin; }
-void __dmb(void) { ++pf_test_sdio_barrier_count; }
+void __dmb(void) { ++pf_test_sdio_barrier_count; trace_event(PF_TEST_BARRIER); }
 uint32_t time_us_32(void) { static uint32_t now; now += pf_test_sdio_time_step; return now; }
 void sleep_us(uint64_t duration) { (void)duration; }
 void sleep_ms(uint32_t duration) { (void)duration; }

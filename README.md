@@ -4,171 +4,130 @@
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
 ![Targets: RP2040 and RP2350](https://img.shields.io/badge/Targets-RP2040%20%7C%20RP2350-2674b8)
 
-PicoForge is an evolving embedded firmware framework for RP2040 and RP2350, built on the Raspberry Pi Pico SDK and FreeRTOS. It brings together a buildable firmware baseline, USB CDC/HID interfaces, host-side tools, and a foundation for reusable drivers, middleware, and automated testing.
+PicoForge is firmware for Raspberry Pi Pico and Pico 2 boards. Connect a board
+over USB to monitor its status, control its LED, and work with files on an
+attached SD card using a dashboard or serial console.
 
-## At A Glance
+**Status:** under active development. Back up important card data before use.
+High-speed SD-card operation depends on the board, card, and wiring; a short
+successful test does not guarantee sustained reliability.
 
-- **Target platforms:** RP2040 and RP2350
-- **Platform services:** board support, version management, build configuration, configuration management, and logging
-- **Middleware:** FatFs, transport-neutral SD-card storage, command-line interface, and USB services
-- **Current USB device:** CDC ACM plus HID status, board telemetry, and LED control
-- **Development workflow:** automated testing and CI/CD pipelines
-- **Intended use:** industrial, IoT, and other embedded products
+## What You Can Do
 
-## Platform
+- View board identity, uptime, system clock, temperature, and SD-card information.
+- Control the board LED from a dashboard.
+- Browse, read, and manage files on FAT/exFAT SD cards through the USB console.
+- Share an attached SD card with your computer as a USB drive.
+- Run an SD-card write/read self-test with progress, verification results, and
+  measured transfer speeds.
 
-The platform layer provides the shared foundation used by applications and middleware:
+SD cards can use SDIO or SPI. An external SD-card breakout is required for
+storage features; it is not required for basic board monitoring.
 
-- **Board support:** common support for target hardware and board-level integration.
-- **Version management:** a consistent way to track framework and product versions.
-- **Build system:** shared build infrastructure for assembling embedded applications.
-- **Configuration:** application and platform settings managed in a structured way.
-- **Logging:** structured diagnostic output to help with development and field troubleshooting.
+## What You Need
 
-## Middleware
+- A Raspberry Pi Pico or Pico 2 and a USB data cable.
+- For storage: a compatible 3.3 V SD-card breakout and an SD card.
+- To build firmware: Git, CMake, Ninja, and the Arm GNU toolchain
+  (`arm-none-eabi-gcc`).
+- For the Python dashboard: Python 3.10+ with virtual-environment support.
 
-Reusable components provide common product functionality without requiring each application to build it from scratch:
+Follow the [hardware setup guide](docs/hardware-setup.md) before connecting an
+SD-card breakout. Use 3.3 V logic and a common ground, never 5 V.
 
-- **FatFs:** file-system support for working with files on supported storage devices.
-- **SD-card block API:** transport-independent block access over implemented SDIO-PIO and SPI backends.
-- **CLI:** a command-line interface for device interaction and diagnostics.
-- **Storage:** reusable storage services for application data.
-- **USB services:** common USB functionality for connected devices and host systems.
+## Get Started
 
-## Engineering Workflow
+### 1. Build the Firmware
 
-PicoForge is intended to support the full embedded development cycle, from bringing up a board to maintaining a product:
-
-- **Modular drivers** help isolate hardware-specific behavior and encourage reuse.
-- **Automated testing** helps catch regressions as platform services and middleware evolve.
-- **CI/CD workflows** provide repeatable checks for changes and releases.
-- **Structured configuration and logging** make products easier to adapt, inspect, and troubleshoot.
-
-## Intended Applications
-
-PicoForge is designed for teams building industrial controllers, connected IoT devices, and other embedded products that benefit from reusable platform services and a repeatable development workflow.
-
-See [docs/hardware-setup.md](docs/hardware-setup.md) for Pico/Pico 2 header wiring, breakout options, and external flash constraints.
-See [docs/architecture.md](docs/architecture.md) for implemented status and intended module boundaries.
-See [docs/sdcard-design.md](docs/sdcard-design.md) for SDIO-PIO/SPI interfaces, workflows, and driver hardware resources.
-
-## Repository Layout
-
-The repository follows a firmware-focused layout, with documentation, tests, and development tooling kept separate from embedded source code:
-
-```text
-.
-├── .github/workflows/       # Continuous integration and release workflows
-├── docs/
-│   ├── architecture.md      # Current state and intended module boundaries
-│   ├── development/         # Build and contributor guidance
-│   └── tests/               # Test plans and hardware test guidance
-├── firmware/
-│   ├── CMakeLists.txt       # Pico SDK firmware build
-│   ├── src/
-│   │   ├── integration/
-│   │   │   ├── fatfs/      # FatFs configuration and disk-I/O adapter
-│   │   │   ├── freertos/    # FreeRTOS configuration
-│   │   │   └── usb/         # TinyUSB integration configuration
-│   │   ├── drivers/
-│   │   │   ├── system.c/h   # MCU identity, clock, and uptime
-│   │   │   ├── temperature.c/h # Internal sensor and conversion
-│   │   │   ├── led.c/h      # Board-configured LED control
-│   │   │   └── sd_card/     # Shared block API with SDIO-PIO and SPI transport directories
-│   │   ├── middleware/
-│   │   │   └── storage/     # FatFs mount lifecycle API
-│   │   ├── board/           # Board topology and SD-card configuration
-│   │   ├── usb/             # HID API and TinyUSB descriptors
-│   │   └── main.c           # Firmware startup and scheduler launch
-│   ├── tests/               # Firmware unit tests
-│   └── third_party/
-│       ├── FreeRTOS-Kernel/ # Pinned FreeRTOS dependency submodule
-│       ├── fatfs/           # FatFs R0.16 with official patches 1 and 2
-│       └── pico-sdk/        # Pinned Pico SDK submodule
-├── host/
-│   ├── dotnet/              # .NET HID monitor and local dashboard host
-│   ├── python/              # Python HID client and Flask dashboard host
-│   ├── web/                 # Shared native-host status dashboard
-│   └── webhid/              # Direct browser WebHID dashboard
-├── tests/
-│   └── contracts/           # Cross-component and repository contract tests
-└── tools/
-	├── firmware/            # SDK setup and firmware build helpers
-	├── host/                 # Host test environment setup helpers
-	└── validation/          # Local validation scripts
-```
-
-## Firmware Setup
-
-Install Git, CMake, Ninja, and the `arm-none-eabi-gcc` toolchain, then initialize submodules and build from the repository root:
+Clone the repository, then run these commands from its root:
 
 ```sh
 git submodule update --init --recursive
-tools/firmware/build.sh --board pico
 tools/firmware/build.sh --board pico2
 ```
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as submodules under `firmware/third_party/`, including their nested submodules. The build defaults to the SDK submodule; set `PICO_SDK_PATH` or pass `--pico-sdk-path` to use another existing checkout. Firmware runs FreeRTOS on one core by default; see [docs/architecture.md](docs/architecture.md) for the core-ownership policy.
+For the original Pico, use `--board pico` instead. The build uses the Pico SDK
+included with the project.
 
-FatFs uses a transport-neutral SD-card block API. Select the static transport in `firmware/src/config/config.h`, get the matching config with `pf_board_get_sd_card_config()`, then pass it to `pf_storage_mount()`; FatFs itself does not know which bus is selected. SDIO-PIO and SPI backends implement initialization and block I/O, but neither has been validated on physical hardware. The example does not mount a volume or format media. See [the hardware setup options](docs/hardware-setup.md) and the [FatFs integration notes](firmware/third_party/fatfs/README.md).
+### 2. Flash Your Board
 
-The current firmware is a FreeRTOS-managed composite USB device for RP2040 (`pico`) and RP2350 (`pico2`). It exposes CDC ACM and vendor-defined HID interfaces by default; HID can hand exclusive SD-card ownership to an optional MSC interface, which appears after USB re-enumeration. HID retains the same PID and interface number in both configurations and reconnects after the brief transition. The host must safely eject before firmware regains the card. CDC provides the [Embedded CLI console](docs/cdc-cli.md); HID reports product identity, runtime telemetry, board LED state, SD-card metadata, and MSC state/control. Startup initializes the selected card for telemetry but does not mount or modify its filesystem. The system, temperature, and LED drivers live directly in `firmware/src/drivers/`; multi-file drivers such as SD card use grouped subdirectories. The development VID/PID (`0xCAFE:0x4011`) must be replaced before product release. See [docs/usb-protocol.md](docs/usb-protocol.md) for the report layout. The build produces `picoforge_hello_world.uf2` under `build/firmware-pico/` or `build/firmware-pico2/`.
+1. Hold **BOOTSEL** while connecting the board to USB.
+2. Copy `build/firmware-pico2/pf_hello_world.uf2` to the drive that appears.
+3. The board restarts automatically.
 
-To flash over a CMSIS-DAP debug probe, run `tools/firmware/load.sh --board pico` or `tools/firmware/load.sh --board pico2`. Alternatively, hold BOOTSEL while connecting USB and copy the matching UF2 file to the mounted drive. Start the Python dashboard separately with `tools/host/run-python.sh` after installing its dependencies. Host enumeration and physical sensor/LED behavior still need board validation.
+For a Pico build, use `build/firmware-pico/pf_hello_world.uf2`.
+Always use the image built for your board.
 
-## Host Tools
-
-The dashboards can start/cancel the firmware's [SD-card file self-test](docs/sd-self-test.md)
-over HID and display verification progress and average filesystem read/write speeds.
-
-The Python launcher creates `build/picoforge` and installs the host package on first run, then opens HID and serves a loopback-only dashboard:
+### 3. Open the Dashboard
 
 ```sh
 tools/host/run-python.sh
-tools/host/run-python.sh status
 ```
 
-The dashboard is at `http://127.0.0.1:8765/`. The .NET 10 host serves the same dashboard at `http://127.0.0.1:8766/`:
+The launcher creates its Python environment and installs dependencies on first
+use. Open **http://127.0.0.1:8765/** to view and control the connected board.
+Use only one dashboard connection per board at a time.
+
+On Linux, if HID access is denied, run:
 
 ```sh
-tools/host/run-dotnet.sh
+tools/host/hid-permissions-setup.sh
 ```
 
-Set `DOTNET` to select a .NET 10 SDK executable. Application arguments can be passed through the script.
+Then reconnect the board and restart the dashboard.
 
-For a direct browser connection, serve the WebHID app at the origin root:
+## Other Ways to Connect
 
-```sh
-tools/host/run-webhid.sh
+| Interface | Start | Open |
+| --- | --- | --- |
+| .NET dashboard (.NET 10 SDK required) | `tools/host/run-dotnet.sh` | http://127.0.0.1:8766/ |
+| Direct browser dashboard | `tools/host/run-webhid.sh` | http://localhost:8000/ |
+| USB serial console | Open the PicoForge CDC port in a serial terminal | Enter `help` to list commands |
+
+The direct browser dashboard requires a WebHID-capable browser and permission
+to access the device. For the serial console, choose the PicoForge USB port,
+not a Debug Probe's UART port. See the [console guide](docs/cdc-cli.md) for
+terminal settings and available commands.
+
+## Using an SD Card
+
+With a correctly wired card, firmware attempts to mount its existing FAT/exFAT
+filesystem automatically. It does not format the card.
+
+Useful console commands:
+
+```text
+sd status
+fs ls /
+fs cat /example.txt
+sd diagnostics
 ```
 
-Open `http://localhost:8000/` in a WebHID-capable browser, connect the board, and grant access to its HID interface. Use `--port` or `--bind` to change the server settings.
+To use the card as a USB drive:
 
-On Linux, if either launcher reports a HID permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session; both launchers check device-node permissions and exit with this instruction if access is blocked.
+1. Finish any file operations and run `fs unmount` in the console.
+2. Enable USB mass storage (MSC) in the dashboard. USB briefly reconnects.
+3. Use the drive on your computer.
+4. Safely eject the drive, then disable MSC in the dashboard before returning
+   to firmware file access.
 
-WebHID requires a secure browser context and a user-granted device permission. CDC remains available to serial terminal applications.
+The computer and firmware cannot access the card's files at the same time.
+Do not unplug or remove the card during writes.
 
-## Host Tests
+The dashboard's [SD-card self-test](docs/sd-self-test.md) writes and verifies a
+temporary file. It requires explicit write consent and refuses to overwrite
+an existing test file. Back up your data first; this is not a filesystem repair
+or a guarantee of card reliability.
 
-Ceedling 1.1.10 is configured at the repository root for firmware unit tests under `firmware/tests`. Host unit tests live beside each implementation and can be run together with:
+## Help and Documentation
 
-```sh
-python3 -m pip install --editable host/python
-tools/validation/test-host.sh
-```
+- [Hardware setup](docs/hardware-setup.md): wiring, supported connections, and board notes.
+- [Console guide](docs/cdc-cli.md): file commands, mounting, and recovery.
+- [SD-card self-test](docs/sd-self-test.md): running tests and understanding results.
+- [Contributing](CONTRIBUTING.md): development and validation guidance.
+- [Security reporting](SECURITY.md): report vulnerabilities privately.
 
-The script requires Python 3.10+, Node.js 22+, and .NET 10. The GitHub host-validation workflow installs these runtimes and runs the same script.
+## License
 
-See [firmware/tests/README.md](firmware/tests/README.md) for Ceedling setup and [tests/README.md](tests/README.md) for test ownership.
-
-## Project Policies
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution and validation guidance, [SECURITY.md](SECURITY.md) for private vulnerability reporting, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations and reporting concerns.
-
-## Project Validation
-
-Run `tools/validation/validate.sh` from the repository root to check shell syntax, validate and run Ceedling tests when present, and build both RP2040 (`pico`) and RP2350 (`pico2`) firmware targets. Use `--skip-firmware`, `--skip-tests`, or `--board NAME` for focused validation.
-
-## Project Status
-
-The repository contains a buildable single-core FreeRTOS firmware baseline, composite CDC/HID status interface, Python and .NET HID hosts, a direct WebHID page, and Ceedling infrastructure. Reusable platform services, drivers, middleware, and release automation remain under development.
+PicoForge is licensed under the [BSD 3-Clause License](LICENSE).
+Third-party components retain their own licenses.

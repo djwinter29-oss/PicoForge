@@ -11,6 +11,18 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "../../../../src/drivers/sd_card/sd_card_protocol.c"
 #include "sdio_sdk_stubs.c"
 
+_Static_assert(PF_SD_CARD_PROFILE_COMMAND == 0 &&
+               PF_SD_CARD_PROFILE_DATA == 1 &&
+               PF_SD_CARD_PROFILE_CRC == 2 &&
+               PF_SD_CARD_PROFILE_BUSY == 3 &&
+               PF_SD_CARD_PROFILE_STOP == 4 &&
+               PF_SD_CARD_PROFILE_RECOVERY == 5 &&
+               PF_SD_CARD_PROFILE_PHASE_COUNT == 6,
+               "profile array indices remain ABI-stable");
+_Static_assert(SDIO_DATA_NIBBLE_COUNT == 512u * 2u + 16u &&
+               SDIO_DATA_WORD_COUNT * 8u == SDIO_DATA_NIBBLE_COUNT,
+               "DMA data words cover payload and CRC framing exactly");
+
 pf_sdio_pio_host_t *pf_test_sdio_observed_host;
 bool pf_test_sdio_expect_streams_cleared;
 bool pf_test_sdio_streams_were_cleared;
@@ -38,6 +50,7 @@ void setUp(void)
     pf_test_sdio_data_irq_delay = 0u;
     pf_test_sdio_data_irq_queries = 0u;
     pf_test_sdio_dma_busy_queries = 0u;
+    pf_test_sdio_dma_abort_count = 0u;
     pf_test_sdio_corrupt_command_crc = false;
     pf_test_sdio_command_fail = 0u;
     pf_test_sdio_command_error = 0u;
@@ -118,6 +131,7 @@ void test_cmd24_uses_full_source_dma_path_and_checks_data_completion(void)
     pf_test_sdio_time_step = 500001u;
     TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 4u, true, block));
     TEST_ASSERT_FALSE(host.mode_restore_failed);
+    TEST_ASSERT_EQUAL_UINT(1u, pf_test_sdio_dma_abort_count);
     pf_sd_card_get_profile(&profile);
     TEST_ASSERT_TRUE(profile.events[PF_SD_CARD_PROFILE_TIMEOUT] > 0u);
 }
@@ -207,4 +221,23 @@ void test_cmd25_failed_data_keeps_stream_until_stop_recovery_succeeds(void)
     pf_test_sdio_command_error = 0u;
     TEST_ASSERT_TRUE(pf_sdio_pio_host_recover(&host));
     TEST_ASSERT_FALSE(host.write_stream_open);
+}
+
+void test_cmd24_profile_can_be_disabled_or_run_without_a_clock(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = make_host(&pio);
+    uint8_t block[PF_SD_CARD_BLOCK_SIZE] = {0};
+    pf_sd_card_profile_t profile;
+
+    pf_sd_card_profile_set_clock(NULL);
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_write_sector(&host, 4u, true, block));
+    pf_sd_card_get_profile(&profile);
+    TEST_ASSERT_EQUAL_UINT(0u, profile.calls[PF_SD_CARD_PROFILE_DATA]);
+
+    pf_sd_card_profile_set_clock(test_profile_clock);
+    pf_sd_card_set_profiling_enabled(false);
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_write_sector(&host, 4u, true, block));
+    pf_sd_card_get_profile(&profile);
+    TEST_ASSERT_EQUAL_UINT(0u, profile.calls[PF_SD_CARD_PROFILE_DATA]);
 }

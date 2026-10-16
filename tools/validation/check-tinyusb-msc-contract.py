@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the pinned TinyUSB source ordering modeled by MSC Unity tests."""
+"""Check pinned TinyUSB source ordering and the MSC linker-wrapper contract."""
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 

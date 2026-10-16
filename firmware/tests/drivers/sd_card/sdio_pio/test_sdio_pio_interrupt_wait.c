@@ -2,9 +2,7 @@
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #define PF_CONFIG_SD_CARD_INTERRUPT_WAIT 1
-#include "FreeRTOS.h"
-#include "hardware/irq.h"
-#include "task.h"
+#include "sdio_wait_fixture.h"
 
 #include <stdint.h>
 
@@ -26,7 +24,7 @@ static unsigned critical_depth;
 static bool early_irq;
 static bool late_irq;
 
-static bool fake_pio_interrupt_get(PIO pio, uint32_t flag)
+bool pio_interrupt_get(PIO pio, uint32_t flag)
 {
     return ((pf_test_sdio_irq_pio_t *)pio)->flag[flag];
 }

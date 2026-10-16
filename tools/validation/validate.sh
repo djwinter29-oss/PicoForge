@@ -56,7 +56,7 @@ Usage: tools/validation/validate.sh [options]
 
 By default, syntax-check shell scripts, validate/run Ceedling tests, and build
 FreeRTOS firmware and bare-metal driver smoke targets for pico and pico2
-with both SDIO_PIO and SPI.
+with both SDIO_PIO and SPI, and verify final application MSC callback pointers.
 PIO timing checks require a prior firmware build or PIOASM when builds are skipped.
 
 Options:
@@ -98,7 +98,7 @@ fi
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "=== Ceedling project and unit tests ==="
-    python3 tools/validation/check-sd-msc-production.py
+    python3 tools/validation/check-tinyusb-msc-contract.py
     "$CEEDLING_SCRIPT" check
     if find firmware/tests -type f -name 'test_*.c' -print -quit | grep -q .; then
         "$CEEDLING_SCRIPT" test:all
@@ -126,6 +126,8 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
             set -- "$@" --generator "$GENERATOR"
         fi
         "$FIRMWARE_BUILD_SCRIPT" "$@"
+        python3 tools/validation/check-msc-elf.py \
+            "build/validation-$board_name-$transport_name/pf_hello_world.elf"
         echo "=== $board_name / $transport_name / BAREMETAL ==="
         baremetal_dir="build/validation-$board_name-$transport_name-baremetal"
         set -- -S firmware -B "$baremetal_dir" \

@@ -2,6 +2,7 @@
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
+#include "sdio_storage_limits.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -36,9 +37,17 @@ void setUp(void)
     pf_test_sdio_data_irq = true;
     pf_test_sdio_dma_busy = false;
     pf_test_sdio_data_wait_ok = true;
+    pf_test_sdio_trace_enabled = true;
+    pf_test_sdio_event_count = 0u;
+    pf_test_sdio_dma_poll_hook = NULL;
+    pf_test_sdio_dma_busy_delay = 0u;
 }
 
-void tearDown(void) {}
+void tearDown(void)
+{
+    pf_test_sdio_trace_enabled = false;
+    pf_test_sdio_dma_poll_hook = NULL;
+}
 
 static void encode_test_blocks(uint8_t blocks[4][PF_SD_CARD_BLOCK_SIZE])
 {
@@ -155,6 +164,40 @@ void test_read_batch_loads_pio_count_before_dma_and_framing(void)
     TEST_ASSERT_TRUE(pf_test_sdio_last_dma_config.swap);
     TEST_ASSERT_TRUE(pf_test_sdio_last_dma_config.write_inc);
     TEST_ASSERT_FALSE(pf_test_sdio_last_dma_config.read_inc);
+    const pf_test_sdio_event_t expected[] = {
+        PF_TEST_RX_DISABLE, PF_TEST_RX_CLEAR, PF_TEST_RX_IRQ_CLEAR, PF_TEST_RX_RESTART,
+        PF_TEST_RX_EXEC, PF_TEST_RX_PUT, PF_TEST_RX_EXEC, PF_TEST_RX_EXEC,
+        PF_TEST_RX_PUT, PF_TEST_DMA_CONFIGURE, PF_TEST_DMA_START, PF_TEST_RX_ENABLE
+    };
+    TEST_ASSERT_EQUAL_UINT(sizeof(expected) / sizeof(expected[0]), pf_test_sdio_event_count);
+    TEST_ASSERT_EQUAL_MEMORY(expected, pf_test_sdio_events, sizeof(expected));
+    TEST_ASSERT_LESS_OR_EQUAL_UINT(PF_STORAGE_SELF_TEST_BUFFER_SIZE,
+                                  SDIO_READ_BATCH_BLOCKS * PF_SD_CARD_BLOCK_SIZE);
+    TEST_ASSERT_EQUAL_UINT(0u, PF_STORAGE_SELF_TEST_BUFFER_SIZE % PF_SD_CARD_BLOCK_SIZE);
+}
+
+void test_rx_cleanup_aborts_dma_before_clearing_and_restarting_pio(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = { .pio = &pio, .data_sm = 1u, .dma_channel = 3u };
+    pf_test_sdio_dma_busy = true;
+    cleanup_data_rx(&host);
+    const pf_test_sdio_event_t expected[] = {
+        PF_TEST_RX_DISABLE, PF_TEST_DMA_ABORT, PF_TEST_RX_CLEAR,
+        PF_TEST_RX_IRQ_CLEAR, PF_TEST_RX_RESTART, PF_TEST_RX_EXEC
+    };
+    TEST_ASSERT_EQUAL_UINT(sizeof(expected) / sizeof(expected[0]), pf_test_sdio_event_count);
+    TEST_ASSERT_EQUAL_MEMORY(expected, pf_test_sdio_events, sizeof(expected));
+    pf_test_sdio_dma_busy = false;
+}
+
+void test_stock_system_clock_produces_exact_qualified_bus_clock(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = { .pio = &pio, .system_clock_hz = 150000000u };
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_set_clock(&host, 25000000u));
+    TEST_ASSERT_EQUAL_UINT32(3u * 256u, host.clock_div_ticks);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, host.current_clock_hz);
 }
 
 static void make_receive_batch(const uint8_t blocks[][PF_SD_CARD_BLOCK_SIZE], unsigned count)
@@ -165,6 +208,16 @@ static void make_receive_batch(const uint8_t blocks[][PF_SD_CARD_BLOCK_SIZE], un
             &pf_test_sdio_batch_rx[block * PF_SDIO_PIO_IMAGE_SIZE]));
     }
     pf_test_sdio_batch_rx_size = count * PF_SDIO_PIO_IMAGE_SIZE;
+}
+
+static unsigned overlap_polls;
+
+static void observe_overlapped_decode(void)
+{
+    if (++overlap_polls == 2u) {
+        TEST_ASSERT_GREATER_THAN_UINT(0u, pf_test_sdio_barrier_count);
+        TEST_ASSERT_TRUE(pf_test_sdio_dma_busy_delay > 0u);
+    }
 }
 
 void test_production_cmd18_reader_decodes_all_blocks_then_stops_stream(void)
@@ -188,10 +241,23 @@ void test_production_cmd18_reader_decodes_all_blocks_then_stops_stream(void)
         ((uint8_t *)expected)[i] = (uint8_t)(i * 19u + 3u);
     }
     make_receive_batch(expected, 2u);
+    overlap_polls = 0u;
+    pf_test_sdio_dma_busy_delay = 2u;
+    pf_test_sdio_dma_poll_hook = observe_overlapped_decode;
 
     TEST_ASSERT_TRUE(pf_sdio_pio_host_read_blocks(&host, 17u, true,
                                                    &received[0][0], 2u));
     TEST_ASSERT_EQUAL_MEMORY(expected, received, sizeof(expected));
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT(2u, overlap_polls);
+    unsigned command_event = 0u, decode_event = 0u, cleanup_event = 0u, stop_event = 0u;
+    for (unsigned i = 0u; i < pf_test_sdio_event_count; ++i) {
+        if (pf_test_sdio_events[i] == PF_TEST_CMD18) command_event = i;
+        if (pf_test_sdio_events[i] == PF_TEST_BARRIER && decode_event == 0u) decode_event = i;
+        if (pf_test_sdio_events[i] == PF_TEST_RX_DISABLE) cleanup_event = i;
+        if (pf_test_sdio_events[i] == PF_TEST_CMD12) stop_event = i;
+    }
+    TEST_ASSERT_TRUE(command_event > 0u && command_event < decode_event);
+    TEST_ASSERT_TRUE(decode_event < cleanup_event && cleanup_event < stop_event);
     TEST_ASSERT_FALSE(host.read_stream_unresolved);
     TEST_ASSERT_EQUAL_UINT(2u, pf_test_sdio_command_count);
     TEST_ASSERT_EQUAL_UINT8(12u, pf_test_sdio_last_command);
