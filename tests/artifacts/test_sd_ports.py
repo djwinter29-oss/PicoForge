@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Inspect bare-metal cross-build artifacts; C behavior is covered by Ceedling."""
-import argparse
+"""Test bare-metal cross-build artifacts; C behavior is covered by Ceedling."""
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+
+import pytest
+
+pytestmark = pytest.mark.artifacts
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = ROOT / "firmware/src/drivers/sd_card"
@@ -35,13 +38,7 @@ def check_build(directory):
     print(f"Bare-metal compile/link: exactly one port, no kernel includes/symbols: {elf}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build-dir", action="append", type=Path, required=True)
-    args = parser.parse_args()
-    for directory in args.build_dir:
-        check_build(directory)
-
-
-if __name__ == "__main__":
-    main()
+def test_baremetal_port(baremetal_build_dir):
+    if baremetal_build_dir is None:
+        pytest.fail("Port artifact tests require --baremetal-build-dir PATH (build bare-metal firmware first)")
+    check_build(baremetal_build_dir)

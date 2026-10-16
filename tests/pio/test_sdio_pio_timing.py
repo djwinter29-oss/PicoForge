@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check assembled TX start/data/end timing and RX cadence, not electrical qualification.
+"""Test assembled TX start/data/end timing and RX cadence, not electrical qualification.
 
 Model divider-1 data instructions, an integer-half-period clock, and 0/1
 cycle clock-observation latency with input_sync_bypass enabled. Pin writes
@@ -11,6 +11,10 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+
+import pytest
+
+pytestmark = pytest.mark.pio
 
 ROOT = Path(__file__).resolve().parents[2]
 PIO = ROOT / "firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.pio"
@@ -235,33 +239,48 @@ def check_tx_status(ops, half):
             "TX busy check before the card could drive busy", half, delay, cycle)
 
 
-def main():
-    ops = assemble()
-    for half in (6, 4, 3, 2):
-        for latency in (0, 1):
-            for phase in range(2 * half):
-                check(ops, half, latency, phase)
-        check_tx_status(ops, half)
-        print(f"TX timing passed: half={half}, all launch phases, 0/1-cycle observation latency, 1040 nibbles, mid-bit status/busy")
-    rx_ops = assemble("data_rx")
-    for half in (6, 4, 3, 2):
-        for latency in (0, 1):
-            for phase in range(2 * half):
-                check_receive(rx_ops, half, latency, phase)
-        check_receive_framing(rx_ops, half)
-        print(f"RX timing passed: half={half}, all phases, 1040 nibbles, falling-edge sampling")
-    fast_rx_ops = assemble("data_rx_fast")
-    for latency in (0, 1):
-        for phase in range(4):
-            check_receive(fast_rx_ops, 2, latency, phase)
-    check_receive_framing(fast_rx_ops, 2)
-    command_ops = assemble("command")
-    check_command_response(command_ops)
-    assert len(command_ops) + max(len(rx_ops), len(fast_rx_ops)) <= 32, (
+@pytest.fixture(scope="module")
+def programs():
+    return {name: assemble(name) for name in ("data_tx", "data_rx", "data_rx_fast", "command")}
+
+
+TIMINGS = [(half, latency, phase) for half in (6, 4, 3, 2)
+           for latency in (0, 1) for phase in range(2 * half)]
+
+
+@pytest.mark.parametrize("half,latency,phase", TIMINGS)
+def test_tx_timing(programs, half, latency, phase):
+    check(programs["data_tx"], half, latency, phase)
+
+
+@pytest.mark.parametrize("half,latency,phase", TIMINGS)
+def test_rx_timing(programs, half, latency, phase):
+    check_receive(programs["data_rx"], half, latency, phase)
+
+
+@pytest.mark.parametrize("half", (6, 4, 3, 2))
+def test_tx_status(programs, half):
+    check_tx_status(programs["data_tx"], half)
+
+
+@pytest.mark.parametrize("half", (6, 4, 3, 2))
+def test_rx_framing(programs, half):
+    check_receive_framing(programs["data_rx"], half)
+
+
+@pytest.mark.parametrize("latency,phase", [(latency, phase) for latency in (0, 1) for phase in range(4)])
+def test_fast_rx_timing(programs, latency, phase):
+    check_receive(programs["data_rx_fast"], 2, latency, phase)
+
+
+def test_fast_rx_framing(programs):
+    check_receive_framing(programs["data_rx_fast"], 2)
+
+
+def test_command_response(programs):
+    check_command_response(programs["command"])
+
+
+def test_instruction_memory(programs):
+    assert len(programs["command"]) + max(len(programs["data_rx"]), len(programs["data_rx_fast"])) <= 32, (
         "Command and receive programs exceed shared PIO instruction memory")
-    print("Fast RX timing passed: half=2, all phases, 1040 nibbles, falling-edge sampling")
-    print("SDIO PIO timing check passed (model only; HIL still required)")
-
-
-if __name__ == "__main__":
-    main()

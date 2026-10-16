@@ -149,7 +149,7 @@ it does not automatically select the bare-metal smoke target.
 Ceedling tests run both bare-metal facade transports on the host, including
 byte-preserving transfers, recursive reservations, sync, and ownership rejection.
 See [firmware test guidance](../firmware/tests/README.md#host-behavior-regressions).
-`check-sd-ports.py` inspects cross-build artifacts.
+[test_sd_ports.py](../tests/artifacts/test_sd_ports.py) inspects cross-build artifacts.
 `validate.sh` also builds both ports and transports for RP2040/RP2350 and inspects
 the bare-metal compilation database and ELF for kernel dependencies and a single
 selected port. These are host/build checks, not physical-card qualification.
@@ -698,7 +698,7 @@ tokens, native initialization/recovery/transfer routing, DMA batch decoding,
 and PIO timing models. C behavior regressions live in the mirrored
 [firmware tests](../firmware/tests), with runner commands and placement described
 in [test guidance](../firmware/tests/README.md#host-behavior-regressions).
-[check-sdio-pio-timing.py](../tools/validation/check-sdio-pio-timing.py) remains
+[test_sdio_pio_timing.py](../tests/pio/test_sdio_pio_timing.py) remains
 a separate assembled-instruction model.
 The Ceedling USB responsiveness tests exercise production
 memory-report/self-test-start functions with an unavailable
@@ -766,7 +766,7 @@ enqueue-time hook mutates this cache. Earlier queued failures cannot erase a
 reset, and failures after handled reset retain their fresh sense. Rejected
 requests, skipped SETUP events, and DATA/ACK stages do not clear it.
 
-`python3 tools/validation/check-tinyusb-msc-contract.py` checks pinned
+`python3 -m pytest tests -m contracts` checks pinned
 source ordering. Ceedling runs production application callbacks and linker wrappers
 against a separate host driver/queue model. TinyUSB itself is not linked in that
 host regression; it is not a real BOT integration or hardware qualification.
