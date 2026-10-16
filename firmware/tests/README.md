@@ -61,6 +61,12 @@ Raw NOR protocol tests live under [drivers/nor_flash](drivers/nor_flash).
 See [external NOR support](../../docs/nor-flash.md#tests-and-remaining-qualification)
 for the standalone SPI/QSPI smoke builds, PIO model and hardware-test boundaries.
 
+[LevelX integration tests](integration/levelx/test_levelx_nor.c) run the pinned
+upstream NOR engine on a simulated flash using `ceedling test:test_levelx_nor`.
+Initialize `firmware/third_party/levelx` first. See
+[the LevelX port guidance](../../docs/nor-flash.md#levelx-nor-port) for configuration,
+region ownership, failure recovery and the limits of host fault-injection tests.
+
 CLI middleware tests compile the pinned Embedded CLI submodule, so initialize
 submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/cdc-cli.md#validation)
 for the focused command and board-only checks.

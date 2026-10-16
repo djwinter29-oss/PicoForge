@@ -36,6 +36,7 @@
     - +:firmware/src/**
     - +:firmware/third_party/embedded-cli/lib/src
     - +:firmware/tests/support/msc
+    - +:firmware/third_party/levelx/common/src
   :include:
     - firmware/src/**
     - firmware/third_party/fatfs/source
@@ -47,10 +48,13 @@
   :source:
     - -:firmware/src/main.c
     - -:firmware/src/drivers/temperature.c
+    - -:firmware/third_party/levelx/common/src/lx_nor_flash_simulator.c
 
 :flags:
   :test:
     :compile:
+      :test_levelx_nor:
+        - -DLX_INCLUDE_USER_DEFINE_FILE
       :test_sd_card_serialization:
         - -std=c11
         - -D_XOPEN_SOURCE=700

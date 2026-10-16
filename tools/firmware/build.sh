@@ -11,6 +11,7 @@ SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
 SD_CARD_PORT="${PF_SD_CARD_PORT:-FREERTOS}"
 NOR_SMOKE=OFF
 NOR_TRANSPORT="${PF_NOR_TRANSPORT:-SPI}"
+BUILD_LEVELX=OFF
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -51,6 +52,10 @@ while [ "$#" -gt 0 ]; do
             NOR_SMOKE=ON
             shift 2
             ;;
+        --levelx)
+            BUILD_LEVELX=ON
+            shift
+            ;;
         --help)
             cat <<'EOF'
 Usage: tools/firmware/build.sh [options]
@@ -66,6 +71,7 @@ Options:
     --sd-card-port NAME  FREERTOS application or BAREMETAL driver smoke (default: FREERTOS)
     --nor-transport NAME  Build standalone raw NOR smoke instead: SPI or QSPI_PIO
                          Default directory: build/nor-BOARD-TRANSPORT
+    --levelx             Also build the LevelX NOR library and no-I/O link smoke
 EOF
             exit 0
             ;;
@@ -143,5 +149,6 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPF_SD_CARD_PORT="$SD_CARD_PORT" \
     -DPF_BUILD_NOR_SMOKE="$NOR_SMOKE" \
     -DPF_NOR_TRANSPORT="$NOR_TRANSPORT" \
+    -DPF_BUILD_LEVELX="$BUILD_LEVELX" \
     -DPF_SD_CARD_TRANSPORT="$SD_CARD_TRANSPORT"
 cmake --build "$BUILD_DIR" --parallel

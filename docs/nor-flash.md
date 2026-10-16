@@ -13,9 +13,10 @@ datasheet before using quad mode: a JEDEC ID alone does not identify every
 revision's status-register command behavior. Other NOR parts, QPI mode,
 four-byte addressing and SFDP discovery are not supported.
 
-This is not a FatFs backend. There is no NOR FTL, wear leveling, filesystem
-mounting or USB MSC export. Raw programming requires previously erased bits;
-it never erases implicitly. A failed write can leave partial changes.
+This is not yet a FatFs backend. An optional LevelX NOR port provides logical
+sectors and upstream reclamation/wear management, but filesystem mounting and
+USB MSC export remain unimplemented. Raw programming requires previously
+erased bits; it never erases implicitly. A failed write can leave partial changes.
 
 ## Layers and Wiring
 
@@ -109,7 +110,70 @@ clock cadence, nonblank single/quad comparison and sustained reads. Destructive
 program/erase testing must use an explicitly authorized disposable sector,
 verify neighboring sectors, and never assume the attached flash is empty.
 
-The next storage step is selecting a reviewed NOR translation layer with
-recoverable metadata and wear leveling, then introducing a logical block-device
-boundary for FatFs without changing existing SD behavior. No empty FTL or
-block-device scaffolding is included in this raw-driver milestone.
+## LevelX NOR Port
+
+[Eclipse ThreadX LevelX](../firmware/third_party/levelx) is pinned as a submodule
+to `v6.4.5.202504_rel`, commit
+`1751446fb0c1793cd60b05c5816305f2cdc3dd12`. The upstream
+[MIT license](../firmware/third_party/levelx/LICENSE.txt) is retained unchanged.
+Only common NOR engine sources are compiled; the upstream simulator, NAND,
+FileX and ThreadX are not dependencies of this port.
+
+```sh
+git submodule update --init firmware/third_party/levelx
+tools/firmware/build.sh --board pico2 --nor-transport QSPI_PIO --levelx
+ceedling test:test_levelx_nor
+```
+
+`--levelx` enables `PF_BUILD_LEVELX=ON`, builds `pf_levelx_vendor` and
+`pf_levelx_nor`, and links `pf_levelx_nor_link_smoke`. That executable exercises
+only invalid-device rejection: it performs no NOR initialization, open, erase
+or program. The separate raw smoke behavior remains unchanged. This is a
+compile/link check, not a LevelX hardware qualification.
+
+The [port API](../firmware/src/integration/levelx/levelx_nor.h) accepts a
+caller-owned, initialized raw NOR instance and an explicit erase-aligned region.
+It is transport-independent and uses either raw SPI or QSPI-PIO. Reads only use
+quad transfers if the caller has successfully enabled quad mode on the raw
+device; the port never changes QE itself.
+
+Use a statically allocated, zero-initialized `pf_levelx_nor_t`, call
+`pf_levelx_nor_open`, then use the read/write/sync/close functions. Each logical
+sector is 512 bytes, with unaligned caller buffers supported by aligned staging.
+The driver callbacks convert LevelX word-address tokens into bounded byte offsets
+inside the supplied region. Tokens are never dereferenced; `LX_DIRECT_READ`
+is forbidden. Two physical erase blocks are reserved from exported capacity.
+For a full 16 MiB device this exports `(4096 - 2) * 7 = 28658` sectors,
+14,672,896 bytes; obtain the exact capacity from `volume.sector_count` rather
+than assuming all raw bytes are available.
+
+LevelX runs in standalone mode: no ThreadX mutexes, interrupts or heap
+allocation are added. Serialize all instances and operations in one storage
+owner, including the first open/global initialization. The config fixes the
+on-flash `ULONG` ABI at 32 bits on RP2040, RP2350 and 64-bit hosts. Context size
+is `sizeof(pf_levelx_nor_t)` for the selected build; allow additional task stack
+space for a 512-byte staging sector and upstream reclaim calls.
+
+**Open is not read-only.** Upstream LevelX can initialize metadata on blank
+media and repair/reclaim existing metadata during open. There is intentionally
+no automatic open in board startup and no destructive erase-all/format wrapper.
+Only supply an explicitly designated LevelX region, never an SD filesystem,
+boot flash, or unrelated raw data. LevelX's on-flash layout is not FAT.
+
+Failures return LevelX status. Raw errors and upstream system errors are retained
+in `last_raw_result` and `last_system_error`, and latch `faulted` to reject further
+I/O. After a media failure, close, recover/reinitialize the raw transport/device,
+and reopen; failed writes can have committed and must not be blindly replayed.
+Unwritten-sector results are returned as LevelX statuses, not silently converted
+to zero-filled successful reads.
+
+The Ceedling tests execute the real pinned NOR engine against a simulated
+1-to-0 array. They cover rewrites, full logical capacity, reclamation with cold
+data, subregion boundaries, reopen persistence, unaligned buffers, injected I/O
+errors and partial program interruption. These bounded fault cases are not an
+exhaustive proof of power-fail safety or endurance. Physical erase interruption,
+real device timing and wear distribution still require dedicated qualification.
+
+The next storage step is adapting these logical sectors to FatFs and its
+storage-owner lifecycle without changing SD behavior. The default SD/FatFs
+application is unchanged by this port.
