@@ -53,6 +53,8 @@
 :flags:
   :test:
     :compile:
+      :test_sdio_pio_init:
+        - -DPF_SDIO_PIO_HIGH_SPEED=1
       :test_levelx_nor:
         - -DLX_INCLUDE_USER_DEFINE_FILE
       :test_sd_card_serialization:

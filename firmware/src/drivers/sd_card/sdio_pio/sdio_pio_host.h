@@ -8,6 +8,13 @@
 #include "sdio_pio.h"
 #include "sdio_pio_protocol.h"
 
+typedef enum {
+    PF_SDIO_PIO_CLOCK_UNOWNED = 0,
+    PF_SDIO_PIO_CLOCK_COMMAND,
+    PF_SDIO_PIO_CLOCK_INITIALIZATION,
+    PF_SDIO_PIO_CLOCK_DATA_TX,
+} pf_sdio_pio_clock_owner_t;
+
 typedef struct {
     PIO pio;
     uint command_gpio;
@@ -29,6 +36,10 @@ typedef struct {
     size_t last_response_word_count;
     pf_sdio_pio_init_stage_t scr_stage;
     uint32_t write_stream_next_sector;
+    uint8_t bus_width;
+    pf_sd_card_detail_error_t last_error;
+    pf_sd_card_error_counters_t errors;
+    pf_sdio_pio_clock_owner_t clock_owner;
     bool write_stream_open;
     bool read_stream_unresolved;
     bool mode_restore_failed; /* Distinct from a card rejecting a write. */
@@ -39,6 +50,8 @@ typedef struct {
     bool clock_program_loaded;
     bool data_tx_program_loaded;
     bool data_tx_fast;
+    bool initialization_prepared;
+    bool dma_claimed;
     uint32_t clock_div_ticks; /* Command/clock divider in 1/256 units. */
 } pf_sdio_pio_host_t;
 
@@ -52,6 +65,12 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
                               const pf_sdio_pio_config_t *config);
 void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host);
 bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz);
+/** Reset host hardware and generate 80 clocks at the configured low-speed rate. */
+bool pf_sdio_pio_host_prepare_initialization(pf_sdio_pio_host_t *host);
+/** Change the software bus-width state after the matching card command succeeds. */
+bool pf_sdio_pio_host_set_bus_width(pf_sdio_pio_host_t *host, uint8_t width);
+/** Abort host hardware without card commands; protocol stream state is retained. */
+void pf_sdio_pio_host_abort(pf_sdio_pio_host_t *host);
 bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
                                  uint32_t argument, uint16_t response_bits,
                                  uint32_t *response_words, size_t response_word_capacity);

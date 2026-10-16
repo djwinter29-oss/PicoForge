@@ -23,6 +23,22 @@ static uint8_t card_init_response[6];
 static uint8_t last_short_command;
 static uint32_t last_short_argument;
 static uint32_t last_short_response_argument;
+static pf_sd_card_info_t native_info;
+
+enum {
+    SD_CMD_GO_IDLE = 0, SD_CMD_ALL_SEND_CID = 2, SD_CMD_SEND_RCA = 3,
+    SD_CMD_SELECT = 7, SD_CMD_IF_CONDITION = 8,
+    SD_CMD_SEND_CSD = 9, SD_CMD_STATUS = 13, SD_CMD_APP = 55,
+    SD_ACMD_BUS_WIDTH = 6, SD_ACMD_OP_COND = 41,
+    SD_INIT_CLOCK_HZ = 400000, SD_HIGH_CLOCK_HZ = 50000000,
+    SD_INIT_TIMEOUT_US = 1000000,
+};
+
+static bool protocol_failure(pf_sd_card_detail_error_t error)
+{
+    sdio_pio_host.last_error = error;
+    return false;
+}
 
 static bool same_config(const pf_sdio_pio_config_t *left,
                         const pf_sdio_pio_config_t *right)
@@ -119,41 +135,24 @@ static bool command_response(uint8_t command, uint32_t argument, uint8_t respons
         return false;
     }
     memcpy(card_init_response, response, sizeof(card_init_response));
-    if (!pf_sdio_pio_parse_response(command, response, response_argument, true)) {
-        return false;
+    pf_sd_card_detail_error_t error =
+        pf_sdio_pio_decode_response(command, response, response_argument, true);
+    if (error != PF_SD_CARD_DETAIL_NONE) {
+        if (error == PF_SD_CARD_DETAIL_RESPONSE_CRC) {
+            ++sdio_pio_host.errors.command_crc_errors;
+        }
+        return protocol_failure(error);
     }
     last_short_command = command;
     last_short_argument = argument;
     last_short_response_argument = *response_argument;
-    if (command == 8u) {
+    if (command == SD_CMD_IF_CONDITION) {
         return true;
     }
-    if (command == 3u) {
-        return (*response_argument & 0xe000u) == 0u;
-    }
-    return (*response_argument & PF_SDIO_PIO_R1_ERROR_MASK) == 0u;
-}
-
-static bool send_application_command(uint8_t command, uint32_t argument,
-                                     uint32_t card_address,
-                                     uint8_t response[6], uint32_t *response_argument)
-{
-    uint8_t prefix_response[6];
-    uint32_t prefix_argument;
-
-    return command_response(55u, card_address, prefix_response, &prefix_argument) &&
-           command_response(command, argument, response, response_argument);
-}
-
-static bool wait_card_data_ready(void)
-{
-    uint32_t start = time_us_32();
-
-    while (gpio_get(active_config.data_gpio[0]) == 0u) {
-        if ((uint32_t)(time_us_32() - start) > 1000000u) {
-            return false;
-        }
-        pf_sd_card_idle();
+    uint32_t mask = command == SD_CMD_SEND_RCA ? PF_SDIO_PIO_R6_ERROR_MASK
+                                               : PF_SDIO_PIO_R1_ERROR_MASK;
+    if ((*response_argument & mask) != 0u) {
+        return protocol_failure(PF_SD_CARD_DETAIL_CARD_STATUS);
     }
     return true;
 }
@@ -163,6 +162,98 @@ static bool card_detect_present(void)
     return !active_config.use_card_detect ||
         ((gpio_get(active_config.card_detect_gpio) != 0u) == active_config.card_detect_active_high);
 }
+
+static bool wait_card_data_ready(void)
+{
+    uint32_t start = time_us_32();
+
+    while (gpio_get(active_config.data_gpio[0]) == 0u) {
+        if (!card_detect_present()) {
+            return protocol_failure(PF_SD_CARD_DETAIL_REMOVED);
+        }
+        if ((uint32_t)(time_us_32() - start) > 1000000u) {
+            ++sdio_pio_host.errors.busy_timeouts;
+            return protocol_failure(PF_SD_CARD_DETAIL_BUSY_TIMEOUT);
+        }
+        pf_sd_card_idle();
+    }
+    return true;
+}
+
+static bool transfer_ready(uint32_t card_address)
+{
+    uint8_t response[6];
+    uint32_t status;
+    return command_response(SD_CMD_STATUS, card_address, response, &status) &&
+           (pf_sdio_pio_status_is_transfer_ready(status) ||
+            protocol_failure(PF_SD_CARD_DETAIL_CARD_STATUS));
+}
+
+static bool validate_transfer(uint32_t card_address)
+{
+    uint8_t block[PF_SD_CARD_BLOCK_SIZE];
+    if (!card_detect_present()) {
+        return protocol_failure(PF_SD_CARD_DETAIL_REMOVED);
+    }
+    return transfer_ready(card_address) &&
+           pf_sdio_pio_host_read_sector(&sdio_pio_host, 0u, true, block);
+}
+
+#if PF_SDIO_PIO_HIGH_SPEED
+static bool select_transfer_speed(uint32_t card_address)
+{
+    uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE];
+    native_info.high_speed_error = PF_SD_CARD_DETAIL_NONE;
+    if (clock_get_hz(clk_sys) < 4u * SD_HIGH_CLOCK_HZ) {
+        native_info.high_speed_error = PF_SD_CARD_DETAIL_HOST_STATE;
+        return true;
+    }
+    if (!pf_sdio_pio_host_read_switch_status(&sdio_pio_host,
+            PF_SDIO_PIO_CMD6_CHECK_HIGH_SPEED, status)) {
+        native_info.high_speed_error = sdio_pio_host.last_error;
+        /* A lost CMD6 response can leave the card busy; prove continued operation. */
+        return wait_card_data_ready() && validate_transfer(card_address);
+    }
+    if (!pf_sdio_pio_switch_supports_high_speed(status) ||
+        pf_sdio_pio_switch_high_speed_busy(status)) {
+        native_info.high_speed_error = PF_SD_CARD_DETAIL_HIGH_SPEED_UNSUPPORTED;
+        return true;
+    }
+    bool switched = pf_sdio_pio_host_read_switch_status(&sdio_pio_host,
+        PF_SDIO_PIO_CMD6_SWITCH_HIGH_SPEED, status);
+    if (!switched || !pf_sdio_pio_switch_selected_high_speed(status) ||
+        pf_sdio_pio_switch_high_speed_busy(status)) {
+        native_info.high_speed_error = PF_SD_CARD_DETAIL_HIGH_SPEED_REJECTED;
+        return wait_card_data_ready() &&
+               pf_sdio_pio_host_read_switch_status(&sdio_pio_host,
+                   PF_SDIO_PIO_CMD6_SWITCH_DEFAULT, status) &&
+               (status[16] & 0x0fu) == 0u &&
+               validate_transfer(card_address);
+    }
+    if (!wait_card_data_ready()) {
+        return false;
+    }
+    native_info.high_speed = true;
+    native_info.requested_clock_hz = SD_HIGH_CLOCK_HZ;
+    if (pf_sdio_pio_host_set_clock(&sdio_pio_host, SD_HIGH_CLOCK_HZ) &&
+        validate_transfer(card_address)) {
+        return true;
+    }
+    native_info.high_speed_error = sdio_pio_host.last_error;
+    ++native_info.high_speed_fallbacks;
+    native_info.requested_clock_hz = PF_SDIO_PIO_TRANSFER_CLOCK_HZ;
+    /* Default-Speed timing requires switching the card back as well as the host. */
+    if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, PF_SDIO_PIO_TRANSFER_CLOCK_HZ) ||
+        !wait_card_data_ready() ||
+        !pf_sdio_pio_host_read_switch_status(&sdio_pio_host,
+            PF_SDIO_PIO_CMD6_SWITCH_DEFAULT, status) ||
+        (status[16] & 0x0fu) != 0u || !wait_card_data_ready()) {
+        return false;
+    }
+    native_info.high_speed = false;
+    return validate_transfer(card_address);
+}
+#endif
 
 static bool initialize_card(void)
 {
@@ -174,104 +265,128 @@ static bool initialize_card(void)
     uint32_t ocr;
     uint32_t start;
     uint32_t card_default_transfer_hz;
-    uint32_t acmd41_argument = 0x00ff8000u;
-    bool supports_sd_v2;
+    const uint32_t acmd41_argument = PF_SDIO_PIO_OCR_VOLTAGE | PF_SDIO_PIO_OCR_HCS;
 
     if (!card_detect_present()) {
-        return false;
+        return protocol_failure(PF_SD_CARD_DETAIL_REMOVED);
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_IDLE;
     sleep_ms(2u);
-    if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 0u, 0u, 0u, NULL, 0u)) {
+    if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, SD_CMD_GO_IDLE, 0u, 0u, NULL, 0u)) {
         return false;
     }
 
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_CMD8_RESPONSE;
-    if (!command_response(8u, 0x1aau, short_response, &response_argument)) {
+    if (!command_response(SD_CMD_IF_CONDITION, PF_SDIO_PIO_R7_ARGUMENT,
+                          short_response, &response_argument)) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_CMD8_CLASSIFY;
-    if (!pf_sdio_pio_cmd8_supports_v2(response_argument, &supports_sd_v2)) {
-        return false;
+    if ((response_argument & PF_SDIO_PIO_R1_ILLEGAL_COMMAND) != 0u) {
+        return protocol_failure(PF_SD_CARD_DETAIL_LEGACY_CARD);
     }
-    if (supports_sd_v2) {
-        acmd41_argument |= 0x40000000u;
+    if ((response_argument & PF_SDIO_PIO_R7_VOLTAGE_MASK) != PF_SDIO_PIO_R7_VOLTAGE_3V3) {
+        return protocol_failure(PF_SD_CARD_DETAIL_VOLTAGE);
+    }
+    if (response_argument != PF_SDIO_PIO_R7_ARGUMENT) {
+        return protocol_failure(PF_SD_CARD_DETAIL_R7);
     }
 
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_CONDITION;
     start = time_us_32();
     do {
         card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_PREFIX;
-        if (!command_response(55u, 0u, short_response, &response_argument)) {
+        if (!card_detect_present()) {
+            return protocol_failure(PF_SD_CARD_DETAIL_REMOVED);
+        }
+        if (!command_response(SD_CMD_APP, 0u, short_response, &response_argument)) {
             return false;
         }
         card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_RESPONSE;
         memset(card_init_response, 0, sizeof(card_init_response));
-        if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 41u, acmd41_argument,
+        if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, SD_ACMD_OP_COND, acmd41_argument,
                                             48u, short_response, sizeof(short_response))) {
             return false;
         }
         memcpy(card_init_response, short_response, sizeof(card_init_response));
         card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_PARSE;
         if (!pf_sdio_pio_parse_r3_response(short_response, &ocr)) {
-            return false;
+            return protocol_failure(PF_SD_CARD_DETAIL_OCR_CCS);
         }
         card_init_stage = PF_SDIO_PIO_INIT_STAGE_OPERATING_READY;
-        if ((ocr & 0x80000000u) != 0u) {
+        native_info.ocr = ocr;
+        if ((ocr & PF_SDIO_PIO_OCR_READY) != 0u) {
             break;
         }
         sleep_ms(10u);
-    } while ((uint32_t)(time_us_32() - start) < 1000000u);
-    if ((ocr & 0x80000000u) == 0u) {
-        return false;
+    } while ((uint32_t)(time_us_32() - start) < SD_INIT_TIMEOUT_US);
+    if ((ocr & PF_SDIO_PIO_OCR_READY) == 0u) {
+        return protocol_failure(PF_SD_CARD_DETAIL_INIT_TIMEOUT);
     }
-    card_block_addressed = supports_sd_v2 && ((ocr & 0x40000000u) != 0u);
+    if ((ocr & PF_SDIO_PIO_OCR_HCS) == 0u ||
+        (ocr & PF_SDIO_PIO_OCR_VOLTAGE) == 0u) {
+        return protocol_failure(PF_SD_CARD_DETAIL_OCR_CCS);
+    }
+    card_block_addressed = true;
 
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_CID_RESPONSE;
-    if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 2u, 0u, 136u,
+    if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, SD_CMD_ALL_SEND_CID, 0u, 136u,
                                         response, sizeof(response))) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_CID_VALIDATE;
+    if (response[0] != 0x3fu) {
+        return protocol_failure(PF_SD_CARD_DETAIL_RESPONSE_INDEX);
+    }
     if (!pf_sdio_pio_validate_r2_response(response)) {
-        return false;
+        ++sdio_pio_host.errors.command_crc_errors;
+        return protocol_failure(PF_SD_CARD_DETAIL_RESPONSE_CRC);
     }
     memcpy(card_cid, response + 1u, sizeof(card_cid));
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_RCA;
-    if (!command_response(3u, 0u, short_response, &response_argument)) {
+    if (!command_response(SD_CMD_SEND_RCA, 0u, short_response, &response_argument)) {
         return false;
     }
-    response_argument = ((uint32_t)short_response[1] << 24u) |
-                        ((uint32_t)short_response[2] << 16u) |
-                        ((uint32_t)short_response[3] << 8u) |
-                        (uint32_t)short_response[4];
     uint32_t relative_card_address = response_argument & 0xffff0000u;
     if (relative_card_address == 0u) {
+        return protocol_failure(PF_SD_CARD_DETAIL_CARD_STATUS);
+    }
+    native_info.rca = (uint16_t)(relative_card_address >> 16u);
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_CSD;
+    if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, SD_CMD_SEND_CSD, relative_card_address,
+                                          136u, response, sizeof(response))) {
         return false;
     }
-    card_init_stage = PF_SDIO_PIO_INIT_STAGE_CSD;
-    if (!pf_sdio_pio_host_command_bytes(&sdio_pio_host, 9u, relative_card_address,
-                                          136u, response, sizeof(response)) ||
-        !pf_sdio_pio_validate_r2_response(response)) {
-        return false;
+    if (response[0] != 0x3fu) {
+        return protocol_failure(PF_SD_CARD_DETAIL_RESPONSE_INDEX);
+    }
+    if (!pf_sdio_pio_validate_r2_response(response)) {
+        ++sdio_pio_host.errors.command_crc_errors;
+        return protocol_failure(PF_SD_CARD_DETAIL_RESPONSE_CRC);
     }
     for (size_t byte_index = 0u; byte_index < sizeof(csd); byte_index++) {
         csd[byte_index] = response[byte_index + 1u];
     }
-    if (!pf_sdio_pio_csd_sector_count(csd, &card_sector_count)) {
-        return false;
+    memcpy(native_info.csd, csd, sizeof(csd));
+    if ((csd[0] >> 6u) != 1u ||
+        !pf_sdio_pio_csd_sector_count(csd, &card_sector_count)) {
+        return protocol_failure(PF_SD_CARD_DETAIL_LEGACY_CARD);
     }
     if (!pf_sd_card_csd_transfer_hz(csd, &card_default_transfer_hz) ||
         card_default_transfer_hz < PF_SDIO_PIO_TRANSFER_CLOCK_HZ) {
-        return false;
+        return protocol_failure(PF_SD_CARD_DETAIL_HOST_STATE);
     }
 
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_RESPONSE;
-    if (!command_response(7u, relative_card_address, short_response, &response_argument)) {
+    if (!command_response(SD_CMD_SELECT, relative_card_address, short_response, &response_argument)) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_READY;
     if (!wait_card_data_ready()) {
+        return false;
+    }
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_STATUS;
+    if (!transfer_ready(relative_card_address)) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SCR;
@@ -280,32 +395,46 @@ static bool initialize_card(void)
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_SCR_BUS_WIDTH;
-    if (!pf_sd_card_scr_supports_four_bit(scr)) {
-        return false;
+    memcpy(native_info.scr, scr, sizeof(scr));
+    native_info.sd_spec = scr[0] & 0x0fu;
+    if (native_info.sd_spec == 2u && (scr[2] & 0x80u) != 0u) {
+        native_info.sd_spec = (scr[2] & 0x04u) != 0u ? 4u : 3u;
+        uint8_t spec_x = (uint8_t)(((scr[2] & 3u) << 2u) | (scr[3] >> 6u));
+        if (native_info.sd_spec == 4u && spec_x != 0u) {
+            native_info.sd_spec = (uint8_t)(4u + spec_x);
+        }
     }
-    card_init_stage = PF_SDIO_PIO_INIT_STAGE_SELECT_STATUS;
-    if (!command_response(13u, relative_card_address, short_response, &response_argument)) {
-        return false;
+    native_info.supported_bus_widths = scr[1] & 0x0fu;
+    if ((scr[0] >> 4u) != 0u || !pf_sd_card_scr_supports_four_bit(scr)) {
+        return protocol_failure(PF_SD_CARD_DETAIL_FOUR_BIT);
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_BUS_WIDTH_PREFIX;
-    if (!command_response(55u, relative_card_address, short_response, &response_argument)) {
+    if (!command_response(SD_CMD_APP, relative_card_address, short_response, &response_argument)) {
         return false;
     }
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_BUS_WIDTH;
-    if (!command_response(6u, 2u, short_response, &response_argument)) {
+    if (!command_response(SD_ACMD_BUS_WIDTH, PF_SDIO_PIO_BUS_WIDTH_FOUR_ARGUMENT,
+                          short_response, &response_argument)) {
         return false;
     }
-    card_init_stage = PF_SDIO_PIO_INIT_STAGE_BLOCK_LENGTH;
-    if (!card_block_addressed &&
-        !command_response(16u, PF_SD_CARD_BLOCK_SIZE, short_response, &response_argument)) {
+    if (!pf_sdio_pio_host_set_bus_width(&sdio_pio_host, 4u)) {
         return false;
     }
+    native_info.bus_width = 4u;
 
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_TRANSFER_CLOCK;
     if (!pf_sdio_pio_host_set_clock(&sdio_pio_host, PF_SDIO_PIO_TRANSFER_CLOCK_HZ)) {
         return false;
     }
     sdio_pio_host.data_rx_multiblock_supported = true;
+    if (!validate_transfer(relative_card_address)) {
+        return false;
+    }
+#if PF_SDIO_PIO_HIGH_SPEED
+    if (!select_transfer_speed(relative_card_address)) {
+        return false;
+    }
+#endif
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
     return true;
 }
@@ -362,6 +491,27 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
         configuration_set = true;
     }
 
+    uint32_t attempts = native_info.init_attempts + 1u;
+    uint32_t fallbacks = native_info.high_speed_fallbacks;
+    native_info = (pf_sd_card_info_t) {
+        .native_details_valid = true,
+        .initialization_error = true,
+        .requested_init_clock_hz = SD_INIT_CLOCK_HZ,
+        .requested_clock_hz = PF_SDIO_PIO_TRANSFER_CLOCK_HZ,
+        .bus_width = 1u,
+        .init_attempts = attempts,
+        .high_speed_fallbacks = fallbacks,
+    };
+    card_initialized = false;
+    card_sector_count = 0u;
+    card_block_addressed = false;
+    memset(card_cid, 0, sizeof(card_cid));
+    memset(card_init_response, 0, sizeof(card_init_response));
+    last_short_command = 0u;
+    last_short_argument = 0u;
+    last_short_response_argument = 0u;
+    card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
+    sdio_pio_host.last_error = PF_SD_CARD_DETAIL_NONE;
     if (!sdio_pio_host.pio) {
         if (active_config.use_card_detect) {
             gpio_init(active_config.card_detect_gpio);
@@ -376,22 +526,29 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
             }
         }
         if (!pf_sdio_pio_host_init(&sdio_pio_host, &active_config)) {
-            return PF_SD_CARD_INIT_FAILED;
+            goto failed;
         }
     }
 
     if (!card_detect_present()) {
-        card_initialized = false;
-        return PF_SD_CARD_INIT_FAILED;
+        protocol_failure(PF_SD_CARD_DETAIL_REMOVED);
+        goto failed;
     }
-    card_initialized = false;
-    /* End any prior stream before CMD0. One attempt, never clock-step retries. */
-    if (pf_sdio_pio_host_recover(&sdio_pio_host) &&
-        pf_sdio_pio_host_set_clock(&sdio_pio_host, 400000u) &&
-        initialize_card()) {
+    if (!pf_sdio_pio_host_prepare_initialization(&sdio_pio_host)) {
+        goto failed;
+    }
+    native_info.actual_init_clock_hz = sdio_pio_host.current_clock_hz;
+    if (initialize_card()) {
         card_initialized = true;
+        native_info.initialization_error = false;
+        sdio_pio_host.last_error = PF_SD_CARD_DETAIL_NONE;
         return PF_SD_CARD_OK;
     }
+failed:
+    if (sdio_pio_host.last_error == PF_SD_CARD_DETAIL_NONE) {
+        protocol_failure(PF_SD_CARD_DETAIL_HOST_STATE);
+    }
+    pf_sdio_pio_host_abort(&sdio_pio_host);
     return PF_SD_CARD_INIT_FAILED;
 }
 
@@ -409,11 +566,23 @@ void pf_sdio_pio_confirm_card_removed(void)
 {
     card_initialized = false;
     pf_sdio_pio_host_forget_removed_card(&sdio_pio_host);
+    protocol_failure(PF_SD_CARD_DETAIL_REMOVED);
 }
 
 uint32_t pf_sdio_pio_block_count(void)
 {
     return card_initialized ? card_sector_count : 0u;
+}
+
+static pf_sd_card_result_t runtime_failure(void)
+{
+    card_initialized = false;
+    native_info.initialization_error = false;
+    if (sdio_pio_host.last_error == PF_SD_CARD_DETAIL_NONE) {
+        protocol_failure(PF_SD_CARD_DETAIL_HOST_STATE);
+    }
+    pf_sdio_pio_host_abort(&sdio_pio_host);
+    return PF_SD_CARD_IO_ERROR;
 }
 
 static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer,
@@ -437,25 +606,18 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
     bool continues_write = (write_buffer != NULL) &&
         pf_sdio_pio_host_write_stream_continues(&sdio_pio_host, first_block);
     if (!continues_write && !pf_sdio_pio_host_recover(&sdio_pio_host)) {
-        card_initialized = false;
-        return PF_SD_CARD_IO_ERROR;
+        return runtime_failure();
     }
     if ((write_buffer != NULL) && (continues_write || (block_count > 1u))) {
         bool success = pf_sdio_pio_host_write_blocks(&sdio_pio_host, first_block,
                                                        card_block_addressed, write_buffer,
                                                        block_count);
-        if (!success && sdio_pio_host.write_stream_open) {
-            card_initialized = false;
-        }
-        return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+        return success ? PF_SD_CARD_OK : runtime_failure();
     }
     if (read_buffer != NULL) {
         bool success = pf_sdio_pio_host_read_blocks(&sdio_pio_host, first_block,
                                                      card_block_addressed, read_buffer, block_count);
-        if (!success) {
-            card_initialized = false;
-        }
-        return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+        return success ? PF_SD_CARD_OK : runtime_failure();
     }
 
     bool success = pf_sdio_pio_host_write_sector(&sdio_pio_host, first_block,
@@ -463,9 +625,9 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
     /* A lost command/data response or busy timeout cannot prove CMD24 complete.
      * Restoration only repairs the host; require reinitialization, never replay. */
     if (!success || sdio_pio_host.mode_restore_failed) {
-        card_initialized = false;
+        return runtime_failure();
     }
-    return success ? PF_SD_CARD_OK : PF_SD_CARD_IO_ERROR;
+    return PF_SD_CARD_OK;
 }
 
 pf_sd_card_result_t pf_sdio_pio_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
@@ -485,8 +647,7 @@ pf_sd_card_result_t pf_sdio_pio_sync(void)
         return PF_SD_CARD_NOT_READY;
     }
     if (!pf_sdio_pio_host_recover(&sdio_pio_host)) {
-        card_initialized = false;
-        return PF_SD_CARD_IO_ERROR;
+        return runtime_failure();
     }
     return PF_SD_CARD_OK;
 }
@@ -496,7 +657,7 @@ void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
     if (info == NULL) {
         return;
     }
-    *info = (pf_sd_card_info_t){ 0 };
+    *info = native_info;
     if (!configuration_set) {
         return;
     }
@@ -508,10 +669,13 @@ void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
         info->present = true;
     }
     info->initialized = pf_sdio_pio_is_initialized();
-    if (info->initialized) {
+    info->actual_clock_hz = sdio_pio_host.current_clock_hz;
+    info->errors = sdio_pio_host.errors;
+    info->detail_error = sdio_pio_host.last_error;
+    if (card_sector_count != 0u) {
         info->cid_valid = true;
-        info->bus_clock_hz = sdio_pio_host.current_clock_hz;
         info->block_count = card_sector_count;
         memcpy(info->cid, card_cid, sizeof(info->cid));
     }
+    info->bus_clock_hz = info->initialized ? sdio_pio_host.current_clock_hz : 0u;
 }

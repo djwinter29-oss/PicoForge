@@ -35,12 +35,32 @@ static unsigned card_init_calls;
 static uint8_t fail_command;
 static bool single_write_ok;
 static bool batch_write_ok;
+static unsigned abort_calls;
+static unsigned validation_reads;
+static unsigned switch_calls;
+static bool high_speed_supported;
+static bool high_speed_selected;
+static bool fail_high_speed_read;
+static bool fail_default_read;
+static uint32_t r7_value;
+static uint32_t ocr_value;
+static uint32_t status_value;
+static uint8_t csd_structure;
+static bool four_bit_supported;
+static uint8_t bad_crc_command;
+static uint8_t bad_index_command;
+static uint8_t commands[64];
+static unsigned command_count;
+static unsigned fail_validation_read;
+static uint32_t r6_value;
+static bool fail_switch_check;
 
 void setUp(void)
 {
     memset(&sdio_pio_host, 0, sizeof(sdio_pio_host));
     memset(&active_config, 0, sizeof(active_config));
     memset(card_cid, 0, sizeof(card_cid));
+    memset(&native_info, 0, sizeof(native_info));
     card_sector_count = 15564800u;
     card_block_addressed = true;
     configuration_set = true;
@@ -69,6 +89,19 @@ void setUp(void)
     pf_test_sdio_gpio_level = 1u;
     pf_test_sdio_can_add_program = true;
     pf_test_sdio_removed_programs = 0u;
+    pf_test_sdio_system_clock_hz = 125000000u;
+    pf_test_sdio_time_step = 100u;
+    abort_calls = validation_reads = switch_calls = command_count = 0u;
+    high_speed_supported = high_speed_selected = four_bit_supported = true;
+    fail_high_speed_read = fail_default_read = false;
+    r7_value = 0x1aau;
+    ocr_value = 0xc0ff8000u;
+    status_value = PF_SDIO_PIO_R1_READY_FOR_DATA | PF_SDIO_PIO_R1_STATE_TRAN;
+    csd_structure = 1u;
+    bad_crc_command = bad_index_command = 0xffu;
+    fail_validation_read = 0u;
+    r6_value = 0x12340000u;
+    fail_switch_check = false;
 }
 
 void tearDown(void) {}
@@ -80,17 +113,30 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t hz)
 {
     TEST_ASSERT_LESS_THAN_UINT(4u, clock_request_count);
     clock_requests[clock_request_count++] = hz;
-    if (hz > PF_SDIO_PIO_TRANSFER_CLOCK_HZ) return false;
+    if (hz > SD_HIGH_CLOCK_HZ) return false;
     host->current_clock_hz = hz;
     return true;
 }
 bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command, uint32_t argument,
                               uint16_t bits, uint32_t *response, size_t capacity)
 { (void)host; (void)command; (void)argument; (void)bits; (void)response; (void)capacity; return true; }
+bool pf_sdio_pio_host_prepare_initialization(pf_sdio_pio_host_t *host)
+{
+    return pf_sdio_pio_host_recover(host) &&
+           pf_sdio_pio_host_set_clock(host, 400000u);
+}
+bool pf_sdio_pio_host_set_bus_width(pf_sdio_pio_host_t *host, uint8_t width)
+{ (void)host; TEST_ASSERT_EQUAL_UINT8(4u, width); TEST_ASSERT_EQUAL_UINT8(6u, commands[command_count - 1u]); return true; }
+void pf_sdio_pio_host_abort(pf_sdio_pio_host_t *host)
+{ (void)host; ++abort_calls; }
 bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command, uint32_t argument,
                                     uint16_t bits, uint8_t *response, size_t capacity)
 {
     (void)host;
+    TEST_ASSERT_LESS_THAN_UINT(sizeof(commands), command_count);
+    commands[command_count++] = command;
+    if (command == 41u) TEST_ASSERT_EQUAL_HEX32(0x40ff8000u, argument);
+    TEST_ASSERT_NOT_EQUAL(16u, command);
     if ((fail_command != 0u) && (command == fail_command)) return false;
     (void)argument;
     if (command == 0u) ++card_init_calls;
@@ -98,6 +144,7 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command, u
     if ((response == NULL) || (capacity < (bits / 8u))) return false;
     memset(response, 0, capacity);
     if (command == 2u || command == 9u) {
+        response[0] = 0x3fu;
         uint8_t *payload = response + 1u;
         if (command == 2u) {
             for (unsigned i = 0u; i < 15u; ++i) {
@@ -105,7 +152,7 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command, u
             }
         } else {
             const uint32_t c_size = 15199u;
-            payload[0] = 0x40u;
+            payload[0] = csd_structure << 6u;
             payload[3] = csd_transfer_speed;
             payload[7] = (uint8_t)(c_size >> 16u);
             payload[8] = (uint8_t)(c_size >> 8u);
@@ -116,36 +163,60 @@ bool pf_sdio_pio_host_command_bytes(pf_sdio_pio_host_t *host, uint8_t command, u
     }
     response[0] = (command == 41u) ? 0x3fu : command;
     uint32_t response_argument = 0u;
-    if (command == 8u) response_argument = 0x1aau;
-    if (command == 3u) response_argument = 0x12340000u;
-    if (command == 41u) response_argument = 0xc0ff8000u;
+    if (command == 8u) response_argument = r7_value;
+    if (command == 3u) response_argument = r6_value;
+    if (command == 41u) response_argument = ocr_value;
+    if (command == 13u) response_argument = status_value;
     response[1] = (uint8_t)(response_argument >> 24u);
     response[2] = (uint8_t)(response_argument >> 16u);
     response[3] = (uint8_t)(response_argument >> 8u);
     response[4] = (uint8_t)response_argument;
     response[5] = (uint8_t)((pf_sdio_pio_crc7(response, 5u) << 1u) | 1u);
+    if (command == 41u) response[5] = 0xffu;
+    if (command == bad_crc_command) response[5] ^= 2u;
+    if (command == bad_index_command) response[0] ^= 1u;
     return true;
 }
 bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector, bool addressed,
                                   uint8_t block[512])
-{ (void)host; (void)sector; (void)addressed; (void)block; return read_ok; }
+{
+    (void)block;
+    TEST_ASSERT_TRUE(addressed);
+    TEST_ASSERT_EQUAL_UINT32(0u, sector);
+    ++validation_reads;
+    bool ok = read_ok && !(fail_high_speed_read && host->current_clock_hz > 25000000u) &&
+              !(fail_default_read && host->current_clock_hz == 25000000u) &&
+              validation_reads != fail_validation_read;
+    if (!ok) host->last_error = PF_SD_CARD_DETAIL_DATA_CRC;
+    return ok;
+}
 bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t address, uint8_t scr[8])
 {
     (void)host;
     (void)address;
     memset(scr, 0, 8u);
     scr[0] = 0x02u;
-    scr[1] = 0x04u;
+    scr[1] = four_bit_supported ? 0x05u : 0x01u;
     return true;
 }
 bool pf_sdio_pio_host_read_switch_status(pf_sdio_pio_host_t *host, uint32_t argument,
                                          uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
 {
-    TEST_FAIL_MESSAGE("Fixed 25 MHz initialization must not negotiate CMD6 High Speed");
     (void)host;
-    (void)argument;
-    (void)status;
-    return false;
+    ++switch_calls;
+    memset(status, 0, PF_SDIO_PIO_SWITCH_STATUS_SIZE);
+    if (argument == PF_SDIO_PIO_CMD6_CHECK_HIGH_SPEED) {
+        if (fail_switch_check) {
+            host->last_error = PF_SD_CARD_DETAIL_DATA_CRC;
+            return false;
+        }
+        status[13] = high_speed_supported ? 2u : 0u;
+    } else if (argument == PF_SDIO_PIO_CMD6_SWITCH_HIGH_SPEED) {
+        status[16] = high_speed_selected ? 1u : 0xfu;
+    } else {
+        TEST_ASSERT_EQUAL_HEX32(PF_SDIO_PIO_CMD6_SWITCH_DEFAULT, argument);
+    }
+    return true;
 }
 bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first, bool addressed,
                                   uint8_t *buffer, uint32_t count)
@@ -284,7 +355,7 @@ void test_transfer_validation_checks_32_bit_sector_overflow(void)
         pf_sd_card_validate_transfer(UINT32_MAX, NULL, 0u, 0u));
 }
 
-void test_card_init_uses_fixed_clock_without_probing_or_switch_negotiation(void)
+void test_card_init_validates_one_sector_without_high_speed_on_slow_cpu(void)
 {
     active_config.clock_hz = 0u;
     TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
@@ -295,6 +366,8 @@ void test_card_init_uses_fixed_clock_without_probing_or_switch_negotiation(void)
     TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
     TEST_ASSERT_EQUAL_UINT32(400000u, clock_requests[0]);
     TEST_ASSERT_EQUAL_UINT32(25000000u, clock_requests[1]);
+    TEST_ASSERT_EQUAL_UINT(1u, validation_reads);
+    TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
 }
 
 void test_card_init_failure_does_not_retry_at_other_clocks(void)
@@ -365,4 +438,170 @@ void test_card_advertising_less_than_25mhz_is_rejected_without_fallback(void)
     TEST_ASSERT_EQUAL_UINT(1u, clock_request_count);
     TEST_ASSERT_EQUAL_UINT32(400000u, clock_requests[0]);
     TEST_ASSERT_EQUAL_UINT(0u, reads);
+}
+
+void test_modern_card_policy_rejects_bad_r7_voltage_legacy_and_ccs(void)
+{
+    const uint32_t invalid_r7[] = { 0x1abu, 0x2aau, 1u << 22u };
+    const pf_sd_card_detail_error_t errors[] = {
+        PF_SD_CARD_DETAIL_R7, PF_SD_CARD_DETAIL_VOLTAGE, PF_SD_CARD_DETAIL_LEGACY_CARD
+    };
+    for (unsigned i = 0u; i < 3u; ++i) {
+        setUp();
+        r7_value = invalid_r7[i];
+        TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+        TEST_ASSERT_EQUAL(errors[i], sdio_pio_host.last_error);
+        TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
+    }
+    setUp();
+    ocr_value &= ~PF_SDIO_PIO_OCR_HCS;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_OCR_CCS, sdio_pio_host.last_error);
+}
+
+void test_response_crc_index_status_csd_and_width_failures_are_distinct(void)
+{
+    bad_crc_command = 8u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_RESPONSE_CRC, sdio_pio_host.last_error);
+    TEST_ASSERT_EQUAL_UINT32(1u, sdio_pio_host.errors.command_crc_errors);
+    setUp();
+    bad_index_command = 8u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_RESPONSE_INDEX, sdio_pio_host.last_error);
+    setUp();
+    status_value = PF_SDIO_PIO_R1_STATE_TRAN;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_CARD_STATUS, sdio_pio_host.last_error);
+    setUp();
+    csd_structure = 0u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_LEGACY_CARD, sdio_pio_host.last_error);
+    setUp();
+    four_bit_supported = false;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_FOUR_BIT, sdio_pio_host.last_error);
+}
+
+void test_default_speed_lba_zero_failure_aborts_before_high_speed_attempt(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    fail_default_read = true;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(1u, validation_reads);
+    TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
+    TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
+    pf_sd_card_info_t info;
+    pf_sdio_pio_get_info(&info);
+    TEST_ASSERT_TRUE(info.initialization_error);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DATA_CRC, info.detail_error);
+}
+
+void test_opt_in_high_speed_checks_support_selection_and_validates_lba_zero(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(2u, switch_calls);
+    TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
+    TEST_ASSERT_EQUAL_UINT(3u, clock_request_count);
+    TEST_ASSERT_EQUAL_UINT32(50000000u, clock_requests[2]);
+    pf_sd_card_info_t info;
+    pf_sdio_pio_get_info(&info);
+    TEST_ASSERT_TRUE(info.high_speed);
+    TEST_ASSERT_EQUAL_UINT32(50000000u, info.actual_clock_hz);
+    TEST_ASSERT_EQUAL_UINT16(0x1234u, info.rca);
+    TEST_ASSERT_EQUAL_UINT8(4u, info.bus_width);
+}
+
+void test_high_speed_failure_has_one_controlled_default_timing_fallback(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    fail_high_speed_read = true;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(3u, switch_calls);
+    TEST_ASSERT_EQUAL_UINT(3u, validation_reads);
+    TEST_ASSERT_EQUAL_UINT(4u, clock_request_count);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, clock_requests[3]);
+    TEST_ASSERT_FALSE(native_info.high_speed);
+    TEST_ASSERT_EQUAL_UINT32(1u, native_info.high_speed_fallbacks);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DATA_CRC, native_info.high_speed_error);
+}
+
+void test_unsupported_or_rejected_high_speed_is_nonfatal_at_25mhz(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    high_speed_supported = false;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(1u, switch_calls);
+    TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_HIGH_SPEED_UNSUPPORTED, native_info.high_speed_error);
+    setUp();
+    pf_test_sdio_system_clock_hz = 250000000u;
+    high_speed_selected = false;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
+    TEST_ASSERT_FALSE(native_info.high_speed);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_HIGH_SPEED_REJECTED, native_info.high_speed_error);
+}
+
+void test_acmd41_uses_time_bound_and_one_cleanup_path(void)
+{
+    pf_test_sdio_time_step = 500000u;
+    ocr_value = 0x40ff8000u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_INIT_TIMEOUT, sdio_pio_host.last_error);
+    TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
+    TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, validation_reads);
+}
+
+void test_selected_card_status_precedes_scr_and_host_width_follows_acmd6(void)
+{
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    const uint8_t expected[] = {0u, 8u, 55u, 41u, 2u, 3u, 9u, 7u, 13u, 55u, 6u, 13u};
+    TEST_ASSERT_EQUAL_UINT(sizeof(expected), command_count);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, commands, sizeof(expected));
+    setUp();
+    fail_command = 6u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT8(1u, native_info.bus_width);
+}
+
+void test_r6_errors_and_zero_rca_are_rejected(void)
+{
+    r6_value = 0x12348000u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_CARD_STATUS, sdio_pio_host.last_error);
+    setUp();
+    r6_value = 0u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_CARD_STATUS, sdio_pio_host.last_error);
+}
+
+void test_failed_50mhz_and_25mhz_validation_aborts_without_a_second_fallback(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    fail_high_speed_read = true;
+    fail_validation_read = 3u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(4u, clock_request_count);
+    TEST_ASSERT_EQUAL_UINT(3u, validation_reads);
+    TEST_ASSERT_EQUAL_UINT32(1u, native_info.high_speed_fallbacks);
+    TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
+}
+
+void test_cmd6_check_crc_failure_requires_proven_default_speed_operation(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    fail_switch_check = true;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
+    TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DATA_CRC, native_info.high_speed_error);
+    setUp();
+    pf_test_sdio_system_clock_hz = 250000000u;
+    fail_switch_check = true;
+    fail_validation_read = 2u;
+    TEST_ASSERT_EQUAL(PF_SD_CARD_INIT_FAILED, pf_sdio_pio_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
 }

@@ -149,8 +149,10 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
         src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
+    option(PF_SDIO_PIO_HIGH_SPEED "Opt in to native 50 MHz startup with one 25 MHz fallback" OFF)
     target_compile_definitions(pf_sdio_backend PRIVATE
         PF_SDIO_PIO_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>
+        PF_SDIO_PIO_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
     )
     pico_generate_pio_header(pf_sdio_backend
         "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio/sdio_pio_host.pio"

@@ -314,6 +314,45 @@ void test_status_is_available_during_host_ownership(void)
     TEST_ASSERT_NOT_NULL(strstr(output, "bytes=15808331776"));
 }
 
+void test_info_reports_native_identity_registers_clocks_and_persistent_errors(void)
+{
+    pf_sd_card_info_t info = {
+        .cid_valid = true, .native_details_valid = true, .initialization_error = true,
+        .block_count = 249737216u, .ocr = 0xc0ff8000u, .rca = 0x1234u,
+        .bus_width = 4u, .sd_spec = 3u, .supported_bus_widths = 5u,
+        .requested_init_clock_hz = 400000u, .actual_init_clock_hz = 398089u,
+        .requested_clock_hz = 25000000u, .actual_clock_hz = 20833333u,
+        .init_attempts = 2u, .high_speed_fallbacks = 1u,
+        .detail_error = PF_SD_CARD_DETAIL_DATA_CRC,
+        .errors = { .data_crc_errors = 3u, .dma_timeouts = 1u },
+    };
+    info.cid[0] = 3u;
+    memcpy(info.cid + 3u, "SB128", 5u);
+    info.cid[8] = 0x80u;
+    info.cid[13] = 1u;
+    info.cid[14] = 0x41u;
+    pf_sd_card_get_info_ExpectAnyArgs();
+    pf_sd_card_get_info_ReturnThruPtr_info(&info);
+    pf_storage_command_execute(NULL, true, "sd", "info", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "product=SB128 revision=8.0"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "date=2020-01"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "capacity=127865454592"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "ocr=c0ff8000 ccs=1 rca=1234"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "requested_hz=25000000 actual_hz=20833333"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "error=data_crc phase=init"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "data_crc=3"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "dma_timeouts=1"));
+}
+
+void test_info_explicitly_reports_unavailable_native_details(void)
+{
+    pf_sd_card_info_t info = {0};
+    pf_sd_card_get_info_ExpectAnyArgs();
+    pf_sd_card_get_info_ReturnThruPtr_info(&info);
+    pf_storage_command_execute(NULL, false, "sd", "info", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Native startup details unavailable"));
+}
+
 void test_profile_enable_and_snapshot_are_serialized_commands(void)
 {
     pf_sd_card_profile_t metrics = { 0 };

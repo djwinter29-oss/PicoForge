@@ -39,6 +39,43 @@ typedef enum {
     PF_SD_CARD_TRANSPORT_SPI,
 } pf_sd_card_transport_t;
 
+/** Detailed native failure; public operation result values remain unchanged. */
+typedef enum {
+    PF_SD_CARD_DETAIL_NONE = 0,
+    PF_SD_CARD_DETAIL_LEGACY_CARD,
+    PF_SD_CARD_DETAIL_VOLTAGE,
+    PF_SD_CARD_DETAIL_INIT_TIMEOUT,
+    PF_SD_CARD_DETAIL_R7,
+    PF_SD_CARD_DETAIL_OCR_CCS,
+    PF_SD_CARD_DETAIL_RESPONSE_CRC,
+    PF_SD_CARD_DETAIL_RESPONSE_INDEX,
+    PF_SD_CARD_DETAIL_CARD_STATUS,
+    PF_SD_CARD_DETAIL_FOUR_BIT,
+    PF_SD_CARD_DETAIL_HIGH_SPEED_UNSUPPORTED,
+    PF_SD_CARD_DETAIL_HIGH_SPEED_REJECTED,
+    PF_SD_CARD_DETAIL_DATA_CRC,
+    PF_SD_CARD_DETAIL_DMA_TIMEOUT,
+    PF_SD_CARD_DETAIL_PIO_TIMEOUT,
+    PF_SD_CARD_DETAIL_BUSY_TIMEOUT,
+    PF_SD_CARD_DETAIL_REMOVED,
+    PF_SD_CARD_DETAIL_HOST_STATE,
+    PF_SD_CARD_DETAIL_TX_STALL,
+    PF_SD_CARD_DETAIL_RX_STALL,
+} pf_sd_card_detail_error_t;
+
+/** Cumulative native counters, independent of optional performance profiling. */
+typedef struct {
+    uint32_t command_crc_errors;
+    uint32_t data_crc_errors;
+    uint32_t command_timeouts;
+    uint32_t data_timeouts;
+    uint32_t dma_timeouts;
+    uint32_t busy_timeouts;
+    uint32_t pio_timeouts;
+    uint32_t tx_stalls;
+    uint32_t rx_stalls;
+} pf_sd_card_error_counters_t;
+
 typedef struct {
     bool initialized;
     bool presence_known;
@@ -47,6 +84,27 @@ typedef struct {
     uint32_t bus_clock_hz;
     uint32_t block_count;
     uint8_t cid[16];
+    /** Native-only diagnostic snapshot. Zero for other transports. Raw registers
+     * and capacity remain available after a failure; initialized gates I/O. */
+    bool native_details_valid;
+    bool initialization_error;
+    bool high_speed;
+    uint8_t bus_width;
+    uint8_t sd_spec;
+    uint8_t supported_bus_widths;
+    uint16_t rca;
+    uint32_t ocr;
+    uint8_t csd[16];
+    uint8_t scr[8];
+    uint32_t requested_clock_hz;
+    uint32_t actual_clock_hz;
+    uint32_t requested_init_clock_hz;
+    uint32_t actual_init_clock_hz;
+    uint32_t init_attempts;
+    uint32_t high_speed_fallbacks;
+    pf_sd_card_detail_error_t detail_error;
+    pf_sd_card_detail_error_t high_speed_error;
+    pf_sd_card_error_counters_t errors;
 } pf_sd_card_info_t;
 
 typedef enum {

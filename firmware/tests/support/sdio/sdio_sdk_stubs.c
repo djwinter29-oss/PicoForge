@@ -6,6 +6,7 @@
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
+#include "hardware/regs/pio.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
 #include "sdio_pio_host.pio.h"
@@ -33,6 +34,8 @@ dma_hw_t pf_test_sdio_dma_registers;
 unsigned pf_test_sdio_barrier_count;
 bool pf_test_sdio_data_irq = true;
 bool pf_test_sdio_dma_busy;
+uint32_t pf_test_sdio_system_clock_hz = 125000000u;
+bool pf_test_sdio_force_tx_stall;
 bool pf_test_sdio_corrupt_command_crc;
 unsigned pf_test_sdio_data_fifo_words = 1u;
 uint32_t pf_test_sdio_data_response = 0x05u;
@@ -42,6 +45,14 @@ uint8_t pf_test_sdio_last_command;
 uint32_t pf_test_sdio_dma_word_count;
 dma_channel_config pf_test_sdio_last_dma_config;
 uint32_t pf_test_sdio_gpio_level = 1u;
+uint32_t pf_test_sdio_clock_gpio = UINT32_MAX;
+bool pf_test_sdio_clock_auto_toggle;
+unsigned pf_test_sdio_clock_rising_edges;
+uint16_t pf_test_sdio_config_divider_integer;
+uint8_t pf_test_sdio_config_divider_fraction;
+uint32_t pf_test_sdio_clkdiv_restart_mask;
+uint32_t pf_test_sdio_sync_mask;
+unsigned pf_test_sdio_tx_preload_queries;
 unsigned pf_test_sdio_dma_busy_delay;
 unsigned pf_test_sdio_data_irq_delay;
 unsigned pf_test_sdio_data_irq_queries;
@@ -96,6 +107,9 @@ void pio_sm_init(PIO pio, uint sm, uint offset, const pio_sm_config *config)
 void pio_sm_set_enabled(PIO pio, uint sm, bool enabled)
 {
     if (sm == 1u) trace_event(enabled ? PF_TEST_RX_ENABLE : PF_TEST_RX_DISABLE);
+    if (pf_test_sdio_force_tx_stall && sm == 1u && enabled) {
+        pio->fdebug |= 1u << (PIO_FDEBUG_TXSTALL_LSB + sm);
+    }
     (void)pio; (void)sm; (void)enabled;
     if (pf_test_sdio_expect_streams_cleared && pf_test_sdio_observed_host != NULL) {
         pf_test_sdio_streams_were_cleared =
@@ -103,7 +117,8 @@ void pio_sm_set_enabled(PIO pio, uint sm, bool enabled)
             !pf_test_sdio_observed_host->read_stream_unresolved;
     }
 }
-void pio_enable_sm_mask_in_sync(PIO pio, uint mask) { (void)pio; (void)mask; }
+void pio_enable_sm_mask_in_sync(PIO pio, uint mask)
+{ (void)pio; pf_test_sdio_sync_mask = mask; }
 uint pio_get_dreq(PIO pio, uint sm, bool tx) { (void)pio; (void)sm; (void)tx; return 0u; }
 void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value)
 {
@@ -153,6 +168,8 @@ void pio_sm_clear_fifos(PIO pio, uint sm)
 { (void)pio; if (sm == 1u) trace_event(PF_TEST_RX_CLEAR); }
 void pio_sm_restart(PIO pio, uint sm)
 { (void)pio; if (sm == 1u) { ++pf_test_sdio_pio_restart_calls; trace_event(PF_TEST_RX_RESTART); } }
+void pio_clkdiv_restart_sm_mask(PIO pio, uint32_t mask)
+{ (void)pio; pf_test_sdio_clkdiv_restart_mask = mask; }
 uint pio_sm_get_rx_fifo_level(PIO pio, uint sm)
 {
     (void)pio;
@@ -161,6 +178,13 @@ uint pio_sm_get_rx_fifo_level(PIO pio, uint sm)
             ? 2u - pf_test_sdio_command_word_index : 0u;
     }
     return pf_test_sdio_data_fifo_words;
+}
+uint pio_sm_get_tx_fifo_level(PIO pio, uint sm)
+{
+    (void)pio;
+    (void)sm;
+    ++pf_test_sdio_tx_preload_queries;
+    return 1u;
 }
 uint32_t pio_sm_get(PIO pio, uint sm)
 {
@@ -222,7 +246,11 @@ void sm_config_set_out_shift(pio_sm_config *config, bool right, bool autopull, u
 { (void)config; (void)right; (void)autopull; (void)threshold; }
 void sm_config_set_fifo_join(pio_sm_config *config, uint join) { (void)config; (void)join; }
 void sm_config_set_clkdiv_int_frac(pio_sm_config *config, uint16_t integer, uint8_t fraction)
-{ (void)config; (void)integer; (void)fraction; }
+{
+    (void)config;
+    pf_test_sdio_config_divider_integer = integer;
+    pf_test_sdio_config_divider_fraction = fraction;
+}
 void sm_config_set_sideset(pio_sm_config *config, uint count, bool optional, bool pindirs)
 { (void)config; (void)count; (void)optional; (void)pindirs; }
 void sm_config_set_jmp_pin(pio_sm_config *config, uint pin) { (void)config; (void)pin; }
@@ -283,10 +311,22 @@ dma_hw_t *dma_channel_hw_addr(unsigned channel) { (void)channel; return &pf_test
 int dma_claim_unused_channel(bool required) { (void)required; return 0; }
 void dma_channel_unclaim(unsigned channel) { (void)channel; }
 
-uint32_t clock_get_hz(unsigned clock) { (void)clock; return 125000000u; }
-uint32_t gpio_get(unsigned pin) { (void)pin; return pf_test_sdio_gpio_level; }
+uint32_t clock_get_hz(unsigned clock) { (void)clock; return pf_test_sdio_system_clock_hz; }
+uint32_t gpio_get(unsigned pin)
+{
+    if (pf_test_sdio_clock_auto_toggle && (pin == pf_test_sdio_clock_gpio)) {
+        pf_test_sdio_gpio_level ^= 1u;
+        if (pf_test_sdio_gpio_level != 0u) {
+            ++pf_test_sdio_clock_rising_edges;
+        }
+        return pf_test_sdio_gpio_level;
+    }
+    return pf_test_sdio_gpio_level;
+}
 void gpio_pull_up(unsigned pin) { (void)pin; }
 void gpio_init(unsigned pin) { (void)pin; }
+void gpio_put(unsigned pin, bool value) { (void)pin; (void)value; }
+void gpio_set_dir(unsigned pin, bool out) { (void)pin; (void)out; }
 void gpio_pull_down(unsigned pin) { (void)pin; }
 void gpio_disable_pulls(unsigned pin) { (void)pin; }
 void __dmb(void) { ++pf_test_sdio_barrier_count; trace_event(PF_TEST_BARRIER); }

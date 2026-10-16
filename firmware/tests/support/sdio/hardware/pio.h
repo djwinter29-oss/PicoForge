@@ -1,17 +1,18 @@
 #ifndef PF_TEST_SDIO_HARDWARE_PIO_H
 #define PF_TEST_SDIO_HARDWARE_PIO_H
+#define PF_TEST_SDIO_FAKE_PIO 1
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #define NUM_BANK0_GPIOS 30u
-
 typedef unsigned int uint;
 typedef struct {
     uint32_t txf[4];
     uint32_t rxf[4];
     uint32_t input_sync_bypass;
+    uint32_t fdebug;
 } pf_test_sdio_pio_t;
 typedef pf_test_sdio_pio_t *PIO;
 extern PIO pio0;
@@ -56,7 +57,9 @@ void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value);
 void pio_sm_exec(PIO pio, uint sm, uint instruction);
 void pio_sm_clear_fifos(PIO pio, uint sm);
 void pio_sm_restart(PIO pio, uint sm);
+void pio_clkdiv_restart_sm_mask(PIO pio, uint32_t mask);
 uint pio_sm_get_rx_fifo_level(PIO pio, uint sm);
+uint pio_sm_get_tx_fifo_level(PIO pio, uint sm);
 uint32_t pio_sm_get(PIO pio, uint sm);
 void pio_sm_set_clkdiv_int_frac(PIO pio, uint sm, uint16_t integer, uint8_t fraction);
 void pio_interrupt_clear(PIO pio, uint index);

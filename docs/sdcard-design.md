@@ -227,22 +227,29 @@ unchanged.
 ## Initialization Workflow
 
 Both transports begin identification at 400 kHz and determine whether sector
-arguments are SDHC/SDXC block addresses or SDSC byte addresses.
+arguments are SDHC/SDXC block addresses. Only the SPI backend retains SDSC
+byte-addressing compatibility.
 
 ```mermaid
 flowchart TD
     Start[Board configuration] --> Validate[Validate pins, clock, and configuration lock]
     Validate --> Transport{Selected transport}
     Transport -->|SDIO-PIO| Claim[Claim two PIO state machines and one DMA channel]
-    Claim --> NativeReset[CMD0 and CMD8]
+    Claim --> Idle[Reset host and release CMD/DAT; 80 clocks at no more than 400 kHz]
+    Idle --> NativeReset[CMD0 and validated CMD8 R7; SDHC/SDXC only]
     NativeReset --> NativeReady[CMD55 plus ACMD41 until ready]
     NativeReady --> Identify[CMD2 CID, CMD3 RCA, CMD9 CSD]
     Identify --> Select[CMD7 select and wait for DAT0 ready]
-    Select --> Width[ACMD51 SCR, CMD13 status, ACMD6 four-bit mode]
-    Width --> Length[CMD16 for byte-addressed cards]
-    Length --> Speed[Require CSD default speed at least 25 MHz]
-    Speed --> Fixed[Set fixed 25 MHz transfer target]
-    Fixed --> Ready[Initialized card and telemetry]
+    Select --> Width[CMD13 ready TRAN; CRC-checked SCR; ACMD6 four-bit mode]
+    Width --> Speed[Set 25 MHz target; CMD13 and CRC-checked LBA 0]
+    Speed --> Policy{High-Speed build opt-in and SYSCLK at least 200 MHz}
+    Policy -->|No| Ready[Initialized card and telemetry]
+    Policy -->|Yes| Switch[CMD6 check and switch; validate group 1 support and selection]
+    Switch -->|Unavailable but card operational| Ready
+    Switch -->|Confirmed| Fast[Set at most 50 MHz; CMD13 and CRC-checked LBA 0]
+    Fast -->|Valid| Ready
+    Fast -->|Invalid| Fallback[One 25 MHz fallback; switch back to Default Speed and validate]
+    Fallback -->|Valid| Ready
     Transport -->|SPI| Setup[Configure SPI mode 0 and GPIO-controlled CS]
     Setup --> Clocks[Send 80 idle clocks with CS released]
     Clocks --> SPIReset[CMD0 and CMD8]
@@ -254,16 +261,44 @@ flowchart TD
 ```
 
 Any command, resource, or validation failure returns an initialization error;
-there are no clock-step retries. Native mode requires SCR-advertised four-bit
+there are no repeated clock-step retries. Native mode requires SCR-advertised four-bit
 support; there is no one-bit sector-I/O fallback. SPI accepts its supported
 ready/idle responses and checks OCR power-up and voltage compatibility.
 
-Native initialization uses 400 kHz, then sets a fixed 25 MHz transfer target.
-There is no CMD6 High Speed negotiation, startup sector probe, automatic speed
-selection, or runtime clock reduction. The target media are Class 10 or newer
+Native initialization requires a valid CMD8 R7, OCR ready/CCS and a compatible
+3.3 V voltage window, CSD structure 1, nonzero RCA, and ready TRAN state.
+Legacy/SDSC cards are rejected, sectors are always 512 bytes with direct block
+addressing, and CMD16 is never sent. CID/CSD CRC7 and SCR data CRC16 are checked.
+The host switches its bus-width state only after ACMD6 succeeds.
+
+Initialization uses at most 400 kHz and 80 released-line clocks before CMD0,
+then sets a 25 MHz transfer target. CMD13 and a CRC-checked read of LBA 0 are
+required before initialization succeeds. There is no large startup sector scan
+or runtime clock reduction. The target media are Class 10 or newer
 cards; speed class is a usage requirement, not a guarantee of electrical
 compatibility or application throughput, and is not detected/enforced by this
 driver. CSD must advertise a default transfer rate of at least 25 MHz.
+
+`PF_SDIO_PIO_HIGH_SPEED=ON` is an explicit CMake opt-in, OFF by default.
+At SYSCLK below 200 MHz the driver stays at 25 MHz and records the host limit.
+Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
+group-1 support, busy status and selected function, and only then targets up to
+50 MHz. CMD13 and CRC-checked LBA 0 validate the faster bus. A failure permits
+exactly one 25 MHz attempt, including a CMD6 switch back to Default-Speed
+timing and repeat validation; failure of that attempt aborts initialization.
+Unsupported/rejected High Speed is nonfatal only while card operation can be
+confirmed. Runtime read/write errors never trigger speed negotiation or replay.
+
+For an existing Pico 2 build directory, enable the experimental path explicitly:
+
+```sh
+cmake -S firmware -B build/validation-pico2-fixed25-250 -DPF_SDIO_PIO_HIGH_SPEED=ON
+cmake --build build/validation-pico2-fixed25-250
+```
+
+This does not change SYSCLK or qualify an overclock. Leave the option OFF for
+the default design. Neither mode is evidence that the current card's observed
+native receive/framing fault has been fixed on hardware.
 
 The integer clock divider rounds down to avoid exceeding 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
@@ -271,6 +306,16 @@ The integer clock divider rounds down to avoid exceeding 25 MHz. At 150 and
 SYSCLK must be at least 100 MHz. Use SDK-supported clock settings and check
 effective-clock telemetry; an accepted divider does not qualify an overclock.
 Failures are reported rather than hidden by lower-speed reinitialization.
+Set SYSCLK before initialization; do not change it during a transfer. An idle
+clock change requires card reinitialization so the host can recalculate timing.
+
+Public block-operation result values and HID report layouts remain unchanged.
+Native `sd info` adds a detailed error and an initialization/runtime phase,
+alongside counters that remain enabled when performance profiling is off.
+Initialization has one failure exit that aborts host I/O and releases the bus.
+Runtime failures likewise invalidate the card and abort the host; neither reads
+nor writes are replayed. The startup 50-to-25 MHz fallback is the only automatic
+transfer-speed fallback.
 
 ## Read Workflow
 
@@ -311,10 +356,9 @@ The PIO programs have no timeouts of their own: the command, data, and busy
 waits are bounded by the host (100 ms for a command response, 1 s for data
 transfer and for DAT0 busy release), after which the state machines are
 restarted. A command that gets no response costs 100 ms; this affects only
-initialization and failure paths. Native legacy compatibility currently requires
-an intact, CRC-valid CMD8 illegal-command response. A silent legacy card is
+initialization and failure paths. Native mode rejects unsupported CMD8; a silent legacy card is
 rejected: the host's boolean completion result cannot distinguish silence from a
-partial frame, so neither timeout nor CRC/framing failure is accepted as legacy.
+partial frame, so neither timeout nor CRC/framing failure is accepted as compatibility.
 A
 command that completes before a delayed poll is not reported as a timeout.
 In-PIO timeouts are not used because the command (20) and receive (12) programs
@@ -485,7 +529,7 @@ controller; CS is an ordinary, independently controlled GPIO.
 | Other stack/static data | SCR/switch-status buffers, command responses, host/configuration state, CID and capacity; additional stack beyond images required | Small command/CSD/CID buffers and configuration/telemetry state |
 | Protocol lookup tables | 8,192 bytes of lazily initialized SRAM tables for four-lane CRC, plus the shared read-only CRC16 table; software CRC | Shared read-only CRC16 table; software CRC |
 | Main native buffer plus CRC tables | 41,472 bytes (40.5 KiB), excluding metadata and stack; the separate self-test buffer adds 32 KiB | SPI-only builds omit these 40.5 KiB of native SRAM |
-| Caller transfer buffers | Caller owns logical payload storage independently of wire/probe buffers | Caller owns logical payload storage |
+| Caller transfer buffers | Caller owns logical payload storage independently of wire buffers | Caller owns logical payload storage |
 | Core/task/heap allocation | No dedicated core, driver task, or heap allocation | Same |
 
 SM and DMA numbers are allocated at runtime, not fixed to SM0/SM1 or DMA0.
@@ -741,9 +785,38 @@ The slow TX program is not suitable for 50 MHz: its observed-edge launch left
 insufficient setup time and produced card CRC-error tokens. A 50 MHz bus needs
 at least 200 MHz SYSCLK; those Pico 2 overclock experiments are diagnostic,
 not supported production clock settings. These are historical experiments;
-the current driver caps host clocks at 25 MHz and does not select the retained
-high-speed PIO programs. Both former initialization scans and the later 128 KiB
-probe have been removed.
+the default driver targets 25 MHz. High-speed PIO programs are selected only
+after the explicit build opt-in and a confirmed CMD6 switch. Both former
+initialization scans and the later 128 KiB probe have been replaced by a
+single-sector validation at each startup timing.
+
+## Fixed-25-MHz Follow-up (2026-10-16)
+
+The connected 128 GB SB128 card was tested with the fixed-clock implementation
+at a 25 MHz transfer target. These checks did not establish sustained throughput:
+
+| CPU clock | Observed result |
+| --- | --- |
+| 250 MHz | Initialization failed at the SCR CRC check, before the transfer clock was selected; self-test rejected because no volume was mounted |
+| 150 MHz | Initialized and mounted at 25 MHz; the authorized 32 MiB self-test failed during preparation with `FR_DISK_ERR`, zero payload bytes written/read, and two profiled receive CRC failures |
+| 200 MHz | Initialized and mounted at 25 MHz; the same test failed during preparation with `FR_DISK_ERR`, zero payload bytes written/read, and two profiled receive CRC failures |
+
+Receive captures showed both a nibble-shifted boot-sector image and a correctly
+positioned `55aa` signature with CRC discrepancies on DAT1-DAT3. A temporary
+1 MHz transfer-clock control produced a byte-for-byte identical bad frame to
+one captured at 25 MHz. A cold-powered SPI control initialized and mounted the
+same card at 25 MHz. This narrows the investigation to native transfer/framing
+and its electrical behavior; it does not prove a specific sampling fix. Debugger
+capture attempts did not yield a verified SPI-sector comparison.
+
+The diagnostic clock override was removed and the 150 MHz CPU / fixed-25-MHz
+SDIO firmware restored. Fully remove card power after the SPI control before
+using native SDIO again.
+No filesystem format was performed. No valid benchmark rate was obtained.
+These observations identify a receive-integrity problem, not its cause; card
+speed rating does not distinguish driver sampling/framing faults from wiring,
+power, or signal-integrity faults. Neither a 10 MB/s result nor reliable
+sustained operation is qualified by these tests.
 
 ## Static SD Review Follow-up (2026-10-15)
 

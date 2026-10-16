@@ -85,7 +85,7 @@ void test_parses_response_without_crc_check_when_requested(void)
 
 void test_parses_r3_ocr_without_a_command_index(void)
 {
-    uint8_t response[6] = { 0x3fu, 0xc0u, 0xffu, 0x80u, 0x00u, 0x01u };
+    uint8_t response[6] = { 0x3fu, 0xc0u, 0xffu, 0x80u, 0x00u, 0xffu };
     uint32_t ocr;
 
     TEST_ASSERT_TRUE(pf_sdio_pio_parse_r3_response(response, &ocr));
@@ -97,6 +97,26 @@ void test_parses_r3_ocr_without_a_command_index(void)
     response[0] &= 0xbfu;
     response[5] = 0u;
     TEST_ASSERT_FALSE(pf_sdio_pio_parse_r3_response(response, &ocr));
+}
+
+void test_status_requires_ready_transfer_state_without_errors(void)
+{
+    uint32_t status = PF_SDIO_PIO_R1_READY_FOR_DATA | PF_SDIO_PIO_R1_STATE_TRAN;
+    TEST_ASSERT_TRUE(pf_sdio_pio_status_is_transfer_ready(status));
+    TEST_ASSERT_FALSE(pf_sdio_pio_status_is_transfer_ready(status & ~PF_SDIO_PIO_R1_READY_FOR_DATA));
+    TEST_ASSERT_FALSE(pf_sdio_pio_status_is_transfer_ready(status ^ (1u << 9u)));
+    TEST_ASSERT_FALSE(pf_sdio_pio_status_is_transfer_ready(status | (1u << 23u)));
+}
+
+void test_switch_status_checks_group_one_busy_only_for_version_one(void)
+{
+    uint8_t status[64] = {0};
+    status[29] = 2u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_switch_high_speed_busy(status));
+    status[17] = 1u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_switch_high_speed_busy(status));
+    status[29] = 1u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_switch_high_speed_busy(status));
 }
 
 void test_unpacks_partial_response_words_from_the_low_bits(void)

@@ -27,6 +27,7 @@ void setUp(void)
     pf_test_sdio_expect_streams_cleared = false;
     pf_test_sdio_streams_were_cleared = false;
     pf_test_sdio_can_add_program = true;
+    pf_test_sdio_system_clock_hz = 125000000u;
     pf_test_sdio_removed_programs = 0u;
     pf_test_sdio_barrier_count = 0u;
     pf_test_sdio_pio_trace_count = 0u;
@@ -36,11 +37,20 @@ void setUp(void)
     pf_test_sdio_corrupt_command_crc = false;
     pf_test_sdio_data_irq = true;
     pf_test_sdio_dma_busy = false;
+    pf_test_sdio_dma_abort_count = 0u;
     pf_test_sdio_data_wait_ok = true;
     pf_test_sdio_trace_enabled = true;
     pf_test_sdio_event_count = 0u;
     pf_test_sdio_dma_poll_hook = NULL;
     pf_test_sdio_dma_busy_delay = 0u;
+    pf_test_sdio_clock_gpio = UINT32_MAX;
+    pf_test_sdio_clock_auto_toggle = false;
+    pf_test_sdio_clock_rising_edges = 0u;
+    pf_test_sdio_gpio_level = 1u;
+    pf_test_sdio_config_divider_integer = 0u;
+    pf_test_sdio_config_divider_fraction = 0u;
+    pf_test_sdio_clkdiv_restart_mask = 0u;
+    pf_test_sdio_sync_mask = 0u;
 }
 
 void tearDown(void)
@@ -49,7 +59,7 @@ void tearDown(void)
     pf_test_sdio_dma_poll_hook = NULL;
 }
 
-void test_host_clock_is_capped_at_25mhz_with_deterministic_integer_rounding(void)
+void test_host_clock_uses_integer_rounding_through_25mhz_and_fractional_fast_mode(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sdio_pio_host_t host = { .pio = &pio, .system_clock_hz = 250000000u };
@@ -57,13 +67,82 @@ void test_host_clock_is_capped_at_25mhz_with_deterministic_integer_rounding(void
     TEST_ASSERT_TRUE(pf_sdio_pio_host_set_clock(&host, 25000000u));
     TEST_ASSERT_EQUAL_UINT32(25000000u, host.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT32(5u * 256u, host.clock_div_ticks);
-    TEST_ASSERT_FALSE(pf_sdio_pio_host_set_clock(&host, 50000000u));
-    TEST_ASSERT_EQUAL_UINT32(25000000u, host.current_clock_hz);
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_set_clock(&host, 50000000u));
+    TEST_ASSERT_EQUAL_UINT32(50000000u, host.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(640u, host.clock_div_ticks);
+    TEST_ASSERT_TRUE(host.data_rx_fast);
 
     host.system_clock_hz = 125000000u;
     TEST_ASSERT_TRUE(pf_sdio_pio_host_set_clock(&host, 25000000u));
     TEST_ASSERT_EQUAL_UINT32(20833333u, host.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT32(3u * 256u, host.clock_div_ticks);
+}
+
+void test_prepare_initialization_resets_host_and_emits_exactly_eighty_low_speed_clocks(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = {
+        .pio = &pio,
+        .command_gpio = 1u,
+        .data_gpio_base = 2u,
+        .data0_gpio = 2u,
+        .clock_gpio = 5u,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .command_program_offset = 1u,
+        .data_rx_program_offset = 2u,
+        .clock_program_offset = 3u,
+        .data_tx_program_offset = 4u,
+        .dma_channel = 3u,
+        .system_clock_hz = 150000000u,
+        .current_clock_hz = 25000000u,
+        .clock_div_ticks = 6u * 256u,
+        .command_program_loaded = true,
+        .data_rx_program_loaded = true,
+        .dma_claimed = true,
+        .bus_width = 1u
+    };
+
+    pf_test_sdio_clock_gpio = host.clock_gpio;
+    pf_test_sdio_gpio_level = 0u;
+    pf_test_sdio_clock_auto_toggle = true;
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_prepare_initialization(&host));
+    TEST_ASSERT_EQUAL_UINT(80u, pf_test_sdio_clock_rising_edges);
+    TEST_ASSERT_TRUE(host.initialization_prepared);
+    TEST_ASSERT_TRUE(host.current_clock_hz > 0u && host.current_clock_hz <= 400000u);
+    TEST_ASSERT_EQUAL(PF_SDIO_PIO_CLOCK_UNOWNED, host.clock_owner);
+    TEST_ASSERT_EQUAL_UINT(1u, host.bus_width);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_NONE, host.last_error);
+}
+
+void test_abort_preserves_diagnostics_and_unresolved_streams_without_card_commands(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = {
+        .pio = &pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .dma_channel = 3u,
+        .command_program_offset = 1u,
+        .data_rx_program_offset = 2u,
+        .command_program_loaded = true,
+        .data_rx_program_loaded = true,
+        .dma_claimed = true,
+        .write_stream_open = true,
+        .read_stream_unresolved = true,
+        .last_error = PF_SD_CARD_DETAIL_DMA_TIMEOUT,
+        .errors = { .data_timeouts = 3u, .dma_timeouts = 2u }
+    };
+
+    pf_sdio_pio_host_abort(&host);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DMA_TIMEOUT, host.last_error);
+    TEST_ASSERT_EQUAL_UINT32(3u, host.errors.data_timeouts);
+    TEST_ASSERT_EQUAL_UINT32(2u, host.errors.dma_timeouts);
+    TEST_ASSERT_TRUE(host.write_stream_open);
+    TEST_ASSERT_TRUE(host.read_stream_unresolved);
+    TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
+    TEST_ASSERT_EQUAL_UINT(1u, pf_test_sdio_dma_abort_count);
+    TEST_ASSERT_EQUAL(PF_SDIO_PIO_CLOCK_UNOWNED, host.clock_owner);
 }
 
 static void encode_test_blocks(uint8_t blocks[4][PF_SD_CARD_BLOCK_SIZE])
@@ -152,6 +231,40 @@ void test_read_batch_decode_rejects_invalid_dma_addresses_and_crc(void)
     TEST_ASSERT_FALSE(decode_at(&host, capacity_words, NULL,
                                 capacity_words, &decoded_count));
     TEST_ASSERT_EQUAL_UINT32(1u, decoded_count);
+}
+
+void test_single_read_crc_is_counted_without_profiling_and_requires_four_bit_mode(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = {
+        .pio = &pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .dma_channel = 3u,
+        .command_program_offset = 1u,
+        .data_rx_program_offset = 2u,
+        .data_rx_program_loaded = true,
+        .bus_width = 4u,
+        .current_clock_hz = 25000000u,
+        .clock_div_ticks = 6u * 256u
+    };
+    uint8_t block[PF_SD_CARD_BLOCK_SIZE] = {0};
+    uint8_t payload[PF_SD_CARD_BLOCK_SIZE];
+
+    pf_sd_card_set_profiling_enabled(false);
+    TEST_ASSERT_TRUE(pf_sdio_pio_encode_data_block(
+        block, pf_test_sdio_rx_wire));
+    pf_test_sdio_rx_wire_size = PF_SDIO_PIO_IMAGE_SIZE;
+    pf_test_sdio_rx_wire[PF_SDIO_PIO_IMAGE_SIZE - 1u] ^= 1u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_host_read_sector(&host, 7u, true, payload));
+    TEST_ASSERT_EQUAL_UINT32(1u, host.errors.data_crc_errors);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DATA_CRC, host.last_error);
+
+    host.bus_width = 1u;
+    pf_test_sdio_command_count = 0u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_host_read_sector(&host, 7u, true, payload));
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_FOUR_BIT, host.last_error);
+    TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
 }
 
 void test_read_batch_loads_pio_count_before_dma_and_framing(void)
@@ -248,6 +361,7 @@ void test_production_cmd18_reader_decodes_all_blocks_then_stops_stream(void)
         .data_rx_program_offset = 4u,
         .data_rx_program_loaded = true,
         .data_rx_multiblock_supported = true,
+        .bus_width = 4u,
         .current_clock_hz = 25000000u,
         .clock_div_ticks = 6u * 256u
     };
@@ -291,6 +405,7 @@ void test_production_cmd18_reader_stops_after_crc_failure_and_preserves_unresolv
         .data_rx_program_offset = 4u,
         .data_rx_program_loaded = true,
         .data_rx_multiblock_supported = true,
+        .bus_width = 4u,
         .current_clock_hz = 25000000u,
         .clock_div_ticks = 6u * 256u
     };
@@ -302,6 +417,8 @@ void test_production_cmd18_reader_stops_after_crc_failure_and_preserves_unresolv
 
     TEST_ASSERT_FALSE(pf_sdio_pio_host_read_blocks(&host, 17u, true,
                                                     &received[0][0], 2u));
+    TEST_ASSERT_EQUAL_UINT32(1u, host.errors.data_crc_errors);
+    TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DATA_CRC, host.last_error);
     TEST_ASSERT_FALSE(host.read_stream_unresolved);
     TEST_ASSERT_EQUAL_UINT8(12u, pf_test_sdio_last_command);
     TEST_ASSERT_EQUAL_UINT(2u, pf_test_sdio_command_count);

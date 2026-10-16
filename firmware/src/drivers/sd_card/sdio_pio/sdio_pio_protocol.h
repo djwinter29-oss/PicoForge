@@ -4,9 +4,25 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "sd_card_block.h"
 
 /* Native R1 card-status error bits; not an R6 response mask. */
 #define PF_SDIO_PIO_R1_ERROR_MASK 0xfdffe008u
+#define PF_SDIO_PIO_R1_READY_FOR_DATA (1u << 8u)
+#define PF_SDIO_PIO_R1_STATE_MASK (15u << 9u)
+#define PF_SDIO_PIO_R1_STATE_TRAN (4u << 9u)
+#define PF_SDIO_PIO_R6_ERROR_MASK 0xe000u
+#define PF_SDIO_PIO_R1_ILLEGAL_COMMAND (1u << 22u)
+#define PF_SDIO_PIO_R7_ARGUMENT 0x000001aau
+#define PF_SDIO_PIO_R7_VOLTAGE_MASK 0x00000f00u
+#define PF_SDIO_PIO_R7_VOLTAGE_3V3 0x00000100u
+#define PF_SDIO_PIO_BUS_WIDTH_FOUR_ARGUMENT 2u
+#define PF_SDIO_PIO_OCR_VOLTAGE 0x00ff8000u
+#define PF_SDIO_PIO_OCR_HCS (1u << 30u)
+#define PF_SDIO_PIO_OCR_READY (1u << 31u)
+#define PF_SDIO_PIO_CMD6_CHECK_HIGH_SPEED 0x00fffff1u
+#define PF_SDIO_PIO_CMD6_SWITCH_HIGH_SPEED 0x80fffff1u
+#define PF_SDIO_PIO_CMD6_SWITCH_DEFAULT 0x80fffff0u
 
 #define PF_SDIO_PIO_TRANSFER_WORDS 130u
 #define PF_SDIO_PIO_IMAGE_SIZE (PF_SDIO_PIO_TRANSFER_WORDS * 4u)
@@ -20,6 +36,9 @@ uint8_t pf_sdio_pio_crc7(const uint8_t *data, size_t size);
 bool pf_sdio_pio_build_command(uint8_t command, uint32_t argument, uint8_t frame[6]);
 bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t frame[6],
 								   uint32_t *argument, bool check_crc);
+/** Decode native short response framing/CRC, without interpreting card status. */
+pf_sd_card_detail_error_t pf_sdio_pio_decode_response(
+    uint8_t command, const uint8_t frame[6], uint32_t *argument, bool check_crc);
 bool pf_sdio_pio_response_words_to_bytes(const uint32_t *words, uint16_t response_bits,
                                             uint8_t *response, size_t response_capacity);
 bool pf_sdio_pio_parse_r3_response(const uint8_t frame[6], uint32_t *ocr);
@@ -27,6 +46,11 @@ bool pf_sdio_pio_write_response_accepted(uint32_t response_word);
 bool pf_sdio_pio_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2);
 bool pf_sdio_pio_validate_r2_response(const uint8_t frame[17]);
 bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count);
+/** Require a ready, error-free card in transfer state. */
+bool pf_sdio_pio_status_is_transfer_ready(uint32_t status);
+/** Check group-1 function 1 busy status in a version-1 switch-status block. */
+bool pf_sdio_pio_switch_high_speed_busy(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE]);
 void pf_sdio_pio_crc16_4bit(const uint8_t block[512], uint16_t crc[4]);
 
 /**

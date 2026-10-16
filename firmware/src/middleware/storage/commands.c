@@ -72,6 +72,93 @@ static void status_command(bool host_owned, pf_storage_reply_t reply, void *cont
     (void)reply(line, context);
 }
 
+static const char *detail_error_name(pf_sd_card_detail_error_t error)
+{
+    static const char *const names[] = {
+        "none", "unsupported_legacy_card", "unsupported_voltage", "initialization_timeout",
+        "invalid_r7", "ocr_ccs_failure", "response_crc", "response_index", "card_status",
+        "unsupported_four_bit", "high_speed_unsupported", "high_speed_rejected",
+        "data_crc", "dma_timeout", "pio_timeout", "card_busy_timeout", "card_removed",
+        "host_state", "tx_stall", "rx_stall"
+    };
+    unsigned index = (unsigned)error;
+    return index < sizeof(names) / sizeof(names[0]) ? names[index] : "unknown";
+}
+
+static bool register_line(const char *name, const uint8_t *bytes, size_t size,
+                          pf_storage_reply_t reply, void *context)
+{
+    char line[80];
+    size_t used = (size_t)snprintf(line, sizeof(line), "%s=", name);
+    for (size_t i = 0u; i < size && used + 2u < sizeof(line); ++i) {
+        (void)snprintf(line + used, sizeof(line) - used, "%02x", bytes[i]);
+        used += 2u;
+    }
+    return reply(line, context);
+}
+
+static void info_command(pf_storage_reply_t reply, void *context)
+{
+    pf_sd_card_info_t info;
+    char line[PF_STORAGE_REPLY_SIZE];
+    pf_sd_card_get_info(&info);
+    if (info.cid_valid) {
+        if (!register_line("cid", info.cid, sizeof(info.cid), reply, context)) return;
+        uint32_t serial = ((uint32_t)info.cid[9] << 24u) |
+                          ((uint32_t)info.cid[10] << 16u) |
+                          ((uint32_t)info.cid[11] << 8u) | info.cid[12];
+        unsigned date = ((info.cid[13] & 15u) << 8u) | info.cid[14];
+        char product[6] = {0};
+        for (unsigned i = 0u; i < 5u; ++i) {
+            uint8_t c = info.cid[i + 3u];
+            product[i] = c >= 32u && c <= 126u ? (char)c : '?';
+        }
+        (void)snprintf(line, sizeof(line),
+            "manufacturer=%u product=%s revision=%u.%u serial=%lu date=%u-%02u",
+            info.cid[0], product, info.cid[8] >> 4u, info.cid[8] & 15u,
+            (unsigned long)serial, 2000u + (date >> 4u), date & 15u);
+        if (!reply(line, context)) return;
+    }
+    (void)snprintf(line, sizeof(line), "initialized=%u block_size=%u blocks=%lu capacity=%llu",
+        (unsigned)info.initialized, PF_SD_CARD_BLOCK_SIZE, (unsigned long)info.block_count,
+        (unsigned long long)info.block_count * PF_SD_CARD_BLOCK_SIZE);
+    if (!reply(line, context)) return;
+    if (!info.native_details_valid) {
+        (void)reply("Native startup details unavailable for this transport or before initialization.", context);
+        return;
+    }
+    if (!register_line("csd", info.csd, sizeof(info.csd), reply, context) ||
+        !register_line("scr", info.scr, sizeof(info.scr), reply, context)) return;
+    (void)snprintf(line, sizeof(line),
+        "ocr=%08lx ccs=%u rca=%04x sd_spec=%u widths=%02x bus_width=%u timing=%s",
+        (unsigned long)info.ocr, (unsigned)((info.ocr >> 30u) & 1u), info.rca,
+        info.sd_spec, info.supported_bus_widths, info.bus_width,
+        info.high_speed ? "high-speed" : "default-speed");
+    if (!reply(line, context)) return;
+    (void)snprintf(line, sizeof(line),
+        "init_requested_hz=%lu init_actual_hz=%lu requested_hz=%lu actual_hz=%lu",
+        (unsigned long)info.requested_init_clock_hz, (unsigned long)info.actual_init_clock_hz,
+        (unsigned long)info.requested_clock_hz, (unsigned long)info.actual_clock_hz);
+    if (!reply(line, context)) return;
+    (void)snprintf(line, sizeof(line),
+        "error=%s phase=%s high_speed_error=%s init_attempts=%lu retries=%lu fallbacks_50_to_25=%lu",
+        detail_error_name(info.detail_error), info.initialization_error ? "init" : "runtime",
+        detail_error_name(info.high_speed_error), (unsigned long)info.init_attempts,
+        (unsigned long)(info.init_attempts > 0u ? info.init_attempts - 1u : 0u),
+        (unsigned long)info.high_speed_fallbacks);
+    if (!reply(line, context)) return;
+    (void)snprintf(line, sizeof(line),
+        "command_crc=%lu data_crc=%lu command_timeouts=%lu data_timeouts=%lu dma_timeouts=%lu",
+        (unsigned long)info.errors.command_crc_errors, (unsigned long)info.errors.data_crc_errors,
+        (unsigned long)info.errors.command_timeouts, (unsigned long)info.errors.data_timeouts,
+        (unsigned long)info.errors.dma_timeouts);
+    if (!reply(line, context)) return;
+    (void)snprintf(line, sizeof(line), "busy_timeouts=%lu pio_timeouts=%lu tx_stalls=%lu rx_stalls=%lu",
+        (unsigned long)info.errors.busy_timeouts, (unsigned long)info.errors.pio_timeouts,
+        (unsigned long)info.errors.tx_stalls, (unsigned long)info.errors.rx_stalls);
+    (void)reply(line, context);
+}
+
 static void profile_command(const char *action, bool host_owned,
                             pf_storage_reply_t reply, void *context)
 {
@@ -313,6 +400,10 @@ void pf_storage_command_execute(const pf_sd_card_config_t *config, bool host_own
         status_command(host_owned, reply, context);
         return;
     }
+    if ((strcmp(family, "sd") == 0) && (count == 1u) && (strcmp(operation, "info") == 0)) {
+        info_command(reply, context);
+        return;
+    }
     if (strcmp(family, "sd") == 0 && count >= 1u && count <= 2u &&
         strcmp(operation, "profile") == 0) {
         profile_command(count == 2u ? first : NULL, host_owned, reply, context);
@@ -324,7 +415,7 @@ void pf_storage_command_execute(const pf_sd_card_config_t *config, bool host_own
         return;
     }
     if ((strcmp(family, "fs") != 0) || (count == 0u)) {
-        (void)reply("Usage: sd <status|profile|diagnostics> | fs <mount|unmount|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
+        (void)reply("Usage: sd <status|info|profile|diagnostics> | fs <mount|unmount|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
         return;
     }
     if (host_owned) {

@@ -110,7 +110,7 @@ static void cdc_cli_task(void)
             panic("Failed to initialize CDC CLI");
         }
         if (!pf_cli_add_binding((CliCommandBinding){
-                "sd", "sd status | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
+                "sd", "sd status | sd info | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
                 "sd", storage_command
             }) || !pf_cli_add_binding((CliCommandBinding){
                 "fs", "fs mount|unmount|ls [path]|stat <path>|cat <path> [limit]|df\r\n"

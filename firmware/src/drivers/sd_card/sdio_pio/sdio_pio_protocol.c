@@ -16,20 +16,28 @@ bool pf_sdio_pio_build_command(uint8_t command, uint32_t argument, uint8_t frame
 bool pf_sdio_pio_parse_response(uint8_t command, const uint8_t frame[6],
                                    uint32_t *argument, bool check_crc)
 {
-    if ((frame == NULL) || (argument == NULL) ||
-        ((frame[0] & 0xc0u) != 0u) || ((frame[0] & 0x3fu) != command) ||
-        ((frame[5] & 1u) == 0u)) {
-        return false;
+    return pf_sdio_pio_decode_response(command, frame, argument, check_crc) == PF_SD_CARD_DETAIL_NONE;
+}
+
+pf_sd_card_detail_error_t pf_sdio_pio_decode_response(
+    uint8_t command, const uint8_t frame[6], uint32_t *argument, bool check_crc)
+{
+    if (frame == NULL || argument == NULL) {
+        return PF_SD_CARD_DETAIL_HOST_STATE;
     }
-    if (check_crc && ((frame[5] >> 1u) != pf_sdio_pio_crc7(frame, 5u))) {
-        return false;
+    if ((frame[0] & 0xc0u) != 0u || (frame[0] & 0x3fu) != command) {
+        return PF_SD_CARD_DETAIL_RESPONSE_INDEX;
+    }
+    if ((frame[5] & 1u) == 0u ||
+        (check_crc && ((frame[5] >> 1u) != pf_sdio_pio_crc7(frame, 5u)))) {
+        return PF_SD_CARD_DETAIL_RESPONSE_CRC;
     }
 
     *argument = ((uint32_t)frame[1] << 24u) |
                 ((uint32_t)frame[2] << 16u) |
                 ((uint32_t)frame[3] << 8u) |
                 (uint32_t)frame[4];
-    return true;
+    return PF_SD_CARD_DETAIL_NONE;
 }
 
 bool pf_sdio_pio_response_words_to_bytes(const uint32_t *words, uint16_t response_bits,
@@ -67,7 +75,7 @@ bool pf_sdio_pio_response_words_to_bytes(const uint32_t *words, uint16_t respons
 bool pf_sdio_pio_parse_r3_response(const uint8_t frame[6], uint32_t *ocr)
 {
     if ((frame == NULL) || (ocr == NULL) ||
-        ((frame[0] & 0xc0u) != 0u) || ((frame[5] & 1u) == 0u)) {
+        (frame[0] != 0x3fu) || (frame[5] != 0xffu)) {
         return false;
     }
 
@@ -90,13 +98,20 @@ bool pf_sdio_pio_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2)
 
 bool pf_sdio_pio_validate_r2_response(const uint8_t frame[17])
 {
-    return (frame != NULL) && ((frame[16] & 1u) != 0u) &&
+    return (frame != NULL) && (frame[0] == 0x3fu) && ((frame[16] & 1u) != 0u) &&
            ((frame[16] >> 1u) == pf_sdio_pio_crc7(frame + 1u, 15u));
 }
 
 bool pf_sdio_pio_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)
 {
     return pf_sd_card_csd_sector_count(csd, sector_count);
+}
+
+bool pf_sdio_pio_status_is_transfer_ready(uint32_t status)
+{
+    return (status & PF_SDIO_PIO_R1_ERROR_MASK) == 0u &&
+           (status & PF_SDIO_PIO_R1_READY_FOR_DATA) != 0u &&
+           (status & PF_SDIO_PIO_R1_STATE_MASK) == PF_SDIO_PIO_R1_STATE_TRAN;
 }
 
 /*
@@ -318,4 +333,10 @@ bool pf_sdio_pio_switch_selected_high_speed(
     const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
 {
     return (status != NULL) && ((status[16] & 0x0fu) == 1u);
+}
+
+bool pf_sdio_pio_switch_high_speed_busy(
+    const uint8_t status[PF_SDIO_PIO_SWITCH_STATUS_SIZE])
+{
+    return status != NULL && status[17] >= 1u && (status[29] & 0x02u) != 0u;
 }

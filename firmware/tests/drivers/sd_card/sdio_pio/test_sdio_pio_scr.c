@@ -100,6 +100,14 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         if (failure == 0u) {
             TEST_ASSERT_EQUAL_MEMORY(expected_scr, scr, sizeof(scr));
         }
+        if (failure == 8u) {
+            TEST_ASSERT_EQUAL_UINT32(1u, host.errors.data_crc_errors);
+            TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DATA_CRC, host.last_error);
+        }
+        if (failure == 2u) {
+            TEST_ASSERT_EQUAL_UINT32(1u, host.errors.command_crc_errors);
+            TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_RESPONSE_CRC, host.last_error);
+        }
     }
 
     TEST_ASSERT_FALSE(pf_sdio_pio_host_read_scr(NULL, 0u, scr));

@@ -7,6 +7,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
+#include "hardware/regs/pio.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
 #include "sd_card_block.h"
@@ -16,12 +17,129 @@
 #define SDIO_COMMAND_TIMEOUT_US 100000u
 #define SDIO_RESPONSE_IRQ 0u
 #define SDIO_DATA_READ_IRQ 1u
+#define SDIO_TX_IRQ 2u
+#define SDIO_IRQ_COUNT 3u
 #define SDIO_DATA_NIBBLE_COUNT 1040u
 #define SDIO_DATA_WORD_COUNT PF_SDIO_PIO_TRANSFER_WORDS
 #define SDIO_READ_BATCH_BLOCKS 64u
+#define SDIO_INIT_CLOCKS 80u
+#define SDIO_INIT_CLOCK_TIMEOUT_US 100000u
+#define SDIO_DATA_TIMEOUT_US 1000000u
 
 static uint32_t read_wire_buffer[SDIO_DATA_WORD_COUNT * SDIO_READ_BATCH_BLOCKS];
 static pf_sdio_pio_wait_hook_t data_wait_hook;
+
+static void set_error(pf_sdio_pio_host_t *host, pf_sd_card_detail_error_t error)
+{
+    if (host != NULL) {
+        host->last_error = error;
+    }
+}
+
+static void count_rx_timeout(pf_sdio_pio_host_t *host, bool dma_busy)
+{
+    if (host == NULL) {
+        return;
+    }
+    ++host->errors.data_timeouts;
+    if (dma_busy) {
+        ++host->errors.dma_timeouts;
+        set_error(host, PF_SD_CARD_DETAIL_DMA_TIMEOUT);
+    } else {
+        ++host->errors.pio_timeouts;
+        set_error(host, PF_SD_CARD_DETAIL_PIO_TIMEOUT);
+    }
+}
+
+static void count_tx_timeout(pf_sdio_pio_host_t *host, bool dma_busy)
+{
+    if (host == NULL) {
+        return;
+    }
+    ++host->errors.data_timeouts;
+    if (dma_busy) {
+        ++host->errors.dma_timeouts;
+        set_error(host, PF_SD_CARD_DETAIL_DMA_TIMEOUT);
+    } else if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) == 0u) {
+        ++host->errors.pio_timeouts;
+        set_error(host, PF_SD_CARD_DETAIL_PIO_TIMEOUT);
+    } else {
+        ++host->errors.busy_timeouts;
+        set_error(host, PF_SD_CARD_DETAIL_BUSY_TIMEOUT);
+    }
+}
+
+static void clear_sm_fdebug(pf_sdio_pio_host_t *host, uint sm)
+{
+    uint32_t mask = (1u << (PIO_FDEBUG_TXSTALL_LSB + sm)) |
+                    (1u << (PIO_FDEBUG_TXOVER_LSB + sm)) |
+                    (1u << (PIO_FDEBUG_RXUNDER_LSB + sm)) |
+                    (1u << (PIO_FDEBUG_RXSTALL_LSB + sm));
+#if defined(PF_TEST_SDIO_FAKE_PIO)
+    host->pio->fdebug &= ~mask;
+#else
+    host->pio->fdebug = mask;
+#endif
+}
+
+static bool tx_fifo_stalled(pf_sdio_pio_host_t *host)
+{
+    uint32_t mask = 1u << (PIO_FDEBUG_TXSTALL_LSB + host->data_sm);
+
+    if ((host->pio->fdebug & mask) == 0u) {
+        return false;
+    }
+#if defined(PF_TEST_SDIO_FAKE_PIO)
+    host->pio->fdebug &= ~mask;
+#else
+    host->pio->fdebug = mask;
+#endif
+    ++host->errors.tx_stalls;
+    set_error(host, PF_SD_CARD_DETAIL_TX_STALL);
+    return true;
+}
+
+static bool rx_fifo_stalled(pf_sdio_pio_host_t *host)
+{
+    uint32_t mask = 1u << (PIO_FDEBUG_RXSTALL_LSB + host->data_sm);
+
+    if ((host->pio->fdebug & mask) == 0u) {
+        return false;
+    }
+#if defined(PF_TEST_SDIO_FAKE_PIO)
+    host->pio->fdebug &= ~mask;
+#else
+    host->pio->fdebug = mask;
+#endif
+    ++host->errors.rx_stalls;
+    set_error(host, PF_SD_CARD_DETAIL_RX_STALL);
+    return true;
+}
+
+static bool parse_host_response(pf_sdio_pio_host_t *host, uint8_t command,
+                                const uint8_t response[6], uint32_t *argument)
+{
+    pf_sd_card_detail_error_t error =
+        pf_sdio_pio_decode_response(command, response, argument, true);
+
+    if (error == PF_SD_CARD_DETAIL_NONE) {
+        return true;
+    }
+    if (error == PF_SD_CARD_DETAIL_RESPONSE_CRC) {
+        ++host->errors.command_crc_errors;
+    }
+    set_error(host, error);
+    return false;
+}
+
+static bool response_status_ok(pf_sdio_pio_host_t *host, uint32_t argument)
+{
+    if ((argument & PF_SDIO_PIO_R1_ERROR_MASK) == 0u) {
+        return true;
+    }
+    set_error(host, PF_SD_CARD_DETAIL_CARD_STATUS);
+    return false;
+}
 
 void pf_sdio_pio_set_wait_hook(pf_sdio_pio_wait_hook_t hook)
 {
@@ -49,6 +167,7 @@ static void start_data_rx(pf_sdio_pio_host_t *host, uint32_t *destination,
                           uint32_t block_count)
 {
     pio_sm_set_enabled(host->pio, host->data_sm, false);
+    clear_sm_fdebug(host, host->data_sm);
     pio_sm_clear_fifos(host->pio, host->data_sm);
     pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
     pio_sm_restart(host->pio, host->data_sm);
@@ -79,8 +198,12 @@ static bool wait_data_rx(pf_sdio_pio_host_t *host, uint32_t timeout_us)
 
     while (!pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) ||
            dma_channel_is_busy(host->dma_channel)) {
+        if (rx_fifo_stalled(host)) {
+            return false;
+        }
         if ((uint32_t)(time_us_32() - start) > timeout_us) {
             pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
+            count_rx_timeout(host, dma_channel_is_busy(host->dma_channel));
             return false;
         }
         wait_data_idle(host, SDIO_DATA_READ_IRQ);
@@ -95,6 +218,7 @@ static void cleanup_data_rx(pf_sdio_pio_host_t *host)
     if (dma_channel_is_busy(host->dma_channel)) {
         dma_channel_abort(host->dma_channel);
     }
+    clear_sm_fdebug(host, host->data_sm);
     pio_sm_clear_fifos(host->pio, host->data_sm);
     pio_interrupt_clear(host->pio, SDIO_DATA_READ_IRQ);
     pio_sm_restart(host->pio, host->data_sm);
@@ -129,6 +253,7 @@ static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
     if ((write_addr < buffer_start) ||
         (write_addr > buffer_start + batch_words * (uint32_t)sizeof(uint32_t)) ||
         ((write_addr & (sizeof(uint32_t) - 1u)) != 0u)) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
         return false;
     }
     completed = (write_addr - buffer_start) / sizeof(uint32_t) / SDIO_DATA_WORD_COUNT;
@@ -141,6 +266,8 @@ static bool decode_completed_blocks(pf_sdio_pio_host_t *host, uint8_t *blocks,
                 blocks + *decoded_count * PF_SD_CARD_BLOCK_SIZE)
             : pf_sdio_pio_verify_data_block(image);
         if (!valid) {
+            ++host->errors.data_crc_errors;
+            set_error(host, PF_SD_CARD_DETAIL_DATA_CRC);
             return false;
         }
         ++*decoded_count;
@@ -217,6 +344,11 @@ static bool load_tx_programs(pf_sdio_pio_host_t *host)
 {
     pio_sm_config config;
 
+    if ((host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND) &&
+        (host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED)) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        return false;
+    }
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
     if (host->data_rx_program_loaded) {
@@ -262,6 +394,11 @@ static bool load_tx_programs(pf_sdio_pio_host_t *host)
     pio_sm_init(host->pio, host->data_sm, host->data_tx_program_offset, &config);
     pio_sm_clear_fifos(host->pio, host->command_sm);
     pio_sm_clear_fifos(host->pio, host->data_sm);
+    clear_sm_fdebug(host, host->command_sm);
+    clear_sm_fdebug(host, host->data_sm);
+    pio_clkdiv_restart_sm_mask(host->pio,
+                               (1u << host->command_sm) | (1u << host->data_sm));
+    host->clock_owner = PF_SDIO_PIO_CLOCK_DATA_TX;
     return true;
 }
 
@@ -269,12 +406,31 @@ static bool load_tx_programs(pf_sdio_pio_host_t *host)
 static void start_tx_data(pf_sdio_pio_host_t *host)
 {
     if (!host->data_tx_fast) {
+        pio_sm_set_enabled(host->pio, host->command_sm, true);
         pio_sm_set_enabled(host->pio, host->data_sm, true);
         return;
     }
     pio_sm_set_enabled(host->pio, host->command_sm, false);
+    pio_sm_restart(host->pio, host->command_sm);
+    pio_sm_restart(host->pio, host->data_sm);
     pio_sm_exec(host->pio, host->command_sm, pio_encode_jmp(host->clock_program_offset));
+    pio_clkdiv_restart_sm_mask(host->pio,
+                               (1u << host->command_sm) | (1u << host->data_sm));
     pio_enable_sm_mask_in_sync(host->pio, (1u << host->command_sm) | (1u << host->data_sm));
+}
+
+static bool wait_tx_preload(pf_sdio_pio_host_t *host)
+{
+    uint32_t start = time_us_32();
+
+    while (pio_sm_get_tx_fifo_level(host->pio, host->data_sm) == 0u) {
+        if ((uint32_t)(time_us_32() - start) >= SDIO_COMMAND_TIMEOUT_US) {
+            count_tx_timeout(host, true);
+            return false;
+        }
+        tight_loop_contents();
+    }
+    return true;
 }
 
 static bool restore_command_mode(pf_sdio_pio_host_t *host)
@@ -302,15 +458,181 @@ static bool restore_command_mode(pf_sdio_pio_host_t *host)
     }
     pio_sm_clear_fifos(host->pio, host->command_sm);
     pio_sm_clear_fifos(host->pio, host->data_sm);
-    pio_interrupt_clear(host->pio, SDIO_RESPONSE_IRQ);
+    for (uint irq = 0u; irq < SDIO_IRQ_COUNT; irq++) {
+        pio_interrupt_clear(host->pio, irq);
+    }
     pio_sm_restart(host->pio, host->command_sm);
+    pio_sm_restart(host->pio, host->data_sm);
     pio_sm_exec(host->pio, host->command_sm,
                 pio_encode_jmp(host->command_program_offset));
+    pio_sm_exec(host->pio, host->data_sm,
+                pio_encode_jmp(host->data_rx_program_offset));
     pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm,
                                (uint16_t)(host->clock_div_ticks >> 8u),
                                (uint8_t)(host->clock_div_ticks & 0xffu));
+    pio_clkdiv_restart_sm_mask(host->pio,
+                               (1u << host->command_sm) | (1u << host->data_sm));
     pio_sm_set_enabled(host->pio, host->command_sm, true);
+    host->clock_owner = PF_SDIO_PIO_CLOCK_COMMAND;
     host->mode_restore_failed = false;
+    return true;
+}
+
+static void release_bus_pins(pf_sdio_pio_host_t *host)
+{
+    gpio_pull_up(host->command_gpio);
+    for (uint pin = 0u; pin < 4u; pin++) {
+        gpio_pull_up(host->data_gpio_base + pin);
+    }
+    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm,
+                                   host->command_gpio, 1u, false);
+    pio_sm_set_consecutive_pindirs(host->pio, host->data_sm,
+                                   host->data_gpio_base, 4u, false);
+    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm,
+                                   host->clock_gpio, 1u, true);
+    pio_sm_exec(host->pio, host->command_sm, pio_encode_nop());
+}
+
+static void set_bus_idle_pins(pf_sdio_pio_host_t *host)
+{
+    release_bus_pins(host);
+    pio_sm_exec(host->pio, host->command_sm,
+                pio_encode_jmp(host->command_program_offset));
+}
+
+void pf_sdio_pio_host_abort(pf_sdio_pio_host_t *host)
+{
+    if ((host == NULL) || (host->pio == NULL)) {
+        return;
+    }
+
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
+    pio_sm_set_enabled(host->pio, host->data_sm, false);
+    if (host->dma_claimed) {
+        dma_channel_abort(host->dma_channel);
+    }
+    clear_sm_fdebug(host, host->command_sm);
+    clear_sm_fdebug(host, host->data_sm);
+    pio_sm_clear_fifos(host->pio, host->command_sm);
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    for (uint irq = 0u; irq < SDIO_IRQ_COUNT; irq++) {
+        pio_interrupt_clear(host->pio, irq);
+    }
+    pio_sm_restart(host->pio, host->command_sm);
+    pio_sm_restart(host->pio, host->data_sm);
+    pio_clkdiv_restart_sm_mask(host->pio,
+                               (1u << host->command_sm) | (1u << host->data_sm));
+    release_bus_pins(host);
+
+    if (!restore_command_mode(host)) {
+        host->mode_restore_failed = true;
+        if (host->last_error == PF_SD_CARD_DETAIL_NONE) {
+            set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        }
+        release_bus_pins(host);
+        host->clock_owner = PF_SDIO_PIO_CLOCK_UNOWNED;
+        return;
+    }
+
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
+    pio_sm_set_enabled(host->pio, host->data_sm, false);
+    clear_sm_fdebug(host, host->command_sm);
+    clear_sm_fdebug(host, host->data_sm);
+    pio_sm_clear_fifos(host->pio, host->command_sm);
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    pio_sm_restart(host->pio, host->command_sm);
+    pio_sm_restart(host->pio, host->data_sm);
+    pio_clkdiv_restart_sm_mask(host->pio,
+                               (1u << host->command_sm) | (1u << host->data_sm));
+    set_bus_idle_pins(host);
+    host->clock_owner = PF_SDIO_PIO_CLOCK_UNOWNED;
+}
+
+static bool wait_clock_level(pf_sdio_pio_host_t *host, bool high, uint32_t start)
+{
+    while ((gpio_get(host->clock_gpio) != 0u) != high) {
+        if ((uint32_t)(time_us_32() - start) >= SDIO_INIT_CLOCK_TIMEOUT_US) {
+            ++host->errors.pio_timeouts;
+            set_error(host, PF_SD_CARD_DETAIL_PIO_TIMEOUT);
+            return false;
+        }
+        tight_loop_contents();
+    }
+    return true;
+}
+
+bool pf_sdio_pio_host_prepare_initialization(pf_sdio_pio_host_t *host)
+{
+    if ((host == NULL) || (host->pio == NULL) || !host->dma_claimed ||
+        host->mode_restore_failed) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        return false;
+    }
+    if ((host->write_stream_open || host->read_stream_unresolved) &&
+        !pf_sdio_pio_host_recover(host)) {
+        return false;
+    }
+    if ((host->clock_owner == PF_SDIO_PIO_CLOCK_DATA_TX) ||
+        (host->clock_owner == PF_SDIO_PIO_CLOCK_INITIALIZATION)) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        return false;
+    }
+
+    pf_sdio_pio_host_abort(host);
+    if (host->mode_restore_failed ||
+        !pf_sdio_pio_host_set_clock(host, 400000u) ||
+        !load_tx_programs(host)) {
+        if (host->last_error == PF_SD_CARD_DETAIL_NONE) {
+            set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        }
+        pf_sdio_pio_host_abort(host);
+        return false;
+    }
+
+    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm,
+                                   host->command_gpio, 1u, false);
+    pio_sm_set_consecutive_pindirs(host->pio, host->data_sm,
+                                   host->data_gpio_base, 4u, false);
+    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm,
+                                   host->clock_gpio, 1u, true);
+    pio_sm_exec(host->pio, host->command_sm,
+                pio_encode_jmp(host->clock_program_offset));
+    host->clock_owner = PF_SDIO_PIO_CLOCK_INITIALIZATION;
+    pio_sm_set_enabled(host->pio, host->command_sm, true);
+
+    uint32_t start = time_us_32();
+    for (uint cycle = 0u; cycle < SDIO_INIT_CLOCKS; cycle++) {
+        if (!wait_clock_level(host, true, start) ||
+            !wait_clock_level(host, false, start)) {
+            pf_sdio_pio_host_abort(host);
+            return false;
+        }
+    }
+
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
+    if (!restore_command_mode(host)) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        pf_sdio_pio_host_abort(host);
+        return false;
+    }
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
+    set_bus_idle_pins(host);
+    host->clock_owner = PF_SDIO_PIO_CLOCK_UNOWNED;
+    host->initialization_prepared = true;
+    return true;
+}
+
+bool pf_sdio_pio_host_set_bus_width(pf_sdio_pio_host_t *host, uint8_t width)
+{
+    if ((host == NULL) || (host->pio == NULL) ||
+        ((width != 1u) && (width != 4u)) ||
+        (host->write_stream_open || host->read_stream_unresolved) ||
+        ((host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED) &&
+         (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND))) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        return false;
+    }
+    host->bus_width = width;
     return true;
 }
 
@@ -337,6 +659,9 @@ static bool wait_for_command_complete(pf_sdio_pio_host_t *host,
             (!pio_interrupt_get(host->pio, SDIO_RESPONSE_IRQ) ||
              (words_read < response_word_count))) {
             pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
+            ++host->errors.command_timeouts;
+            ++host->errors.pio_timeouts;
+            set_error(host, PF_SD_CARD_DETAIL_PIO_TIMEOUT);
             return false;
         }
         tight_loop_contents();
@@ -364,6 +689,7 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
     host->pio = config->pio;
     host->command_gpio = config->command_gpio;
     host->data0_gpio = config->data_gpio[0];
+    host->bus_width = 1u;
     host->data_rx_multiblock_supported = true;
     data_gpio_base = config->data_gpio[0];
     host->data_gpio_base = data_gpio_base;
@@ -391,6 +717,7 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
         return false;
     }
     host->dma_channel = (uint)dma_channel;
+    host->dma_claimed = true;
 
     pio_gpio_init(host->pio, host->clock_gpio);
     pio_gpio_init(host->pio, host->command_gpio);
@@ -420,7 +747,9 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host,
         return false;
     }
 
-    pio_sm_set_enabled(host->pio, host->command_sm, true);
+    set_bus_idle_pins(host);
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
+    host->clock_owner = PF_SDIO_PIO_CLOCK_UNOWNED;
     return true;
 }
 
@@ -432,6 +761,36 @@ void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host)
 
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     pio_sm_set_enabled(host->pio, host->data_sm, false);
+    if (host->dma_claimed) {
+        dma_channel_abort(host->dma_channel);
+    }
+    clear_sm_fdebug(host, host->command_sm);
+    clear_sm_fdebug(host, host->data_sm);
+    pio_sm_clear_fifos(host->pio, host->command_sm);
+    pio_sm_clear_fifos(host->pio, host->data_sm);
+    for (uint irq = 0u; irq < SDIO_IRQ_COUNT; irq++) {
+        pio_interrupt_clear(host->pio, irq);
+    }
+    pio_sm_restart(host->pio, host->command_sm);
+    pio_sm_restart(host->pio, host->data_sm);
+    pio_clkdiv_restart_sm_mask(host->pio,
+                               (1u << host->command_sm) | (1u << host->data_sm));
+    gpio_pull_up(host->command_gpio);
+    for (uint pin = 0u; pin < 4u; pin++) {
+        gpio_pull_up(host->data_gpio_base + pin);
+    }
+    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm,
+                                   host->command_gpio, 1u, false);
+    pio_sm_set_consecutive_pindirs(host->pio, host->data_sm,
+                                   host->data_gpio_base, 4u, false);
+    pio_sm_set_consecutive_pindirs(host->pio, host->command_sm,
+                                   host->clock_gpio, 1u, true);
+    if (host->command_program_loaded) {
+        pio_sm_exec(host->pio, host->command_sm,
+                    pio_encode_jmp(host->command_program_offset));
+    } else if (host->clock_program_loaded) {
+        pio_sm_exec(host->pio, host->command_sm, pio_encode_nop());
+    }
     if (host->data_rx_program_loaded) {
         pio_remove_program(host->pio, data_rx_program(host),
                            host->data_rx_program_offset);
@@ -453,7 +812,20 @@ void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host)
     host->pio->input_sync_bypass =
         (host->pio->input_sync_bypass & ~host->input_sync_bypass_mask) |
         (host->previous_input_sync_bypass & host->input_sync_bypass_mask);
-    dma_channel_unclaim(host->dma_channel);
+    gpio_init(host->command_gpio);
+    gpio_pull_up(host->command_gpio);
+    gpio_set_dir(host->command_gpio, false);
+    for (uint pin = 0u; pin < 4u; pin++) {
+        gpio_init(host->data_gpio_base + pin);
+        gpio_pull_up(host->data_gpio_base + pin);
+        gpio_set_dir(host->data_gpio_base + pin, false);
+    }
+    gpio_init(host->clock_gpio);
+    gpio_put(host->clock_gpio, false);
+    gpio_set_dir(host->clock_gpio, true);
+    if (host->dma_claimed) {
+        dma_channel_unclaim(host->dma_channel);
+    }
     pio_sm_unclaim(host->pio, host->data_sm);
     pio_sm_unclaim(host->pio, host->command_sm);
     memset(host, 0, sizeof(*host));
@@ -464,26 +836,53 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
     uint32_t divider_ticks;
 
     if ((host == NULL) || (host->pio == NULL) || (clock_hz == 0u) ||
-        (clock_hz > 25000000u) || (clock_hz > host->system_clock_hz / 4u)) {
+        (clock_hz > 50000000u) ||
+        ((uint64_t)host->system_clock_hz < (uint64_t)4u * clock_hz) ||
+        ((host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED) &&
+         (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND)) ||
+        host->write_stream_open || host->read_stream_unresolved ||
+        host->mode_restore_failed) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
         return false;
     }
 
-    /* Programs need whole system cycles; never exceed the fixed transfer target. */
-    divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz + 2u * clock_hz - 1u) /
-                               (2u * clock_hz)) * 256u;
+    /* Preserve the proven whole-cycle divider through 25 MHz. Above that, retain
+     * fractional precision; the fast TX state machine runs at half this divider. */
+    if (clock_hz <= 25000000u) {
+        divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz +
+                                    2u * clock_hz - 1u) / (2u * clock_hz)) * 256u;
+    } else {
+        divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz * 128u +
+                                    clock_hz - 1u) / clock_hz);
+    }
+    if (divider_ticks < 512u) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+        return false;
+    }
+
+    bool resume_command = host->clock_owner == PF_SDIO_PIO_CLOCK_COMMAND;
+    pio_sm_set_enabled(host->pio, host->command_sm, false);
     host->clock_div_ticks = divider_ticks;
     pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm,
                                (uint16_t)(divider_ticks >> 8u),
                                (uint8_t)(divider_ticks & 0xffu));
     host->current_clock_hz = (uint32_t)(((uint64_t)host->system_clock_hz * 128u) /
                                         divider_ticks);
+    host->data_rx_fast = host->current_clock_hz > 25000000u;
     if (host->command_program_loaded) {
         pio_sm_set_enabled(host->pio, host->data_sm, false);
         if (host->data_rx_program_loaded) {
             pio_remove_program(host->pio, data_rx_program(host), host->data_rx_program_offset);
         }
         host->data_rx_program_loaded = false;
-        return load_data_rx_program(host);
+        if (!load_data_rx_program(host)) {
+            host->mode_restore_failed = true;
+            set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
+            return false;
+        }
+    }
+    if (resume_command) {
+        pio_sm_set_enabled(host->pio, host->command_sm, true);
     }
     return true;
 }
@@ -500,12 +899,19 @@ bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command,
 
     if ((host == NULL) || (host->pio == NULL) || host->mode_restore_failed ||
         (host->read_stream_unresolved && (command != 12u)) ||
+        ((host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED) &&
+         (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND)) ||
         ((response_bits != 0u) &&
          ((response_words == NULL) || (response_word_count > response_word_capacity))) ||
         (response_bits > 136u) ||
         ((response_bits != 0u) && (response_bits < 8u)) ||
         !pf_sdio_pio_build_command(command, argument, frame)) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
         return false;
+    }
+    if (host->clock_owner == PF_SDIO_PIO_CLOCK_UNOWNED) {
+        host->clock_owner = PF_SDIO_PIO_CLOCK_COMMAND;
+        pio_sm_set_enabled(host->pio, host->command_sm, true);
     }
 
     /* The PIO program shifts a 6-bit loop count (47) before the 48 frame bits. */
@@ -566,10 +972,16 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
     uint32_t wire_bytes;
     bool success = false;
 
-    if ((host == NULL) || ((data == NULL) && (data_size != PF_SD_CARD_BLOCK_SIZE)) ||
+    if ((host == NULL) || (host->bus_width != 4u)) {
+        set_error(host, PF_SD_CARD_DETAIL_FOUR_BIT);
+        return false;
+    }
+    host->last_error = PF_SD_CARD_DETAIL_NONE;
+    if (((data == NULL) && (data_size != PF_SD_CARD_BLOCK_SIZE)) ||
         (data_size == 0u) ||
         (data_size > PF_SD_CARD_BLOCK_SIZE) || ((data_size & 3u) != 0u) ||
         !host->data_rx_program_loaded || host->read_stream_unresolved) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
         return false;
     }
     wire_bytes = (uint32_t)data_size + 8u;
@@ -578,8 +990,8 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
 
     if (!pf_sdio_pio_host_command_bytes(host, command, argument, 48u,
                                          response, sizeof(response)) ||
-        !pf_sdio_pio_parse_response(command, response, &response_argument, true) ||
-        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
+        !parse_host_response(host, command, response, &response_argument) ||
+        !response_status_ok(host, response_argument)) {
         goto cleanup;
     }
 
@@ -589,6 +1001,10 @@ static bool read_data_block(pf_sdio_pio_host_t *host, uint8_t command,
     success = data != NULL
         ? pf_sdio_pio_decode_data_block_sized((const uint8_t *)image, data, data_size)
         : pf_sdio_pio_verify_data_block((const uint8_t *)image);
+    if (!success) {
+        ++host->errors.data_crc_errors;
+        set_error(host, PF_SD_CARD_DETAIL_DATA_CRC);
+    }
 
 cleanup:
     cleanup_data_rx(host);
@@ -620,6 +1036,7 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
     if ((host == NULL) || (scr == NULL) || !host->data_rx_program_loaded) {
         return false;
     }
+    host->last_error = PF_SD_CARD_DETAIL_NONE;
 
     start_data_rx(host, image, SCR_DMA_WORDS, SCR_DATA_BITS, 1u);
 
@@ -628,8 +1045,8 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
                                          response, sizeof(response))) {
         goto cleanup;
     }
-    if (!pf_sdio_pio_parse_response(55u, response, &response_argument, true) ||
-        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
+    if (!parse_host_response(host, 55u, response, &response_argument) ||
+        !response_status_ok(host, response_argument)) {
         goto cleanup;
     }
     host->scr_stage = PF_SDIO_PIO_INIT_STAGE_SCR_RESPONSE;
@@ -637,8 +1054,8 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
                                          response, sizeof(response))) {
         goto cleanup;
     }
-    if (!pf_sdio_pio_parse_response(51u, response, &response_argument, true) ||
-        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
+    if (!parse_host_response(host, 51u, response, &response_argument) ||
+        !response_status_ok(host, response_argument)) {
         goto cleanup;
     }
 
@@ -663,6 +1080,9 @@ bool pf_sdio_pio_host_read_scr(pf_sdio_pio_host_t *host, uint32_t relative_card_
     success = received_crc == pf_sd_card_crc16(scr, 8u);
     if (success) {
         host->scr_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
+    } else {
+        ++host->errors.data_crc_errors;
+        set_error(host, PF_SD_CARD_DETAIL_DATA_CRC);
     }
 cleanup:
     cleanup_data_rx(host);
@@ -687,19 +1107,21 @@ static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
                                          response, sizeof(response))) {
         return false;
     }
-    if (!pf_sdio_pio_parse_response(12u, response, &response_argument, true)) {
+    if (!parse_host_response(host, 12u, response, &response_argument)) {
         return false;
     }
-    if ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u) {
+    if (!response_status_ok(host, response_argument)) {
         return false;
     }
 
     start = time_us_32();
     uint32_t profile_start = pf_sd_card_profile_begin();
     while (gpio_get(host->data0_gpio) == 0u) {
-        if ((uint32_t)(time_us_32() - start) > 1000000u) {
+        if ((uint32_t)(time_us_32() - start) > SDIO_DATA_TIMEOUT_US) {
             pf_sd_card_profile_end(PF_SD_CARD_PROFILE_BUSY, profile_start);
             pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
+            ++host->errors.busy_timeouts;
+            set_error(host, PF_SD_CARD_DETAIL_BUSY_TIMEOUT);
             return false;
         }
         pf_sd_card_idle();
@@ -722,8 +1144,14 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
 {
     if ((host == NULL) || (host->pio == NULL) ||
         !host->data_rx_program_loaded || host->read_stream_unresolved) {
+        set_error(host, PF_SD_CARD_DETAIL_HOST_STATE);
         return false;
     }
+    if (host->bus_width != 4u) {
+        set_error(host, PF_SD_CARD_DETAIL_FOUR_BIT);
+        return false;
+    }
+    host->last_error = PF_SD_CARD_DETAIL_NONE;
     if (block_count == 0u) {
         return true;
     }
@@ -743,6 +1171,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         bool transfer_ok = false;
         bool crc_failed = false;
         bool timed_out = false;
+        bool rx_stalled = false;
         uint32_t decoded_count = 0u;
 
         if (batch_count > SDIO_READ_BATCH_BLOCKS) {
@@ -761,16 +1190,24 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
                                                      48u, response, sizeof(response));
         host->read_stream_unresolved = true;
         bool response_valid = command_ok &&
-            pf_sdio_pio_parse_response(18u, response, &response_argument, true);
+            parse_host_response(host, 18u, response, &response_argument);
         bool response_ok = response_valid &&
             ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) == 0u);
+        if (response_valid && !response_ok) {
+            set_error(host, PF_SD_CARD_DETAIL_CARD_STATUS);
+        }
         if (response_ok) {
             start = time_us_32();
             uint32_t profile_start = pf_sd_card_profile_begin();
             while (!pio_interrupt_get(host->pio, SDIO_DATA_READ_IRQ) ||
                    dma_channel_is_busy(host->dma_channel)) {
-                if ((uint32_t)(time_us_32() - start) > 1000000u) {
+                if (rx_fifo_stalled(host)) {
+                    rx_stalled = true;
+                    break;
+                }
+                if ((uint32_t)(time_us_32() - start) > SDIO_DATA_TIMEOUT_US) {
                     timed_out = true;
+                    count_rx_timeout(host, dma_channel_is_busy(host->dma_channel));
                     pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
                     break;
                 }
@@ -793,7 +1230,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         cleanup_data_rx(host);
         bool stop_ok = stop_multiblock(host);
         host->read_stream_unresolved = !stop_ok;
-        if (!stop_ok || !response_valid || crc_failed || timed_out) {
+        if (!stop_ok || !response_valid || crc_failed || timed_out || rx_stalled) {
             return false;
         }
         if (!transfer_ok) {
@@ -840,14 +1277,19 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         !pf_sd_card_block_argument(sector, block_addressed, &command_argument)) {
         return false;
     }
+    if (host->bus_width != 4u) {
+        set_error(host, PF_SD_CARD_DETAIL_FOUR_BIT);
+        return false;
+    }
+    host->last_error = PF_SD_CARD_DETAIL_NONE;
     if (!pf_sdio_pio_encode_data_block(block, (uint8_t *)image)) {
         return false;
     }
 
     if (!pf_sdio_pio_host_command_bytes(host, 24u, command_argument, 48u,
                                            response, sizeof(response)) ||
-        !pf_sdio_pio_parse_response(24u, response, &response_argument, true) ||
-        ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u)) {
+        !parse_host_response(host, 24u, response, &response_argument) ||
+        !response_status_ok(host, response_argument)) {
         return false;
     }
 
@@ -855,27 +1297,43 @@ bool pf_sdio_pio_host_write_sector(pf_sdio_pio_host_t *host, uint32_t sector,
         goto restore;
     }
     pio_sm_put_blocking(host->pio, host->data_sm, SDIO_DATA_NIBBLE_COUNT - 1u);
-    pio_interrupt_clear(host->pio, 2u);
+    pio_interrupt_clear(host->pio, SDIO_TX_IRQ);
 
     dma_config = tx_dma_config(host);
     dma_channel_configure(host->dma_channel, &dma_config,
                           &host->pio->txf[host->data_sm], image,
                           SDIO_DATA_WORD_COUNT, false);
-    pio_sm_set_enabled(host->pio, host->command_sm, true);
     dma_channel_start(host->dma_channel);
+    if (!wait_tx_preload(host)) {
+        goto restore;
+    }
     start_tx_data(host);
 
     start = time_us_32();
     /* DATA includes the TX PIO program's response token and card-busy wait;
      * these are not separately measured. Match the CMD25 measurement boundary. */
     uint32_t profile_start = pf_sd_card_profile_begin();
-    while (!pio_interrupt_get(host->pio, 2u) || dma_channel_is_busy(host->dma_channel)) {
-        if ((uint32_t)(time_us_32() - start) > 1000000u) {
+    for (;;) {
+        if (tx_fifo_stalled(host)) {
+            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
+            goto restore;
+        }
+        bool data_irq = pio_interrupt_get(host->pio, SDIO_TX_IRQ);
+        bool dma_busy = dma_channel_is_busy(host->dma_channel);
+        if (data_irq && !dma_busy) {
+            break;
+        }
+        if ((uint32_t)(time_us_32() - start) > SDIO_DATA_TIMEOUT_US) {
+            count_tx_timeout(host, dma_busy);
             pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
             pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
             goto restore;
         }
-        wait_data_idle(host, 2u);
+        wait_data_idle(host, SDIO_TX_IRQ);
+    }
+    if (tx_fifo_stalled(host)) {
+        pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
+        goto restore;
     }
     pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
     dma_channel_wait_for_finish_blocking(host->dma_channel);
@@ -887,7 +1345,7 @@ restore:
     if (dma_channel_is_busy(host->dma_channel)) {
         dma_channel_abort(host->dma_channel);
     }
-    pio_interrupt_clear(host->pio, 2u);
+    pio_interrupt_clear(host->pio, SDIO_TX_IRQ);
     return restore_command_mode(host) && success;
 }
 
@@ -944,6 +1402,11 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         !pf_sd_card_block_argument(first_sector, block_addressed, &command_argument)) {
         return false;
     }
+    if (host->bus_width != 4u) {
+        set_error(host, PF_SD_CARD_DETAIL_FOUR_BIT);
+        return false;
+    }
+    host->last_error = PF_SD_CARD_DETAIL_NONE;
     if (host->write_stream_open && !continues &&
         !pf_sdio_pio_host_recover(host)) {
         return false;
@@ -955,7 +1418,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         bool command_ok = pf_sdio_pio_host_command_bytes(
             host, 25u, command_argument, 48u, response, sizeof(response));
         bool response_valid = command_ok &&
-            pf_sdio_pio_parse_response(25u, response, &response_argument, true);
+            parse_host_response(host, 25u, response, &response_argument);
         if (!response_valid) {
             host->write_stream_open = true;
             host->write_stream_next_sector = first_sector;
@@ -963,6 +1426,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
             return false;
         }
         if ((response_argument & PF_SDIO_PIO_R1_ERROR_MASK) != 0u) {
+            set_error(host, PF_SD_CARD_DETAIL_CARD_STATUS);
             return false;
         }
         host->write_stream_open = true;
@@ -972,7 +1436,6 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
             (void)pf_sdio_pio_host_recover(host);
             return false;
         }
-        pio_sm_set_enabled(host->pio, host->command_sm, true);
     }
     dma_channel_config dma_config = tx_dma_config(host);
     for (uint32_t block_index = 0u; block_index < block_count; block_index++) {
@@ -980,7 +1443,7 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
         uint32_t response_word = 0u;
 
         pio_sm_clear_fifos(host->pio, host->data_sm);
-        pio_interrupt_clear(host->pio, 2u);
+        pio_interrupt_clear(host->pio, SDIO_TX_IRQ);
         pio_sm_restart(host->pio, host->data_sm);
         pio_sm_exec(host->pio, host->data_sm,
                     pio_encode_jmp(host->data_tx_program_offset));
@@ -990,6 +1453,10 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
                               &host->pio->txf[host->data_sm], image,
                               SDIO_DATA_WORD_COUNT, false);
         dma_channel_start(host->dma_channel);
+        if (!wait_tx_preload(host)) {
+            transfer_ok = false;
+            break;
+        }
         start_tx_data(host);
 
         start = time_us_32();
@@ -1000,16 +1467,28 @@ bool pf_sdio_pio_host_write_blocks(pf_sdio_pio_host_t *host, uint32_t first_sect
                 (uint8_t *)images[(block_index + 1u) & 1u])) {
             transfer_ok = false;
         }
-        while (!pio_interrupt_get(host->pio, 2u) ||
-               dma_channel_is_busy(host->dma_channel)) {
-            if ((uint32_t)(time_us_32() - start) > 1000000u) {
+        for (;;) {
+            if (tx_fifo_stalled(host)) {
+                transfer_ok = false;
+                break;
+            }
+            bool data_irq = pio_interrupt_get(host->pio, SDIO_TX_IRQ);
+            bool dma_busy = dma_channel_is_busy(host->dma_channel);
+            if (data_irq && !dma_busy) {
+                break;
+            }
+            if ((uint32_t)(time_us_32() - start) > SDIO_DATA_TIMEOUT_US) {
+                count_tx_timeout(host, dma_busy);
                 transfer_ok = false;
                 pf_sd_card_profile_event(PF_SD_CARD_PROFILE_TIMEOUT);
                 break;
             }
-            wait_data_idle(host, 2u);
+            wait_data_idle(host, SDIO_TX_IRQ);
         }
         pf_sd_card_profile_end(PF_SD_CARD_PROFILE_DATA, profile_start);
+        if (transfer_ok && tx_fifo_stalled(host)) {
+            transfer_ok = false;
+        }
         pio_sm_set_enabled(host->pio, host->data_sm, false);
         if (dma_channel_is_busy(host->dma_channel)) {
             dma_channel_abort(host->dma_channel);
