@@ -76,19 +76,11 @@ class Integrity(unittest.TestCase):
         return subprocess.run([sys.executable, str(script), *map(str, args)],
                               cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
 
-    def test_required_sources_real_runner(self):
+    def test_source_order_checker_needs_no_compiler_and_rejects_changed_ordering(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            # Copy only the runner's explicit source inputs, never alter the worktree.
-            files = [VALIDATION / 'check-sd-msc-production.py']
-            files += list((VALIDATION / 'host').rglob('*.c'))
-            files += list((VALIDATION / 'host/stubs').rglob('*.h'))
-            files += list((ROOT / 'firmware/src/drivers/sd_card').rglob('*.c'))
-            files += list((ROOT / 'firmware/src/drivers/sd_card').rglob('*.h'))
-            files += [ROOT / p for p in (
-                'firmware/src/config/config.h', 'firmware/src/usb/msc.c',
-                'firmware/src/usb/msc.h', 'firmware/src/middleware/storage/storage.h',
-                'firmware/src/middleware/storage/storage_worker.h', 'firmware/CMakeLists.txt',
+            files = [VALIDATION / 'check-sd-msc-production.py'] + [ROOT / p for p in (
+                'firmware/CMakeLists.txt',
                 'firmware/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c',
                 'firmware/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c')]
             for source in files:
@@ -96,20 +88,15 @@ class Integrity(unittest.TestCase):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, dest)
             runner = root / 'tools/validation/check-sd-msc-production.py'
-            for name in ('spi_write', 'msc'):
-                source = root / f'tools/validation/host/regression_{name}.c'
-                saved = source.read_bytes()
-                source.unlink()  # Only the temporary copy.
-                result = self.run_script(runner)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('Missing required production regression', result.stderr)
-                self.assertIn(str(source), result.stderr)
-                self.assertNotIn('Executed required regression', result.stdout)
-                source.write_bytes(saved)
-            result = self.run_script(runner)
+            env = dict(os.environ, CC='/nonexistent/compiler', PYTHONDONTWRITEBYTECODE='1')
+            result = self.run_script(runner, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            for name in ('spi_write', 'msc'):
-                self.assertIn(f'Executed required regression: {root}/tools/validation/host/regression_{name}.c', result.stdout)
+            self.assertIn('Pinned TinyUSB source ordering checked', result.stdout)
+            source = root / 'firmware/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c'
+            source.write_text(source.read_text().replace(
+                'set_sense_medium_not_present(p_cbw->lun);', '/* missing failure sense */'))
+            result = self.run_script(runner, env=env)
+            self.assertNotEqual(result.returncode, 0)
 
     def test_elf_standalone_and_identity(self):
         with tempfile.TemporaryDirectory() as tmp:

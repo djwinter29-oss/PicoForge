@@ -5,6 +5,9 @@
 #include <stdint.h>
 
 uint32_t gpio_get(unsigned pin);
+void gpio_init(unsigned pin);
 void gpio_pull_up(unsigned pin);
+void gpio_pull_down(unsigned pin);
+void gpio_disable_pulls(unsigned pin);
 
 #endif

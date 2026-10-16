@@ -99,14 +99,6 @@ fi
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "=== Ceedling project and unit tests ==="
     python3 tools/validation/check-sd-msc-production.py
-    python3 tools/validation/check-storage-automount.py
-    python3 tools/validation/check-sd-serialization.py
-    python3 tools/validation/check-sd-ports.py
-    python3 tools/validation/check-usb-sd-responsiveness.py
-    python3 tools/validation/check-sdio-init.py
-    python3 tools/validation/check-sdio-tx.py
-    python3 tools/validation/check-sdio-read-batch.py
-    python3 tools/validation/check-sd-spi-transfer.py
     "$CEEDLING_SCRIPT" check
     if find firmware/tests -type f -name 'test_*.c' -print -quit | grep -q .; then
         "$CEEDLING_SCRIPT" test:all

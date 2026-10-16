@@ -5,6 +5,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include <string.h>
 
+#include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio.c"
 #include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_host.c"
 #include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c"
 #include "../../../../src/drivers/sd_card/sd_card_protocol.c"
@@ -91,4 +92,29 @@ void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 
     TEST_ASSERT_NULL(host.pio);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_removed_programs);
+}
+
+void test_confirm_card_removed_invalidates_card_before_forgetting_host_streams(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    sdio_pio_host = (pf_sdio_pio_host_t){
+        .pio = &pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .command_program_loaded = true,
+        .data_rx_program_loaded = true,
+        .write_stream_open = true,
+        .read_stream_unresolved = true
+    };
+    configuration_set = false;
+    card_initialized = true;
+    pf_test_sdio_observed_host = &sdio_pio_host;
+    pf_test_sdio_expect_streams_cleared = true;
+
+    pf_sdio_pio_confirm_card_removed();
+
+    TEST_ASSERT_FALSE(card_initialized);
+    TEST_ASSERT_TRUE(pf_test_sdio_streams_were_cleared);
+    TEST_ASSERT_FALSE(sdio_pio_host.write_stream_open);
+    TEST_ASSERT_FALSE(sdio_pio_host.read_stream_unresolved);
 }

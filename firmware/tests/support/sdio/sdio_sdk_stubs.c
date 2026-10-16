@@ -16,6 +16,33 @@ const pio_program_t pf_sdio_pio_data_rx_program = { 0 };
 const pio_program_t pf_sdio_pio_data_rx_fast_program = { 0 };
 const pio_program_t pf_sdio_pio_data_tx_program = { 0 };
 const pio_program_t pf_sdio_pio_data_tx_fast_program = { 0 };
+dma_hw_t pf_test_sdio_dma_registers;
+unsigned pf_test_sdio_barrier_count;
+bool pf_test_sdio_data_irq = true;
+bool pf_test_sdio_dma_busy;
+bool pf_test_sdio_corrupt_command_crc;
+unsigned pf_test_sdio_data_fifo_words = 1u;
+uint32_t pf_test_sdio_data_response = 0x05u;
+uint32_t pf_test_sdio_time_step = 1u;
+unsigned pf_test_sdio_command_count;
+uint8_t pf_test_sdio_last_command;
+uint32_t pf_test_sdio_dma_word_count;
+dma_channel_config pf_test_sdio_last_dma_config;
+uint32_t pf_test_sdio_gpio_level = 1u;
+uint8_t pf_test_sdio_rx_wire[40];
+size_t pf_test_sdio_rx_wire_size;
+bool pf_test_sdio_data_wait_ok = true;
+unsigned pf_test_sdio_command_fail;
+unsigned pf_test_sdio_command_error;
+unsigned pf_test_sdio_corrupt_command;
+unsigned pf_test_sdio_pio_restart_calls;
+uint32_t pf_test_sdio_pio_trace[32];
+unsigned pf_test_sdio_pio_trace_count;
+uint8_t pf_test_sdio_batch_rx[PF_TEST_SDIO_MAX_RX_BATCH_BYTES];
+size_t pf_test_sdio_batch_rx_size;
+static uint32_t pf_test_sdio_command_words[2];
+static unsigned pf_test_sdio_command_word_count;
+static unsigned pf_test_sdio_command_word_index;
 static pf_test_sdio_pio_t pf_test_sdio_pio0;
 static pf_test_sdio_pio_t pf_test_sdio_pio1;
 PIO pio0 = &pf_test_sdio_pio0;
@@ -60,16 +87,78 @@ void pio_sm_set_enabled(PIO pio, uint sm, bool enabled)
 void pio_enable_sm_mask_in_sync(PIO pio, uint mask) { (void)pio; (void)mask; }
 uint pio_get_dreq(PIO pio, uint sm, bool tx) { (void)pio; (void)sm; (void)tx; return 0u; }
 void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value)
-{ (void)pio; (void)sm; (void)value; }
-void pio_sm_exec(PIO pio, uint sm, uint instruction) { (void)pio; (void)sm; (void)instruction; }
+{
+    (void)pio;
+    if (sm == 1u && pf_test_sdio_pio_trace_count < 32u) {
+        pf_test_sdio_pio_trace[pf_test_sdio_pio_trace_count++] = 0x10000000u | value;
+    }
+    if (sm == 0u) {
+        if (pf_test_sdio_command_word_count == 0u) {
+            pf_test_sdio_last_command = (uint8_t)((value >> 18u) & 0x3fu);
+            ++pf_test_sdio_command_count;
+        }
+        ++pf_test_sdio_command_word_count;
+        if (pf_test_sdio_command_word_count == 3u) {
+            uint8_t response[6] = {0};
+            response[0] = pf_test_sdio_last_command;
+            if (pf_test_sdio_last_command == pf_test_sdio_command_error) {
+                response[2] = 0x40u;
+            }
+            response[5] = (uint8_t)((pf_sdio_pio_crc7(response, 5u) << 1u) | 1u);
+            if (pf_test_sdio_corrupt_command_crc &&
+                ((pf_test_sdio_corrupt_command == 0u) ||
+                 (pf_test_sdio_corrupt_command == pf_test_sdio_last_command))) {
+                response[5] ^= 2u;
+            }
+            pf_test_sdio_command_words[0] = ((uint32_t)response[0] << 24u) |
+                ((uint32_t)response[1] << 16u) | ((uint32_t)response[2] << 8u) | response[3];
+            pf_test_sdio_command_words[1] = ((uint32_t)response[4] << 8u) |
+                response[5];
+            pf_test_sdio_command_word_index = 0u;
+        }
+    }
+    (void)value;
+}
+void pio_sm_exec(PIO pio, uint sm, uint instruction)
+{
+    (void)pio;
+    if (sm == 1u && pf_test_sdio_pio_trace_count < 32u) {
+        pf_test_sdio_pio_trace[pf_test_sdio_pio_trace_count++] = 0x20000000u | instruction;
+    }
+}
 void pio_sm_clear_fifos(PIO pio, uint sm) { (void)pio; (void)sm; }
-void pio_sm_restart(PIO pio, uint sm) { (void)pio; (void)sm; }
-uint pio_sm_get_rx_fifo_level(PIO pio, uint sm) { (void)pio; (void)sm; return 0u; }
-uint32_t pio_sm_get(PIO pio, uint sm) { (void)pio; (void)sm; return 0u; }
+void pio_sm_restart(PIO pio, uint sm)
+{ (void)pio; if (sm == 1u) ++pf_test_sdio_pio_restart_calls; }
+uint pio_sm_get_rx_fifo_level(PIO pio, uint sm)
+{
+    (void)pio;
+    if (sm == 0u) {
+        return pf_test_sdio_command_word_count == 3u
+            ? 2u - pf_test_sdio_command_word_index : 0u;
+    }
+    return pf_test_sdio_data_fifo_words;
+}
+uint32_t pio_sm_get(PIO pio, uint sm)
+{
+    (void)pio;
+    if (sm == 0u && pf_test_sdio_command_word_index < 2u) {
+        return pf_test_sdio_command_words[pf_test_sdio_command_word_index++];
+    }
+    return pf_test_sdio_data_response;
+}
 void pio_sm_set_clkdiv_int_frac(PIO pio, uint sm, uint16_t integer, uint8_t fraction)
 { (void)pio; (void)sm; (void)integer; (void)fraction; }
-void pio_interrupt_clear(PIO pio, uint index) { (void)pio; (void)index; }
-bool pio_interrupt_get(PIO pio, uint index) { (void)pio; (void)index; return true; }
+void pio_interrupt_clear(PIO pio, uint index)
+{ (void)pio; if (index == 0u) pf_test_sdio_command_word_count = 0u; }
+bool pio_interrupt_get(PIO pio, uint index)
+{
+    (void)pio;
+    if (index == 0u) {
+        return pf_test_sdio_last_command != pf_test_sdio_command_fail;
+    }
+    if (index == 2u) return pf_test_sdio_data_irq;
+    return pf_test_sdio_data_wait_ok;
+}
 uint pio_encode_jmp(uint address) { return address; }
 uint pio_encode_pull(bool if_empty, bool block) { return (uint)if_empty | ((uint)block << 1u); }
 uint pio_encode_mov(uint destination, uint source) { return destination | (source << 8u); }
@@ -117,19 +206,39 @@ void channel_config_set_write_increment(dma_channel_config *config, bool enabled
 void dma_channel_configure(unsigned channel, const dma_channel_config *config,
                            void *write_addr, const void *read_addr,
                            unsigned transfer_count, bool start)
-{ (void)channel; (void)config; (void)write_addr; (void)read_addr; (void)transfer_count; (void)start; }
+{
+    (void)channel; (void)read_addr; (void)start;
+    pf_test_sdio_last_dma_config = *config;
+    pf_test_sdio_dma_word_count = transfer_count;
+    if (config->write_inc) {
+        size_t copy_size = transfer_count * sizeof(uint32_t);
+        if (pf_test_sdio_batch_rx_size != 0u) {
+            if (copy_size > pf_test_sdio_batch_rx_size) copy_size = pf_test_sdio_batch_rx_size;
+            memcpy(write_addr, pf_test_sdio_batch_rx, copy_size);
+        } else if (pf_test_sdio_rx_wire_size != 0u) {
+            if (copy_size > pf_test_sdio_rx_wire_size) copy_size = pf_test_sdio_rx_wire_size;
+            memcpy(write_addr, pf_test_sdio_rx_wire, copy_size);
+        }
+        pf_test_sdio_dma_registers.write_addr =
+            (uintptr_t)write_addr + transfer_count * sizeof(uint32_t);
+    }
+}
 void dma_channel_start(unsigned channel) { (void)channel; }
-bool dma_channel_is_busy(unsigned channel) { (void)channel; return false; }
+bool dma_channel_is_busy(unsigned channel) { (void)channel; return pf_test_sdio_dma_busy; }
 void dma_channel_abort(unsigned channel) { (void)channel; }
 void dma_channel_wait_for_finish_blocking(unsigned channel) { (void)channel; }
-dma_hw_t *dma_channel_hw_addr(unsigned channel) { (void)channel; return NULL; }
+dma_hw_t *dma_channel_hw_addr(unsigned channel) { (void)channel; return &pf_test_sdio_dma_registers; }
 int dma_claim_unused_channel(bool required) { (void)required; return 0; }
 void dma_channel_unclaim(unsigned channel) { (void)channel; }
 
 uint32_t clock_get_hz(unsigned clock) { (void)clock; return 125000000u; }
-uint32_t gpio_get(unsigned pin) { (void)pin; return 1u; }
+uint32_t gpio_get(unsigned pin) { (void)pin; return pf_test_sdio_gpio_level; }
 void gpio_pull_up(unsigned pin) { (void)pin; }
-void __dmb(void) {}
-uint32_t time_us_32(void) { static uint32_t now; return ++now; }
+void gpio_init(unsigned pin) { (void)pin; }
+void gpio_pull_down(unsigned pin) { (void)pin; }
+void gpio_disable_pulls(unsigned pin) { (void)pin; }
+void __dmb(void) { ++pf_test_sdio_barrier_count; }
+uint32_t time_us_32(void) { static uint32_t now; now += pf_test_sdio_time_step; return now; }
 void sleep_us(uint64_t duration) { (void)duration; }
+void sleep_ms(uint32_t duration) { (void)duration; }
 void tight_loop_contents(void) {}

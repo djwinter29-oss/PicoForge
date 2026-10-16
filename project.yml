@@ -35,6 +35,7 @@
   :source:
     - +:firmware/src/**
     - +:firmware/third_party/embedded-cli/lib/src
+    - +:firmware/tests/support/msc
   :include:
     - firmware/src/**
     - firmware/third_party/fatfs/source
@@ -46,3 +47,43 @@
   :source:
     - -:firmware/src/main.c
     - -:firmware/src/drivers/temperature.c
+
+:flags:
+  :test:
+    :compile:
+      :test_sd_card_serialization:
+        - -std=c11
+        - -D_XOPEN_SOURCE=700
+        - -pthread
+      :test_sd_card_:
+        - -ffunction-sections
+        - -fdata-sections
+      :/test_sd_card_.*_spi/:
+        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+      :test_storage_automount:
+        - -ffunction-sections
+        - -fdata-sections
+      :test_usb_sd_responsiveness:
+        - -ffunction-sections
+        - -fdata-sections
+      :test_msc_batch:
+        - -D_XOPEN_SOURCE=700
+        - -pthread
+      :test_msc_batch_sdio:
+        - -DPF_CONFIG_SD_CARD_TRANSPORT=0
+      :test_msc_batch_spi:
+        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+    :link:
+      :test_sd_card_serialization:
+        - -pthread
+      :test_sd_card_:
+        - -Wl,--gc-sections
+      :test_storage_automount:
+        - -Wl,--gc-sections
+      :test_usb_sd_responsiveness:
+        - -Wl,--gc-sections
+      :test_msc_callbacks:
+        - -Wl,--wrap=mscd_reset
+        - -Wl,--wrap=mscd_control_xfer_cb
+      :test_msc_batch:
+        - -pthread

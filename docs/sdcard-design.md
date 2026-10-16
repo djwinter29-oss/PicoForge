@@ -146,8 +146,10 @@ SPI also rejects that native-only option. There is no scheduler auto-detection
 or fallback to an unsynchronized port. `load.sh` builds the FreeRTOS application;
 it does not automatically select the bare-metal smoke target.
 
-`check-sd-ports.py` runs both bare-metal facade transports on the host, including
+Ceedling tests run both bare-metal facade transports on the host, including
 byte-preserving transfers, recursive reservations, sync, and ownership rejection.
+See [firmware test guidance](../firmware/tests/README.md#host-behavior-regressions).
+`check-sd-ports.py` inspects cross-build artifacts.
 `validate.sh` also builds both ports and transports for RP2040/RP2350 and inspects
 the bare-metal compilation database and ELF for kernel dependencies and a single
 selected port. These are host/build checks, not physical-card qualification.
@@ -585,7 +587,7 @@ Acknowledging cached data early would weaken the error/durability contract.
 Current 512-byte BOT staging remains a performance ceiling; no USB throughput
 gain is claimed from accepting larger callback inputs.
 
-`check-msc-batch.py` executes production MSC, facade and diskio against a
+Ceedling MSC batch tests execute production MSC, facade and diskio against a
 data-bearing backend seam (actual bytes, ownership, RMW, batch counts, sense and
 checked completion). It does not execute TinyUSB's BOT state machine or physical
 SD transport. Existing SDK TinyUSB tests require an external test environment;
@@ -693,14 +695,13 @@ do not provide ownership or task serialization and are not an application API.
 
 Host checks cover shared protocol arithmetic, native wire encoding/CRC, SPI
 tokens, native initialization/recovery/transfer routing, DMA batch decoding,
-and PIO timing models. Relevant checks live in
-[firmware SD-card tests](../firmware/tests/drivers/sd_card),
-[check-sdio-init.py](../tools/validation/check-sdio-init.py),
-[check-sdio-read-batch.py](../tools/validation/check-sdio-read-batch.py),
-[check-sd-spi-transfer.py](../tools/validation/check-sd-spi-transfer.py), and
-[check-sdio-pio-timing.py](../tools/validation/check-sdio-pio-timing.py).
-The [USB responsiveness check](../tools/validation/check-usb-sd-responsiveness.py)
-exercises production memory-report/self-test-start functions with an unavailable
+and PIO timing models. C behavior regressions live in the mirrored
+[firmware tests](../firmware/tests), with runner commands and placement described
+in [test guidance](../firmware/tests/README.md#host-behavior-regressions).
+[check-sdio-pio-timing.py](../tools/validation/check-sdio-pio-timing.py) remains
+a separate assembled-instruction model.
+The Ceedling USB responsiveness tests exercise production
+memory-report/self-test-start functions with an unavailable
 reservation. The serialization check verifies nonblocking reservations against
 concurrent slow backend calls in both transports, and the automount check covers
 explicit MSC fault recovery, rejection, and the no-automount latch. These are
@@ -766,7 +767,7 @@ reset, and failures after handled reset retain their fresh sense. Rejected
 requests, skipped SETUP events, and DATA/ACK stages do not clear it.
 
 `python3 tools/validation/check-sd-msc-production.py` checks pinned
-source ordering and runs production application callbacks and linker wrappers
+source ordering. Ceedling runs production application callbacks and linker wrappers
 against a separate host driver/queue model. TinyUSB itself is not linked in that
 host regression; it is not a real BOT integration or hardware qualification.
 

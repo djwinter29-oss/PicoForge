@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define NUM_BANK0_GPIOS 30u
+
 typedef unsigned int uint;
 typedef struct {
     uint32_t txf[4];
@@ -25,10 +27,10 @@ typedef struct {
 } pio_sm_config;
 
 typedef enum {
-    pio_interrupt0,
-    pio_interrupt1,
-    pio_interrupt2,
-    pio_interrupt3
+    pis_interrupt0,
+    pis_interrupt1,
+    pis_interrupt2,
+    pis_interrupt3
 } pio_interrupt_source_t;
 
 enum {

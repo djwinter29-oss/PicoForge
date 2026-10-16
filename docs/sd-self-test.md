@@ -201,8 +201,8 @@ Final Pico 2 hardware validation at 150 MHz CPU / 12.5 MHz SDIO passed three
 zero mismatches and successful cleanup. These are short filesystem benchmarks,
 not a continuous acquisition guarantee. See
 `tests/records/2026-10-13-sdio-read-throughput.md` for artifacts and scope.
-Run `python3 tools/validation/check-sdio-read-batch.py` for structural and
-compiled-helper DMA boundary regression checks.
+Run the Ceedling SDIO read-batch regressions for DMA boundary and recovery
+checks; see [firmware test guidance](../firmware/tests/README.md#host-behavior-regressions).
 At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
 indicating some CPU-side cost, but the overclock is diagnostic only.
 

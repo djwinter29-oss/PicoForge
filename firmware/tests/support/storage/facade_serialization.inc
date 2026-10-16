@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <sched.h>
+#include <unistd.h>
 #include "selected_transport.h"
 
 #define FACADE_SOURCE "../../../src/drivers/sd_card/sd_card.c"
