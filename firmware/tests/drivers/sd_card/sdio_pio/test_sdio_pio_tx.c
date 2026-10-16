@@ -34,7 +34,14 @@ void setUp(void)
     pf_test_sdio_removed_programs = 0u;
     pf_test_sdio_data_irq = true;
     pf_test_sdio_dma_busy = false;
+    pf_test_sdio_dma_busy_delay = 0u;
+    pf_test_sdio_data_irq_delay = 0u;
+    pf_test_sdio_data_irq_queries = 0u;
+    pf_test_sdio_dma_busy_queries = 0u;
     pf_test_sdio_corrupt_command_crc = false;
+    pf_test_sdio_command_fail = 0u;
+    pf_test_sdio_command_error = 0u;
+    pf_test_sdio_corrupt_command = 0u;
     pf_test_sdio_data_fifo_words = 1u;
     pf_test_sdio_data_response = 0x05u;
     pf_test_sdio_time_step = 1u;
@@ -139,4 +146,65 @@ void test_cmd25_batches_and_continues_without_reissuing_command(void)
     TEST_ASSERT_TRUE(pf_sdio_pio_host_write_blocks(&host, 7u, true, blocks, 1u));
     TEST_ASSERT_EQUAL_UINT(command_count, pf_test_sdio_command_count);
     TEST_ASSERT_EQUAL_UINT32(8u, host.write_stream_next_sector);
+}
+
+void test_cmd24_waits_for_both_dma_and_pio_completion_independently(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = make_host(&pio);
+    uint8_t block[PF_SD_CARD_BLOCK_SIZE] = {0};
+
+    pf_test_sdio_dma_busy_delay = 1u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_write_sector(&host, 2u, true, block));
+    TEST_ASSERT_TRUE(pf_test_sdio_dma_busy_queries >= 2u);
+
+    pf_test_sdio_data_irq_queries = 0u;
+    pf_test_sdio_dma_busy_queries = 0u;
+    pf_test_sdio_data_irq_delay = 1u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_write_sector(&host, 3u, true, block));
+    TEST_ASSERT_TRUE(pf_test_sdio_data_irq_queries >= 2u);
+    TEST_ASSERT_TRUE(pf_test_sdio_dma_busy_queries > 0u);
+}
+
+void test_cmd24_command_and_program_failures_do_not_report_data_success(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = make_host(&pio);
+    uint8_t block[PF_SD_CARD_BLOCK_SIZE] = {0};
+    pf_sd_card_profile_t profile;
+
+    pf_test_sdio_command_error = 24u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 2u, true, block));
+    check_data_profile(0u, 0u);
+
+    pf_test_sdio_command_error = 0u;
+    pf_test_sdio_command_fail = 24u;
+    pf_test_sdio_time_step = 500001u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 2u, true, block));
+    pf_sd_card_get_profile(&profile);
+    TEST_ASSERT_EQUAL_UINT(0u, profile.calls[PF_SD_CARD_PROFILE_DATA]);
+    TEST_ASSERT_TRUE(profile.events[PF_SD_CARD_PROFILE_TIMEOUT] > 0u);
+
+    pf_test_sdio_command_fail = 0u;
+    pf_test_sdio_time_step = 1u;
+    pf_test_sdio_can_add_program = false;
+    TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 2u, true, block));
+    TEST_ASSERT_TRUE(host.mode_restore_failed);
+}
+
+void test_cmd25_failed_data_keeps_stream_until_stop_recovery_succeeds(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = make_host(&pio);
+    uint8_t blocks[2u * PF_SD_CARD_BLOCK_SIZE] = {0};
+
+    pf_test_sdio_data_response = 0x0bu;
+    pf_test_sdio_command_error = 12u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_host_write_blocks(&host, 5u, true, blocks, 2u));
+    TEST_ASSERT_TRUE(host.write_stream_open);
+    TEST_ASSERT_TRUE(host.write_stream_next_sector == 5u);
+
+    pf_test_sdio_command_error = 0u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_recover(&host));
+    TEST_ASSERT_FALSE(host.write_stream_open);
 }

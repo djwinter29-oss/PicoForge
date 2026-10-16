@@ -29,6 +29,10 @@ uint8_t pf_test_sdio_last_command;
 uint32_t pf_test_sdio_dma_word_count;
 dma_channel_config pf_test_sdio_last_dma_config;
 uint32_t pf_test_sdio_gpio_level = 1u;
+unsigned pf_test_sdio_dma_busy_delay;
+unsigned pf_test_sdio_data_irq_delay;
+unsigned pf_test_sdio_data_irq_queries;
+unsigned pf_test_sdio_dma_busy_queries;
 uint8_t pf_test_sdio_rx_wire[40];
 size_t pf_test_sdio_rx_wire_size;
 bool pf_test_sdio_data_wait_ok = true;
@@ -156,7 +160,14 @@ bool pio_interrupt_get(PIO pio, uint index)
     if (index == 0u) {
         return pf_test_sdio_last_command != pf_test_sdio_command_fail;
     }
-    if (index == 2u) return pf_test_sdio_data_irq;
+    if (index == 2u) {
+        ++pf_test_sdio_data_irq_queries;
+        if (pf_test_sdio_data_irq_delay != 0u) {
+            --pf_test_sdio_data_irq_delay;
+            return false;
+        }
+        return pf_test_sdio_data_irq;
+    }
     return pf_test_sdio_data_wait_ok;
 }
 uint pio_encode_jmp(uint address) { return address; }
@@ -224,7 +235,16 @@ void dma_channel_configure(unsigned channel, const dma_channel_config *config,
     }
 }
 void dma_channel_start(unsigned channel) { (void)channel; }
-bool dma_channel_is_busy(unsigned channel) { (void)channel; return pf_test_sdio_dma_busy; }
+bool dma_channel_is_busy(unsigned channel)
+{
+    (void)channel;
+    ++pf_test_sdio_dma_busy_queries;
+    if (pf_test_sdio_dma_busy_delay != 0u) {
+        --pf_test_sdio_dma_busy_delay;
+        return true;
+    }
+    return pf_test_sdio_dma_busy;
+}
 void dma_channel_abort(unsigned channel) { (void)channel; }
 void dma_channel_wait_for_finish_blocking(unsigned channel) { (void)channel; }
 dma_hw_t *dma_channel_hw_addr(unsigned channel) { (void)channel; return &pf_test_sdio_dma_registers; }
