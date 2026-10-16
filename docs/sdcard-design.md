@@ -83,8 +83,8 @@ board support, not application code or reusable protocol helpers.
 | Configuration type | `pf_sdio_pio_config_t` | `pf_sd_spi_config_t` |
 | Hardware selector | `pio0` or `pio1` | `spi0` or `spi1` |
 | Backend API prefix | `pf_sdio_pio_` | `pf_sd_spi_` |
-| Zero clock request | SYSCLK / 12, capped at 12.5 MHz | 25 MHz |
-| Requested clock bounds | 400 kHz to 50 MHz, subject to host/card limits | 400 kHz to 25 MHz |
+| Zero clock request | Fixed 25 MHz transfer target | 25 MHz |
+| Requested clock bounds | Only 0 or 25 MHz; initialization at 400 kHz | 400 kHz to 25 MHz |
 
 Transport and connection settings are locked after setup; repeating initialization
 with the same configuration retries card identification. There is no public
@@ -240,11 +240,9 @@ flowchart TD
     Identify --> Select[CMD7 select and wait for DAT0 ready]
     Select --> Width[ACMD51 SCR, CMD13 status, ACMD6 four-bit mode]
     Width --> Length[CMD16 for byte-addressed cards]
-    Length --> Speed[Decode CSD speed; negotiate CMD6 High Speed if requested]
-    Speed --> Probe[Select clock and CRC-check up to 256 sectors]
-    Probe --> Good{Probe accepted}
-    Good -->|Yes| Ready[Initialized card and telemetry]
-    Good -->|No, lower candidate available| NativeReset
+    Length --> Speed[Require CSD default speed at least 25 MHz]
+    Speed --> Fixed[Set fixed 25 MHz transfer target]
+    Fixed --> Ready[Initialized card and telemetry]
     Transport -->|SPI| Setup[Configure SPI mode 0 and GPIO-controlled CS]
     Setup --> Clocks[Send 80 idle clocks with CS released]
     Clocks --> SPIReset[CMD0 and CMD8]
@@ -256,30 +254,23 @@ flowchart TD
 ```
 
 Any command, resource, or validation failure returns an initialization error;
-the diagram's native retry applies to failed transfer-clock qualification, not
-every identification failure. Native mode requires SCR-advertised four-bit
+there are no clock-step retries. Native mode requires SCR-advertised four-bit
 support; there is no one-bit sector-I/O fallback. SPI accepts its supported
 ready/idle responses and checks OCR power-up and voltage compatibility.
 
-Native clock candidates are 50, 40, 33, 25, 20, 10, 5, and 1 MHz, then
-400 kHz. Requests from 400 kHz through 999,999 Hz select the 400 kHz
-candidate and run the same CRC-checked read probe; requests below 400 kHz
-are rejected. Candidates
-above the requested/card/recovery limit or unsupported by SYSCLK are skipped.
-Above 25 MHz, CMD6 must confirm High Speed; otherwise normal speed is used.
-Host divider rounding can make the actual rate lower than the candidate. The
-slow native PIO programs require SYSCLK of at least four times the selected
-effective bus rate; the requested clock is only an upper bound and may be
-reduced to a supported candidate.
-Use SDK/board-supported clock settings; accepting a divider is not qualification
-of an overclocked MCU.
+Native initialization uses 400 kHz, then sets a fixed 25 MHz transfer target.
+There is no CMD6 High Speed negotiation, startup sector probe, automatic speed
+selection, or runtime clock reduction. The target media are Class 10 or newer
+cards; speed class is a usage requirement, not a guarantee of electrical
+compatibility or application throughput, and is not detected/enforced by this
+driver. CSD must advertise a default transfer rate of at least 25 MHz.
 
-The read-only probe CRC-checks and discards at most 256 sectors in batches of
-at most 64, without allocating a separate payload buffer. It
-rejects a candidate if recovery lowers the clock, and above 20 MHz also requires
-working multi-block reads. A failed qualification restarts identification at
-400 kHz with a lower limit. This short probe does not qualify writes, signal
-integrity margins, endurance, or power-loss safety.
+The integer clock divider rounds down to avoid exceeding 25 MHz. At 150 and
+250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
+20.833 MHz. This deterministic divider rounding is not adaptive speed selection.
+SYSCLK must be at least 100 MHz. Use SDK-supported clock settings and check
+effective-clock telemetry; an accepted divider does not qualify an overclock.
+Failures are reported rather than hidden by lower-speed reinitialization.
 
 ## Read Workflow
 
@@ -295,14 +286,11 @@ flowchart TD
     CRC --> NativeOK{Read outcome}
     NativeOK -->|Yes| Done[Return result]
     NativeOK -->|Valid bulk rejection and clean stop| Single[Disable batching for session and retry via CMD17]
-    NativeOK -->|CRC, timeout, uncertain response, or stop failure| Recover[Reinitialize at 400 kHz with lower clock limit]
+    NativeOK -->|CRC, timeout, uncertain response, or stop failure| Error[Invalidate card and return error]
     Batch -->|No| Single
     Single --> Retry{CRC-checked read successful}
     Retry -->|Yes| Done
-    Retry -->|No| Recover
-    Recover --> Identity{Presence, CID, and capacity still match}
-    Identity -->|Yes, candidate available| Batch
-    Identity -->|No or exhausted| Error[Return error]
+    Retry -->|No| Error
     Mode -->|SPI| SPIRead[CMD18 for multi-sector requests or CMD17 for one sector]
     SPIRead --> SPICRC[Wait for data token, read payload, check serial CRC16]
     SPICRC --> SPIStop[CMD12 and busy wait after CMD18; release CS]
@@ -311,13 +299,13 @@ flowchart TD
 
 The native host falls back to CMD17 only after a valid bulk rejection and a
 successful stop. CRC errors, timeouts, missing/malformed responses, and failed
-stops return to card-layer recovery without latching batching off. The card
-layer performs clock-limited recovery if a read fails.
-Recovered reads retain the lower clock. Identity checks prevent a retry from
-silently reading a replacement card. SPI holds CS across a CMD18 transaction,
+stops return an I/O error without latching batching off or changing the clock.
+The card is invalidated after a failed read; a later initialization request
+starts again at 400 kHz and returns to the same fixed target. The failed read
+is not replayed. SPI holds CS across a CMD18 transaction,
 stops with CMD12, discards CMD12's stuff byte, and waits for ready before release.
 An explicit illegal-command response permits single-sector fallback; other
-failures are not replayed. SPI does not implement the native clock-recovery ladder.
+failures are not replayed.
 
 The PIO programs have no timeouts of their own: the command, data, and busy
 waits are bounded by the host (100 ms for a command response, 1 s for data
@@ -369,7 +357,7 @@ flowchart TD
     Encode --> Accept[Check card data-response token and DAT0 busy release]
     Accept --> Pending[Return success with stream open at next sector]
     Pending --> Sync[Sync, read, noncontiguous write, or reinit closes stream]
-    Sync --> Stop[Restore command mode and send CMD12; lower-clock stop retry if needed]
+    Sync --> Stop[Restore command mode and send CMD12 at unchanged clock]
     Count -->|No| Single[CMD24, one DMA wire image, response and busy wait]
     Single --> Restore[Restore command and RX programs]
     Mode -->|SPI| SPIWrite[CMD25 for multi-sector requests or CMD24 for one sector; hold CS]
@@ -445,8 +433,8 @@ common ground, and the breakout's required biasing.
 
 The default CMake transport is SDIO-PIO; the board profile requests 25 MHz.
 At 150 MHz SYSCLK, the slow-mode divider produces an exact 25 MHz bus.
-This is a request, not a guaranteed effective clock; identification and
-qualification can select a lower rate. SPI's zero clock request selects 25 MHz. See
+The integer divider can round down for other system clocks; initialization never
+selects a lower candidate after errors. SPI's zero clock request selects 25 MHz. See
 [board_profile.c](../firmware/src/board/board_profile.c) for authoritative values
 and [hardware setup](hardware-setup.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
@@ -491,7 +479,7 @@ controller; CS is an ordinary, independently controlled GPIO.
 | Clock source | `clk_sys` drives SM dividers; effective rate is reported in telemetry | SDK SPI baud-rate configuration; actual rate is reported |
 | Timing source | SDK microsecond timer for bounded polling; SDK sleeps during identification | Same; no dedicated timer/alarm claimed |
 | Static native receive/transfer wire buffer | 64 x 130 words x 4 bytes = 33,280 bytes | None |
-| Static initialization probe buffer | None; CRC-only reads reuse the receive wire buffer | None |
+| Static initialization probe buffer | None; no startup sector probe | None |
 | Single-sector wire image | 520 bytes on stack for native single-block read/write paths | No full-sector bounce buffer |
 | Multi-block write wire images | Two x 520 bytes = 1,040 bytes on stack | None |
 | Other stack/static data | SCR/switch-status buffers, command responses, host/configuration state, CID and capacity; additional stack beyond images required | Small command/CSD/CID buffers and configuration/telemetry state |
@@ -542,7 +530,7 @@ silently change existing results; no such reinterpretation is made.
 | SPI DATA | Read token wait + payload + wire CRC; write payload only, excluding response and the separately timed ready wait |
 | CRC/copy | CPU encode/decode/CRC validation windows; may run while DMA/PIO is transferring; includes copy only for the native variants that perform it |
 | BUSY | Explicit ready wait; native TX PIO busy is already in DATA; explicit stop waits are also inside STOP |
-| STOP | Entire multiblock stop helper including command/response and busy; native clock-fallback attempts included |
+| STOP | Entire multiblock stop helper including command/response and busy, at unchanged clock |
 | RECOVERY | Native reinitialization attempt, including its command/data/CRC/busy windows; not all cleanup or retry time |
 
 Do not sum these values to obtain latency, subtract CRC/copy to infer physical
@@ -616,7 +604,7 @@ preallocated files), and card busy time before choosing further optimizations.
 | --- | --- |
 | Phase profiling and recovery diagnostics | Implemented, disabled by default; CLI and C API available |
 | Preserve batching after transient faults | Implemented; CRC/timeout/uncertain-stop failures enter bounded card recovery |
-| Remove initialization-only payload storage | Implemented; saves 32 KiB, retaining probe coverage and CRC checks |
+| Remove initialization-only payload storage | Implemented; no startup probe; transfer CRC checks retained |
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; hardware qualification outstanding |
@@ -752,9 +740,10 @@ the clock and data state machines together and launches at a fixed cycle offset.
 The slow TX program is not suitable for 50 MHz: its observed-edge launch left
 insufficient setup time and produced card CRC-error tokens. A 50 MHz bus needs
 at least 200 MHz SYSCLK; those Pico 2 overclock experiments are diagnostic,
-not supported production clock settings. The former 64 MiB initialization scan
-could delay startup for minutes with single-sector fallback; the current probe
-is bounded to 128 KiB.
+not supported production clock settings. These are historical experiments;
+the current driver caps host clocks at 25 MHz and does not select the retained
+high-speed PIO programs. Both former initialization scans and the later 128 KiB
+probe have been removed.
 
 ## Static SD Review Follow-up (2026-10-15)
 

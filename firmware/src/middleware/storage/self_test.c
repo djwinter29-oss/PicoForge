@@ -74,6 +74,23 @@ void pf_storage_self_test_run(uint32_t size_mib,
         cancelled = true;
         goto finish;
     }
+    FILINFO existing;
+    result = f_stat(PF_STORAGE_SELF_TEST_PATH, &existing);
+    if (result == FR_OK) {
+        if ((existing.fattrib & AM_DIR) != 0u) {
+            filesystem_error(&status, FR_DENIED);
+            goto finish;
+        }
+        result = f_unlink(PF_STORAGE_SELF_TEST_PATH);
+        if (result != FR_OK) {
+            status.flags |= PF_SELF_TEST_FILE_REMAINS;
+            filesystem_error(&status, result);
+            goto finish;
+        }
+    } else if (result != FR_NO_FILE) {
+        filesystem_error(&status, result);
+        goto finish;
+    }
     DWORD free_clusters;
     FATFS *filesystem;
     result = f_getfree(PF_STORAGE_VOLUME, &free_clusters, &filesystem);

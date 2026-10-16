@@ -57,6 +57,20 @@ void test_accepts_valid_selected_transport_topology(void)
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
 }
 
+void test_native_clock_policy_accepts_only_default_or_25mhz(void)
+{
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+    pf_board_resources_t topology = valid_topology();
+
+    topology.clock_hz = 25000000u;
+    TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+    topology.clock_hz = 50000000u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+    topology.clock_hz = 10000000u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#endif
+}
+
 void test_rejects_invalid_spi_sd_pin_assignments(void)
 {
     pf_board_resources_t topology = valid_topology();

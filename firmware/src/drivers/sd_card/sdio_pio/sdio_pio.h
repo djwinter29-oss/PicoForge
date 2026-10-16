@@ -7,8 +7,10 @@
 #include "hardware/pio.h"
 #include "sd_card_block.h"
 
-/** Upper bound of the default bus clock selected by a zero pf_sdio_pio_config_t::clock_hz. */
-#define PF_SDIO_PIO_DEFAULT_CLOCK_MAX_HZ 12500000u
+/** Fixed transfer target; integer PIO divider rounds down when not exactly representable. */
+#define PF_SDIO_PIO_TRANSFER_CLOCK_HZ 25000000u
+/** Compatibility name for the default transfer limit. */
+#define PF_SDIO_PIO_DEFAULT_CLOCK_MAX_HZ PF_SDIO_PIO_TRANSFER_CLOCK_HZ
 
 /** Optional platform wait callback; completion flags remain owned by the host.
  * Called only during bounded data waits. Must use a bounded wait,
@@ -24,7 +26,7 @@ typedef struct {
     uint32_t clock_gpio;
     uint32_t data_gpio[4];    /**< DAT0-DAT3 GPIOs; must be ascending and consecutive. */
     PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
-    uint32_t clock_hz;       /**< 0 selects the default; requests above 25 MHz use CMD6 high-speed negotiation, max 50 MHz. */
+    uint32_t clock_hz;       /**< Only 0 (default) or 25000000 accepted; no speed negotiation/fallback. */
     bool use_card_detect;
     uint32_t card_detect_gpio;
     bool card_detect_active_high;

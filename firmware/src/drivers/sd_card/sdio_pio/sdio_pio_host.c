@@ -464,19 +464,13 @@ bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t clock_hz)
     uint32_t divider_ticks;
 
     if ((host == NULL) || (host->pio == NULL) || (clock_hz == 0u) ||
-        (clock_hz > host->system_clock_hz / 4u)) {
+        (clock_hz > 25000000u) || (clock_hz > host->system_clock_hz / 4u)) {
         return false;
     }
 
-    if (clock_hz > 25000000u) {
-        /* The data state machines run at half the clock divider; equal fractions keep them in lockstep. */
-        divider_ticks = 2u * (uint32_t)(((uint64_t)host->system_clock_hz * 64u +
-                                         clock_hz - 1u) / clock_hz);
-    } else {
-        /* Slow-mode programs need whole system cycles; round the divider up. */
-        divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz + 2u * clock_hz - 1u) /
-                                   (2u * clock_hz)) * 256u;
-    }
+    /* Programs need whole system cycles; never exceed the fixed transfer target. */
+    divider_ticks = (uint32_t)(((uint64_t)host->system_clock_hz + 2u * clock_hz - 1u) /
+                               (2u * clock_hz)) * 256u;
     host->clock_div_ticks = divider_ticks;
     pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm,
                                (uint16_t)(divider_ticks >> 8u),
@@ -714,31 +708,12 @@ static bool stop_multiblock_transfer(pf_sdio_pio_host_t *host)
     return true;
 }
 
-static bool stop_multiblock_with_clock_fallback(pf_sdio_pio_host_t *host)
+static bool stop_multiblock(pf_sdio_pio_host_t *host)
 {
-    static const uint32_t stop_clock_steps_hz[] = {
-        25000000u, 20000000u, 10000000u, 5000000u, 1000000u,
-    };
-
     uint32_t profile_start = pf_sd_card_profile_begin();
-    if (stop_multiblock_transfer(host)) {
-        pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
-        return true;
-    }
-    for (size_t index = 0u;
-         index < (sizeof(stop_clock_steps_hz) / sizeof(stop_clock_steps_hz[0]));
-         index++) {
-        if ((stop_clock_steps_hz[index] >= host->current_clock_hz) ||
-            !pf_sdio_pio_host_set_clock(host, stop_clock_steps_hz[index])) {
-            continue;
-        }
-        if (stop_multiblock_transfer(host)) {
-            pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
-            return true;
-        }
-    }
+    bool success = stop_multiblock_transfer(host);
     pf_sd_card_profile_end(PF_SD_CARD_PROFILE_STOP, profile_start);
-    return false;
+    return success;
 }
 
 bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_sector,
@@ -816,7 +791,7 @@ bool pf_sdio_pio_host_read_blocks(pf_sdio_pio_host_t *host, uint32_t first_secto
         }
 
         cleanup_data_rx(host);
-        bool stop_ok = stop_multiblock_with_clock_fallback(host);
+        bool stop_ok = stop_multiblock(host);
         host->read_stream_unresolved = !stop_ok;
         if (!stop_ok || !response_valid || crc_failed || timed_out) {
             return false;
@@ -932,7 +907,7 @@ bool pf_sdio_pio_host_recover(pf_sdio_pio_host_t *host)
         return false;
     }
     if ((host->write_stream_open || host->read_stream_unresolved) &&
-        !stop_multiblock_with_clock_fallback(host)) {
+        !stop_multiblock(host)) {
         return false;
     }
     host->write_stream_open = false;

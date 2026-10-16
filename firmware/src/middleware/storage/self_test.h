@@ -72,11 +72,12 @@ typedef bool (*pf_self_test_update_t)(const pf_self_test_status_t *status, void 
 
 /** Write and verify a 1..128 MiB dedicated file from the sole storage task.
  * Requires a mounted volume and firmware ownership (enforced by caller).
- * Never overwrites PFTEST.BIN if it already exists. Owns one static 32 KiB
+ * Deletes an existing PFTEST.BIN before checking space and creating a fresh file.
+ * Refuses directories and stops on inspection/deletion errors. Owns one static 32 KiB
  * buffer, so calls must be serialized. Timing covers pattern generation plus
  * write/sync/close, and read/verification/close; mount and cleanup are excluded.
  * The test's own file is removed; the existing volume remains mounted.
- * Status flags identify failed cleanup; existing files are never deleted.
+ * Status flags identify failed deletion/cleanup. No other paths are deleted.
  */
 void pf_storage_self_test_run(uint32_t size_mib,
                               pf_self_test_clock_t clock_ms, pf_self_test_update_t update,

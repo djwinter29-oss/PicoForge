@@ -136,7 +136,7 @@ bool pf_board_resources_validate(const pf_board_resources_t *topology)
         !pin_is_valid(topology->clock_gpio, gpio_limit) ||
         (topology->clock_gpio != ((data_gpio_base + 30u) % 32u)) ||
         ((topology->clock_hz != 0u) &&
-         ((topology->clock_hz < 400000u) || (topology->clock_hz > 50000000u)))) {
+         (topology->clock_hz != 25000000u))) {
         return false;
     }
 

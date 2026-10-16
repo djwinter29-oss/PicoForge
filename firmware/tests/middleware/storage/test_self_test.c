@@ -52,11 +52,44 @@ static FRESULT open_file(FIL *file, const TCHAR *path, BYTE mode, int calls)
     return FR_OK;
 }
 
-static FRESULT open_existing_file(FIL *file, const TCHAR *path, BYTE mode, int calls)
+static FRESULT existing_file(FILINFO *info, BYTE attributes)
 {
-    TEST_ASSERT_EQUAL_INT(0, calls);
-    (void)open_file(file, path, mode, calls);
-    return FR_EXIST;
+    memset(info, 0, sizeof(*info));
+    info->fattrib = attributes;
+    return FR_OK;
+}
+
+static FRESULT stat_missing(const TCHAR *path, FILINFO *info, int calls)
+{
+    (void)info;
+    (void)calls;
+    TEST_ASSERT_EQUAL_STRING(PF_STORAGE_SELF_TEST_PATH, path);
+    return FR_NO_FILE;
+}
+
+static FRESULT stat_existing(const TCHAR *path, FILINFO *info, int calls)
+{
+    (void)stat_missing(path, info, calls);
+    return existing_file(info, AM_ARC);
+}
+
+static FRESULT stat_directory(const TCHAR *path, FILINFO *info, int calls)
+{
+    (void)stat_missing(path, info, calls);
+    return existing_file(info, AM_DIR);
+}
+
+static FRESULT remove_existing(const TCHAR *path, int calls)
+{
+    TEST_ASSERT_EQUAL_STRING(PF_STORAGE_SELF_TEST_PATH, path);
+    ++unlink_calls;
+    if (calls == 0) {
+        TEST_ASSERT_EQUAL(PF_SELF_TEST_MOUNTING, final_status.state);
+        TEST_ASSERT_EQUAL_UINT32(0u, write_offset);
+        return FR_OK;
+    }
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_CLEANUP, final_status.state);
+    return FR_OK;
 }
 
 static uint8_t pattern(uint32_t offset)
@@ -142,6 +175,7 @@ void setUp(void)
     available_clusters = 100000u;
     sync_result = close_result = unlink_result = FR_OK;
     close_calls = unlink_calls = 0u;
+    f_stat_StubWithCallback(stat_missing);
 }
 void tearDown(void) {}
 
@@ -265,15 +299,48 @@ void test_self_test_short_write_is_not_a_pass(void)
     TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
 }
 
-void test_self_test_refuses_existing_file_without_unlink_or_other_file_io(void)
+void test_self_test_removes_existing_file_and_runs_full_verification(void)
+{
+    prepare();
+    f_stat_StubWithCallback(stat_existing);
+    f_unlink_StubWithCallback(remove_existing);
+    pf_storage_self_test_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
+    TEST_ASSERT_EQUAL_UINT32(2u, unlink_calls);
+}
+
+void test_self_test_deletion_failure_stops_before_space_check_or_creation(void)
 {
     pf_storage_is_mounted_ExpectAndReturn(true);
-    f_getfree_StubWithCallback(get_free);
-    f_open_StubWithCallback(open_existing_file);
+    f_stat_StubWithCallback(stat_existing);
+    f_unlink_ExpectAnyArgsAndReturn(FR_DENIED);
     pf_storage_self_test_run(1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_EXISTS, final_status.error);
-    TEST_ASSERT_EQUAL(FR_EXIST, final_status.filesystem_result);
+    TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
+    TEST_ASSERT_EQUAL_UINT8(PF_SELF_TEST_VOLUME_MOUNTED | PF_SELF_TEST_FILE_REMAINS, final_status.flags);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
+}
+
+void test_self_test_refuses_directory_without_unlink(void)
+{
+    pf_storage_is_mounted_ExpectAndReturn(true);
+    f_stat_StubWithCallback(stat_directory);
+    pf_storage_self_test_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
+}
+
+void test_self_test_inspection_error_stops_without_deletion(void)
+{
+    pf_storage_is_mounted_ExpectAndReturn(true);
+    f_stat_StubWithCallback(NULL);
+    f_stat_ExpectAnyArgsAndReturn(FR_DISK_ERR);
+    pf_storage_self_test_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_FILESYSTEM, final_status.error);
+    TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.write_elapsed_ms);

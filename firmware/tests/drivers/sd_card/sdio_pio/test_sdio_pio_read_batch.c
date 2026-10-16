@@ -49,6 +49,23 @@ void tearDown(void)
     pf_test_sdio_dma_poll_hook = NULL;
 }
 
+void test_host_clock_is_capped_at_25mhz_with_deterministic_integer_rounding(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sdio_pio_host_t host = { .pio = &pio, .system_clock_hz = 250000000u };
+
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_set_clock(&host, 25000000u));
+    TEST_ASSERT_EQUAL_UINT32(25000000u, host.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(5u * 256u, host.clock_div_ticks);
+    TEST_ASSERT_FALSE(pf_sdio_pio_host_set_clock(&host, 50000000u));
+    TEST_ASSERT_EQUAL_UINT32(25000000u, host.current_clock_hz);
+
+    host.system_clock_hz = 125000000u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_host_set_clock(&host, 25000000u));
+    TEST_ASSERT_EQUAL_UINT32(20833333u, host.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(3u * 256u, host.clock_div_ticks);
+}
+
 static void encode_test_blocks(uint8_t blocks[4][PF_SD_CARD_BLOCK_SIZE])
 {
     for (unsigned block = 0u; block < 4u; ++block) {
@@ -296,4 +313,6 @@ void test_production_cmd18_reader_stops_after_crc_failure_and_preserves_unresolv
     TEST_ASSERT_FALSE(pf_sdio_pio_host_read_blocks(&host, 17u, true,
                                                     &received[0][0], 2u));
     TEST_ASSERT_TRUE(host.read_stream_unresolved);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, host.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT(2u, pf_test_sdio_command_count);
 }
