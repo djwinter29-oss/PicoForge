@@ -22,27 +22,53 @@ erased bits; it never erases implicitly. A failed write can leave partial change
 
 - [Common NOR protocol](../firmware/src/drivers/nor_flash/nor_flash.h) owns
   device commands, geometry, write-enable checks, status and operation deadlines.
-- [Transaction interface](../firmware/src/drivers/nor_flash/nor_flash_transport.h)
-  supports single-lane command/address/dummy phases and single- or quad-lane data.
-- [SPI adapter](../firmware/src/drivers/nor_flash/spi/nor_spi.c) uses the
-  [shared SPI engine](../firmware/src/drivers/storage/spi/storage_spi.c), also
-  used by SD-SPI.
-- [QSPI-PIO adapter](../firmware/src/drivers/nor_flash/qspi_pio/nor_qspi_pio.c)
-  uses the [physical quad-SPI engine](../firmware/src/drivers/storage/qspi_pio/storage_qspi_pio.c).
-  The NOR protocol selects single-lane initialization and `6Bh` quad reads;
-  programming remains single-lane `02h`. The physical engine does not identify
-  NOR parts, set QE, or decide when to erase.
-- [Board integration](../firmware/src/board/board_nor.c) selects GP2 clock,
+- [Transaction interface](../firmware/src/drivers/nor_flash/nor_flash_transport.h) and
+  [common adapter](../firmware/src/drivers/nor_flash/nor_flash_transport.c) use the same storage-bus handle for SPI
+  and QSPI-PIO. Transactions contain single-lane command/address/dummy phases and single- or quad-lane data.
+  The adapter forwards transactions, maps physical results, and supplies the protocol's microsecond clock.
+- Physical signaling uses the [shared SPI engine](../firmware/src/drivers/storage/spi/storage_spi.c), also used by
+  SD-SPI, or the [quad-SPI engine](../firmware/src/drivers/storage/qspi_pio/storage_qspi_pio.c).
+  The NOR protocol selects single-lane initialization and `6Bh` quad reads; programming remains single-lane `02h`.
+  Neither physical engine identifies NOR parts, sets QE, or decides when to erase.
+- [Board profile](../firmware/src/board/board_profile.c) selects GP2 clock,
   GP3..GP6 IO0..IO3 and GP7 CS, matching
   [the reference storage wiring](../firmware/src/drivers/storage/README.md#w25q128-flash-breakout).
 
 The authoritative [physical storage-bus architecture](../firmware/src/drivers/storage/README.md#physical-storage-bus)
-defines transport ownership, lifecycle, and shared-pin restrictions. Existing
-NOR APIs remain available through the adapters; moving the physical engines
-does not add FatFs integration or simultaneous SD/NOR access.
+defines transport ownership, lifecycle, and shared-pin restrictions. Sharing the adapter does not add FatFs
+integration or simultaneous SD/NOR access.
 
-The board configuration starts at 1 MHz. The transport APIs reject requested
-clocks above 10 MHz; that limit is not a hardware qualification. PIO divides
+The protocol and common adapter live together in `firmware/src/drivers/nor_flash/`:
+
+```text
+nor_flash/
+  nor_flash.c / .h          NOR protocol, geometry, programming and erase
+  nor_flash_transport.c / .h  Common storage-bus adapter and result translation
+```
+
+`pf_nor_transport_init` replaces the former `pf_nor_spi_init` / `pf_nor_qspi_pio_init` entry points. Pass a persistent,
+configured `pf_storage_bus_t` handle and a transport output; the common adapter initializes the bus and derives quad
+capability from its mode. Native SD handles are rejected. The handle and concrete context must outlive the flash
+device. Deinitialize with `pf_storage_bus_deinit` after device operations finish. NOR protocol and LevelX APIs are
+unchanged; direct callers of the former bus-specific adapters must migrate.
+
+The former NOR-specific board wrapper is removed. The
+[board storage interface](../firmware/src/board/board_storage.h) prepares the selected physical descriptor and
+board-specific idle pins without initializing the bus or referencing NOR. The standalone smoke follows this sequence:
+
+1. `pf_board_storage_prepare(&bus)` obtains a handle to the board profile's static physical context and prepares
+   WP/HOLD for SPI. It acquires no SPI/PIO resources.
+2. `pf_nor_transport_init(&bus, &transport)` initializes the bus; `pf_nor_flash_init` identifies the flash.
+3. After all operations, call `pf_storage_bus_deinit(&bus)`, then `pf_board_storage_release_pins()`.
+   Release prepared pins even if subsequent bus/device initialization fails.
+
+`PF_BOARD_STORAGE_QSPI` selects the serial board profile for the standalone target; CMake derives it from
+`PF_NOR_TRANSPORT`. The SD application retains its existing profile and does not prepare the alternative serial device.
+
+The board configuration starts at 1 MHz and configures SPI with a 100 ms per-byte FIFO deadline. QSPI-PIO rejects
+requested clocks above 10 MHz; generic SPI also serves SD and has no NOR-specific clock ceiling. Custom NOR SPI
+callers must retain the previous at-most-10 MHz policy and configure bounded polling; higher clocks are not qualified.
+PIO divides
 the actual system clock for four instructions per symbol, with one high-clock
 instruction. CPU/FIFO pacing introduces additional low-clock gaps, so the
 requested frequency is a maximum symbol cadence, not sustained throughput.
@@ -57,8 +83,11 @@ Never hard-tie those pins to 3V3 when using quad transfers.
 All contexts are caller-owned and must remain alive for the transport/device
 lifetime. Zero-initialize transport contexts, serialize all access and dedicate
 the selected pins/controller to this driver. Deinitialize before reinitializing.
-A bus timeout deinitializes the transport; recover by reinitializing transport
-and flash. The board wrapper owns its static transport context.
+A bus I/O error or timeout deinitializes the transport without replay. The caller owns the bus handle; the board
+profile owns the concrete context. Recover by deinitializing the bus, releasing board pins, then repeating
+preparation, transport initialization, and flash initialization.
+WP/HOLD setup belongs to board support, not the common adapter. In SPI mode these pins remain driven high after a bus
+transfer failure until board pin release; external pull-ups keep their idle levels afterward.
 
 ## Standalone Build
 

@@ -43,8 +43,8 @@ static bool protocol_failure(pf_sd_card_detail_error_t error)
 static bool same_config(const pf_sdio_pio_config_t *left,
                         const pf_sdio_pio_config_t *right)
 {
-    if ((left->command_gpio != right->command_gpio) ||
-        (left->clock_gpio != right->clock_gpio) ||
+    if ((left->pins.command_gpio != right->pins.command_gpio) ||
+        (left->pins.clock_gpio != right->pins.clock_gpio) ||
         (left->pio != right->pio) ||
         (left->clock_hz != right->clock_hz) ||
         (left->use_card_detect != right->use_card_detect) ||
@@ -55,7 +55,7 @@ static bool same_config(const pf_sdio_pio_config_t *left,
         return false;
     }
     for (uint32_t lane = 0u; lane < 4u; lane++) {
-        if (left->data_gpio[lane] != right->data_gpio[lane]) {
+        if (left->pins.data_gpio[lane] != right->pins.data_gpio[lane]) {
             return false;
         }
     }
@@ -93,24 +93,24 @@ static bool pins_are_valid(const pf_sdio_pio_config_t *config)
     uint32_t data_gpio_base;
 
     if (((config->pio != pio0) && (config->pio != pio1)) ||
-        !data_gpio_window(config->data_gpio, pin_limit, &data_gpio_base) ||
+        !data_gpio_window(config->pins.data_gpio, pin_limit, &data_gpio_base) ||
         (data_gpio_base < 2u) || (data_gpio_base > 28u) ||
-        (config->clock_gpio >= pin_limit) ||
-        (config->clock_gpio != ((data_gpio_base + 30u) % 32u)) ||
-        (config->command_gpio >= pin_limit)) {
+        (config->pins.clock_gpio >= pin_limit) ||
+        (config->pins.clock_gpio != ((data_gpio_base + 30u) % 32u)) ||
+        (config->pins.command_gpio >= pin_limit)) {
         return false;
     }
 
-    if ((config->command_gpio == config->clock_gpio) ||
-        pin_is_data_gpio(config->command_gpio, config->data_gpio)) {
+    if ((config->pins.command_gpio == config->pins.clock_gpio) ||
+        pin_is_data_gpio(config->pins.command_gpio, config->pins.data_gpio)) {
         return false;
     }
 
     if (config->use_card_detect &&
         ((config->card_detect_gpio >= pin_limit) ||
-         (config->card_detect_gpio == config->command_gpio) ||
-         (config->card_detect_gpio == config->clock_gpio) ||
-         pin_is_data_gpio(config->card_detect_gpio, config->data_gpio))) {
+         (config->card_detect_gpio == config->pins.command_gpio) ||
+         (config->card_detect_gpio == config->pins.clock_gpio) ||
+         pin_is_data_gpio(config->card_detect_gpio, config->pins.data_gpio))) {
         return false;
     }
     return true;
@@ -167,7 +167,7 @@ static bool wait_card_data_ready(void)
 {
     uint32_t start = time_us_32();
 
-    while (gpio_get(active_config.data_gpio[0]) == 0u) {
+    while (gpio_get(active_config.pins.data_gpio[0]) == 0u) {
         if (!card_detect_present()) {
             return protocol_failure(PF_SD_CARD_DETAIL_REMOVED);
         }

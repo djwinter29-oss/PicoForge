@@ -20,7 +20,7 @@ bool pf_storage_spi_config_valid(const pf_storage_spi_t *context)
         context->clock_hz == 0u) {
         return false;
     }
-    uint32_t pins[] = {context->clock_gpio, context->mosi_gpio, context->miso_gpio, context->cs_gpio};
+    uint32_t pins[] = {context->pins.clock_gpio, context->pins.mosi_gpio, context->pins.miso_gpio, context->pins.cs_gpio};
     for (size_t index = 0u; index < 4u; index++) {
         if (pins[index] >= NUM_BANK0_GPIOS) {
             return false;
@@ -32,9 +32,9 @@ bool pf_storage_spi_config_valid(const pf_storage_spi_t *context)
         }
     }
     uint32_t controller = spi_get_index(context->instance);
-    return context->clock_gpio % 4u == 2u && context->mosi_gpio % 4u == 3u &&
-           context->miso_gpio % 4u == 0u && (context->clock_gpio / 8u) % 2u == controller &&
-           (context->mosi_gpio / 8u) % 2u == controller && (context->miso_gpio / 8u) % 2u == controller;
+    return context->pins.clock_gpio % 4u == 2u && context->pins.mosi_gpio % 4u == 3u &&
+           context->pins.miso_gpio % 4u == 0u && (context->pins.clock_gpio / 8u) % 2u == controller &&
+           (context->pins.mosi_gpio / 8u) % 2u == controller && (context->pins.miso_gpio / 8u) % 2u == controller;
 }
 
 pf_storage_bus_result_t pf_storage_spi_init(pf_storage_spi_t *context)
@@ -44,25 +44,25 @@ pf_storage_bus_result_t pf_storage_spi_init(pf_storage_spi_t *context)
     }
     controller_t *controller = &controllers[spi_get_index(context->instance)];
     if (controller->selected != NULL || (controller->references != 0u &&
-        (controller->clock_gpio != context->clock_gpio || controller->mosi_gpio != context->mosi_gpio ||
-         controller->miso_gpio != context->miso_gpio))) {
+        (controller->clock_gpio != context->pins.clock_gpio || controller->mosi_gpio != context->pins.mosi_gpio ||
+         controller->miso_gpio != context->pins.miso_gpio))) {
         return PF_STORAGE_BUS_NOT_READY;
     }
-    gpio_init(context->cs_gpio);
-    gpio_put(context->cs_gpio, true);
-    gpio_set_dir(context->cs_gpio, GPIO_OUT);
+    gpio_init(context->pins.cs_gpio);
+    gpio_put(context->pins.cs_gpio, true);
+    gpio_set_dir(context->pins.cs_gpio, GPIO_OUT);
     if (controller->references == 0u) {
         if (spi_init(context->instance, context->clock_hz) == 0u) {
             return PF_STORAGE_BUS_IO_ERROR;
         }
         spi_set_format(context->instance, 8u, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-        gpio_set_function(context->clock_gpio, GPIO_FUNC_SPI);
-        gpio_set_function(context->mosi_gpio, GPIO_FUNC_SPI);
-        gpio_set_function(context->miso_gpio, GPIO_FUNC_SPI);
-        gpio_pull_up(context->miso_gpio);
-        controller->clock_gpio = context->clock_gpio;
-        controller->mosi_gpio = context->mosi_gpio;
-        controller->miso_gpio = context->miso_gpio;
+        gpio_set_function(context->pins.clock_gpio, GPIO_FUNC_SPI);
+        gpio_set_function(context->pins.mosi_gpio, GPIO_FUNC_SPI);
+        gpio_set_function(context->pins.miso_gpio, GPIO_FUNC_SPI);
+        gpio_pull_up(context->pins.miso_gpio);
+        controller->clock_gpio = context->pins.clock_gpio;
+        controller->mosi_gpio = context->pins.mosi_gpio;
+        controller->miso_gpio = context->pins.miso_gpio;
     }
     controller->references++;
     context->initialized = true;
@@ -110,7 +110,7 @@ pf_storage_bus_result_t pf_storage_spi_select(pf_storage_spi_t *context, bool se
             return result;
         }
     }
-    gpio_put(context->cs_gpio, !selected);
+    gpio_put(context->pins.cs_gpio, !selected);
     controller->selected = selected ? context : NULL;
     return PF_STORAGE_BUS_OK;
 }
@@ -198,15 +198,15 @@ void pf_storage_spi_deinit(pf_storage_spi_t *context)
         return;
     }
     controller_t *controller = &controllers[spi_get_index(context->instance)];
-    gpio_put(context->cs_gpio, true);
+    gpio_put(context->pins.cs_gpio, true);
     if (controller->selected == context) {
         controller->selected = NULL;
     }
     if (--controller->references == 0u) {
         spi_deinit(context->instance);
-        gpio_init(context->clock_gpio);
-        gpio_init(context->mosi_gpio);
-        gpio_init(context->miso_gpio);
+        gpio_init(context->pins.clock_gpio);
+        gpio_init(context->pins.mosi_gpio);
+        gpio_init(context->pins.miso_gpio);
     }
     context->initialized = false;
 }

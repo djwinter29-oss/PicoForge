@@ -14,16 +14,16 @@ static pf_board_resources_t valid_topology(void)
         .monitor_uart_rx_gpio = 1u,
         .monitor_uart_baud_rate = 115200u,
         .sd_card_enabled = true,
-        .command_gpio = 3u,
-        .clock_gpio = 2u,
-        .data_gpio = { 4u, 5u, 6u, 7u },
+        .native_pins.command_gpio = 3u,
+        .native_pins.clock_gpio = 2u,
+        .native_pins.data_gpio = { 4u, 5u, 6u, 7u },
         .pio_index = 0u,
         .clock_hz = 0u,
         .spi_index = 0u,
-        .spi_clock_gpio = 2u,
-        .spi_mosi_gpio = 3u,
-        .spi_miso_gpio = 4u,
-        .spi_chip_select_gpio = 7u,
+        .spi_pins.clock_gpio = 2u,
+        .spi_pins.mosi_gpio = 3u,
+        .spi_pins.miso_gpio = 4u,
+        .spi_pins.cs_gpio = 7u,
         .spi_clock_hz = 400000u,
     };
 }
@@ -41,9 +41,9 @@ void test_accepts_unconfigured_sd_topology(void)
         .monitor_uart_rx_gpio = 1u,
         .monitor_uart_baud_rate = 115200u,
         .sd_card_enabled = false,
-        .command_gpio = PF_BOARD_PIN_UNASSIGNED,
-        .clock_gpio = PF_BOARD_PIN_UNASSIGNED,
-        .data_gpio = { PF_BOARD_PIN_UNASSIGNED, PF_BOARD_PIN_UNASSIGNED,
+        .native_pins.command_gpio = PF_BOARD_PIN_UNASSIGNED,
+        .native_pins.clock_gpio = PF_BOARD_PIN_UNASSIGNED,
+        .native_pins.data_gpio = { PF_BOARD_PIN_UNASSIGNED, PF_BOARD_PIN_UNASSIGNED,
                    PF_BOARD_PIN_UNASSIGNED, PF_BOARD_PIN_UNASSIGNED },
     };
 
@@ -79,14 +79,14 @@ void test_rejects_invalid_spi_sd_pin_assignments(void)
     topology.spi_index = 2u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.spi_mosi_gpio = topology.spi_clock_gpio;
+    topology.spi_pins.mosi_gpio = topology.spi_pins.clock_gpio;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.spi_clock_gpio = topology.monitor_uart_tx_gpio;
+    topology.spi_pins.clock_gpio = topology.monitor_uart_tx_gpio;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 #else
     topology.spi_index = 2u;
-    topology.spi_mosi_gpio = topology.spi_clock_gpio;
+    topology.spi_pins.mosi_gpio = topology.spi_pins.clock_gpio;
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
 #endif
 }
@@ -99,11 +99,11 @@ void test_rejects_spi_pins_that_do_not_match_the_controller(void)
     topology.spi_index = 1u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.spi_mosi_gpio = 9u;
+    topology.spi_pins.mosi_gpio = 9u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 #else
     topology.spi_index = 2u;
-    topology.spi_mosi_gpio = topology.spi_clock_gpio;
+    topology.spi_pins.mosi_gpio = topology.spi_pins.clock_gpio;
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
 #endif
 }
@@ -136,7 +136,7 @@ void test_rejects_monitor_uart_pin_conflicts(void)
     topology.monitor_uart_tx_gpio = 2u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.monitor_uart_rx_gpio = topology.data_gpio[3];
+    topology.monitor_uart_rx_gpio = topology.native_pins.data_gpio[3];
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
     topology.card_detect_enabled = true;
@@ -159,13 +159,13 @@ void test_rejects_invalid_topology_pointer_pio_and_clock(void)
     topology.clock_hz = 399999u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.clock_gpio = 1u;
+    topology.native_pins.clock_gpio = 1u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 #else
     topology = valid_topology();
     topology.pio_index = 2u;
     topology.clock_hz = 399999u;
-    topology.clock_gpio = 1u;
+    topology.native_pins.clock_gpio = 1u;
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
 #endif
 }
@@ -175,27 +175,27 @@ void test_rejects_pins_outside_sd_bus_constraints(void)
     pf_board_resources_t topology = valid_topology();
 
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-    topology.data_gpio[0] = 1u;
+    topology.native_pins.data_gpio[0] = 1u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.data_gpio[0] = 27u;
+    topology.native_pins.data_gpio[0] = 27u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.command_gpio = 31u;
+    topology.native_pins.command_gpio = 31u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.data_gpio[1] = topology.data_gpio[0];
+    topology.native_pins.data_gpio[1] = topology.native_pins.data_gpio[0];
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.data_gpio[1] = 6u;
-    topology.data_gpio[2] = 5u;
+    topology.native_pins.data_gpio[1] = 6u;
+    topology.native_pins.data_gpio[2] = 5u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.data_gpio[1] = 8u;
+    topology.native_pins.data_gpio[1] = 8u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 #else
-    topology.data_gpio[0] = 1u;
-    topology.command_gpio = 31u;
+    topology.native_pins.data_gpio[0] = 1u;
+    topology.native_pins.command_gpio = 31u;
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
 #endif
 }
@@ -205,14 +205,14 @@ void test_rejects_command_clock_and_data_pin_collisions(void)
     pf_board_resources_t topology = valid_topology();
 
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-    topology.command_gpio = 2u;
+    topology.native_pins.command_gpio = 2u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
     topology = valid_topology();
-    topology.command_gpio = 5u;
+    topology.native_pins.command_gpio = 5u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 #else
-    topology.command_gpio = 2u;
-    topology.clock_gpio = 4u;
+    topology.native_pins.command_gpio = 2u;
+    topology.native_pins.clock_gpio = 4u;
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
 #endif
 }
@@ -226,7 +226,7 @@ void test_validates_optional_card_detect_pin(void)
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
     topology.card_detect_gpio = 8u;
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
-    topology.card_detect_gpio = topology.command_gpio;
+    topology.card_detect_gpio = topology.native_pins.command_gpio;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     topology.card_detect_gpio = 6u;
@@ -244,7 +244,7 @@ void test_validates_led_presence_and_sd_pin_collisions(void)
     topology.led_gpio = 25u;
     topology.led_active_high = true;
     TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
-    topology.led_gpio = topology.command_gpio;
+    topology.led_gpio = topology.native_pins.command_gpio;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
 
     topology = valid_topology();

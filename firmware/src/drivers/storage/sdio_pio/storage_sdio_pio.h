@@ -43,19 +43,13 @@ typedef void (*pf_storage_sdio_error_hook_t)(void *context, pf_storage_sdio_erro
 /** Board-independent physical pin routing. */
 typedef struct {
     PIO pio;                  /**< Reserved PIO instruction memory, pio0 or pio1. */
-    uint32_t command_gpio;    /**< Bidirectional command line. */
-    uint32_t clock_gpio;      /**< Clock output. */
-    uint32_t data_gpio[4];    /**< Ascending, consecutive DAT0-DAT3. */
+    pf_storage_sdio_pins_t pins; /**< Fixed physical signal allocation. */
 } pf_storage_sdio_pio_config_t;
 
 /** Caller-owned physical transport. Zero initialize before first use; never copy a live context. */
 typedef struct {
     pf_storage_sdio_pio_config_t config; /**< Configuration retained for common-bus init. */
     PIO pio;                           /**< NULL until resources are acquired. */
-    uint command_gpio;                 /**< Command pin. */
-    uint data_gpio_base;               /**< First consecutive data pin. */
-    uint data0_gpio;                   /**< Busy/start observation pin. */
-    uint clock_gpio;                   /**< Clock pin. */
     uint command_sm;                   /**< Claimed command/clock state machine. */
     uint data_sm;                      /**< Claimed data state machine. */
     uint command_program_offset;       /**< Loaded command program origin. */

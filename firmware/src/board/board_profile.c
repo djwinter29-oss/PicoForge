@@ -2,6 +2,16 @@
 
 #include "pico/stdlib.h"
 
+/** Reference connector signals shared by the mutually exclusive storage modes. */
+enum {
+    STORAGE_CLK = 2u, /**< Common clock output. */
+    STORAGE_IO0 = 3u, /**< CMD or MOSI/IO0. */
+    STORAGE_IO1 = 4u, /**< DAT0 or MISO/IO1. */
+    STORAGE_IO2 = 5u, /**< DAT1 or IO2/WP. */
+    STORAGE_IO3 = 6u, /**< DAT2 or IO3/HOLD. */
+    STORAGE_CS = 7u,  /**< DAT3 or serial CS. */
+};
+
 /* Fixed profile for standard Pico and Pico 2 boards. */
 static const pf_board_resources_t board_resources = {
     .gpio_count = NUM_BANK0_GPIOS,
@@ -15,19 +25,27 @@ static const pf_board_resources_t board_resources = {
     .monitor_uart_rx_gpio = 1u,
     .monitor_uart_baud_rate = 115200u,
     .sd_card_enabled = true,
-    .command_gpio = 3u,
-    .clock_gpio = 2u,
+    .native_pins.command_gpio = STORAGE_IO0,
+    .native_pins.clock_gpio = STORAGE_CLK,
     /* Logical DAT0-DAT3 now follow consecutive GPIO order. */
-    .data_gpio = { 4u, 5u, 6u, 7u },
+    .native_pins.data_gpio = { STORAGE_IO1, STORAGE_IO2, STORAGE_IO3, STORAGE_CS },
     .pio_index = 0u,
     /* Fixed transfer target; no automatic probing or lower-clock retries. */
     .clock_hz = 25000000u,
     .spi_index = 0u,
-    .spi_clock_gpio = 2u,
-    .spi_mosi_gpio = 3u,
-    .spi_miso_gpio = 4u,
-    .spi_chip_select_gpio = 7u,
+    .spi_pins.clock_gpio = STORAGE_CLK,
+    .spi_pins.mosi_gpio = STORAGE_IO0,
+    .spi_pins.miso_gpio = STORAGE_IO1,
+    .spi_pins.cs_gpio = STORAGE_CS,
     .spi_clock_hz = 0u,
+    .qspi_pins = {
+        .clock_gpio = STORAGE_CLK, .cs_gpio = STORAGE_CS,
+        .data_gpio = { STORAGE_IO0, STORAGE_IO1, STORAGE_IO2, STORAGE_IO3 },
+    },
+    .serial_clock_hz = 1000000u,
+    .serial_timeout_us = 100000u,
+    .serial_wp_gpio = STORAGE_IO2,
+    .serial_hold_gpio = STORAGE_IO3,
     /* The selected breakout provides the DET bias; do not add an MCU pull. */
     .card_detect_enabled = true,
     .card_detect_gpio = 8u,

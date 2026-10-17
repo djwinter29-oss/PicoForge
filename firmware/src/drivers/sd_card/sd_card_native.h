@@ -6,6 +6,7 @@
 
 #include "hardware/pio.h"
 #include "sd_card_block.h"
+#include "../storage/storage_bus.h"
 
 /** Fixed transfer target; integer PIO divider rounds down when not exactly representable. */
 #define PF_SDIO_PIO_TRANSFER_CLOCK_HZ 25000000u
@@ -26,9 +27,7 @@ void pf_sdio_pio_set_wait_hook(pf_sdio_pio_wait_hook_t hook);
 
 /** Board-provided SDHC/SDXC connection settings for the native four-bit PIO host. */
 typedef struct {
-    uint32_t command_gpio;
-    uint32_t clock_gpio;
-    uint32_t data_gpio[4];    /**< DAT0-DAT3 GPIOs; must be ascending and consecutive. */
+    pf_storage_sdio_pins_t pins; /**< Physical signals shared with the native transport. */
     PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
     uint32_t clock_hz;       /**< Only 0 or 25000000 accepted; High Speed is a separate build opt-in. */
     bool use_card_detect;

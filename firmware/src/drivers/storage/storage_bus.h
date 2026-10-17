@@ -5,6 +5,28 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** Immutable mode-0 SPI signal allocation; chip select is software-controlled. */
+typedef struct {
+    uint32_t clock_gpio; /**< Serial clock output. */
+    uint32_t mosi_gpio;  /**< Controller transmit signal. */
+    uint32_t miso_gpio;  /**< Controller receive signal. */
+    uint32_t cs_gpio;    /**< Active-low device select. */
+} pf_storage_spi_pins_t;
+
+/** Immutable native SD signal allocation, independent of PIO resources. */
+typedef struct {
+    uint32_t clock_gpio;   /**< SD clock output. */
+    uint32_t command_gpio; /**< Bidirectional command signal. */
+    uint32_t data_gpio[4]; /**< DAT0-DAT3 in logical order; ascending, consecutive GPIOs. */
+} pf_storage_sdio_pins_t;
+
+/** Immutable single/quad serial signal allocation, independent of PIO resources. */
+typedef struct {
+    uint32_t clock_gpio;   /**< Serial clock output. */
+    uint32_t data_gpio[4]; /**< IO0-IO3 in logical order; ascending, consecutive GPIOs. */
+    uint32_t cs_gpio;      /**< Active-low device select. */
+} pf_storage_qspi_pins_t;
+
 /** Physical signaling mode, not the attached device's command protocol. */
 typedef enum {
     PF_STORAGE_BUS_SPI,      /**< Clocked full-duplex single-lane SPI. */

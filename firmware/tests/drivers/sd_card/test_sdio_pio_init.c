@@ -68,9 +68,9 @@ void setUp(void)
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
     active_config = (pf_sdio_pio_config_t){
         .pio = pio0,
-        .command_gpio = 1u,
-        .data_gpio = {2u, 3u, 4u, 5u},
-        .clock_gpio = 0u,
+        .pins.command_gpio = 1u,
+        .pins.data_gpio = {2u, 3u, 4u, 5u},
+        .pins.clock_gpio = 0u,
         .clock_hz = 25000000u
     };
     sdio_pio_host.transport.current_clock_hz = 25000000u;

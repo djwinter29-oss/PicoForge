@@ -3,7 +3,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "serial_fake.h"
 #include "storage_bus.h"
 #include "storage_qspi_pio.h"
-#include "nor_qspi_pio.h"
+#include "nor_flash_transport.h"
 #include <string.h>
 
 serial_fake_t serial_fake;
@@ -14,7 +14,8 @@ void setUp(void)
 {
     memset(&serial_fake, 0, sizeof(serial_fake));
     context = (pf_storage_qspi_pio_t){
-        .pio = pio0, .clock_gpio = 6, .data_gpio = 0, .cs_gpio = 7, .clock_hz = 10000000,
+        .pio = pio0, .pins.clock_gpio = 6, .pins.data_gpio = {0, 1, 2, 3},
+        .pins.cs_gpio = 7, .clock_hz = 10000000,
     };
 }
 
@@ -55,7 +56,9 @@ void test_quad_write_outputs_most_significant_nibble_first(void)
 void test_fifo_timeout_releases_cs_programs_and_state_machine(void)
 {
     pf_nor_transport_t transport;
-    TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_qspi_pio_init(&context, &transport));
+    pf_storage_bus_t bus = pf_storage_qspi_pio_bus(&context);
+    TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&bus, &transport));
+    TEST_ASSERT_TRUE(transport.quad_supported);
     serial_fake.fifo_full = true;
     pf_nor_transaction_t command = { .command = 6, .data_lanes = 1 };
     TEST_ASSERT_EQUAL(PF_NOR_TIMEOUT, transport.execute(transport.context, &command));

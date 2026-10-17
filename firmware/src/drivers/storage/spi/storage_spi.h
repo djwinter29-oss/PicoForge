@@ -10,10 +10,7 @@
  */
 typedef struct {
     spi_inst_t *instance; /**< SDK controller. */
-    uint32_t clock_gpio;  /**< Serial clock pin. */
-    uint32_t mosi_gpio;   /**< Controller transmit pin. */
-    uint32_t miso_gpio;   /**< Controller receive pin. */
-    uint32_t cs_gpio;     /**< Device-specific active-low chip select. */
+    pf_storage_spi_pins_t pins; /**< Fixed physical signal allocation. */
     uint32_t clock_hz;    /**< Requested device clock, updated by set_clock. */
     uint32_t timeout_us;  /**< Per-byte FIFO deadline; zero uses SDK blocking bulk I/O. */
     bool initialized;    /**< This device holds a controller reference. */

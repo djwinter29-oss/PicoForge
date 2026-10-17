@@ -85,10 +85,10 @@ void test_prepare_initialization_resets_host_and_emits_exactly_eighty_low_speed_
     pf_test_sdio_pio_t pio = {0};
     pf_sdio_pio_host_t host = {
         .transport.pio = &pio,
-        .transport.command_gpio = 1u,
-        .transport.data_gpio_base = 2u,
-        .transport.data0_gpio = 2u,
-        .transport.clock_gpio = 5u,
+        .transport.config.pins.command_gpio = 1u,
+        .transport.config.pins.data_gpio[0] = 2u,
+        .transport.config.pins.data_gpio[0] = 2u,
+        .transport.config.pins.clock_gpio = 5u,
         .transport.command_sm = 0u,
         .transport.data_sm = 1u,
         .transport.command_program_offset = 1u,
@@ -105,7 +105,7 @@ void test_prepare_initialization_resets_host_and_emits_exactly_eighty_low_speed_
         .bus_width = 1u
     };
 
-    pf_test_sdio_clock_gpio = host.transport.clock_gpio;
+    pf_test_sdio_clock_gpio = host.transport.config.pins.clock_gpio;
     pf_test_sdio_gpio_level = 0u;
     pf_test_sdio_clock_auto_toggle = true;
     TEST_ASSERT_TRUE(pf_sdio_pio_host_prepare_initialization(&host));

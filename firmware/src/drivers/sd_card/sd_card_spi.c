@@ -58,10 +58,10 @@ static bool same_config(const pf_sd_spi_config_t *left,
                         const pf_sd_spi_config_t *right)
 {
     return (left->spi == right->spi) &&
-           (left->clock_gpio == right->clock_gpio) &&
-           (left->mosi_gpio == right->mosi_gpio) &&
-           (left->miso_gpio == right->miso_gpio) &&
-           (left->chip_select_gpio == right->chip_select_gpio) &&
+           (left->pins.clock_gpio == right->pins.clock_gpio) &&
+           (left->pins.mosi_gpio == right->pins.mosi_gpio) &&
+           (left->pins.miso_gpio == right->pins.miso_gpio) &&
+           (left->pins.cs_gpio == right->pins.cs_gpio) &&
            (left->clock_hz == right->clock_hz) &&
            (left->use_card_detect == right->use_card_detect) &&
            (left->card_detect_gpio == right->card_detect_gpio) &&
@@ -81,8 +81,7 @@ static bool config_is_valid(const pf_sd_spi_config_t *config)
         return false;
     }
     pf_storage_spi_t physical = {
-        .instance = config->spi, .clock_gpio = config->clock_gpio, .mosi_gpio = config->mosi_gpio,
-        .miso_gpio = config->miso_gpio, .cs_gpio = config->chip_select_gpio,
+        .instance = config->spi, .pins = config->pins,
         .clock_hz = SD_SPI_INIT_CLOCK_HZ,
     };
     if (!pf_storage_spi_config_valid(&physical)) {
@@ -91,10 +90,10 @@ static bool config_is_valid(const pf_sd_spi_config_t *config)
 
     if (config->use_card_detect &&
         (!pin_is_valid(config->card_detect_gpio) ||
-         (config->card_detect_gpio == config->clock_gpio) ||
-         (config->card_detect_gpio == config->mosi_gpio) ||
-         (config->card_detect_gpio == config->miso_gpio) ||
-         (config->card_detect_gpio == config->chip_select_gpio))) {
+         (config->card_detect_gpio == config->pins.clock_gpio) ||
+         (config->card_detect_gpio == config->pins.mosi_gpio) ||
+         (config->card_detect_gpio == config->pins.miso_gpio) ||
+         (config->card_detect_gpio == config->pins.cs_gpio))) {
         return false;
     }
 
@@ -585,9 +584,7 @@ pf_sd_card_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config)
         }
 
         physical_bus = (pf_storage_spi_t){
-            .instance = active_config.spi, .clock_gpio = active_config.clock_gpio,
-            .mosi_gpio = active_config.mosi_gpio, .miso_gpio = active_config.miso_gpio,
-            .cs_gpio = active_config.chip_select_gpio, .clock_hz = SD_SPI_INIT_CLOCK_HZ,
+            .instance = active_config.spi, .pins = active_config.pins, .clock_hz = SD_SPI_INIT_CLOCK_HZ,
         };
         pf_storage_bus_t bus = pf_storage_spi_bus(&physical_bus);
         if (pf_storage_bus_init(&bus) != PF_STORAGE_BUS_OK) {

@@ -27,6 +27,14 @@ typedef struct {
     bool quad_supported;
 } pf_nor_transport_t;
 
+/** Initialize a configured SPI/QSPI storage bus and expose the common NOR transport.
+ * The bus handle and its concrete context must remain alive and unchanged until all NOR operations finish.
+ * Configure physical clock limits and bounded polling before calling. Native SD buses are unsupported.
+ * On success, release resources with pf_storage_bus_deinit after completing device operations.
+ * Transfer I/O errors and timeouts deinitialize the bus; recovery requires bus and flash reinitialization.
+ */
+pf_nor_result_t pf_nor_transport_init(pf_storage_bus_t *bus, pf_nor_transport_t *transport);
+
 /** Validate the supported transaction shape before touching CS or any bus pins. */
 static inline bool pf_nor_transaction_valid(const pf_nor_transaction_t *transaction)
 {

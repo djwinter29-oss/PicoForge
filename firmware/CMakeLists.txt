@@ -98,17 +98,17 @@ set(PF_NOR_TRANSPORT "SPI" CACHE STRING "Raw NOR transport: SPI or QSPI_PIO")
 set_property(CACHE PF_NOR_TRANSPORT PROPERTY STRINGS SPI QSPI_PIO)
 option(PF_BUILD_LEVELX "Build the standalone LevelX NOR port (no FatFs backend yet)" OFF)
 if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX)
-    add_library(pf_nor_flash STATIC src/drivers/nor_flash/nor_flash.c)
+    add_library(pf_nor_flash STATIC
+        src/drivers/nor_flash/nor_flash.c
+        src/drivers/nor_flash/nor_flash_transport.c)
     target_include_directories(pf_nor_flash PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
     if(PF_NOR_TRANSPORT STREQUAL "SPI")
         target_sources(pf_nor_flash PRIVATE
-            src/drivers/nor_flash/spi/nor_spi.c
             src/drivers/storage/spi/storage_spi.c)
         target_link_libraries(pf_nor_flash PUBLIC hardware_spi)
         target_compile_definitions(pf_nor_flash PUBLIC PF_NOR_QSPI=0)
     elseif(PF_NOR_TRANSPORT STREQUAL "QSPI_PIO")
         target_sources(pf_nor_flash PRIVATE
-            src/drivers/nor_flash/qspi_pio/nor_qspi_pio.c
             src/drivers/storage/qspi_pio/storage_qspi_pio.c)
         pico_generate_pio_header(pf_nor_flash
             "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/qspi_pio/storage_qspi_pio.pio")
@@ -128,7 +128,10 @@ if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX)
     endif()
 endif()
 if(PF_BUILD_NOR_SMOKE)
-    add_executable(pf_nor_flash_smoke tests/ports/nor_flash_smoke.c src/board/board_nor.c)
+    add_executable(pf_nor_flash_smoke
+        tests/ports/nor_flash_smoke.c src/board/board_profile.c src/board/board_storage.c)
+    target_compile_definitions(pf_nor_flash_smoke PRIVATE
+        PF_BOARD_STORAGE_QSPI=$<STREQUAL:${PF_NOR_TRANSPORT},QSPI_PIO>)
     target_link_libraries(pf_nor_flash_smoke PRIVATE pf_nor_flash)
     pico_enable_stdio_usb(pf_nor_flash_smoke 0)
     pico_enable_stdio_uart(pf_nor_flash_smoke 1)

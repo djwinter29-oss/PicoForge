@@ -9,9 +9,7 @@
  */
 typedef struct {
     PIO pio;                /**< SDK PIO block. */
-    uint32_t clock_gpio;     /**< Mode-0 clock output. */
-    uint32_t data_gpio;      /**< First of four consecutive data pins. */
-    uint32_t cs_gpio;        /**< Active-low device select. */
+    pf_storage_qspi_pins_t pins; /**< Fixed physical signal allocation. */
     uint32_t clock_hz;       /**< Requested serial clock. */
     uint32_t sm;             /**< Claimed state machine. */
     uint32_t single_offset;  /**< Loaded single-lane program offset. */

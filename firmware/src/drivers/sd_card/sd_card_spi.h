@@ -6,14 +6,12 @@
 
 #include "hardware/spi.h"
 #include "sd_card_block.h"
+#include "../storage/storage_bus.h"
 
 /** Board-provided SPI pin assignments; chip select is GPIO-controlled for whole SD transactions. */
 typedef struct {
     spi_inst_t *spi;
-    uint32_t clock_gpio;
-    uint32_t mosi_gpio;
-    uint32_t miso_gpio;
-    uint32_t chip_select_gpio;
+    pf_storage_spi_pins_t pins; /**< Physical signals shared with the SPI transport. */
     uint32_t clock_hz; /**< 0 selects 25 MHz after the 400 kHz initialization phase. */
     bool use_card_detect;
     uint32_t card_detect_gpio;

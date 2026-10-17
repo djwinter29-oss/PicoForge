@@ -50,10 +50,10 @@ static bool spi_pins_are_valid(const pf_board_resources_t *topology,
                                uint32_t gpio_limit)
 {
     uint32_t pins[4] = {
-        topology->spi_clock_gpio,
-        topology->spi_mosi_gpio,
-        topology->spi_miso_gpio,
-        topology->spi_chip_select_gpio,
+        topology->spi_pins.clock_gpio,
+        topology->spi_pins.mosi_gpio,
+        topology->spi_pins.miso_gpio,
+        topology->spi_pins.cs_gpio,
     };
 
     if ((topology->spi_index > 1u) ||
@@ -91,8 +91,8 @@ static bool spi_pins_are_valid(const pf_board_resources_t *topology,
           (topology->card_detect_gpio == topology->led_gpio)))) {
         return false;
     }
-    return pf_sd_spi_pins_match_controller(topology->spi_index, topology->spi_clock_gpio,
-                                           topology->spi_mosi_gpio, topology->spi_miso_gpio);
+    return pf_sd_spi_pins_match_controller(topology->spi_index, topology->spi_pins.clock_gpio,
+                                           topology->spi_pins.mosi_gpio, topology->spi_pins.miso_gpio);
 }
 #endif
 
@@ -130,49 +130,49 @@ bool pf_board_resources_validate(const pf_board_resources_t *topology)
     return spi_pins_are_valid(topology, gpio_limit);
 #else
     if ((topology->pio_index > 1u) ||
-        !data_pins_are_valid(topology->data_gpio, gpio_limit, &data_gpio_base) ||
+        !data_pins_are_valid(topology->native_pins.data_gpio, gpio_limit, &data_gpio_base) ||
         (data_gpio_base < 2u) || (data_gpio_base > 28u) ||
-        !pin_is_valid(topology->command_gpio, gpio_limit) ||
-        !pin_is_valid(topology->clock_gpio, gpio_limit) ||
-        (topology->clock_gpio != ((data_gpio_base + 30u) % 32u)) ||
+        !pin_is_valid(topology->native_pins.command_gpio, gpio_limit) ||
+        !pin_is_valid(topology->native_pins.clock_gpio, gpio_limit) ||
+        (topology->native_pins.clock_gpio != ((data_gpio_base + 30u) % 32u)) ||
         ((topology->clock_hz != 0u) &&
          (topology->clock_hz != 25000000u))) {
         return false;
     }
 
-    clock_gpio = topology->clock_gpio;
+    clock_gpio = topology->native_pins.clock_gpio;
     if ((clock_gpio >= gpio_limit) ||
-        (topology->command_gpio == clock_gpio) ||
-        pin_is_sdio_data(topology->command_gpio, topology->data_gpio)) {
+        (topology->native_pins.command_gpio == clock_gpio) ||
+        pin_is_sdio_data(topology->native_pins.command_gpio, topology->native_pins.data_gpio)) {
         return false;
     }
 
     if (topology->monitor_uart_enabled &&
-        ((topology->monitor_uart_tx_gpio == topology->command_gpio) ||
-         (topology->monitor_uart_rx_gpio == topology->command_gpio) ||
+        ((topology->monitor_uart_tx_gpio == topology->native_pins.command_gpio) ||
+         (topology->monitor_uart_rx_gpio == topology->native_pins.command_gpio) ||
          (topology->monitor_uart_tx_gpio == clock_gpio) ||
          (topology->monitor_uart_rx_gpio == clock_gpio) ||
-         pin_is_sdio_data(topology->monitor_uart_tx_gpio, topology->data_gpio) ||
-         pin_is_sdio_data(topology->monitor_uart_rx_gpio, topology->data_gpio))) {
+         pin_is_sdio_data(topology->monitor_uart_tx_gpio, topology->native_pins.data_gpio) ||
+         pin_is_sdio_data(topology->monitor_uart_rx_gpio, topology->native_pins.data_gpio))) {
         return false;
     }
 
     if (topology->led_enabled &&
-        ((topology->led_gpio == topology->command_gpio) ||
+        ((topology->led_gpio == topology->native_pins.command_gpio) ||
          (topology->led_gpio == clock_gpio) ||
-         pin_is_sdio_data(topology->led_gpio, topology->data_gpio))) {
+         pin_is_sdio_data(topology->led_gpio, topology->native_pins.data_gpio))) {
         return false;
     }
 
     if (topology->card_detect_enabled &&
         (!pin_is_valid(topology->card_detect_gpio, gpio_limit) ||
-         (topology->card_detect_gpio == topology->command_gpio) ||
+         (topology->card_detect_gpio == topology->native_pins.command_gpio) ||
          (topology->card_detect_gpio == clock_gpio) ||
          (topology->monitor_uart_enabled &&
           ((topology->card_detect_gpio == topology->monitor_uart_tx_gpio) ||
            (topology->card_detect_gpio == topology->monitor_uart_rx_gpio))) ||
          (topology->led_enabled && (topology->card_detect_gpio == topology->led_gpio)) ||
-         pin_is_sdio_data(topology->card_detect_gpio, topology->data_gpio))) {
+         pin_is_sdio_data(topology->card_detect_gpio, topology->native_pins.data_gpio))) {
         return false;
     }
 

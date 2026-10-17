@@ -37,7 +37,7 @@ static void on_wait(PIO pio, uint32_t flag)
 static pf_storage_sdio_pio_config_t pins(void)
 {
     return (pf_storage_sdio_pio_config_t){
-        .pio = pio0, .command_gpio = 1u, .clock_gpio = 0u, .data_gpio = {2u, 3u, 4u, 5u},
+        .pio = pio0, .pins.command_gpio = 1u, .pins.clock_gpio = 0u, .pins.data_gpio = {2u, 3u, 4u, 5u},
     };
 }
 
@@ -117,11 +117,11 @@ void test_native_invalid_pin_routing_and_raw_dma_shape_are_rejected_before_trans
 {
     pf_storage_sdio_pio_t host = {0};
     pf_storage_sdio_pio_config_t config = pins();
-    config.data_gpio[2]++;
+    config.pins.data_gpio[2]++;
     TEST_ASSERT_FALSE(pf_storage_sdio_pio_init(&host, &config));
     TEST_ASSERT_NULL(host.pio);
     config = pins();
-    config.clock_gpio = 9u;
+    config.pins.clock_gpio = 9u;
     TEST_ASSERT_FALSE(pf_storage_sdio_pio_init(&host, &config));
     config = pins();
     TEST_ASSERT_TRUE(pf_storage_sdio_pio_init(&host, &config));

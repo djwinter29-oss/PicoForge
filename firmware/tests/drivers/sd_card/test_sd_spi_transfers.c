@@ -80,8 +80,8 @@ static void reset(uint8_t response)
 {
     pf_storage_spi_deinit(&physical_bus);
     physical_bus = (pf_storage_spi_t){
-        .instance = &test_spi, .clock_gpio = 2u, .mosi_gpio = 3u,
-        .miso_gpio = 0u, .cs_gpio = 1u, .clock_hz = 25000000u,
+        .instance = &test_spi, .pins.clock_gpio = 2u, .pins.mosi_gpio = 3u,
+        .pins.miso_gpio = 0u, .pins.cs_gpio = 1u, .clock_hz = 25000000u,
     };
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_spi_init(&physical_bus));
     card_initialized = card_block_addressed = true;

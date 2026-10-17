@@ -58,6 +58,11 @@ than `pf_storage_bus_transfer`.
 native SD and quad-SPI use their own physical engines. These are alternative modes of the shared pins, not permission
 to attach multiple active devices. DET remains a board/device-presence input.
 
+The standalone serial-storage profile is defined in [board_profile.c](../../board/board_profile.c) and exposed through
+[board_storage.h](../../board/board_storage.h). Board preparation supplies a physical descriptor and applies SPI
+WP/HOLD idle levels; it does not initialize the bus or depend on NOR. The NOR adapter initializes that descriptor.
+After device operations, the caller deinitializes the bus before releasing board-specific pins.
+
 Before switching devices, the caller must sync/unmount as appropriate, finish the device protocol, deinitialize the
 bus, and satisfy the new device's power requirements. Bus abort/deinit never claims to finish an interrupted write
 or make filesystem data durable.

@@ -109,8 +109,7 @@ bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host, const pf_sdio_pio_config_t 
         return false;
     }
     pf_storage_sdio_pio_config_t pins = {
-        .pio = config->pio, .command_gpio = config->command_gpio, .clock_gpio = config->clock_gpio,
-        .data_gpio = {config->data_gpio[0], config->data_gpio[1], config->data_gpio[2], config->data_gpio[3]},
+        .pio = config->pio, .pins = config->pins,
     };
     host->transport.config = pins;
     pf_storage_bus_t bus = pf_storage_sdio_pio_bus(&host->transport);
