@@ -30,11 +30,8 @@ ledControl.addEventListener("click", () => client.setLed(!client.state.board_sta
 mscControl.addEventListener("click", () => client.setMsc(!client.state.msc?.enabled));
 document.querySelector("#self-test-start").addEventListener("click", async () => {
   await client.setSelfTest("start", document.querySelector("#self-test-size").valueAsNumber);
-  document.querySelector("#self-test-consent").checked = false;
   render(client.state);
 });
 document.querySelector("#self-test-cancel").addEventListener("click", () => client.setSelfTest("cancel"));
-for (const selector of ["#self-test-size", "#self-test-consent"]) {
-  document.querySelector(selector).addEventListener("input", () => renderSelfTest(client.state));
-}
+document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(client.state));
 render(client.state);

@@ -22,6 +22,25 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void ParsesFirmwareReleaseAndTransportPrefixesInIdentityLayoutThree()
+    {
+        var report = CreateInfoReport();
+        report[1] = 3;
+        report[39] = 0;
+        report[40] = 1;
+        report[41] = 0;
+        Assert.Equal("0.1.0", HidProtocol.ParseInfoReport(report).FirmwareVersion);
+        Assert.Equal("0.1.0", HidProtocol.ParseInfoReport([0, .. report]).FirmwareVersion);
+        Assert.Equal("0.1.0", HidProtocol.ParseInfoReport([1, .. report]).FirmwareVersion);
+        Assert.Equal("0.1.0", HidProtocol.ParseInfoReport([.. report, 0]).FirmwareVersion);
+        report[42] = 1;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseInfoReport(report));
+        report[42] = 0;
+        report[1] = 4;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseInfoReport(report));
+    }
+
+    [Fact]
     public void ParsesPaddedStandardFeatureReportWhenVersionEqualsReportId()
     {
         var report = new byte[44];

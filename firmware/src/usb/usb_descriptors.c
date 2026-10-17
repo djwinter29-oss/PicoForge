@@ -7,7 +7,6 @@
 
 #define USB_VID 0xCAFEu
 #define USB_PID 0x4011u
-#define USB_BCD_DEVICE 0x0100u
 
 enum {
     ITF_NUM_CDC = 0,
@@ -92,7 +91,7 @@ static tusb_desc_device_t desc_device = {
     .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
     .idVendor = USB_VID,
     .idProduct = USB_PID,
-    .bcdDevice = USB_BCD_DEVICE,
+    .bcdDevice = PF_BCD_DEVICE,
     .iManufacturer = STRID_MANUFACTURER,
     .iProduct = STRID_PRODUCT,
     .iSerialNumber = STRID_SERIAL,

@@ -48,7 +48,7 @@ typedef struct {
     bool mode_restore_failed;          /**< Command program restoration failed. */
     bool command_program_loaded;       /**< Command program owns instruction memory. */
     bool data_rx_program_loaded;       /**< RX program owns instruction memory. */
-    bool data_rx_fast;                 /**< RX program is cycle-locked. */
+    bool data_rx_fast;                 /**< RX uses the shortened High-Speed sampling loop. */
     bool clock_program_loaded;         /**< Clock program owns instruction memory. */
     bool data_tx_program_loaded;        /**< TX program owns instruction memory. */
     bool data_tx_fast;                 /**< TX program is cycle-locked. */

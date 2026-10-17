@@ -25,13 +25,19 @@ export function renderStatus(snapshot) {
     ? "Attention" : snapshot.reconnecting ? "Reconnecting" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
   document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
-  document.querySelector("#runtime-clock").textContent = runtime
+  document.querySelector("#firmware-version").textContent = hardware?.firmware_version ?? "Unknown";
+  const clock = runtime
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
+  document.querySelector("#identity-clock").textContent = clock;
+  document.querySelector("#runtime-clock").textContent = clock;
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   renderLinkState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
-  renderLinkState("#usb-state", runtime ? (runtime.usb_mounted ? "Mounted" : "Not mounted") : "--", runtime?.usb_mounted);
+  const memory = snapshot.memory;
+  const cardPresence = !memory?.configured ? "Not configured"
+    : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown";
+  renderLinkState("#card-presence", cardPresence, memory?.presence_known ? memory.present : undefined);
   document.querySelector("#sequence").textContent = runtime?.sequence ?? "--";
   const board = snapshot.board_status;
   document.querySelector("#temperature").textContent = board?.temperature_valid
@@ -55,8 +61,6 @@ export function renderStatus(snapshot) {
 function renderMemory(memory, filesystemFormat) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const manufacturer = memory?.manufacturer;
-  set("#memory-presence", !memory?.configured ? "Not configured"
-    : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown");
   set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
   set("#memory-note", !memory?.configured ? "No SD-card transport configured"
     : memory.presence_known && !memory.present
@@ -72,11 +76,19 @@ function renderMemory(memory, filesystemFormat) {
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
   set("#memory-filesystem", filesystemLabels[filesystemFormat] ?? "Unknown");
-  set("#memory-manufacturer", manufacturer ? `0x${manufacturer.id.toString(16).padStart(2, "0")} / ${manufacturer.oem_id}` : "--");
+  set("#memory-manufacturer", formatManufacturer(manufacturer));
   set("#memory-product", manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
   set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
+}
+
+function formatManufacturer(manufacturer) {
+  if (!manufacturer) return "--";
+  const id = manufacturer.id;
+  if (!Number.isInteger(id) || id < 0 || id > 0xff) return "Unknown manufacturer";
+  const names = { 0x03: "SanDisk", 0x41: "Kingston" };
+  return `${names[id] ?? "Unknown manufacturer"} (0x${id.toString(16).padStart(2, "0")})`;
 }
 
 function formatBytes(bytes) {
@@ -115,7 +127,7 @@ export function renderSelfTest(snapshot) {
   const size = document.querySelector("#self-test-size");
   const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 128;
   document.querySelector("#self-test-start").disabled = !ready || status.active || pending || Boolean(snapshot.busy)
-    || !validSize || !document.querySelector("#self-test-consent").checked;
+    || !validSize || Boolean(snapshot.msc?.transition_pending);
   document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup" || pending || Boolean(snapshot.busy);
   size.disabled = !snapshot.connected || Boolean(status?.active) || pending;
 }

@@ -13,15 +13,33 @@ The HID report ID is the first byte of each report delivered by host APIs. Multi
 
 ## Feature Report 1
 
-Feature report 1 has a 42-byte payload, excluding the report ID. Its layout version is `2`.
+Feature report 1 has a 42-byte payload, excluding the report ID. Its layout version is `3`.
+The firmware release version uses the PicoUart build-time policy. Set the CMake cache variable
+`PF_FIRMWARE_VERSION` or pass `--firmware-version 0.1.0` to
+[`build.sh`](../tools/firmware/build.sh) or [`load.sh`](../tools/firmware/load.sh).
+Both scripts also accept the `PF_FIRMWARE_VERSION` environment variable.
+The default is `0.0.0-dev`; versions must be `MAJOR.MINOR.PATCH`, optionally followed by `-dev` or `-rcN`
+(positive N without leading zeros). Each component is 0-255 without leading zeros.
+[`version.cmake`](../firmware/version.cmake) validates the version before compilation.
+The complete string is embedded in Pico SDK program metadata. HID reports the three numeric components only,
+so `1.2.3-rc1` appears as `1.2.3` in the dashboard, matching PicoUart.
+USB `bcdDevice` encodes major/minor as BCD (`1.2.3` becomes `0x0102`); major/minor above 99 produce a
+configuration warning and `0x0000`, while HID retains the numeric version.
+It is separate from the HID layout version. Other reports retain layout version `2`.
+Updated hosts also accept identity layout `2` with four zero reserved bytes and show
+firmware version as `Unknown`. Older hosts reject layout `3`: restart Python/.NET hosts with the updated
+code and reload browser pages when upgrading firmware.
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |
-| 0 | 1 | Layout version | `2` |
+| 0 | 1 | Layout version | `3` |
 | 1 | 1 | MCU ID | `1` = RP2040, `2` = RP2350 |
 | 2 | 20 | Product name | NUL-padded ASCII, currently `PicoForge` |
 | 22 | 16 | USB serial | ASCII hexadecimal unique board ID; same value as the USB serial string |
-| 38 | 4 | Reserved | Zero-filled; reserved for a future software-version field |
+| 38 | 1 | Firmware major | Unsigned release component |
+| 39 | 1 | Firmware minor | Unsigned release component |
+| 40 | 1 | Firmware patch | Unsigned release component |
+| 41 | 1 | Reserved | Zero |
 
 All identity fields are stable for a connection. `clk_sys` is intentionally excluded because firmware may change it at runtime.
 
@@ -60,7 +78,7 @@ retry; no stale or fabricated memory snapshot is sent.
 | 9 | 4 | Block count | Number of 512-byte sectors, little-endian; zero unless capacity is valid |
 | 13 | 16 | SD CID | Raw card identification register; zero unless CID is valid |
 
-When presence-known is clear, the card's presence is unknown; do not treat it as absent. When no card-detect input is configured, successful initialization establishes presence. CID bytes decode as manufacturer ID (byte 0), OEM ID (1-2, ASCII), product name (3-7, ASCII), product revision (byte 8, high nibble major and low nibble minor), serial number (9-12, big-endian), and manufacturing date (13-14: year offset from 2000 in the upper 8 bits and month in the lower 4 bits). Byte 15 contains the CID CRC/end bits. The numeric manufacturer ID is reported without a vendor-name lookup.
+When presence-known is clear, the card's presence is unknown; do not treat it as absent. When no card-detect input is configured, successful initialization establishes presence. CID bytes decode as manufacturer ID (byte 0), OEM ID (1-2, ASCII), product name (3-7, ASCII), product revision (byte 8, high nibble major and low nibble minor), serial number (9-12, big-endian), and manufacturing date (13-14: year offset from 2000 in the upper 8 bits and month in the lower 4 bits). Byte 15 contains the CID CRC/end bits. Host dashboards show names for recognized manufacturer IDs and retain the numeric ID; unrecognized IDs are labeled unknown rather than guessed.
 
 If initialized is set, configured, presence-known, present, CID-valid, and
 capacity-valid must also be set. The report supports `GET_REPORT` when the card

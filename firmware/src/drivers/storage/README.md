@@ -101,6 +101,13 @@ Both native TX programs park on their completion IRQ until the CPU disables the 
 wrap into an empty FIFO pull after a completed payload, which would set TXSTALL and falsely report an underrun.
 The next TX start clears the old completion flag while the state machine is disabled; real FIFO stalls remain fatal.
 
+Default-Speed RX qualifies start and samples payload after rising CLK, half a bit after the card's falling-edge
+launch. Sampling just after falling CLK could miss the start bit or capture changing data; extending only the payload
+delay did not fix start detection. High-Speed RX samples after falling CLK instead, following the card's rising-edge
+launch. Both receive programs run at the system clock, not a fractional data divider, so WAIT-to-IN latency is one
+system cycle. TX retains its separately synchronized clock/data dividers. Timing-model checks cover cadence and
+framing; actual card/pad timing still requires hardware qualification.
+
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 
@@ -279,6 +286,40 @@ self-test passed with zero mismatches and cleanup (2.55 MB/s write, 7.44 MB/s re
 reported a passed 32 MiB test with zero mismatches and cleanup (7.19 MB/s write, 7.48 MB/s read). Final card diagnostics
 had no CRC, timeout, or FIFO-stall errors, and `/PFTEST.BIN` was absent. These checks do not qualify other cards,
 electrical timing margins, optional 50 MHz operation, endurance, or power-loss safety.
+
+#### High-Speed Bring-up (2026-10-17)
+
+The same card exposed a one-bit-shifted SCR at 200 MHz CPU / 400 kHz SD before the Default-Speed RX edge correction
+above. A fixed payload-only settling delay was insufficient. High-Speed qualification also failed without additional
+settling after CMD6 selected the new function. The SD policy now leaves CLK running for 1 ms at the old rate after
+DAT0 becomes ready, before raising the clock. This is a bounded lab-qualified delay, not a guarantee for every card.
+
+At 200 MHz CPU / 50 MHz SD, three authorized 32 MiB write/read tests passed, including two intervening normal resets.
+Each wrote and read all 33,554,432 bytes with zero mismatches and removed `/PFTEST.BIN`. Write throughput was
+7.92-8.07 MB/s and read throughput 10.92 MB/s. GPIO drive/slew defaults were retained; no debugger qualification
+breakpoints were used for these three tests. The user chose to leave this image running.
+
+Before final inspection the card was changed to the 128 GB `SB128`. The dashboard separately reported a passed
+128 MiB self-test with zero mismatches and cleanup at the same 200 MHz CPU / 50 MHz SD setting (15.47 MB/s write,
+14.00 MB/s read). Final CDC inspection confirmed High-Speed timing, no CRC/timeout/stall errors, no fallback,
+facade diagnostics `result=ok`, and `/PFTEST.BIN` absent. This was a separate dashboard test, not one of the three
+controlled runs above.
+
+The 250 MHz CPU / 50 MHz SD configuration still failed runtime I/O despite successful negotiation and occasional
+valid sector captures. A captured CMD17 frame was correct at the MCU pins, but the card reported `COM_CRC_ERROR`;
+this does not establish signal timing at the card socket. Neither fractional timing nor wiring is individually
+proven to be the remaining cause. Do not treat a mounted 50 MHz volume, or a passing timing model, as sustained
+qualification. CRC checks, the one-time startup fallback, and runtime invalidation remain enabled.
+
+To reproduce the tested image without changing the default profile:
+
+```sh
+cmake -S firmware -B build/firmware-pico2-hs200 \
+  -DPICO_BOARD=pico2 -DPF_SYS_CLK_MHZ=200 \
+  -DPF_SD_CARD_PORT=FREERTOS -DPF_SD_CARD_TRANSPORT=SDIO_PIO \
+  -DPF_SDIO_PIO_HIGH_SPEED=ON -DPF_SD_CARD_INTERRUPT_WAIT=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build/firmware-pico2-hs200 --parallel 4
+```
 
 ### W25Q128 Flash Breakout
 

@@ -12,6 +12,7 @@ SD_CARD_PORT="${PF_SD_CARD_PORT:-FREERTOS}"
 NOR_SMOKE=OFF
 NOR_TRANSPORT="${PF_NOR_TRANSPORT:-SPI}"
 BUILD_LEVELX=OFF
+FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -37,6 +38,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --sys-clk-mhz)
             SYS_CLK_MHZ="$2"
+            shift 2
+            ;;
+        --firmware-version)
+            FIRMWARE_VERSION="$2"
             shift 2
             ;;
         --sd-card-transport)
@@ -67,6 +72,7 @@ Options:
   --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
     --sys-clk-mhz MHZ  Out-of-spec system clock, 100-250 (default: 0, SDK default)
+    --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
     --sd-card-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
     --sd-card-port NAME  FREERTOS application or BAREMETAL driver smoke (default: FREERTOS)
     --nor-transport NAME  Build standalone raw NOR smoke instead: SPI or QSPI_PIO
@@ -145,6 +151,7 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" \
     -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \
     -DPICO_BOARD="$BOARD" \
+    -DPF_FIRMWARE_VERSION="$FIRMWARE_VERSION" \
     -DPF_SYS_CLK_MHZ="$SYS_CLK_MHZ" \
     -DPF_SD_CARD_PORT="$SD_CARD_PORT" \
     -DPF_BUILD_NOR_SMOKE="$NOR_SMOKE" \

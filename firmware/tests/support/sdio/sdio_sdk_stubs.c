@@ -35,6 +35,8 @@ unsigned pf_test_sdio_barrier_count;
 bool pf_test_sdio_data_irq = true;
 bool pf_test_sdio_dma_busy;
 uint32_t pf_test_sdio_system_clock_hz = 125000000u;
+uint32_t pf_test_sdio_sm_divider[4];
+uint32_t pf_test_sdio_sleep_ms_total;
 bool pf_test_sdio_force_tx_stall;
 bool pf_test_sdio_corrupt_command_crc;
 unsigned pf_test_sdio_data_fifo_words = 1u;
@@ -84,9 +86,9 @@ pio_sm_config pf_sdio_pio_clock_program_get_default_config(uint offset)
 pio_sm_config pf_sdio_pio_command_program_get_default_config(uint offset)
 { (void)offset; return (pio_sm_config){0}; }
 pio_sm_config pf_sdio_pio_data_rx_program_get_default_config(uint offset)
-{ (void)offset; return (pio_sm_config){0}; }
+{ (void)offset; return (pio_sm_config){.opaque = {256u}}; }
 pio_sm_config pf_sdio_pio_data_rx_fast_program_get_default_config(uint offset)
-{ (void)offset; return (pio_sm_config){0}; }
+{ (void)offset; return (pio_sm_config){.opaque = {256u}}; }
 pio_sm_config pf_sdio_pio_data_tx_program_get_default_config(uint offset)
 { (void)offset; return (pio_sm_config){0}; }
 pio_sm_config pf_sdio_pio_data_tx_fast_program_get_default_config(uint offset)
@@ -119,7 +121,7 @@ void pio_gpio_init(PIO pio, uint pin) { (void)pio; (void)pin; }
 void pio_sm_set_consecutive_pindirs(PIO pio, uint sm, uint pin, uint count, bool out)
 { (void)pio; (void)sm; (void)pin; (void)count; (void)out; }
 void pio_sm_init(PIO pio, uint sm, uint offset, const pio_sm_config *config)
-{ (void)pio; (void)sm; (void)offset; (void)config; }
+{ (void)pio; (void)offset; pf_test_sdio_sm_divider[sm] = config->opaque[0]; }
 void pio_sm_set_enabled(PIO pio, uint sm, bool enabled)
 {
     if (sm == 1u) trace_event(enabled ? PF_TEST_RX_ENABLE : PF_TEST_RX_DISABLE);
@@ -229,7 +231,7 @@ uint32_t pio_sm_get(PIO pio, uint sm)
     return pf_test_sdio_data_response;
 }
 void pio_sm_set_clkdiv_int_frac(PIO pio, uint sm, uint16_t integer, uint8_t fraction)
-{ (void)pio; (void)sm; (void)integer; (void)fraction; }
+{ (void)pio; pf_test_sdio_sm_divider[sm] = ((uint32_t)integer << 8u) | fraction; }
 void pio_interrupt_clear(PIO pio, uint index)
 {
     (void)pio;
@@ -281,7 +283,7 @@ void sm_config_set_out_shift(pio_sm_config *config, bool right, bool autopull, u
 void sm_config_set_fifo_join(pio_sm_config *config, uint join) { (void)config; (void)join; }
 void sm_config_set_clkdiv_int_frac(pio_sm_config *config, uint16_t integer, uint8_t fraction)
 {
-    (void)config;
+    config->opaque[0] = ((uint32_t)integer << 8u) | fraction;
     pf_test_sdio_config_divider_integer = integer;
     pf_test_sdio_config_divider_fraction = fraction;
 }
@@ -368,5 +370,5 @@ void gpio_disable_pulls(unsigned pin) { (void)pin; }
 void __dmb(void) { ++pf_test_sdio_barrier_count; trace_event(PF_TEST_BARRIER); }
 uint32_t time_us_32(void) { static uint32_t now; now += pf_test_sdio_time_step; return now; }
 void sleep_us(uint64_t duration) { (void)duration; }
-void sleep_ms(uint32_t duration) { (void)duration; }
+void sleep_ms(uint32_t duration) { pf_test_sdio_sleep_ms_total += duration; }
 void tight_loop_contents(void) {}

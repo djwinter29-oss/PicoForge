@@ -55,7 +55,7 @@ def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object
     """Decode stable product, MCU, and USB serial identity from Feature report 1."""
     payload = _feature_payload(report, INFO_REPORT_ID, INFO_PAYLOAD_SIZE)
     version, mcu_id = payload[:2]
-    if version != REPORT_VERSION:
+    if version not in (2, 3):
         raise ValueError(f"unsupported HID info report version {version}")
     try:
         product_name = payload[2 : 2 + PRODUCT_NAME_SIZE].split(b"\0", 1)[0].decode("ascii")
@@ -66,7 +66,7 @@ def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object
         character not in "0123456789abcdefABCDEF" for character in serial_number
     ):
         raise ValueError("invalid product name or USB serial in HID identity report")
-    if any(payload[38:]):
+    if any(payload[38:] if version == 2 else payload[41:]):
         raise ValueError("nonzero reserved bytes in HID identity report")
     return {
         "version": version,
@@ -74,6 +74,7 @@ def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object
         "mcu": MCU_NAMES.get(mcu_id, f"Unknown MCU ({mcu_id})"),
         "product_name": product_name,
         "serial_number": serial_number,
+        "firmware_version": ".".join(str(value) for value in payload[38:41]) if version == 3 else None,
     }
 
 

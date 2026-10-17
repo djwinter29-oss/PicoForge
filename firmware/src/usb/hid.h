@@ -15,11 +15,12 @@
 #define PF_HID_SELF_TEST_REPORT_ID 6u
 #define PF_HID_FILESYSTEM_REPORT_ID 7u
 #define PF_HID_REPORT_VERSION 2u
+/** @brief Identity layout with a firmware release version; other reports retain layout 2. */
+#define PF_HID_INFO_REPORT_VERSION 3u
 #define PF_HID_PRODUCT_NAME "PicoForge"
 #define PF_HID_PRODUCT_NAME_SIZE 20u
 #define PF_HID_SERIAL_NUMBER_SIZE (2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES)
-#define PF_HID_INFO_RESERVED_SIZE 4u
-#define PF_HID_INFO_PAYLOAD_SIZE (2u + PF_HID_PRODUCT_NAME_SIZE + PF_HID_SERIAL_NUMBER_SIZE + PF_HID_INFO_RESERVED_SIZE)
+#define PF_HID_INFO_PAYLOAD_SIZE (2u + PF_HID_PRODUCT_NAME_SIZE + PF_HID_SERIAL_NUMBER_SIZE + 4u)
 #define PF_HID_STATUS_PAYLOAD_SIZE 13u
 #define PF_HID_MEMORY_PAYLOAD_SIZE 29u
 #define PF_HID_LED_COMMAND_PAYLOAD_SIZE 2u
@@ -57,11 +58,14 @@
 
 /** Stable product/device identity returned by HID Feature report 1. */
 typedef struct __attribute__((packed)) {
-    uint8_t version;
-    uint8_t mcu_id;
-    char product_name[PF_HID_PRODUCT_NAME_SIZE];
-    char serial_number[PF_HID_SERIAL_NUMBER_SIZE];
-    uint8_t reserved[PF_HID_INFO_RESERVED_SIZE];
+    uint8_t version; /**< Identity layout version, not the firmware version. */
+    uint8_t mcu_id; /**< SDK-selected MCU family. */
+    char product_name[PF_HID_PRODUCT_NAME_SIZE]; /**< Zero-padded product name. */
+    char serial_number[PF_HID_SERIAL_NUMBER_SIZE]; /**< Hexadecimal unique board ID. */
+    uint8_t firmware_major; /**< Firmware release major version. */
+    uint8_t firmware_minor; /**< Firmware release minor version. */
+    uint8_t firmware_patch; /**< Firmware release patch version. */
+    uint8_t reserved; /**< Must remain zero. */
 } pf_hid_info_report_t;
 
 /** Dynamic telemetry returned by HID Input report 2. Integer fields are little-endian. */

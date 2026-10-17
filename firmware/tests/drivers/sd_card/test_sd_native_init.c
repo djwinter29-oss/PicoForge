@@ -59,6 +59,7 @@ static unsigned command_count;
 static unsigned fail_validation_read;
 static uint32_t r6_value;
 static bool fail_switch_check;
+static uint32_t switch_selected_at_ms;
 
 void setUp(void)
 {
@@ -104,6 +105,7 @@ void setUp(void)
     fail_validation_read = 0u;
     r6_value = 0x12340000u;
     fail_switch_check = false;
+    pf_test_sdio_sleep_ms_total = switch_selected_at_ms = 0u;
 }
 
 void tearDown(void) {}
@@ -113,6 +115,9 @@ bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_config_t *con
 void pf_sd_native_host_deinit(pf_sd_native_host_t *host) { (void)host; }
 bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t hz)
 {
+    if (hz == 50000000u) {
+        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1u, pf_test_sdio_sleep_ms_total - switch_selected_at_ms);
+    }
     TEST_ASSERT_LESS_THAN_UINT(4u, clock_request_count);
     clock_requests[clock_request_count++] = hz;
     if (hz > SD_HIGH_CLOCK_HZ) return false;
@@ -216,6 +221,7 @@ bool pf_sd_native_host_read_switch_status(pf_sd_native_host_t *host, uint32_t ar
         }
         status[13] = high_speed_supported ? 2u : 0u;
     } else if (argument == PF_SD_NATIVE_CMD6_SWITCH_HIGH_SPEED) {
+        switch_selected_at_ms = pf_test_sdio_sleep_ms_total;
         status[16] = high_speed_selected ? 1u : 0xfu;
     } else {
         TEST_ASSERT_EQUAL_HEX32(PF_SD_NATIVE_CMD6_SWITCH_DEFAULT, argument);

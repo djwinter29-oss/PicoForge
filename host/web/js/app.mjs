@@ -1,6 +1,5 @@
 import { renderStatus, renderSelfTest } from "./dashboard.mjs";
 
-const refresh = document.querySelector("#refresh");
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
 let requestInProgress = false;
@@ -10,7 +9,6 @@ let selfTestPendingSequence = null;
 async function updateStatus() {
   if (requestInProgress) return;
   requestInProgress = true;
-  refresh.disabled = true;
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
     if (!response.ok) throw new Error(`Status endpoint returned HTTP ${response.status}`);
@@ -23,7 +21,6 @@ async function updateStatus() {
     currentSnapshot = null;
   } finally {
     requestInProgress = false;
-    refresh.disabled = false;
     ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
     mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
       || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
@@ -74,7 +71,6 @@ async function setLed() {
   }
 }
 
-refresh.addEventListener("click", updateStatus);
 async function selfTest(action) {
   if (!currentSnapshot?.connected) return;
   selfTestPendingSequence = currentSnapshot.self_test?.sequence ?? 0;
@@ -86,7 +82,6 @@ async function selfTest(action) {
       body: JSON.stringify({ action, size_mib: document.querySelector("#self-test-size").valueAsNumber }),
     });
     if (!response.ok) throw new Error(`Self-test endpoint returned HTTP ${response.status}`);
-    if (action === "start") document.querySelector("#self-test-consent").checked = false;
   } catch (error) {
     selfTestPendingSequence = null;
     currentSnapshot.self_test_command_pending = false;
@@ -96,9 +91,7 @@ async function selfTest(action) {
 }
 document.querySelector("#self-test-start").addEventListener("click", () => selfTest("start"));
 document.querySelector("#self-test-cancel").addEventListener("click", () => selfTest("cancel"));
-for (const selector of ["#self-test-size", "#self-test-consent"]) {
-  document.querySelector(selector).addEventListener("input", () => renderSelfTest(currentSnapshot ?? {}));
-}
+document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(currentSnapshot ?? {}));
 ledControl.addEventListener("click", setLed);
 mscControl.addEventListener("click", setMsc);
 void updateStatus();

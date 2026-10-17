@@ -17,7 +17,10 @@ void pf_hid_build_info_report(pf_hid_info_report_t *report)
     char serial_number[PF_HID_SERIAL_NUMBER_SIZE + 1u];
 
     memset(report, 0, sizeof(*report));
-    report->version = PF_HID_REPORT_VERSION;
+    report->version = PF_HID_INFO_REPORT_VERSION;
+    report->firmware_major = PF_FIRMWARE_VERSION_MAJOR;
+    report->firmware_minor = PF_FIRMWARE_VERSION_MINOR;
+    report->firmware_patch = PF_FIRMWARE_VERSION_PATCH;
     report->mcu_id = pf_system_mcu_id();
     memcpy(report->product_name, PF_HID_PRODUCT_NAME, sizeof(PF_HID_PRODUCT_NAME) - 1u);
     pico_get_unique_board_id_string(serial_number, sizeof(serial_number));

@@ -2,7 +2,8 @@
 """Test assembled TX timing/completion and RX cadence, not electrical qualification.
 
 Model divider-1 data instructions, an integer-half-period clock, and 0/1
-cycle clock-observation latency with input_sync_bypass enabled. Pin writes
+cycle clock-observation latency with input_sync_bypass enabled; a separate
+system-cycle RX model covers 200/250 MHz CPU and exact 50 MHz clock cadence. Pin writes
 become effective on the following model cycle. Hardware must separately
 qualify pad skew, signal integrity, CRC and sustained transfers.
 """
@@ -143,19 +144,19 @@ def check_receive(ops, half, latency, phase):
         "RX skipped a nibble", half, latency, phase, samples[:8])
 
 
-def check_receive_framing(ops, half):
+def check_receive_framing(ops, half, falling_launch=False):
     # Exercise the actual start-detection loop, including DAT0 going low before
     # the rising edge. The old asynchronous WAIT counted that start bit as data.
     period = 2 * half
-    # JMP PIN observes DAT0 one instruction after the falling-edge WAIT.
+    # JMP PIN observes DAT0 one instruction after the settled sampling edge.
     # Keep one cycle of setup/hold margin around that observation.
     for delay in range(2 - half, half):
-        samples = receive_samples(ops, half, 0, half, 2, -2 * period, 3, delay)
+        samples = receive_samples(ops, half, 0, 0 if falling_launch else half, 2, -2 * period, 3, delay)
         assert len(samples) == 3, (half, delay)
         for index, cycle in enumerate(samples):
             lo = period * (index + 1) + half
             assert lo <= cycle < lo + half, (
-                "RX sample outside the second half of its bit", half, delay, index, cycle)
+                "RX sample outside the second half of its launched bit", half, delay, index, cycle)
 
 
 def check_command_response(ops):
@@ -265,7 +266,16 @@ def test_tx_status(programs, half):
 
 @pytest.mark.parametrize("half", (6, 4, 3, 2))
 def test_rx_framing(programs, half):
-    check_receive_framing(programs["data_rx"], half)
+    check_receive_framing(programs["data_rx"], half, falling_launch=True)
+
+
+def test_250mhz_default_speed_rx_samples_after_rising_edge(programs):
+    ops = programs["data_rx"]
+    assert ops[2:4] == ops[5:7] == [0x203e, 0x20be], "Start and payload must settle after falling CLK"
+    for latency in (0, 1):
+        for phase in range(10):
+            check_receive(ops, 5, latency, phase)
+    check_receive_framing(ops, 5, falling_launch=True)
 
 
 @pytest.mark.parametrize("latency,phase", [(latency, phase) for latency in (0, 1) for phase in range(4)])
@@ -275,6 +285,41 @@ def test_fast_rx_timing(programs, latency, phase):
 
 def test_fast_rx_framing(programs):
     check_receive_framing(programs["data_rx_fast"], 2)
+
+
+def fast_receive_system_cycles(ops, period, phase, latency):
+    """Run system-clock RX with integer/fractional command-clock half-periods."""
+    pc, remaining = 5, 1039
+    samples = []
+    for cycle in range(5300):
+        op = ops[pc]
+        kind, condition = op >> 13, (op >> 5) & 7
+        if kind == 1:
+            assert op & 31 == 30
+            if (2 * (cycle + phase - latency) // period) % 2 != (op >> 7) & 1:
+                continue
+        elif kind == 2:
+            samples.append(cycle)
+        else:
+            assert kind == 0 and condition == 2
+            if not remaining:
+                return samples
+            remaining -= 1
+            pc = op & 31
+            continue
+        assert ((op >> 8) & 31) == 0, "RX needs one system cycle between WAIT and IN"
+        pc += 1
+    raise AssertionError("Fast RX did not complete")
+
+
+@pytest.mark.parametrize("period,phase,latency", [
+    (period, phase, latency) for period in (4, 5) for phase in range(period) for latency in (0, 1)])
+def test_fast_rx_system_clock_sampling_at_200_and_250mhz(programs, period, phase, latency):
+    samples = fast_receive_system_cycles(programs["data_rx_fast"], period, phase, latency)
+    assert len(samples) == 1040
+    assert all(b - a == period for a, b in zip(samples, samples[1:])), "Dropped/duplicated 50 MHz nibble"
+    for cycle in samples:
+        assert (cycle - 1 + phase - latency) % period == 0, "IN must follow observed falling CLK by one cycle"
 
 
 def test_command_response(programs):

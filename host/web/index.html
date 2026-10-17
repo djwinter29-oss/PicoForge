@@ -21,24 +21,19 @@
     </div>
   </header>
 
+  <main>
     <section class="page-heading">
       <div>
         <p class="eyebrow">HID STATUS / USB</p>
         <h1>Board overview</h1>
       </div>
-      <div class="actions">
-        <button class="button" id="refresh" type="button">Refresh</button>
-        <button class="button" id="led-control" type="button" disabled>Set LED</button>
-        <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
-      </div>
     </section>
-
-    <p id="msc-note" role="status">USB drive off; enable it to hand card access to the host. Safely eject before disabling.</p>
 
     <section class="identity" aria-label="Hardware identity">
       <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
       <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
       <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
+      <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
       <div class="metric"><span>USB serial</span><strong id="serial">--</strong></div>
     </section>
 
@@ -48,13 +43,17 @@
           <p class="eyebrow">LIVE REPORT</p>
           <h2 id="runtime-title">Runtime status</h2>
         </div>
-        <p class="sample-time" id="sample-time">Waiting for HID report</p>
+        <div class="actions">
+          <p class="sample-time" id="sample-time">Waiting for HID report</p>
+          <button class="button" id="led-control" type="button" disabled>Set LED</button>
+        </div>
       </div>
       <dl class="runtime-grid">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
         <div><dt>System clock</dt><dd id="runtime-clock">--</dd></div>
         <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
-        <div><dt>USB device</dt><dd id="usb-state">--</dd></div>
+        <div><dt>SD card presence</dt><dd id="card-presence">--</dd></div>
+        <div><dt>Memory type</dt><dd id="memory-type">--</dd></div>
         <div><dt>Report sequence</dt><dd id="sequence">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
         <div><dt>Onboard LED</dt><dd id="led-state">--</dd></div>
@@ -71,14 +70,12 @@
       </div>
       <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
-        <div><dt>Presence</dt><dd id="memory-presence">--</dd></div>
         <div><dt>Card state</dt><dd id="memory-state">--</dd></div>
-        <div><dt>Type</dt><dd id="memory-type">--</dd></div>
         <div><dt>Mode</dt><dd id="memory-mode">--</dd></div>
         <div><dt>Bus speed</dt><dd id="memory-speed">--</dd></div>
         <div><dt>Capacity</dt><dd id="memory-size">--</dd></div>
         <div><dt>Filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
-        <div><dt>Manufacturer ID</dt><dd id="memory-manufacturer">--</dd></div>
+        <div><dt>Manufacturer</dt><dd id="memory-manufacturer">--</dd></div>
         <div><dt>Product</dt><dd id="memory-product">--</dd></div>
         <div><dt>Card serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
@@ -86,15 +83,16 @@
 
     <section class="runtime self-test" aria-labelledby="self-test-title">
       <div class="section-heading">
-        <h2 id="self-test-title">SD card self-test</h2>
-        <span class="sample-time">/PFTEST.BIN</span>
+        <h2 id="self-test-title">Memory Tests</h2>
+        <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
+      <p class="sample-time storage-note" id="msc-note" role="status">USB drive off; safely eject before disabling.</p>
+      <p class="sample-time">Writes and verifies /PFTEST.BIN, replacing any existing file at that path.</p>
       <div class="self-test-controls">
         <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="128" step="1" value="32"></label>
         <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
         <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
       </div>
-      <label class="self-test-consent"><input id="self-test-consent" type="checkbox">Allow SD-card writes and replacement of /PFTEST.BIN</label>
       <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
       <dl class="runtime-grid">
         <div><dt>State</dt><dd id="self-test-state">Unavailable</dd></div>

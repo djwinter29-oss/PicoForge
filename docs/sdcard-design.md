@@ -341,8 +341,10 @@ driver. CSD must advertise a default transfer rate of at least 25 MHz.
 `PF_SDIO_PIO_HIGH_SPEED=ON` is an explicit CMake opt-in, OFF by default.
 At SYSCLK below 200 MHz the driver stays at 25 MHz and records the host limit.
 Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
-group-1 support, busy status and selected function, and only then targets up to
-50 MHz. CMD13 and CRC-checked LBA 0 validate the faster bus. A failure permits
+group-1 support, busy status and selected function. After DAT0 is ready, it leaves
+CLK running at the old rate for 1 ms before targeting up to 50 MHz. This bounded
+settling interval was required by the lab card; other cards still require qualification.
+CMD13 and CRC-checked LBA 0 validate the faster bus. A failure permits
 exactly one 25 MHz attempt, including a CMD6 switch back to Default-Speed
 timing and repeat validation; failure of that attempt aborts initialization.
 Unsupported/rejected High Speed is nonfatal only while card operation can be
@@ -356,8 +358,8 @@ cmake --build build/validation-pico2-fixed25-250
 ```
 
 This does not change SYSCLK or qualify an overclock. Leave the option OFF for
-the default design. Neither mode is evidence that the current card's observed
-native receive/framing fault has been fixed on hardware.
+the default design. For the qualified 200 MHz CPU / 50 MHz SD build and the still-failing 250 MHz combination, see the
+[High-Speed lab record](../firmware/src/drivers/storage/README.md#high-speed-bring-up-2026-10-17).
 
 The integer clock divider rounds down to avoid exceeding 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
@@ -421,11 +423,11 @@ partial frame, so neither timeout nor CRC/framing failure is accepted as compati
 A
 command that completes before a delayed poll is not reported as a timeout.
 In-PIO timeouts are not used because the command (20) and receive (12) programs
-use all 32 PIO instructions. Receive start detection qualifies DAT0 at a falling
-clock edge rather than treating any asynchronous low level as the start bit.
-This avoids including an early-asserted start bit in the SCR or sector payload.
-Command responses are also sampled at falling edges, away from rising-edge card
-output transitions. Both paths retain framing/CRC validation; see the
+use all 32 PIO instructions. Receive start detection qualifies DAT0 at the same
+settled edge used for payload rather than treating any asynchronous low level as
+the start bit. The [physical transport reference](../firmware/src/drivers/storage/README.md#physical-storage-bus)
+defines Default-Speed and High-Speed sampling phases. Command responses retain
+falling-edge sampling and framing/CRC validation; see the historical
 [Class 4 read-only check](../firmware/src/drivers/storage/README.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
@@ -834,12 +836,10 @@ of this documentation change or every compatible card:
 | 128 GB SN128, stock 150 MHz SYSCLK / 25 MHz SDIO | Recorded 9.5 MB/s write and 8.3 MB/s read |
 | 128 GB SN128, 280 MHz SYSCLK | Did not work with the card even at 25 MHz SDIO |
 
-All native RX programs sample data on the falling clock edge (mid-bit), and the
-slow TX CRC-status read does the same; the busy check runs one bit after the end
-bit. This replaces sampling one cycle after the rising edge, which is inside the
-card's 2.5-14 ns output-change window. High-speed RX uses a three-instruction
-loop; its data divider is half the
-command/clock divider with matched fractional timing. High-speed TX starts
+Those experiments used falling-edge RX with a fast data divider half the
+command/clock divider. The current RX phases and system-clock sampling are
+documented in the [physical transport reference](../firmware/src/drivers/storage/README.md#physical-storage-bus).
+High-speed TX starts
 the clock and data state machines together and launches at a fixed cycle offset.
 The slow TX program is not suitable for 50 MHz: its observed-edge launch left
 insufficient setup time and produced card CRC-error tokens. A 50 MHz bus needs

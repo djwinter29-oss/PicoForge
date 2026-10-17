@@ -11,7 +11,7 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 2. Ensure the filesystem is mounted; use `fs mount` if it is not already mounted.
 3. Open one dashboard and connect to its vendor HID interface.
 4. Choose an integer file size from 1 to 128 MiB; the default is 32 MiB.
-5. Check **Allow SD-card writes and replacement of /PFTEST.BIN**, then select **Start self-test**.
+5. Select **Start self-test**. This authorizes writes and replacement of `/PFTEST.BIN`; no checkbox is required.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and
    does not make ownership available until the worker finishes.
 

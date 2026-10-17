@@ -35,6 +35,8 @@ extern unsigned pf_test_sdio_barrier_count;
 extern bool pf_test_sdio_data_irq;
 extern bool pf_test_sdio_dma_busy;
 extern uint32_t pf_test_sdio_system_clock_hz;
+extern uint32_t pf_test_sdio_sm_divider[4];
+extern uint32_t pf_test_sdio_sleep_ms_total;
 extern bool pf_test_sdio_force_tx_stall;
 extern bool pf_test_sdio_corrupt_command_crc;
 extern unsigned pf_test_sdio_data_fifo_words;

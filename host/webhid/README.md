@@ -10,5 +10,7 @@ Open `http://localhost:8000/` in a WebHID-capable browser, connect the board, an
 
 The [SD self-test](../../docs/sd-self-test.md) uses HID Report 6 to start/cancel
 a verified temporary-file benchmark and receive progress/timing metrics. Default
-size is 32 MiB, with explicit temporary-write consent required in the UI. Do not
+size is 32 MiB; selecting Start authorizes temporary-file writes and replacement.
+The first summary row includes the firmware release version (`Unknown` for legacy firmware).
+LED control is in Live Report; USB-drive control is beside the self-test. Do not
 run a competing Python/.NET HID monitor for the same board at the same time.

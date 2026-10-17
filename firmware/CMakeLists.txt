@@ -23,6 +23,9 @@ endif()
 
 project(pf_hello_world C CXX ASM)
 
+set(PF_FIRMWARE_VERSION "0.0.0-dev" CACHE STRING "Firmware semantic version string")
+include("${CMAKE_CURRENT_LIST_DIR}/version.cmake")
+
 set(PF_SD_CARD_TRANSPORT "SDIO_PIO" CACHE STRING "SD-card transport: SDIO_PIO or SPI")
 set_property(CACHE PF_SD_CARD_TRANSPORT PROPERTY STRINGS SDIO_PIO SPI)
 option(PF_SD_CARD_INTERRUPT_WAIT "Enable experimental FreeRTOS native PIO completion waits" OFF)
@@ -366,6 +369,10 @@ target_link_libraries(pf_hello_world
 
 target_compile_definitions(pf_hello_world PRIVATE
     configNUMBER_OF_CORES=1
+    PF_FIRMWARE_VERSION_MAJOR=${PF_FIRMWARE_VERSION_MAJOR}u
+    PF_FIRMWARE_VERSION_MINOR=${PF_FIRMWARE_VERSION_MINOR}u
+    PF_FIRMWARE_VERSION_PATCH=${PF_FIRMWARE_VERSION_PATCH}u
+    PF_BCD_DEVICE=${PF_BCD_DEVICE}u
 )
 
 # Interpose TinyUSB MSC reset processing without modifying the pinned SDK.
@@ -375,6 +382,7 @@ target_link_options(pf_hello_world PRIVATE
 )
 
 pico_enable_stdio_usb(pf_hello_world 0)
+pico_set_program_version(pf_hello_world "${PF_FIRMWARE_VERSION}")
 pico_enable_stdio_uart(pf_hello_world 0)
 
 pico_add_extra_outputs(pf_hello_world)

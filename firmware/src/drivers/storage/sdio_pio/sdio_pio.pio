@@ -40,18 +40,18 @@ command_complete:
 .wrap
 
 .program pf_sdio_pio_data_rx
-; Sample on the falling edge, mid-bit; after the rising edge the card's outputs are still changing.
+; Default-Speed cards launch on falling CLK; sample after the following rising edge.
     pull block
 receive_block:
     mov x, osr
-; Detect start at a falling edge, whether DAT0 went low before or after the rising edge.
+; Qualify start on the same settled edge used for payload sampling.
 wait_for_start:
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     jmp pin wait_for_start
 receive_nibble:
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     in pins, 4
     jmp x-- receive_nibble
     wait 1 pin 0
@@ -59,6 +59,7 @@ receive_nibble:
     irq set 1
 
 .program pf_sdio_pio_data_rx_fast
+; High-Speed cards launch on rising CLK; sample after falling CLK at the system clock.
     pull block
 receive_block:
     mov x, osr

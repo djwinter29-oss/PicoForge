@@ -47,14 +47,14 @@ function paddedText(view, offset, length) {
 export function decodeInfoReport(report) {
   const payload = featurePayload(report, INFO_REPORT_ID, INFO_PAYLOAD_SIZE);
   const version = payload.getUint8(0);
-  if (version !== 2) throw new Error(`Unsupported HID info report version ${version}`);
+  if (version !== 2 && version !== 3) throw new Error(`Unsupported HID info report version ${version}`);
   const mcuId = payload.getUint8(1);
   const productName = paddedText(payload, 2, 20);
   const serialNumber = paddedText(payload, 22, 16);
   if (!productName || !/^[0-9a-f]{16}$/i.test(serialNumber)) {
     throw new Error("Invalid HID product or serial identity");
   }
-  for (let index = 38; index < INFO_PAYLOAD_SIZE; index++) {
+  for (let index = version === 2 ? 38 : 41; index < INFO_PAYLOAD_SIZE; index++) {
     if (payload.getUint8(index) !== 0) throw new Error("Unexpected nonzero HID identity reserved bytes");
   }
   return {
@@ -63,6 +63,7 @@ export function decodeInfoReport(report) {
     mcu: ({ 1: "RP2040", 2: "RP2350" })[mcuId] ?? `Unknown MCU (${mcuId})`,
     product_name: productName,
     serial_number: serialNumber,
+    firmware_version: version === 3 ? [38, 39, 40].map(offset => payload.getUint8(offset)).join(".") : null,
   };
 }
 

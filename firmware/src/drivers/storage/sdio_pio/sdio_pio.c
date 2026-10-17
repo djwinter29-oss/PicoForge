@@ -133,10 +133,6 @@ static bool load_data_rx_program(pf_sdio_pio_t *host)
     pio_sm_config config = host->data_rx_fast
         ? pf_sdio_pio_data_rx_fast_program_get_default_config(host->data_rx_program_offset)
         : pf_sdio_pio_data_rx_program_get_default_config(host->data_rx_program_offset);
-    if (host->data_rx_fast) {
-        sm_config_set_clkdiv_int_frac(&config, (uint16_t)(host->clock_div_ticks >> 9u),
-                                      (uint8_t)((host->clock_div_ticks >> 1u) & 0xffu));
-    }
     sm_config_set_in_pins(&config, host->config.pins.data_gpio[0]);
     sm_config_set_jmp_pin(&config, host->config.pins.data_gpio[0]);
     sm_config_set_in_shift(&config, false, true, 32u);

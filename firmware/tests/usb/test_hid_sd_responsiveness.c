@@ -10,6 +10,23 @@ void setUp(void)
 }
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
 
+void test_hid_identity_reports_firmware_version_without_changing_payload_size(void)
+{
+    pf_hid_info_report_t report;
+    memset(&report, 0xa5, sizeof(report));
+    pf_hid_build_info_report(&report);
+    TEST_ASSERT_EQUAL_UINT(42u, sizeof(report));
+    TEST_ASSERT_EQUAL_UINT8(3u, report.version);
+    TEST_ASSERT_EQUAL_UINT8(1u, report.firmware_major);
+    TEST_ASSERT_EQUAL_UINT8(2u, report.firmware_minor);
+    TEST_ASSERT_EQUAL_UINT8(3u, report.firmware_patch);
+    TEST_ASSERT_EQUAL_UINT8(0u, report.reserved);
+    uint8_t payload[sizeof(report)];
+    TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0, PF_HID_INFO_REPORT_ID,
+        HID_REPORT_TYPE_FEATURE, payload, sizeof(payload)));
+    TEST_ASSERT_EQUAL_MEMORY(&report, payload, sizeof(report));
+}
+
 void test_hid_unavailable_card_preserves_payload_and_does_not_block_usb_or_queue_work(void)
 {
     pf_hid_memory_report_t report, sentinel;

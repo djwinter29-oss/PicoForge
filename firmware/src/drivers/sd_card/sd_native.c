@@ -149,6 +149,8 @@ static bool select_transfer_speed(uint32_t card_address)
     if (!wait_card_data_ready()) {
         return false;
     }
+    /* ponytail: 1 ms settling qualifies the lab card; add card-specific readiness if this ceiling is insufficient. */
+    pf_storage_bus_delay_ms(&active_config.transport, 1u);
     native_info.high_speed = true;
     native_info.requested_clock_hz = SD_HIGH_CLOCK_HZ;
     if (pf_sd_native_host_set_clock(&native_host, SD_HIGH_CLOCK_HZ) &&

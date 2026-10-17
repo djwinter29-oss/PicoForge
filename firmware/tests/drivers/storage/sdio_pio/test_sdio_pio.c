@@ -72,6 +72,28 @@ void setUp(void)
 
 void tearDown(void) {}
 
+void test_rx_uses_system_clock_before_and_after_high_speed_tx(void)
+{
+    const uint32_t clocks[] = {125000000u, 150000000u, 200000000u, 250000000u};
+    for (unsigned index = 0u; index < sizeof(clocks) / sizeof(clocks[0]); ++index) {
+        pf_test_sdio_system_clock_hz = clocks[index];
+        pf_sdio_pio_t host = {0};
+        pf_sdio_pio_config_t config = pins();
+        TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+        TEST_ASSERT_EQUAL_UINT32(256u, pf_test_sdio_sm_divider[host.data_sm]);
+        if (clocks[index] >= 200000000u) {
+            TEST_ASSERT_TRUE(pf_sdio_pio_set_clock(&host, 50000000u));
+            TEST_ASSERT_TRUE(host.data_rx_fast);
+            TEST_ASSERT_EQUAL_UINT32(256u, pf_test_sdio_sm_divider[host.data_sm]);
+            TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&host));
+            TEST_ASSERT_EQUAL_UINT32(host.clock_div_ticks / 2u, pf_test_sdio_sm_divider[host.data_sm]);
+            TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
+            TEST_ASSERT_EQUAL_UINT32(256u, pf_test_sdio_sm_divider[host.data_sm]);
+        }
+        pf_sdio_pio_deinit(&host);
+    }
+}
+
 void test_native_descriptor_lifecycle_has_no_serial_or_device_protocol_dependency(void)
 {
     pf_sdio_pio_t host = {.config = pins()};

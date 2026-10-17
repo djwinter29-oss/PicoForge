@@ -5,7 +5,7 @@ namespace PicoForge;
 
 /// <summary>Hardware and product identity reported by the PicoForge HID feature report.</summary>
 public sealed record HardwareInfoResponse(string ProductName, string Mcu, byte McuId,
-    string SerialNumber);
+    string SerialNumber, string? FirmwareVersion = null);
 
 /// <summary>Dynamic telemetry reported periodically by the PicoForge HID input report.</summary>
 public sealed record RuntimeStatusResponse(byte Sequence, uint UptimeMs, uint SystemClockHz,
@@ -76,7 +76,7 @@ internal static class HidProtocol
     public static HardwareInfoResponse ParseInfoReport(ReadOnlySpan<byte> report)
     {
         var payload = FeaturePayload(report, InfoReportId, InfoPayloadSize);
-        Require(payload[0] == ReportVersion, "unsupported HID info report version");
+        Require(payload[0] is 2 or 3, "unsupported HID info report version");
         var mcuId = payload[1];
         var productBytes = payload.Slice(2, 20);
         var terminator = productBytes.IndexOf((byte)0);
@@ -87,7 +87,7 @@ internal static class HidProtocol
         var serialNumber = Encoding.ASCII.GetString(serialBytes);
         Require(serialNumber.Length == 16 && serialNumber.All(Uri.IsHexDigit),
             "invalid USB serial in HID info report");
-        Require(payload.Slice(38, 4).IndexOfAnyExcept((byte)0) < 0,
+        Require(payload[(payload[0] == 2 ? 38 : 41)..].IndexOfAnyExcept((byte)0) < 0,
             "nonzero reserved bytes in HID info report");
         var mcu = mcuId switch
         {
@@ -95,7 +95,8 @@ internal static class HidProtocol
             2 => "RP2350",
             _ => $"Unknown MCU ({mcuId})"
         };
-        return new(Encoding.ASCII.GetString(productBytes), mcu, mcuId, serialNumber);
+        var firmwareVersion = payload[0] == 3 ? $"{payload[38]}.{payload[39]}.{payload[40]}" : null;
+        return new(Encoding.ASCII.GetString(productBytes), mcu, mcuId, serialNumber, firmwareVersion);
     }
 
     public static RuntimeStatusResponse ParseStatusReport(ReadOnlySpan<byte> report)
@@ -247,7 +248,7 @@ internal static class HidProtocol
     {
         var offset = report.Length >= size + 2 && report[0] == 0 && report[1] == reportId ? 2
             : report.Length >= size + 2 && report[0] == reportId && report[1] == reportId
-                && report[2] == ReportVersion ? 2
+                && (report[2] == ReportVersion || (reportId == InfoReportId && report[2] == 3)) ? 2
             : report.Length >= size + 1 && report[0] == reportId ? 1
             : -1;
         Require(offset >= 0 && report.Length >= offset + size, "unexpected HID feature report length or ID");

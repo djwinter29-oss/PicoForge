@@ -29,8 +29,23 @@ class ProtocolTests(unittest.TestCase):
                 "mcu": "RP2350",
                 "product_name": "PicoForge",
                 "serial_number": "0123456789abcdef",
+                "firmware_version": None,
             },
         )
+
+    def test_decodes_firmware_release_from_identity_layout_three(self):
+        report = bytearray(info_report())
+        report[1] = 3
+        report[39:42] = bytes([0, 1, 0])
+        for framed in (report, bytes([0]) + report + bytes(4), report + bytes(4)):
+            self.assertEqual(parse_info_report(framed)["firmware_version"], "0.1.0")
+        report[-1] = 1
+        with self.assertRaises(ValueError):
+            parse_info_report(report)
+        report[-1] = 0
+        report[1] = 4
+        with self.assertRaises(ValueError):
+            parse_info_report(report)
 
     def test_accepts_linux_feature_report_id_prefix_and_zero_padding(self):
         report = bytes([0]) + info_report() + bytes(4)
