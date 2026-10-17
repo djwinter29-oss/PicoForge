@@ -2,8 +2,8 @@
 
 This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
-resource ownership. Wiring and electrical requirements remain in
-[hardware setup](hardware-setup.md#memory-and-storage-connections); filesystem
+resource ownership. Wiring and electrical requirements remain in the
+[storage transport guide](../firmware/src/drivers/storage/README.md#memory-and-storage-connections); filesystem
 commands and mounting policy remain in [the CDC CLI guide](cdc-cli.md).
 
 ## Architecture
@@ -12,50 +12,32 @@ One configured card is exposed through a transport-neutral, synchronous block
 API. Native SDIO-PIO uses four data lanes; SD-SPI uses a Pico SDK SPI controller.
 Here, SDIO means native SD memory-card signaling, not support for SDIO I/O cards.
 
-### Physical Storage Bus
-
-Reusable physical engines live under `firmware/src/drivers/storage/`, separate
-from SD and NOR device protocols:
+Native and SPI protocol files live together under `firmware/src/drivers/sd_card/`:
 
 ```text
-drivers/
-  storage/
-    storage_bus.h / storage_bus.c
-    spi/storage_spi.h / storage_spi.c
-    sdio_pio/storage_sdio_pio.h / storage_sdio_pio.c / storage_sdio_pio.pio
-    qspi_pio/storage_qspi_pio.h / storage_qspi_pio.c / storage_qspi_pio.pio
-  sd_card/       SD initialization, registers, framing, sector and stream policy
-  nor_flash/     NOR opcodes, status, page programming, erase and verification
+sd_card/
+  sd_card.c / .h                       Public configuration, ownership and diagnostics
+  sd_card_block.h / sd_card_msc.h      Block and USB ownership interfaces
+  sd_card_protocol.c / .h             Shared command framing, CRC and register helpers
+  sd_card_native.c / .h               Native initialization and block operations
+  sd_card_native_host.c / .h          Native command/data sequencing and streams
+  sd_card_native_protocol.c / .h      Native response parsing and four-lane CRC
+  sd_card_spi.c / .h                  SPI initialization and block operations
+  sd_card_spi_protocol.c / .h         SPI response and token helpers
+  sd_card_port.h / ports/             FreeRTOS and bare-metal integration
 ```
 
-The [common bus interface](../firmware/src/drivers/storage/storage_bus.h) dispatches
-initialization, clock changes with calculated actual rates, hardware abort,
-deinitialization, and CS-bounded serial transactions. It is a non-owning handle:
-the caller owns the concrete context and serializes access. It creates no task,
-queue, filesystem policy, or automatic mode-switch manager.
+The native and SPI implementations reuse the common protocol helpers but retain their distinct initialization,
+response formats, data framing, and recovery sequences. Native requires modern SDHC/SDXC; SPI retains its existing
+legacy/SDSC handling. The `pf_sdio_pio_*` and `pf_sd_spi_*` function/type names and existing build options are retained;
+backend header names are now `sd_card_native.h` and `sd_card_spi.h`. PIO and DMA implementation belongs to the
+physical storage layer, not the native protocol's name or directory.
 
-SPI and QSPI use command/address/dummy/data transactions. SD-SPI additionally
-uses the SPI byte-exchange and CS primitives so command responses, data tokens,
-busy polling, and multiblock transfers retain their existing CS boundaries.
-Native SD uses a distinct typed wire interface for command/response and data
-phases; it is not emulated as a serial flash transaction. Native DMA buffers
-remain batchable so the SD layer can overlap CRC checking and payload copying
-with receive DMA.
+### Physical Storage Bus
 
-The transport owns GPIO mux/direction, programmed clock timing, PIO/DMA
-resources, FIFO/IRQ state, bounded hardware waits, and hardware cleanup.
-Device adapters retain SD commands, addressing, register decoding and stream
-state, or NOR opcodes and erase/program behavior. They translate physical
-errors into their existing public device results.
-
-Board support remains authoritative for GP2-GP8. SD-SPI and NOR-SPI use one
-shared SPI implementation; native SD and quad-SPI use their own physical
-engines. These are alternative modes of the shared pins, not permission to
-attach multiple active devices. DET remains a board/device-presence input.
-Before switching devices, the caller must sync/unmount as appropriate, finish
-the device protocol, deinitialize the bus, and satisfy the new device's power
-requirements. Bus abort/deinit never claims to finish an interrupted write or
-make filesystem data durable.
+The [storage transport guide](../firmware/src/drivers/storage/README.md#physical-storage-bus) owns the physical
+engine layout, lifecycle, typed transfer interfaces, and shared-pin restrictions. This document covers the SD protocol
+and its integration above those engines.
 
 ```mermaid
 flowchart TD
@@ -90,13 +72,13 @@ flowchart TD
 | Block operations, result codes, and telemetry | [sd_card_block.h](../firmware/src/drivers/sd_card/sd_card_block.h) |
 | USB-only ownership and block capabilities | [sd_card_msc.h](../firmware/src/drivers/sd_card/sd_card_msc.h) |
 | CRC7, command framing, CMD8 classification, CSD decoding, serial CRC16, address conversion, and transfer bounds | [sd_card_protocol.c](../firmware/src/drivers/sd_card/sd_card_protocol.c) |
-| Native card initialization and transfer policy | [sdio_pio.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c) |
-| Native response parsing and four-lane data encoding/CRC | [sdio_pio_protocol.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c) |
-| Native SD command/data adapter and stream policy | [sdio_pio_host.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.c) |
+| Native card initialization and transfer policy | [sd_card_native.c](../firmware/src/drivers/sd_card/sd_card_native.c) |
+| Native response parsing and four-lane data encoding/CRC | [sd_card_native_protocol.c](../firmware/src/drivers/sd_card/sd_card_native_protocol.c) |
+| Native SD command/data adapter and stream policy | [sd_card_native_host.c](../firmware/src/drivers/sd_card/sd_card_native_host.c) |
 | Native physical PIO/DMA engine and wire timing | [storage_sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.c), [storage_sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.pio) |
-| SPI card protocol | [sd_spi.c](../firmware/src/drivers/sd_card/spi/sd_spi.c) |
+| SPI card protocol | [sd_card_spi.c](../firmware/src/drivers/sd_card/sd_card_spi.c) |
 | Shared SPI hardware transport | [storage_spi.c](../firmware/src/drivers/storage/spi/storage_spi.c) |
-| SPI response/token validation and pin-function checks | [sd_spi_protocol.c](../firmware/src/drivers/sd_card/spi/sd_spi_protocol.c) |
+| SPI response/token validation and pin-function checks | [sd_card_spi_protocol.c](../firmware/src/drivers/sd_card/sd_card_spi_protocol.c) |
 | FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
 
 The build selects one backend; it reuses the shared protocol library. SPI-only
@@ -416,7 +398,7 @@ clock edge rather than treating any asynchronous low level as the start bit.
 This avoids including an early-asserted start bit in the SCR or sector payload.
 Command responses are also sampled at falling edges, away from rising-edge card
 output transitions. Both paths retain framing/CRC validation; see the
-[Class 4 read-only check](hardware-setup.md#class-4-read-only-bring-up-2026-10-15).
+[Class 4 read-only check](../firmware/src/drivers/storage/README.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
 
@@ -529,7 +511,7 @@ At 150 MHz SYSCLK, the slow-mode divider produces an exact 25 MHz bus.
 The integer divider can round down for other system clocks; initialization never
 selects a lower candidate after errors. SPI's zero clock request selects 25 MHz. See
 [board_profile.c](../firmware/src/board/board_profile.c) for authoritative values
-and [hardware setup](hardware-setup.md#memory-and-storage-connections) for header
+and [storage wiring](../firmware/src/drivers/storage/README.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 
 | Resource | SDIO-PIO | SD-SPI |
@@ -792,7 +774,7 @@ Use the existing [test guidance](../firmware/tests/README.md) and
 
 Host tests and timing models do not establish electrical margins or target
 hardware safety. Physical qualification is card, board, wiring, and clock
-specific; see [hardware records](hardware-setup.md#sd-card-breakout),
+specific; see [hardware records](../firmware/src/drivers/storage/README.md#sd-card-breakout),
 [SD self-test](sd-self-test.md), and [test records](tests/records).
 Read-only initialization success does not qualify high-speed writes. Power-loss
 recovery, complete MSC lifecycles, and sustained endurance require separate

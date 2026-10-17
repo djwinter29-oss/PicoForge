@@ -7,7 +7,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "../../../../src/drivers/storage/storage_bus.c"
 #include "sdio_sdk_stubs.c"
 
-#if defined(PF_SD_CARD_BLOCK_H) || defined(PF_SDIO_PIO_HOST_H) || defined(PF_NOR_FLASH_H)
+#if defined(PF_SD_CARD_BLOCK_H) || defined(PF_SD_CARD_NATIVE_HOST_H) || defined(PF_NOR_FLASH_H)
 #error "Native transport tests must compile and link without device protocol headers or sources"
 #endif
 

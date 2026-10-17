@@ -1,6 +1,6 @@
 #include "unity.h"
 #include "sd_card_protocol.h"
-#include "sdio_pio_protocol.h"
+#include "sd_card_native_protocol.h"
 
 #include <string.h>
 

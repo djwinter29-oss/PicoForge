@@ -1,4 +1,4 @@
-#include "sd_spi.h"
+#include "sd_card_spi.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -6,8 +6,8 @@
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 #include "sd_card_protocol.h"
-#include "sd_spi_protocol.h"
-#include "../../storage/spi/storage_spi.h"
+#include "sd_card_spi_protocol.h"
+#include "../storage/spi/storage_spi.h"
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u

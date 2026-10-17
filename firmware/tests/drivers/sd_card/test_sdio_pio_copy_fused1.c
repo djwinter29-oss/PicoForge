@@ -2,8 +2,8 @@
 
 #define PF_SDIO_PIO_FUSED_COPY 1
 
-#include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c"
-#include "../../../../src/drivers/sd_card/sd_card_protocol.c"
+#include "../../../src/drivers/sd_card/sd_card_native_protocol.c"
+#include "../../../src/drivers/sd_card/sd_card_protocol.c"
 
 #include <string.h>
 

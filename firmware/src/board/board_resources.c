@@ -4,7 +4,7 @@
 
 #include "config/config.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-#include "sd_spi_protocol.h"
+#include "sd_card_spi_protocol.h"
 #endif
 
 static uint32_t topology_gpio_limit(uint32_t gpio_count)

@@ -1,4 +1,4 @@
-#include "sdio_pio.h"
+#include "sd_card_native.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -7,8 +7,8 @@
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
-#include "sdio_pio_host.h"
-#include "sdio_pio_protocol.h"
+#include "sd_card_native_host.h"
+#include "sd_card_native_protocol.h"
 #include "sd_card_protocol.h"
 
 static pf_sdio_pio_host_t sdio_pio_host;

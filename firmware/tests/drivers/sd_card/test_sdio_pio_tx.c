@@ -6,11 +6,11 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include <stdint.h>
 #include <string.h>
 
-#include "../../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
-#include "../../../../src/drivers/storage/storage_bus.c"
-#include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_host.c"
-#include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c"
-#include "../../../../src/drivers/sd_card/sd_card_protocol.c"
+#include "../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
+#include "../../../src/drivers/storage/storage_bus.c"
+#include "../../../src/drivers/sd_card/sd_card_native_host.c"
+#include "../../../src/drivers/sd_card/sd_card_native_protocol.c"
+#include "../../../src/drivers/sd_card/sd_card_protocol.c"
 #include "sdio_sdk_stubs.c"
 
 _Static_assert(PF_SD_CARD_PROFILE_COMMAND == 0 &&

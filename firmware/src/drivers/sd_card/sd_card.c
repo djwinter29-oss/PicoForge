@@ -21,7 +21,7 @@ void pf_sd_card_unlock(void)
 
 #include "config/config.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-#include "spi/sd_spi.h"
+#include "sd_card_spi.h"
 #define PF_SELECTED_TRANSPORT PF_SD_CARD_TRANSPORT_SPI
 #define pf_selected_init(config) pf_sd_spi_init(&(config)->bus.spi)
 #define pf_selected_is_initialized() pf_sd_spi_is_initialized()
@@ -33,7 +33,7 @@ void pf_sd_card_unlock(void)
 #define pf_selected_get_init_stage() ((uint32_t)pf_sd_spi_get_init_stage())
 #define PF_SELECTED_TRANSPORT_NAME "spi"
 #else
-#include "sdio_pio/sdio_pio.h"
+#include "sd_card_native.h"
 #define PF_SELECTED_TRANSPORT PF_SD_CARD_TRANSPORT_SDIO_PIO
 #define pf_selected_init(config) pf_sdio_pio_init(&(config)->bus.sdio_pio)
 #define pf_selected_is_initialized() pf_sdio_pio_is_initialized()

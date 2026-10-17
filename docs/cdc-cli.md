@@ -160,7 +160,8 @@ These modification commands change the card. The example leaves the empty
 
 FatFs currently has no RTC integration: newly modified files receive the fixed
 timestamp `2026-01-01 00:00:00`. `fs stat` reports the stored timestamp, not the
-board's current time. See [the hardware validation record](hardware-setup.md#sd-card-breakout)
+board's current time. See
+[the hardware validation record](../firmware/src/drivers/storage/README.md#sd-card-breakout)
 for the tested SPI CLI workflow and remaining qualification limits.
 
 ## Integration

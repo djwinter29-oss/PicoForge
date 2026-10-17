@@ -1,5 +1,5 @@
 /** @file SD protocol adapter over the native PIO wire transport. */
-#include "sdio_pio_host.h"
+#include "sd_card_native_host.h"
 #include "sd_card_protocol.h"
 #include <string.h>
 #include "pico/stdlib.h"

@@ -1,13 +1,13 @@
-#ifndef PF_SDIO_PIO_HOST_H
-#define PF_SDIO_PIO_HOST_H
+#ifndef PF_SD_CARD_NATIVE_HOST_H
+#define PF_SD_CARD_NATIVE_HOST_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include "sdio_pio.h"
-#include "sdio_pio_protocol.h"
-#include "../../storage/sdio_pio/storage_sdio_pio.h"
+#include "sd_card_native.h"
+#include "sd_card_native_protocol.h"
+#include "../storage/sdio_pio/storage_sdio_pio.h"
 
 /** Compatibility names for physical clock ownership, now owned by the transport. */
 typedef pf_storage_sdio_clock_owner_t pf_sdio_pio_clock_owner_t;

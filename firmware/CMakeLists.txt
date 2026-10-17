@@ -151,9 +151,9 @@ target_include_directories(pf_sd_card_protocol PUBLIC
 
 if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     add_library(pf_sdio_backend STATIC
-        src/drivers/sd_card/sdio_pio/sdio_pio.c
-        src/drivers/sd_card/sdio_pio/sdio_pio_host.c
-        src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c
+        src/drivers/sd_card/sd_card_native.c
+        src/drivers/sd_card/sd_card_native_host.c
+        src/drivers/sd_card/sd_card_native_protocol.c
         src/drivers/storage/sdio_pio/storage_sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
@@ -168,7 +168,6 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     target_include_directories(pf_sdio_backend
         PUBLIC
             "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
-            "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"
     )
     target_link_libraries(pf_sdio_backend PUBLIC
         pf_storage_bus
@@ -183,12 +182,12 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     set(PF_SD_CARD_BACKEND pf_sdio_backend)
 else()
     add_library(pf_sd_spi_backend STATIC
-        src/drivers/sd_card/spi/sd_spi.c
-        src/drivers/sd_card/spi/sd_spi_protocol.c
+        src/drivers/sd_card/sd_card_spi.c
+        src/drivers/sd_card/sd_card_spi_protocol.c
         src/drivers/storage/spi/storage_spi.c
     )
     target_include_directories(pf_sd_spi_backend PUBLIC
-        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/spi"
+        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     )
     target_link_libraries(pf_sd_spi_backend PUBLIC
         pf_storage_bus
@@ -206,8 +205,6 @@ add_library(pf_sd_card STATIC
 target_include_directories(pf_sd_card PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/spi"
 )
 target_link_libraries(pf_sd_card PUBLIC
     pf_sd_card_protocol
@@ -316,7 +313,6 @@ target_include_directories(pf_board PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_CURRENT_LIST_DIR}/src/board"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card/sdio_pio"
 )
 target_link_libraries(pf_board PUBLIC
     hardware_gpio

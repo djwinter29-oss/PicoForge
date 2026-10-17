@@ -34,9 +34,9 @@ erased bits; it never erases implicitly. A failed write can leave partial change
   NOR parts, set QE, or decide when to erase.
 - [Board integration](../firmware/src/board/board_nor.c) selects GP2 clock,
   GP3..GP6 IO0..IO3 and GP7 CS, matching
-  [the reference hardware setup](hardware-setup.md#w25q128-flash-breakout).
+  [the reference storage wiring](../firmware/src/drivers/storage/README.md#w25q128-flash-breakout).
 
-The authoritative [physical storage-bus architecture](sdcard-design.md#physical-storage-bus)
+The authoritative [physical storage-bus architecture](../firmware/src/drivers/storage/README.md#physical-storage-bus)
 defines transport ownership, lifecycle, and shared-pin restrictions. Existing
 NOR APIs remain available through the adapters; moving the physical engines
 does not add FatFs integration or simultaneous SD/NOR access.

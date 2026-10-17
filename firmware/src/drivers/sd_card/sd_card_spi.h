@@ -1,5 +1,5 @@
-#ifndef PF_SD_SPI_H
-#define PF_SD_SPI_H
+#ifndef PF_SD_CARD_SPI_H
+#define PF_SD_CARD_SPI_H
 
 #include <stdbool.h>
 #include <stdint.h>

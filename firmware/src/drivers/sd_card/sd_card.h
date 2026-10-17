@@ -4,9 +4,9 @@
 #include "config/config.h"
 #include "sd_card_block.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-#include "spi/sd_spi.h"
+#include "sd_card_spi.h"
 #else
-#include "sdio_pio/sdio_pio.h"
+#include "sd_card_native.h"
 #endif
 
 typedef struct pf_sd_card_config {

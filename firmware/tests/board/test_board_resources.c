@@ -2,7 +2,7 @@
 #include "board_resources.h"
 #include "config/config.h"
 #include "sd_card_protocol.h"
-#include "sd_spi_protocol.h"
+#include "sd_card_spi_protocol.h"
 
 static pf_board_resources_t valid_topology(void)
 {

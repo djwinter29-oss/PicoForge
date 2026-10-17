@@ -3,7 +3,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #define PF_SPI_PRODUCTION_TEST
 #include "spi_production_fixture.h"
 #include "sd_card_protocol.h"
-#include "sd_spi_protocol.h"
+#include "sd_card_spi_protocol.h"
 #include "storage_bus.h"
 #include "storage_spi.h"
 

@@ -5,9 +5,9 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include <string.h>
 
-#include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio.c"
-#include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c"
-#include "../../../../src/drivers/sd_card/sd_card_protocol.c"
+#include "../../../src/drivers/sd_card/sd_card_native.c"
+#include "../../../src/drivers/sd_card/sd_card_native_protocol.c"
+#include "../../../src/drivers/sd_card/sd_card_protocol.c"
 #include "sdio_sdk_stubs.c"
 
 pf_sdio_pio_host_t *pf_test_sdio_observed_host;

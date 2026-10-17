@@ -2,7 +2,7 @@
 #include <string.h>
 #include "drivers/sd_card/sd_card_msc.h"
 #include "drivers/sd_card/sd_card_port.h"
-#include "drivers/sd_card/sdio_pio/sdio_pio.h"
+#include "drivers/sd_card/sd_card_native.h"
 #define WORKER_SOURCE "../../../src/middleware/storage/storage_worker.c"
 #define FACADE_SOURCE "../../../src/drivers/sd_card/sd_card.c"
 #define MSC_SOURCE "../../../src/usb/msc.c"

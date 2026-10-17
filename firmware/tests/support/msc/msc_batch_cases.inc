@@ -13,7 +13,7 @@ static bool pf_storage_worker_recover_card(void);
 #include "../../../src/usb/msc.c"
 #include "drivers/sd_card/sd_card.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == 1
-#include "drivers/sd_card/spi/sd_spi.h"
+#include "drivers/sd_card/sd_card_spi.h"
 #define pf_sdio_pio_init pf_sd_spi_init
 #define pf_sdio_pio_config_t pf_sd_spi_config_t
 #define pf_sdio_pio_get_init_stage pf_sd_spi_get_init_stage
@@ -27,7 +27,7 @@ static bool pf_storage_worker_recover_card(void);
 #define pf_sdio_pio_sync pf_sd_spi_sync
 #define TEST_TRANSPORT PF_SD_CARD_TRANSPORT_SPI
 #else
-#include "drivers/sd_card/sdio_pio/sdio_pio.h"
+#include "drivers/sd_card/sd_card_native.h"
 #define TEST_TRANSPORT PF_SD_CARD_TRANSPORT_SDIO_PIO
 #endif
 #pragma GCC diagnostic push

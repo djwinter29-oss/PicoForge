@@ -1,5 +1,5 @@
-#ifndef PF_SDIO_PIO_PROTOCOL_H
-#define PF_SDIO_PIO_PROTOCOL_H
+#ifndef PF_SD_CARD_NATIVE_PROTOCOL_H
+#define PF_SD_CARD_NATIVE_PROTOCOL_H
 
 #include <stdbool.h>
 #include <stddef.h>
