@@ -22,7 +22,7 @@ def programs(tmp_path_factory):
     text = output.read_text()
     return {
         name: [int(word, 16) for word in re.findall(r"0x([0-9a-fA-F]{4})",
-               text.split(f"pf_storage_{name}_program_instructions[] = {{", 1)[1].split("};", 1)[0])]
+               text.split(f"pf_qspi_pio_{name}_program_instructions[] = {{", 1)[1].split("};", 1)[0])]
         for name in ("single", "quad")
     }
 

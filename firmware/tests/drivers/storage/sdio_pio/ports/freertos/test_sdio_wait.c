@@ -140,11 +140,11 @@ void test_wait_hook_filters_invalid_requests_and_handles_both_irq_races(void)
     pf_test_sdio_irq_pio_t pio = {0}, foreign = {0};
     pio0 = (PIO)&pio;
     pio1 = (PIO)&foreign;
-    pf_storage_sdio_pio_t transport = { .config.pio = pio0 };
+    pf_sdio_pio_t transport = { .config.pio = pio0 };
 
-    TEST_ASSERT_FALSE(pf_storage_sdio_pio_enable_wait(NULL));
+    TEST_ASSERT_FALSE(pf_sdio_pio_enable_wait(NULL));
     TEST_ASSERT_NULL(transport.wait_hook);
-    TEST_ASSERT_TRUE(pf_storage_sdio_pio_enable_wait(&transport));
+    TEST_ASSERT_TRUE(pf_sdio_pio_enable_wait(&transport));
     wait_hook = transport.wait_hook;
     TEST_ASSERT_NOT_NULL(wait_hook);
     TEST_ASSERT_FALSE(pio.source[1]);

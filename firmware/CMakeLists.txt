@@ -90,7 +90,10 @@ endif()
 
 pico_sdk_init()
 
-add_library(pf_storage_transport STATIC src/drivers/storage/storage_transport.c)
+add_library(pf_storage_transport STATIC
+    src/drivers/storage/storage_transport.c
+    src/drivers/storage/serial.c
+    src/drivers/storage/native.c)
 target_include_directories(pf_storage_transport PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 
 option(PF_BUILD_NOR_SMOKE "Build standalone raw NOR target instead of the SD/USB application" OFF)

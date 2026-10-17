@@ -4,13 +4,14 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "sdio_sdk_stubs.h"
 #include "sdio_pio.h"
 
-static pf_storage_sdio_pio_t test_wire;
+static pf_sdio_pio_t test_wire;
 
 #include <stdint.h>
 #include <string.h>
 
 #include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
 #include "../../../src/drivers/storage/storage_transport.c"
+#include "../../../src/drivers/storage/native.c"
 #include "../../../src/drivers/sd_card/sd_native_host.c"
 #include "../../../src/drivers/sd_card/sd_native_protocol.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
@@ -88,7 +89,7 @@ void tearDown(void)
 
 static pf_sd_native_host_t make_host(pf_test_sdio_pio_t *pio)
 {
-    test_wire = (pf_storage_sdio_pio_t){
+    test_wire = (pf_sdio_pio_t){
         .pio = pio,
         .command_sm = 0u,
         .data_sm = 1u,
@@ -103,13 +104,13 @@ static pf_sd_native_host_t make_host(pf_test_sdio_pio_t *pio)
         .command_program_loaded = true,
         .data_rx_program_loaded = true,
     };
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire), .bus_width = 4u };
+    pf_sd_native_host_t host = { .transport = pf_sdio_pio_transport(&test_wire), .bus_width = 4u };
     return host;
 }
 
 static unsigned hook_bindings;
 
-static void count_hooks(void *context, pf_storage_sdio_error_hook_t error, void *error_context, void (*idle)(void))
+static void count_hooks(void *context, pf_storage_native_error_hook_t error, void *error_context, void (*idle)(void))
 {
     ++hook_bindings;
     native_hooks(context, error, error_context, idle);
@@ -117,11 +118,11 @@ static void count_hooks(void *context, pf_storage_sdio_error_hook_t error, void 
 
 void test_host_init_binds_callbacks_once_and_preserves_them_until_deinit(void)
 {
-    test_wire = (pf_storage_sdio_pio_t){
+    test_wire = (pf_sdio_pio_t){
         .config = {.pio = pio0, .pins = {.clock_gpio = 0u, .command_gpio = 1u,
                                        .data_gpio = {2u, 3u, 4u, 5u}}},
     };
-    pf_sd_config_t config = {.transport = pf_storage_sdio_pio_transport(&test_wire)};
+    pf_sd_config_t config = {.transport = pf_sdio_pio_transport(&test_wire)};
     pf_storage_transport_ops_t ops = *config.transport.ops;
     pf_storage_native_ops_t native = *ops.native;
     native.hooks = count_hooks;
@@ -139,7 +140,13 @@ void test_host_init_binds_callbacks_once_and_preserves_them_until_deinit(void)
     TEST_ASSERT_TRUE(pf_sd_native_host_set_clock(&host, 25000000u));
     uint8_t response[6];
     TEST_ASSERT_TRUE(pf_sd_native_host_command_bytes(&host, 13u, 0u, 48u, response, sizeof(response)));
+    pf_test_sdio_command_fail = 13u;
+    pf_test_sdio_time_step = 100001u;
+    TEST_ASSERT_FALSE(pf_sd_native_host_command_bytes(&host, 13u, 0u, 48u, response, sizeof(response)));
+    TEST_ASSERT_EQUAL(PF_SD_DETAIL_PIO_TIMEOUT, host.last_error);
+    TEST_ASSERT_EQUAL_UINT32(1u, host.errors.pio_timeouts);
     pf_sd_native_host_abort(&host);
+    TEST_ASSERT_EQUAL(PF_SD_DETAIL_PIO_TIMEOUT, host.last_error);
     TEST_ASSERT_EQUAL_UINT(1u, hook_bindings);
     pf_sd_native_host_deinit(&host);
     TEST_ASSERT_EQUAL_UINT(1u, hook_bindings);
@@ -159,7 +166,7 @@ void test_cmd24_uses_full_source_dma_path_and_checks_data_completion(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE];
     pf_sd_profile_t profile;
 
@@ -198,7 +205,7 @@ void test_cmd25_batches_and_continues_without_reissuing_command(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t blocks[4u * PF_SD_BLOCK_SIZE] = {0};
     unsigned command_count;
     pf_sd_profile_t profile;
@@ -225,7 +232,7 @@ void test_cmd24_waits_for_both_dma_and_pio_completion_independently(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
 
     pf_test_sdio_dma_busy_delay = 1u;
@@ -244,7 +251,7 @@ void test_cmd24_treats_a_pio_tx_fifo_stall_as_fatal(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
 
     pf_test_sdio_force_tx_stall = true;
@@ -259,18 +266,18 @@ void test_fast_tx_uses_half_clock_divider_and_synchronized_sm_restart(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint32_t sm_mask = (1u << test_wire.command_sm) | (1u << test_wire.data_sm);
 
     test_wire.current_clock_hz = 50000000u;
     test_wire.clock_div_ticks = 640u;
-    TEST_ASSERT_TRUE(pf_storage_sdio_pio_tx_prepare(&test_wire));
+    TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&test_wire));
     TEST_ASSERT_TRUE(test_wire.data_tx_fast);
     TEST_ASSERT_EQUAL_UINT16(1u, pf_test_sdio_config_divider_integer);
     TEST_ASSERT_EQUAL_UINT8(64u, pf_test_sdio_config_divider_fraction);
 
     uint32_t image[PF_SD_NATIVE_TRANSFER_WORDS] = {0};
-    TEST_ASSERT_TRUE(pf_storage_sdio_pio_tx_start(&test_wire, image,
+    TEST_ASSERT_TRUE(pf_sdio_pio_tx_start(&test_wire, image,
                                                 PF_SD_NATIVE_TRANSFER_WORDS, SDIO_DATA_NIBBLE_COUNT));
     TEST_ASSERT_EQUAL_UINT32(sm_mask, pf_test_sdio_sync_mask);
     TEST_ASSERT_EQUAL_UINT32(sm_mask, pf_test_sdio_clkdiv_restart_mask);
@@ -280,19 +287,19 @@ void test_clock_owner_rejects_command_during_standalone_or_tx_clock_ownership(vo
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
-    uint32_t response[2];
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    uint8_t response[6];
 
-    test_wire.clock_owner = PF_SD_NATIVE_CLOCK_INITIALIZATION;
-    TEST_ASSERT_FALSE(pf_sd_native_host_command(&host, 0u, 0u, 48u,
-                                               response, 2u));
+    test_wire.clock_owner = PF_SDIO_PIO_CLOCK_INITIALIZATION;
+    TEST_ASSERT_FALSE(pf_sd_native_host_command_bytes(&host, 0u, 0u, 48u,
+                                               response, sizeof(response)));
     TEST_ASSERT_FALSE(pf_sd_native_host_set_clock(&host, 25000000u));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_HOST_STATE, host.last_error);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
 
-    test_wire.clock_owner = PF_SD_NATIVE_CLOCK_DATA_TX;
-    TEST_ASSERT_FALSE(pf_sd_native_host_command(&host, 13u, 0u, 48u,
-                                               response, 2u));
+    test_wire.clock_owner = PF_SDIO_PIO_CLOCK_DATA_TX;
+    TEST_ASSERT_FALSE(pf_sd_native_host_command_bytes(&host, 13u, 0u, 48u,
+                                               response, sizeof(response)));
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
 }
 
@@ -300,7 +307,7 @@ void test_cmd24_command_and_program_failures_do_not_report_data_success(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
     pf_sd_profile_t profile;
 
@@ -327,7 +334,7 @@ void test_cmd25_failed_data_keeps_stream_until_stop_recovery_succeeds(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t blocks[2u * PF_SD_BLOCK_SIZE] = {0};
 
     pf_test_sdio_data_response = 0x0bu;
@@ -345,7 +352,7 @@ void test_cmd24_profile_can_be_disabled_or_run_without_a_clock(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
     pf_sd_profile_t profile;
 

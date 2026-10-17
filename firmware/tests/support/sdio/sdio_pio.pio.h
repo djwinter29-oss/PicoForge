@@ -1,5 +1,5 @@
-#ifndef PF_TEST_STORAGE_SDIO_PIO_H
-#define PF_TEST_STORAGE_SDIO_PIO_H
+#ifndef PF_TEST_SDIO_PIO_H
+#define PF_TEST_SDIO_PIO_H
 
 #include "hardware/pio.h"
 

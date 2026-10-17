@@ -8,22 +8,22 @@ TEST_INCLUDE_PATH("firmware/tests/support/serial")
 
 serial_fake_t serial_fake;
 serial_pio_t serial_pio[2];
-static pf_storage_qspi_pio_t context;
+static pf_qspi_pio_t context;
 
 void setUp(void)
 {
     memset(&serial_fake, 0, sizeof(serial_fake));
-    context = (pf_storage_qspi_pio_t){
+    context = (pf_qspi_pio_t){
         .pio = pio0, .pins.clock_gpio = 6, .pins.data_gpio = {0, 1, 2, 3},
         .pins.cs_gpio = 7, .clock_hz = 10000000,
     };
 }
 
-void tearDown(void) { pf_storage_qspi_pio_deinit(&context); }
+void tearDown(void) { pf_qspi_pio_deinit(&context); }
 
 void test_quad_read_clocks_single_command_address_dummy_then_quad_payload(void)
 {
-    pf_storage_transport_t bus = pf_storage_qspi_pio_transport(&context);
+    pf_storage_transport_t bus = pf_qspi_pio_transport(&context);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
     serial_fake.input = 0xa;
     uint8_t input[2];
@@ -42,12 +42,12 @@ void test_quad_read_clocks_single_command_address_dummy_then_quad_payload(void)
 
 void test_quad_write_outputs_most_significant_nibble_first(void)
 {
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_qspi_pio_init(&context));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_qspi_pio_init(&context));
     uint8_t output = 0xa5;
     pf_storage_serial_transaction_t command = {
         .command = 0x32, .data_lanes = 4, .tx = &output, .length = 1,
     };
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_qspi_pio_transfer(&context, &command));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_qspi_pio_transfer(&context, &command));
     TEST_ASSERT_EQUAL_UINT(10, serial_fake.symbols);
     TEST_ASSERT_EQUAL_HEX8(0xa, serial_fake.bytes[8]);
     TEST_ASSERT_EQUAL_HEX8(0x5, serial_fake.bytes[9]);
@@ -56,7 +56,7 @@ void test_quad_write_outputs_most_significant_nibble_first(void)
 void test_fifo_timeout_releases_cs_programs_and_state_machine(void)
 {
     pf_nor_transport_t transport;
-    pf_storage_transport_t bus = pf_storage_qspi_pio_transport(&context);
+    pf_storage_transport_t bus = pf_qspi_pio_transport(&context);
     TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&bus, &transport));
     TEST_ASSERT_TRUE(transport.quad_supported);
     serial_fake.fifo_full = true;
@@ -69,12 +69,12 @@ void test_fifo_timeout_releases_cs_programs_and_state_machine(void)
 
 void test_invalid_qspi_shape_does_not_touch_cs_and_clock_reports_quantized_rate(void)
 {
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_qspi_pio_init(&context));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_qspi_pio_init(&context));
     pf_storage_serial_transaction_t command = { .command = 6, .data_lanes = 2 };
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_qspi_pio_transfer(&context, &command));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_qspi_pio_transfer(&context, &command));
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
     uint32_t actual;
-    pf_storage_transport_t bus = pf_storage_qspi_pio_transport(&context);
+    pf_storage_transport_t bus = pf_qspi_pio_transport(&context);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_set_clock(&bus, 8000000, &actual));
     TEST_ASSERT_EQUAL_UINT32(8000000, actual);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_transport_set_clock(&bus, 1, &actual));
@@ -83,7 +83,7 @@ void test_invalid_qspi_shape_does_not_touch_cs_and_clock_reports_quantized_rate(
 void test_program_capacity_failure_releases_claim_without_selecting_device(void)
 {
     serial_fake.no_program = true;
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_NOT_READY, pf_storage_qspi_pio_init(&context));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_NOT_READY, pf_qspi_pio_init(&context));
     TEST_ASSERT_FALSE(context.initialized);
     TEST_ASSERT_EQUAL_UINT(1, serial_fake.unclaim);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
@@ -92,10 +92,10 @@ void test_program_capacity_failure_releases_claim_without_selecting_device(void)
 void test_quad_pin_allocation_rejects_swapped_and_out_of_range_lanes_before_acquisition(void)
 {
     context.pins.data_gpio[1] = 2u;
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_qspi_pio_init(&context));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_qspi_pio_init(&context));
     context.pins.data_gpio[1] = 1u;
     context.pins.data_gpio[3] = NUM_BANK0_GPIOS;
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_qspi_pio_init(&context));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_qspi_pio_init(&context));
     TEST_ASSERT_FALSE(context.initialized);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.program_count);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);

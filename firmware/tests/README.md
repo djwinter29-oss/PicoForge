@@ -5,8 +5,11 @@ Ceedling 1.1.10 with Unity and CMock is configured by the repository-root `proje
 Install Ruby 3 or newer and GCC/gcov, then run the setup wrapper from the repository root. The wrapper uses `uv` if available or Python 3.10+ with venv support to provision gcovr:
 
 ```sh
+git submodule update --init firmware/third_party/embedded-cli firmware/third_party/levelx
 tools/validation/setup-ceedling-testing.sh
 ```
+
+Both source submodules are required even for Ceedling configuration validation; the setup wrapper does not fetch them.
 
 The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin`
 directory to `PATH` and run it from the root. Name test files `test_<source_basename>[_<scenario>].c` beneath the matching

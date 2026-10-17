@@ -7,18 +7,7 @@
 
 #include "sd_native.h"
 #include "sd_native_protocol.h"
-#include "../storage/storage_transport.h"
-
-/** Compatibility names for physical clock ownership, now owned by the transport. */
-typedef pf_storage_sdio_clock_owner_t pf_sd_native_clock_owner_t;
-/** Stopped physical clock. */
-#define PF_SD_NATIVE_CLOCK_UNOWNED PF_STORAGE_SDIO_CLOCK_UNOWNED
-/** Clock owned by command signaling. */
-#define PF_SD_NATIVE_CLOCK_COMMAND PF_STORAGE_SDIO_CLOCK_COMMAND
-/** Clock owned by released-line startup generation. */
-#define PF_SD_NATIVE_CLOCK_INITIALIZATION PF_STORAGE_SDIO_CLOCK_INITIALIZATION
-/** Clock owned by data transmission. */
-#define PF_SD_NATIVE_CLOCK_DATA_TX PF_STORAGE_SDIO_CLOCK_DATA_TX
+#include "../storage/native.h"
 
 /** SD protocol state layered over a native wire transport. */
 typedef struct {
@@ -28,6 +17,8 @@ typedef struct {
     uint8_t bus_width;                /**< Width negotiated with the card. */
     pf_sd_detail_error_t last_error; /**< Latest SD or mapped physical failure. */
     pf_sd_error_counters_t errors; /**< SD and mapped physical diagnostic counters. */
+    uint32_t last_response_words[5]; /**< Legacy packed response diagnostic, including partial capture. */
+    size_t last_response_word_count; /**< Number of captured response words. */
     bool write_stream_open;          /**< CMD25 requires CMD12 before other operations. */
     bool read_stream_unresolved;     /**< CMD18 may have reached the card and needs CMD12. */
     bool data_rx_multiblock_supported; /**< False after a qualified single-block fallback. */
@@ -63,19 +54,18 @@ static inline bool pf_sd_native_host_response_status_ok(pf_sd_native_host_t *hos
  * checks transport readiness before clearing the structure. Never pass an indeterminate host.
  * Duplicate init of a live host returns false without changing it or its resources.
  * Deinit releases resources and zeroes the host, allowing init again.
+ * The host must remain at the same address until deinit; diagnostic callbacks borrow it.
  */
 bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_config_t *config);
 void pf_sd_native_host_deinit(pf_sd_native_host_t *host);
 bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t clock_hz);
-/** Reset host hardware and generate 80 clocks at the configured low-speed rate. */
+/** Reset wire activity and generate 80 released-line clocks at 400 kHz or less. */
 bool pf_sd_native_host_prepare_initialization(pf_sd_native_host_t *host);
 /** Change the software bus-width state after the matching card command succeeds. */
 bool pf_sd_native_host_set_bus_width(pf_sd_native_host_t *host, uint8_t width);
 /** Abort host hardware without card commands; protocol stream state is retained. */
 void pf_sd_native_host_abort(pf_sd_native_host_t *host);
-bool pf_sd_native_host_command(pf_sd_native_host_t *host, uint8_t command,
-                                 uint32_t argument, uint16_t response_bits,
-                                 uint32_t *response_words, size_t response_word_capacity);
+/** Build one SD command and exchange raw response bytes; the host retains partial diagnostics. */
 bool pf_sd_native_host_command_bytes(pf_sd_native_host_t *host, uint8_t command,
                                        uint32_t argument, uint16_t response_bits,
                                        uint8_t *response, size_t response_capacity);

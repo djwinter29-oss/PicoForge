@@ -4,12 +4,13 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "sdio_sdk_stubs.h"
 #include "sdio_pio.h"
 
-static pf_storage_sdio_pio_t test_wire;
+static pf_sdio_pio_t test_wire;
 
 #include <string.h>
 
 #include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
 #include "../../../src/drivers/storage/storage_transport.c"
+#include "../../../src/drivers/storage/native.c"
 #include "../../../src/drivers/sd_card/sd_native_host.c"
 #include "../../../src/drivers/sd_card/sd_native_protocol.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
@@ -87,7 +88,7 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         PF_SD_NATIVE_INIT_STAGE_SCR_CRC
     };
     pf_test_sdio_pio_t pio = {0};
-    test_wire = (pf_storage_sdio_pio_t){
+    test_wire = (pf_sdio_pio_t){
         .pio = &pio,
         .command_sm = 0u,
         .data_sm = 1u,
@@ -97,8 +98,8 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         .dma_claimed = true,
         .data_rx_program_loaded = true,
     };
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    pf_sd_native_host_t host = { .transport = pf_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t scr[8];
 
     for (unsigned failure = 0u; failure < sizeof(failure_stages) / sizeof(failure_stages[0]);

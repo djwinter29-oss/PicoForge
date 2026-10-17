@@ -3,10 +3,10 @@
 #include "config/config.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
 #include "drivers/storage/sdio_pio/sdio_pio.h"
-static pf_storage_sdio_pio_t sd_transport;
+static pf_sdio_pio_t sd_transport;
 #else
 #include "drivers/storage/spi/spi.h"
-static pf_storage_spi_t sd_transport;
+static pf_spi_t sd_transport;
 #endif
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
@@ -61,24 +61,24 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     if (!storage_configured) {
-        sd_transport.config = (pf_storage_sdio_pio_config_t){
+        sd_transport.config = (pf_sdio_pio_config_t){
             .pins = topology->native_pins,
             .pio = topology->pio_index == 0u ? pio0 : pio1,
         };
     }
     *config = (pf_sd_config_t){
-        .transport = pf_storage_sdio_pio_transport(&sd_transport),
+        .transport = pf_sdio_pio_transport(&sd_transport),
         .clock_hz = topology->clock_hz,
     };
 #else
     if (!storage_configured) {
-        sd_transport = (pf_storage_spi_t){
+        sd_transport = (pf_spi_t){
             .instance = topology->spi_index == 0u ? spi0 : spi1,
             .pins = topology->spi_pins, .clock_hz = 400000u,
         };
     }
     *config = (pf_sd_config_t){
-        .transport = pf_storage_spi_transport(&sd_transport),
+        .transport = pf_spi_transport(&sd_transport),
         .clock_hz = topology->spi_clock_hz,
     };
 #endif

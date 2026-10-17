@@ -32,9 +32,18 @@ descriptor: board/storage integration owns the concrete context, and the caller 
 do not dereference backend contexts or operations, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
 It creates no task, queue, filesystem policy, or automatic mode-switch manager.
 Common mode tags describe SPI, native SD, or QSPI signaling, not the backend's PIO/SPI-controller implementation.
-Backend filenames omit the redundant `storage_` prefix within their mode directories; C symbols retain
-`pf_storage_*` / `PF_STORAGE_*` names to avoid collisions with SDK APIs. The common interface retains its
-`storage_transport.[ch]` name.
+Backend filenames, functions, types, and header guards use the same module name:
+
+| Module | C API and types | Header guard |
+| --- | --- | --- |
+| SPI | `pf_spi_*`, `pf_spi_t` | `PF_SPI_H` |
+| Native SD PIO | `pf_sdio_pio_*`, `pf_sdio_pio_t` | `PF_SDIO_PIO_H` |
+| QSPI PIO | `pf_qspi_pio_*`, `pf_qspi_pio_t` | `PF_QSPI_PIO_H` |
+
+The native wait-hook type is `pf_sdio_pio_wait_hook_t`; generated PIO programs use `pf_sdio_pio_*` or
+`pf_qspi_pio_*`. These replace the former backend `pf_storage_*` names without compatibility aliases.
+The common interface retains its `storage_transport.[ch]` name and `pf_storage_*` / `PF_STORAGE_*` symbols,
+including shared pin types, routing validation, result codes, native diagnostics, and operation tables.
 
 | Physical mode | Implementation | Device configurations |
 | --- | --- | --- |

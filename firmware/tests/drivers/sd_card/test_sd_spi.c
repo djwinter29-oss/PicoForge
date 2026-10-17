@@ -6,7 +6,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #include "storage_transport.h"
 #include "spi.h"
 
-static pf_storage_spi_t physical_bus;
+static pf_spi_t physical_bus;
 static bool test_present(const void *context) { (void)context; return spi_test_present; }
 
 spi_inst_t test_spi;
@@ -80,18 +80,18 @@ int spi_write_read_blocking(spi_inst_t *spi, const uint8_t *data, uint8_t *respo
 
 static void reset(uint8_t response)
 {
-    pf_storage_spi_deinit(&physical_bus);
-    physical_bus = (pf_storage_spi_t){
+    pf_spi_deinit(&physical_bus);
+    physical_bus = (pf_spi_t){
         .instance = &test_spi, .pins.clock_gpio = 2u, .pins.mosi_gpio = 3u,
         .pins.miso_gpio = 0u, .pins.cs_gpio = 1u, .clock_hz = 25000000u,
     };
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_spi_init(&physical_bus));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_spi_init(&physical_bus));
     card_initialized = card_block_addressed = true;
     card_sector_count = 128;
     configuration_set = false;
     last_init_response_received = false;
     last_init_command = last_init_response = 0;
-    active_config = (pf_sd_config_t){ .transport = pf_storage_spi_transport(&physical_bus) };
+    active_config = (pf_sd_config_t){ .transport = pf_spi_transport(&physical_bus) };
     position = 0; length = 5;
     queue[0] = 0xff; queue[1] = 0; queue[2] = queue[3] = 0xff; queue[4] = response;
     busy = selected = fail_trailing = short_payload = false;

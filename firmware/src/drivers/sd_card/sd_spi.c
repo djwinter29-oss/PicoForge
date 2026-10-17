@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "sd_protocol.h"
+#include "../storage/serial.h"
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u
@@ -60,6 +61,9 @@ static bool config_is_valid(const pf_sd_config_t *config)
     if (config == NULL || !pf_storage_transport_valid(&config->transport, PF_STORAGE_TRANSPORT_SPI)) {
         return false;
     }
+    if (!pf_storage_serial_raw_valid(&config->transport)) {
+        return false;
+    }
 
     return (config->clock_hz == 0u) ||
            ((config->clock_hz >= SD_SPI_INIT_CLOCK_HZ) &&
@@ -78,7 +82,7 @@ static uint32_t spi_profile_clock(void)
 
 static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 {
-    if (pf_storage_transport_exchange(&active_config.transport, &value, received, 1u) != PF_STORAGE_TRANSPORT_OK) {
+    if (pf_storage_serial_exchange(&active_config.transport, &value, received, 1u) != PF_STORAGE_TRANSPORT_OK) {
         card_initialized = false;
         return false;
     }
@@ -87,7 +91,7 @@ static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 
 static bool select_card(void)
 {
-    if (pf_storage_transport_select(&active_config.transport, true) != PF_STORAGE_TRANSPORT_OK) {
+    if (pf_storage_serial_select(&active_config.transport, true) != PF_STORAGE_TRANSPORT_OK) {
         card_initialized = false;
         return false;
     }
@@ -99,7 +103,7 @@ static bool deselect_card(void)
     /* CS is high before the trailing clocks. The pinned blocking SDK returns
      * len after receiving every byte; an alternate short-return seam gives no
      * clock-completion guarantee. Invalidate and propagate, never recover/replay. */
-    if (pf_storage_transport_select(&active_config.transport, false) != PF_STORAGE_TRANSPORT_OK) {
+    if (pf_storage_serial_select(&active_config.transport, false) != PF_STORAGE_TRANSPORT_OK) {
         return false;
     }
     uint8_t ignored;
@@ -140,7 +144,7 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
 
     uint32_t profile_start = pf_sd_profile_begin();
     bool success = false;
-    if (pf_storage_transport_exchange(&active_config.transport, frame, NULL, sizeof(frame)) != PF_STORAGE_TRANSPORT_OK) {
+    if (pf_storage_serial_exchange(&active_config.transport, frame, NULL, sizeof(frame)) != PF_STORAGE_TRANSPORT_OK) {
         goto done;
     }
     if (command == SD_CMD_STOP_TRANSMISSION) {
@@ -185,7 +189,7 @@ static bool send_command(uint8_t command, uint32_t argument,
         send_command_selected(command, argument, response)) {
         success = (extra_size == 0u) ||
                   ((extra != NULL) &&
-                   (pf_storage_transport_exchange(&active_config.transport, NULL, extra, extra_size) == PF_STORAGE_TRANSPORT_OK));
+                   (pf_storage_serial_exchange(&active_config.transport, NULL, extra, extra_size) == PF_STORAGE_TRANSPORT_OK));
     }
     bool deselected = deselect_card();
     if (!deselected) {
@@ -228,7 +232,7 @@ static bool read_data_block(uint8_t *data, size_t size)
         pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
         goto data_done;
     }
-    if (pf_storage_transport_exchange(&active_config.transport, NULL, data, size) != PF_STORAGE_TRANSPORT_OK ||
+    if (pf_storage_serial_exchange(&active_config.transport, NULL, data, size) != PF_STORAGE_TRANSPORT_OK ||
         !exchange_byte_checked(0xffu, &crc_high) ||
         !exchange_byte_checked(0xffu, &crc_low)) {
         goto data_done;
@@ -305,7 +309,7 @@ static bool initialize_card(void)
     last_init_response_received = false;
     card_init_stage = PF_SD_SPI_INIT_STAGE_IDLE_CLOCKS;
     memset(idle_clocks, 0xff, sizeof(idle_clocks));
-    if (pf_storage_transport_exchange(&active_config.transport, idle_clocks, NULL, sizeof(idle_clocks)) != PF_STORAGE_TRANSPORT_OK) {
+    if (pf_storage_serial_exchange(&active_config.transport, idle_clocks, NULL, sizeof(idle_clocks)) != PF_STORAGE_TRANSPORT_OK) {
         return false;
     }
 
@@ -425,12 +429,12 @@ void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
 
 static bool write_data_block(const uint8_t *buffer, uint8_t token)
 {
-    if (pf_storage_transport_exchange(&active_config.transport, &token, NULL, 1u) != PF_STORAGE_TRANSPORT_OK) {
+    if (pf_storage_serial_exchange(&active_config.transport, &token, NULL, 1u) != PF_STORAGE_TRANSPORT_OK) {
         card_initialized = false;
         return false;
     }
     uint32_t profile_start = pf_sd_profile_begin();
-    bool sent = pf_storage_transport_exchange(&active_config.transport, buffer, NULL, PF_SD_BLOCK_SIZE)
+    bool sent = pf_storage_serial_exchange(&active_config.transport, buffer, NULL, PF_SD_BLOCK_SIZE)
         == PF_STORAGE_TRANSPORT_OK;
     pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
     if (!sent) {

@@ -49,7 +49,7 @@ static bool config_is_valid(const pf_sd_config_t *config)
 
     return (config->clock_hz == 0u || config->clock_hz == PF_SD_NATIVE_TRANSFER_CLOCK_HZ) &&
            PF_SD_NATIVE_TRANSFER_CLOCK_HZ <=
-               pf_storage_transport_native_state(&config->transport).maximum_clock_hz;
+               pf_storage_native_state(&config->transport).maximum_clock_hz;
 }
 
 static bool command_response(uint8_t command, uint32_t argument, uint8_t response[6],
@@ -84,7 +84,7 @@ static bool wait_card_data_ready(void)
 {
     uint32_t start = (uint32_t)pf_storage_transport_time_us(&active_config.transport);
 
-    while (!pf_storage_transport_native_state(&active_config.transport).data_ready) {
+    while (!pf_storage_native_state(&active_config.transport).data_high) {
         if (!card_detect_present()) {
             return protocol_failure(PF_SD_DETAIL_REMOVED);
         }
@@ -121,7 +121,7 @@ static bool select_transfer_speed(uint32_t card_address)
 {
     uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
     native_info.high_speed_error = PF_SD_DETAIL_NONE;
-    if (pf_storage_transport_native_state(&active_config.transport).maximum_clock_hz < SD_HIGH_CLOCK_HZ) {
+    if (pf_storage_native_state(&active_config.transport).maximum_clock_hz < SD_HIGH_CLOCK_HZ) {
         native_info.high_speed_error = PF_SD_DETAIL_HOST_STATE;
         return true;
     }
@@ -382,12 +382,11 @@ void pf_sd_native_get_last_short_response(uint8_t *command, uint32_t *argument,
 
 void pf_sd_native_get_last_response_words(uint32_t words[5], size_t *word_count)
 {
-    pf_storage_native_state_t state = pf_storage_transport_native_state(&native_host.transport);
     if (words != NULL) {
-        memcpy(words, state.last_response_words, sizeof(state.last_response_words));
+        memcpy(words, native_host.last_response_words, sizeof(native_host.last_response_words));
     }
     if (word_count != NULL) {
-        *word_count = state.last_response_word_count;
+        *word_count = native_host.last_response_word_count;
     }
 }
 
@@ -423,7 +422,7 @@ pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
     last_short_response_argument = 0u;
     card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
     native_host.last_error = PF_SD_DETAIL_NONE;
-    if (!pf_storage_transport_native_state(&native_host.transport).ready) {
+    if (!pf_storage_native_state(&native_host.transport).ready) {
         if (!pf_sd_native_host_init(&native_host, &active_config)) {
             goto failed;
         }
@@ -436,7 +435,7 @@ pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
     if (!pf_sd_native_host_prepare_initialization(&native_host)) {
         goto failed;
     }
-    native_info.actual_init_clock_hz = pf_storage_transport_native_state(&native_host.transport).current_clock_hz;
+    native_info.actual_init_clock_hz = pf_storage_native_state(&native_host.transport).current_clock_hz;
     if (initialize_card()) {
         card_initialized = true;
         native_info.initialization_error = false;
@@ -453,7 +452,7 @@ failed:
 
 bool pf_sd_native_is_initialized(void)
 {
-    if (pf_storage_transport_native_state(&native_host.transport).mode_restore_failed ||
+    if (!pf_storage_native_state(&native_host.transport).healthy ||
         (configuration_set && !card_detect_present())) {
         /* Absence or broken host mode blocks I/O without discarding protocol state. */
         card_initialized = false;
@@ -519,7 +518,7 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
     bool success = pf_sd_native_host_write_sector(&native_host, first_block, write_buffer);
     /* A lost command/data response or busy timeout cannot prove CMD24 complete.
      * Restoration only repairs the host; require reinitialization, never replay. */
-    if (!success || pf_storage_transport_native_state(&native_host.transport).mode_restore_failed) {
+    if (!success || !pf_storage_native_state(&native_host.transport).healthy) {
         return runtime_failure();
     }
     return PF_SD_OK;
@@ -565,7 +564,7 @@ void pf_sd_native_get_info(pf_sd_info_t *info)
     }
     info->initialized = pf_sd_native_is_initialized();
     info->bus_width = native_host.bus_width;
-    info->actual_clock_hz = pf_storage_transport_native_state(&native_host.transport).current_clock_hz;
+    info->actual_clock_hz = pf_storage_native_state(&native_host.transport).current_clock_hz;
     info->errors = native_host.errors;
     info->detail_error = native_host.last_error;
     if (native_info.block_count != 0u) {

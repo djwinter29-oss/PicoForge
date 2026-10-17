@@ -9,12 +9,12 @@ typedef struct {
     uint32_t mosi_gpio;          /**< Shared output pin. */
     uint32_t miso_gpio;          /**< Shared input pin. */
     size_t references;          /**< Initialized device contexts. */
-    pf_storage_spi_t *selected;  /**< Active CS owner, or NULL between transactions. */
+    pf_spi_t *selected;  /**< Active CS owner, or NULL between transactions. */
 } controller_t;
 
 static controller_t controllers[2];
 
-bool pf_storage_spi_config_valid(const pf_storage_spi_t *context)
+bool pf_spi_config_valid(const pf_spi_t *context)
 {
     if (context == NULL || (context->instance != spi0 && context->instance != spi1) ||
         context->clock_hz == 0u) {
@@ -35,9 +35,9 @@ bool pf_storage_spi_config_valid(const pf_storage_spi_t *context)
                                                 context->pins.mosi_gpio, context->pins.miso_gpio);
 }
 
-pf_storage_transport_result_t pf_storage_spi_init(pf_storage_spi_t *context)
+pf_storage_transport_result_t pf_spi_init(pf_spi_t *context)
 {
-    if (!pf_storage_spi_config_valid(context) || context->initialized) {
+    if (!pf_spi_config_valid(context) || context->initialized) {
         return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
     }
     controller_t *controller = &controllers[spi_get_index(context->instance)];
@@ -67,7 +67,7 @@ pf_storage_transport_result_t pf_storage_spi_init(pf_storage_spi_t *context)
     return PF_STORAGE_TRANSPORT_OK;
 }
 
-pf_storage_transport_result_t pf_storage_spi_set_clock(pf_storage_spi_t *context, uint32_t requested_hz,
+pf_storage_transport_result_t pf_spi_set_clock(pf_spi_t *context, uint32_t requested_hz,
                                                 uint32_t *actual_hz)
 {
     if (context == NULL || requested_hz == 0u || actual_hz == NULL) {
@@ -89,7 +89,7 @@ pf_storage_transport_result_t pf_storage_spi_set_clock(pf_storage_spi_t *context
     return PF_STORAGE_TRANSPORT_OK;
 }
 
-pf_storage_transport_result_t pf_storage_spi_select(pf_storage_spi_t *context, bool selected)
+pf_storage_transport_result_t pf_spi_select(pf_spi_t *context, bool selected)
 {
     if (context == NULL) {
         return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
@@ -103,7 +103,7 @@ pf_storage_transport_result_t pf_storage_spi_select(pf_storage_spi_t *context, b
     }
     if (selected) {
         uint32_t actual;
-        pf_storage_transport_result_t result = pf_storage_spi_set_clock(context, context->clock_hz, &actual);
+        pf_storage_transport_result_t result = pf_spi_set_clock(context, context->clock_hz, &actual);
         if (result != PF_STORAGE_TRANSPORT_OK) {
             return result;
         }
@@ -113,7 +113,7 @@ pf_storage_transport_result_t pf_storage_spi_select(pf_storage_spi_t *context, b
     return PF_STORAGE_TRANSPORT_OK;
 }
 
-pf_storage_transport_result_t pf_storage_spi_exchange(pf_storage_spi_t *context, const uint8_t *tx,
+pf_storage_transport_result_t pf_spi_exchange(pf_spi_t *context, const uint8_t *tx,
                                                uint8_t *rx, size_t length)
 {
     if (context == NULL || (length != 0u && tx == NULL && rx == NULL)) {
@@ -159,38 +159,36 @@ pf_storage_transport_result_t pf_storage_spi_exchange(pf_storage_spi_t *context,
     return PF_STORAGE_TRANSPORT_OK;
 }
 
-pf_storage_transport_result_t pf_storage_spi_transfer(pf_storage_spi_t *context,
-    const pf_storage_serial_transaction_t *transaction)
+pf_storage_transport_result_t pf_spi_transfer(pf_spi_t *context,
+    const pf_storage_serial_phase_t *phases, size_t count)
 {
-    if (!pf_storage_serial_transaction_valid(transaction) || transaction->dummy_cycles % 8u != 0u) {
-        return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
+    pf_storage_transport_result_t result = pf_storage_serial_phases_valid(phases, count, 1u);
+    if (result != PF_STORAGE_TRANSPORT_OK) {
+        return result;
     }
-    if (transaction->data_lanes != 1u) {
-        return PF_STORAGE_TRANSPORT_UNSUPPORTED;
-    }
-    pf_storage_transport_result_t result = pf_storage_spi_select(context, true);
+    result = pf_spi_select(context, true);
     if (result != PF_STORAGE_TRANSPORT_OK) {
         return result;
     }
     busy_wait_us_32(1u);
-    result = pf_storage_spi_exchange(context, &transaction->command, NULL, 1u);
-    for (uint8_t index = transaction->address_bytes; result == PF_STORAGE_TRANSPORT_OK && index != 0u; index--) {
-        uint8_t value = (uint8_t)(transaction->address >> ((index - 1u) * 8u));
-        result = pf_storage_spi_exchange(context, &value, NULL, 1u);
+    for (size_t index = 0u; result == PF_STORAGE_TRANSPORT_OK && index < count; ++index) {
+        const pf_storage_serial_phase_t *phase = &phases[index];
+        if (phase->tx != NULL || phase->rx != NULL) {
+            result = pf_spi_exchange(context, phase->tx, phase->rx, phase->bit_count / 8u);
+        } else {
+            for (size_t byte_index = 0u; result == PF_STORAGE_TRANSPORT_OK &&
+                 byte_index < phase->bit_count / 8u; ++byte_index) {
+                uint8_t ones = 0xffu;
+                result = pf_spi_exchange(context, &ones, NULL, 1u);
+            }
+        }
     }
-    for (uint8_t index = 0u; result == PF_STORAGE_TRANSPORT_OK && index < transaction->dummy_cycles / 8u; index++) {
-        uint8_t value = 0xffu;
-        result = pf_storage_spi_exchange(context, &value, NULL, 1u);
-    }
-    if (result == PF_STORAGE_TRANSPORT_OK) {
-        result = pf_storage_spi_exchange(context, transaction->tx, transaction->rx, transaction->length);
-    }
-    (void)pf_storage_spi_select(context, false);
+    pf_storage_transport_result_t deselected = pf_spi_select(context, false);
     busy_wait_us_32(1u);
-    return result;
+    return result == PF_STORAGE_TRANSPORT_OK ? deselected : result;
 }
 
-void pf_storage_spi_deinit(pf_storage_spi_t *context)
+void pf_spi_deinit(pf_spi_t *context)
 {
     if (context == NULL || !context->initialized) {
         return;
@@ -209,32 +207,35 @@ void pf_storage_spi_deinit(pf_storage_spi_t *context)
     context->initialized = false;
 }
 
-static pf_storage_transport_result_t bus_init(void *context) { return pf_storage_spi_init(context); }
-static void bus_deinit(void *context) { pf_storage_spi_deinit(context); }
+static pf_storage_transport_result_t bus_init(void *context) { return pf_spi_init(context); }
+static void bus_deinit(void *context) { pf_spi_deinit(context); }
 static pf_storage_transport_result_t bus_clock(void *context, uint32_t hz, uint32_t *actual)
 {
-    return pf_storage_spi_set_clock(context, hz, actual);
+    return pf_spi_set_clock(context, hz, actual);
 }
-static pf_storage_transport_result_t bus_transfer(void *context, const pf_storage_serial_transaction_t *transaction)
+static pf_storage_transport_result_t bus_transfer(void *context, const pf_storage_serial_phase_t *phases, size_t count)
 {
-    return pf_storage_spi_transfer(context, transaction);
+    return pf_spi_transfer(context, phases, count);
 }
 
 static pf_storage_transport_result_t bus_select(void *context, bool selected)
 {
-    return pf_storage_spi_select(context, selected);
+    return pf_spi_select(context, selected);
 }
 
 static pf_storage_transport_result_t bus_exchange(void *context, const uint8_t *tx, uint8_t *rx, size_t length)
 {
-    return pf_storage_spi_exchange(context, tx, rx, length);
+    return pf_spi_exchange(context, tx, rx, length);
 }
 
-pf_storage_transport_t pf_storage_spi_transport(pf_storage_spi_t *context)
+pf_storage_transport_t pf_spi_transport(pf_spi_t *context)
 {
+    static const pf_storage_serial_ops_t serial = {
+        .transfer = bus_transfer, .select = bus_select, .exchange = bus_exchange, .lanes = 1u,
+    };
     static const pf_storage_transport_ops_t ops = {
         .init = bus_init, .deinit = bus_deinit, .abort = bus_deinit, .set_clock = bus_clock,
-        .transfer = bus_transfer, .select = bus_select, .exchange = bus_exchange,
+        .serial = &serial,
         .time_us = time_us_64, .delay_ms = sleep_ms,
     };
     return (pf_storage_transport_t){ .context = context, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_SPI };

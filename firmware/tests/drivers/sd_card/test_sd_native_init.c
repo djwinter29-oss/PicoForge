@@ -4,8 +4,9 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "sdio_sdk_stubs.h"
 #include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
 #include "../../../src/drivers/storage/storage_transport.c"
+#include "../../../src/drivers/storage/native.c"
 
-static pf_storage_sdio_pio_t test_wire;
+static pf_sdio_pio_t test_wire;
 static bool test_present(const void *context) { (void)context; return pf_test_sdio_gpio_level != 0u; }
 
 #include <string.h>
@@ -71,7 +72,7 @@ void setUp(void)
     card_initialized = true;
     card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
     active_config = (pf_sd_config_t){
-        .transport = pf_storage_sdio_pio_transport(&test_wire), .clock_hz = 25000000u
+        .transport = pf_sdio_pio_transport(&test_wire), .clock_hz = 25000000u
     };
     native_host.transport = active_config.transport;
     test_wire.current_clock_hz = 25000000u;

@@ -6,12 +6,12 @@
 #include "pico/stdlib.h"
 
 /** @brief Restart the state machine with the selected lane count and pin ownership. */
-static void configure(pf_storage_qspi_pio_t *context, bool quad, bool receive)
+static void configure(pf_qspi_pio_t *context, bool quad, bool receive)
 {
     pio_sm_set_enabled(context->pio, context->sm, false);
     uint32_t offset = quad ? context->quad_offset : context->single_offset;
-    pio_sm_config config = quad ? pf_storage_quad_program_get_default_config(offset) :
-                                 pf_storage_single_program_get_default_config(offset);
+    pio_sm_config config = quad ? pf_qspi_pio_quad_program_get_default_config(offset) :
+                                 pf_qspi_pio_single_program_get_default_config(offset);
     sm_config_set_out_pins(&config, context->pins.data_gpio[0], quad ? 4u : 1u);
     sm_config_set_in_pins(&config, context->pins.data_gpio[0] + (quad ? 0u : 1u));
     sm_config_set_sideset_pins(&config, context->pins.clock_gpio);
@@ -30,7 +30,7 @@ static void configure(pf_storage_qspi_pio_t *context, bool quad, bool receive)
 }
 
 /** @brief Clock one symbol with a bounded FIFO wait. */
-static pf_storage_transport_result_t symbol(pf_storage_qspi_pio_t *context, uint8_t output,
+static pf_storage_transport_result_t symbol(pf_qspi_pio_t *context, uint8_t output,
                                uint8_t bits, uint8_t *input)
 {
     uint64_t start = time_us_64();
@@ -50,7 +50,7 @@ static pf_storage_transport_result_t symbol(pf_storage_qspi_pio_t *context, uint
 }
 
 /** @brief Exchange one byte, most-significant symbol first. */
-static pf_storage_transport_result_t byte(pf_storage_qspi_pio_t *context, uint8_t output,
+static pf_storage_transport_result_t byte(pf_qspi_pio_t *context, uint8_t output,
                              uint8_t lanes, uint8_t *input)
 {
     *input = 0u;
@@ -65,34 +65,37 @@ static pf_storage_transport_result_t byte(pf_storage_qspi_pio_t *context, uint8_
     return PF_STORAGE_TRANSPORT_OK;
 }
 
-pf_storage_transport_result_t pf_storage_qspi_pio_transfer(pf_storage_qspi_pio_t *context,
-    const pf_storage_serial_transaction_t *transaction)
+pf_storage_transport_result_t pf_qspi_pio_transfer(pf_qspi_pio_t *context,
+    const pf_storage_serial_phase_t *phases, size_t count)
 {
-    if (context == NULL || !pf_storage_serial_transaction_valid(transaction)) {
+    if (context == NULL) {
         return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
+    }
+    pf_storage_transport_result_t result = pf_storage_serial_phases_valid(phases, count, 4u);
+    if (result != PF_STORAGE_TRANSPORT_OK) {
+        return result;
     }
     if (!context->initialized) {
         return PF_STORAGE_TRANSPORT_NOT_READY;
     }
-    configure(context, false, false);
     gpio_put(context->pins.cs_gpio, false);
     busy_wait_us_32(1u);
     uint8_t ignored;
-    pf_storage_transport_result_t result = byte(context, transaction->command, 1u, &ignored);
-    for (uint8_t index = transaction->address_bytes; result == PF_STORAGE_TRANSPORT_OK && index != 0u; index--) {
-        result = byte(context, (uint8_t)(transaction->address >> ((index - 1u) * 8u)), 1u, &ignored);
-    }
-    for (uint8_t index = 0u; result == PF_STORAGE_TRANSPORT_OK && index < transaction->dummy_cycles; index++) {
-        result = symbol(context, 1u, 1u, &ignored);
-    }
-    if (result == PF_STORAGE_TRANSPORT_OK && transaction->data_lanes == 4u) {
-        configure(context, true, transaction->rx != NULL);
-    }
-    for (size_t index = 0u; result == PF_STORAGE_TRANSPORT_OK && index < transaction->length; index++) {
-        result = byte(context, transaction->tx != NULL ? transaction->tx[index] : 0xffu,
-                      transaction->data_lanes, &ignored);
-        if (result == PF_STORAGE_TRANSPORT_OK && transaction->rx != NULL) {
-            transaction->rx[index] = ignored;
+    for (size_t phase_index = 0u; result == PF_STORAGE_TRANSPORT_OK && phase_index < count; ++phase_index) {
+        const pf_storage_serial_phase_t *phase = &phases[phase_index];
+        configure(context, phase->lanes == 4u, phase->rx != NULL);
+        if (phase->tx == NULL && phase->rx == NULL) {
+            for (size_t bit = 0u; result == PF_STORAGE_TRANSPORT_OK && bit < phase->bit_count;
+                 bit += phase->lanes) {
+                result = symbol(context, 0xffu, phase->lanes, &ignored);
+            }
+        } else {
+            for (size_t index = 0u; result == PF_STORAGE_TRANSPORT_OK && index < phase->bit_count / 8u; ++index) {
+                result = byte(context, phase->tx != NULL ? phase->tx[index] : 0xffu, phase->lanes, &ignored);
+                if (result == PF_STORAGE_TRANSPORT_OK && phase->rx != NULL) {
+                    phase->rx[index] = ignored;
+                }
+            }
         }
     }
     gpio_put(context->pins.cs_gpio, true);
@@ -100,12 +103,12 @@ pf_storage_transport_result_t pf_storage_qspi_pio_transfer(pf_storage_qspi_pio_t
     if (result == PF_STORAGE_TRANSPORT_OK) {
         configure(context, false, false);
     } else {
-        pf_storage_qspi_pio_deinit(context);
+        pf_qspi_pio_deinit(context);
     }
     return result;
 }
 
-pf_storage_transport_result_t pf_storage_qspi_pio_init(pf_storage_qspi_pio_t *context)
+pf_storage_transport_result_t pf_qspi_pio_init(pf_qspi_pio_t *context)
 {
     if (context == NULL || context->initialized ||
         (context->pio != pio0 && context->pio != pio1) ||
@@ -130,17 +133,17 @@ pf_storage_transport_result_t pf_storage_qspi_pio_init(pf_storage_qspi_pio_t *co
     if (sm < 0) {
         return PF_STORAGE_TRANSPORT_NOT_READY;
     }
-    if (!pio_can_add_program(context->pio, &pf_storage_single_program)) {
+    if (!pio_can_add_program(context->pio, &pf_qspi_pio_single_program)) {
         pio_sm_unclaim(context->pio, (uint)sm);
         return PF_STORAGE_TRANSPORT_NOT_READY;
     }
-    context->single_offset = pio_add_program(context->pio, &pf_storage_single_program);
-    if (!pio_can_add_program(context->pio, &pf_storage_quad_program)) {
-        pio_remove_program(context->pio, &pf_storage_single_program, context->single_offset);
+    context->single_offset = pio_add_program(context->pio, &pf_qspi_pio_single_program);
+    if (!pio_can_add_program(context->pio, &pf_qspi_pio_quad_program)) {
+        pio_remove_program(context->pio, &pf_qspi_pio_single_program, context->single_offset);
         pio_sm_unclaim(context->pio, (uint)sm);
         return PF_STORAGE_TRANSPORT_NOT_READY;
     }
-    context->quad_offset = pio_add_program(context->pio, &pf_storage_quad_program);
+    context->quad_offset = pio_add_program(context->pio, &pf_qspi_pio_quad_program);
     context->sm = (uint32_t)sm;
     gpio_init(context->pins.cs_gpio);
     gpio_put(context->pins.cs_gpio, true);
@@ -154,7 +157,7 @@ pf_storage_transport_result_t pf_storage_qspi_pio_init(pf_storage_qspi_pio_t *co
     return PF_STORAGE_TRANSPORT_OK;
 }
 
-void pf_storage_qspi_pio_deinit(pf_storage_qspi_pio_t *context)
+void pf_qspi_pio_deinit(pf_qspi_pio_t *context)
 {
     if (context == NULL || !context->initialized) {
         return;
@@ -163,8 +166,8 @@ void pf_storage_qspi_pio_deinit(pf_storage_qspi_pio_t *context)
     pio_sm_set_enabled(context->pio, context->sm, false);
     pio_sm_clear_fifos(context->pio, context->sm);
     pio_sm_unclaim(context->pio, context->sm);
-    pio_remove_program(context->pio, &pf_storage_single_program, context->single_offset);
-    pio_remove_program(context->pio, &pf_storage_quad_program, context->quad_offset);
+    pio_remove_program(context->pio, &pf_qspi_pio_single_program, context->single_offset);
+    pio_remove_program(context->pio, &pf_qspi_pio_quad_program, context->quad_offset);
     gpio_init(context->pins.clock_gpio);
     for (uint32_t lane = 0u; lane < 4u; lane++) {
         gpio_init(context->pins.data_gpio[0] + lane);
@@ -172,7 +175,7 @@ void pf_storage_qspi_pio_deinit(pf_storage_qspi_pio_t *context)
     context->initialized = false;
 }
 
-pf_storage_transport_result_t pf_storage_qspi_pio_set_clock(pf_storage_qspi_pio_t *context,
+pf_storage_transport_result_t pf_qspi_pio_set_clock(pf_qspi_pio_t *context,
                                                     uint32_t requested_hz, uint32_t *actual_hz)
 {
     if (context == NULL || actual_hz == NULL || requested_hz == 0u || requested_hz > 10000000u) {
@@ -193,22 +196,23 @@ pf_storage_transport_result_t pf_storage_qspi_pio_set_clock(pf_storage_qspi_pio_
     return PF_STORAGE_TRANSPORT_OK;
 }
 
-static pf_storage_transport_result_t bus_init(void *context) { return pf_storage_qspi_pio_init(context); }
-static void bus_deinit(void *context) { pf_storage_qspi_pio_deinit(context); }
+static pf_storage_transport_result_t bus_init(void *context) { return pf_qspi_pio_init(context); }
+static void bus_deinit(void *context) { pf_qspi_pio_deinit(context); }
 static pf_storage_transport_result_t bus_clock(void *context, uint32_t hz, uint32_t *actual)
 {
-    return pf_storage_qspi_pio_set_clock(context, hz, actual);
+    return pf_qspi_pio_set_clock(context, hz, actual);
 }
-static pf_storage_transport_result_t bus_transfer(void *context, const pf_storage_serial_transaction_t *transaction)
+static pf_storage_transport_result_t bus_transfer(void *context, const pf_storage_serial_phase_t *phases, size_t count)
 {
-    return pf_storage_qspi_pio_transfer(context, transaction);
+    return pf_qspi_pio_transfer(context, phases, count);
 }
 
-pf_storage_transport_t pf_storage_qspi_pio_transport(pf_storage_qspi_pio_t *context)
+pf_storage_transport_t pf_qspi_pio_transport(pf_qspi_pio_t *context)
 {
+    static const pf_storage_serial_ops_t serial = {.transfer = bus_transfer, .lanes = 4u};
     static const pf_storage_transport_ops_t ops = {
         .init = bus_init, .deinit = bus_deinit, .abort = bus_deinit, .set_clock = bus_clock,
-        .transfer = bus_transfer, .time_us = time_us_64, .delay_ms = sleep_ms,
+        .serial = &serial, .time_us = time_us_64, .delay_ms = sleep_ms,
     };
     return (pf_storage_transport_t){ .context = context, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_QSPI };
 }

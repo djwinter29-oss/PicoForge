@@ -164,14 +164,14 @@ void test_presence_time_and_serial_capability_queries_keep_backend_state_opaque(
     TEST_ASSERT_FALSE(pf_storage_transport_present(&transport));
     TEST_ASSERT_EQUAL_UINT64(123456u, pf_storage_transport_time_us(&transport));
     pf_storage_transport_delay_ms(&transport, 5u);
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_validate_serial(&transport, &quad));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_serial_valid(&transport, &quad));
     TEST_ASSERT_FALSE(quad);
     transport.mode = PF_STORAGE_TRANSPORT_QSPI;
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_validate_serial(&transport, &quad));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_serial_valid(&transport, &quad));
     TEST_ASSERT_TRUE(quad);
     ops.time_us = NULL;
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT,
-                      pf_storage_transport_validate_serial(&transport, &quad));
+                      pf_storage_serial_valid(&transport, &quad));
     TEST_ASSERT_FALSE(pf_storage_transport_present(NULL));
     TEST_ASSERT_FALSE(pf_storage_transport_same(NULL, &copy));
 }
@@ -183,27 +183,27 @@ void test_unsupported_raw_serial_and_native_operations_do_not_touch_backend(void
     uint8_t frame[6] = {0};
     bool complete = false;
     TEST_ASSERT_FALSE(pf_storage_transport_valid(&transport, PF_STORAGE_TRANSPORT_SPI));
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED, pf_storage_transport_select(&transport, true));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED, pf_storage_serial_select(&transport, true));
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT,
-                      pf_storage_transport_exchange(&transport, NULL, NULL, 1u));
+                      pf_storage_serial_exchange(&transport, NULL, NULL, 1u));
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED,
-                      pf_storage_transport_exchange(&transport, frame, NULL, sizeof(frame)));
+                      pf_storage_serial_exchange(&transport, frame, NULL, sizeof(frame)));
     TEST_ASSERT_FALSE(pf_storage_transport_enable_wait(&transport));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_state(&transport).ready);
-    TEST_ASSERT_FALSE(pf_storage_transport_native_hooks(&transport, NULL, NULL, NULL));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_prepare(&transport));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_restore(&transport));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_command(&transport, frame, 48u, words, 5u));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_rx_start(&transport, words, 5u, 40u, 1u));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_rx_finish(&transport, 100u));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_rx_poll(&transport, 0u, 100u, &complete));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_rx_progress(&transport, words, 5u, &complete_words));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_tx_prepare(&transport));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_tx_start(&transport, words, 5u, 40u));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_tx_finish(&transport, 100u, words));
-    TEST_ASSERT_FALSE(pf_storage_transport_native_wait_ready(&transport, 100u));
-    pf_storage_transport_native_rx_cleanup(&transport);
-    pf_storage_transport_native_rx_wait(&transport);
+    TEST_ASSERT_FALSE(pf_storage_native_state(&transport).ready);
+    TEST_ASSERT_FALSE(pf_storage_native_hooks(&transport, NULL, NULL, NULL));
+    TEST_ASSERT_FALSE(pf_storage_native_prepare(&transport));
+    TEST_ASSERT_FALSE(pf_storage_native_idle(&transport));
+    TEST_ASSERT_FALSE(pf_storage_native_command(&transport, frame, 48u, words, 5u));
+    TEST_ASSERT_FALSE(pf_storage_native_rx_start(&transport, words, 5u, 40u, 1u));
+    TEST_ASSERT_FALSE(pf_storage_native_rx_finish(&transport, 100u));
+    TEST_ASSERT_FALSE(pf_storage_native_rx_poll(&transport, 0u, 100u, &complete));
+    TEST_ASSERT_FALSE(pf_storage_native_rx_progress(&transport, words, 5u, &complete_words));
+    TEST_ASSERT_FALSE(pf_storage_native_tx_prepare(&transport));
+    TEST_ASSERT_FALSE(pf_storage_native_tx_start(&transport, words, 5u, 40u));
+    TEST_ASSERT_FALSE(pf_storage_native_tx_finish(&transport, 100u, words));
+    TEST_ASSERT_FALSE(pf_storage_native_wait_high(&transport, 100u));
+    pf_storage_native_rx_cancel(&transport);
+    pf_storage_native_rx_wait(&transport);
     TEST_ASSERT_EQUAL_UINT(0u, init_calls);
     TEST_ASSERT_EQUAL_UINT(0u, transfer_calls);
 }

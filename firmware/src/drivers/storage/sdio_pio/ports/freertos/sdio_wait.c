@@ -46,7 +46,7 @@ static void wait_completion(PIO pio, uint32_t flag)
     waiting_task = NULL;
     taskEXIT_CRITICAL();
 }
-bool pf_storage_sdio_pio_enable_wait(pf_storage_sdio_pio_t *transport)
+bool pf_sdio_pio_enable_wait(pf_sdio_pio_t *transport)
 {
     if (transport == NULL || (transport->config.pio != pio0 && transport->config.pio != pio1)) {
         return false;

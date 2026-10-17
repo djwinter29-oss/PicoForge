@@ -3,6 +3,7 @@
 import hashlib
 import os
 import runpy
+import shlex
 from pathlib import Path
 import shutil
 import struct
@@ -11,6 +12,21 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_TESTS = ROOT / 'tests/artifacts'
 pytestmark = pytest.mark.contracts
+
+
+def test_ceedling_ci_initializes_both_source_dependencies_before_setup():
+    workflow = (ROOT / '.github/workflows/host-validation.yml').read_text()
+    setup = workflow.split('  ceedling-setup:', 1)[1]
+    initialization, _ = setup.split('tools/validation/setup-ceedling-testing.sh', 1)
+    commands = [
+        shlex.split(line.strip().removeprefix('run: '))
+        for line in initialization.splitlines() if line.strip().startswith('run: git submodule ')
+    ]
+    assert len(commands) == 1
+    assert commands[0][:4] == ['git', 'submodule', 'update', '--init']
+    assert set(commands[0][4:]) == {
+        'firmware/third_party/embedded-cli', 'firmware/third_party/levelx',
+    }
 
 
 def elf_fixture(path, broken=None):

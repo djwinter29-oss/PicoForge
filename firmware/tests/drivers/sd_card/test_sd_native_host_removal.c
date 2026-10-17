@@ -4,13 +4,14 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "sdio_sdk_stubs.h"
 #include "sdio_pio.h"
 
-static pf_storage_sdio_pio_t test_wire;
+static pf_sdio_pio_t test_wire;
 
 #include <string.h>
 
 #include "../../../src/drivers/sd_card/sd_native.c"
 #include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
 #include "../../../src/drivers/storage/storage_transport.c"
+#include "../../../src/drivers/storage/native.c"
 #include "../../../src/drivers/sd_card/sd_native_host.c"
 #include "../../../src/drivers/sd_card/sd_native_protocol.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
@@ -36,7 +37,7 @@ void tearDown(void) {}
 void test_forget_removed_clears_stream_state_before_restoring_mode(void)
 {
     pf_test_sdio_pio_t pio = {0};
-    test_wire = (pf_storage_sdio_pio_t){
+    test_wire = (pf_sdio_pio_t){
         .pio = &pio,
         .command_sm = 0u,
         .data_sm = 1u,
@@ -49,11 +50,11 @@ void test_forget_removed_clears_stream_state_before_restoring_mode(void)
         .mode_restore_failed = true,
     };
     pf_sd_native_host_t host = {
-        .transport = pf_storage_sdio_pio_transport(&test_wire),
+        .transport = pf_sdio_pio_transport(&test_wire),
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_observed_host = &host;
     pf_test_sdio_expect_streams_cleared = true;
@@ -73,7 +74,7 @@ void test_forget_removed_clears_stream_state_before_restoring_mode(void)
 void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void)
 {
     pf_test_sdio_pio_t pio = {0};
-    test_wire = (pf_storage_sdio_pio_t){
+    test_wire = (pf_sdio_pio_t){
         .pio = &pio,
         .command_sm = 0u,
         .data_sm = 1u,
@@ -81,11 +82,11 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
         .data_rx_program_loaded = true,
     };
     pf_sd_native_host_t host = {
-        .transport = pf_storage_sdio_pio_transport(&test_wire),
+        .transport = pf_sdio_pio_transport(&test_wire),
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_can_add_program = false;
     pf_sd_native_host_forget_removed_card(&host);
@@ -98,9 +99,9 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
 
 void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 {
-    test_wire = (pf_storage_sdio_pio_t){};
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
-    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    test_wire = (pf_sdio_pio_t){};
+    pf_sd_native_host_t host = { .transport = pf_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_sd_native_host_forget_removed_card(NULL);
     pf_sd_native_host_forget_removed_card(&host);
@@ -112,7 +113,7 @@ void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 void test_confirm_card_removed_invalidates_card_before_forgetting_host_streams(void)
 {
     pf_test_sdio_pio_t pio = {0};
-    test_wire = (pf_storage_sdio_pio_t){
+    test_wire = (pf_sdio_pio_t){
         .pio = &pio,
         .command_sm = 0u,
         .data_sm = 1u,
@@ -120,7 +121,7 @@ void test_confirm_card_removed_invalidates_card_before_forgetting_host_streams(v
         .data_rx_program_loaded = true,
     };
     native_host = (pf_sd_native_host_t){
-        .transport = pf_storage_sdio_pio_transport(&test_wire),
+        .transport = pf_sdio_pio_transport(&test_wire),
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
