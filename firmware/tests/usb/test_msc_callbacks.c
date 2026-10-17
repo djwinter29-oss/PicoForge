@@ -258,3 +258,40 @@ void test_sync_eject_removal_prevention_and_owner_handoff(void)
  before=syncs; tud_msc_write10_complete_cb(0); TEST_ASSERT_TRUE(syncs==before);
  TEST_ASSERT_TRUE(locks==0 && !mounted);
 }
+
+void test_start_stop_invalid_lun_and_disabled_media_report_fresh_sense(void)
+{
+ sense=SCSI_SENSE_MEDIUM_ERROR; asc=0x11;
+ TEST_ASSERT_FALSE(tud_msc_start_stop_cb(1,0,false,true));
+ TEST_ASSERT_EQUAL_UINT(SCSI_SENSE_NOT_READY,sense);
+ TEST_ASSERT_EQUAL_UINT(0x3a,asc);
+ msc_enabled=false;
+ sense=SCSI_SENSE_MEDIUM_ERROR; asc=0x11;
+ TEST_ASSERT_FALSE(tud_msc_start_stop_cb(0,0,false,true));
+ TEST_ASSERT_EQUAL_UINT(SCSI_SENSE_NOT_READY,sense);
+ TEST_ASSERT_EQUAL_UINT(0x3a,asc);
+ TEST_ASSERT_EQUAL_UINT(0,syncs);
+}
+
+void test_sync_reserved_fields_and_completion_error_boundary(void)
+{
+ uint8_t cmd[16]={0x35};
+ const unsigned fields[]={1,6,9};
+ for (unsigned i=0;i<3;++i) {
+  cmd[fields[i]]=1;
+  TEST_ASSERT_EQUAL_INT(-1,tud_msc_scsi_cb(0,cmd,NULL,0));
+  TEST_ASSERT_EQUAL_UINT(5,sense); TEST_ASSERT_EQUAL_UINT(0x24,asc);
+  cmd[fields[i]]=0;
+ }
+ TEST_ASSERT_EQUAL_INT(-1,tud_msc_scsi_cb(0,cmd,NULL,1));
+ TEST_ASSERT_EQUAL_UINT(0,syncs);
+ sync_result=PF_SD_NOT_CONFIGURED;
+ TEST_ASSERT_EQUAL_INT(-1,tud_msc_scsi_cb(0,cmd,NULL,0));
+ TEST_ASSERT_EQUAL_UINT(2,sense); TEST_ASSERT_EQUAL_UINT(0x3a,asc);
+ TEST_ASSERT_FALSE(tud_msc_start_stop_cb(0,0,false,true));
+ TEST_ASSERT_FALSE(msc_ejected);
+ TEST_ASSERT_EQUAL_UINT(2,sense); TEST_ASSERT_EQUAL_UINT(0x3a,asc);
+ unsigned before=syncs;
+ tud_msc_write10_complete_cb(0);
+ TEST_ASSERT_EQUAL_UINT(before,syncs); /* already after CSW */
+}

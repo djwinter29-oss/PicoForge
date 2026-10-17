@@ -7,7 +7,8 @@
  * Give an initialized, unmounted card to USB MSC.
  *
  * The caller must serialize the complete lifecycle check and ensure FatFs is
- * unmounted before calling. Repeated acquisition is idempotent.
+ * unmounted before calling, after checking f_sync/f_close for all open files.
+ * Block serialization does not protect FatFs objects. Acquisition is idempotent.
  */
 pf_sd_result_t pf_sd_msc_acquire(void);
 
@@ -16,6 +17,8 @@ pf_sd_result_t pf_sd_msc_acquire(void);
  *
  * The caller must serialize the complete lifecycle check. A real USB-to-firmware
  * transition requests card reinitialization before the next firmware mount.
+ * Release does not flush. Removed/faulted-media recovery is an explicit
+ * integration exception and must not be reported as successful synchronization.
  */
 pf_sd_result_t pf_sd_msc_release(void);
 

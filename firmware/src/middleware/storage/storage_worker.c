@@ -8,6 +8,7 @@
 #include "middleware/storage/storage.h"
 
 #include <string.h>
+#include <stdatomic.h>
 
 #define STORAGE_WORKER_STACK_SIZE 2048u
 #define STORAGE_REPLY_COUNT 8u
@@ -36,7 +37,11 @@ static pf_sd_config_t card_config;
 static bool config_available;
 static bool busy;
 static uint32_t active_session;
-static volatile bool cancelled;
+/* Request admission/completion and self-test publication use critical sections.
+ * The worker reads cancellation while waiting for replies; atomic publication
+ * avoids relying on volatile for cross-task communication. Presence/automount
+ * policy is worker-owned and published while card_service_busy is reserved. */
+static atomic_bool cancelled;
 static pf_self_test_status_t self_test_status;
 static bool self_test_active;
 static bool self_test_finished;
@@ -330,23 +335,30 @@ bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply)
         return false;
     }
     if (reply->done) {
+        taskENTER_CRITICAL();
         busy = false;
+        taskEXIT_CRITICAL();
     }
     return true;
 }
 
 void pf_storage_worker_cancel(uint32_t session)
 {
+    taskENTER_CRITICAL();
     if (busy && !self_test_active && (active_session == session)) {
         cancelled = true;
     }
+    taskEXIT_CRITICAL();
 }
 
 bool pf_storage_worker_self_test_start(uint32_t size_mib, bool host_owned)
 {
     pf_self_test_error_t rejection = PF_SELF_TEST_ERROR_NONE;
     refresh_self_test_completion();
-    if (busy || card_service_busy || (requests == NULL)) {
+    taskENTER_CRITICAL();
+    bool unavailable = busy || card_service_busy || (requests == NULL);
+    taskEXIT_CRITICAL();
+    if (unavailable) {
         rejection = PF_SELF_TEST_ERROR_BUSY;
     } else if (host_owned) {
         rejection = PF_SELF_TEST_ERROR_USB_OWNER;

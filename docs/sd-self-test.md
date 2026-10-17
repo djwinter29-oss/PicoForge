@@ -1,5 +1,7 @@
 # SD Card Self-Test
 
+Current source-review dispositions and remaining qualification: [SD remediation matrix](tests/sd-design-remediation.md).
+
 The firmware can write a dedicated file, read it back, verify every byte, and
 report average filesystem write/read speeds over HID. The Python and .NET
 dashboards and the direct WebHID page expose Start, Cancel, progress, timings,

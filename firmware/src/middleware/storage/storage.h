@@ -36,7 +36,11 @@ typedef enum {
 pf_storage_result_t pf_storage_mount(
     const pf_sd_config_t *sd_card_config, FRESULT *filesystem_result);
 
-/** Unmount the volume after all open FatFs objects have been closed. */
+/** Unregister the volume after all open FatFs objects have been closed.
+ * This is not a flush: callers must check f_sync/f_close before unmount and
+ * ownership handoff. Removal/fault cleanup may unregister invalid media without
+ * syncing; that path must never be reported as a successful flush.
+ */
 pf_storage_result_t pf_storage_unmount(FRESULT *filesystem_result);
 
 /** Return whether the FatFs volume is currently mounted. */

@@ -1,5 +1,7 @@
 # SD-Card Driver Design
 
+Current source-review dispositions and remaining qualification: [SD remediation matrix](tests/sd-design-remediation.md).
+
 This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the

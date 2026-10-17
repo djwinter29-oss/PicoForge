@@ -293,12 +293,26 @@ void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_siz
     *block_size = PF_SD_BLOCK_SIZE;
 }
 
+/* Eject and SYNCHRONIZE CACHE share the same pre-CSW sync contract. */
+static bool sync_media(uint8_t lun)
+{
+    pf_sd_result_t result = pf_sd_msc_sync();
+    if (result == PF_SD_OK) {
+        return true;
+    }
+    bool unavailable = (result == PF_SD_NOT_READY) || (result == PF_SD_NOT_CONFIGURED);
+    set_sense(lun, unavailable ? SCSI_SENSE_NOT_READY : SCSI_SENSE_MEDIUM_ERROR,
+              unavailable ? 0x3au : 0x0cu, 0x00u);
+    return false;
+}
+
 bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
                            bool load_eject)
 {
     (void)power_condition;
     transfer_sense_pending = false;
     if ((lun != 0u) || !msc_enabled) {
+        set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
         return false;
     }
     if (load_eject) {
@@ -319,13 +333,7 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
             if (!media_ready(lun)) {
                 return false;
             }
-            pf_sd_result_t result = pf_sd_msc_sync();
-            if (result != PF_SD_OK) {
-                if ((result == PF_SD_NOT_READY) || (result == PF_SD_NOT_CONFIGURED)) {
-                    set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
-                } else {
-                    set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
-                }
+            if (!sync_media(lun)) {
                 return false;
             }
             msc_ejected = true;
@@ -490,13 +498,7 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
             set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u, 0x00u);
             return -1;
         }
-        pf_sd_result_t result = pf_sd_msc_sync();
-        if (result != PF_SD_OK) {
-            if ((result == PF_SD_NOT_READY) || (result == PF_SD_NOT_CONFIGURED)) {
-                set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
-            } else {
-                set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, 0x0cu, 0x00u);
-            }
+        if (!sync_media(lun)) {
             return -1;
         }
         return 0;

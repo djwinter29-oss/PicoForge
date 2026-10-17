@@ -257,3 +257,22 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     TEST_ASSERT_TRUE(!busy && !media.initialized && !mounted && init_calls == 2);
     TEST_ASSERT_EQUAL_UINT(previous_mounts, mount_calls);
 }
+
+void test_command_cancellation_keeps_reservation_until_completion(void)
+{
+ busy=true; active_session=42; cancelled=false; self_test_active=false;
+ pf_storage_worker_cancel(41);
+ TEST_ASSERT_FALSE(cancelled);
+ pf_storage_worker_cancel(42);
+ TEST_ASSERT_TRUE(cancelled);
+ TEST_ASSERT_TRUE(pf_storage_worker_busy());
+ cancelled=false; self_test_active=true;
+ pf_storage_worker_cancel(42);
+ TEST_ASSERT_FALSE(cancelled);
+ self_test_finished=true;
+ TEST_ASSERT_FALSE(pf_storage_worker_busy());
+ TEST_ASSERT_FALSE(self_test_active);
+ TEST_ASSERT_FALSE(self_test_finished);
+ pf_storage_worker_cancel(42);
+ TEST_ASSERT_FALSE(cancelled);
+}
