@@ -1,5 +1,5 @@
-#ifndef PF_STORAGE_NATIVE_H
-#define PF_STORAGE_NATIVE_H
+#ifndef PF_STORAGE_SD_WIRE_H
+#define PF_STORAGE_SD_WIRE_H
 
 #include "storage_transport.h"
 

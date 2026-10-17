@@ -1,5 +1,5 @@
 /** @file
- * @brief Non-owning physical transport dispatch; device protocols remain above this layer.
+ * @brief Non-owning physical bus dispatch; device protocols remain above this layer.
  */
 #include "storage_transport.h"
 #include <assert.h>
@@ -90,4 +90,3 @@ bool pf_storage_transport_enable_wait(const pf_storage_transport_t *bus)
 {
     return bus_valid(bus) && bus->ops->enable_wait != NULL && bus->ops->enable_wait(bus->context);
 }
-

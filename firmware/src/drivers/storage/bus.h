@@ -1,5 +1,5 @@
-#ifndef PF_STORAGE_TRANSPORT_H
-#define PF_STORAGE_TRANSPORT_H
+#ifndef PF_STORAGE_BUS_H
+#define PF_STORAGE_BUS_H
 
 #include <stdbool.h>
 #include <stddef.h>

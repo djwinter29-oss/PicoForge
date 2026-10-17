@@ -1,4 +1,4 @@
-/** @file Raw CMD/DAT capability dispatch; device commands and policy belong to callers. */
+/** @file SD CMD/DAT wire dispatch; device commands and policy belong to callers. */
 #include "native.h"
 
 /** @brief Resolve native capability without exposing concrete hardware state. */
