@@ -272,8 +272,10 @@ void test_fast_tx_uses_half_clock_divider_and_synchronized_sm_restart(void)
     TEST_ASSERT_TRUE(pf_storage_sd_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint32_t sm_mask = (1u << test_wire.command_sm) | (1u << test_wire.data_sm);
 
-    test_wire.current_clock_hz = 50000000u;
-    test_wire.clock_div_ticks = 640u;
+    test_wire.system_clock_hz = 250000000u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_set_clock(&test_wire, 50000000u));
+    TEST_ASSERT_EQUAL_UINT32(50000000u, test_wire.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(640u, test_wire.clock_div_ticks);
     TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&test_wire));
     TEST_ASSERT_TRUE(test_wire.data_tx_fast);
     TEST_ASSERT_EQUAL_UINT16(1u, pf_test_sdio_config_divider_integer);

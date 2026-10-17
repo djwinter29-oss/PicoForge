@@ -94,6 +94,115 @@ void test_rx_uses_system_clock_before_and_after_high_speed_tx(void)
     }
 }
 
+/* Smallest representable clock/data divider (1/256 cycles) that does not exceed the request. */
+static uint32_t ceil_divider(uint64_t numerator, uint32_t denominator)
+{
+    return (uint32_t)((numerator + denominator - 1u) / denominator);
+}
+
+void test_high_speed_divider_is_even_so_cycle_locked_tx_data_is_exactly_half_for_every_clock(void)
+{
+    for (uint32_t mhz = 100u; mhz <= 300u; ++mhz) {
+        pf_test_sdio_system_clock_hz = mhz * 1000000u;
+        pf_sdio_pio_t host = {0};
+        pf_sdio_pio_config_t config = pins();
+        TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+        TEST_ASSERT_TRUE_MESSAGE(pf_sdio_pio_set_clock(&host, 50000000u), "50 MHz request must always be timed");
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, host.clock_div_ticks & 1u, "odd divider drifts the TX lock");
+        TEST_ASSERT_TRUE(host.clock_div_ticks >= 512u && host.clock_div_ticks <= 768u);
+        TEST_ASSERT_TRUE(host.current_clock_hz <= 50000000u);
+        uint32_t wanted = 2u * ceil_divider((uint64_t)pf_test_sdio_system_clock_hz * 64u, 50000000u);
+        TEST_ASSERT_EQUAL_UINT32(wanted < 512u ? 512u : wanted, host.clock_div_ticks);
+        TEST_ASSERT_TRUE(host.data_rx_fast && host.data_tx_fast);
+        TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&host));
+        TEST_ASSERT_EQUAL_UINT32(host.clock_div_ticks, pf_test_sdio_sm_divider[host.command_sm]);
+        TEST_ASSERT_EQUAL_UINT32(host.clock_div_ticks, 2u * pf_test_sdio_sm_divider[host.data_sm]);
+        TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
+        pf_sdio_pio_deinit(&host);
+    }
+}
+
+void test_default_speed_divider_uses_whole_cycles_and_never_exceeds_the_request(void)
+{
+    const uint32_t requests[] = {400000u, 1000000u, 12500000u, 25000000u};
+    for (uint32_t mhz = 100u; mhz <= 300u; mhz += 5u) {
+        for (unsigned index = 0u; index < sizeof(requests) / sizeof(requests[0]); ++index) {
+            pf_test_sdio_system_clock_hz = mhz * 1000000u;
+            pf_sdio_pio_t host = {0};
+            pf_sdio_pio_config_t config = pins();
+            TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+            TEST_ASSERT_TRUE(pf_sdio_pio_set_clock(&host, requests[index]));
+            uint32_t whole_cycles = ceil_divider(pf_test_sdio_system_clock_hz, 2u * requests[index]);
+            TEST_ASSERT_EQUAL_UINT32((whole_cycles < 2u ? 2u : whole_cycles) * 256u, host.clock_div_ticks);
+            TEST_ASSERT_TRUE(host.current_clock_hz <= requests[index]);
+            TEST_ASSERT_FALSE(host.data_rx_fast || host.data_tx_fast);
+            pf_sdio_pio_deinit(&host);
+        }
+    }
+}
+
+void test_high_speed_request_below_200mhz_clamps_to_the_fastest_cycle_structure_that_is_qualified(void)
+{
+    const struct { uint32_t system_hz, actual_hz; } cases[] = {
+        {100000000u, 25000000u}, {125000000u, 31250000u}, {150000000u, 37500000u}, {200000000u, 50000000u},
+    };
+    for (unsigned index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        pf_test_sdio_system_clock_hz = cases[index].system_hz;
+        pf_sdio_pio_t host = {0};
+        pf_sdio_pio_config_t config = pins();
+        TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+        TEST_ASSERT_TRUE(pf_sdio_pio_set_clock(&host, 50000000u));
+        TEST_ASSERT_EQUAL_UINT32(cases[index].actual_hz, host.current_clock_hz);
+        TEST_ASSERT_EQUAL_UINT32(512u, host.clock_div_ticks);
+        TEST_ASSERT_TRUE_MESSAGE(host.data_rx_fast && host.data_tx_fast,
+                                 "High-Speed card timing is selected by the request, not by the rounded rate");
+        TEST_ASSERT_TRUE(pf_sdio_pio_set_clock(&host, 25000000u));
+        TEST_ASSERT_FALSE(host.data_rx_fast || host.data_tx_fast);
+        pf_sdio_pio_deinit(&host);
+    }
+}
+
+void test_high_speed_request_that_would_double_sample_is_rejected_without_changing_the_bus(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    pf_sdio_pio_t host = {0};
+    pf_sdio_pio_config_t config = pins();
+    TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+    host.error_hook = on_error;
+    host.hook_context = &host;
+    TEST_ASSERT_TRUE(pf_sdio_pio_set_clock(&host, 50000000u));
+    uint32_t ticks = host.clock_div_ticks, actual = host.current_clock_hz;
+    /* 250 MHz / 26 MHz needs a 4.8 divider: the shortened RX loop would sample one nibble twice. */
+    TEST_ASSERT_FALSE(pf_sdio_pio_set_clock(&host, 26000000u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_SD_WIRE_ERROR_STATE, observed_error);
+    TEST_ASSERT_EQUAL_UINT32(ticks, host.clock_div_ticks);
+    TEST_ASSERT_EQUAL_UINT32(actual, host.current_clock_hz);
+    TEST_ASSERT_TRUE(host.data_rx_fast && !host.mode_restore_failed);
+    TEST_ASSERT_FALSE(pf_sdio_pio_set_clock(&host, 50000001u));
+    TEST_ASSERT_FALSE(pf_sdio_pio_set_clock(&host, 0u));
+    pf_sdio_pio_deinit(&host);
+}
+
+void test_reported_maximum_clock_matches_what_set_clock_will_actually_time(void)
+{
+    const struct { uint32_t system_hz, maximum_hz; } cases[] = {
+        {90000000u, 22500000u}, {100000000u, 25000000u}, {125000000u, 31250000u}, {150000000u, 37500000u},
+        {200000000u, 50000000u}, {250000000u, 50000000u}, {300000000u, 50000000u}, {320000000u, 25000000u},
+    };
+    for (unsigned index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        pf_test_sdio_system_clock_hz = cases[index].system_hz;
+        pf_sdio_pio_t host = {.config = pins()};
+        pf_storage_bus_t bus = pf_sdio_pio_bus(&host);
+        TEST_ASSERT_EQUAL_UINT32(cases[index].maximum_hz, pf_storage_sd_wire_state(&bus).maximum_clock_hz);
+        TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&bus));
+        TEST_ASSERT_EQUAL_UINT32(cases[index].maximum_hz, pf_storage_sd_wire_state(&bus).maximum_clock_hz);
+        uint32_t actual;
+        TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_set_clock(&bus, 25000000u, &actual));
+        TEST_ASSERT_TRUE(actual <= 25000000u && actual <= cases[index].maximum_hz);
+        pf_storage_bus_deinit(&bus);
+    }
+}
+
 void test_native_descriptor_lifecycle_has_no_serial_or_device_protocol_dependency(void)
 {
     pf_sdio_pio_t host = {.config = pins()};
@@ -158,6 +267,26 @@ void test_native_raw_command_and_tx_do_not_build_crc_or_interpret_response_token
     uint32_t token;
     TEST_ASSERT_TRUE(pf_sdio_pio_tx_finish(&host, 1000u, &token));
     TEST_ASSERT_EQUAL_UINT32(0x0bu, token);
+    TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
+    pf_sdio_pio_deinit(&host);
+}
+
+void test_tx_completion_without_a_response_token_reports_a_wire_error(void)
+{
+    pf_sdio_pio_t host = {0};
+    pf_sdio_pio_config_t config = pins();
+    TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+    host.error_hook = on_error;
+    host.hook_context = &host;
+    TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&host));
+    uint32_t image[2] = {0x12345678u, 0xabcdef01u};
+    TEST_ASSERT_TRUE(pf_sdio_pio_tx_start(&host, image, 2u, 16u));
+    pf_test_sdio_data_fifo_words = 0u;
+    uint32_t token = 0xa5a5a5a5u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_tx_finish(&host, 1000u, &token));
+    TEST_ASSERT_EQUAL(PF_STORAGE_SD_WIRE_ERROR_STATE, observed_error);
+    TEST_ASSERT_EQUAL(PF_STORAGE_SD_WIRE_PHASE_DATA, observed_phase);
+    TEST_ASSERT_EQUAL_HEX32(0xa5a5a5a5u, token);
     TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
     pf_sdio_pio_deinit(&host);
 }

@@ -301,7 +301,7 @@ flowchart TD
     Identify --> Select[CMD7 select and wait for DAT0 ready]
     Select --> Width[CMD13 ready TRAN; CRC-checked SCR; ACMD6 four-bit mode]
     Width --> Speed[Set 25 MHz target; CMD13 and CRC-checked LBA 0]
-    Speed --> Policy{High-Speed build opt-in and SYSCLK at least 200 MHz}
+    Speed --> Policy{High-Speed build opt-in and the transport can exceed 25 MHz}
     Policy -->|No| Ready[Initialized card and telemetry]
     Policy -->|Yes| Switch[CMD6 check and switch; validate group 1 support and selection]
     Switch -->|Unavailable but card operational| Ready
@@ -339,7 +339,10 @@ compatibility or application throughput, and is not detected/enforced by this
 driver. CSD must advertise a default transfer rate of at least 25 MHz.
 
 `PF_SDIO_PIO_HIGH_SPEED=ON` is an explicit CMake opt-in, OFF by default.
-At SYSCLK below 200 MHz the driver stays at 25 MHz and records the host limit.
+At or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default Speed and records the
+host limit. Above 100 MHz it requests up to 50 MHz and the transport clamps to its planned ceiling (SYSCLK / 4, so
+37.5 MHz at the stock 150 MHz Pico 2 clock; 50 MHz from 200 MHz). Only 200 MHz / 50 MHz is hardware-qualified; see the
+[clock planning rules](../firmware/src/drivers/storage/README.md#clock-planning).
 Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
 group-1 support, busy status and selected function. After DAT0 is ready, it leaves
 CLK running at the old rate for 1 ms before targeting up to 50 MHz. This bounded
@@ -361,9 +364,11 @@ This does not change SYSCLK or qualify an overclock. Leave the option OFF for
 the default design. For the qualified 200 MHz CPU / 50 MHz SD build and the still-failing 250 MHz combination, see the
 [High-Speed lab record](../firmware/src/drivers/storage/README.md#high-speed-bring-up-2026-10-17).
 
-The integer clock divider rounds down to avoid exceeding 25 MHz. At 150 and
+The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
-20.833 MHz. This deterministic divider rounding is not adaptive speed selection.
+20.833 MHz. High-Speed dividers are even and limited to 3.0 so the cycle-locked TX and shortened RX programs stay valid;
+the [clock planning table](../firmware/src/drivers/storage/README.md#clock-planning) lists each rule. This deterministic divider
+rounding is not adaptive speed selection.
 SYSCLK must be at least 100 MHz. Use SDK-supported clock settings and check
 effective-clock telemetry; an accepted divider does not qualify an overclock.
 Failures are reported rather than hidden by lower-speed reinitialization.

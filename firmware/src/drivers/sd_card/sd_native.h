@@ -54,7 +54,9 @@ typedef enum {
  * changed after first use. Repeating the same call retries card initialization.
  * Legacy/SDSC cards are rejected. No user sectors are written. High Speed is
  * disabled unless PF_SD_NATIVE_HIGH_SPEED is enabled at build time; that path
- * permits one 50-to-25 MHz startup fallback, never runtime transfer replay.
+ * requests up to 50 MHz (the transport clamps to its ceiling and skips High Speed
+ * when that is not above 25 MHz) and permits one fallback to 25 MHz at startup,
+ * never runtime transfer replay.
  */
 pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config);
 

@@ -48,10 +48,10 @@ typedef struct {
     bool mode_restore_failed;          /**< Command program restoration failed. */
     bool command_program_loaded;       /**< Command program owns instruction memory. */
     bool data_rx_program_loaded;       /**< RX program owns instruction memory. */
-    bool data_rx_fast;                 /**< RX uses the shortened High-Speed sampling loop. */
+    bool data_rx_fast;                 /**< RX uses the shortened High-Speed loop (last request above 25 MHz). */
     bool clock_program_loaded;         /**< Clock program owns instruction memory. */
     bool data_tx_program_loaded;        /**< TX program owns instruction memory. */
-    bool data_tx_fast;                 /**< TX program is cycle-locked. */
+    bool data_tx_fast;                 /**< TX is cycle-locked to CLK (last request above 25 MHz). */
     bool dma_claimed;                  /**< DMA ownership is valid. */
     uint32_t clock_div_ticks;          /**< Command/clock divider in 1/256 units. */
 } pf_sdio_pio_t;
@@ -65,7 +65,9 @@ bool pf_sdio_pio_init(pf_sdio_pio_t *transport,
                       const pf_sdio_pio_config_t *config);
 /** Release all physical resources and zero the context. */
 void pf_sdio_pio_deinit(pf_sdio_pio_t *transport);
-/** Set a clock no faster than requested; does not change device protocol state. */
+/** Set a clock no faster than requested; does not change device protocol state.
+ * Requests above 25 MHz select High-Speed card timing and clamp to the fastest qualified cycle structure
+ * (system clock / 4); a request that cannot be timed safely is rejected without changing the bus. */
 bool pf_sdio_pio_set_clock(pf_sdio_pio_t *transport, uint32_t clock_hz);
 /** Reset wire activity and emit caller-selected released-line clocks at the current rate. */
 bool pf_sdio_pio_clocks(pf_sdio_pio_t *transport, uint32_t cycles, uint32_t timeout_us);

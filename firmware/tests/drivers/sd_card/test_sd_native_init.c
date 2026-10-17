@@ -92,7 +92,8 @@ void setUp(void)
     pf_test_sdio_gpio_level = 1u;
     pf_test_sdio_can_add_program = true;
     pf_test_sdio_removed_programs = 0u;
-    pf_test_sdio_system_clock_hz = 125000000u;
+    /* Baseline: 100 MHz / 4 is exactly the Default-Speed ceiling; High-Speed tests choose a faster clock. */
+    pf_test_sdio_system_clock_hz = 100000000u;
     pf_test_sdio_time_step = 100u;
     abort_calls = validation_reads = switch_calls = command_count = 0u;
     high_speed_supported = high_speed_selected = four_bit_supported = true;
@@ -375,6 +376,22 @@ void test_card_init_validates_one_sector_without_high_speed_on_slow_cpu(void)
     TEST_ASSERT_EQUAL_UINT32(25000000u, clock_requests[1]);
     TEST_ASSERT_EQUAL_UINT(1u, validation_reads);
     TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
+    TEST_ASSERT_EQUAL(PF_SD_DETAIL_HOST_STATE, native_info.high_speed_error);
+}
+
+void test_high_speed_is_attempted_whenever_the_transport_can_exceed_25mhz(void)
+{
+    const uint32_t system_clocks[] = {125000000u, 150000000u, 200000000u, 250000000u};
+    for (unsigned index = 0u; index < sizeof(system_clocks) / sizeof(system_clocks[0]); ++index) {
+        setUp();
+        pf_test_sdio_system_clock_hz = system_clocks[index];
+        TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+        TEST_ASSERT_EQUAL_UINT(2u, switch_calls);
+        TEST_ASSERT_EQUAL_UINT(3u, clock_request_count);
+        TEST_ASSERT_EQUAL_UINT32(50000000u, clock_requests[2]);
+        TEST_ASSERT_TRUE(native_info.high_speed);
+        TEST_ASSERT_EQUAL(PF_SD_DETAIL_NONE, native_info.high_speed_error);
+    }
 }
 
 void test_card_init_failure_does_not_retry_at_other_clocks(void)

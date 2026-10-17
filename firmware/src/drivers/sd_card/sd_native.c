@@ -120,7 +120,7 @@ static bool select_transfer_speed(uint32_t card_address)
 {
     uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
     native_info.high_speed_error = PF_SD_DETAIL_NONE;
-    if (pf_storage_sd_wire_state(&active_config.transport).maximum_clock_hz < SD_HIGH_CLOCK_HZ) {
+    if (pf_storage_sd_wire_state(&active_config.transport).maximum_clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
         native_info.high_speed_error = PF_SD_DETAIL_HOST_STATE;
         return true;
     }

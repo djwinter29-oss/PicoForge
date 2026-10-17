@@ -201,8 +201,10 @@ def check_command_response(ops):
 
 
 def check_tx_status(ops, half):
-    # Slow TX CRC-status read: start bit launched at cycle 0 and seen low `delay` cycles later.
-    # Status bits are sampled mid-bit; the busy check lands after the end bit's launch.
+    # Slow TX CRC-status read. A Default-Speed card launches on falling CLK: the start bit is launched at
+    # cycle 0 (CLK just fell) and seen low `delay` cycles later. Status and busy must be sampled in the
+    # second half of each bit (after the rising edge), never at the launch instant, where a card output
+    # delay of a few ns decides which bit is read. That held at 150 MHz by margin and failed from 200 MHz.
     # Same card-delay bound as the RX framing check.
     period = 2 * half
     for delay in range(1, period - 1):
@@ -212,7 +214,7 @@ def check_tx_status(ops, half):
             kind, dest, immediate = op >> 13, (op >> 5) & 7, op & 31
             next_pc = pc + 1
             if kind == 1 and immediate == 30:
-                if ((cycle + half) // half) % 2 != (op >> 7) & 1:
+                if (cycle // half) % 2 != (op >> 7) & 1:
                     cycle += 1
                     continue
             elif kind == 1:
@@ -320,6 +322,71 @@ def test_fast_rx_system_clock_sampling_at_200_and_250mhz(programs, period, phase
     assert all(b - a == period for a, b in zip(samples, samples[1:])), "Dropped/duplicated 50 MHz nibble"
     for cycle in samples:
         assert (cycle - 1 + phase - latency) % period == 0, "IN must follow observed falling CLK by one cycle"
+
+
+def divider_phases(ticks, ceil_edges):
+    """Alternating CLK low/high durations (system cycles) of the clock program under a fractional divider.
+
+    The hardware's tick placement is not documented, so bound it by both floor and ceiling placement.
+    """
+    edge = (lambda k: -(-k * ticks // 256)) if ceil_edges else (lambda k: k * ticks // 256)
+    return [edge(k + 1) - edge(k) for k in range(12 * 1040)]
+
+
+def fast_receive_with_phases(ops, durations, latency):
+    """Run the High-Speed RX loop against explicit CLK phases (starting low); return sample and fall cycles."""
+    levels = []
+    for index, duration in enumerate(durations):
+        levels += [index % 2] * duration
+    falls = [i for i in range(1, len(levels)) if levels[i - 1] == 1 and levels[i] == 0]
+    pc, remaining, cycle, samples = 5, 1039, 0, []
+    while cycle < len(levels) - 8:
+        op = ops[pc]
+        kind = op >> 13
+        if kind == 1:
+            if levels[max(cycle - latency, 0)] != (op >> 7) & 1:
+                cycle += 1
+                continue
+        elif kind == 2:
+            samples.append(cycle)
+        else:
+            if not remaining:
+                break
+            remaining -= 1
+            pc = op & 31
+            cycle += 1
+            continue
+        pc += 1
+        cycle += 1
+    return samples, falls
+
+
+def samples_follow_consecutive_falls(samples, falls, latency):
+    import bisect
+    owners = [bisect.bisect_right(falls, cycle - latency - 1) - 1 for cycle in samples]
+    return (len(samples) == 1040 and all(b - a == 1 for a, b in zip(owners, owners[1:]))
+            and all(cycle - latency - falls[owner] == 1 for cycle, owner in zip(samples, owners)))
+
+
+@pytest.mark.parametrize("ceil_edges", (False, True))
+@pytest.mark.parametrize("latency", (0, 1))
+@pytest.mark.parametrize("ticks", (512, 576, 640, 704, 768))
+def test_fast_rx_takes_one_nibble_per_clock_for_every_divider_the_planner_accepts(
+        programs, ticks, latency, ceil_edges):
+    # sdio_pio.c rejects High-Speed dividers above HIGH_SPEED_DIVIDER_MAX_TICKS (3.0 == 768 ticks).
+    durations = divider_phases(ticks, ceil_edges)
+    assert max(durations[0::2]) <= 3, "CLK low phase exceeds the fast loop's three-cycle rearm time"
+    samples, falls = fast_receive_with_phases(programs["data_rx_fast"], durations, latency)
+    assert samples_follow_consecutive_falls(samples, falls, latency), (ticks, latency, ceil_edges)
+
+
+@pytest.mark.parametrize("ticks", (1024, 1280))
+def test_fast_rx_samples_a_nibble_twice_once_the_low_phase_reaches_four_cycles(programs, ticks):
+    # Documents the hazard behind the planner's divider ceiling: a longer low phase satisfies the next
+    # WAIT 0 before CLK rises, so the loop counts the same bit period as two nibbles.
+    durations = divider_phases(ticks, False)
+    samples, falls = fast_receive_with_phases(programs["data_rx_fast"], durations, 0)
+    assert not samples_follow_consecutive_falls(samples, falls, 0)
 
 
 def test_command_response(programs):

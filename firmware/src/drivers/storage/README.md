@@ -108,6 +108,33 @@ launch. Both receive programs run at the system clock, not a fractional data div
 system cycle. TX retains its separately synchronized clock/data dividers. Timing-model checks cover cadence and
 framing; actual card/pad timing still requires hardware qualification.
 
+#### Clock Planning
+
+`pf_sdio_pio_set_clock` plans every request in one place and never exceeds it. The command/clock state machine spends
+two system cycles per bus period, so its divider cannot be below 2.0 and the fastest bus is SYSCLK / 4.
+
+| Request | Divider | Consequence |
+| --- | --- | --- |
+| Up to 25 MHz (Default Speed) | Whole cycles, rounded up | Symmetric CLK at any SYSCLK; 150 MHz gives exactly 25 MHz, 125 MHz gives 20.83 MHz |
+| Above 25 MHz (High Speed) | Even, in 1/256 cycles, from 2.0 to 3.0 | Clamps to SYSCLK / 4 when SYSCLK is too low (150 MHz gives 37.5 MHz) |
+| Above 50 MHz, or a High-Speed divider above 3.0 | Rejected | The bus is left unchanged and a STATE error is reported |
+
+* The cycle-locked High-Speed TX data state machine runs at exactly half the clock divider. The divider is therefore
+  halved before rounding and doubled; an odd value would slip one system cycle every 128 bus periods, which is eight
+  cycles across one 1,040-nibble block.
+* The shortened High-Speed RX loop rearms three system cycles after it sees CLK fall. A CLK low phase of four or more
+  cycles would satisfy the next `WAIT 0` early and count one bit period as two nibbles. Because fractional dividers
+  alternate whole-cycle phases and their placement is not documented, the planner accepts only dividers up to 3.0,
+  where both floor and ceiling placement keep every low phase at three cycles or less. The timing-model tests check
+  both placements.
+* Receive and transmit program selection follows the *request* (above 25 MHz selects High-Speed card timing), not the
+  rounded rate, so a clamped High-Speed request keeps High-Speed sampling.
+* The reported maximum clock is what the planner accepts for a 50 MHz request (50 MHz where SYSCLK / 4 allows it),
+  otherwise 25 MHz. The SD host attempts High Speed only when this exceeds 25 MHz.
+
+Host tests sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and limits. Hardware has qualified only
+150 MHz / 25 MHz and 200 MHz / 50 MHz; other High-Speed combinations are modeled, not proven on a card.
+
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 

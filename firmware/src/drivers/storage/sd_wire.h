@@ -32,7 +32,7 @@ typedef struct {
     bool healthy; /**< Wire mode is usable or can return to idle. */
     bool data_high; /**< Current DAT0 level, not interpreted device readiness. */
     uint32_t current_clock_hz; /**< Calculated actual wire clock. */
-    uint32_t maximum_clock_hz; /**< Representable physical ceiling. */
+    uint32_t maximum_clock_hz; /**< Fastest clock the backend will time safely; faster requests clamp or fail. */
 } pf_storage_sd_wire_state_t;
 
 /** SD CMD/DAT wire operations; no command construction, CRC policy, or device recovery.

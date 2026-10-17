@@ -98,17 +98,19 @@ transmit_nibble:
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     set pindirs, 0
     wait 0 pin 0
-    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+; Default-Speed cards launch on falling CLK: sample status and busy half a bit later, after the rising edge,
+; never at the launch instant (marginal below 6 ns, i.e. at 200 MHz and above).
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     set x, 3
 read_data_response:
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     in pins, 1
     jmp x-- read_data_response
     push block
-; Check busy mid-bit after the end bit, once the card has had time to drive DAT0 low.
-    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
+; The busy window starts with the next launch; its low level is stable after the following rising edge.
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin 0
 ; Park at completion; wrapping to an empty PULL would falsely set TXSTALL.
     irq wait 2

@@ -15,6 +15,53 @@
 #define RX_IRQ 1u
 #define TX_IRQ 2u
 
+#define DEFAULT_SPEED_MAX_HZ 25000000u
+#define HIGH_SPEED_MAX_HZ 50000000u
+/* Divider limits in 1/256 system cycles. The clock program spends two cycles per bus period, so 2.0 is the floor. */
+#define DIVIDER_MIN_TICKS 512u
+#define DIVIDER_MAX_TICKS 0xffffffu
+/* The shortened High-Speed RX loop rearms after three cycles; a longer CLK low phase samples one nibble twice. */
+#define HIGH_SPEED_DIVIDER_MAX_TICKS 768u
+
+/**
+ * @brief Command/clock divider for a requested bus clock, or zero when it cannot be timed safely.
+ *
+ * Default Speed uses whole-cycle phases, which keep the duty cycle symmetric and never exceed the request.
+ * High Speed halves before rounding so the cycle-locked TX data state machine, which runs at exactly half this
+ * divider, stays in lockstep with CLK; an odd divider would drift by one cycle every 128 bus periods.
+ * Requests faster than the cycle structure allows clamp to the 2.0 divider (system clock / 4).
+ */
+static uint32_t clock_divider_ticks(uint32_t system_hz, uint32_t clock_hz)
+{
+    if ((system_hz == 0u) || (clock_hz == 0u) || (clock_hz > HIGH_SPEED_MAX_HZ)) {
+        return 0u;
+    }
+    bool high_speed = clock_hz > DEFAULT_SPEED_MAX_HZ;
+    uint64_t ticks = high_speed
+        ? 2u * (((uint64_t)system_hz * 64u + clock_hz - 1u) / clock_hz)
+        : (((uint64_t)system_hz + 2u * clock_hz - 1u) / (2u * clock_hz)) * 256u;
+    if (ticks < DIVIDER_MIN_TICKS) {
+        ticks = DIVIDER_MIN_TICKS;
+    }
+    if ((ticks > DIVIDER_MAX_TICKS) || (high_speed && (ticks > HIGH_SPEED_DIVIDER_MAX_TICKS))) {
+        return 0u;
+    }
+    return (uint32_t)ticks;
+}
+
+/** @brief Actual bus clock produced by a divider; rounding down never exceeds the planned request. */
+static uint32_t divider_clock_hz(uint32_t system_hz, uint32_t divider_ticks)
+{
+    return (uint32_t)(((uint64_t)system_hz * 128u) / divider_ticks);
+}
+
+/** @brief Fastest clock the planner will time: the High-Speed ceiling, else the Default-Speed ceiling. */
+static uint32_t maximum_clock_hz(uint32_t system_hz)
+{
+    uint32_t ticks = clock_divider_ticks(system_hz, HIGH_SPEED_MAX_HZ);
+    return ticks != 0u ? divider_clock_hz(system_hz, ticks) : DEFAULT_SPEED_MAX_HZ;
+}
+
 /** @brief Report a physical failure without importing device diagnostics. */
 static void wire_error(pf_sdio_pio_t *host, pf_storage_sd_wire_error_t error,
                        pf_storage_sd_wire_phase_t phase)
@@ -122,10 +169,9 @@ static bool load_command_program(pf_sdio_pio_t *host)
     return true;
 }
 
-/** @brief Claim and configure the RX program matching the calculated physical clock. */
+/** @brief Claim and configure the RX program selected by the last clock request's card timing mode. */
 static bool load_data_rx_program(pf_sdio_pio_t *host)
 {
-    host->data_rx_fast = host->current_clock_hz > 25000000u;
     if (!pio_can_add_program(host->pio, data_rx_program(host))) {
         return false;
     }
@@ -161,7 +207,6 @@ bool pf_sdio_pio_tx_prepare(pf_sdio_pio_t *host)
         pio_remove_program(host->pio, &pf_sdio_pio_command_program, host->command_program_offset);
         host->command_program_loaded = false;
     }
-    host->data_tx_fast = host->current_clock_hz > 25000000u;
     if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
         !pio_can_add_program(host->pio, data_tx_program(host))) {
         wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
@@ -346,39 +391,37 @@ bool pf_sdio_pio_clocks(pf_sdio_pio_t *host, uint32_t cycles, uint32_t timeout_u
 
 bool pf_sdio_pio_set_clock(pf_sdio_pio_t *host, uint32_t clock_hz)
 {
-    if ((host == NULL) || (host->pio == NULL) || (clock_hz == 0u) || (clock_hz > 50000000u) ||
-        ((uint64_t)host->system_clock_hz < (uint64_t)4u * clock_hz) || host->mode_restore_failed ||
+    uint32_t divider_ticks = host != NULL ? clock_divider_ticks(host->system_clock_hz, clock_hz) : 0u;
+    if ((host == NULL) || (host->pio == NULL) || (divider_ticks == 0u) || host->mode_restore_failed ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND))) {
         wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
         return false;
     }
-    uint32_t divider_ticks = clock_hz <= 25000000u
-        ? (uint32_t)(((uint64_t)host->system_clock_hz + 2u * clock_hz - 1u) / (2u * clock_hz)) * 256u
-        : (uint32_t)(((uint64_t)host->system_clock_hz * 128u + clock_hz - 1u) / clock_hz);
-    if ((divider_ticks < 512u) || (divider_ticks > 0xffffffu)) {
-        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
-        return false;
-    }
+    /* Card output timing follows the requested mode, so a clamped High-Speed request keeps High-Speed sampling. */
+    bool high_speed = clock_hz > DEFAULT_SPEED_MAX_HZ;
     bool resume = host->clock_owner == PF_SDIO_PIO_CLOCK_COMMAND;
     pio_sm_set_enabled(host->pio, host->command_sm, false);
     host->clock_div_ticks = divider_ticks;
     pio_sm_set_clkdiv_int_frac(host->pio, host->command_sm, (uint16_t)(divider_ticks >> 8u),
                               (uint8_t)(divider_ticks & 0xffu));
-    host->current_clock_hz = (uint32_t)(((uint64_t)host->system_clock_hz * 128u) / divider_ticks);
+    host->current_clock_hz = divider_clock_hz(host->system_clock_hz, divider_ticks);
     if (host->command_program_loaded) {
         pio_sm_set_enabled(host->pio, host->data_sm, false);
         if (host->data_rx_program_loaded) {
             pio_remove_program(host->pio, data_rx_program(host), host->data_rx_program_offset);
         }
         host->data_rx_program_loaded = false;
+        host->data_rx_fast = high_speed;
+        host->data_tx_fast = high_speed;
         if (!load_data_rx_program(host)) {
             host->mode_restore_failed = true;
             wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
             return false;
         }
     } else {
-        host->data_rx_fast = host->current_clock_hz > 25000000u;
+        host->data_rx_fast = high_speed;
+        host->data_tx_fast = high_speed;
     }
     pio_clkdiv_restart_sm_mask(host->pio, (1u << host->command_sm) | (1u << host->data_sm));
     pio_sm_set_enabled(host->pio, host->command_sm, resume);
@@ -766,7 +809,11 @@ bool pf_sdio_pio_tx_finish(pf_sdio_pio_t *host, uint32_t timeout_us,
     if (dma_channel_is_busy(host->dma_channel)) {
         dma_channel_abort(host->dma_channel);
     }
-    if (!success || (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) == 0u)) {
+    if (!success) {
+        return false;
+    }
+    if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) == 0u) {
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_DATA);
         return false;
     }
     *response_word = pio_sm_get(host->pio, host->data_sm);
@@ -826,13 +873,12 @@ static pf_storage_bus_result_t bus_set_clock(void *context, uint32_t requested, 
 static pf_storage_sd_wire_state_t sd_wire_state(void *context)
 {
     pf_sdio_pio_t *host = context;
-    uint32_t maximum = clock_get_hz(clk_sys) / 4u;
     pf_storage_sd_wire_state_t state = {
         .ready = host->pio != NULL,
         .healthy = host->pio != NULL && !host->mode_restore_failed,
         .data_high = host->pio != NULL && gpio_get(host->config.pins.data_gpio[0]) != 0u,
         .current_clock_hz = host->current_clock_hz,
-        .maximum_clock_hz = maximum < 50000000u ? maximum : 50000000u,
+        .maximum_clock_hz = maximum_clock_hz(clock_get_hz(clk_sys)),
     };
     return state;
 }
