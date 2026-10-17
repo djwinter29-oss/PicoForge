@@ -26,8 +26,8 @@ erased bits; it never erases implicitly. A failed write can leave partial change
   [common adapter](../firmware/src/drivers/nor_flash/nor_transport.c) use the same storage-bus handle for SPI
   and QSPI-PIO. Transactions contain single-lane command/address/dummy phases and single- or quad-lane data.
   The adapter forwards transactions, maps physical results, and supplies the protocol's microsecond clock.
-- Physical signaling uses the [shared SPI engine](../firmware/src/drivers/storage/spi/storage_spi.c), also used by
-  SD-SPI, or the [quad-SPI engine](../firmware/src/drivers/storage/qspi_pio/storage_qspi_pio.c).
+- Physical signaling uses the [shared SPI engine](../firmware/src/drivers/storage/spi/spi.c), also used by
+  SD-SPI, or the [quad-SPI engine](../firmware/src/drivers/storage/qspi_pio/qspi_pio.c).
   The NOR protocol selects single-lane initialization and `6Bh` quad reads; programming remains single-lane `02h`.
   Neither physical engine identifies NOR parts, sets QE, or decides when to erase.
 - [Board profile](../firmware/src/board/board_profile.c) selects GP2 clock,

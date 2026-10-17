@@ -1,5 +1,5 @@
 /** @file Shared mode-0 SPI ownership, pin setup, chip select and byte I/O. */
-#include "storage_spi.h"
+#include "spi.h"
 
 #include "pico/stdlib.h"
 

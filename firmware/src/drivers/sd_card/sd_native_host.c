@@ -105,7 +105,7 @@ static bool response_status_ok(pf_sd_native_host_t *host, uint32_t argument)
 bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_native_config_t *config)
 {
     if ((host == NULL) || pf_storage_transport_native_state(&host->transport).ready || config == NULL ||
-        !pf_storage_transport_valid(&config->transport, PF_STORAGE_TRANSPORT_SDIO_PIO)) {
+        !pf_storage_transport_valid(&config->transport, PF_STORAGE_TRANSPORT_NATIVE_SD)) {
         return false;
     }
     host->transport = config->transport;

@@ -24,8 +24,8 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 
 | Behavior | Test directory |
 | --- | --- |
-| Native/SPI initialization, transfers, CRC faults, recovery and interrupt-wait races | [drivers/sd_card](drivers/sd_card) |
-| Physical SPI, SDIO-PIO and QSPI-PIO lifecycle and wire operations | [drivers/storage](drivers/storage) |
+| Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sd_card](drivers/sd_card) |
+| Physical SPI, SDIO-PIO and QSPI-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
 | FreeRTOS facade ownership and serialization | [drivers/sd_card/ports/freertos](drivers/sd_card/ports/freertos) |
 | Bare-metal facade and port behavior | [drivers/sd_card/ports/baremetal](drivers/sd_card/ports/baremetal) |
 | Card presence, automount and recovery | [middleware/storage](middleware/storage) |

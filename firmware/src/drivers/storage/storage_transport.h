@@ -34,8 +34,8 @@ typedef struct {
 /** Physical signaling mode, not the attached device's command protocol. */
 typedef enum {
     PF_STORAGE_TRANSPORT_SPI,      /**< Clocked full-duplex single-lane SPI. */
-    PF_STORAGE_TRANSPORT_SDIO_PIO, /**< Native SD command/data signaling. */
-    PF_STORAGE_TRANSPORT_QSPI_PIO, /**< Single/quad serial signaling. */
+    PF_STORAGE_TRANSPORT_NATIVE_SD, /**< Native SD command/data signaling, independent of implementation. */
+    PF_STORAGE_TRANSPORT_QSPI,      /**< Single/quad serial signaling, independent of implementation. */
 } pf_storage_transport_mode_t;
 
 /** Transport outcome; device protocol layers translate into their public results. */
@@ -155,8 +155,8 @@ typedef struct {
     void *context;                    /**< Backend-owned configuration and hardware state. */
     const pf_storage_transport_ops_t *ops;   /**< Immutable lifecycle implementation. */
     pf_storage_transport_mode_t mode;       /**< Selects the typed transfer interface. */
-    bool (*present)(void *context);    /**< Optional board-owned media-presence callback. */
-    void *presence_context;           /**< Borrowed presence callback context. */
+    bool (*present)(const void *context); /**< Optional board-owned media-presence callback. */
+    const void *presence_context;     /**< Borrowed immutable presence callback context. */
 } pf_storage_transport_t;
 
 /** Initialize a configured backend. Does not identify, mount, erase, or format media. */

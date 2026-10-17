@@ -17,25 +17,32 @@ remain above this layer:
 drivers/
   storage/
     storage_transport.h / storage_transport.c
-    spi/storage_spi.h / storage_spi.c
-    sdio_pio/storage_sdio_pio.h / storage_sdio_pio.c / storage_sdio_pio.pio
-    qspi_pio/storage_qspi_pio.h / storage_qspi_pio.c / storage_qspi_pio.pio
+    spi/spi.h / spi.c
+    sdio_pio/sdio_pio.h / sdio_pio.c / sdio_pio.pio
+    sdio_pio/ports/freertos/sdio_wait.c
+    qspi_pio/qspi_pio.h / qspi_pio.c / qspi_pio.pio
   sd_card/       SD initialization, registers, framing, sector and stream policy
   nor_flash/     NOR opcodes, status, page programming, erase and verification
 ```
 
-The [common bus interface](storage_transport.h) dispatches initialization, clock changes with calculated actual rates,
-hardware abort, deinitialization, and CS-bounded serial transactions. Its `pf_storage_transport_t` is a non-owning handle:
-the caller owns the concrete context and serializes access. It creates no task, queue, filesystem policy, or automatic
-mode-switch manager.
+The [common transport interface](storage_transport.h) is the only physical interface included by SD and NOR drivers.
+It dispatches initialization, calculated clock changes, hardware abort/deinitialization, CS-bounded serial transactions,
+raw serial CS/byte operations, and typed native command/data operations. `pf_storage_transport_t` is a non-owning
+descriptor: board/storage integration owns the concrete context, and the caller serializes access. Protocol clients
+do not dereference backend contexts or operations, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
+It creates no task, queue, filesystem policy, or automatic mode-switch manager.
+Common mode tags describe SPI, native SD, or QSPI signaling, not the backend's PIO/SPI-controller implementation.
+Backend filenames omit the redundant `storage_` prefix within their mode directories; C symbols retain
+`pf_storage_*` / `PF_STORAGE_*` names to avoid collisions with SDK APIs. The common interface retains its
+`storage_transport.[ch]` name.
 
 | Physical mode | Implementation | Device configurations |
 | --- | --- | --- |
-| SPI | [storage_spi.h](spi/storage_spi.h), [storage_spi.c](spi/storage_spi.c) | SD-SPI and NOR-SPI |
-| Native SD PIO | [storage_sdio_pio.h](sdio_pio/storage_sdio_pio.h), [storage_sdio_pio.c](sdio_pio/storage_sdio_pio.c), [PIO programs](sdio_pio/storage_sdio_pio.pio) | Native four-bit SD memory cards |
-| QSPI-PIO | [storage_qspi_pio.h](qspi_pio/storage_qspi_pio.h), [storage_qspi_pio.c](qspi_pio/storage_qspi_pio.c), [PIO programs](qspi_pio/storage_qspi_pio.pio) | NOR single/quad-lane serial transfers |
+| SPI | [spi.h](spi/spi.h), [spi.c](spi/spi.c) | SD-SPI and NOR-SPI |
+| Native SD PIO | [sdio_pio.h](sdio_pio/sdio_pio.h), [sdio_pio.c](sdio_pio/sdio_pio.c), [PIO programs](sdio_pio/sdio_pio.pio) | Native four-bit SD memory cards |
+| QSPI-PIO | [qspi_pio.h](qspi_pio/qspi_pio.h), [qspi_pio.c](qspi_pio/qspi_pio.c), [PIO programs](qspi_pio/qspi_pio.pio) | NOR single/quad-lane serial transfers |
 
-SPI and QSPI use command/address/dummy/data transactions. SD-SPI additionally uses the SPI byte-exchange and CS
+SPI and QSPI use command/address/dummy/data transactions. SD-SPI additionally uses the common byte-exchange and CS
 primitives so command responses, data tokens, busy polling, and multiblock transfers retain their existing CS
 boundaries. Native SD uses a distinct typed wire interface for command/response and data phases; it is not emulated
 as a serial flash transaction. Native DMA buffers remain batchable so the SD layer can overlap CRC checking and
@@ -52,7 +59,18 @@ Configure and zero-initialize the concrete context, obtain its non-owning bus ha
 device-protocol operations. Contexts must outlive all synchronous calls; do not copy a live context. The common
 interface exposes `pf_storage_transport_init`, `pf_storage_transport_set_clock`, `pf_storage_transport_transfer`,
 `pf_storage_transport_abort`, and `pf_storage_transport_deinit`. Native command/data operations use the native typed API rather
-than `pf_storage_transport_transfer`.
+than `pf_storage_transport_transfer`. All these operations are declared in `storage_transport.h`; concrete backend
+headers are only for board/storage composition and physical-engine tests.
+
+Native clients receive read-only wire snapshots (readiness, clock ownership, actual/maximum clock, DAT0 level, and
+last raw response), not hardware registers or mutable resource state. Error/idle callbacks are borrowed and invoked
+synchronously. RX start/poll/progress/finish/cleanup and TX prepare/start/finish preserve DMA overlap and buffer
+lifetimes. Descriptor validation rejects incomplete required operation sets before SD initialization.
+
+Platform time, bounded delays, and optional scheduler-wait setup are also dispatched through the descriptor.
+The [FreeRTOS wait adapter](sdio_pio/ports/freertos/sdio_wait.c) owns PIO IRQ details; SD's execution port only
+requests that the transport enable it. The backend retains its physical configuration and installed wait hook across
+common-interface initialization failures and deinitialization, so reinitialization does not need device-side pin setup.
 
 [Board support](../../board/) remains authoritative for GP2-GP8. SD-SPI and NOR-SPI use one shared SPI implementation;
 native SD and quad-SPI use their own physical engines. These are alternative modes of the shared pins, not permission
@@ -63,6 +81,9 @@ The standalone serial-storage profile is defined in [board_profile.c](../../boar
 serial runtime context, separate from the immutable profile. Board preparation supplies a physical descriptor and applies SPI
 WP/HOLD idle levels; it does not initialize the bus or depend on NOR. The NOR adapter initializes that descriptor.
 After device operations, the caller deinitializes the bus before releasing board-specific pins.
+For SD, [board.c](../../board/board.c) owns the selected static backend context and prepares card-detect GPIO/pulls
+from the same immutable profile. Its descriptor carries an optional board presence callback; without one, presence
+is unknown and media is assumed present. Repeated configuration queries do not reset a live backend.
 
 ### Pin Allocation and Runtime State
 
@@ -75,14 +96,18 @@ The immutable board resource profile contains `native_pins`, `spi_pins`, and `qs
 signal assignment in [board_profile.c](../../board/board_profile.c). SD and NOR share `spi_pins`; neither has a second
 board-specific SPI map. DET polarity/pulls and SPI WP/HOLD remain board/device configuration.
 
-SD configuration and concrete storage contexts embed the corresponding shared type as `pins`. Board integration copies
-that allocation into the selected context; mutable clock settings, controller references, PIO state machines, DMA
+Concrete storage contexts embed the corresponding shared type as `pins`. Board integration copies that allocation
+into the selected context; mutable clock settings, controller references, PIO state machines, DMA
 channels, and initialization flags remain runtime state, never fields modified in the board profile. Re-preparing
 serial storage after deinitialization restores its configuration from that profile.
 
-Direct configuration callers must migrate former flat fields to `pins`, for example `config.pins.clock_gpio` and
-`config.pins.cs_gpio` (formerly SD-SPI `chip_select_gpio`). QSPI callers now supply all four `pins.data_gpio` entries
-rather than only a base GPIO. Transport selection, board wiring, and transfer behavior are unchanged.
+SD configuration callers now supply a persistent descriptor in `bus.native.transport` or `bus.spi.transport`, plus
+the protocol's transfer-clock target. Pin allocation, controller selection, and DET configuration are no longer SD
+configuration fields. Backend integration supplies `pins.clock_gpio`, `pins.cs_gpio`, or all four `pins.data_gpio`
+entries as appropriate. The former `storage_bus.[ch]`, `pf_storage_bus_*`, and `PF_STORAGE_BUS_*` names are replaced
+by `storage_transport.[ch]`, `pf_storage_transport_*`, and `PF_STORAGE_TRANSPORT_*`, without compatibility aliases.
+Physical backend descriptor factories now end in `_transport`. Transport selection, board wiring, and transfer
+behavior are unchanged.
 For SD API naming migration, see the [SD architecture](../../../../docs/sdcard-design.md#architecture).
 
 Before switching devices, the caller must sync/unmount as appropriate, finish the device protocol, deinitialize the

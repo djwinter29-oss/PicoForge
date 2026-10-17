@@ -1,8 +1,8 @@
 /** @file Device-independent PIO single/quad serial signaling. */
-#include "storage_qspi_pio.h"
+#include "qspi_pio.h"
 
 #include "hardware/clocks.h"
-#include "storage_qspi_pio.pio.h"
+#include "qspi_pio.pio.h"
 #include "pico/stdlib.h"
 
 /** @brief Restart the state machine with the selected lane count and pin ownership. */
@@ -210,5 +210,5 @@ pf_storage_transport_t pf_storage_qspi_pio_transport(pf_storage_qspi_pio_t *cont
         .init = bus_init, .deinit = bus_deinit, .abort = bus_deinit, .set_clock = bus_clock,
         .transfer = bus_transfer, .time_us = time_us_64, .delay_ms = sleep_ms,
     };
-    return (pf_storage_transport_t){ .context = context, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_QSPI_PIO };
+    return (pf_storage_transport_t){ .context = context, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_QSPI };
 }

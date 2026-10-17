@@ -46,7 +46,7 @@ static bool same_config(const pf_sd_native_config_t *left,
 
 static bool config_is_valid(const pf_sd_native_config_t *config)
 {
-    if (config == NULL || !pf_storage_transport_valid(&config->transport, PF_STORAGE_TRANSPORT_SDIO_PIO)) {
+    if (config == NULL || !pf_storage_transport_valid(&config->transport, PF_STORAGE_TRANSPORT_NATIVE_SD)) {
         return false;
     }
 

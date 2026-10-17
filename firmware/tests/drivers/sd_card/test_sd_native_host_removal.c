@@ -2,14 +2,14 @@
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
-#include "storage_sdio_pio.h"
+#include "sdio_pio.h"
 
 static pf_storage_sdio_pio_t test_wire;
 
 #include <string.h>
 
 #include "../../../src/drivers/sd_card/sd_native.c"
-#include "../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
+#include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
 #include "../../../src/drivers/storage/storage_transport.c"
 #include "../../../src/drivers/sd_card/sd_native_host.c"
 #include "../../../src/drivers/sd_card/sd_native_protocol.c"

@@ -104,14 +104,14 @@ if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX)
     target_include_directories(pf_nor_flash PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
     if(PF_NOR_TRANSPORT STREQUAL "SPI")
         target_sources(pf_nor_flash PRIVATE
-            src/drivers/storage/spi/storage_spi.c)
+            src/drivers/storage/spi/spi.c)
         target_link_libraries(pf_nor_flash PUBLIC hardware_spi)
         target_compile_definitions(pf_nor_flash PUBLIC PF_NOR_QSPI=0)
     elseif(PF_NOR_TRANSPORT STREQUAL "QSPI_PIO")
         target_sources(pf_nor_flash PRIVATE
-            src/drivers/storage/qspi_pio/storage_qspi_pio.c)
+            src/drivers/storage/qspi_pio/qspi_pio.c)
         pico_generate_pio_header(pf_nor_flash
-            "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/qspi_pio/storage_qspi_pio.pio")
+            "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/qspi_pio/qspi_pio.pio")
         target_link_libraries(pf_nor_flash PUBLIC hardware_pio hardware_clocks)
         target_compile_definitions(pf_nor_flash PUBLIC PF_NOR_QSPI=1)
     else()
@@ -157,7 +157,7 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
         src/drivers/sd_card/sd_native.c
         src/drivers/sd_card/sd_native_host.c
         src/drivers/sd_card/sd_native_protocol.c
-        src/drivers/storage/sdio_pio/storage_sdio_pio.c
+        src/drivers/storage/sdio_pio/sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
     option(PF_SDIO_PIO_HIGH_SPEED "Opt in to native 50 MHz startup with one 25 MHz fallback" OFF)
@@ -168,11 +168,11 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     )
     if(PF_SD_CARD_INTERRUPT_WAIT)
         target_sources(pf_sdio_backend PRIVATE
-            src/drivers/storage/sdio_pio/ports/freertos/storage_sdio_wait.c)
+            src/drivers/storage/sdio_pio/ports/freertos/sdio_wait.c)
         target_link_libraries(pf_sdio_backend PRIVATE FreeRTOS-Kernel-Static hardware_irq)
     endif()
     pico_generate_pio_header(pf_sdio_backend
-        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/sdio_pio/storage_sdio_pio.pio"
+        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/sdio_pio/sdio_pio.pio"
     )
     target_include_directories(pf_sdio_backend
         PUBLIC
@@ -193,7 +193,7 @@ else()
     add_library(pf_sd_spi_backend STATIC
         src/drivers/sd_card/sd_spi.c
         src/drivers/sd_card/sd_spi_protocol.c
-        src/drivers/storage/spi/storage_spi.c
+        src/drivers/storage/spi/spi.c
     )
     target_include_directories(pf_sd_spi_backend PUBLIC
         "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"

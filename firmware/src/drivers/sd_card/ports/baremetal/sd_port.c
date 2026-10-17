@@ -1,8 +1,9 @@
 #include "sd_port.h"
 
-void pf_sd_port_init(const pf_sd_config_t *config)
+bool pf_sd_port_init(const pf_sd_config_t *config)
 {
     (void)config;
+    return true;
 }
 
 void pf_sd_port_lock(void)

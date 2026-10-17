@@ -2,10 +2,10 @@
 
 #include "config/config.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-#include "drivers/storage/sdio_pio/storage_sdio_pio.h"
+#include "drivers/storage/sdio_pio/sdio_pio.h"
 static pf_storage_sdio_pio_t sd_transport;
 #else
-#include "drivers/storage/spi/storage_spi.h"
+#include "drivers/storage/spi/spi.h"
 static pf_storage_spi_t sd_transport;
 #endif
 #include "hardware/gpio.h"
@@ -18,7 +18,7 @@ static bool led_initialized;
 static bool storage_configured;
 
 /** @brief Sample board-owned card detect; the immutable profile has static lifetime. */
-static bool card_present(void *context)
+static bool card_present(const void *context)
 {
     const pf_board_resources_t *profile = context;
     return (gpio_get(profile->card_detect_gpio) != 0u) == profile->card_detect_active_high;
@@ -97,7 +97,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
             }
         }
         transport->present = card_present;
-        transport->presence_context = (void *)topology;
+        transport->presence_context = topology;
     }
     storage_configured = true;
     return true;

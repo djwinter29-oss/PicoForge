@@ -53,7 +53,7 @@ void tearDown(void) {}
 
 void test_one_adapter_dispatches_spi_and_quad_buses_and_supplies_clock(void)
 {
-    const pf_storage_transport_mode_t modes[] = {PF_STORAGE_TRANSPORT_SPI, PF_STORAGE_TRANSPORT_QSPI_PIO};
+    const pf_storage_transport_mode_t modes[] = {PF_STORAGE_TRANSPORT_SPI, PF_STORAGE_TRANSPORT_QSPI};
     pf_nor_transaction_t transaction = { .command = 0x9f, .data_lanes = 1 };
     for (unsigned index = 0; index < 2; ++index) {
         bus.mode = modes[index];
@@ -83,7 +83,7 @@ void test_invalid_or_native_buses_never_initialize_or_publish_transport(void)
     incomplete.deinit = NULL;
     TEST_ASSERT_EQUAL(PF_NOR_INVALID_ARGUMENT, pf_nor_transport_init(&bus, &transport));
     bus.ops = &operations;
-    bus.mode = PF_STORAGE_TRANSPORT_SDIO_PIO;
+    bus.mode = PF_STORAGE_TRANSPORT_NATIVE_SD;
     TEST_ASSERT_EQUAL(PF_NOR_UNSUPPORTED, pf_nor_transport_init(&bus, &transport));
     incomplete = operations;
     incomplete.transfer = NULL;

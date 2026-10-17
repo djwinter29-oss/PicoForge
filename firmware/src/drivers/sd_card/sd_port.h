@@ -8,8 +8,9 @@
  * this before scheduler startup to install optional PIO waits.
  * Bare metal: no setup required. Configuration is borrowed only for this call.
  * This does not initialize the card or access media.
+ * @return False if a requested transport wait adapter cannot be installed.
  */
-void pf_sd_port_init(const pf_sd_config_t *config);
+bool pf_sd_port_init(const pf_sd_config_t *config);
 
 /** Internal recursive reservation primitives used by the shared facade.
  * FreeRTOS requires task context with the scheduler running.

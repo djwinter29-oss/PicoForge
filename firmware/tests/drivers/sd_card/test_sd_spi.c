@@ -5,10 +5,10 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #include "sd_protocol.h"
 #include "sd_spi_protocol.h"
 #include "storage_transport.h"
-#include "storage_spi.h"
+#include "spi.h"
 
 static pf_storage_spi_t physical_bus;
-static bool test_present(void *context) { (void)context; return spi_test_present; }
+static bool test_present(const void *context) { (void)context; return spi_test_present; }
 
 spi_inst_t test_spi;
 bool spi_test_present;

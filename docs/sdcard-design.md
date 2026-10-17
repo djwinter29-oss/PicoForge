@@ -44,10 +44,13 @@ aliases are provided. Result values, behavior, build targets, and CMake options 
 Unit-test filenames use the same source basenames, with port tests beneath the matching `ports/freertos` or
 `ports/baremetal` subtree.
 
-Both backend configuration structures embed shared physical allocation types in `pins`; SD-SPI uses
-`pins.cs_gpio` rather than the former flat `chip_select_gpio`. Board integration obtains these allocations from the
-immutable board profile. See [pin allocation and runtime state](../firmware/src/drivers/storage/README.md#pin-allocation-and-runtime-state)
-for the authoritative ownership and configuration-migration details.
+Both backend configurations now borrow a `pf_storage_transport_t` descriptor and retain only the protocol transfer-clock
+target. They no longer contain GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
+See [pin allocation and runtime state](../firmware/src/drivers/storage/README.md#pin-allocation-and-runtime-state)
+for authoritative ownership and configuration-migration details. The former `pf_sd_native_set_wait_hook` API is removed;
+the execution port requests optional waits through `pf_storage_transport_enable_wait`, without PIO/IRQ knowledge.
+`pf_sd_port_init` now returns `bool`; callers must handle failure when optional waits were requested. Application
+startup reports this as a fatal setup error rather than silently ignoring a failed wait binding.
 
 ### Physical Storage Bus
 
@@ -91,9 +94,9 @@ flowchart TD
 | Native card initialization and transfer policy | [sd_native.c](../firmware/src/drivers/sd_card/sd_native.c) |
 | Native response parsing and four-lane data encoding/CRC | [sd_native_protocol.c](../firmware/src/drivers/sd_card/sd_native_protocol.c) |
 | Native SD command/data adapter and stream policy | [sd_native_host.c](../firmware/src/drivers/sd_card/sd_native_host.c) |
-| Native physical PIO/DMA engine and wire timing | [storage_sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.c), [storage_sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.pio) |
+| Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/sdio_pio.c), [sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/sdio_pio.pio) |
 | SPI card protocol | [sd_spi.c](../firmware/src/drivers/sd_card/sd_spi.c) |
-| Shared SPI hardware transport | [storage_spi.c](../firmware/src/drivers/storage/spi/storage_spi.c) |
+| Shared SPI hardware transport | [spi.c](../firmware/src/drivers/storage/spi/spi.c) |
 | SPI response/token validation and pin-function checks | [sd_spi_protocol.c](../firmware/src/drivers/sd_card/sd_spi_protocol.c) |
 | FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
 
@@ -128,7 +131,7 @@ board support, not application code or reusable protocol helpers.
 | --- | --- | --- |
 | Configuration member | `bus.native` | `bus.spi` |
 | Configuration type | `pf_sd_native_config_t` | `pf_sd_spi_config_t` |
-| Hardware selector | `pio0` or `pio1` | `spi0` or `spi1` |
+| Physical interface | `bus.native.transport` | `bus.spi.transport` |
 | Backend API prefix | `pf_sd_native_` | `pf_sd_spi_` |
 | Zero clock request | Fixed 25 MHz transfer target | 25 MHz |
 | Requested clock bounds | Only 0 or 25 MHz; initialization at 400 kHz | 400 kHz to 25 MHz |

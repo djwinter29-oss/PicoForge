@@ -1,5 +1,5 @@
 /** @file Native command/data wire transport; device framing and stream state belong to callers. */
-#include "storage_sdio_pio.h"
+#include "sdio_pio.h"
 #include <string.h>
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
@@ -7,7 +7,7 @@
 #include "hardware/regs/pio.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
-#include "storage_sdio_pio.pio.h"
+#include "sdio_pio.pio.h"
 
 #define COMMAND_TIMEOUT_US 100000u
 #define RESPONSE_IRQ 0u
@@ -816,12 +816,13 @@ static pf_storage_transport_result_t bus_set_clock(void *context, uint32_t reque
 static pf_storage_native_state_t native_state(void *context)
 {
     pf_storage_sdio_pio_t *host = context;
+    uint32_t maximum = clock_get_hz(clk_sys) / 4u;
     pf_storage_native_state_t state = {
         .ready = host->pio != NULL, .rx_ready = host->data_rx_program_loaded,
         .mode_restore_failed = host->mode_restore_failed,
         .data_ready = host->pio != NULL && gpio_get(host->config.pins.data_gpio[0]) != 0u,
         .current_clock_hz = host->current_clock_hz,
-        .maximum_clock_hz = clock_get_hz(clk_sys) / 4u,
+        .maximum_clock_hz = maximum < 50000000u ? maximum : 50000000u,
         .clock_owner = host->clock_owner,
         .last_response_word_count = host->last_response_word_count,
     };
@@ -900,5 +901,5 @@ pf_storage_transport_t pf_storage_sdio_pio_transport(pf_storage_sdio_pio_t *host
         .init = bus_init, .deinit = bus_deinit, .abort = bus_abort, .set_clock = bus_set_clock,
         .native = &native, .time_us = time_us_64, .delay_ms = sleep_ms, .enable_wait = native_enable_wait,
     };
-    return (pf_storage_transport_t){ .context = host, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_SDIO_PIO };
+    return (pf_storage_transport_t){ .context = host, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_NATIVE_SD };
 }

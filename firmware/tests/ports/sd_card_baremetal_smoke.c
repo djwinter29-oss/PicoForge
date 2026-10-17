@@ -7,7 +7,9 @@
 int main(void)
 {
     pf_sd_info_t info;
-    pf_sd_port_init(NULL);
+    if (!pf_sd_port_init(NULL)) {
+        return 1;
+    }
     pf_sd_lock();
     if (!pf_sd_try_lock()) {
         return 1;

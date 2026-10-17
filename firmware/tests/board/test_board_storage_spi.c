@@ -2,7 +2,7 @@
 TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "serial_fake.h"
 #include "storage_transport.h"
-#include "storage_spi.h"
+#include "spi.h"
 #include "nor_transport.h"
 #include <string.h>
 

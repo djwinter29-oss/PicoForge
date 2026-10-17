@@ -6,10 +6,10 @@
 #include "hardware/gpio.h"
 
 #if PF_BOARD_STORAGE_QSPI
-#include "drivers/storage/qspi_pio/storage_qspi_pio.h"
+#include "drivers/storage/qspi_pio/qspi_pio.h"
 static pf_storage_qspi_pio_t serial_storage;
 #else
-#include "drivers/storage/spi/storage_spi.h"
+#include "drivers/storage/spi/spi.h"
 static pf_storage_spi_t serial_storage;
 #endif
 static bool serial_pins_prepared;

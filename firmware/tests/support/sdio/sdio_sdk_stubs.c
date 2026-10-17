@@ -9,7 +9,7 @@
 #include "hardware/regs/pio.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
-#include "storage_sdio_pio.pio.h"
+#include "sdio_pio.pio.h"
 
 pf_test_sdio_event_t pf_test_sdio_events[256];
 unsigned pf_test_sdio_event_count;

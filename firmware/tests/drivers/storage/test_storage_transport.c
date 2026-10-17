@@ -73,7 +73,7 @@ void test_serial_dispatch_propagates_failure_and_native_rejects_serial_shape(voi
     pf_storage_serial_transaction_t transaction = { .command = 0x9fu, .data_lanes = 1u };
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_TIMEOUT, pf_storage_transport_transfer(&bus, &transaction));
     TEST_ASSERT_EQUAL_UINT(1u, transfer_calls);
-    bus.mode = PF_STORAGE_TRANSPORT_SDIO_PIO;
+    bus.mode = PF_STORAGE_TRANSPORT_NATIVE_SD;
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED, pf_storage_transport_transfer(&bus, &transaction));
     TEST_ASSERT_EQUAL_UINT(1u, transfer_calls);
 }
@@ -96,7 +96,7 @@ void test_invalid_transaction_never_calls_backend_and_missing_serial_support_is_
 void test_invalid_lifecycle_handles_and_missing_operations_are_explicit(void)
 {
     const pf_storage_transport_ops_t empty = {0};
-    pf_storage_transport_t bus = { .context = &context, .ops = &empty, .mode = PF_STORAGE_TRANSPORT_QSPI_PIO };
+    pf_storage_transport_t bus = { .context = &context, .ops = &empty, .mode = PF_STORAGE_TRANSPORT_QSPI };
     uint32_t actual = 17u;
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_transport_init(NULL));
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_transport_init(&bus));
@@ -137,7 +137,7 @@ void test_serial_shape_rejects_invalid_addresses_lanes_and_buffer_ownership(void
     TEST_ASSERT_FALSE(pf_storage_serial_transaction_valid(&transaction));
 }
 
-static bool absent(void *value)
+static bool absent(const void *value)
 {
     TEST_ASSERT_EQUAL_PTR(&context, value);
     return false;
@@ -166,7 +166,7 @@ void test_presence_time_and_serial_capability_queries_keep_backend_state_opaque(
     pf_storage_transport_delay_ms(&transport, 5u);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_validate_serial(&transport, &quad));
     TEST_ASSERT_FALSE(quad);
-    transport.mode = PF_STORAGE_TRANSPORT_QSPI_PIO;
+    transport.mode = PF_STORAGE_TRANSPORT_QSPI;
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_validate_serial(&transport, &quad));
     TEST_ASSERT_TRUE(quad);
     ops.time_us = NULL;

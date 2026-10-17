@@ -15,7 +15,7 @@ bool pf_storage_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpi
 static bool bus_valid(const pf_storage_transport_t *bus)
 {
     return bus != NULL && bus->context != NULL && bus->ops != NULL &&
-           bus->mode >= PF_STORAGE_TRANSPORT_SPI && bus->mode <= PF_STORAGE_TRANSPORT_QSPI_PIO;
+           bus->mode >= PF_STORAGE_TRANSPORT_SPI && bus->mode <= PF_STORAGE_TRANSPORT_QSPI;
 }
 
 pf_storage_transport_result_t pf_storage_transport_init(const pf_storage_transport_t *bus)
@@ -64,7 +64,7 @@ pf_storage_transport_result_t pf_storage_transport_transfer(const pf_storage_tra
     if (!bus_valid(bus) || !pf_storage_serial_transaction_valid(transaction)) {
         return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
     }
-    if (bus->mode == PF_STORAGE_TRANSPORT_SDIO_PIO || bus->ops->transfer == NULL) {
+    if (bus->mode == PF_STORAGE_TRANSPORT_NATIVE_SD || bus->ops->transfer == NULL) {
         return PF_STORAGE_TRANSPORT_UNSUPPORTED;
     }
     return bus->ops->transfer(bus->context, transaction);
@@ -85,7 +85,7 @@ bool pf_storage_transport_valid(const pf_storage_transport_t *bus, pf_storage_tr
     return bus->ops->init != NULL &&
            bus->ops->deinit != NULL && bus->ops->abort != NULL && bus->ops->set_clock != NULL &&
            bus->ops->time_us != NULL && bus->ops->delay_ms != NULL &&
-           (mode == PF_STORAGE_TRANSPORT_SDIO_PIO ? native_valid :
+           (mode == PF_STORAGE_TRANSPORT_NATIVE_SD ? native_valid :
             mode == PF_STORAGE_TRANSPORT_SPI ? bus->ops->select != NULL && bus->ops->exchange != NULL :
             bus->ops->transfer != NULL);
 }
@@ -103,14 +103,14 @@ pf_storage_transport_result_t pf_storage_transport_validate_serial(const pf_stor
     if (!bus_valid(bus) || quad_supported == NULL) {
         return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
     }
-    if (bus->mode == PF_STORAGE_TRANSPORT_SDIO_PIO) {
+    if (bus->mode == PF_STORAGE_TRANSPORT_NATIVE_SD) {
         return PF_STORAGE_TRANSPORT_UNSUPPORTED;
     }
     if (bus->ops->init == NULL || bus->ops->deinit == NULL || bus->ops->transfer == NULL ||
         bus->ops->time_us == NULL) {
         return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
     }
-    *quad_supported = bus->mode == PF_STORAGE_TRANSPORT_QSPI_PIO;
+    *quad_supported = bus->mode == PF_STORAGE_TRANSPORT_QSPI;
     return PF_STORAGE_TRANSPORT_OK;
 }
 
@@ -161,7 +161,7 @@ pf_storage_transport_result_t pf_storage_transport_exchange(const pf_storage_tra
 
 static const pf_storage_native_ops_t *native_ops(const pf_storage_transport_t *bus)
 {
-    return bus_valid(bus) && bus->mode == PF_STORAGE_TRANSPORT_SDIO_PIO ? bus->ops->native : NULL;
+    return bus_valid(bus) && bus->mode == PF_STORAGE_TRANSPORT_NATIVE_SD ? bus->ops->native : NULL;
 }
 
 pf_storage_native_state_t pf_storage_transport_native_state(const pf_storage_transport_t *bus)

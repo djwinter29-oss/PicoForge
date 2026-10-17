@@ -17,7 +17,7 @@ def programs(tmp_path_factory):
     assert assembler, "Build firmware first or set PIOASM"
     output = tmp_path_factory.mktemp("nor-pio") / "nor.h"
     subprocess.run([assembler, "-o", "c-sdk",
-                    str(ROOT / "firmware/src/drivers/storage/qspi_pio/storage_qspi_pio.pio"),
+                    str(ROOT / "firmware/src/drivers/storage/qspi_pio/qspi_pio.pio"),
                     str(output)], check=True)
     text = output.read_text()
     return {

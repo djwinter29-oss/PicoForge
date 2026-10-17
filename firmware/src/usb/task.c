@@ -223,8 +223,8 @@ void pf_usb_start(void)
 {
     pf_sd_config_t config;
     bool configured = pf_board_get_sd_card_config(&config);
-    if (configured) {
-        pf_sd_port_init(&config);
+    if (configured && !pf_sd_port_init(&config)) {
+        panic("Failed to initialize SD transport waits");
     }
     if (!pf_storage_worker_init(configured ? &config : NULL)) {
         panic("Failed to create storage worker");

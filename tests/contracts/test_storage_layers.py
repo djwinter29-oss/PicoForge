@@ -25,9 +25,9 @@ def test_physical_engines_do_not_include_device_or_filesystem_headers():
 @pytest.mark.parametrize("mode", ["spi", "sdio_pio", "qspi_pio"])
 def test_each_physical_mode_has_a_concrete_driver(mode):
     for extension in ("c", "h"):
-        assert (STORAGE / mode / f"storage_{mode}.{extension}").is_file()
+        assert (STORAGE / mode / f"{mode}.{extension}").is_file()
     if mode != "spi":
-        assert (STORAGE / mode / f"storage_{mode}.pio").is_file()
+        assert (STORAGE / mode / f"{mode}.pio").is_file()
 
 
 @pytest.mark.parametrize("device", ["sd_card", "nor_flash"])

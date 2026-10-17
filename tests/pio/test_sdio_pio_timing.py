@@ -17,7 +17,7 @@ import pytest
 pytestmark = pytest.mark.pio
 
 ROOT = Path(__file__).resolve().parents[2]
-PIO = ROOT / "firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.pio"
+PIO = ROOT / "firmware/src/drivers/storage/sdio_pio/sdio_pio.pio"
 
 
 def assemble(program="data_tx"):

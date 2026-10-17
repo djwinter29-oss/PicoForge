@@ -2,11 +2,11 @@
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
-#include "../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
+#include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
 #include "../../../src/drivers/storage/storage_transport.c"
 
 static pf_storage_sdio_pio_t test_wire;
-static bool test_present(void *context) { (void)context; return pf_test_sdio_gpio_level != 0u; }
+static bool test_present(const void *context) { (void)context; return pf_test_sdio_gpio_level != 0u; }
 
 #include <string.h>
 
