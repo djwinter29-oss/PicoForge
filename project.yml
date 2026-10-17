@@ -31,9 +31,12 @@
   :test:
     - +:firmware/tests/**
     - -:firmware/tests/support
+    - -:firmware/tests/support/**
   :source:
     - +:firmware/src/**
     - +:firmware/third_party/embedded-cli/lib/src
+    - +:firmware/tests/support/msc
+    - +:firmware/third_party/levelx/common/src
   :include:
     - firmware/src/**
     - firmware/third_party/fatfs/source
@@ -45,3 +48,51 @@
   :source:
     - -:firmware/src/main.c
     - -:firmware/src/drivers/temperature.c
+    - -:firmware/third_party/levelx/common/src/lx_nor_flash_simulator.c
+
+:flags:
+  :test:
+    :compile:
+      :test_sd_native_init:
+        - -DPF_SD_NATIVE_HIGH_SPEED=1
+      :test_levelx_nor:
+        - -DLX_INCLUDE_USER_DEFINE_FILE
+      :test_sd_port_serialization:
+        - -std=c11
+        - -D_XOPEN_SOURCE=700
+        - -pthread
+      :test_sd_port_:
+        - -ffunction-sections
+        - -fdata-sections
+      :/test_sd_port_.*spi/:
+        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+      :test_storage_automount:
+        - -ffunction-sections
+        - -fdata-sections
+      :test_hid_sd_responsiveness:
+        - -DPF_FIRMWARE_VERSION_MAJOR=1u
+        - -DPF_FIRMWARE_VERSION_MINOR=2u
+        - -DPF_FIRMWARE_VERSION_PATCH=3u
+        - -ffunction-sections
+        - -fdata-sections
+      :test_msc_batch:
+        - -D_XOPEN_SOURCE=700
+        - -pthread
+      :test_msc_batch_sdio:
+        - -DPF_CONFIG_SD_CARD_TRANSPORT=0
+      :test_msc_batch_spi:
+        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+    :link:
+      :test_sd_port_serialization:
+        - -pthread
+      :test_sd_port_:
+        - -Wl,--gc-sections
+      :test_storage_automount:
+        - -Wl,--gc-sections
+      :test_hid_sd_responsiveness:
+        - -Wl,--gc-sections
+      :test_msc_callbacks:
+        - -Wl,--wrap=mscd_reset
+        - -Wl,--wrap=mscd_control_xfer_cb
+      :test_msc_batch:
+        - -pthread

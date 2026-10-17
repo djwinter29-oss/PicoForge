@@ -39,6 +39,7 @@ CR, LF, and CRLF are accepted.
 | `version` | Show the PicoForge CLI and Embedded CLI version. |
 | `echo <text>` | Echo text for non-destructive transport checks. |
 | `sd status` | Show card presence, initialization, transport, capacity, clock, mounted state, and Pico/USB ownership. |
+| `sd info` | Read-only diagnostic snapshot: CID identity, OCR/CCS, RCA, CSD/capacity, SCR/version/widths, requested/actual initialization and transfer clocks, timing, detailed error/phase, init attempts/retries, bounded High-Speed fallbacks and persistent CRC/timeout/PIO stall counters. Native details remain available after failure; SPI reports native details unavailable. |
 | `sd profile [status, on, off, reset]` | Show or control optional SD-card phase profiling; changes require Pico ownership. Counters are cumulative and not a total-latency breakdown. |
 | `sd diagnostics [status, clear]` | Show the retained last facade failure, transport initialization stage, owner, and event-counter snapshot. Clearing requires Pico ownership. |
 | `sd recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
@@ -62,7 +63,11 @@ format command. File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
 
-`sd status` is available while USB owns the card. Every `fs` command is refused
+`sd status` and `sd info` are available while USB owns the card; neither sends
+commands to the card. Detailed errors and counters do not require `sd profile on`.
+The retry count is explicit initialization requests after the first, not runtime
+transfer replay. See the [native startup policy](sdcard-design.md#initialization-workflow).
+Every `fs` command is refused
 until the host safely ejects and disables MSC. The storage worker automatically
 attempts to mount detected cards at boot, after insertion, and after MSC returns
 ownership. Failed attempts are retried five seconds after each attempt finishes.
@@ -155,7 +160,8 @@ These modification commands change the card. The example leaves the empty
 
 FatFs currently has no RTC integration: newly modified files receive the fixed
 timestamp `2026-01-01 00:00:00`. `fs stat` reports the stored timestamp, not the
-board's current time. See [the hardware validation record](hardware-setup.md#sd-card-breakout)
+board's current time. See
+[the hardware validation record](../firmware/src/drivers/storage/README.md#sd-card-breakout)
 for the tested SPI CLI workflow and remaining qualification limits.
 
 ## Integration

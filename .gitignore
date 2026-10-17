@@ -63,3 +63,9 @@ dkms.conf
 __pycache__/
 # debug information files
 *.dwo
+
+# C# Project build
+obj/
+obj/**
+bin/
+bin/**

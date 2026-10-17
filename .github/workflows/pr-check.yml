@@ -43,6 +43,16 @@ jobs:
       - name: Build firmware
         run: tools/firmware/build.sh --board "${{ matrix.board }}"
 
+      - name: Install project test dependencies
+        run: python3 -m pip install --requirement tests/requirements.txt
+
+      - name: Run project tests
+        run: |
+          python3 -m pytest tests/contracts tests/pio tests/test_validation_integrity.py \
+            tests/artifacts/test_msc_elf.py \
+            --elf "build/firmware-${{ matrix.board }}/pf_hello_world.elf" \
+            --junitxml=build/project-tests.xml
+
   host-validation:
     name: Host validation
     uses: ./.github/workflows/host-validation.yml

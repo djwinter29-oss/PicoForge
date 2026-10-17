@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "drivers/storage/bus.h"
 
 #define PF_BOARD_PIN_UNASSIGNED UINT32_MAX
 
@@ -18,17 +19,17 @@ typedef struct {
     uint32_t monitor_uart_rx_gpio;
     uint32_t monitor_uart_baud_rate;
     bool sd_card_enabled;
-    uint32_t command_gpio;
-    uint32_t clock_gpio;
-    uint32_t data_gpio[4];
+    pf_storage_sdio_pins_t native_pins; /**< Native SD signal allocation. */
     uint32_t pio_index;
     uint32_t clock_hz;
     uint32_t spi_index;
-    uint32_t spi_clock_gpio;
-    uint32_t spi_mosi_gpio;
-    uint32_t spi_miso_gpio;
-    uint32_t spi_chip_select_gpio;
-    uint32_t spi_clock_hz;
+    pf_storage_spi_pins_t spi_pins; /**< Shared SD/NOR SPI signal allocation. */
+    uint32_t spi_clock_hz; /**< SD-SPI ceiling; rates above 25 MHz require card High-Speed support. */
+    pf_storage_qspi_pins_t qspi_pins; /**< Quad serial signal allocation. */
+    uint32_t serial_clock_hz; /**< Initial external serial-device clock. */
+    uint32_t serial_timeout_us; /**< SPI per-byte FIFO deadline. */
+    uint32_t serial_wp_gpio; /**< Inactive-high SPI-only write protect. */
+    uint32_t serial_hold_gpio; /**< Inactive-high SPI-only hold. */
     bool card_detect_enabled;
     uint32_t card_detect_gpio;
     bool card_detect_active_high;

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #include "board_resources.h"
-#include "sd_card.h"
+#include "sd.h"
 
 /** Apply required board pin assignments, including monitor UART and optional LED. */
 bool pf_board_init(void);
@@ -14,6 +14,6 @@ bool pf_board_init(void);
  *
  * Returns false while SD wiring is unassigned or if the topology is invalid.
  */
-bool pf_board_get_sd_card_config(pf_sd_card_config_t *config);
+bool pf_board_get_sd_card_config(pf_sd_config_t *config);
 
 #endif

@@ -2,16 +2,27 @@
 
 #include "config/config.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-#include "hardware/pio.h"
+#include "drivers/storage/sdio_pio/sdio_pio.h"
+static pf_sdio_pio_t sd_transport;
 #else
-#include "hardware/spi.h"
+#include "drivers/storage/spi/spi.h"
+static pf_spi_t sd_transport;
 #endif
+#include "hardware/gpio.h"
 #include "hardware/uart.h"
 #include "pico/stdio_uart.h"
 #include "led.h"
 
 static bool monitor_uart_initialized;
 static bool led_initialized;
+static bool storage_configured;
+
+/** @brief Sample board-owned card detect; the immutable profile has static lifetime. */
+static bool card_present(const void *context)
+{
+    const pf_board_resources_t *profile = context;
+    return (gpio_get(profile->card_detect_gpio) != 0u) == profile->card_detect_active_high;
+}
 
 bool pf_board_init(void)
 {
@@ -39,7 +50,7 @@ bool pf_board_init(void)
     return true;
 }
 
-bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
+bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 {
     const pf_board_resources_t *topology = pf_board_resources_get();
 
@@ -48,36 +59,42 @@ bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
         return false;
     }
 
- #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-    config->transport = PF_SD_CARD_TRANSPORT_SDIO_PIO;
-    config->bus.sdio_pio = (pf_sdio_pio_config_t){
-        .command_gpio = topology->command_gpio,
-        .clock_gpio = topology->clock_gpio,
-        .data_gpio = { topology->data_gpio[0], topology->data_gpio[1],
-                       topology->data_gpio[2], topology->data_gpio[3] },
-        .pio = (topology->pio_index == 0u) ? pio0 : pio1,
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+    if (!storage_configured) {
+        sd_transport.config = (pf_sdio_pio_config_t){
+            .pins = topology->native_pins,
+            .pio = topology->pio_index == 0u ? pio0 : pio1,
+        };
+    }
+    *config = (pf_sd_config_t){
+        .transport = pf_sdio_pio_bus(&sd_transport),
         .clock_hz = topology->clock_hz,
-        .use_card_detect = topology->card_detect_enabled,
-        .card_detect_gpio = topology->card_detect_gpio,
-        .card_detect_active_high = topology->card_detect_active_high,
-        .card_detect_use_pull = topology->card_detect_use_pull,
-        .card_detect_pull_up = topology->card_detect_pull_up,
     };
 #else
-    config->transport = PF_SD_CARD_TRANSPORT_SPI;
-    config->bus.spi = (pf_sd_spi_config_t){
-        .spi = (topology->spi_index == 0u) ? spi0 : spi1,
-        .clock_gpio = topology->spi_clock_gpio,
-        .mosi_gpio = topology->spi_mosi_gpio,
-        .miso_gpio = topology->spi_miso_gpio,
-        .chip_select_gpio = topology->spi_chip_select_gpio,
+    if (!storage_configured) {
+        sd_transport = (pf_spi_t){
+            .instance = topology->spi_index == 0u ? spi0 : spi1,
+            .pins = topology->spi_pins, .clock_hz = 400000u,
+        };
+    }
+    *config = (pf_sd_config_t){
+        .transport = pf_spi_bus(&sd_transport),
         .clock_hz = topology->spi_clock_hz,
-        .use_card_detect = topology->card_detect_enabled,
-        .card_detect_gpio = topology->card_detect_gpio,
-        .card_detect_active_high = topology->card_detect_active_high,
-        .card_detect_use_pull = topology->card_detect_use_pull,
-        .card_detect_pull_up = topology->card_detect_pull_up,
     };
 #endif
+    if (topology->card_detect_enabled) {
+        if (!storage_configured) {
+            gpio_init(topology->card_detect_gpio);
+            if (topology->card_detect_use_pull) {
+                gpio_set_pulls(topology->card_detect_gpio, topology->card_detect_pull_up,
+                               !topology->card_detect_pull_up);
+            } else {
+                gpio_disable_pulls(topology->card_detect_gpio);
+            }
+        }
+        config->transport.present = card_present;
+        config->transport.presence_context = topology;
+    }
+    storage_configured = true;
     return true;
 }

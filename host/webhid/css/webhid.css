@@ -65,7 +65,7 @@ h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 0; font-size: 30px; font-weight: 640; }
 h2 { margin-bottom: 0; font-size: 19px; font-weight: 650; }
 
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .button {
   min-height: 40px;
   padding: 0 15px;
@@ -81,7 +81,7 @@ h2 { margin-bottom: 0; font-size: 19px; font-weight: 650; }
 
 .identity {
   display: grid;
-  grid-template-columns: 1.3fr 1fr 1fr 1.2fr;
+  grid-template-columns: 1.3fr 1fr 1fr 1fr 1.2fr;
   padding: 23px 0;
   border-top: 3px solid var(--lime);
   background: var(--surface);
@@ -117,8 +117,8 @@ h2 { margin-bottom: 0; font-size: 19px; font-weight: 650; }
 .self-test-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 20px; }
 .self-test-controls label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .self-test-controls input { width: 100px; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; color: var(--ink); background: var(--surface); }
-.self-test-consent { display: flex; align-items: center; gap: 8px; margin: 18px 0; font-size: 13px; }
-.self-test progress { display: block; width: 100%; height: 12px; accent-color: var(--teal); }
+.storage-note { margin: 16px 0 8px; }
+.self-test progress { display: block; width: 100%; height: 12px; margin-top: 20px; accent-color: var(--teal); }
 .self-test .runtime-grid { row-gap: 18px; }
 .self-test-message { margin-top: 20px; overflow-wrap: anywhere; }
 
@@ -140,7 +140,7 @@ h2 { margin-bottom: 0; font-size: 19px; font-weight: 650; }
   .topbar { padding: 0 5vw; }
   .page-heading { align-items: start; flex-direction: column; padding-top: 30px; }
   .identity { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 22px; }
-  .metric:nth-child(3) { border-left: 0; }
+  .metric:nth-child(odd) { border-left: 0; }
   .runtime { padding: 20px 18px; }
   .runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 18px; }
 }

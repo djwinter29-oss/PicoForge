@@ -4,6 +4,10 @@ The Python host reads the PicoForge vendor-defined HID interface and can serve a
 
 The dashboard binds to `127.0.0.1:8765`. Use `--serial SERIAL` or `--device-path PATH` when more than one board is connected. On Linux, if the launcher reports a permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session.
 
+The shared Python/.NET page refreshes automatically. Its first summary row includes the firmware release version
+(`Unknown` for legacy firmware). LED control is in Live Report; USB-drive control is beside the SD-card self-test.
+Selecting Start authorizes self-test writes and replacement of the reserved test file without a separate checkbox.
+
 Use **Enable USB drive** to hand the SD card to the host; USB briefly re-enumerates with an added MSC interface while keeping the HID identity and interface stable. Safely eject it in the host operating system before disabling MSC; the Pico then regains card ownership. Firmware storage must be unmounted before enabling host ownership.
 
 The dashboard also controls the [SD-card self-test](../../docs/sd-self-test.md)

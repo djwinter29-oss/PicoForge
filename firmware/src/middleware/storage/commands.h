@@ -15,7 +15,7 @@ typedef bool (*pf_storage_reply_t)(const char *line, void *context);
  * their files even if the output callback stops accepting replies. No format
  * or overwrite operation is provided. Paths must be absolute on volume 0.
  */
-void pf_storage_command_execute(const pf_sd_card_config_t *config, bool host_owned,
+void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
                                 const char *family, const char *arguments,
                                 pf_storage_reply_t reply, void *context);
 

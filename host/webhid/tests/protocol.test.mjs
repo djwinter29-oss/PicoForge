@@ -64,7 +64,22 @@ test("decode stable product, MCU, and serial identity", () => {
     mcu: "RP2350",
     product_name: "PicoForge",
     serial_number: "0123456789abcdef",
+    firmware_version: null,
   });
+});
+
+test("identity layout three reports firmware release independently of protocol version", () => {
+  const report = infoReport({ reportId: false });
+  report[0] = 3;
+  report.set([0, 1, 0], 38);
+  for (const framed of [report, Uint8Array.from([1, ...report, 0]), Uint8Array.from([0, 1, ...report])]) {
+    assert.equal(decodeInfoReport(new DataView(framed.buffer)).firmware_version, "0.1.0");
+  }
+  report[41] = 1;
+  assert.throws(() => decodeInfoReport(new DataView(report.buffer)), /reserved/);
+  report[41] = 0;
+  report[0] = 4;
+  assert.throws(() => decodeInfoReport(new DataView(report.buffer)), /version/);
 });
 
 test("accept zero-prefixed and padded standard feature reports", () => {

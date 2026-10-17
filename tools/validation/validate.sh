@@ -54,9 +54,9 @@ while [ "$#" -gt 0 ]; do
             cat <<'EOF'
 Usage: tools/validation/validate.sh [options]
 
-By default, syntax-check shell scripts, validate/run Ceedling tests, and build
+By default, syntax-check shell scripts, run project and Ceedling tests, and build
 FreeRTOS firmware and bare-metal driver smoke targets for pico and pico2
-with both SDIO_PIO and SPI.
+with both SDIO_PIO and SPI, and verify final application MSC callback pointers.
 PIO timing checks require a prior firmware build or PIOASM when builds are skipped.
 
 Options:
@@ -64,7 +64,7 @@ Options:
   --pico-sdk-path PATH  Use an explicit Pico SDK checkout
   --generator NAME      Select a CMake generator
   --skip-firmware       Skip Pico SDK firmware builds
-  --skip-tests          Skip Ceedling configuration and unit tests
+  --skip-tests          Skip project tests, Ceedling configuration and unit tests
   --skip-shell          Skip shell-script syntax checks
 EOF
             exit 0
@@ -97,16 +97,9 @@ if [ "$SKIP_SHELL" -eq 0 ]; then
 fi
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
+    echo "=== Project contracts and validation-tool tests ==="
+    python3 -m pytest tests -m contracts
     echo "=== Ceedling project and unit tests ==="
-    python3 tools/validation/check-sd-msc-production.py
-    python3 tools/validation/check-storage-automount.py
-    python3 tools/validation/check-sd-serialization.py
-    python3 tools/validation/check-sd-ports.py
-    python3 tools/validation/check-usb-sd-responsiveness.py
-    python3 tools/validation/check-sdio-init.py
-    python3 tools/validation/check-sdio-tx.py
-    python3 tools/validation/check-sdio-read-batch.py
-    python3 tools/validation/check-sd-spi-transfer.py
     "$CEEDLING_SCRIPT" check
     if find firmware/tests -type f -name 'test_*.c' -print -quit | grep -q .; then
         "$CEEDLING_SCRIPT" test:all
@@ -134,6 +127,8 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
             set -- "$@" --generator "$GENERATOR"
         fi
         "$FIRMWARE_BUILD_SCRIPT" "$@"
+        python3 -m pytest tests/artifacts/test_msc_elf.py \
+            --elf "build/validation-$board_name-$transport_name/pf_hello_world.elf"
         echo "=== $board_name / $transport_name / BAREMETAL ==="
         baremetal_dir="build/validation-$board_name-$transport_name-baremetal"
         set -- -S firmware -B "$baremetal_dir" \
@@ -145,7 +140,7 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
         fi
         cmake "$@"
         cmake --build "$baremetal_dir" --parallel
-        python3 tools/validation/check-sd-ports.py --build-dir "$baremetal_dir"
+        python3 -m pytest tests/artifacts/test_sd_ports.py --baremetal-build-dir "$baremetal_dir"
     }
 
     echo "=== Firmware builds ==="
@@ -162,5 +157,5 @@ fi
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "=== Assembled SDIO PIO timing ==="
-    python3 tools/validation/check-sdio-pio-timing.py
+    python3 -m pytest tests -m pio
 fi

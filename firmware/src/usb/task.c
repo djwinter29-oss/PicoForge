@@ -9,7 +9,7 @@
 #include "middleware/cli/cli.h"
 #include "middleware/storage/storage_worker.h"
 #include "board/board.h"
-#include "drivers/sd_card/sd_card_port.h"
+#include "drivers/sd_card/sd_port.h"
 
 #include <string.h>
 
@@ -110,7 +110,7 @@ static void cdc_cli_task(void)
             panic("Failed to initialize CDC CLI");
         }
         if (!pf_cli_add_binding((CliCommandBinding){
-                "sd", "sd status | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
+                "sd", "sd status | sd info | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
                 "sd", storage_command
             }) || !pf_cli_add_binding((CliCommandBinding){
                 "fs", "fs mount|unmount|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
@@ -221,10 +221,10 @@ static void usb_task(void *context)
 
 void pf_usb_start(void)
 {
-    pf_sd_card_config_t config;
+    pf_sd_config_t config;
     bool configured = pf_board_get_sd_card_config(&config);
-    if (configured) {
-        pf_sd_card_port_init(&config);
+    if (configured && !pf_sd_port_init(&config)) {
+        panic("Failed to initialize SD transport waits");
     }
     if (!pf_storage_worker_init(configured ? &config : NULL)) {
         panic("Failed to create storage worker");

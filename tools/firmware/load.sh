@@ -13,6 +13,7 @@ PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
 SKIP_BUILD=0
+FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
 usage() {
     cat <<'EOF'
@@ -33,6 +34,7 @@ Options:
 --freertos-kernel-path PATH  Override FreeRTOS-Kernel path
 --sd-card-transport NAME     SDIO_PIO or SPI (default: SDIO_PIO)
 --skip-build                 Flash an existing ELF without building
+--firmware-version VERSION   Firmware version for builds (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
 --help                       Show this help
 EOF
 }
@@ -87,6 +89,10 @@ while [ "$#" -gt 0 ]; do
             SKIP_BUILD=1
             shift
             ;;
+        --firmware-version)
+            FIRMWARE_VERSION="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -109,7 +115,8 @@ elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-    set -- "$SCRIPT_DIR/build.sh" --board "$BOARD" --build-dir "$BUILD_DIR"
+    set -- "$SCRIPT_DIR/build.sh" --board "$BOARD" --build-dir "$BUILD_DIR" \
+        --firmware-version "$FIRMWARE_VERSION"
     if [ -n "$GENERATOR" ]; then
         set -- "$@" --generator "$GENERATOR"
     fi

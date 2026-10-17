@@ -11,7 +11,7 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 2. Ensure the filesystem is mounted; use `fs mount` if it is not already mounted.
 3. Open one dashboard and connect to its vendor HID interface.
 4. Choose an integer file size from 1 to 128 MiB; the default is 32 MiB.
-5. Check **Allow temporary SD-card writes**, then select **Start self-test**.
+5. Select **Start self-test**. This authorizes writes and replacement of `/PFTEST.BIN`; no checkbox is required.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and
    does not make ownership available until the worker finishes.
 
@@ -19,16 +19,15 @@ Do not reset, unplug, remove the card, or change transport while the test runs.
 This test writes flash and contributes to card wear. Back up important data
 before testing. It is not a filesystem repair or full-capacity authenticity test.
 
-The fixed filename is `/PFTEST.BIN`. The firmware atomically creates it in
-create-new mode and refuses an existing file with the EXISTS error (`FR_EXIST`),
-regardless of capitalization on FAT. It never deletes or overwrites a pre-existing
-file, including a leftover from an interrupted run. Insufficient free space is
-rejected before creation. Only a file created by the current run is closed and
-removed during final cleanup before
-completion is published; the filesystem remains mounted. If close/unlink fails,
-explicit status flags identify a possible remaining test file. An
-interrupted/power-lost run may leave the file; inspect it before deliberately
-removing it with the CLI. Do not assume cleanup after a reset.
+The fixed filename `/PFTEST.BIN` is reserved for self-tests. **Starting a test
+deletes an existing file at that path**, including a leftover from an interrupted
+run, regardless of capitalization on FAT. Do not store valuable data under this
+name. The firmware refuses a directory at that path and aborts on inspection or
+deletion errors. Deletion happens before the free-space check, so a subsequent
+space error or cancellation does not restore the old file. A fresh file is then
+created in create-new mode and removed during final cleanup; the filesystem
+remains mounted. If close/unlink fails, explicit status flags identify a possible
+remaining test file. Do not assume cleanup after a reset.
 
 Only one storage operation can be outstanding. CLI storage commands, duplicate
 test starts, and MSC transitions are refused during the benchmark. Starting on
@@ -74,7 +73,7 @@ The default test uses normal FatFs allocation. Configure
 `-DPF_STORAGE_SELF_TEST_PREALLOCATE=ON` to call `f_expand()` after creating
 the new test file and before starting write timing. The call asks FatFs for a
 contiguous allocation. Failure is reported as a filesystem error and still
-clears the test's own file; it never changes existing files. Allocation time is
+clears the new test file; the startup replacement policy above still applies. Allocation time is
 excluded from write averages, so record preallocated and normal results
 separately. This mode changes allocation and wear behavior, may need contiguous
 free space, and is not a raw-driver benchmark. Use `sd profile` with a stable
@@ -126,7 +125,7 @@ The wire layout is authoritative in [USB protocol](usb-protocol.md#report-id-6).
 ## Validation
 
 Host-independent engine tests cover deterministic writes/readback, corruption,
-short writes, cancellation, existing-file protection, insufficient space, sync
+short writes, cancellation, existing-file replacement and deletion failures, insufficient space, sync
 and close failures, and failed cleanup:
 
 ```sh
@@ -201,8 +200,8 @@ Final Pico 2 hardware validation at 150 MHz CPU / 12.5 MHz SDIO passed three
 zero mismatches and successful cleanup. These are short filesystem benchmarks,
 not a continuous acquisition guarantee. See
 `tests/records/2026-10-13-sdio-read-throughput.md` for artifacts and scope.
-Run `python3 tools/validation/check-sdio-read-batch.py` for structural and
-compiled-helper DMA boundary regression checks.
+Run the Ceedling SDIO read-batch regressions for DMA boundary and recovery
+checks; see [firmware test guidance](../firmware/tests/README.md#host-behavior-regressions).
 At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
 indicating some CPU-side cost, but the overclock is diagnostic only.
 
