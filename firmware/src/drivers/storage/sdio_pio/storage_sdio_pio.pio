@@ -1,3 +1,4 @@
+; Physical command/data signaling; device framing is supplied by the caller.
 .define public SDIO_CLK_PIN_D0_OFFSET 30
 
 .program pf_sdio_pio_clock

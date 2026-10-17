@@ -9,7 +9,7 @@
 #include "hardware/regs/pio.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
-#include "sdio_pio_host.pio.h"
+#include "storage_sdio_pio.pio.h"
 
 pf_test_sdio_event_t pf_test_sdio_events[256];
 unsigned pf_test_sdio_event_count;
@@ -96,9 +96,23 @@ uint pio_add_program(PIO pio, const pio_program_t *program)
 { (void)pio; (void)program; return 1u; }
 void pio_remove_program(PIO pio, const pio_program_t *program, uint offset)
 { (void)pio; (void)program; (void)offset; ++pf_test_sdio_removed_programs; }
-uint pio_claim_unused_sm(PIO pio, bool required)
-{ (void)pio; (void)required; return 0u; }
-void pio_sm_unclaim(PIO pio, uint sm) { (void)pio; (void)sm; }
+static uint claimed_sms[2];
+int pio_claim_unused_sm(PIO pio, bool required)
+{
+    (void)required;
+    uint index = pio == pio0 ? 0u : 1u;
+    for (uint sm = 0u; sm < 4u; ++sm) {
+        if ((claimed_sms[index] & (1u << sm)) == 0u) {
+            claimed_sms[index] |= 1u << sm;
+            return (int)sm;
+        }
+    }
+    return -1;
+}
+void pio_sm_unclaim(PIO pio, uint sm)
+{
+    claimed_sms[pio == pio0 ? 0u : 1u] &= ~(1u << sm);
+}
 void pio_gpio_init(PIO pio, uint pin) { (void)pio; (void)pin; }
 void pio_sm_set_consecutive_pindirs(PIO pio, uint sm, uint pin, uint count, bool out)
 { (void)pio; (void)sm; (void)pin; (void)count; (void)out; }
@@ -111,11 +125,13 @@ void pio_sm_set_enabled(PIO pio, uint sm, bool enabled)
         pio->fdebug |= 1u << (PIO_FDEBUG_TXSTALL_LSB + sm);
     }
     (void)pio; (void)sm; (void)enabled;
+#if !defined(PF_TEST_SDIO_WIRE_ONLY)
     if (pf_test_sdio_expect_streams_cleared && pf_test_sdio_observed_host != NULL) {
         pf_test_sdio_streams_were_cleared =
             !pf_test_sdio_observed_host->write_stream_open &&
             !pf_test_sdio_observed_host->read_stream_unresolved;
     }
+#endif
 }
 void pio_enable_sm_mask_in_sync(PIO pio, uint mask)
 { (void)pio; pf_test_sdio_sync_mask = mask; }
@@ -141,7 +157,11 @@ void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value)
             if (pf_test_sdio_last_command == pf_test_sdio_command_error) {
                 response[2] = 0x40u;
             }
+#if defined(PF_TEST_SDIO_WIRE_ONLY)
+            response[5] = 1u;
+#else
             response[5] = (uint8_t)((pf_sdio_pio_crc7(response, 5u) << 1u) | 1u);
+#endif
             if (pf_test_sdio_corrupt_command_crc &&
                 ((pf_test_sdio_corrupt_command == 0u) ||
                  (pf_test_sdio_corrupt_command == pf_test_sdio_last_command))) {
@@ -304,6 +324,8 @@ void dma_channel_abort(unsigned channel)
 {
     (void)channel;
     ++pf_test_sdio_dma_abort_count;
+    pf_test_sdio_dma_busy = false;
+    pf_test_sdio_dma_busy_delay = 0u;
     trace_event(PF_TEST_DMA_ABORT);
 }
 void dma_channel_wait_for_finish_blocking(unsigned channel) { (void)channel; }

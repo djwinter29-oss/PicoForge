@@ -6,6 +6,8 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include <stdint.h>
 #include <string.h>
 
+#include "../../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
+#include "../../../../src/drivers/storage/storage_bus.c"
 #include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_host.c"
 #include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c"
 #include "../../../../src/drivers/sd_card/sd_card_protocol.c"
@@ -84,19 +86,20 @@ void tearDown(void)
 static pf_sdio_pio_host_t make_host(pf_test_sdio_pio_t *pio)
 {
     pf_sdio_pio_host_t host = {
-        .pio = pio,
-        .command_sm = 0u,
-        .data_sm = 1u,
-        .dma_channel = 3u,
-        .command_program_offset = 1u,
-        .data_rx_program_offset = 2u,
-        .data_tx_program_offset = 3u,
-        .clock_program_offset = 4u,
-        .clock_div_ticks = 3u * 256u,
-        .current_clock_hz = 25000000u,
+        .transport.pio = pio,
+        .transport.command_sm = 0u,
+        .transport.data_sm = 1u,
+        .transport.dma_channel = 3u,
+        .transport.dma_claimed = true,
+        .transport.command_program_offset = 1u,
+        .transport.data_rx_program_offset = 2u,
+        .transport.data_tx_program_offset = 3u,
+        .transport.clock_program_offset = 4u,
+        .transport.clock_div_ticks = 3u * 256u,
+        .transport.current_clock_hz = 25000000u,
         .bus_width = 4u,
-        .command_program_loaded = true,
-        .data_rx_program_loaded = true
+        .transport.command_program_loaded = true,
+        .transport.data_rx_program_loaded = true
     };
     return host;
 }
@@ -132,14 +135,14 @@ void test_cmd24_uses_full_source_dma_path_and_checks_data_completion(void)
 
     pf_test_sdio_data_response = 0x0bu;
     TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 4u, true, block));
-    TEST_ASSERT_FALSE(host.mode_restore_failed);
+    TEST_ASSERT_FALSE(host.transport.mode_restore_failed);
 
     pf_test_sdio_data_response = 0x05u;
     pf_test_sdio_data_irq = false;
     pf_test_sdio_dma_busy = true;
     pf_test_sdio_time_step = 500001u;
     TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 4u, true, block));
-    TEST_ASSERT_FALSE(host.mode_restore_failed);
+    TEST_ASSERT_FALSE(host.transport.mode_restore_failed);
     TEST_ASSERT_EQUAL_UINT(1u, pf_test_sdio_dma_abort_count);
     TEST_ASSERT_EQUAL_UINT(1u, host.errors.dma_timeouts);
     TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_DMA_TIMEOUT, host.last_error);
@@ -201,7 +204,7 @@ void test_cmd24_treats_a_pio_tx_fifo_stall_as_fatal(void)
     TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 2u, true, block));
     TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_TX_STALL, host.last_error);
     TEST_ASSERT_EQUAL_UINT32(1u, host.errors.tx_stalls);
-    TEST_ASSERT_FALSE(host.mode_restore_failed);
+    TEST_ASSERT_FALSE(host.transport.mode_restore_failed);
     pf_test_sdio_force_tx_stall = false;
 }
 
@@ -209,16 +212,18 @@ void test_fast_tx_uses_half_clock_divider_and_synchronized_sm_restart(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sdio_pio_host_t host = make_host(&pio);
-    uint32_t sm_mask = (1u << host.command_sm) | (1u << host.data_sm);
+    uint32_t sm_mask = (1u << host.transport.command_sm) | (1u << host.transport.data_sm);
 
-    host.current_clock_hz = 50000000u;
-    host.clock_div_ticks = 640u;
-    TEST_ASSERT_TRUE(load_tx_programs(&host));
-    TEST_ASSERT_TRUE(host.data_tx_fast);
+    host.transport.current_clock_hz = 50000000u;
+    host.transport.clock_div_ticks = 640u;
+    TEST_ASSERT_TRUE(pf_storage_sdio_pio_tx_prepare(&host.transport));
+    TEST_ASSERT_TRUE(host.transport.data_tx_fast);
     TEST_ASSERT_EQUAL_UINT16(1u, pf_test_sdio_config_divider_integer);
     TEST_ASSERT_EQUAL_UINT8(64u, pf_test_sdio_config_divider_fraction);
 
-    start_tx_data(&host);
+    uint32_t image[PF_SDIO_PIO_TRANSFER_WORDS] = {0};
+    TEST_ASSERT_TRUE(pf_storage_sdio_pio_tx_start(&host.transport, image,
+                                                PF_SDIO_PIO_TRANSFER_WORDS, SDIO_DATA_NIBBLE_COUNT));
     TEST_ASSERT_EQUAL_UINT32(sm_mask, pf_test_sdio_sync_mask);
     TEST_ASSERT_EQUAL_UINT32(sm_mask, pf_test_sdio_clkdiv_restart_mask);
 }
@@ -229,14 +234,14 @@ void test_clock_owner_rejects_command_during_standalone_or_tx_clock_ownership(vo
     pf_sdio_pio_host_t host = make_host(&pio);
     uint32_t response[2];
 
-    host.clock_owner = PF_SDIO_PIO_CLOCK_INITIALIZATION;
+    host.transport.clock_owner = PF_SDIO_PIO_CLOCK_INITIALIZATION;
     TEST_ASSERT_FALSE(pf_sdio_pio_host_command(&host, 0u, 0u, 48u,
                                                response, 2u));
     TEST_ASSERT_FALSE(pf_sdio_pio_host_set_clock(&host, 25000000u));
     TEST_ASSERT_EQUAL(PF_SD_CARD_DETAIL_HOST_STATE, host.last_error);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
 
-    host.clock_owner = PF_SDIO_PIO_CLOCK_DATA_TX;
+    host.transport.clock_owner = PF_SDIO_PIO_CLOCK_DATA_TX;
     TEST_ASSERT_FALSE(pf_sdio_pio_host_command(&host, 13u, 0u, 48u,
                                                response, 2u));
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
@@ -265,7 +270,7 @@ void test_cmd24_command_and_program_failures_do_not_report_data_success(void)
     pf_test_sdio_time_step = 1u;
     pf_test_sdio_can_add_program = false;
     TEST_ASSERT_FALSE(pf_sdio_pio_host_write_sector(&host, 2u, true, block));
-    TEST_ASSERT_TRUE(host.mode_restore_failed);
+    TEST_ASSERT_TRUE(host.transport.mode_restore_failed);
 }
 
 void test_cmd25_failed_data_keeps_stream_until_stop_recovery_succeeds(void)

@@ -12,6 +12,51 @@ One configured card is exposed through a transport-neutral, synchronous block
 API. Native SDIO-PIO uses four data lanes; SD-SPI uses a Pico SDK SPI controller.
 Here, SDIO means native SD memory-card signaling, not support for SDIO I/O cards.
 
+### Physical Storage Bus
+
+Reusable physical engines live under `firmware/src/drivers/storage/`, separate
+from SD and NOR device protocols:
+
+```text
+drivers/
+  storage/
+    storage_bus.h / storage_bus.c
+    spi/storage_spi.h / storage_spi.c
+    sdio_pio/storage_sdio_pio.h / storage_sdio_pio.c / storage_sdio_pio.pio
+    qspi_pio/storage_qspi_pio.h / storage_qspi_pio.c / storage_qspi_pio.pio
+  sd_card/       SD initialization, registers, framing, sector and stream policy
+  nor_flash/     NOR opcodes, status, page programming, erase and verification
+```
+
+The [common bus interface](../firmware/src/drivers/storage/storage_bus.h) dispatches
+initialization, clock changes with calculated actual rates, hardware abort,
+deinitialization, and CS-bounded serial transactions. It is a non-owning handle:
+the caller owns the concrete context and serializes access. It creates no task,
+queue, filesystem policy, or automatic mode-switch manager.
+
+SPI and QSPI use command/address/dummy/data transactions. SD-SPI additionally
+uses the SPI byte-exchange and CS primitives so command responses, data tokens,
+busy polling, and multiblock transfers retain their existing CS boundaries.
+Native SD uses a distinct typed wire interface for command/response and data
+phases; it is not emulated as a serial flash transaction. Native DMA buffers
+remain batchable so the SD layer can overlap CRC checking and payload copying
+with receive DMA.
+
+The transport owns GPIO mux/direction, programmed clock timing, PIO/DMA
+resources, FIFO/IRQ state, bounded hardware waits, and hardware cleanup.
+Device adapters retain SD commands, addressing, register decoding and stream
+state, or NOR opcodes and erase/program behavior. They translate physical
+errors into their existing public device results.
+
+Board support remains authoritative for GP2-GP8. SD-SPI and NOR-SPI use one
+shared SPI implementation; native SD and quad-SPI use their own physical
+engines. These are alternative modes of the shared pins, not permission to
+attach multiple active devices. DET remains a board/device-presence input.
+Before switching devices, the caller must sync/unmount as appropriate, finish
+the device protocol, deinitialize the bus, and satisfy the new device's power
+requirements. Bus abort/deinit never claims to finish an interrupted write or
+make filesystem data durable.
+
 ```mermaid
 flowchart TD
     Board[Board profile and build-time transport selection] --> Config[pf_board_get_sd_card_config]
@@ -23,14 +68,16 @@ flowchart TD
     Gate --> Card
     Card --> Native[SDIO-PIO card lifecycle]
     Card --> SPI[SPI card lifecycle]
-    Native --> Host[PIO host: commands, DMA, program switching]
+    Native --> Host[SD command/data adapter and stream policy]
     Native --> NativeProtocol[Native responses and four-lane CRC]
     SPI --> SPIProtocol[SPI response and data tokens]
     NativeProtocol --> Shared[Shared SD protocol helpers]
     SPIProtocol --> Shared
     SPI --> Shared
-    Host --> PIO[PIO and DMA hardware]
-    SPI --> Peripheral[SPI peripheral and GPIO CS]
+    Host --> NativeBus[storage/sdio_pio: wire operations, PIO and DMA]
+    NativeBus --> PIO[PIO and DMA hardware]
+    SPI --> SerialBus[storage/spi: shared SPI engine]
+    SerialBus --> Peripheral[SPI peripheral and GPIO CS]
     PIO --> Media[SD memory card]
     Peripheral --> Media
 ```
@@ -45,8 +92,10 @@ flowchart TD
 | CRC7, command framing, CMD8 classification, CSD decoding, serial CRC16, address conversion, and transfer bounds | [sd_card_protocol.c](../firmware/src/drivers/sd_card/sd_card_protocol.c) |
 | Native card initialization and transfer policy | [sdio_pio.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c) |
 | Native response parsing and four-lane data encoding/CRC | [sdio_pio_protocol.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c) |
-| PIO/DMA engine and wire timing | [sdio_pio_host.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.c), [sdio_pio_host.pio](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.pio) |
-| SPI initialization and blocking transfers | [sd_spi.c](../firmware/src/drivers/sd_card/spi/sd_spi.c) |
+| Native SD command/data adapter and stream policy | [sdio_pio_host.c](../firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.c) |
+| Native physical PIO/DMA engine and wire timing | [storage_sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.c), [storage_sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.pio) |
+| SPI card protocol | [sd_spi.c](../firmware/src/drivers/sd_card/spi/sd_spi.c) |
+| Shared SPI hardware transport | [storage_spi.c](../firmware/src/drivers/storage/spi/storage_spi.c) |
 | SPI response/token validation and pin-function checks | [sd_spi_protocol.c](../firmware/src/drivers/sd_card/spi/sd_spi_protocol.c) |
 | FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
 

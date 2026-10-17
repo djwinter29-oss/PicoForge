@@ -1,4 +1,5 @@
 #include "unity.h"
+#include "storage_bus.h"
 #include "nor_flash.h"
 
 #include <string.h>

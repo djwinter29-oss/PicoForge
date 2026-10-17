@@ -45,7 +45,7 @@ enum {
 bool pio_can_add_program(PIO pio, const pio_program_t *program);
 uint pio_add_program(PIO pio, const pio_program_t *program);
 void pio_remove_program(PIO pio, const pio_program_t *program, uint offset);
-uint pio_claim_unused_sm(PIO pio, bool required);
+int pio_claim_unused_sm(PIO pio, bool required);
 void pio_sm_unclaim(PIO pio, uint sm);
 void pio_gpio_init(PIO pio, uint pin);
 void pio_sm_set_consecutive_pindirs(PIO pio, uint sm, uint pin, uint count, bool out);

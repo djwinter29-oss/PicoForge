@@ -4,6 +4,8 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #include "spi_production_fixture.h"
 #include "sd_card_protocol.h"
 #include "sd_spi_protocol.h"
+#include "storage_bus.h"
+#include "storage_spi.h"
 
 spi_inst_t test_spi;
 bool spi_test_present;
@@ -76,6 +78,12 @@ int spi_write_read_blocking(spi_inst_t *spi, const uint8_t *data, uint8_t *respo
 
 static void reset(uint8_t response)
 {
+    pf_storage_spi_deinit(&physical_bus);
+    physical_bus = (pf_storage_spi_t){
+        .instance = &test_spi, .clock_gpio = 2u, .mosi_gpio = 3u,
+        .miso_gpio = 0u, .cs_gpio = 1u, .clock_hz = 25000000u,
+    };
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_spi_init(&physical_bus));
     card_initialized = card_block_addressed = true;
     card_sector_count = 128;
     configuration_set = spi_configured = false;

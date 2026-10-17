@@ -5,6 +5,8 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include <string.h>
 
+#include "../../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
+#include "../../../../src/drivers/storage/storage_bus.c"
 #include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_host.c"
 #include "../../../../src/drivers/sd_card/sdio_pio/sdio_pio_protocol.c"
 #include "../../../../src/drivers/sd_card/sd_card_protocol.c"
@@ -82,9 +84,11 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         PF_SDIO_PIO_INIT_STAGE_SCR_CRC
     };
     pf_test_sdio_pio_t pio = {0};
-    pf_sdio_pio_host_t host = { .pio = &pio, .command_sm = 0u, .data_sm = 1u,
-                                .dma_channel = 2u, .current_clock_hz = 25000000u,
-                                .data_rx_program_loaded = true };
+    pf_sdio_pio_host_t host = { .transport.pio = &pio, .transport.command_sm = 0u, .transport.data_sm = 1u,
+                                .transport.dma_channel = 2u, .transport.current_clock_hz = 25000000u,
+                                .transport.command_program_loaded = true,
+                                .transport.dma_claimed = true,
+                                .transport.data_rx_program_loaded = true };
     uint8_t scr[8];
 
     for (unsigned failure = 0u; failure < sizeof(failure_stages) / sizeof(failure_stages[0]);

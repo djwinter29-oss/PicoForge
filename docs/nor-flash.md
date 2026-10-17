@@ -24,13 +24,22 @@ erased bits; it never erases implicitly. A failed write can leave partial change
   device commands, geometry, write-enable checks, status and operation deadlines.
 - [Transaction interface](../firmware/src/drivers/nor_flash/nor_flash_transport.h)
   supports single-lane command/address/dummy phases and single- or quad-lane data.
-- [SPI transport](../firmware/src/drivers/nor_flash/spi/nor_spi.c) uses SDK SPI0.
-- [QSPI-PIO transport](../firmware/src/drivers/nor_flash/qspi_pio/nor_qspi_pio.c)
-  uses single-lane initialization and `6Bh` quad reads on the same PIO state
-  machine. Programming remains single-lane `02h`.
+- [SPI adapter](../firmware/src/drivers/nor_flash/spi/nor_spi.c) uses the
+  [shared SPI engine](../firmware/src/drivers/storage/spi/storage_spi.c), also
+  used by SD-SPI.
+- [QSPI-PIO adapter](../firmware/src/drivers/nor_flash/qspi_pio/nor_qspi_pio.c)
+  uses the [physical quad-SPI engine](../firmware/src/drivers/storage/qspi_pio/storage_qspi_pio.c).
+  The NOR protocol selects single-lane initialization and `6Bh` quad reads;
+  programming remains single-lane `02h`. The physical engine does not identify
+  NOR parts, set QE, or decide when to erase.
 - [Board integration](../firmware/src/board/board_nor.c) selects GP2 clock,
   GP3..GP6 IO0..IO3 and GP7 CS, matching
   [the reference hardware setup](hardware-setup.md#w25q128-flash-breakout).
+
+The authoritative [physical storage-bus architecture](sdcard-design.md#physical-storage-bus)
+defines transport ownership, lifecycle, and shared-pin restrictions. Existing
+NOR APIs remain available through the adapters; moving the physical engines
+does not add FatFs integration or simultaneous SD/NOR access.
 
 The board configuration starts at 1 MHz. The transport APIs reject requested
 clocks above 10 MHz; that limit is not a hardware qualification. PIO divides

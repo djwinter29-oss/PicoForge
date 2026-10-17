@@ -20,6 +20,7 @@ See [firmware test guidance](../firmware/tests/README.md) for test placement, sc
 | Test | Purpose |
 | --- | --- |
 | [contracts/test_tinyusb_msc_contract.py](contracts/test_tinyusb_msc_contract.py) | Verify pinned TinyUSB source ordering and MSC linker-wrapper configuration |
+| [contracts/test_storage_layers.py](contracts/test_storage_layers.py) | Verify physical storage mode layout and independence from SD/NOR/filesystem headers |
 | [test_validation_integrity.py](test_validation_integrity.py) | Exercise validation tools with copied sources and valid/broken ARM ELF fixtures |
 
 Run from the repository root:

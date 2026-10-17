@@ -1,4 +1,4 @@
-.program pf_nor_single
+.program pf_storage_single
 .side_set 1
 .wrap_target
 pull block side 0
@@ -7,7 +7,7 @@ in pins, 1 side 1
 push block side 0
 .wrap
 
-.program pf_nor_quad
+.program pf_storage_quad
 .side_set 1
 .wrap_target
 pull block side 0

@@ -73,7 +73,7 @@ void setUp(void)
         .clock_gpio = 0u,
         .clock_hz = 25000000u
     };
-    sdio_pio_host.current_clock_hz = 25000000u;
+    sdio_pio_host.transport.current_clock_hz = 25000000u;
     sdio_pio_host.data_rx_multiblock_supported = true;
     recovery_calls = reads = sectors_read = single_writes = batch_writes = forget_calls = 0u;
     memset(read_first, 0, sizeof(read_first));
@@ -107,14 +107,14 @@ void setUp(void)
 void tearDown(void) {}
 
 bool pf_sdio_pio_host_init(pf_sdio_pio_host_t *host, const pf_sdio_pio_config_t *config)
-{ (void)config; host->pio = pio0; host->current_clock_hz = 400000u; return true; }
+{ (void)config; host->transport.pio = pio0; host->transport.current_clock_hz = 400000u; return true; }
 void pf_sdio_pio_host_deinit(pf_sdio_pio_host_t *host) { (void)host; }
 bool pf_sdio_pio_host_set_clock(pf_sdio_pio_host_t *host, uint32_t hz)
 {
     TEST_ASSERT_LESS_THAN_UINT(4u, clock_request_count);
     clock_requests[clock_request_count++] = hz;
     if (hz > SD_HIGH_CLOCK_HZ) return false;
-    host->current_clock_hz = hz;
+    host->transport.current_clock_hz = hz;
     return true;
 }
 bool pf_sdio_pio_host_command(pf_sdio_pio_host_t *host, uint8_t command, uint32_t argument,
@@ -184,8 +184,8 @@ bool pf_sdio_pio_host_read_sector(pf_sdio_pio_host_t *host, uint32_t sector, boo
     TEST_ASSERT_TRUE(addressed);
     TEST_ASSERT_EQUAL_UINT32(0u, sector);
     ++validation_reads;
-    bool ok = read_ok && !(fail_high_speed_read && host->current_clock_hz > 25000000u) &&
-              !(fail_default_read && host->current_clock_hz == 25000000u) &&
+    bool ok = read_ok && !(fail_high_speed_read && host->transport.current_clock_hz > 25000000u) &&
+              !(fail_default_read && host->transport.current_clock_hz == 25000000u) &&
               validation_reads != fail_validation_read;
     if (!ok) host->last_error = PF_SD_CARD_DETAIL_DATA_CRC;
     return ok;
@@ -252,7 +252,7 @@ bool pf_sdio_pio_host_recover(pf_sdio_pio_host_t *host)
     if (recovery_ok) {
         host->write_stream_open = false;
         host->read_stream_unresolved = false;
-        host->mode_restore_failed = false;
+        host->transport.mode_restore_failed = false;
     }
     return recovery_ok;
 }
@@ -359,7 +359,7 @@ void test_card_init_validates_one_sector_without_high_speed_on_slow_cpu(void)
 {
     active_config.clock_hz = 0u;
     TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
-    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.transport.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
     TEST_ASSERT_EQUAL_UINT(0u, reads);
@@ -396,7 +396,7 @@ void test_runtime_read_failure_is_not_replayed_and_clock_stays_fixed(void)
     read_fail_unresolved = true;
     TEST_ASSERT_EQUAL(PF_SD_CARD_IO_ERROR, pf_sdio_pio_read_blocks(4096u, block, 1u));
     TEST_ASSERT_FALSE(card_initialized);
-    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.transport.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(1u, reads);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
     TEST_ASSERT_EQUAL(PF_SD_CARD_NOT_READY, pf_sdio_pio_read_blocks(4096u, block, 1u));
@@ -424,7 +424,7 @@ void test_explicit_reinitialization_after_failed_read_restores_fixed_rate(void)
     TEST_ASSERT_EQUAL(PF_SD_CARD_IO_ERROR, pf_sdio_pio_read_blocks(0u, block, 1u));
     read_ok = true;
     TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_init(&active_config));
-    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.transport.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(2u, card_init_calls);
     TEST_ASSERT_EQUAL(PF_SD_CARD_OK, pf_sdio_pio_read_blocks(0u, block, 1u));
 }

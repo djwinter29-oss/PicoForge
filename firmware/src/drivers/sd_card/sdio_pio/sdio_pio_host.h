@@ -7,57 +7,35 @@
 
 #include "sdio_pio.h"
 #include "sdio_pio_protocol.h"
+#include "../../storage/sdio_pio/storage_sdio_pio.h"
 
-typedef enum {
-    PF_SDIO_PIO_CLOCK_UNOWNED = 0,
-    PF_SDIO_PIO_CLOCK_COMMAND,
-    PF_SDIO_PIO_CLOCK_INITIALIZATION,
-    PF_SDIO_PIO_CLOCK_DATA_TX,
-} pf_sdio_pio_clock_owner_t;
+/** Compatibility names for physical clock ownership, now owned by the transport. */
+typedef pf_storage_sdio_clock_owner_t pf_sdio_pio_clock_owner_t;
+/** Stopped physical clock. */
+#define PF_SDIO_PIO_CLOCK_UNOWNED PF_STORAGE_SDIO_CLOCK_UNOWNED
+/** Clock owned by command signaling. */
+#define PF_SDIO_PIO_CLOCK_COMMAND PF_STORAGE_SDIO_CLOCK_COMMAND
+/** Clock owned by released-line startup generation. */
+#define PF_SDIO_PIO_CLOCK_INITIALIZATION PF_STORAGE_SDIO_CLOCK_INITIALIZATION
+/** Clock owned by data transmission. */
+#define PF_SDIO_PIO_CLOCK_DATA_TX PF_STORAGE_SDIO_CLOCK_DATA_TX
 
+/** SD protocol state layered over a native wire transport. */
 typedef struct {
-    PIO pio;
-    uint command_gpio;
-    uint data_gpio_base;
-    uint data0_gpio;
-    uint clock_gpio;
-    uint command_sm;
-    uint data_sm;
-    uint command_program_offset;
-    uint data_rx_program_offset;
-    uint clock_program_offset;
-    uint data_tx_program_offset;
-    uint dma_channel;
-    uint32_t system_clock_hz;
-    uint32_t current_clock_hz;
-    uint32_t previous_input_sync_bypass;
-    uint32_t input_sync_bypass_mask;
-    uint32_t last_response_words[5];
-    size_t last_response_word_count;
-    pf_sdio_pio_init_stage_t scr_stage;
-    uint32_t write_stream_next_sector;
-    uint8_t bus_width;
-    pf_sd_card_detail_error_t last_error;
-    pf_sd_card_error_counters_t errors;
-    pf_sdio_pio_clock_owner_t clock_owner;
-    bool write_stream_open;
-    bool read_stream_unresolved;
-    bool mode_restore_failed; /* Distinct from a card rejecting a write. */
-    bool command_program_loaded;
-    bool data_rx_program_loaded;
-    bool data_rx_fast;
-    bool data_rx_multiblock_supported;
-    bool clock_program_loaded;
-    bool data_tx_program_loaded;
-    bool data_tx_fast;
-    bool initialization_prepared;
-    bool dma_claimed;
-    uint32_t clock_div_ticks; /* Command/clock divider in 1/256 units. */
+    pf_storage_sdio_pio_t transport; /**< Owns GPIO, PIO, DMA and raw wire movement. */
+    pf_sdio_pio_init_stage_t scr_stage; /**< Most recent SCR protocol stage. */
+    uint32_t write_stream_next_sector; /**< Next LBA accepted by the open CMD25 stream. */
+    uint8_t bus_width;                /**< Width negotiated with the card. */
+    pf_sd_card_detail_error_t last_error; /**< Latest SD or mapped physical failure. */
+    pf_sd_card_error_counters_t errors; /**< SD and mapped physical diagnostic counters. */
+    bool write_stream_open;          /**< CMD25 requires CMD12 before other operations. */
+    bool read_stream_unresolved;     /**< CMD18 may have reached the card and needs CMD12. */
+    bool data_rx_multiblock_supported; /**< False after a qualified single-block fallback. */
 } pf_sdio_pio_host_t;
 
 /**
  * First use requires a zero-initialized host (static storage or {0}); this function
- * reads host->pio before clearing the structure. Never pass an indeterminate host.
+ * reads host->transport.pio before clearing the structure. Never pass an indeterminate host.
  * Duplicate init of a live host returns false without changing it or its resources.
  * Deinit releases resources and zeroes the host, allowing init again.
  */

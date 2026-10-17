@@ -17,14 +17,14 @@ import pytest
 pytestmark = pytest.mark.pio
 
 ROOT = Path(__file__).resolve().parents[2]
-PIO = ROOT / "firmware/src/drivers/sd_card/sdio_pio/sdio_pio_host.pio"
+PIO = ROOT / "firmware/src/drivers/storage/sdio_pio/storage_sdio_pio.pio"
 
 
 def assemble(program="data_tx"):
     candidates = sorted(glob.glob(str(ROOT / "build/*/pioasm/pioasm")))
     assembler = os.environ.get("PIOASM") or (candidates[0] if candidates else None)
     assert assembler, "Build firmware first or set PIOASM"
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=ROOT / "build") as tmp:
         out = Path(tmp) / "program.h"
         subprocess.run([assembler, "-o", "c-sdk", str(PIO), str(out)], check=True)
         text = out.read_text()

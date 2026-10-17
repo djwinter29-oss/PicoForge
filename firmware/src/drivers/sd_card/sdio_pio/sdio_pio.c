@@ -468,11 +468,11 @@ void pf_sdio_pio_get_last_short_response(uint8_t *command, uint32_t *argument,
 void pf_sdio_pio_get_last_response_words(uint32_t words[5], size_t *word_count)
 {
     if (words != NULL) {
-        memcpy(words, sdio_pio_host.last_response_words,
-               sizeof(sdio_pio_host.last_response_words));
+        memcpy(words, sdio_pio_host.transport.last_response_words,
+               sizeof(sdio_pio_host.transport.last_response_words));
     }
     if (word_count != NULL) {
-        *word_count = sdio_pio_host.last_response_word_count;
+        *word_count = sdio_pio_host.transport.last_response_word_count;
     }
 }
 
@@ -512,7 +512,7 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
     last_short_response_argument = 0u;
     card_init_stage = PF_SDIO_PIO_INIT_STAGE_NONE;
     sdio_pio_host.last_error = PF_SD_CARD_DETAIL_NONE;
-    if (!sdio_pio_host.pio) {
+    if (!sdio_pio_host.transport.pio) {
         if (active_config.use_card_detect) {
             gpio_init(active_config.card_detect_gpio);
             if (active_config.card_detect_use_pull) {
@@ -537,7 +537,7 @@ pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
     if (!pf_sdio_pio_host_prepare_initialization(&sdio_pio_host)) {
         goto failed;
     }
-    native_info.actual_init_clock_hz = sdio_pio_host.current_clock_hz;
+    native_info.actual_init_clock_hz = sdio_pio_host.transport.current_clock_hz;
     if (initialize_card()) {
         card_initialized = true;
         native_info.initialization_error = false;
@@ -554,7 +554,7 @@ failed:
 
 bool pf_sdio_pio_is_initialized(void)
 {
-    if (sdio_pio_host.mode_restore_failed ||
+    if (sdio_pio_host.transport.mode_restore_failed ||
         (configuration_set && !card_detect_present())) {
         /* Absence or broken host mode blocks I/O without discarding protocol state. */
         card_initialized = false;
@@ -624,7 +624,7 @@ static pf_sd_card_result_t transfer_blocks(uint32_t first_block, uint8_t *read_b
                                                    card_block_addressed, write_buffer);
     /* A lost command/data response or busy timeout cannot prove CMD24 complete.
      * Restoration only repairs the host; require reinitialization, never replay. */
-    if (!success || sdio_pio_host.mode_restore_failed) {
+    if (!success || sdio_pio_host.transport.mode_restore_failed) {
         return runtime_failure();
     }
     return PF_SD_CARD_OK;
@@ -669,7 +669,7 @@ void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
         info->present = true;
     }
     info->initialized = pf_sdio_pio_is_initialized();
-    info->actual_clock_hz = sdio_pio_host.current_clock_hz;
+    info->actual_clock_hz = sdio_pio_host.transport.current_clock_hz;
     info->errors = sdio_pio_host.errors;
     info->detail_error = sdio_pio_host.last_error;
     if (card_sector_count != 0u) {
@@ -677,5 +677,5 @@ void pf_sdio_pio_get_info(pf_sd_card_info_t *info)
         info->block_count = card_sector_count;
         memcpy(info->cid, card_cid, sizeof(info->cid));
     }
-    info->bus_clock_hz = info->initialized ? sdio_pio_host.current_clock_hz : 0u;
+    info->bus_clock_hz = info->initialized ? sdio_pio_host.transport.current_clock_hz : 0u;
 }

@@ -3,18 +3,20 @@
 
 #include "../nor_flash_transport.h"
 #include "hardware/spi.h"
+#include "../../storage/spi/storage_spi.h"
 
-/** Caller-owned dedicated SPI controller; do not share with another driver. */
+/** Compatibility configuration; physical signaling is owned by storage_spi. */
 typedef struct {
-    spi_inst_t *instance;
-    uint32_t clock_gpio;
-    uint32_t mosi_gpio;
-    uint32_t miso_gpio;
-    uint32_t wp_gpio;
-    uint32_t hold_gpio;
-    uint32_t cs_gpio;
-    uint32_t clock_hz;
-    bool initialized;
+    spi_inst_t *instance; /**< SDK controller, also usable by other serialized SPI devices. */
+    uint32_t clock_gpio;  /**< Shared clock output. */
+    uint32_t mosi_gpio;   /**< Shared controller transmit pin. */
+    uint32_t miso_gpio;   /**< Shared controller receive pin. */
+    uint32_t wp_gpio;     /**< NOR write-protect, driven inactive high. */
+    uint32_t hold_gpio;   /**< NOR hold, driven inactive high. */
+    uint32_t cs_gpio;     /**< NOR-specific active-low chip select. */
+    uint32_t clock_hz;    /**< Requested NOR clock, at most 10 MHz. */
+    bool initialized;    /**< Compatibility adapter owns its physical bus reference. */
+    pf_storage_spi_t bus; /**< Shared physical device context, owned by this adapter. */
 } pf_nor_spi_t;
 
 /** Initialize SPI mode 0 and idle-high CS/WP/HOLD. Context must outlive transport. */

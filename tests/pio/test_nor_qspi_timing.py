@@ -17,12 +17,12 @@ def programs(tmp_path_factory):
     assert assembler, "Build firmware first or set PIOASM"
     output = tmp_path_factory.mktemp("nor-pio") / "nor.h"
     subprocess.run([assembler, "-o", "c-sdk",
-                    str(ROOT / "firmware/src/drivers/nor_flash/qspi_pio/nor_qspi.pio"),
+                    str(ROOT / "firmware/src/drivers/storage/qspi_pio/storage_qspi_pio.pio"),
                     str(output)], check=True)
     text = output.read_text()
     return {
         name: [int(word, 16) for word in re.findall(r"0x([0-9a-fA-F]{4})",
-               text.split(f"pf_nor_{name}_program_instructions[] = {{", 1)[1].split("};", 1)[0])]
+               text.split(f"pf_storage_{name}_program_instructions[] = {{", 1)[1].split("};", 1)[0])]
         for name in ("single", "quad")
     }
 

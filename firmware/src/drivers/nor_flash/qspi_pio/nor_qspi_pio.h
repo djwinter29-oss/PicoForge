@@ -3,21 +3,12 @@
 
 #include "../nor_flash_transport.h"
 #include "hardware/pio.h"
+#include "../../storage/qspi_pio/storage_qspi_pio.h"
 
 /** Dedicated PIO state machine with consecutive IO0..IO3; initially zero-initialize.
  * Uses polling, not DMA. Pin range is restricted to GPIO0..31 on both MCUs.
  */
-typedef struct {
-    PIO pio;
-    uint32_t clock_gpio;
-    uint32_t data_gpio;
-    uint32_t cs_gpio;
-    uint32_t clock_hz;
-    uint32_t sm;
-    uint32_t single_offset;
-    uint32_t quad_offset;
-    bool initialized;
-} pf_nor_qspi_pio_t;
+typedef pf_storage_qspi_pio_t pf_nor_qspi_pio_t;
 
 /** Claim a state machine/program memory; caller owns context until deinit. */
 pf_nor_result_t pf_nor_qspi_pio_init(pf_nor_qspi_pio_t *context, pf_nor_transport_t *transport);
