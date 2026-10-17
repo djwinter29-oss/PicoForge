@@ -4,6 +4,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #include "spi_production_fixture.h"
 #include "sd_protocol.h"
 #include "storage_transport.h"
+#include "serial.h"
 #include "spi.h"
 
 static pf_spi_t physical_bus;
@@ -134,7 +135,9 @@ void test_spi_selection_failure_stops_every_command_and_transfer_without_cleanup
     for (unsigned operation = 0u; operation < 8u; ++operation) {
         reset(0);
         pf_storage_transport_ops_t ops = *active_config.transport.ops;
-        ops.select = reject_selection;
+        pf_storage_serial_ops_t serial_ops = *ops.serial;
+        serial_ops.select = reject_selection;
+        ops.serial = &serial_ops;
         active_config.transport.ops = &ops;
         selection_attempts = 0u;
         switch (operation) {

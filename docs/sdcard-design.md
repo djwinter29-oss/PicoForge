@@ -18,15 +18,14 @@ Native and SPI protocol files live together under `firmware/src/drivers/sd_card/
 sd_card/
   sd.c / .h                   Public configuration, ownership and diagnostics
   sd_block.h / sd_msc.h        Block and USB ownership interfaces
-  sd_protocol.c / .h          Shared command framing, CRC and register helpers
+  sd_protocol.c / .h          Command/register helpers, native responses and data codecs
   sd_native.c / .h            Native initialization and block operations
   sd_native_host.c / .h       Native command/data sequencing and streams
-  sd_native_protocol.c / .h   Native response parsing and four-lane CRC
   sd_spi.c / .h               SPI initialization and block operations
   sd_port.h / ports/          FreeRTOS and bare-metal integration
 ```
 
-The native and SPI implementations reuse the common protocol helpers but retain their distinct initialization,
+The native and SPI implementations use one protocol module but retain their distinct initialization,
 response formats, data framing, and recovery sequences. Native requires modern SDHC/SDXC; SPI retains its existing
 legacy/SDSC handling. Backend function/type prefixes are `pf_sd_native_*` and `pf_sd_spi_*`;
 backend header names are now `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
@@ -66,6 +65,11 @@ The [storage transport guide](../firmware/src/drivers/storage/README.md#physical
 engine layout, lifecycle, typed transfer interfaces, and shared-pin restrictions. This document covers the SD protocol
 and its integration above those engines.
 
+SD-SPI uses raw CS/byte operations; native SD uses raw CMD bytes and separately armed DAT DMA. The native host builds
+command frames, selects 400 kHz and 80 startup clocks, supplies command/data deadlines, interprets responses and owns
+stream recovery. Transport snapshots expose wire availability, actual/maximum clock and DAT0 level, not physical clock
+ownership or packed response words. The existing packed-response diagnostic API is preserved by the SD host.
+
 ```mermaid
 flowchart TD
     Board[Board profile and build-time transport selection] --> Config[pf_board_get_sd_card_config]
@@ -78,8 +82,8 @@ flowchart TD
     Card --> Native[SDIO-PIO card lifecycle]
     Card --> SPI[SPI card lifecycle]
     Native --> Host[SD command/data adapter and stream policy]
-    Native --> NativeProtocol[Native responses and four-lane CRC]
-    NativeProtocol --> Shared[Shared SD protocol helpers]
+    Native --> Shared[sd_protocol: commands, registers, responses and CRC codecs]
+    Host --> Shared
     SPI --> Shared
     Host --> NativeBus[storage/sdio_pio: wire operations, PIO and DMA]
     NativeBus --> PIO[PIO and DMA hardware]
@@ -96,16 +100,17 @@ flowchart TD
 | Execution-environment selection, reservations, and optional waits | [sd_port.h](../firmware/src/drivers/sd_card/sd_port.h), [ports/](../firmware/src/drivers/sd_card/ports/) |
 | Block operations, result codes, and telemetry | [sd_block.h](../firmware/src/drivers/sd_card/sd_block.h) |
 | USB-only ownership and block capabilities | [sd_msc.h](../firmware/src/drivers/sd_card/sd_msc.h) |
-| CRC7, command framing, CMD8 classification, CSD decoding, serial CRC16, address conversion, and transfer bounds | [sd_protocol.c](../firmware/src/drivers/sd_card/sd_protocol.c) |
+| Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../firmware/src/drivers/sd_card/sd_protocol.c) |
 | Native card initialization and transfer policy | [sd_native.c](../firmware/src/drivers/sd_card/sd_native.c) |
-| Native response parsing and four-lane data encoding/CRC | [sd_native_protocol.c](../firmware/src/drivers/sd_card/sd_native_protocol.c) |
 | Native SD command/data adapter and stream policy | [sd_native_host.c](../firmware/src/drivers/sd_card/sd_native_host.c) |
 | Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/sdio_pio.c), [sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/sdio_pio.pio) |
 | SPI card protocol | [sd_spi.c](../firmware/src/drivers/sd_card/sd_spi.c) |
 | Shared SPI hardware transport | [spi.c](../firmware/src/drivers/storage/spi/spi.c) |
 | FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
 
-The build selects one backend; it reuses the shared protocol library. SPI-only
+The build selects one backend; both modes use the consolidated protocol library. Native-only helpers retain their
+`pf_sd_native_*` names. `PF_SDIO_PIO_FUSED_COPY` configures this library, where the data codec is compiled.
+Per-function/data sections let the firmware linker discard unused protocol helpers and tables. SPI-only
 builds omit native SDIO code, including its 33,280-byte receive buffer and 8 KiB
 CRC tables. Filesystem mounting, formatting policy, and RTOS scheduling do not
 belong in the reusable driver. The driver does not allocate its own task or

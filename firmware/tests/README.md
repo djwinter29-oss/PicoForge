@@ -13,10 +13,14 @@ Both source submodules are required even for Ceedling configuration validation; 
 
 The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin`
 directory to `PATH` and run it from the root. Name test files `test_<source_basename>[_<scenario>].c` beneath the matching
-source subtree. For example, [sd_native_protocol.c](../src/drivers/sd_card/sd_native_protocol.c) is covered by
-[test_sd_native_protocol.c](drivers/sd_card/test_sd_native_protocol.c). Keep related scenario tests alongside it.
+source subtree. For example, [sd_protocol.c](../src/drivers/sd_card/sd_protocol.c) is covered by
+[test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c) and
+[test_sd_protocol_native.c](drivers/sd_card/test_sd_protocol_native.c). Keep related scenario tests alongside it.
 FreeRTOS port tests live under [ports/freertos](drivers/sd_card/ports/freertos), and bare-metal port tests under
 [ports/baremetal](drivers/sd_card/ports/baremetal), matching their production port directories.
+The layout contract in [test_validation_integrity.py](../../tests/test_validation_integrity.py) checks every Ceedling
+test against a C module in the matching source directory. Scenario suffixes are allowed; they do not create a new
+production module. Support fixtures and standalone smoke programs are not Ceedling test modules.
 
 Run `tools/validation/coverage-firmware.sh` to execute `gcov:all` and generate HTML and Cobertura reports under `build/ceedling/artifacts/gcov/gcovr/`. Coverage requires at least one unit test.
 
@@ -36,11 +40,25 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 
 Shared CRC7, command-frame, CSD and address-conversion tests live in
 [test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c); native wire-codec tests remain in
-[test_sd_native_protocol.c](drivers/sd_card/test_sd_native_protocol.c).
+[test_sd_protocol_native.c](drivers/sd_card/test_sd_protocol_native.c).
+Both fused-copy variants compile the same consolidated protocol implementation in their
+[disabled](drivers/sd_card/test_sd_protocol_copy_fused0.c) and
+[enabled](drivers/sd_card/test_sd_protocol_copy_fused1.c) tests.
+Bare-metal artifact checks also verify that SPI links no native codecs or CRC tables, and that the native fused-copy
+option reaches the consolidated protocol compilation.
 [SPI behavior tests](drivers/sd_card/test_sd_spi.c) inject selection failures across command, register, single-block,
 multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
 and preserved stream recovery. Optional wait setup is tested with
 [FreeRTOS port serialization](drivers/sd_card/ports/freertos/test_sd_port_serialization_sdio.c).
+Storage tests cover raw phase validation before CS, arbitrary released-line clock counts/deadlines, short/long native
+response byte packing and partial failure capture. NOR adapter tests verify opcode/address construction and payload
+bit-count overflow independently of the physical engines. The SD host test retains the exact 80-clock, low-speed
+initialization check.
+Common lifecycle tests live in [test_storage_transport.c](drivers/storage/test_storage_transport.c), raw serial dispatch
+tests in [test_serial.c](drivers/storage/test_serial.c), and native dispatch tests in
+[test_native.c](drivers/storage/test_native.c). Concrete backend tests remain under their corresponding storage
+subdirectories. Cross-layer HID/card-unavailable scenarios are owned by
+[test_hid_sd_responsiveness.c](usb/test_hid_sd_responsiveness.c), matching the HID source module.
 
 Run all C behavior tests with:
 

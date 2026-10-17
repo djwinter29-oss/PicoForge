@@ -13,7 +13,6 @@ static pf_sdio_pio_t test_wire;
 #include "../../../src/drivers/storage/storage_transport.c"
 #include "../../../src/drivers/storage/native.c"
 #include "../../../src/drivers/sd_card/sd_native_host.c"
-#include "../../../src/drivers/sd_card/sd_native_protocol.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
@@ -140,6 +139,10 @@ void test_host_init_binds_callbacks_once_and_preserves_them_until_deinit(void)
     TEST_ASSERT_TRUE(pf_sd_native_host_set_clock(&host, 25000000u));
     uint8_t response[6];
     TEST_ASSERT_TRUE(pf_sd_native_host_command_bytes(&host, 13u, 0u, 48u, response, sizeof(response)));
+    TEST_ASSERT_EQUAL_UINT(2u, host.last_response_word_count);
+    TEST_ASSERT_EQUAL_HEX32(((uint32_t)response[0] << 24u) | ((uint32_t)response[1] << 16u) |
+                          ((uint32_t)response[2] << 8u) | response[3], host.last_response_words[0]);
+    TEST_ASSERT_EQUAL_HEX32(((uint32_t)response[4] << 8u) | response[5], host.last_response_words[1]);
     pf_test_sdio_command_fail = 13u;
     pf_test_sdio_time_step = 100001u;
     TEST_ASSERT_FALSE(pf_sd_native_host_command_bytes(&host, 13u, 0u, 48u, response, sizeof(response)));

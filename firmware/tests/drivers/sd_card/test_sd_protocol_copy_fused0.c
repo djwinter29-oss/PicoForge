@@ -2,7 +2,6 @@
 
 #define PF_SD_NATIVE_FUSED_COPY 0
 
-#include "../../../src/drivers/sd_card/sd_native_protocol.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
 
 #include <string.h>

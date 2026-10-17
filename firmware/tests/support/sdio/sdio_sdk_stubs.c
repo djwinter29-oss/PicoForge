@@ -69,7 +69,9 @@ uint32_t pf_test_sdio_pio_trace[32];
 unsigned pf_test_sdio_pio_trace_count;
 uint8_t pf_test_sdio_batch_rx[PF_TEST_SDIO_MAX_RX_BATCH_BYTES];
 size_t pf_test_sdio_batch_rx_size;
-static uint32_t pf_test_sdio_command_words[2];
+static uint32_t pf_test_sdio_command_words[5];
+static unsigned pf_test_sdio_response_word_count;
+static unsigned pf_test_sdio_response_word_limit = 5u;
 static unsigned pf_test_sdio_command_word_count;
 static unsigned pf_test_sdio_command_word_index;
 static pf_test_sdio_pio_t pf_test_sdio_pio0;
@@ -152,7 +154,7 @@ void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value)
         }
         ++pf_test_sdio_command_word_count;
         if (pf_test_sdio_command_word_count == 3u) {
-            uint8_t response[6] = {0};
+            uint8_t response[17] = {0};
             response[0] = pf_test_sdio_last_command;
             if (pf_test_sdio_last_command == pf_test_sdio_command_error) {
                 response[2] = 0x40u;
@@ -167,10 +169,22 @@ void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value)
                  (pf_test_sdio_corrupt_command == pf_test_sdio_last_command))) {
                 response[5] ^= 2u;
             }
-            pf_test_sdio_command_words[0] = ((uint32_t)response[0] << 24u) |
-                ((uint32_t)response[1] << 16u) | ((uint32_t)response[2] << 8u) | response[3];
-            pf_test_sdio_command_words[1] = ((uint32_t)response[4] << 8u) |
-                response[5];
+            size_t response_size = value == 0u ? 0u : ((value >> 24u) + 2u) / 8u;
+            TEST_ASSERT_LESS_OR_EQUAL_UINT(sizeof(response), response_size);
+            if (response_size > 6u) {
+                for (size_t index = 0u; index < response_size; ++index) {
+                    response[index] = (uint8_t)(0x80u + index);
+                }
+            }
+            memset(pf_test_sdio_command_words, 0, sizeof(pf_test_sdio_command_words));
+            for (size_t index = 0u; index < response_size; ++index) {
+                uint32_t *word = &pf_test_sdio_command_words[index / 4u];
+                *word = (*word << 8u) | response[index];
+            }
+            pf_test_sdio_response_word_count = (response_size + 3u) / 4u;
+            if (pf_test_sdio_response_word_count > pf_test_sdio_response_word_limit) {
+                pf_test_sdio_response_word_count = pf_test_sdio_response_word_limit;
+            }
             pf_test_sdio_command_word_index = 0u;
         }
     }
@@ -195,7 +209,7 @@ uint pio_sm_get_rx_fifo_level(PIO pio, uint sm)
     (void)pio;
     if (sm == 0u) {
         return pf_test_sdio_command_word_count == 3u
-            ? 2u - pf_test_sdio_command_word_index : 0u;
+            ? pf_test_sdio_response_word_count - pf_test_sdio_command_word_index : 0u;
     }
     return pf_test_sdio_data_fifo_words;
 }
@@ -209,7 +223,7 @@ uint pio_sm_get_tx_fifo_level(PIO pio, uint sm)
 uint32_t pio_sm_get(PIO pio, uint sm)
 {
     (void)pio;
-    if (sm == 0u && pf_test_sdio_command_word_index < 2u) {
+    if (sm == 0u && pf_test_sdio_command_word_index < pf_test_sdio_response_word_count) {
         return pf_test_sdio_command_words[pf_test_sdio_command_word_index++];
     }
     return pf_test_sdio_data_response;

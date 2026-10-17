@@ -154,18 +154,20 @@ add_library(pf_sd_card_protocol STATIC
 target_include_directories(pf_sd_card_protocol PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
 )
+# Let SPI-only firmware discard unused native codecs and their CRC tables.
+target_compile_options(pf_sd_card_protocol PRIVATE -ffunction-sections -fdata-sections)
 
 if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     add_library(pf_sdio_backend STATIC
         src/drivers/sd_card/sd_native.c
         src/drivers/sd_card/sd_native_host.c
-        src/drivers/sd_card/sd_native_protocol.c
         src/drivers/storage/sdio_pio/sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
     option(PF_SDIO_PIO_HIGH_SPEED "Opt in to native 50 MHz startup with one 25 MHz fallback" OFF)
+    target_compile_definitions(pf_sd_card_protocol PRIVATE
+        PF_SD_NATIVE_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>)
     target_compile_definitions(pf_sdio_backend PRIVATE
-        PF_SD_NATIVE_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>
         PF_SD_NATIVE_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
         PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
     )

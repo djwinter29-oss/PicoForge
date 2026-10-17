@@ -17,6 +17,8 @@ remain above this layer:
 drivers/
   storage/
     storage_transport.h / storage_transport.c
+    serial.h / serial.c
+    native.h / native.c
     spi/spi.h / spi.c
     sdio_pio/sdio_pio.h / sdio_pio.c / sdio_pio.pio
     sdio_pio/ports/freertos/sdio_wait.c
@@ -25,10 +27,10 @@ drivers/
   nor_flash/     NOR opcodes, status, page programming, erase and verification
 ```
 
-The [common transport interface](storage_transport.h) is the only physical interface included by SD and NOR drivers.
-It dispatches initialization, calculated clock changes, hardware abort/deinitialization, CS-bounded serial transactions,
-raw serial CS/byte operations, and typed native command/data operations. `pf_storage_transport_t` is a non-owning
-descriptor: board/storage integration owns the concrete context, and the caller serializes access. Protocol clients
+The [common transport interface](storage_transport.h) contains shared pin types, lifecycle, clock and platform services.
+Wire operations are separate SDK-independent capabilities: [raw serial](serial.h) and [native CMD/DAT](native.h).
+`pf_storage_transport_t` is a non-owning descriptor: board/storage integration owns the concrete context, and the caller
+serializes access. Protocol clients
 do not dereference backend contexts or operations, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
 It creates no task, queue, filesystem policy, or automatic mode-switch manager.
 Common mode tags describe SPI, native SD, or QSPI signaling, not the backend's PIO/SPI-controller implementation.
@@ -42,8 +44,8 @@ Backend filenames, functions, types, and header guards use the same module name:
 
 The native wait-hook type is `pf_sdio_pio_wait_hook_t`; generated PIO programs use `pf_sdio_pio_*` or
 `pf_qspi_pio_*`. These replace the former backend `pf_storage_*` names without compatibility aliases.
-The common interface retains its `storage_transport.[ch]` name and `pf_storage_*` / `PF_STORAGE_*` symbols,
-including shared pin types, routing validation, result codes, native diagnostics, and operation tables.
+The common and wire interfaces use `pf_storage_*` / `PF_STORAGE_*` symbols. Concrete clock ownership and PIO/DMA
+resource state remain private to each backend.
 
 | Physical mode | Implementation | Device configurations |
 | --- | --- | --- |
@@ -51,11 +53,17 @@ including shared pin types, routing validation, result codes, native diagnostics
 | Native SD PIO | [sdio_pio.h](sdio_pio/sdio_pio.h), [sdio_pio.c](sdio_pio/sdio_pio.c), [PIO programs](sdio_pio/sdio_pio.pio) | Native four-bit SD memory cards |
 | QSPI-PIO | [qspi_pio.h](qspi_pio/qspi_pio.h), [qspi_pio.c](qspi_pio/qspi_pio.c), [PIO programs](qspi_pio/qspi_pio.pio) | NOR single/quad-lane serial transfers |
 
-SPI and QSPI use command/address/dummy/data transactions. SD-SPI additionally uses the common byte-exchange and CS
-primitives so command responses, data tokens, busy polling, and multiblock transfers retain their existing CS
-boundaries. Native SD uses a distinct typed wire interface for command/response and data phases; it is not emulated
-as a serial flash transaction. Native DMA buffers remain batchable so the SD layer can overlap CRC checking and
-payload copying with receive DMA. Here, SDIO means native SD memory-card signaling, not support for SDIO I/O cards.
+SPI and QSPI execute ordered raw phases under one CS assertion. Each phase specifies borrowed TX/RX buffers, bit count,
+and one or four lanes; an unbuffered phase drives ones. All phases are validated before CS is asserted. Buffered phases
+must contain whole bytes; hardware SPI also requires whole-byte clock-only phases, while QSPI permits individual clocks.
+Quad phases are half-duplex. The NOR adapter builds opcode/address/dummy/payload phases; physical engines do not parse
+them. SD-SPI uses manual CS and byte exchange so response, token, busy-polling and multiblock boundaries stay unchanged.
+
+Native CMD exchange takes caller-framed bytes and returns response bytes, including partial capture on failure.
+The current PIO engine supports six TX bytes and byte-aligned responses up to 136 bits; it never builds CRC or interprets
+card status. Separate DAT start/poll/progress/finish/cancel operations preserve RX-before-CMD ordering and DMA overlap.
+They are not replaced by blocking read/write calls. Here, SDIO means native SD memory-card signaling, not support for
+SDIO I/O cards.
 
 The transport owns GPIO mux/direction, programmed clock timing, PIO/DMA resources, FIFO/IRQ state, hardware waits,
 and hardware cleanup. Device adapters retain SD commands, addressing, register decoding and stream state, or NOR
@@ -66,15 +74,20 @@ SPI supports bounded FIFO polling for NOR; SD-SPI retains SDK blocking bulk I/O 
 
 Configure and zero-initialize the concrete context, obtain its non-owning bus handle, then initialize it before
 device-protocol operations. Contexts must outlive all synchronous calls; do not copy a live context. The common
-interface exposes `pf_storage_transport_init`, `pf_storage_transport_set_clock`, `pf_storage_transport_transfer`,
-`pf_storage_transport_abort`, and `pf_storage_transport_deinit`. Native command/data operations use the native typed API rather
-than `pf_storage_transport_transfer`. All these operations are declared in `storage_transport.h`; concrete backend
-headers are only for board/storage composition and physical-engine tests.
+interface exposes `pf_storage_transport_init`, `pf_storage_transport_set_clock`, `pf_storage_transport_abort`, and
+`pf_storage_transport_deinit`. Wire dispatch uses `pf_storage_serial_*` or `pf_storage_native_*` from their capability
+headers; the common lifecycle has no device-shaped transfer operation. Concrete backend headers are only for
+board/storage composition and physical-engine tests.
 
-Native clients receive read-only wire snapshots (readiness, clock ownership, actual/maximum clock, DAT0 level, and
-last raw response), not hardware registers or mutable resource state. Error/idle callbacks are borrowed and invoked
-synchronously. RX start/poll/progress/finish/cleanup and TX prepare/start/finish preserve DMA overlap and buffer
-lifetimes. Descriptor validation rejects incomplete required operation sets before SD initialization.
+Native clients observe only availability/health, actual/maximum clock and the raw DAT0 level. Physical ownership and
+PIO response packing are not exposed. Legacy packed-response diagnostics are retained by the SD host, not the transport.
+Error/idle callbacks are borrowed and invoked synchronously. TX start acquires physical TX programs internally and retains
+them across adjacent payloads. Returning to CMD signaling is a hardware-only idle operation; SD recovery still decides
+when CMD12 is required and never replays an uncertain write. Wire-capability validation rejects incomplete operation sets
+before device initialization.
+
+Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
+400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 
 Platform time, bounded delays, and optional scheduler-wait setup are also dispatched through the descriptor.
 The [FreeRTOS wait adapter](sdio_pio/ports/freertos/sdio_wait.c) owns PIO IRQ details; SD's execution port only

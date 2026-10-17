@@ -2,6 +2,7 @@
 TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "serial_fake.h"
 #include "storage_transport.h"
+#include "serial.h"
 #include "spi.h"
 #include "nor_transport.h"
 #include <string.h>
@@ -81,10 +82,14 @@ void test_sdk_short_bulk_io_is_reported_without_replay_or_implicit_cs_boundary(v
 void test_invalid_or_quad_spi_transactions_never_assert_cs(void)
 {
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_spi_init(&sd));
-    pf_storage_serial_transaction_t command = { .command = 6, .data_lanes = 4 };
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED, pf_spi_transfer(&sd, &command));
-    command.data_lanes = 1; command.dummy_cycles = 1;
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_spi_transfer(&sd, &command));
+    uint8_t output = 6u;
+    pf_storage_serial_phase_t phases[] = {
+        {.tx = &output, .bit_count = 8u, .lanes = 1u}, {.bit_count = 8u, .lanes = 4u},
+    };
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED, pf_spi_transfer(&sd, phases, 2u));
+    phases[1].lanes = 1u;
+    phases[1].bit_count = 1u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED, pf_spi_transfer(&sd, phases, 2u));
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
 }
 
@@ -112,9 +117,13 @@ void test_generic_spi_dispatch_clocks_dummy_bytes_and_receives_payload(void)
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
     serial_fake.input = 0x91;
     uint8_t input[2];
-    pf_storage_serial_transaction_t command = { .command = 0x0b, .dummy_cycles = 16,
-        .data_lanes = 1, .rx = input, .length = sizeof(input) };
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_transfer(&bus, &command));
+    uint8_t output = 0x0b;
+    pf_storage_serial_phase_t phases[] = {
+        {.tx = &output, .bit_count = 8u, .lanes = 1u},
+        {.bit_count = 16u, .lanes = 1u},
+        {.rx = input, .bit_count = sizeof(input) * 8u, .lanes = 1u},
+    };
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_serial_transfer(&bus, phases, 3u));
     const uint8_t expected[] = {0x0b, 0xff, 0xff, 0xff, 0xff};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, serial_fake.bytes, sizeof(expected));
     TEST_ASSERT_EQUAL_HEX8(0x91, input[0]);

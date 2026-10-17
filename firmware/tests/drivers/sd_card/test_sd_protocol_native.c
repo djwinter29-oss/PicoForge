@@ -1,6 +1,5 @@
 #include "unity.h"
 #include "sd_protocol.h"
-#include "sd_native_protocol.h"
 
 #include <string.h>
 
@@ -65,45 +64,20 @@ void test_switch_status_checks_group_one_busy_only_for_version_one(void)
     TEST_ASSERT_FALSE(pf_sd_native_switch_high_speed_busy(status));
 }
 
-void test_unpacks_partial_response_words_from_the_low_bits(void)
-{
-    const uint32_t r1_words[] = { 0x01020304u, 0x00000506u };
-    const uint8_t r1_expected[] = { 1u, 2u, 3u, 4u, 5u, 6u };
-    const uint32_t r2_words[] = { 0x01020304u, 0x05060708u, 0x090a0b0cu,
-                                  0x0d0e0f10u, 0x00000011u };
-    uint8_t r1[6];
-    uint8_t r2[17];
-
-    TEST_ASSERT_TRUE(pf_sd_native_response_words_to_bytes(r1_words, 48u, r1, sizeof(r1)));
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(r1_expected, r1, sizeof(r1));
-    TEST_ASSERT_TRUE(pf_sd_native_response_words_to_bytes(r2_words, 136u, r2, sizeof(r2)));
-    TEST_ASSERT_EQUAL_HEX8(0x11u, r2[16]);
-    TEST_ASSERT_FALSE(pf_sd_native_response_words_to_bytes(r1_words, 48u, r1, 5u));
-    TEST_ASSERT_FALSE(pf_sd_native_response_words_to_bytes(r1_words, 47u, r1, sizeof(r1)));
-}
-
 void test_decodes_native_cmd8_capture_without_bit_shift(void)
 {
-    const uint32_t words[] = { 0x08000001u, 0x0000aa13u };
-    uint8_t response[6];
+    const uint8_t response[] = {0x08u, 0x00u, 0x00u, 0x01u, 0xaau, 0x13u};
     uint32_t argument = 0u;
 
-    TEST_ASSERT_TRUE(pf_sd_native_response_words_to_bytes(words, 48u, response,
-                                                       sizeof(response)));
-    TEST_ASSERT_EQUAL_HEX8_ARRAY(((uint8_t[]){0x08u, 0x00u, 0x00u, 0x01u, 0xaau, 0x13u}),
-                                 response, sizeof(response));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_NONE, pf_sd_native_decode_response(8u, response, &argument, true));
     TEST_ASSERT_EQUAL_HEX32(0x000001aau, argument);
 }
 
 void test_decodes_native_acmd41_capture_without_bit_shift(void)
 {
-    const uint32_t words[] = { 0x3fc0ff80u, 0x000000ffu };
-    uint8_t response[6];
+    const uint8_t response[] = {0x3fu, 0xc0u, 0xffu, 0x80u, 0x00u, 0xffu};
     uint32_t ocr = 0u;
 
-    TEST_ASSERT_TRUE(pf_sd_native_response_words_to_bytes(words, 48u, response,
-                                                       sizeof(response)));
     TEST_ASSERT_TRUE(pf_sd_native_parse_r3_response(response, &ocr));
     TEST_ASSERT_EQUAL_HEX32(0xc0ff8000u, ocr);
 }

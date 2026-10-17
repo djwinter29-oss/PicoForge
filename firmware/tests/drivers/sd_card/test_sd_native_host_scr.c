@@ -12,7 +12,6 @@ static pf_sdio_pio_t test_wire;
 #include "../../../src/drivers/storage/storage_transport.c"
 #include "../../../src/drivers/storage/native.c"
 #include "../../../src/drivers/sd_card/sd_native_host.c"
-#include "../../../src/drivers/sd_card/sd_native_protocol.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 

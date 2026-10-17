@@ -25,7 +25,9 @@ erased bits; it never erases implicitly. A failed write can leave partial change
 - [Transaction interface](../firmware/src/drivers/nor_flash/nor_transport.h) and
   [common adapter](../firmware/src/drivers/nor_flash/nor_transport.c) use the same storage-bus handle for SPI
   and QSPI-PIO. Transactions contain single-lane command/address/dummy phases and single- or quad-lane data.
-  The adapter forwards transactions, maps physical results, and supplies the protocol's microsecond clock.
+  NOR owns this transaction structure. The adapter validates address width and payload size, constructs big-endian
+  opcode/address bytes, then submits raw phases through [the serial capability](../firmware/src/drivers/storage/serial.h).
+  It also maps physical results and supplies the protocol's microsecond clock.
 - Physical signaling uses the [shared SPI engine](../firmware/src/drivers/storage/spi/spi.c), also used by
   SD-SPI, or the [quad-SPI engine](../firmware/src/drivers/storage/qspi_pio/qspi_pio.c).
   The NOR protocol selects single-lane initialization and `6Bh` quad reads; programming remains single-lane `02h`.
@@ -54,7 +56,7 @@ LevelX `lx_nor_flash_*` names retain their existing names.
 
 `pf_nor_transport_init` replaces the former `pf_nor_spi_init` / `pf_nor_qspi_pio_init` entry points. Pass a persistent,
 configured `pf_storage_transport_t` handle and a transport output; the common adapter initializes the bus and derives quad
-capability from its mode. Native SD handles are rejected. The handle and concrete context must outlive the flash
+capability from its serial operations. Native SD handles are rejected. The handle and concrete context must outlive the flash
 device. Deinitialize with `pf_storage_transport_deinit` after device operations finish. NOR protocol and LevelX APIs are
 unchanged; direct callers of the former bus-specific adapters must migrate.
 

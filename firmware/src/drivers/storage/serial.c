@@ -43,7 +43,7 @@ pf_storage_transport_result_t pf_storage_serial_valid(const pf_storage_transport
     }
     const pf_storage_serial_ops_t *ops = serial_ops(transport);
     if (ops == NULL || ops->transfer == NULL || (ops->lanes != 1u && ops->lanes != 4u) ||
-        transport->ops->init == NULL || transport->ops->deinit == NULL || transport->ops->time_us == NULL) {
+        !pf_storage_transport_valid(transport, transport->mode)) {
         return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
     }
     *quad_supported = ops->lanes == 4u;

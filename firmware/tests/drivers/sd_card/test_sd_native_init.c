@@ -12,7 +12,6 @@ static bool test_present(const void *context) { (void)context; return pf_test_sd
 #include <string.h>
 
 #include "../../../src/drivers/sd_card/sd_native.c"
-#include "../../../src/drivers/sd_card/sd_native_protocol.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
@@ -76,6 +75,7 @@ void setUp(void)
     };
     native_host.transport = active_config.transport;
     test_wire.current_clock_hz = 25000000u;
+    test_wire.pio = pio0;
     native_host.data_rx_multiblock_supported = true;
     recovery_calls = reads = sectors_read = single_writes = batch_writes = forget_calls = 0u;
     memset(read_first, 0, sizeof(read_first));
@@ -119,9 +119,6 @@ bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t hz)
     test_wire.current_clock_hz = hz;
     return true;
 }
-bool pf_sd_native_host_command(pf_sd_native_host_t *host, uint8_t command, uint32_t argument,
-                              uint16_t bits, uint32_t *response, size_t capacity)
-{ (void)host; (void)command; (void)argument; (void)bits; (void)response; (void)capacity; return true; }
 bool pf_sd_native_host_prepare_initialization(pf_sd_native_host_t *host)
 {
     host->bus_width = 1u;

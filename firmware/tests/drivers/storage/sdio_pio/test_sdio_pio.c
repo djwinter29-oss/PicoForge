@@ -64,6 +64,8 @@ void setUp(void)
     pf_test_sdio_batch_rx_size = 0u;
     pf_test_sdio_trace_enabled = false;
     pf_test_sdio_clock_auto_toggle = false;
+    pf_test_sdio_response_word_limit = 5u;
+    pf_test_sdio_clock_rising_edges = 0u;
     observed_error = PF_STORAGE_NATIVE_ERROR_NONE;
     waits = 0u;
 }
@@ -121,11 +123,13 @@ void test_native_raw_command_and_tx_do_not_build_crc_or_interpret_response_token
     pf_sdio_pio_config_t config = pins();
     TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
     uint8_t frame[6] = {0x46u, 0x11u, 0x22u, 0x33u, 0x44u, 0u};
-    uint32_t response[2];
+    uint8_t response[6];
+    size_t received;
     /* Deliberately invalid CRC: the physical transport must transmit the caller's frame unchanged. */
-    TEST_ASSERT_TRUE(pf_sdio_pio_command(&host, frame, 48u, response, 2u, 100000u));
+    TEST_ASSERT_TRUE(pf_sdio_pio_exchange(&host, frame, sizeof(frame), 48u,
+                                        response, sizeof(response), &received, 100000u));
     TEST_ASSERT_EQUAL_UINT8(6u, pf_test_sdio_last_command);
-    TEST_ASSERT_EQUAL_UINT(2u, host.last_response_word_count);
+    TEST_ASSERT_EQUAL_UINT(6u, received);
     TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&host));
     uint32_t image[2] = {0x12345678u, 0xabcdef01u};
     TEST_ASSERT_TRUE(pf_sdio_pio_tx_start(&host, image, 2u, 16u));
@@ -174,4 +178,67 @@ void test_native_rx_timeout_reports_generic_diagnostics_and_uses_bounded_wait_ho
     TEST_ASSERT_FALSE(pf_test_sdio_dma_busy);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
     pf_sdio_pio_deinit(&host);
+}
+
+void test_native_clocks_use_requested_count_current_rate_and_deadline_without_card_commands(void)
+{
+    pf_sdio_pio_t host = {.config = pins()};
+    pf_storage_transport_t bus = pf_sdio_pio_transport(&host);
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
+    TEST_ASSERT_TRUE(pf_storage_native_hooks(&bus, on_error, &host, NULL));
+    uint32_t actual;
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_set_clock(&bus, 1000000u, &actual));
+    pf_test_sdio_clock_gpio = host.config.pins.clock_gpio;
+    pf_test_sdio_gpio_level = 0u;
+    pf_test_sdio_clock_auto_toggle = true;
+    TEST_ASSERT_TRUE(pf_storage_native_clocks(&bus, 13u, 1000u));
+    TEST_ASSERT_EQUAL_UINT(13u, pf_test_sdio_clock_rising_edges);
+    TEST_ASSERT_EQUAL_UINT32(actual, pf_storage_native_state(&bus).current_clock_hz);
+    TEST_ASSERT_EQUAL(PF_SDIO_PIO_CLOCK_UNOWNED, host.clock_owner);
+    TEST_ASSERT_FALSE(pf_storage_native_clocks(&bus, 1000u, 10u));
+    TEST_ASSERT_LESS_THAN_UINT(1000u, pf_test_sdio_clock_rising_edges - 13u);
+    pf_test_sdio_clock_auto_toggle = false;
+    TEST_ASSERT_FALSE(pf_storage_native_clocks(&bus, 13u, 10u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_NATIVE_ERROR_PIO_TIMEOUT, observed_error);
+    TEST_ASSERT_EQUAL(PF_STORAGE_NATIVE_PHASE_SETUP, observed_phase);
+    TEST_ASSERT_EQUAL(PF_SDIO_PIO_CLOCK_UNOWNED, host.clock_owner);
+    TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
+    pf_storage_transport_deinit(&bus);
+}
+
+void test_native_raw_exchange_returns_short_long_and_partial_bytes_without_packing_leaks(void)
+{
+    pf_sdio_pio_t host = {.config = pins()};
+    pf_storage_transport_t bus = pf_sdio_pio_transport(&host);
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
+    uint8_t frame[] = {0x46u, 0x11u, 0x22u, 0x33u, 0x44u, 0u};
+    uint8_t response[17];
+    size_t received;
+    TEST_ASSERT_TRUE(pf_storage_native_exchange(&bus, frame, sizeof(frame), 48u,
+                                               response, sizeof(response), &received, 1000u));
+    const uint8_t expected[] = {6u, 0u, 0u, 0u, 0u, 1u};
+    TEST_ASSERT_EQUAL_UINT(sizeof(expected), received);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, response, received);
+    TEST_ASSERT_TRUE(pf_storage_native_exchange(&bus, frame, sizeof(frame), 136u,
+                                               response, sizeof(response), &received, 1000u));
+    TEST_ASSERT_EQUAL_UINT(17u, received);
+    for (size_t index = 0u; index < received; ++index) {
+        TEST_ASSERT_EQUAL_HEX8(0x80u + index, response[index]);
+    }
+    pf_test_sdio_response_word_limit = 1u;
+    memset(response, 0x55, sizeof(response));
+    TEST_ASSERT_FALSE(pf_storage_native_exchange(&bus, frame, sizeof(frame), 48u,
+                                                response, sizeof(response), &received, 10u));
+    TEST_ASSERT_EQUAL_UINT(4u, received);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, response, received);
+    TEST_ASSERT_EQUAL_HEX8(0x55u, response[received]);
+    unsigned calls = pf_test_sdio_command_count;
+    TEST_ASSERT_FALSE(pf_storage_native_exchange(&bus, frame, sizeof(frame), 48u,
+                                                response, 5u, &received, 100u));
+    TEST_ASSERT_EQUAL_UINT(0u, received);
+    TEST_ASSERT_FALSE(pf_storage_native_exchange(&bus, frame, 5u, 48u,
+                                                response, sizeof(response), &received, 100u));
+    TEST_ASSERT_EQUAL_UINT(0u, received);
+    TEST_ASSERT_EQUAL_UINT(calls, pf_test_sdio_command_count);
+    pf_storage_transport_deinit(&bus);
 }

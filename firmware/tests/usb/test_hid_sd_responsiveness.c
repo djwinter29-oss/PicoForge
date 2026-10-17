@@ -10,7 +10,7 @@ void setUp(void)
 }
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
 
-void test_unavailable_card_preserves_hid_payload_and_does_not_block_usb_or_queue_work(void)
+void test_hid_unavailable_card_preserves_payload_and_does_not_block_usb_or_queue_work(void)
 {
     pf_hid_memory_report_t report, sentinel;
     memset(&sentinel, 0xa5, sizeof(sentinel));

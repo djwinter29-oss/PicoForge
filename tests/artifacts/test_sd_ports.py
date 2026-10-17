@@ -27,7 +27,7 @@ def check_build(directory):
             raise AssertionError(f"Kernel dependency in {directory}: {item['file']}")
     elf = directory / "pf_sd_card_baremetal_smoke.elf"
     symbols = subprocess.check_output(
-        [os.environ.get("ARM_NM", "arm-none-eabi-nm"), str(elf)], text=True)
+        [os.environ.get("ARM_NM", "arm-none-eabi-nm"), "-S", str(elf)], text=True)
     if re.search(r"\b(?:[xv]Task\w*|[xv]Queue\w*|[xv]Port\w*|pvPort\w*|vApplication\w*)$", symbols,
                  re.MULTILINE):
         raise AssertionError(f"FreeRTOS symbols in {elf}")
@@ -35,6 +35,21 @@ def check_build(directory):
                    "pf_sd_sync", "pf_sd_port_try_lock"):
         if not re.search(r"\b" + symbol + r"$", symbols, re.MULTILINE):
             raise AssertionError(f"Missing {symbol} in {elf}")
+    if re.search(r"\bpf_sd_spi_read_blocks$", symbols, re.MULTILINE):
+        if re.search(r"\b(?:pf_sd_native_\w+|crc16_4bit_\w+)$", symbols, re.MULTILINE):
+            raise AssertionError(f"Unused native protocol code or CRC tables in SPI artifact: {elf}")
+    else:
+        protocol = [item for item in commands if item["file"].endswith("/sd_card/sd_protocol.c")]
+        cache = (directory / "CMakeCache.txt").read_text()
+        fused = re.search(r"^PF_SDIO_PIO_FUSED_COPY:BOOL=(.+)$", cache, re.MULTILINE)
+        if fused is None:
+            raise AssertionError(f"Missing native fused-copy configuration in {directory}")
+        enabled = fused[1].upper() in ("1", "ON", "TRUE", "YES", "Y")
+        if len(protocol) != 1 or f"-DPF_SD_NATIVE_FUSED_COPY={int(enabled)}" not in protocol[0]["command"]:
+            raise AssertionError(f"Fused-copy option did not reach the protocol implementation in {directory}")
+        for table in ("crc16_4bit_slice_hi", "crc16_4bit_slice_lo"):
+            if not re.search(rf"^.*\s00001000\s[bB]\s{table}$", symbols, re.MULTILINE):
+                raise AssertionError(f"Missing 4 KiB native CRC table {table} in {elf}")
     print(f"Bare-metal compile/link: exactly one port, no kernel includes/symbols: {elf}")
 
 

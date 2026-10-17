@@ -69,7 +69,7 @@
       :test_storage_automount:
         - -ffunction-sections
         - -fdata-sections
-      :test_usb_sd_responsiveness:
+      :test_hid_sd_responsiveness:
         - -ffunction-sections
         - -fdata-sections
       :test_msc_batch:
@@ -86,7 +86,7 @@
         - -Wl,--gc-sections
       :test_storage_automount:
         - -Wl,--gc-sections
-      :test_usb_sd_responsiveness:
+      :test_hid_sd_responsiveness:
         - -Wl,--gc-sections
       :test_msc_callbacks:
         - -Wl,--wrap=mscd_reset

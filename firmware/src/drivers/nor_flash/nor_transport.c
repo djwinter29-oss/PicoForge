@@ -9,7 +9,7 @@ static uint64_t now(void *context)
     return pf_storage_transport_time_us(context);
 }
 
-/** @brief Forward one serial transaction and invalidate failed hardware without replay. */
+/** @brief Frame one NOR transaction as raw phases; invalidate failed hardware without replay. */
 static pf_nor_result_t execute(void *context, const pf_nor_transaction_t *transaction)
 {
     pf_storage_transport_t *bus = context;

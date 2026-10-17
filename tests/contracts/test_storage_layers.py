@@ -38,10 +38,24 @@ def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
         for header in re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', text, re.MULTILINE):
             assert not header.startswith(("hardware/", "pico/")), f"{source}: hardware dependency {header}"
             if "storage/" in header:
-                assert header.endswith("/storage_transport.h"), f"{source}: concrete backend include {header}"
+                assert header.endswith(("/storage_transport.h", "/serial.h", "/native.h")), (
+                    f"{source}: concrete backend include {header}"
+                )
         assert not re.search(r"\bpf_(?:spi|sdio_pio|qspi_pio)_\w+", text), source
         assert not re.search(r"\bpf_storage_(?:spi|sdio_pio|qspi_pio)_\w+", text), source
         assert not re.search(r"\b(?:spi_inst_t|dma_channel_\w+|pio_sm_\w+)\b", text), source
+
+
+def test_common_lifecycle_and_raw_wire_interfaces_do_not_expose_device_transactions():
+    common = (STORAGE / "storage_transport.h").read_text()
+    assert not re.search(r"\b(?:response_bits|response_words|dummy_cycles|address_bytes|tx_prepare)\b", common)
+    assert "pf_storage_native_state_t" not in common
+    serial = (STORAGE / "serial.h").read_text()
+    assert not re.search(r"\b(?:command|address_bytes|dummy_cycles)\s*;", serial)
+    native = (STORAGE / "native.h").read_text()
+    assert not re.search(r"\b(?:clock_owner|last_response_words|rx_ready|mode_restore_failed)\b", native)
+    physical = (STORAGE / "sdio_pio/sdio_pio.c").read_text()
+    assert "prepare_80_clocks" not in physical
 
 
 @pytest.mark.parametrize("mode", ["spi", "sdio_pio", "qspi_pio"])

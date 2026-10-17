@@ -320,6 +320,11 @@ bool pf_sdio_pio_clocks(pf_sdio_pio_t *host, uint32_t cycles, uint32_t timeout_u
     pio_sm_set_enabled(host->pio, host->command_sm, true);
     uint32_t start = time_us_32();
     for (uint32_t cycle = 0u; cycle < cycles; cycle++) {
+        if ((uint32_t)(time_us_32() - start) >= timeout_us) {
+            wire_error(host, PF_STORAGE_NATIVE_ERROR_PIO_TIMEOUT, PF_STORAGE_NATIVE_PHASE_SETUP);
+            pf_sdio_pio_abort(host);
+            return false;
+        }
         for (uint level = 0u; level < 2u; level++) {
             while ((gpio_get(host->config.pins.clock_gpio) != 0u) != (level == 0u)) {
                 if ((uint32_t)(time_us_32() - start) >= timeout_us) {
@@ -510,16 +515,20 @@ void pf_sdio_pio_deinit(pf_sdio_pio_t *host)
     memset(host, 0, sizeof(*host));
 }
 
-bool pf_sdio_pio_command(pf_sdio_pio_t *host, const uint8_t frame[6],
-    uint16_t response_bits, uint32_t *response_words, size_t response_word_capacity, uint32_t timeout_us)
+bool pf_sdio_pio_exchange(pf_sdio_pio_t *host, const uint8_t *tx, size_t tx_size,
+    uint16_t rx_bits, uint8_t *rx, size_t capacity, size_t *received, uint32_t timeout_us)
 {
-    size_t count = (response_bits + 31u) / 32u;
-    if ((host == NULL) || (host->pio == NULL) || (frame == NULL) || timeout_us == 0u || host->mode_restore_failed ||
+    if (received != NULL) {
+        *received = 0u;
+    }
+    size_t count = (rx_bits + 31u) / 32u;
+    if ((host == NULL) || (host->pio == NULL) || tx == NULL || tx_size != 6u ||
+        received == NULL || timeout_us == 0u || host->mode_restore_failed ||
         !host->command_program_loaded || (host->current_clock_hz == 0u) ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND)) ||
-        ((response_bits != 0u) && ((response_words == NULL) || (count > response_word_capacity))) ||
-        (response_bits > 136u) || ((response_bits != 0u) && (response_bits < 8u))) {
+        (rx_bits != 0u && (rx == NULL || capacity < rx_bits / 8u)) ||
+        rx_bits > 136u || rx_bits % 8u != 0u) {
         wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_COMMAND);
         return false;
     }
@@ -527,24 +536,29 @@ bool pf_sdio_pio_command(pf_sdio_pio_t *host, const uint8_t frame[6],
         host->clock_owner = PF_SDIO_PIO_CLOCK_COMMAND;
         pio_sm_set_enabled(host->pio, host->command_sm, true);
     }
-    uint64_t bits = ((uint64_t)frame[0] << 40u) | ((uint64_t)frame[1] << 32u) |
-                    ((uint64_t)frame[2] << 24u) | ((uint64_t)frame[3] << 16u) |
-                    ((uint64_t)frame[4] << 8u) | frame[5];
+    uint64_t bits = ((uint64_t)tx[0] << 40u) | ((uint64_t)tx[1] << 32u) |
+                    ((uint64_t)tx[2] << 24u) | ((uint64_t)tx[3] << 16u) |
+                    ((uint64_t)tx[4] << 8u) | tx[5];
     pio_sm_clear_fifos(host->pio, host->command_sm);
     pio_interrupt_clear(host->pio, RESPONSE_IRQ);
     pio_sm_put_blocking(host->pio, host->command_sm, (47u << 26u) | (uint32_t)(bits >> 22u));
     pio_sm_put_blocking(host->pio, host->command_sm, (uint32_t)(bits & 0x3fffffu) << 10u);
     pio_sm_put_blocking(host->pio, host->command_sm,
-                        response_bits == 0u ? 0u : ((uint32_t)(response_bits - 2u) << 24u));
+                        rx_bits == 0u ? 0u : ((uint32_t)(rx_bits - 2u) << 24u));
     uint32_t start = time_us_32();
     size_t read = 0u;
-    host->last_response_word_count = 0u;
-    memset(host->last_response_words, 0, sizeof(host->last_response_words));
     while (!pio_interrupt_get(host->pio, RESPONSE_IRQ) || (read < count)) {
         while ((read < count) && (pio_sm_get_rx_fifo_level(host->pio, host->command_sm) > 0u)) {
-            response_words[read] = pio_sm_get(host->pio, host->command_sm);
-            host->last_response_words[read] = response_words[read];
-            host->last_response_word_count = ++read;
+            uint32_t word = pio_sm_get(host->pio, host->command_sm);
+            size_t bytes = rx_bits / 8u - *received;
+            if (bytes > 4u) {
+                bytes = 4u;
+            }
+            for (size_t index = 0u; index < bytes; ++index) {
+                rx[*received + index] = (uint8_t)(word >> ((bytes - index - 1u) * 8u));
+            }
+            *received += bytes;
+            ++read;
         }
         if (((uint32_t)(time_us_32() - start) >= timeout_us) &&
             (!pio_interrupt_get(host->pio, RESPONSE_IRQ) || (read < count))) {
@@ -844,24 +858,7 @@ static bool native_restore(void *context) { return pf_sdio_pio_restore_command(c
 static bool native_exchange(void *context, const uint8_t *tx, size_t tx_size, uint16_t bits,
                             uint8_t *rx, size_t capacity, size_t *received, uint32_t timeout_us)
 {
-    pf_sdio_pio_t *host = context;
-    if (tx_size != 6u || bits > 136u || bits % 8u != 0u || capacity < bits / 8u) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_COMMAND);
-        return false;
-    }
-    uint32_t words[5] = {0u};
-    bool ok = pf_sdio_pio_command(host, tx, bits, words, 5u, timeout_us);
-    size_t bytes = bits / 8u;
-    size_t captured = host->last_response_word_count * 4u;
-    *received = captured < bytes ? captured : bytes;
-    for (size_t index = 0u; index < *received; ++index) {
-        size_t word_bytes = bytes - (index / 4u) * 4u;
-        if (word_bytes > 4u) {
-            word_bytes = 4u;
-        }
-        rx[index] = (uint8_t)(words[index / 4u] >> ((word_bytes - 1u - index % 4u) * 8u));
-    }
-    return ok;
+    return pf_sdio_pio_exchange(context, tx, tx_size, bits, rx, capacity, received, timeout_us);
 }
 static bool native_rx_start(void *context, uint32_t *buffer, uint32_t words,
                             uint32_t nibbles, uint32_t blocks)

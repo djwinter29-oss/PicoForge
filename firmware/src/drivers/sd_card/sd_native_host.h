@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include "sd_native.h"
-#include "sd_native_protocol.h"
+#include "sd_protocol.h"
 #include "../storage/native.h"
 
 /** SD protocol state layered over a native wire transport. */

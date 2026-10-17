@@ -39,8 +39,6 @@ typedef struct {
     uint32_t current_clock_hz;         /**< Actual wire clock. */
     uint32_t previous_input_sync_bypass;/**< Saved GPIO synchronizer state. */
     uint32_t input_sync_bypass_mask;    /**< Bits owned by this transport. */
-    uint32_t last_response_words[5];    /**< Last raw command response, including partial failures. */
-    size_t last_response_word_count;   /**< Number of captured response words. */
     pf_sdio_pio_clock_owner_t clock_owner; /**< Current CLK owner. */
     pf_storage_native_error_t last_error; /**< Latest physical failure. */
     pf_sdio_pio_wait_hook_t wait_hook; /**< Optional bounded scheduler wait. */
@@ -75,9 +73,9 @@ bool pf_sdio_pio_clocks(pf_sdio_pio_t *transport, uint32_t cycles, uint32_t time
 void pf_sdio_pio_abort(pf_sdio_pio_t *transport);
 /** Restore command signaling after TX; does not terminate a device stream. */
 bool pf_sdio_pio_restore_command(pf_sdio_pio_t *transport);
-/** Transfer an already-framed 48-bit command; response words are raw PIO packing. */
-bool pf_sdio_pio_command(pf_sdio_pio_t *transport, const uint8_t frame[6],
-    uint16_t response_bits, uint32_t *response_words, size_t response_word_capacity, uint32_t timeout_us);
+/** Exchange six caller-framed CMD bytes; received includes partial RX bytes on failure. */
+bool pf_sdio_pio_exchange(pf_sdio_pio_t *transport, const uint8_t *tx, size_t tx_size,
+    uint16_t rx_bits, uint8_t *rx, size_t capacity, size_t *received, uint32_t timeout_us);
 /** Arm raw nibble RX before issuing the device command; buffers remain borrowed until cleanup. */
 bool pf_sdio_pio_rx_start(pf_sdio_pio_t *transport, uint32_t *destination,
     uint32_t transfer_words, uint32_t nibble_count, uint32_t block_count);

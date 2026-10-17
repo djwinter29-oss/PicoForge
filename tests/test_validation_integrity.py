@@ -14,6 +14,23 @@ ARTIFACT_TESTS = ROOT / 'tests/artifacts'
 pytestmark = pytest.mark.contracts
 
 
+def test_ceedling_tests_mirror_source_directories_and_module_names():
+    source_root = ROOT / 'firmware/src'
+    test_root = ROOT / 'firmware/tests'
+    tests = sorted(test_root.rglob('test_*.c'))
+    assert tests
+    for test in tests:
+        relative = test.relative_to(test_root)
+        source_directory = source_root / relative.parent
+        candidates = [
+            source for source in source_directory.glob('*.c')
+            if test.stem == f'test_{source.stem}' or test.stem.startswith(f'test_{source.stem}_')
+        ]
+        assert candidates, (
+            f'{relative}: expected test_<source_basename>[_<scenario>].c alongside mirrored source directory'
+        )
+
+
 def test_ceedling_ci_initializes_both_source_dependencies_before_setup():
     workflow = (ROOT / '.github/workflows/host-validation.yml').read_text()
     setup = workflow.split('  ceedling-setup:', 1)[1]
