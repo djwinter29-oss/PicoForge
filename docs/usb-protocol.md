@@ -66,6 +66,10 @@ If initialized is set, configured, presence-known, present, CID-valid, and
 capacity-valid must also be set. The report supports `GET_REPORT` when the card
 reservation is available.
 
+CID and capacity retained internally for SD diagnostics after initialization or I/O failure are not published in
+Input Report 3 while the card is uninitialized. Its CID-valid and capacity-valid flags remain clear, and CID, clock,
+and capacity fields remain zero, so a card failure does not invalidate the dashboard's live status stream.
+
 ## Feature Report 4
 
 Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED state (`0` off or `1` on). Setting a state is idempotent; the command is ignored if malformed or if the selected board has no controllable LED. The resulting state is reported in subsequent Input Report 2 telemetry.

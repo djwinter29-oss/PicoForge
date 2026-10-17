@@ -7,7 +7,7 @@
 #include HID_SOURCE
 #include USB_TASK_SOURCE
 
-static bool unavailable, reserved, initialized, mounted, queue_fails;
+static bool unavailable, reserved, initialized, mounted, queue_fails, retained_cid;
 static unsigned queries, queued, recovery_requests, normal_submissions, messages;
 bool pf_sd_try_lock(void)
 {
@@ -24,8 +24,11 @@ void pf_sd_get_info(pf_sd_info_t *info)
     ++queries;
     *info = (pf_sd_info_t){
         .initialized = initialized, .presence_known = true, .present = true,
-        .cid_valid = initialized, .bus_clock_hz = 25000000, .block_count = 128
+        .cid_valid = initialized || retained_cid, .bus_clock_hz = 25000000, .block_count = 128
     };
+    if (info->cid_valid) {
+        memset(info->cid, 0x5a, sizeof(info->cid));
+    }
 }
 bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 {

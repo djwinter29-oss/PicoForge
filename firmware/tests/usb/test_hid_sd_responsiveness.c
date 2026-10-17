@@ -73,3 +73,28 @@ void test_hid_unavailable_card_preserves_payload_and_does_not_block_usb_or_queue
     storage_command(NULL, recovery, "fs");
     TEST_ASSERT_TRUE(recovery_requests == 1 && normal_submissions == 3 && messages == 4);
 }
+
+void test_hid_retained_card_identity_is_hidden_until_initialized(void)
+{
+    unavailable = false;
+    retained_cid = true;
+    for (unsigned attempt = 0; attempt < 3; ++attempt) {
+        initialized = attempt == 1;
+        pf_hid_memory_report_t report;
+        TEST_ASSERT_TRUE(pf_hid_build_memory_report(&report, 7));
+        TEST_ASSERT_EQUAL_UINT8(initialized ? PF_HID_MEMORY_INITIALIZED | PF_HID_MEMORY_CID_VALID |
+            PF_HID_MEMORY_CAPACITY_VALID : 0, report.flags & (PF_HID_MEMORY_INITIALIZED |
+            PF_HID_MEMORY_CID_VALID | PF_HID_MEMORY_CAPACITY_VALID));
+        TEST_ASSERT_EQUAL_UINT32(initialized ? 25000000 : 0, report.bus_clock_hz);
+        TEST_ASSERT_EQUAL_UINT32(initialized ? 128 : 0, report.block_count);
+        for (unsigned i = 0; i < sizeof(report.cid); ++i) {
+            TEST_ASSERT_EQUAL_HEX8(initialized ? 0x5a : 0, report.cid[i]);
+        }
+        pf_hid_memory_report_t control_report;
+        TEST_ASSERT_EQUAL_UINT16(sizeof(control_report), tud_hid_get_report_cb(0, PF_HID_MEMORY_REPORT_ID,
+            HID_REPORT_TYPE_INPUT, (uint8_t *)&control_report, sizeof(control_report)));
+        report.sequence = 0;
+        TEST_ASSERT_EQUAL_MEMORY(&report, &control_report, sizeof(report));
+    }
+    retained_cid = false;
+}

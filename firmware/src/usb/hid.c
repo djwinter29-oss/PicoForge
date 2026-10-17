@@ -82,7 +82,7 @@ bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
         report->bus_clock_hz = info.bus_clock_hz;
         report->block_count = info.block_count;
     }
-    if (info.cid_valid) {
+    if (info.initialized && info.cid_valid) {
         report->flags |= PF_HID_MEMORY_CID_VALID;
         memcpy(report->cid, info.cid, sizeof(report->cid));
     }
