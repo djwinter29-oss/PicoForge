@@ -313,16 +313,20 @@ flowchart TD
     Transport -->|SPI| Setup[Configure SPI mode 0 and GPIO-controlled CS]
     Setup --> Clocks[Send 80 idle clocks with CS released]
     Clocks --> SPIReset[CMD0 and CMD8]
-    SPIReset --> SPIReady[CMD55 plus ACMD41 until ready]
-    SPIReady --> OCR[CMD58 OCR and address mode]
-    OCR --> SPIIdentify[CMD16 if needed, CMD9 CSD, CMD10 CID]
+    SPIReset --> SPICrc[CMD59 enable CRC checking; R1 must be idle]
+    SPICrc --> SPIReady[CMD55 plus ACMD41 until ready]
+    SPIReady --> OCR[CMD58 OCR and address mode; CMD16 if needed]
+    OCR --> SPIIdentify[CMD9 CSD, CMD10 CID]
     SPIIdentify --> SPISwitch[Above 25 MHz: CMD6 check and switch if supported]
     SPISwitch --> SPISpeed[Set card-limited SPI baud rate, at most 50 MHz]
     SPISpeed --> Ready
 ```
 
 Any command, resource, or validation failure returns an initialization error;
-there are no repeated clock-step retries. Native mode requires SCR-advertised four-bit
+there are no repeated clock-step retries. SPI initialization sends CMD59 with CRC_ON_OFF=1 after a valid CMD8 classification and
+before ACMD41 (SD Physical Layer Simplified Specification 3.01, 7.2.2). The card is still idle, so R1 must be exactly
+IDLE (`0x01`); ready (`0x00`), any other R1, or an absent or short response fails with init stage `CRC_ENABLE`, because
+write payloads carry CRC16 that the card must then check. Native mode requires SCR-advertised four-bit
 support; there is no one-bit sector-I/O fallback. SPI accepts its supported
 ready/idle responses and checks OCR power-up and voltage compatibility.
 
@@ -645,8 +649,9 @@ overlapped next-block encoding and the PIO's response/busy completion; it does
 not isolate the card's internal programming time. SPI read DATA includes token
 waiting, payload transfer and both wire CRC bytes; CRC covers CPU validation
 separately. A token deadline emits one timeout event; I/O failures do not. Snapshots use
-`pf_sd_get_profile()`; the facade locks each snapshot, while direct backend
-profiling access requires external serialization.
+`pf_sd_get_profile()`. The public enable, reset and snapshot calls take the recursive facade reservation
+themselves (a no-op on bare metal's single foreground context), so they may be called with it already held;
+the driver-internal `pf_sd_profile_*` hot-path helpers are lock-free because their callers hold it.
 
 ### Profile Measurement Boundaries
 
@@ -738,8 +743,8 @@ preallocated files), and card busy time before choosing further optimizations.
 | Review improvement | Current status |
 | --- | --- |
 | Phase profiling and recovery diagnostics | Implemented, disabled by default; CLI and C API available |
-| Preserve batching after transient faults | Implemented; CRC/timeout/uncertain-stop failures enter bounded card recovery |
-| Remove initialization-only payload storage | Implemented; no startup probe; transfer CRC checks retained |
+| Preserve batching after transient faults | Not implemented: a runtime failure invalidates the card, aborts the host, and refuses replay; later explicit or worker initialization resolves open streams only after a successful stop |
+| Remove initialization-only payload storage | Implemented for payload storage; initialization keeps its single-sector LBA 0 validation, and transfer CRC checks are retained |
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; SB128 filesystem tests qualified at 25 MHz, not 50 MHz |

@@ -18,6 +18,7 @@ typedef enum {
     PF_SD_SPI_INIT_STAGE_CID,
     PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK,
     PF_SD_SPI_INIT_STAGE_SWITCH_FUNCTION, /**< CMD6 capability check or timing switch failed. */
+    PF_SD_SPI_INIT_STAGE_CRC_ENABLE, /**< CMD59 enabling card CRC checking failed. */
 } pf_sd_spi_init_stage_t;
 
 /**

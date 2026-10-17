@@ -27,6 +27,7 @@
 #define SD_CMD_STOP_TRANSMISSION 12u
 #define SD_CMD_APP 55u
 #define SD_CMD_READ_OCR 58u
+#define SD_CMD_CRC_ON_OFF 59u
 #define SD_ACMD_SD_SEND_OP_COND 41u
 
 #define SD_R1_IDLE_STATE 0x01u
@@ -393,6 +394,12 @@ static bool initialize_card(void)
         return false;
     }
     if (!pf_sd_cmd8_supports_v2(response_argument, &supports_v2)) {
+        return false;
+    }
+
+    /* SD spec 7.2.2: enable CRC before ACMD41; the card is still idle, so R1 must be exactly IDLE. */
+    card_init_stage = PF_SD_SPI_INIT_STAGE_CRC_ENABLE;
+    if (!send_command(SD_CMD_CRC_ON_OFF, 1u, &response, NULL, 0u) || (response != SD_R1_IDLE_STATE)) {
         return false;
     }
 

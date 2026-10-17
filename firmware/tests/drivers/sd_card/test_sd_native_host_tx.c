@@ -1,4 +1,6 @@
 #include "unity.h"
+void pf_sd_lock(void) {}
+void pf_sd_unlock(void) {}
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"

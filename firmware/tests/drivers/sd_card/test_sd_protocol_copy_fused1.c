@@ -1,4 +1,6 @@
 #include "unity.h"
+void pf_sd_lock(void) {}
+void pf_sd_unlock(void) {}
 
 #define PF_SD_NATIVE_FUSED_COPY 1
 

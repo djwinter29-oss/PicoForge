@@ -1,4 +1,6 @@
 #include "unity.h"
+void pf_sd_lock(void) {}
+void pf_sd_unlock(void) {}
 TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #define PF_SPI_PRODUCTION_TEST
 #include "spi_production_fixture.h"
@@ -287,7 +289,7 @@ void test_spi_transfer_clock_failure_or_invalid_actual_rate_fails_initialization
 void test_spi_initialization_uses_only_hcs_in_acmd41_and_negotiates_after_identification(void)
 {
     prepare_clock();
-    const uint8_t responses[] = {0xffu, 1u, 0xffu, 0xffu, 1u, 0xffu,
+    const uint8_t responses[] = {0xffu, 1u, 0xffu, 0xffu, 1u, 0xffu, 0xffu, 1u, 0xffu,
         0xffu, 1u, 0xffu, 0xffu, 0u, 0xffu, 0xffu, 0u, 0xffu};
     memcpy(queue, responses, sizeof(responses));
     length = sizeof(responses);
@@ -303,16 +305,76 @@ void test_spi_initialization_uses_only_hcs_in_acmd41_and_negotiates_after_identi
     read_payloads[5][16] = 1u;
     for (unsigned i = 2u; i < 6u; ++i) queue_data_response(i, i < 4u ? 16u : 64u);
     TEST_ASSERT_TRUE(initialize_card());
-    TEST_ASSERT_EQUAL_UINT(9u, command_count);
-    TEST_ASSERT_EQUAL_UINT(41u, commands[3]);
-    TEST_ASSERT_EQUAL_HEX32(0x40000000u, arguments[3]);
-    TEST_ASSERT_EQUAL_UINT(9u, commands[5]);
-    TEST_ASSERT_EQUAL_UINT(10u, commands[6]);
-    TEST_ASSERT_EQUAL_UINT(6u, commands[7]);
+    TEST_ASSERT_EQUAL_UINT(10u, command_count);
+    TEST_ASSERT_EQUAL_UINT(59u, commands[2]);
+    TEST_ASSERT_EQUAL_HEX32(1u, arguments[2]);
+    TEST_ASSERT_EQUAL_UINT(55u, commands[3]);
+    TEST_ASSERT_EQUAL_UINT(41u, commands[4]);
+    TEST_ASSERT_EQUAL_HEX32(0x40000000u, arguments[4]);
+    TEST_ASSERT_EQUAL_UINT(58u, commands[5]);
+    TEST_ASSERT_EQUAL_UINT(9u, commands[6]);
+    TEST_ASSERT_EQUAL_UINT(10u, commands[7]);
     TEST_ASSERT_EQUAL_UINT(6u, commands[8]);
+    TEST_ASSERT_EQUAL_UINT(6u, commands[9]);
     TEST_ASSERT_EQUAL_UINT32(50000000u, clock_request);
     TEST_ASSERT_EQUAL_UINT(length, position);
     TEST_ASSERT_EQUAL_UINT(PF_SD_SPI_INIT_STAGE_NONE, card_init_stage);
+}
+
+static void queue_through_cmd8(void)
+{
+    const uint8_t responses[] = {0xffu, 1u, 0xffu, 0xffu, 1u, 0xffu};
+    memcpy(queue, responses, sizeof(responses));
+    length = sizeof(responses);
+    read_payloads[0][2] = 1u;
+    read_payloads[0][3] = 0xaau;
+}
+
+static void assert_crc_enable_precedes_acmd41(void)
+{
+    TEST_ASSERT_EQUAL_UINT(PF_SD_SPI_INIT_STAGE_CRC_ENABLE, card_init_stage);
+    TEST_ASSERT_EQUAL_UINT(3u, command_count);
+    TEST_ASSERT_EQUAL_UINT(59u, commands[2]);
+    TEST_ASSERT_EQUAL_HEX32(1u, arguments[2]);
+}
+
+void test_spi_initialization_fails_when_crc_enable_is_rejected_or_uncertain(void)
+{
+    const uint8_t wrong_r1[] = {SD_R1_ILLEGAL_COMMAND, 0u, 0x09u};
+    for (unsigned i = 0u; i < sizeof(wrong_r1); ++i) {
+        prepare_clock();
+        queue_through_cmd8();
+        queue[length++] = 0xffu;
+        queue[length++] = wrong_r1[i];
+        queue[length++] = 0xffu;
+        TEST_ASSERT_FALSE(initialize_card());
+        assert_crc_enable_precedes_acmd41();
+    }
+
+    prepare_clock();
+    queue_through_cmd8();
+    queue[length++] = 0xffu;
+    queue[length++] = SD_R1_IDLE_STATE;
+    queue[length++] = 0xffu;
+    unsigned total = 0u;
+    initialize_card();
+    total = exchanges;
+
+    unsigned failed_at_crc_enable = 0u;
+    for (unsigned k = 0u; k < total; ++k) {
+        prepare_clock();
+        queue_through_cmd8();
+        queue[length++] = 0xffu;
+        queue[length++] = SD_R1_IDLE_STATE;
+        queue[length++] = 0xffu;
+        short_exchange = (int)k;
+        TEST_ASSERT_FALSE(initialize_card());
+        if (card_init_stage == PF_SD_SPI_INIT_STAGE_CRC_ENABLE) {
+            ++failed_at_crc_enable;
+            TEST_ASSERT_NOT_EQUAL_UINT(55u, commands[command_count - 1u]);
+        }
+    }
+    TEST_ASSERT_GREATER_THAN_UINT(0u, failed_at_crc_enable);
 }
 
 static unsigned selection_attempts;

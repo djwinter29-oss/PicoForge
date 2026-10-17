@@ -360,10 +360,8 @@ void test_profile_enable_and_snapshot_are_serialized_commands(void)
     metrics.calls[PF_SD_PROFILE_CRC] = 8u;
     metrics.events[PF_SD_PROFILE_TIMEOUT] = 2u;
     pf_sd_set_profiling_enabled_Expect(true);
-    pf_sd_lock_Expect();
     pf_sd_get_profile_ExpectAnyArgs();
     pf_sd_get_profile_ReturnThruPtr_profile(&metrics);
-    pf_sd_unlock_Expect();
     pf_storage_command_execute(NULL, false, "sd", "profile on", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "crc_copy_us=1234 calls=8"));
     TEST_ASSERT_NOT_NULL(strstr(output, "timeouts=2"));

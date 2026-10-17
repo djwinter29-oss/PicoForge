@@ -158,7 +158,8 @@ typedef struct {
     pf_sd_profile_t profile;
 } pf_sd_diagnostics_t;
 
-/** Enable optional profiling, disabled at boot; serialize with all card access. */
+/** Enable optional profiling, disabled at boot. This and the two profile calls below take the recursive facade
+ * reservation internally, so they may be called with or without it held. */
 void pf_sd_set_profiling_enabled(bool enabled);
 /** Clear accumulated metrics without changing profiling enablement. */
 void pf_sd_reset_profile(void);

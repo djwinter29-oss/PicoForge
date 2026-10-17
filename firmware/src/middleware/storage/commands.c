@@ -178,9 +178,7 @@ static void profile_command(const char *action, bool host_owned,
     }
     static const char *const phase_names[] = { "command", "data", "crc_copy", "busy", "stop", "recovery" };
     pf_sd_profile_t metrics;
-    pf_sd_lock();
     pf_sd_get_profile(&metrics);
-    pf_sd_unlock();
     char line[PF_STORAGE_REPLY_SIZE];
     for (unsigned phase = 0u; phase < PF_SD_PROFILE_PHASE_COUNT; ++phase) {
         (void)snprintf(line, sizeof(line), "%s_us=%llu calls=%lu",
