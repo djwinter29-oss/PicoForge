@@ -97,6 +97,10 @@ them across adjacent payloads. Returning to CMD signaling is a hardware-only idl
 when CMD12 is required and never replays an uncertain write. Wire-capability validation rejects incomplete operation sets
 before device initialization.
 
+Both native TX programs park on their completion IRQ until the CPU disables the data state machine. They do not
+wrap into an empty FIFO pull after a completed payload, which would set TXSTALL and falsely report an underrun.
+The next TX start clears the old completion flag while the state machine is disabled; real FIFO stalls remain fatal.
+
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 
@@ -263,6 +267,18 @@ No formatting, repair, file creation, or write self-test was performed. This qua
 on this card and wiring, not sustained writes, another card, high-speed timing margins, or power-loss recovery. The
 Class 4 marking is a speed rating, not the cause of the initialization failure. This historical record does not change
 the current SDHC/SDXC Class 10-or-better target or its initialization policy.
+
+#### TX Completion Regression (2026-10-17)
+
+The replacement 8 GB `SD8GB` card initialized and mounted exFAT at 25 MHz, but writes failed with TXSTALL. Both TX
+programs signaled completion and wrapped into an empty blocking PULL before the CPU disabled the state machine.
+Parking on `IRQ WAIT 2` removes that false underrun without weakening actual starvation detection or changing wire timing.
+
+The fixed image was flashed and verified on Pico 2 at 150 MHz CPU / 25 MHz SD. An authorized 1 MiB file write/read
+self-test passed with zero mismatches and cleanup (2.55 MB/s write, 7.44 MB/s read). The dashboard subsequently
+reported a passed 32 MiB test with zero mismatches and cleanup (7.19 MB/s write, 7.48 MB/s read). Final card diagnostics
+had no CRC, timeout, or FIFO-stall errors, and `/PFTEST.BIN` was absent. These checks do not qualify other cards,
+electrical timing margins, optional 50 MHz operation, endurance, or power-loss safety.
 
 ### W25Q128 Flash Breakout
 

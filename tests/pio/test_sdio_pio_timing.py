@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test assembled TX start/data/end timing and RX cadence, not electrical qualification.
+"""Test assembled TX timing/completion and RX cadence, not electrical qualification.
 
 Model divider-1 data instructions, an integer-half-period clock, and 0/1
 cycle clock-observation latency with input_sync_bypass enabled. Pin writes
@@ -241,7 +241,7 @@ def check_tx_status(ops, half):
 
 @pytest.fixture(scope="module")
 def programs():
-    return {name: assemble(name) for name in ("data_tx", "data_rx", "data_rx_fast", "command")}
+    return {name: assemble(name) for name in ("data_tx", "data_tx_fast", "data_rx", "data_rx_fast", "command")}
 
 
 TIMINGS = [(half, latency, phase) for half in (6, 4, 3, 2)
@@ -284,3 +284,27 @@ def test_command_response(programs):
 def test_instruction_memory(programs):
     assert len(programs["command"]) + max(len(programs["data_rx"]), len(programs["data_rx_fast"])) <= 32, (
         "Command and receive programs exceed shared PIO instruction memory")
+
+
+@pytest.mark.parametrize("program", ("data_tx", "data_tx_fast"))
+@pytest.mark.parametrize("cpu_delay", (2, 32, 1000))
+def test_tx_completion_does_not_pull_empty_fifo_before_cpu_disables_sm(programs, program, cpu_delay):
+    ops = programs[program]
+    pc = len(ops) - 1
+    irq = False
+    tx_stall = False
+    for _ in range(cpu_delay):
+        op = ops[pc]
+        kind = op >> 13
+        if kind == 6:
+            assert op & 0x1f == 2 and not op & 0x40, "Expected TX completion IRQ set/wait"
+            irq = True
+            if op & 0x20:
+                continue  # IRQ WAIT parks until the CPU acknowledges the completion flag.
+        else:
+            assert kind == 4 and op & 0xe0 == 0xa0, "Expected wrapped blocking PULL"
+            tx_stall = True
+            break
+        pc = (pc + 1) % len(ops)
+    assert irq
+    assert not tx_stall, "Completed TX wrapped to an empty PULL and falsely reported starvation"

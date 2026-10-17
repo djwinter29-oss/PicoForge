@@ -109,7 +109,8 @@ read_data_response:
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin 0
-    irq set 2
+; Park at completion; wrapping to an empty PULL would falsely set TXSTALL.
+    irq wait 2
 
 ; Cycle-locked to the clock program: both start in sync, a period is 4 cycles at clkdiv
 ; sys/(4*bus), the clock rises in cycle 2 and every launch is in cycle 3, one cycle after it.
@@ -141,4 +142,4 @@ read_data_response:
     wait 0 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin SDIO_CLK_PIN_D0_OFFSET
     wait 1 pin 0
-    irq set 2
+    irq wait 2
