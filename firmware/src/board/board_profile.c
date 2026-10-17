@@ -37,7 +37,7 @@ static const pf_board_resources_t board_resources = {
     .spi_pins.mosi_gpio = STORAGE_IO0,
     .spi_pins.miso_gpio = STORAGE_IO1,
     .spi_pins.cs_gpio = STORAGE_CS,
-    .spi_clock_hz = 0u,
+    .spi_clock_hz = 50000000u,
     .qspi_pins = {
         .clock_gpio = STORAGE_CLK, .cs_gpio = STORAGE_CS,
         .data_gpio = { STORAGE_IO0, STORAGE_IO1, STORAGE_IO2, STORAGE_IO3 },

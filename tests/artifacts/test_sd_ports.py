@@ -36,8 +36,14 @@ def check_build(directory):
         if not re.search(r"\b" + symbol + r"$", symbols, re.MULTILINE):
             raise AssertionError(f"Missing {symbol} in {elf}")
     if re.search(r"\bpf_sd_spi_read_blocks$", symbols, re.MULTILINE):
-        if re.search(r"\b(?:pf_sd_native_\w+|crc16_4bit_\w+)$", symbols, re.MULTILINE):
-            raise AssertionError(f"Unused native protocol code or CRC tables in SPI artifact: {elf}")
+        native_symbols = set(re.findall(r"\b(pf_sd_native_\w+|crc16_4bit_\w+)$", symbols, re.MULTILINE))
+        shared_switch_decoders = {
+            "pf_sd_native_switch_supports_high_speed",
+            "pf_sd_native_switch_selected_high_speed",
+            "pf_sd_native_switch_high_speed_busy",
+        }
+        if native_symbols - shared_switch_decoders:
+            raise AssertionError(f"Unused native wire code or CRC tables in SPI artifact: {elf}")
     else:
         protocol = [item for item in commands if item["file"].endswith("/sd_card/sd_protocol.c")]
         cache = (directory / "CMakeCache.txt").read_text()

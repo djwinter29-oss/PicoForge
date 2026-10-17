@@ -24,6 +24,12 @@ static uint32_t arguments[16];
 static const uint8_t *expected_write;
 static uint8_t *expected_read;
 static unsigned fail_payload;
+static bool scripted_reads;
+static uint8_t read_payloads[6][64];
+static uint32_t clock_request, clock_actual;
+static unsigned clock_calls, commands_at_clock;
+static pf_storage_bus_result_t clock_result;
+static pf_storage_bus_ops_t clock_ops;
 
 uint32_t time_us_32(void) { now += clock_step; return now; }
 static uint32_t profile_clock(void) { return now; }
@@ -42,7 +48,12 @@ void gpio_put(unsigned pin, bool high)
 int spi_write_blocking(spi_inst_t *spi, const uint8_t *data, size_t size)
 {
     (void)spi;
-    TEST_ASSERT_TRUE(selected);
+    if (size == 10u) {
+        TEST_ASSERT_FALSE(selected);
+        for (size_t i = 0u; i < size; ++i) TEST_ASSERT_EQUAL_HEX8(0xffu, data[i]);
+    } else {
+        TEST_ASSERT_TRUE(selected);
+    }
     if (size == 6) {
         TEST_ASSERT_LESS_THAN_UINT(16, command_count);
         commands[command_count] = data[0] & 63u;
@@ -63,8 +74,15 @@ int spi_read_blocking(spi_inst_t *spi, uint8_t value, uint8_t *data, size_t size
     TEST_ASSERT_TRUE(selected);
     if (expected_read != NULL)
         TEST_ASSERT_EQUAL_PTR(expected_read + reads * 512, data);
-    if (reads++ == fail_payload) return 0;
-    memcpy(data, payload, size);
+    if (reads == fail_payload) { ++reads; return 0; }
+    if (scripted_reads) {
+        TEST_ASSERT_LESS_THAN_UINT(6u, reads);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT(64u, size);
+        memcpy(data, read_payloads[reads], size);
+    } else {
+        memcpy(data, payload, size);
+    }
+    ++reads;
     now += 100u;
     return short_payload ? (int)size - 1 : (int)size;
 }
@@ -102,6 +120,10 @@ static void reset(uint8_t response)
     crc_calls = 0;
     command_count = selects = deselects = payload_writes = 0;
     expected_write = NULL; expected_read = NULL; fail_payload = UINT32_MAX;
+    scripted_reads = false;
+    memset(read_payloads, 0, sizeof(read_payloads));
+    clock_calls = clock_request = clock_actual = commands_at_clock = 0u;
+    clock_result = PF_STORAGE_BUS_OK;
     clock_step = 25000u;
     memset(payload, 0, sizeof(payload));
     pf_sd_set_profiling_enabled(false);
@@ -116,6 +138,181 @@ void tearDown(void)
     pf_sd_set_profiling_enabled(false);
     pf_sd_profile_set_clock(NULL);
     pf_sd_set_idle_hook(NULL);
+}
+
+static pf_storage_bus_result_t record_clock(void *context, uint32_t requested, uint32_t *actual)
+{
+    TEST_ASSERT_EQUAL_PTR(&physical_bus, context);
+    TEST_ASSERT_FALSE(selected);
+    ++clock_calls;
+    commands_at_clock = command_count;
+    clock_request = requested;
+    *actual = clock_actual == 0u ? requested : clock_actual;
+    return clock_result;
+}
+
+static void prepare_clock(void)
+{
+    reset(0u);
+    physical_bus.clock_hz = SD_SPI_INIT_CLOCK_HZ;
+    active_config.clock_hz = SD_SPI_HIGH_CLOCK_HZ;
+    clock_ops = *active_config.transport.ops;
+    clock_ops.set_clock = record_clock;
+    active_config.transport.ops = &clock_ops;
+    scripted_reads = true;
+    clock_step = 0u;
+    length = 0u;
+}
+
+static void queue_data_response(unsigned read_index, size_t size)
+{
+    uint16_t crc = pf_sd_crc16(read_payloads[read_index], size);
+    const uint8_t bytes[] = {0xffu, 0u, 0xfeu, (uint8_t)(crc >> 8u), (uint8_t)crc, 0xffu};
+    TEST_ASSERT_LESS_OR_EQUAL_UINT(sizeof(queue), length + sizeof(bytes));
+    memcpy(queue + length, bytes, sizeof(bytes));
+    length += sizeof(bytes);
+}
+
+static void queue_switch(uint8_t support, uint8_t selection, bool check_busy, bool switch_busy)
+{
+    read_payloads[0][13] = support;
+    read_payloads[0][17] = 1u;
+    read_payloads[0][29] = check_busy ? 2u : 0u;
+    read_payloads[1][16] = selection;
+    read_payloads[1][17] = 1u;
+    read_payloads[1][29] = switch_busy ? 2u : 0u;
+    queue_data_response(0u, 64u);
+    queue_data_response(1u, 64u);
+}
+
+void test_spi_clock_configuration_accepts_50mhz_but_rejects_out_of_range_requests(void)
+{
+    const uint32_t valid[] = {0u, 400000u, 25000000u, 50000000u};
+    for (unsigned i = 0u; i < sizeof(valid) / sizeof(valid[0]); ++i) {
+        active_config.clock_hz = valid[i];
+        TEST_ASSERT_TRUE(config_is_valid(&active_config));
+    }
+    active_config.clock_hz = 399999u;
+    TEST_ASSERT_FALSE(config_is_valid(&active_config));
+    active_config.clock_hz = 50000001u;
+    TEST_ASSERT_FALSE(config_is_valid(&active_config));
+}
+
+void test_spi_high_speed_requires_check_and_successful_switch_before_raising_clock(void)
+{
+    uint8_t csd[16] = {[3] = 0x32u, [4] = 0x40u};
+    prepare_clock();
+    queue_switch(2u, 1u, false, false);
+    clock_actual = 37500000u;
+    TEST_ASSERT_TRUE(select_transfer_clock(csd));
+    TEST_ASSERT_EQUAL_UINT(2u, command_count);
+    TEST_ASSERT_EQUAL_UINT(6u, commands[0]);
+    TEST_ASSERT_EQUAL_UINT(6u, commands[1]);
+    TEST_ASSERT_EQUAL_HEX32(PF_SD_NATIVE_CMD6_CHECK_HIGH_SPEED, arguments[0]);
+    TEST_ASSERT_EQUAL_HEX32(PF_SD_NATIVE_CMD6_SWITCH_HIGH_SPEED, arguments[1]);
+    TEST_ASSERT_EQUAL_UINT(1u, clock_calls);
+    TEST_ASSERT_EQUAL_UINT(2u, commands_at_clock);
+    TEST_ASSERT_EQUAL_UINT32(50000000u, clock_request);
+    TEST_ASSERT_EQUAL_UINT32(37500000u, card_bus_clock_hz);
+    TEST_ASSERT_EQUAL_UINT(length, position);
+    TEST_ASSERT_EQUAL_UINT(PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK, card_init_stage);
+}
+
+void test_spi_unsupported_busy_or_declined_high_speed_retains_default_clock(void)
+{
+    uint8_t csd[16] = {[3] = 0x32u, [4] = 0x40u};
+    for (unsigned mode = 0u; mode < 4u; ++mode) {
+        prepare_clock();
+        queue_switch(mode == 0u ? 1u : 2u, mode == 2u ? 0u : 1u, mode == 1u, false);
+        if (mode == 3u) { queue[1] = SD_R1_ILLEGAL_COMMAND; queue[2] = 0xffu; length = 3u; }
+        TEST_ASSERT_TRUE(select_transfer_clock(csd));
+        TEST_ASSERT_EQUAL_UINT32(25000000u, clock_request);
+        TEST_ASSERT_EQUAL_UINT(mode == 2u ? 2u : 1u, command_count);
+        TEST_ASSERT_EQUAL_UINT(mode == 3u ? 0u : command_count, reads);
+    }
+}
+
+void test_spi_clock_policy_honors_explicit_default_and_csd_limits_without_cmd6(void)
+{
+    uint8_t csd[16] = {[3] = 0x32u, [4] = 0x40u};
+    const uint32_t requests[] = {0u, 10000000u, 25000000u, 50000000u};
+    const uint32_t expected[] = {25000000u, 10000000u, 25000000u, 20000000u};
+    for (unsigned i = 0u; i < 4u; ++i) {
+        prepare_clock();
+        active_config.clock_hz = requests[i];
+        csd[3] = i == 3u ? 0x2au : 0x32u;
+        csd[4] = i == 3u ? 0u : 0x40u;
+        TEST_ASSERT_TRUE(select_transfer_clock(csd));
+        TEST_ASSERT_EQUAL_UINT32(expected[i], clock_request);
+        TEST_ASSERT_EQUAL_UINT(0u, command_count);
+    }
+    prepare_clock();
+    csd[3] = 0u;
+    TEST_ASSERT_FALSE(select_transfer_clock(csd));
+    TEST_ASSERT_EQUAL_UINT(0u, clock_calls);
+}
+
+void test_spi_cmd6_transport_crc_status_and_busy_failures_never_raise_clock(void)
+{
+    uint8_t csd[16] = {[3] = 0x32u, [4] = 0x40u};
+    for (unsigned failure = 0u; failure < 8u; ++failure) {
+        prepare_clock();
+        queue_switch(2u, failure == 4u ? 0x0fu : 1u, false, failure == 5u);
+        if (failure == 0u) short_payload = true;
+        if (failure == 1u) queue[3] ^= 1u;
+        if (failure == 2u) queue[1] = 8u;
+        if (failure == 3u) queue[7] = SD_R1_ILLEGAL_COMMAND;
+        if (failure == 6u) fail_trailing = true;
+        if (failure == 7u) queue[9] ^= 1u;
+        TEST_ASSERT_FALSE(select_transfer_clock(csd));
+        TEST_ASSERT_EQUAL_UINT(0u, clock_calls);
+        TEST_ASSERT_EQUAL_UINT(PF_SD_SPI_INIT_STAGE_SWITCH_FUNCTION, card_init_stage);
+        TEST_ASSERT_FALSE(selected);
+    }
+}
+
+void test_spi_transfer_clock_failure_or_invalid_actual_rate_fails_initialization(void)
+{
+    uint8_t csd[16] = {[3] = 0x32u};
+    for (unsigned failure = 0u; failure < 3u; ++failure) {
+        prepare_clock();
+        if (failure == 0u) clock_result = PF_STORAGE_BUS_IO_ERROR;
+        if (failure == 1u) clock_actual = 399999u;
+        if (failure == 2u) clock_actual = 25000001u;
+        TEST_ASSERT_FALSE(select_transfer_clock(csd));
+        TEST_ASSERT_EQUAL_UINT(PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK, card_init_stage);
+    }
+}
+
+void test_spi_initialization_uses_only_hcs_in_acmd41_and_negotiates_after_identification(void)
+{
+    prepare_clock();
+    const uint8_t responses[] = {0xffu, 1u, 0xffu, 0xffu, 1u, 0xffu,
+        0xffu, 1u, 0xffu, 0xffu, 0u, 0xffu, 0xffu, 0u, 0xffu};
+    memcpy(queue, responses, sizeof(responses));
+    length = sizeof(responses);
+    read_payloads[0][2] = 1u;
+    read_payloads[0][3] = 0xaau;
+    read_payloads[1][0] = 0xc0u;
+    read_payloads[1][1] = 0xffu;
+    read_payloads[1][2] = 0x80u;
+    read_payloads[2][0] = 0x40u;
+    read_payloads[2][3] = 0x32u;
+    read_payloads[2][4] = 0x40u;
+    read_payloads[4][13] = 2u;
+    read_payloads[5][16] = 1u;
+    for (unsigned i = 2u; i < 6u; ++i) queue_data_response(i, i < 4u ? 16u : 64u);
+    TEST_ASSERT_TRUE(initialize_card());
+    TEST_ASSERT_EQUAL_UINT(9u, command_count);
+    TEST_ASSERT_EQUAL_UINT(41u, commands[3]);
+    TEST_ASSERT_EQUAL_HEX32(0x40000000u, arguments[3]);
+    TEST_ASSERT_EQUAL_UINT(9u, commands[5]);
+    TEST_ASSERT_EQUAL_UINT(10u, commands[6]);
+    TEST_ASSERT_EQUAL_UINT(6u, commands[7]);
+    TEST_ASSERT_EQUAL_UINT(6u, commands[8]);
+    TEST_ASSERT_EQUAL_UINT32(50000000u, clock_request);
+    TEST_ASSERT_EQUAL_UINT(length, position);
+    TEST_ASSERT_EQUAL_UINT(PF_SD_SPI_INIT_STAGE_NONE, card_init_stage);
 }
 
 static unsigned selection_attempts;

@@ -108,8 +108,9 @@ flowchart TD
 | Shared SPI hardware transport | [spi.c](../firmware/src/drivers/storage/spi/spi.c) |
 | FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
 
-The build selects one backend; both modes use the consolidated protocol library. Native-only helpers retain their
-`pf_sd_native_*` names. `PF_SDIO_PIO_FUSED_COPY` configures this library, where the data codec is compiled.
+The build selects one backend; both modes use the consolidated protocol library. Native wire helpers retain their
+`pf_sd_native_*` names; SPI also reuses its transport-independent CMD6 arguments and switch-status decoders.
+`PF_SDIO_PIO_FUSED_COPY` configures this library, where the data codec is compiled.
 Per-function/data sections let the firmware linker discard unused protocol helpers and tables. SPI-only
 builds omit native SDIO code, including its 33,280-byte receive buffer and 8 KiB
 CRC tables. Filesystem mounting, formatting policy, and RTOS scheduling do not
@@ -143,7 +144,7 @@ board support, not application code or reusable protocol helpers.
 | Physical interface | `transport` (`NATIVE_SD` mode) | `transport` (`SPI` mode) |
 | Backend API prefix | `pf_sd_native_` | `pf_sd_spi_` |
 | Zero clock request | Fixed 25 MHz transfer target | 25 MHz |
-| Requested clock bounds | Only 0 or 25 MHz; initialization at 400 kHz | 400 kHz to 25 MHz |
+| Requested clock bounds | Only 0 or 25 MHz; initialization at 400 kHz | 400 kHz to 50 MHz; CMD6 required above 25 MHz |
 
 Transport and connection settings are locked after setup; repeating initialization
 with the same configuration retries card identification. There is no public
@@ -315,7 +316,8 @@ flowchart TD
     SPIReset --> SPIReady[CMD55 plus ACMD41 until ready]
     SPIReady --> OCR[CMD58 OCR and address mode]
     OCR --> SPIIdentify[CMD16 if needed, CMD9 CSD, CMD10 CID]
-    SPIIdentify --> SPISpeed[Set requested SPI baud rate, at most 25 MHz]
+    SPIIdentify --> SPISwitch[Above 25 MHz: CMD6 check and switch if supported]
+    SPISwitch --> SPISpeed[Set card-limited SPI baud rate, at most 50 MHz]
     SPISpeed --> Ready
 ```
 
@@ -323,6 +325,29 @@ Any command, resource, or validation failure returns an initialization error;
 there are no repeated clock-step retries. Native mode requires SCR-advertised four-bit
 support; there is no one-bit sector-I/O fallback. SPI accepts its supported
 ready/idle responses and checks OCR power-up and voltage compatibility.
+
+### SPI Transfer Clock
+
+SPI initialization sends only HCS in ACMD41 for a version-2 card (zero for a legacy card); the native-mode voltage
+window occupies reserved bits in the SPI argument. The reference board requests a 50 MHz ceiling. An API clock request
+of zero still selects 25 MHz for compatibility, and explicit requests at or below 25 MHz do not attempt CMD6.
+
+After reading CSD/CID, the driver limits Default Speed to the lesser of CSD `TRAN_SPEED`, 25 MHz, and the request.
+For requests above 25 MHz, CSD command class 10 enables CMD6 capability checking at the initialization clock.
+Only a CRC-checked status advertising group-1 function 1, not busy, permits the switch command. The clock is raised
+only after a CRC-checked switch status confirms function 1 and not busy. Missing capability, an explicitly illegal
+check command, or a switch retaining function 0 leaves the card at its Default-Speed limit. Transport, CRC, unexpected
+R1, invalid selection, and switch-busy failures return initialization failure rather than assume a safe mode.
+SPI initialization stage 10 identifies CMD6 failures; existing stage numbers are unchanged.
+
+The SDK chooses the highest realizable SPI rate not exceeding the selected ceiling, using `clk_peri` and an even
+prescaler multiplied by an integer post-divider. With `clk_peri` equal to SYSCLK, a 50 MHz ceiling yields 37.5 MHz at
+150 MHz, exactly 50 MHz at 200 MHz, and 41.67 MHz at 250 MHz. These are divider calculations, not hardware qualification
+of High-Speed SPI. HID and `sd status` report the actual configured rate, not the requested ceiling.
+Class 10 is a write-performance class, not a guarantee of 50 MHz SPI support. Runtime I/O errors do not lower clocks
+or replay uncertain writes.
+
+### Native Transfer Clock
 
 Native initialization requires a valid CMD8 R7, OCR ready/CCS and a compatible
 3.3 V voltage window, CSD structure 1, nonzero RCA, and ready TRAN state.
@@ -717,7 +742,7 @@ preallocated files), and card busy time before choosing further optimizations.
 | Remove initialization-only payload storage | Implemented; no startup probe; transfer CRC checks retained |
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
-| SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; hardware qualification outstanding |
+| SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; SB128 filesystem tests qualified at 25 MHz, not 50 MHz |
 | Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](tests/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
 | Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD self-test](sd-self-test.md) |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |

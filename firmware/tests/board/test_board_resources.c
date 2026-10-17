@@ -90,6 +90,22 @@ void test_rejects_invalid_spi_sd_pin_assignments(void)
 #endif
 }
 
+void test_spi_clock_policy_accepts_default_through_50mhz(void)
+{
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
+    pf_board_resources_t topology = valid_topology();
+    const uint32_t valid[] = {0u, 400000u, 25000000u, 50000000u};
+    for (unsigned i = 0u; i < sizeof(valid) / sizeof(valid[0]); ++i) {
+        topology.spi_clock_hz = valid[i];
+        TEST_ASSERT_TRUE(pf_board_resources_validate(&topology));
+    }
+    topology.spi_clock_hz = 399999u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+    topology.spi_clock_hz = 50000001u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&topology));
+#endif
+}
+
 void test_rejects_spi_pins_that_do_not_match_the_controller(void)
 {
     pf_board_resources_t topology = valid_topology();

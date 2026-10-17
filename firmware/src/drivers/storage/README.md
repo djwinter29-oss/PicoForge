@@ -232,9 +232,32 @@ GP7 drives CS in that mode. Board support can construct either transport configu
 signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls
 when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their
 combined strength. The storage worker initializes and mounts detected cards according to
-[the mounting policy](../../../../docs/cdc-cli.md). SPI requests use single-block commands for each sector.
+[the mounting policy](../../../../docs/cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
+for single sectors. Card capability negotiation and the board's 50 MHz SPI ceiling are defined by the
+[SPI transfer-clock policy](../../../../docs/sdcard-design.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
 Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power:
 an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.
+
+#### SPI Clock Qualification (2026-10-17)
+
+The connected SanDisk `SB128` (128 GB, product revision 8.0) returned a CRC-valid CMD6 check status with function-group-1
+support mask `0x8001`: Default Speed is supported, but the High-Speed function-1 bit is clear. The driver therefore
+retained 25 MHz even with the board's 50 MHz request. This establishes this card's advertised SPI limit, not the limits
+of its native SD mode or every card with the same product name. The initial switch from native firmware failed at
+CMD58; card removal/reinsertion followed by a firmware reset restored SPI initialization. The final SPI argument
+also clears ACMD41's reserved voltage-window bits; that change alone was not isolated as the cause of recovery.
+
+Clean version `0.1.0` firmware passed the filesystem write/read self-test on the existing exFAT volume:
+
+| Pico 2 SYSCLK / actual SPI SCK | Test size | Write / read | Result |
+| --- | --- | --- | --- |
+| 150 MHz / 25 MHz | 128 MiB | 1.91 / 1.98 MB/s | Passed; zero mismatches and errors; test file removed |
+| 200 MHz / 25 MHz | 32 MiB | 2.02 / 2.10 MB/s | Passed; zero mismatches and errors; test file removed |
+
+Only `/PFTEST.BIN` was used, without formatting or replacing other files. The board was left at stock 150 MHz with
+25 MHz SPI, the filesystem mounted, and MSC disabled. CMD6 check/switch sequencing, CRC/error rejection, rate rounding,
+and unsupported-card limits have host regression tests. A card advertising SPI High Speed is still required to
+qualify physical 37.5/41.67/50 MHz operation; no 50 MHz SPI hardware pass is claimed here.
 
 #### Historical SD-Card Qualification
 

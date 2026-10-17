@@ -8,12 +8,14 @@
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u
+#define SD_SPI_HIGH_CLOCK_HZ 50000000u
 #define SD_SPI_COMMAND_RETRIES 10u
 #define SD_SPI_RESPONSE_TIMEOUT_US 100000u
 #define SD_SPI_INITIALIZATION_TIMEOUT_US 1000000u
 #define SD_SPI_WRITE_TIMEOUT_US 500000u
 
 #define SD_CMD_GO_IDLE_STATE 0u
+#define SD_CMD_SWITCH_FUNCTION 6u
 #define SD_CMD_SEND_IF_COND 8u
 #define SD_CMD_SEND_CSD 9u
 #define SD_CMD_SEND_CID 10u
@@ -67,7 +69,7 @@ static bool config_is_valid(const pf_sd_config_t *config)
 
     return (config->clock_hz == 0u) ||
            ((config->clock_hz >= SD_SPI_INIT_CLOCK_HZ) &&
-            (config->clock_hz <= SD_SPI_DEFAULT_CLOCK_HZ));
+            (config->clock_hz <= SD_SPI_HIGH_CLOCK_HZ));
 }
 
 static bool card_is_present(void)
@@ -272,24 +274,74 @@ static bool receive_write_response(uint8_t *response)
     return false;
 }
 
-static bool read_register(uint8_t command, uint8_t data[16])
+/** @brief Read an accepted command's CRC-checked payload; retain R1 for optional-command rejection. */
+static bool read_command_data(uint8_t command, uint32_t argument, uint8_t *data,
+                              size_t size, uint8_t *response)
 {
-    uint8_t response;
     bool success = false;
 
     if (!select_card()) {
         return false;
     }
     if (wait_ready(SD_SPI_RESPONSE_TIMEOUT_US) &&
-        send_command_selected(command, 0u, &response) &&
-        (response == 0u) && read_data_block(data, 16u)) {
-        success = true;
+        send_command_selected(command, argument, response)) {
+        success = (*response != 0u) || read_data_block(data, size);
     }
     bool deselected = deselect_card();
     if (!deselected) {
         card_initialized = false;
     }
     return success && deselected;
+}
+
+static bool read_register(uint8_t command, uint8_t data[16])
+{
+    uint8_t response;
+    return read_command_data(command, 0u, data, 16u, &response) && response == 0u;
+}
+
+/** @brief Negotiate card timing before raising SCK; unsupported cards retain their CSD-limited default rate. */
+static bool select_transfer_clock(const uint8_t csd[16])
+{
+    uint32_t default_clock;
+    if (!pf_sd_csd_transfer_hz(csd, &default_clock)) {
+        return false;
+    }
+    if (default_clock > SD_SPI_DEFAULT_CLOCK_HZ) {
+        default_clock = SD_SPI_DEFAULT_CLOCK_HZ;
+    }
+    uint32_t requested = active_config.clock_hz == 0u ? SD_SPI_DEFAULT_CLOCK_HZ : active_config.clock_hz;
+    uint32_t transfer_clock = requested < default_clock ? requested : default_clock;
+    /* CSD command class 10 advertises CMD6; its status layout is shared with native SD. */
+    if (requested > SD_SPI_DEFAULT_CLOCK_HZ && (csd[4] & 0x40u) != 0u) {
+        uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
+        uint8_t response;
+        card_init_stage = PF_SD_SPI_INIT_STAGE_SWITCH_FUNCTION;
+        if (!read_command_data(SD_CMD_SWITCH_FUNCTION, PF_SD_NATIVE_CMD6_CHECK_HIGH_SPEED,
+                               status, sizeof(status), &response)) {
+            return false;
+        }
+        if (response != 0u && response != SD_R1_ILLEGAL_COMMAND) {
+            return false;
+        }
+        if (response == 0u && pf_sd_native_switch_supports_high_speed(status) &&
+            !pf_sd_native_switch_high_speed_busy(status)) {
+            if (!read_command_data(SD_CMD_SWITCH_FUNCTION, PF_SD_NATIVE_CMD6_SWITCH_HIGH_SPEED,
+                                   status, sizeof(status), &response) || response != 0u ||
+                pf_sd_native_switch_high_speed_busy(status)) {
+                return false;
+            }
+            if (pf_sd_native_switch_selected_high_speed(status)) {
+                transfer_clock = requested;
+            } else if ((status[16] & 0x0fu) != 0u) {
+                return false;
+            }
+        }
+    }
+    card_init_stage = PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK;
+    return pf_storage_bus_set_clock(&active_config.transport, transfer_clock, &card_bus_clock_hz) ==
+               PF_STORAGE_BUS_OK &&
+           card_bus_clock_hz >= SD_SPI_INIT_CLOCK_HZ && card_bus_clock_hz <= transfer_clock;
 }
 
 static bool initialize_card(void)
@@ -349,7 +401,7 @@ static bool initialize_card(void)
     do {
         if (!send_application_command(
                 SD_ACMD_SD_SEND_OP_COND,
-                0x00ff8000u | (supports_v2 ? SD_OCR_HCS : 0u), &response) ||
+                supports_v2 ? SD_OCR_HCS : 0u, &response) ||
             (response != 0u && response != SD_R1_IDLE_STATE)) {
             return false;
         }
@@ -395,12 +447,7 @@ static bool initialize_card(void)
         return false;
     }
 
-    uint32_t transfer_clock = (active_config.clock_hz == 0u)
-        ? SD_SPI_DEFAULT_CLOCK_HZ
-        : active_config.clock_hz;
-    card_init_stage = PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK;
-    if (pf_storage_bus_set_clock(&active_config.transport, transfer_clock, &card_bus_clock_hz) != PF_STORAGE_BUS_OK ||
-        card_bus_clock_hz < SD_SPI_INIT_CLOCK_HZ) {
+    if (!select_transfer_clock(csd)) {
         return false;
     }
     memcpy(card_cid, cid, sizeof(card_cid));

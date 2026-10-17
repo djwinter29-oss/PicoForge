@@ -24,7 +24,7 @@ typedef struct {
     uint32_t clock_hz;
     uint32_t spi_index;
     pf_storage_spi_pins_t spi_pins; /**< Shared SD/NOR SPI signal allocation. */
-    uint32_t spi_clock_hz;
+    uint32_t spi_clock_hz; /**< SD-SPI ceiling; rates above 25 MHz require card High-Speed support. */
     pf_storage_qspi_pins_t qspi_pins; /**< Quad serial signal allocation. */
     uint32_t serial_clock_hz; /**< Initial external serial-device clock. */
     uint32_t serial_timeout_us; /**< SPI per-byte FIFO deadline. */

@@ -57,7 +57,7 @@ static bool spi_pins_are_valid(const pf_board_resources_t *topology,
     if ((topology->spi_index > 1u) ||
         ((topology->spi_clock_hz != 0u) &&
          ((topology->spi_clock_hz < 400000u) ||
-          (topology->spi_clock_hz > 25000000u)))) {
+          (topology->spi_clock_hz > 50000000u)))) {
         return false;
     }
     for (uint32_t pin_index = 0u; pin_index < 4u; pin_index++) {
