@@ -3,11 +3,8 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "hardware/gpio.h"
-#include "pico/stdlib.h"
 #include "sd_protocol.h"
 #include "sd_spi_protocol.h"
-#include "../storage/spi/storage_spi.h"
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u
@@ -43,7 +40,6 @@
 static pf_sd_spi_config_t active_config;
 static bool configuration_set;
 static bool spi_configured;
-static pf_storage_spi_t physical_bus;
 static bool card_initialized;
 static bool card_block_addressed;
 static uint32_t card_sector_count;
@@ -57,43 +53,13 @@ static bool last_init_response_received;
 static bool same_config(const pf_sd_spi_config_t *left,
                         const pf_sd_spi_config_t *right)
 {
-    return (left->spi == right->spi) &&
-           (left->pins.clock_gpio == right->pins.clock_gpio) &&
-           (left->pins.mosi_gpio == right->pins.mosi_gpio) &&
-           (left->pins.miso_gpio == right->pins.miso_gpio) &&
-           (left->pins.cs_gpio == right->pins.cs_gpio) &&
-           (left->clock_hz == right->clock_hz) &&
-           (left->use_card_detect == right->use_card_detect) &&
-           (left->card_detect_gpio == right->card_detect_gpio) &&
-           (left->card_detect_active_high == right->card_detect_active_high) &&
-           (left->card_detect_use_pull == right->card_detect_use_pull) &&
-           (left->card_detect_pull_up == right->card_detect_pull_up);
-}
-
-static bool pin_is_valid(uint32_t pin)
-{
-    return pin < NUM_BANK0_GPIOS;
+    return left->clock_hz == right->clock_hz &&
+           pf_storage_transport_same(&left->transport, &right->transport);
 }
 
 static bool config_is_valid(const pf_sd_spi_config_t *config)
 {
-    if (config == NULL) {
-        return false;
-    }
-    pf_storage_spi_t physical = {
-        .instance = config->spi, .pins = config->pins,
-        .clock_hz = SD_SPI_INIT_CLOCK_HZ,
-    };
-    if (!pf_storage_spi_config_valid(&physical)) {
-        return false;
-    }
-
-    if (config->use_card_detect &&
-        (!pin_is_valid(config->card_detect_gpio) ||
-         (config->card_detect_gpio == config->pins.clock_gpio) ||
-         (config->card_detect_gpio == config->pins.mosi_gpio) ||
-         (config->card_detect_gpio == config->pins.miso_gpio) ||
-         (config->card_detect_gpio == config->pins.cs_gpio))) {
+    if (config == NULL || !pf_storage_transport_valid(&config->transport, PF_STORAGE_TRANSPORT_SPI)) {
         return false;
     }
 
@@ -104,14 +70,17 @@ static bool config_is_valid(const pf_sd_spi_config_t *config)
 
 static bool card_is_present(void)
 {
-    return !active_config.use_card_detect ||
-           ((gpio_get(active_config.card_detect_gpio) != 0u) ==
-            active_config.card_detect_active_high);
+    return pf_storage_transport_present(&active_config.transport);
+}
+
+static uint32_t spi_profile_clock(void)
+{
+    return (uint32_t)pf_storage_transport_time_us(&active_config.transport);
 }
 
 static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 {
-    if (pf_storage_spi_exchange(&physical_bus, &value, received, 1u) != PF_STORAGE_BUS_OK) {
+    if (pf_storage_transport_exchange(&active_config.transport, &value, received, 1u) != PF_STORAGE_TRANSPORT_OK) {
         card_initialized = false;
         return false;
     }
@@ -120,7 +89,7 @@ static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 
 static void select_card(void)
 {
-    if (pf_storage_spi_select(&physical_bus, true) != PF_STORAGE_BUS_OK) {
+    if (pf_storage_transport_select(&active_config.transport, true) != PF_STORAGE_TRANSPORT_OK) {
         card_initialized = false;
     }
 }
@@ -130,7 +99,7 @@ static bool deselect_card(void)
     /* CS is high before the trailing clocks. The pinned blocking SDK returns
      * len after receiving every byte; an alternate short-return seam gives no
      * clock-completion guarantee. Invalidate and propagate, never recover/replay. */
-    if (pf_storage_spi_select(&physical_bus, false) != PF_STORAGE_BUS_OK) {
+    if (pf_storage_transport_select(&active_config.transport, false) != PF_STORAGE_TRANSPORT_OK) {
         return false;
     }
     uint8_t ignored;
@@ -139,7 +108,7 @@ static bool deselect_card(void)
 
 static bool wait_ready(uint32_t timeout_us)
 {
-    uint32_t start = time_us_32();
+    uint32_t start = (uint32_t)pf_storage_transport_time_us(&active_config.transport);
     uint32_t profile_start = pf_sd_profile_begin();
 
     do {
@@ -153,7 +122,7 @@ static bool wait_ready(uint32_t timeout_us)
             return true;
         }
         pf_sd_idle();
-    } while ((uint32_t)(time_us_32() - start) < timeout_us);
+    } while ((uint32_t)((uint32_t)pf_storage_transport_time_us(&active_config.transport) - start) < timeout_us);
 
     pf_sd_profile_end(PF_SD_PROFILE_BUSY, profile_start);
     pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
@@ -171,7 +140,7 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
 
     uint32_t profile_start = pf_sd_profile_begin();
     bool success = false;
-    if (pf_storage_spi_exchange(&physical_bus, frame, NULL, sizeof(frame)) != PF_STORAGE_BUS_OK) {
+    if (pf_storage_transport_exchange(&active_config.transport, frame, NULL, sizeof(frame)) != PF_STORAGE_TRANSPORT_OK) {
         goto done;
     }
     if (command == SD_CMD_STOP_TRANSMISSION) {
@@ -214,7 +183,7 @@ static bool send_command(uint8_t command, uint32_t argument,
         send_command_selected(command, argument, response)) {
         success = (extra_size == 0u) ||
                   ((extra != NULL) &&
-                   (pf_storage_spi_exchange(&physical_bus, NULL, extra, extra_size) == PF_STORAGE_BUS_OK));
+                   (pf_storage_transport_exchange(&active_config.transport, NULL, extra, extra_size) == PF_STORAGE_TRANSPORT_OK));
     }
     bool deselected = deselect_card();
     if (!deselected) {
@@ -235,7 +204,7 @@ static bool send_application_command(uint8_t command, uint32_t argument,
 
 static bool read_data_block(uint8_t *data, size_t size)
 {
-    uint32_t start = time_us_32();
+    uint32_t start = (uint32_t)pf_storage_transport_time_us(&active_config.transport);
     /* DATA covers token wait, payload and wire CRC; CRC measures CPU validation. */
     uint32_t profile_start = pf_sd_profile_begin();
     uint8_t token, crc_high, crc_low;
@@ -252,12 +221,12 @@ static bool read_data_block(uint8_t *data, size_t size)
             goto data_done;
         }
         pf_sd_idle();
-    } while ((uint32_t)(time_us_32() - start) < SD_SPI_RESPONSE_TIMEOUT_US);
+    } while ((uint32_t)((uint32_t)pf_storage_transport_time_us(&active_config.transport) - start) < SD_SPI_RESPONSE_TIMEOUT_US);
     if (!pf_sd_spi_read_token_is_valid(token)) {
         pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
         goto data_done;
     }
-    if (pf_storage_spi_exchange(&physical_bus, NULL, data, size) != PF_STORAGE_BUS_OK ||
+    if (pf_storage_transport_exchange(&active_config.transport, NULL, data, size) != PF_STORAGE_TRANSPORT_OK ||
         !exchange_byte_checked(0xffu, &crc_high) ||
         !exchange_byte_checked(0xffu, &crc_low)) {
         goto data_done;
@@ -281,7 +250,7 @@ data_done:
 
 static bool receive_write_response(uint8_t *response)
 {
-    uint32_t start = time_us_32();
+    uint32_t start = (uint32_t)pf_storage_transport_time_us(&active_config.transport);
 
     do {
         if (!exchange_byte_checked(0xffu, response)) {
@@ -292,7 +261,7 @@ static bool receive_write_response(uint8_t *response)
             return pf_sd_spi_write_response_is_accepted(*response);
         }
         pf_sd_idle();
-    } while ((uint32_t)(time_us_32() - start) < SD_SPI_RESPONSE_TIMEOUT_US);
+    } while ((uint32_t)((uint32_t)pf_storage_transport_time_us(&active_config.transport) - start) < SD_SPI_RESPONSE_TIMEOUT_US);
 
     return false;
 }
@@ -350,7 +319,7 @@ static bool initialize_card(void)
     last_init_response_received = false;
     card_init_stage = PF_SD_SPI_INIT_STAGE_IDLE_CLOCKS;
     memset(idle_clocks, 0xff, sizeof(idle_clocks));
-    if (pf_storage_spi_exchange(&physical_bus, idle_clocks, NULL, sizeof(idle_clocks)) != PF_STORAGE_BUS_OK) {
+    if (pf_storage_transport_exchange(&active_config.transport, idle_clocks, NULL, sizeof(idle_clocks)) != PF_STORAGE_TRANSPORT_OK) {
         return false;
     }
 
@@ -363,7 +332,7 @@ static bool initialize_card(void)
         if (attempt + 1u == SD_SPI_COMMAND_RETRIES) {
             return false;
         }
-        sleep_ms(10u);
+        pf_storage_transport_delay_ms(&active_config.transport, 10u);
     }
 
     card_init_stage = PF_SD_SPI_INIT_STAGE_IF_CONDITION;
@@ -386,7 +355,7 @@ static bool initialize_card(void)
     }
 
     card_init_stage = PF_SD_SPI_INIT_STAGE_OPERATING_CONDITION;
-    start = time_us_32();
+    start = (uint32_t)pf_storage_transport_time_us(&active_config.transport);
     do {
         if (!send_application_command(
                 SD_ACMD_SD_SEND_OP_COND,
@@ -397,8 +366,8 @@ static bool initialize_card(void)
         if (response == 0u) {
             break;
         }
-        sleep_ms(10u);
-    } while ((uint32_t)(time_us_32() - start) <
+        pf_storage_transport_delay_ms(&active_config.transport, 10u);
+    } while ((uint32_t)((uint32_t)pf_storage_transport_time_us(&active_config.transport) - start) <
              SD_SPI_INITIALIZATION_TIMEOUT_US);
     if (response != 0u) {
         return false;
@@ -440,8 +409,7 @@ static bool initialize_card(void)
         ? SD_SPI_DEFAULT_CLOCK_HZ
         : active_config.clock_hz;
     card_init_stage = PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK;
-    pf_storage_bus_t bus = pf_storage_spi_bus(&physical_bus);
-    if (pf_storage_bus_set_clock(&bus, transfer_clock, &card_bus_clock_hz) != PF_STORAGE_BUS_OK ||
+    if (pf_storage_transport_set_clock(&active_config.transport, transfer_clock, &card_bus_clock_hz) != PF_STORAGE_TRANSPORT_OK ||
         card_bus_clock_hz < SD_SPI_INIT_CLOCK_HZ) {
         return false;
     }
@@ -471,13 +439,13 @@ void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
 
 static bool write_data_block(const uint8_t *buffer, uint8_t token)
 {
-    if (pf_storage_spi_exchange(&physical_bus, &token, NULL, 1u) != PF_STORAGE_BUS_OK) {
+    if (pf_storage_transport_exchange(&active_config.transport, &token, NULL, 1u) != PF_STORAGE_TRANSPORT_OK) {
         card_initialized = false;
         return false;
     }
     uint32_t profile_start = pf_sd_profile_begin();
-    bool sent = pf_storage_spi_exchange(&physical_bus, buffer, NULL, PF_SD_BLOCK_SIZE)
-        == PF_STORAGE_BUS_OK;
+    bool sent = pf_storage_transport_exchange(&active_config.transport, buffer, NULL, PF_SD_BLOCK_SIZE)
+        == PF_STORAGE_TRANSPORT_OK;
     pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
     if (!sent) {
         card_initialized = false;
@@ -566,38 +534,19 @@ pf_sd_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config)
     if (configuration_set && !same_config(&active_config, config)) {
         return PF_SD_CONFIG_LOCKED;
     }
-    pf_sd_profile_set_clock(time_us_32);
     if (!configuration_set) {
         active_config = *config;
-
-        if (active_config.use_card_detect) {
-            gpio_init(active_config.card_detect_gpio);
-            if (active_config.card_detect_use_pull) {
-                if (active_config.card_detect_pull_up) {
-                    gpio_pull_up(active_config.card_detect_gpio);
-                } else {
-                    gpio_pull_down(active_config.card_detect_gpio);
-                }
-            } else {
-                gpio_disable_pulls(active_config.card_detect_gpio);
-            }
-        }
-
-        physical_bus = (pf_storage_spi_t){
-            .instance = active_config.spi, .pins = active_config.pins, .clock_hz = SD_SPI_INIT_CLOCK_HZ,
-        };
-        pf_storage_bus_t bus = pf_storage_spi_bus(&physical_bus);
-        if (pf_storage_bus_init(&bus) != PF_STORAGE_BUS_OK) {
+        if (pf_storage_transport_init(&active_config.transport) != PF_STORAGE_TRANSPORT_OK) {
             return PF_SD_INIT_FAILED;
         }
         spi_configured = true;
         configuration_set = true;
     }
+    pf_sd_profile_set_clock(spi_profile_clock);
 
     card_initialized = false;
     if (spi_configured) {
-        pf_storage_bus_t bus = pf_storage_spi_bus(&physical_bus);
-        if (pf_storage_bus_set_clock(&bus, SD_SPI_INIT_CLOCK_HZ, &card_bus_clock_hz) != PF_STORAGE_BUS_OK) {
+        if (pf_storage_transport_set_clock(&active_config.transport, SD_SPI_INIT_CLOCK_HZ, &card_bus_clock_hz) != PF_STORAGE_TRANSPORT_OK) {
             return PF_SD_INIT_FAILED;
         }
     }
@@ -757,7 +706,7 @@ void pf_sd_spi_get_info(pf_sd_info_t *info)
     if (!configuration_set) {
         return;
     }
-    if (active_config.use_card_detect) {
+    if (pf_storage_transport_presence_known(&active_config.transport)) {
         info->presence_known = true;
         info->present = card_is_present();
     } else if (pf_sd_spi_is_initialized()) {

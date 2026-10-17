@@ -53,9 +53,9 @@ Transport/result names already use `pf_nor_*` / `PF_NOR_*` and are unchanged. Bu
 LevelX `lx_nor_flash_*` names retain their existing names.
 
 `pf_nor_transport_init` replaces the former `pf_nor_spi_init` / `pf_nor_qspi_pio_init` entry points. Pass a persistent,
-configured `pf_storage_bus_t` handle and a transport output; the common adapter initializes the bus and derives quad
+configured `pf_storage_transport_t` handle and a transport output; the common adapter initializes the bus and derives quad
 capability from its mode. Native SD handles are rejected. The handle and concrete context must outlive the flash
-device. Deinitialize with `pf_storage_bus_deinit` after device operations finish. NOR protocol and LevelX APIs are
+device. Deinitialize with `pf_storage_transport_deinit` after device operations finish. NOR protocol and LevelX APIs are
 unchanged; direct callers of the former bus-specific adapters must migrate.
 
 The former NOR-specific board wrapper is removed. The
@@ -65,7 +65,7 @@ board-specific idle pins without initializing the bus or referencing NOR. The st
 1. `pf_board_storage_prepare(&bus)` configures board-owned runtime state from the immutable profile and prepares
    WP/HOLD for SPI. It acquires no SPI/PIO resources.
 2. `pf_nor_transport_init(&bus, &transport)` initializes the bus; `pf_nor_init` identifies the flash.
-3. After all operations, call `pf_storage_bus_deinit(&bus)`, then `pf_board_storage_release_pins()`.
+3. After all operations, call `pf_storage_transport_deinit(&bus)`, then `pf_board_storage_release_pins()`.
    Release prepared pins even if subsequent bus/device initialization fails.
 
 `PF_BOARD_STORAGE_QSPI` selects the serial board profile for the standalone target; CMake derives it from

@@ -2,6 +2,11 @@
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
+#include "../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
+#include "../../../src/drivers/storage/storage_transport.c"
+
+static pf_storage_sdio_pio_t test_wire;
+static bool test_present(void *context) { (void)context; return pf_test_sdio_gpio_level != 0u; }
 
 #include <string.h>
 
@@ -57,6 +62,7 @@ static bool fail_switch_check;
 
 void setUp(void)
 {
+    memset(&test_wire, 0, sizeof(test_wire));
     memset(&sdio_pio_host, 0, sizeof(sdio_pio_host));
     memset(&active_config, 0, sizeof(active_config));
     memset(card_cid, 0, sizeof(card_cid));
@@ -67,13 +73,10 @@ void setUp(void)
     card_initialized = true;
     card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
     active_config = (pf_sd_native_config_t){
-        .pio = pio0,
-        .pins.command_gpio = 1u,
-        .pins.data_gpio = {2u, 3u, 4u, 5u},
-        .pins.clock_gpio = 0u,
-        .clock_hz = 25000000u
+        .transport = pf_storage_sdio_pio_bus(&test_wire), .clock_hz = 25000000u
     };
-    sdio_pio_host.transport.current_clock_hz = 25000000u;
+    sdio_pio_host.transport = active_config.transport;
+    test_wire.current_clock_hz = 25000000u;
     sdio_pio_host.data_rx_multiblock_supported = true;
     recovery_calls = reads = sectors_read = single_writes = batch_writes = forget_calls = 0u;
     memset(read_first, 0, sizeof(read_first));
@@ -107,14 +110,14 @@ void setUp(void)
 void tearDown(void) {}
 
 bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_native_config_t *config)
-{ (void)config; host->transport.pio = pio0; host->transport.current_clock_hz = 400000u; return true; }
+{ host->transport = config->transport; test_wire.pio = pio0; test_wire.current_clock_hz = 400000u; return true; }
 void pf_sd_native_host_deinit(pf_sd_native_host_t *host) { (void)host; }
 bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t hz)
 {
     TEST_ASSERT_LESS_THAN_UINT(4u, clock_request_count);
     clock_requests[clock_request_count++] = hz;
     if (hz > SD_HIGH_CLOCK_HZ) return false;
-    host->transport.current_clock_hz = hz;
+    test_wire.current_clock_hz = hz;
     return true;
 }
 bool pf_sd_native_host_command(pf_sd_native_host_t *host, uint8_t command, uint32_t argument,
@@ -184,8 +187,8 @@ bool pf_sd_native_host_read_sector(pf_sd_native_host_t *host, uint32_t sector, b
     TEST_ASSERT_TRUE(addressed);
     TEST_ASSERT_EQUAL_UINT32(0u, sector);
     ++validation_reads;
-    bool ok = read_ok && !(fail_high_speed_read && host->transport.current_clock_hz > 25000000u) &&
-              !(fail_default_read && host->transport.current_clock_hz == 25000000u) &&
+    bool ok = read_ok && !(fail_high_speed_read && test_wire.current_clock_hz > 25000000u) &&
+              !(fail_default_read && test_wire.current_clock_hz == 25000000u) &&
               validation_reads != fail_validation_read;
     if (!ok) host->last_error = PF_SD_DETAIL_DATA_CRC;
     return ok;
@@ -252,7 +255,7 @@ bool pf_sd_native_host_recover(pf_sd_native_host_t *host)
     if (recovery_ok) {
         host->write_stream_open = false;
         host->read_stream_unresolved = false;
-        host->transport.mode_restore_failed = false;
+        test_wire.mode_restore_failed = false;
     }
     return recovery_ok;
 }
@@ -315,9 +318,7 @@ void test_readiness_sync_card_removal_and_info_follow_card_detect(void)
 {
     pf_sd_info_t info;
 
-    active_config.use_card_detect = true;
-    active_config.card_detect_gpio = 6u;
-    active_config.card_detect_active_high = true;
+    active_config.transport.present = test_present;
     pf_sd_native_get_info(&info);
     TEST_ASSERT_TRUE(info.presence_known);
     TEST_ASSERT_TRUE(info.present);
@@ -359,7 +360,7 @@ void test_card_init_validates_one_sector_without_high_speed_on_slow_cpu(void)
 {
     active_config.clock_hz = 0u;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
-    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.transport.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
     TEST_ASSERT_EQUAL_UINT(0u, reads);
@@ -396,7 +397,7 @@ void test_runtime_read_failure_is_not_replayed_and_clock_stays_fixed(void)
     read_fail_unresolved = true;
     TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_native_read_blocks(4096u, block, 1u));
     TEST_ASSERT_FALSE(card_initialized);
-    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.transport.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(1u, reads);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, block, 1u));
@@ -406,9 +407,7 @@ void test_runtime_read_failure_is_not_replayed_and_clock_stays_fixed(void)
 void test_removed_media_never_attempts_read_or_reinitialization(void)
 {
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
-    active_config.use_card_detect = true;
-    active_config.card_detect_gpio = 6u;
-    active_config.card_detect_active_high = true;
+    active_config.transport.present = test_present;
     pf_test_sdio_gpio_level = 0u;
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, block, 1u));
     TEST_ASSERT_FALSE(card_initialized);
@@ -424,7 +423,7 @@ void test_explicit_reinitialization_after_failed_read_restores_fixed_rate(void)
     TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_native_read_blocks(0u, block, 1u));
     read_ok = true;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
-    TEST_ASSERT_EQUAL_UINT32(25000000u, sdio_pio_host.transport.current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(2u, card_init_calls);
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_read_blocks(0u, block, 1u));
 }

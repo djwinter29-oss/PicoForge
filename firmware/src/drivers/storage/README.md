@@ -16,7 +16,7 @@ remain above this layer:
 ```text
 drivers/
   storage/
-    storage_bus.h / storage_bus.c
+    storage_transport.h / storage_transport.c
     spi/storage_spi.h / storage_spi.c
     sdio_pio/storage_sdio_pio.h / storage_sdio_pio.c / storage_sdio_pio.pio
     qspi_pio/storage_qspi_pio.h / storage_qspi_pio.c / storage_qspi_pio.pio
@@ -24,8 +24,8 @@ drivers/
   nor_flash/     NOR opcodes, status, page programming, erase and verification
 ```
 
-The [common bus interface](storage_bus.h) dispatches initialization, clock changes with calculated actual rates,
-hardware abort, deinitialization, and CS-bounded serial transactions. Its `pf_storage_bus_t` is a non-owning handle:
+The [common bus interface](storage_transport.h) dispatches initialization, clock changes with calculated actual rates,
+hardware abort, deinitialization, and CS-bounded serial transactions. Its `pf_storage_transport_t` is a non-owning handle:
 the caller owns the concrete context and serializes access. It creates no task, queue, filesystem policy, or automatic
 mode-switch manager.
 
@@ -50,9 +50,9 @@ SPI supports bounded FIFO polling for NOR; SD-SPI retains SDK blocking bulk I/O 
 
 Configure and zero-initialize the concrete context, obtain its non-owning bus handle, then initialize it before
 device-protocol operations. Contexts must outlive all synchronous calls; do not copy a live context. The common
-interface exposes `pf_storage_bus_init`, `pf_storage_bus_set_clock`, `pf_storage_bus_transfer`,
-`pf_storage_bus_abort`, and `pf_storage_bus_deinit`. Native command/data operations use the native typed API rather
-than `pf_storage_bus_transfer`.
+interface exposes `pf_storage_transport_init`, `pf_storage_transport_set_clock`, `pf_storage_transport_transfer`,
+`pf_storage_transport_abort`, and `pf_storage_transport_deinit`. Native command/data operations use the native typed API rather
+than `pf_storage_transport_transfer`.
 
 [Board support](../../board/) remains authoritative for GP2-GP8. SD-SPI and NOR-SPI use one shared SPI implementation;
 native SD and quad-SPI use their own physical engines. These are alternative modes of the shared pins, not permission
@@ -66,7 +66,7 @@ After device operations, the caller deinitializes the bus before releasing board
 
 ### Pin Allocation and Runtime State
 
-[storage_bus.h](storage_bus.h) defines SDK-independent `pf_storage_spi_pins_t`, `pf_storage_sdio_pins_t`, and
+[storage_transport.h](storage_transport.h) defines SDK-independent `pf_storage_spi_pins_t`, `pf_storage_sdio_pins_t`, and
 `pf_storage_qspi_pins_t`. Native DAT0-DAT3 and quad IO0-IO3 are explicit arrays in logical order; the physical engines
 validate their ascending, consecutive mapping. Pin allocation types do not include card detect, WP/HOLD policy,
 controller pointers, clock rates, or mutable hardware ownership.

@@ -1,0 +1,69 @@
+/** @file
+ * @brief Bounded FreeRTOS notification waits for the native PIO transport.
+ */
+#include "../../storage_sdio_pio.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "hardware/irq.h"
+#include "hardware/pio.h"
+
+static PIO wait_pio;
+static TaskHandle_t volatile waiting_task;
+static uint32_t waiting_flag;
+static bool handler_installed;
+
+static pio_interrupt_source_t completion_source(uint32_t flag)
+{
+    return (pio_interrupt_source_t)(pis_interrupt0 + flag);
+}
+
+static void completion_irq(void)
+{
+    if (waiting_task != NULL && pio_interrupt_get(wait_pio, waiting_flag)) {
+        pio_set_irq0_source_enabled(wait_pio, completion_source(waiting_flag), false);
+        BaseType_t awakened = pdFALSE;
+        vTaskNotifyGiveIndexedFromISR(waiting_task, 1u, &awakened);
+        portYIELD_FROM_ISR(awakened);
+    }
+}
+
+static void wait_completion(PIO pio, uint32_t flag)
+{
+    if (pio != wait_pio || (flag != 1u && flag != 2u) ||
+        xTaskGetSchedulerState() != taskSCHEDULER_RUNNING ||
+        pio_interrupt_get(pio, flag)) {
+        return;
+    }
+    (void)ulTaskNotifyTakeIndexed(1u, pdTRUE, 0u);
+    taskENTER_CRITICAL();
+    waiting_task = xTaskGetCurrentTaskHandle();
+    waiting_flag = flag;
+    pio_set_irq0_source_enabled(pio, completion_source(flag), true);
+    taskEXIT_CRITICAL();
+    (void)ulTaskNotifyTakeIndexed(1u, pdTRUE, 1u);
+    taskENTER_CRITICAL();
+    pio_set_irq0_source_enabled(pio, completion_source(flag), false);
+    waiting_task = NULL;
+    taskEXIT_CRITICAL();
+}
+bool pf_storage_sdio_pio_enable_wait(pf_storage_sdio_pio_t *transport)
+{
+    if (transport == NULL || (transport->config.pio != pio0 && transport->config.pio != pio1)) {
+        return false;
+    }
+    if (handler_installed && wait_pio != transport->config.pio) {
+        return false;
+    }
+    if (!handler_installed) {
+        wait_pio = transport->config.pio;
+        uint irq = (uint)pio_get_irq_num(wait_pio, 0u);
+        pio_set_irq0_source_enabled(wait_pio, pis_interrupt1, false);
+        pio_set_irq0_source_enabled(wait_pio, pis_interrupt2, false);
+        irq_add_shared_handler(irq, completion_irq, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
+        irq_set_priority(irq, PICO_DEFAULT_IRQ_PRIORITY);
+        irq_set_enabled(irq, true);
+        handler_installed = true;
+    }
+    transport->wait_hook = wait_completion;
+    return true;
+}

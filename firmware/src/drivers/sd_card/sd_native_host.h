@@ -7,7 +7,7 @@
 
 #include "sd_native.h"
 #include "sd_native_protocol.h"
-#include "../storage/sdio_pio/storage_sdio_pio.h"
+#include "../storage/storage_transport.h"
 
 /** Compatibility names for physical clock ownership, now owned by the transport. */
 typedef pf_storage_sdio_clock_owner_t pf_sd_native_clock_owner_t;
@@ -22,7 +22,7 @@ typedef pf_storage_sdio_clock_owner_t pf_sd_native_clock_owner_t;
 
 /** SD protocol state layered over a native wire transport. */
 typedef struct {
-    pf_storage_sdio_pio_t transport; /**< Owns GPIO, PIO, DMA and raw wire movement. */
+    pf_storage_transport_t transport; /**< Borrows board/storage-owned wire state. */
     pf_sd_native_init_stage_t scr_stage; /**< Most recent SCR protocol stage. */
     uint32_t write_stream_next_sector; /**< Next LBA accepted by the open CMD25 stream. */
     uint8_t bus_width;                /**< Width negotiated with the card. */
@@ -35,7 +35,7 @@ typedef struct {
 
 /**
  * First use requires a zero-initialized host (static storage or {0}); this function
- * reads host->transport.pio before clearing the structure. Never pass an indeterminate host.
+ * checks transport readiness before clearing the structure. Never pass an indeterminate host.
  * Duplicate init of a live host returns false without changing it or its resources.
  * Deinit releases resources and zeroes the host, allowing init again.
  */

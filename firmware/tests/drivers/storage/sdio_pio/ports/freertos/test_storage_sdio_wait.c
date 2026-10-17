@@ -1,12 +1,11 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
-#define PF_CONFIG_SD_CARD_INTERRUPT_WAIT 1
 #include "sdio_wait_fixture.h"
 
 #include <stdint.h>
 
-#include "../../../../../src/drivers/sd_card/ports/freertos/sd_wait.c"
+#include "../../../../../../src/drivers/storage/sdio_pio/ports/freertos/storage_sdio_wait.c"
 
 typedef struct {
     bool flag[3];
@@ -23,6 +22,7 @@ static unsigned notified;
 static unsigned critical_depth;
 static bool early_irq;
 static bool late_irq;
+PIO pio0, pio1;
 
 bool pio_interrupt_get(PIO pio, uint32_t flag)
 {
@@ -35,13 +35,11 @@ static void fake_pio_set_irq0_source_enabled(PIO pio, pio_interrupt_source_t sou
     ((pf_test_sdio_irq_pio_t *)pio)->source[source] = enabled;
 }
 
-void pf_sd_native_set_wait_hook(void (*hook)(PIO, uint32_t))
-{
-    wait_hook = hook;
-}
-
 void setUp(void)
 {
+    handler_installed = false;
+    wait_pio = NULL;
+    waiting_task = NULL;
     installed_handler = NULL;
     wait_hook = NULL;
     active_pio = NULL;
@@ -140,17 +138,14 @@ void irq_set_enabled(unsigned irq, bool enabled)
 void test_wait_hook_filters_invalid_requests_and_handles_both_irq_races(void)
 {
     pf_test_sdio_irq_pio_t pio = {0}, foreign = {0};
-    pf_sd_config_t config = {
-        .transport = PF_SD_TRANSPORT_SPI,
-        .bus.native.pio = (PIO)&pio
-    };
+    pio0 = (PIO)&pio;
+    pio1 = (PIO)&foreign;
+    pf_storage_sdio_pio_t transport = { .config.pio = pio0 };
 
-    pf_sd_port_init(NULL);
-    pf_sd_port_init(&config);
-    TEST_ASSERT_NULL(wait_hook);
-
-    config.transport = PF_SD_TRANSPORT_SDIO_PIO;
-    pf_sd_port_init(&config);
+    TEST_ASSERT_FALSE(pf_storage_sdio_pio_enable_wait(NULL));
+    TEST_ASSERT_NULL(transport.wait_hook);
+    TEST_ASSERT_TRUE(pf_storage_sdio_pio_enable_wait(&transport));
+    wait_hook = transport.wait_hook;
     TEST_ASSERT_NOT_NULL(wait_hook);
     TEST_ASSERT_FALSE(pio.source[1]);
     TEST_ASSERT_FALSE(pio.source[2]);

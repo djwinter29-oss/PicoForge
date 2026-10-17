@@ -5,40 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "hardware/pio.h"
-#include "../storage_bus.h"
-
-/** Physical clock generator currently owning CLK. */
-typedef enum {
-    PF_STORAGE_SDIO_CLOCK_UNOWNED,       /**< Clock stopped, lines released. */
-    PF_STORAGE_SDIO_CLOCK_COMMAND,       /**< Command state machine drives CLK. */
-    PF_STORAGE_SDIO_CLOCK_INITIALIZATION,/**< Standalone startup clocks. */
-    PF_STORAGE_SDIO_CLOCK_DATA_TX,       /**< Standalone data clock. */
-} pf_storage_sdio_clock_owner_t;
-
-/** Physical failures; no card response or CRC interpretation is performed here. */
-typedef enum {
-    PF_STORAGE_SDIO_ERROR_NONE,        /**< No physical error. */
-    PF_STORAGE_SDIO_ERROR_STATE,       /**< Invalid state or unavailable program memory. */
-    PF_STORAGE_SDIO_ERROR_PIO_TIMEOUT, /**< PIO did not complete. */
-    PF_STORAGE_SDIO_ERROR_DMA_TIMEOUT, /**< DMA did not complete. */
-    PF_STORAGE_SDIO_ERROR_BUSY_TIMEOUT,/**< Data lines stayed busy. */
-    PF_STORAGE_SDIO_ERROR_TX_STALL,    /**< Transmit FIFO starvation. */
-    PF_STORAGE_SDIO_ERROR_RX_STALL,    /**< Receive FIFO overflow. */
-} pf_storage_sdio_error_t;
-
-/** Timeout domains for device-layer diagnostics. */
-typedef enum {
-    PF_STORAGE_SDIO_PHASE_COMMAND, /**< Command wire transfer. */
-    PF_STORAGE_SDIO_PHASE_DATA,    /**< Data DMA and PIO. */
-    PF_STORAGE_SDIO_PHASE_BUSY,    /**< DAT0 release. */
-    PF_STORAGE_SDIO_PHASE_SETUP,   /**< Clock/program setup. */
-} pf_storage_sdio_phase_t;
+#include "../storage_transport.h"
 
 /** Optional bounded data-wait integration; must not clear the completion IRQ. */
 typedef void (*pf_storage_sdio_wait_hook_t)(PIO pio, uint32_t completion_flag);
-/** Optional device-layer diagnostic callback; context remains caller-owned. */
-typedef void (*pf_storage_sdio_error_hook_t)(void *context, pf_storage_sdio_error_t error,
-                                           pf_storage_sdio_phase_t phase);
 
 /** Board-independent physical pin routing. */
 typedef struct {
@@ -82,7 +52,9 @@ typedef struct {
 } pf_storage_sdio_pio_t;
 
 /** Return a non-owning common lifecycle descriptor; serial transfer is unsupported. */
-pf_storage_bus_t pf_storage_sdio_pio_bus(pf_storage_sdio_pio_t *transport);
+pf_storage_transport_t pf_storage_sdio_pio_bus(pf_storage_sdio_pio_t *transport);
+/** Enable the optional platform wait adapter for this backend. */
+bool pf_storage_sdio_pio_enable_wait(pf_storage_sdio_pio_t *transport);
 /** Acquire physical resources. Duplicate initialization leaves the live context unchanged. */
 bool pf_storage_sdio_pio_init(pf_storage_sdio_pio_t *transport,
                               const pf_storage_sdio_pio_config_t *config);

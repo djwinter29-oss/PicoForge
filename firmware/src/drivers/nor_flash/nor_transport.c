@@ -3,41 +3,37 @@
  */
 #include "nor_transport.h"
 
-#include "pico/stdlib.h"
-
 static uint64_t now(void *context)
 {
-    (void)context;
-    return time_us_64();
+    return pf_storage_transport_time_us(context);
 }
 
 /** @brief Forward one serial transaction and invalidate failed hardware without replay. */
 static pf_nor_result_t execute(void *context, const pf_nor_transaction_t *transaction)
 {
-    pf_storage_bus_t *bus = context;
-    pf_nor_result_t result = pf_nor_result_from_storage(pf_storage_bus_transfer(bus, transaction));
+    pf_storage_transport_t *bus = context;
+    pf_nor_result_t result = pf_nor_result_from_storage(pf_storage_transport_transfer(bus, transaction));
     if (result == PF_NOR_IO_ERROR || result == PF_NOR_TIMEOUT) {
-        pf_storage_bus_deinit(bus);
+        pf_storage_transport_deinit(bus);
     }
     return result;
 }
 
-pf_nor_result_t pf_nor_transport_init(pf_storage_bus_t *bus, pf_nor_transport_t *transport)
+pf_nor_result_t pf_nor_transport_init(pf_storage_transport_t *bus, pf_nor_transport_t *transport)
 {
-    if (bus == NULL || transport == NULL || bus->context == NULL || bus->ops == NULL) {
+    if (transport == NULL || bus == NULL) {
         return PF_NOR_INVALID_ARGUMENT;
     }
-    if (bus->mode != PF_STORAGE_BUS_SPI && bus->mode != PF_STORAGE_BUS_QSPI_PIO) {
-        return PF_NOR_UNSUPPORTED;
+    bool quad;
+    pf_nor_result_t validation = pf_nor_result_from_storage(pf_storage_transport_validate_serial(bus, &quad));
+    if (validation != PF_NOR_OK) {
+        return validation;
     }
-    if (bus->ops->init == NULL || bus->ops->transfer == NULL || bus->ops->deinit == NULL) {
-        return PF_NOR_INVALID_ARGUMENT;
-    }
-    pf_nor_result_t result = pf_nor_result_from_storage(pf_storage_bus_init(bus));
+    pf_nor_result_t result = pf_nor_result_from_storage(pf_storage_transport_init(bus));
     if (result == PF_NOR_OK) {
         *transport = (pf_nor_transport_t){
             .context = bus, .execute = execute, .time_us = now,
-            .quad_supported = bus->mode == PF_STORAGE_BUS_QSPI_PIO,
+            .quad_supported = quad,
         };
     }
     return result;

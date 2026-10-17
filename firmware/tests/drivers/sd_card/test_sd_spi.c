@@ -4,8 +4,11 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #include "spi_production_fixture.h"
 #include "sd_protocol.h"
 #include "sd_spi_protocol.h"
-#include "storage_bus.h"
+#include "storage_transport.h"
 #include "storage_spi.h"
+
+static pf_storage_spi_t physical_bus;
+static bool test_present(void *context) { (void)context; return spi_test_present; }
 
 spi_inst_t test_spi;
 bool spi_test_present;
@@ -83,13 +86,13 @@ static void reset(uint8_t response)
         .instance = &test_spi, .pins.clock_gpio = 2u, .pins.mosi_gpio = 3u,
         .pins.miso_gpio = 0u, .pins.cs_gpio = 1u, .clock_hz = 25000000u,
     };
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_spi_init(&physical_bus));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_spi_init(&physical_bus));
     card_initialized = card_block_addressed = true;
     card_sector_count = 128;
     configuration_set = spi_configured = false;
     last_init_response_received = false;
     last_init_command = last_init_response = 0;
-    active_config = (pf_sd_spi_config_t){ .spi = &test_spi };
+    active_config = (pf_sd_spi_config_t){ .transport = pf_storage_spi_bus(&physical_bus) };
     position = 0; length = 5;
     queue[0] = 0xff; queue[1] = 0; queue[2] = queue[3] = 0xff; queue[4] = response;
     busy = selected = fail_trailing = short_payload = false;
@@ -395,8 +398,8 @@ void test_spi_invalid_bounds_zero_count_absence_and_ready_timeout_never_transfer
     TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, transfer_blocks(5, NULL, data, 3));
     TEST_ASSERT_FALSE(card_initialized || selected);
     TEST_ASSERT_EQUAL_UINT(0, payload_writes);
-    reset(0); active_config.use_card_detect = true;
-    active_config.card_detect_active_high = true; spi_test_present = false;
+    reset(0); active_config.transport.present = test_present;
+     spi_test_present = false;
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, transfer_blocks(5, NULL, data, 3));
     TEST_ASSERT_FALSE(card_initialized || selected);
     TEST_ASSERT_EQUAL_UINT(0, payload_writes);
@@ -459,8 +462,8 @@ void test_spi_single_block_command_failure_and_rejection_have_distinct_recovery(
     reset(0); length = 0; busy = true;
     TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, transfer_block(5, data, NULL));
     TEST_ASSERT_FALSE(card_initialized || selected);
-    reset(0); active_config.use_card_detect = true;
-    active_config.card_detect_active_high = true; spi_test_present = false;
+    reset(0); active_config.transport.present = test_present;
+     spi_test_present = false;
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, transfer_block(5, data, NULL));
     TEST_ASSERT_FALSE(card_initialized);
 }

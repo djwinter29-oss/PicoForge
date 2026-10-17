@@ -9,7 +9,7 @@ int main(void)
 {
     stdio_init_all();
     pf_nor_transport_t transport;
-    pf_storage_bus_t bus = {0};
+    pf_storage_transport_t bus = {0};
     pf_nor_t flash;
     uint8_t single[32], quad[32];
     pf_nor_result_t result = pf_nor_result_from_storage(pf_board_storage_prepare(&bus));
@@ -36,7 +36,7 @@ int main(void)
     (void)quad;
 #endif
     printf("Raw NOR identify/read smoke: result=%d (no program/erase performed)\n", (int)result);
-    pf_storage_bus_deinit(&bus);
+    pf_storage_transport_deinit(&bus);
     pf_board_storage_release_pins();
     for (;;) {
         sleep_ms(1000u);

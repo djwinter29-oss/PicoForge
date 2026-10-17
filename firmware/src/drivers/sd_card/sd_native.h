@@ -4,9 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "hardware/pio.h"
 #include "sd_block.h"
-#include "../storage/storage_bus.h"
+#include "../storage/storage_transport.h"
 
 /** Fixed transfer target; integer PIO divider rounds down when not exactly representable. */
 #define PF_SD_NATIVE_TRANSFER_CLOCK_HZ 25000000u
@@ -17,24 +16,10 @@
 #define PF_SD_NATIVE_HIGH_SPEED 0
 #endif
 
-/** Optional platform wait callback; completion flags remain owned by the host.
- * Called only during bounded data waits. Must use a bounded wait,
- * must not clear the PIO flag or access the card, and must tolerate boot before
- * a scheduler starts. Set before card access; NULL retains plain polling.
- */
-typedef void (*pf_sd_native_wait_hook_t)(PIO pio, uint32_t completion_flag);
-void pf_sd_native_set_wait_hook(pf_sd_native_wait_hook_t hook);
-
-/** Board-provided SDHC/SDXC connection settings for the native four-bit PIO host. */
+/** Protocol settings over a board-owned native transport; the context must outlive all SD access. */
 typedef struct {
-    pf_storage_sdio_pins_t pins; /**< Physical signals shared with the native transport. */
-    PIO pio;                 /**< Must be pio0 or pio1; the backend reserves this PIO instruction memory. */
+    pf_storage_transport_t transport; /**< Non-owning, immutable native wire descriptor. */
     uint32_t clock_hz;       /**< Only 0 or 25000000 accepted; High Speed is a separate build opt-in. */
-    bool use_card_detect;
-    uint32_t card_detect_gpio;
-    bool card_detect_active_high;
-    bool card_detect_use_pull;
-    bool card_detect_pull_up;
 } pf_sd_native_config_t;
 
 typedef enum {

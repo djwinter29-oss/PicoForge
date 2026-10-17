@@ -4,7 +4,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #define PF_TEST_SDIO_WIRE_ONLY 1
 #include "sdio_sdk_stubs.h"
 #include "../../../../src/drivers/storage/sdio_pio/storage_sdio_pio.c"
-#include "../../../../src/drivers/storage/storage_bus.c"
+#include "../../../../src/drivers/storage/storage_transport.c"
 #include "sdio_sdk_stubs.c"
 
 #if defined(PF_SD_BLOCK_H) || defined(PF_SD_NATIVE_HOST_H) || defined(PF_NOR_H)
@@ -72,24 +72,47 @@ void tearDown(void) {}
 void test_native_descriptor_lifecycle_has_no_serial_or_device_protocol_dependency(void)
 {
     pf_storage_sdio_pio_t host = {.config = pins()};
-    pf_storage_bus_t bus = pf_storage_sdio_pio_bus(&host);
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_SDIO_PIO, bus.mode);
+    pf_storage_transport_t bus = pf_storage_sdio_pio_bus(&host);
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_SDIO_PIO, bus.mode);
     TEST_ASSERT_NULL(bus.ops->transfer);
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&bus));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
     TEST_ASSERT_TRUE(host.dma_claimed);
     TEST_ASSERT_EQUAL(PF_STORAGE_SDIO_CLOCK_UNOWNED, host.clock_owner);
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_NOT_READY, pf_storage_bus_init(&bus));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_NOT_READY, pf_storage_transport_init(&bus));
     TEST_ASSERT_TRUE(host.dma_claimed);
     uint32_t actual;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_set_clock(&bus, 25000000u, &actual));
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_set_clock(&bus, 25000000u, &actual));
     TEST_ASSERT_EQUAL_UINT32(25000000u, actual);
     pf_storage_serial_transaction_t serial = {.data_lanes = 1u};
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_UNSUPPORTED, pf_storage_bus_transfer(&bus, &serial));
-    pf_storage_bus_abort(&bus);
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_UNSUPPORTED, pf_storage_transport_transfer(&bus, &serial));
+    pf_storage_transport_abort(&bus);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
-    pf_storage_bus_deinit(&bus);
+    pf_storage_transport_deinit(&bus);
     TEST_ASSERT_NULL(host.pio);
     TEST_ASSERT_FALSE(host.dma_claimed);
+}
+
+void test_common_lifecycle_retains_configuration_and_wait_binding_for_retry_and_reinitialization(void)
+{
+    pf_storage_sdio_pio_t host = {.config = pins(), .wait_hook = on_wait};
+    pf_storage_transport_t transport = pf_storage_sdio_pio_bus(&host);
+    TEST_ASSERT_TRUE(pf_storage_transport_valid(&transport, PF_STORAGE_TRANSPORT_SDIO_PIO));
+    pf_test_sdio_can_add_program = false;
+    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_NOT_READY, pf_storage_transport_init(&transport));
+    TEST_ASSERT_EQUAL_PTR(pio0, host.config.pio);
+    TEST_ASSERT_TRUE(host.wait_hook == on_wait);
+    pf_test_sdio_can_add_program = true;
+    for (unsigned attempt = 0u; attempt < 2u; ++attempt) {
+        TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&transport));
+        TEST_ASSERT_TRUE(pf_storage_transport_native_state(&transport).ready);
+        TEST_ASSERT_TRUE(host.wait_hook == on_wait);
+        TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&transport, on_error, &host, NULL));
+        TEST_ASSERT_TRUE(host.error_hook == on_error);
+        pf_storage_transport_deinit(&transport);
+        TEST_ASSERT_FALSE(pf_storage_transport_native_state(&transport).ready);
+        TEST_ASSERT_EQUAL_PTR(pio0, host.config.pio);
+        TEST_ASSERT_TRUE(host.wait_hook == on_wait);
+    }
 }
 
 void test_native_raw_command_and_tx_do_not_build_crc_or_interpret_response_tokens(void)

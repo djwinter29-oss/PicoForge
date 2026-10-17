@@ -780,29 +780,125 @@ bool pf_storage_sdio_pio_wait_ready(pf_storage_sdio_pio_t *host, uint32_t timeou
     return true;
 }
 
-static pf_storage_bus_result_t bus_init(void *context)
+static pf_storage_transport_result_t bus_init(void *context)
 {
     pf_storage_sdio_pio_t *host = context;
-    return pf_storage_sdio_pio_init(host, &host->config) ? PF_STORAGE_BUS_OK : PF_STORAGE_BUS_NOT_READY;
+    pf_storage_sdio_pio_config_t config = host->config;
+    pf_storage_sdio_wait_hook_t wait = host->wait_hook;
+    bool initialized = pf_storage_sdio_pio_init(host, &config);
+    host->config = config;
+    host->wait_hook = wait;
+    return initialized ? PF_STORAGE_TRANSPORT_OK : PF_STORAGE_TRANSPORT_NOT_READY;
 }
 
-static void bus_deinit(void *context) { pf_storage_sdio_pio_deinit(context); }
+static void bus_deinit(void *context)
+{
+    pf_storage_sdio_pio_t *host = context;
+    pf_storage_sdio_pio_config_t config = host->config;
+    pf_storage_sdio_wait_hook_t wait = host->wait_hook;
+    pf_storage_sdio_pio_deinit(host);
+    host->config = config;
+    host->wait_hook = wait;
+}
 static void bus_abort(void *context) { pf_storage_sdio_pio_abort(context); }
 
-static pf_storage_bus_result_t bus_set_clock(void *context, uint32_t requested, uint32_t *actual)
+static pf_storage_transport_result_t bus_set_clock(void *context, uint32_t requested, uint32_t *actual)
 {
     pf_storage_sdio_pio_t *host = context;
     if (!pf_storage_sdio_pio_set_clock(host, requested)) {
-        return PF_STORAGE_BUS_IO_ERROR;
+        return PF_STORAGE_TRANSPORT_IO_ERROR;
     }
     *actual = host->current_clock_hz;
-    return PF_STORAGE_BUS_OK;
+    return PF_STORAGE_TRANSPORT_OK;
 }
 
-pf_storage_bus_t pf_storage_sdio_pio_bus(pf_storage_sdio_pio_t *host)
+/** @brief Copy only wire status, never expose mutable DMA/PIO resources to protocol clients. */
+static pf_storage_native_state_t native_state(void *context)
 {
-    static const pf_storage_bus_ops_t ops = {
-        .init = bus_init, .deinit = bus_deinit, .abort = bus_abort, .set_clock = bus_set_clock,
+    pf_storage_sdio_pio_t *host = context;
+    pf_storage_native_state_t state = {
+        .ready = host->pio != NULL, .rx_ready = host->data_rx_program_loaded,
+        .mode_restore_failed = host->mode_restore_failed,
+        .data_ready = host->pio != NULL && gpio_get(host->config.pins.data_gpio[0]) != 0u,
+        .current_clock_hz = host->current_clock_hz,
+        .maximum_clock_hz = clock_get_hz(clk_sys) / 4u,
+        .clock_owner = host->clock_owner,
+        .last_response_word_count = host->last_response_word_count,
     };
-    return (pf_storage_bus_t){ .context = host, .ops = &ops, .mode = PF_STORAGE_BUS_SDIO_PIO };
+    memcpy(state.last_response_words, host->last_response_words, sizeof(state.last_response_words));
+    return state;
+}
+
+static void native_hooks(void *context, pf_storage_sdio_error_hook_t error,
+                         void *error_context, void (*idle)(void))
+{
+    pf_storage_sdio_pio_t *host = context;
+    host->error_hook = error;
+    host->hook_context = error_context;
+    host->idle_hook = idle;
+}
+
+static bool native_prepare(void *context) { return pf_storage_sdio_pio_prepare_80_clocks(context); }
+static bool native_restore(void *context) { return pf_storage_sdio_pio_restore_command(context); }
+static bool native_command(void *context, const uint8_t frame[6], uint16_t bits,
+                           uint32_t *words, size_t capacity)
+{
+    return pf_storage_sdio_pio_command(context, frame, bits, words, capacity);
+}
+static bool native_rx_start(void *context, uint32_t *buffer, uint32_t words,
+                            uint32_t nibbles, uint32_t blocks)
+{
+    return pf_storage_sdio_pio_rx_start(context, buffer, words, nibbles, blocks);
+}
+static bool native_rx_finish(void *context, uint32_t timeout_us)
+{
+    return pf_storage_sdio_pio_rx_finish(context, timeout_us);
+}
+static void native_rx_cleanup(void *context) { pf_storage_sdio_pio_rx_cleanup(context); }
+static bool native_rx_poll(void *context, uint32_t start, uint32_t timeout_us, bool *complete)
+{
+    return pf_storage_sdio_pio_rx_poll(context, start, timeout_us, complete);
+}
+static void native_rx_wait(void *context) { pf_storage_sdio_pio_rx_wait(context); }
+static bool native_rx_progress(void *context, const uint32_t *buffer, uint32_t capacity, uint32_t *words)
+{
+    return pf_storage_sdio_pio_rx_progress(context, buffer, capacity, words);
+}
+static bool native_tx_prepare(void *context) { return pf_storage_sdio_pio_tx_prepare(context); }
+static bool native_tx_start(void *context, const uint32_t *buffer, uint32_t words, uint32_t nibbles)
+{
+    return pf_storage_sdio_pio_tx_start(context, buffer, words, nibbles);
+}
+static bool native_tx_finish(void *context, uint32_t timeout_us, uint32_t *response)
+{
+    return pf_storage_sdio_pio_tx_finish(context, timeout_us, response);
+}
+static bool native_wait_ready(void *context, uint32_t timeout_us)
+{
+    return pf_storage_sdio_pio_wait_ready(context, timeout_us);
+}
+static bool native_enable_wait(void *context)
+{
+#if PF_CONFIG_SD_CARD_INTERRUPT_WAIT
+    return pf_storage_sdio_pio_enable_wait(context);
+#else
+    (void)context;
+    return false;
+#endif
+}
+
+pf_storage_transport_t pf_storage_sdio_pio_bus(pf_storage_sdio_pio_t *host)
+{
+    static const pf_storage_native_ops_t native = {
+        .state = native_state, .hooks = native_hooks, .prepare = native_prepare, .restore = native_restore,
+        .command = native_command, .rx_start = native_rx_start, .rx_finish = native_rx_finish,
+        .rx_cleanup = native_rx_cleanup, .rx_poll = native_rx_poll, .rx_wait = native_rx_wait,
+        .rx_progress = native_rx_progress, .tx_prepare = native_tx_prepare, .tx_start = native_tx_start,
+        .tx_finish = native_tx_finish, .wait_ready = native_wait_ready,
+    };
+    static const pf_storage_transport_ops_t ops = {
+        .init = bus_init, .deinit = bus_deinit, .abort = bus_abort, .set_clock = bus_set_clock,
+        .native = &native, .time_us = time_us_64, .delay_ms = sleep_ms, .enable_wait = native_enable_wait,
+    };
+    return (pf_storage_transport_t){ .context = host, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_SDIO_PIO };
 }

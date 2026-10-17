@@ -4,20 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "hardware/spi.h"
 #include "sd_block.h"
-#include "../storage/storage_bus.h"
+#include "../storage/storage_transport.h"
 
-/** Board-provided SPI pin assignments; chip select is GPIO-controlled for whole SD transactions. */
+/** Protocol settings over a board-owned raw serial transport. */
 typedef struct {
-    spi_inst_t *spi;
-    pf_storage_spi_pins_t pins; /**< Physical signals shared with the SPI transport. */
+    pf_storage_transport_t transport; /**< Non-owning descriptor; context outlives all SD access. */
     uint32_t clock_hz; /**< 0 selects 25 MHz after the 400 kHz initialization phase. */
-    bool use_card_detect;
-    uint32_t card_detect_gpio;
-    bool card_detect_active_high;
-    bool card_detect_use_pull;
-    bool card_detect_pull_up;
 } pf_sd_spi_config_t;
 
 typedef enum {
