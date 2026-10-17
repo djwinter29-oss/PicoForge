@@ -90,11 +90,11 @@ endif()
 
 pico_sdk_init()
 
-add_library(pf_storage_transport STATIC
-    src/drivers/storage/storage_transport.c
+add_library(pf_storage_bus STATIC
+    src/drivers/storage/bus.c
     src/drivers/storage/serial.c
-    src/drivers/storage/native.c)
-target_include_directories(pf_storage_transport PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+    src/drivers/storage/sd_wire.c)
+target_include_directories(pf_storage_bus PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 
 option(PF_BUILD_NOR_SMOKE "Build standalone raw NOR target instead of the SD/USB application" OFF)
 set(PF_NOR_TRANSPORT "SPI" CACHE STRING "Raw NOR transport: SPI or QSPI_PIO")
@@ -120,7 +120,7 @@ if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX)
     else()
         message(FATAL_ERROR "PF_NOR_TRANSPORT must be SPI or QSPI_PIO")
     endif()
-    target_link_libraries(pf_nor_flash PUBLIC pf_storage_transport pico_stdlib hardware_gpio)
+    target_link_libraries(pf_nor_flash PUBLIC pf_storage_bus pico_stdlib hardware_gpio)
     if(PF_BUILD_LEVELX)
         add_subdirectory(src/integration/levelx)
         add_executable(pf_levelx_nor_link_smoke tests/ports/levelx_nor_link_smoke.c)
@@ -184,7 +184,7 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
             "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     )
     target_link_libraries(pf_sdio_backend PUBLIC
-        pf_storage_transport
+        pf_storage_bus
         pf_sd_card_protocol
         hardware_clocks
         hardware_dma
@@ -203,7 +203,7 @@ else()
         "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     )
     target_link_libraries(pf_sd_spi_backend PUBLIC
-        pf_storage_transport
+        pf_storage_bus
         pf_sd_card_protocol
         hardware_spi
         hardware_gpio

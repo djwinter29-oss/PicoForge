@@ -7,11 +7,11 @@
 
 #include "sd_native.h"
 #include "sd_protocol.h"
-#include "../storage/native.h"
+#include "../storage/sd_wire.h"
 
 /** SD protocol state layered over a native wire transport. */
 typedef struct {
-    pf_storage_transport_t transport; /**< Borrows board/storage-owned wire state. */
+    pf_storage_bus_t transport; /**< Borrows board/storage-owned wire state. */
     pf_sd_native_init_stage_t scr_stage; /**< Most recent SCR protocol stage. */
     uint32_t write_stream_next_sector; /**< Next LBA accepted by the open CMD25 stream. */
     uint8_t bus_width;                /**< Width negotiated with the card. */

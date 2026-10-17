@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "drivers/storage/storage_transport.h"
+#include "drivers/storage/bus.h"
 
 #define PF_BOARD_PIN_UNASSIGNED UINT32_MAX
 

@@ -67,7 +67,7 @@ bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
     report->component_type = PF_HID_MEMORY_TYPE_SD_CARD;
     if (pf_board_get_sd_card_config(&config)) {
         report->flags |= PF_HID_MEMORY_CONFIGURED;
-        report->mode = (config.transport.mode == PF_STORAGE_TRANSPORT_SPI)
+        report->mode = (config.transport.mode == PF_STORAGE_BUS_SPI)
             ? PF_HID_MEMORY_MODE_SPI
             : PF_HID_MEMORY_MODE_SDIO;
     }

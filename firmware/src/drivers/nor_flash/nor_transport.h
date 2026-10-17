@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "../storage/storage_transport.h"
+#include "../storage/bus.h"
 
 typedef enum {
     PF_NOR_OK = 0,
@@ -39,10 +39,10 @@ typedef struct {
 /** Initialize a configured SPI/QSPI storage bus and expose the common NOR transport.
  * The bus handle and its concrete context must remain alive and unchanged until all NOR operations finish.
  * Configure physical clock limits and bounded polling before calling. Native SD buses are unsupported.
- * On success, release resources with pf_storage_transport_deinit after completing device operations.
+ * On success, release resources with pf_storage_bus_deinit after completing device operations.
  * Transfer I/O errors and timeouts deinitialize the bus; recovery requires bus and flash reinitialization.
  */
-pf_nor_result_t pf_nor_transport_init(pf_storage_transport_t *bus, pf_nor_transport_t *transport);
+pf_nor_result_t pf_nor_transport_init(pf_storage_bus_t *bus, pf_nor_transport_t *transport);
 
 /** Validate the supported transaction shape before touching CS or any bus pins. */
 static inline bool pf_nor_transaction_valid(const pf_nor_transaction_t *transaction)
@@ -57,15 +57,15 @@ static inline bool pf_nor_transaction_valid(const pf_nor_transaction_t *transact
 }
 
 /** Translate physical results without relying on enum numeric equivalence. */
-static inline pf_nor_result_t pf_nor_result_from_storage(pf_storage_transport_result_t result)
+static inline pf_nor_result_t pf_nor_result_from_storage(pf_storage_bus_result_t result)
 {
     switch (result) {
-    case PF_STORAGE_TRANSPORT_OK: return PF_NOR_OK;
-    case PF_STORAGE_TRANSPORT_INVALID_ARGUMENT: return PF_NOR_INVALID_ARGUMENT;
-    case PF_STORAGE_TRANSPORT_NOT_READY: return PF_NOR_NOT_READY;
-    case PF_STORAGE_TRANSPORT_UNSUPPORTED: return PF_NOR_UNSUPPORTED;
-    case PF_STORAGE_TRANSPORT_TIMEOUT: return PF_NOR_TIMEOUT;
-    case PF_STORAGE_TRANSPORT_IO_ERROR: default: return PF_NOR_IO_ERROR;
+    case PF_STORAGE_BUS_OK: return PF_NOR_OK;
+    case PF_STORAGE_BUS_INVALID_ARGUMENT: return PF_NOR_INVALID_ARGUMENT;
+    case PF_STORAGE_BUS_NOT_READY: return PF_NOR_NOT_READY;
+    case PF_STORAGE_BUS_UNSUPPORTED: return PF_NOR_UNSUPPORTED;
+    case PF_STORAGE_BUS_TIMEOUT: return PF_NOR_TIMEOUT;
+    case PF_STORAGE_BUS_IO_ERROR: default: return PF_NOR_IO_ERROR;
     }
 }
 

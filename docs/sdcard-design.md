@@ -43,12 +43,12 @@ compatibility aliases are provided. Result values, build targets, and CMake opti
 Unit-test filenames use the same source basenames, with port tests beneath the matching `ports/freertos` or
 `ports/baremetal` subtree.
 
-Both backends use the same configuration shape, borrowing a `pf_storage_transport_t` descriptor plus the protocol
+Both backends use the same configuration shape, borrowing a `pf_storage_bus_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
 no GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
 See [pin allocation and runtime state](../firmware/src/drivers/storage/README.md#pin-allocation-and-runtime-state)
 for authoritative ownership and configuration-migration details. The former `pf_sd_native_set_wait_hook` API is removed;
-the execution port requests optional waits through `pf_storage_transport_enable_wait`, without PIO/IRQ knowledge.
+the execution port requests optional waits through `pf_storage_bus_enable_wait`, without PIO/IRQ knowledge.
 `pf_sd_port_init` now returns `bool`; callers must handle failure when optional waits were requested. Application
 startup reports this as a fatal setup error rather than silently ignoring a failed wait binding.
 

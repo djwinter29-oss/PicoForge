@@ -67,7 +67,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
         };
     }
     *config = (pf_sd_config_t){
-        .transport = pf_sdio_pio_transport(&sd_transport),
+        .transport = pf_sdio_pio_bus(&sd_transport),
         .clock_hz = topology->clock_hz,
     };
 #else
@@ -78,7 +78,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
         };
     }
     *config = (pf_sd_config_t){
-        .transport = pf_spi_transport(&sd_transport),
+        .transport = pf_spi_bus(&sd_transport),
         .clock_hz = topology->spi_clock_hz,
     };
 #endif

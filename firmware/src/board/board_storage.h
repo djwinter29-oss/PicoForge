@@ -1,7 +1,7 @@
 #ifndef PF_BOARD_STORAGE_H
 #define PF_BOARD_STORAGE_H
 
-#include "drivers/storage/storage_transport.h"
+#include "drivers/storage/bus.h"
 
 /** @brief Prepare the selected serial-storage profile and its board-specific idle pins.
  * Returns a non-owning handle to a static, uninitialized SPI/QSPI context.
@@ -10,7 +10,7 @@
  * @param bus Receives the board-owned bus handle on success.
  * @return Physical result; preparation never sends device commands or acquires bus hardware.
  */
-pf_storage_transport_result_t pf_board_storage_prepare(pf_storage_transport_t *bus);
+pf_storage_bus_result_t pf_board_storage_prepare(pf_storage_bus_t *bus);
 
 /** @brief Release board-specific idle pins after the caller deinitializes the bus.
  * Does not deinitialize transport hardware, synchronize media, or send device commands.

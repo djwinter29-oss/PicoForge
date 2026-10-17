@@ -9,8 +9,8 @@ static pf_sdio_pio_t test_wire;
 #include <string.h>
 
 #include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
-#include "../../../src/drivers/storage/storage_transport.c"
-#include "../../../src/drivers/storage/native.c"
+#include "../../../src/drivers/storage/bus.c"
+#include "../../../src/drivers/storage/sd_wire.c"
 #include "../../../src/drivers/sd_card/sd_native_host.c"
 #include "../../../src/drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
@@ -97,8 +97,8 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         .dma_claimed = true,
         .data_rx_program_loaded = true,
     };
-    pf_sd_native_host_t host = { .transport = pf_sdio_pio_transport(&test_wire) };
-    TEST_ASSERT_TRUE(pf_storage_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    pf_sd_native_host_t host = { .transport = pf_sdio_pio_bus(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_sd_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t scr[8];
 
     for (unsigned failure = 0u; failure < sizeof(failure_stages) / sizeof(failure_stages[0]);

@@ -11,8 +11,8 @@ static SemaphoreHandle_t card_mutex;
 bool pf_sd_port_init(const pf_sd_config_t *config)
 {
 #if PF_CONFIG_SD_CARD_INTERRUPT_WAIT
-    return config != NULL && config->transport.mode == PF_STORAGE_TRANSPORT_NATIVE_SD &&
-           pf_storage_transport_enable_wait(&config->transport);
+    return config != NULL && config->transport.mode == PF_STORAGE_BUS_NATIVE_SD &&
+           pf_storage_bus_enable_wait(&config->transport);
 #else
     (void)config;
     return true;

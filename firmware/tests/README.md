@@ -54,9 +54,9 @@ Storage tests cover raw phase validation before CS, arbitrary released-line cloc
 response byte packing and partial failure capture. NOR adapter tests verify opcode/address construction and payload
 bit-count overflow independently of the physical engines. The SD host test retains the exact 80-clock, low-speed
 initialization check.
-Common lifecycle tests live in [test_storage_transport.c](drivers/storage/test_storage_transport.c), raw serial dispatch
+Common lifecycle tests live in [test_bus.c](drivers/storage/test_bus.c), raw serial dispatch
 tests in [test_serial.c](drivers/storage/test_serial.c), and native dispatch tests in
-[test_native.c](drivers/storage/test_native.c). Concrete backend tests remain under their corresponding storage
+[test_sd_wire.c](drivers/storage/test_sd_wire.c). Concrete backend tests remain under their corresponding storage
 subdirectories. Cross-layer HID/card-unavailable scenarios are owned by
 [test_hid_sd_responsiveness.c](usb/test_hid_sd_responsiveness.c), matching the HID source module.
 

@@ -16,8 +16,8 @@
 #define TX_IRQ 2u
 
 /** @brief Report a physical failure without importing device diagnostics. */
-static void wire_error(pf_sdio_pio_t *host, pf_storage_native_error_t error,
-                       pf_storage_native_phase_t phase)
+static void wire_error(pf_sdio_pio_t *host, pf_storage_sd_wire_error_t error,
+                       pf_storage_sd_wire_phase_t phase)
 {
     if (host != NULL) {
         host->last_error = error;
@@ -73,21 +73,21 @@ static bool fifo_stalled(pf_sdio_pio_t *host, bool tx)
 #else
     host->pio->fdebug = mask;
 #endif
-    wire_error(host, tx ? PF_STORAGE_NATIVE_ERROR_TX_STALL : PF_STORAGE_NATIVE_ERROR_RX_STALL,
-               PF_STORAGE_NATIVE_PHASE_DATA);
+    wire_error(host, tx ? PF_STORAGE_SD_WIRE_ERROR_TX_STALL : PF_STORAGE_SD_WIRE_ERROR_RX_STALL,
+               PF_STORAGE_SD_WIRE_PHASE_DATA);
     return true;
 }
 
 /** @brief Distinguish DMA starvation, PIO noncompletion, and a held-low data line. */
 static void data_timeout(pf_sdio_pio_t *host, bool tx, bool dma_busy)
 {
-    pf_storage_native_error_t error = PF_STORAGE_NATIVE_ERROR_PIO_TIMEOUT;
+    pf_storage_sd_wire_error_t error = PF_STORAGE_SD_WIRE_ERROR_PIO_TIMEOUT;
     if (dma_busy) {
-        error = PF_STORAGE_NATIVE_ERROR_DMA_TIMEOUT;
+        error = PF_STORAGE_SD_WIRE_ERROR_DMA_TIMEOUT;
     } else if (tx && pio_sm_get_rx_fifo_level(host->pio, host->data_sm) != 0u) {
-        error = PF_STORAGE_NATIVE_ERROR_BUSY_TIMEOUT;
+        error = PF_STORAGE_SD_WIRE_ERROR_BUSY_TIMEOUT;
     }
-    wire_error(host, error, PF_STORAGE_NATIVE_PHASE_DATA);
+    wire_error(host, error, PF_STORAGE_SD_WIRE_PHASE_DATA);
 }
 
 static const pio_program_t *data_rx_program(const pf_sdio_pio_t *host)
@@ -152,7 +152,7 @@ bool pf_sdio_pio_tx_prepare(pf_sdio_pio_t *host)
     if ((host == NULL) || (host->pio == NULL) ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED))) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_SETUP);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
         return false;
     }
     pio_sm_set_enabled(host->pio, host->command_sm, false);
@@ -168,7 +168,7 @@ bool pf_sdio_pio_tx_prepare(pf_sdio_pio_t *host)
     host->data_tx_fast = host->current_clock_hz > 25000000u;
     if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
         !pio_can_add_program(host->pio, data_tx_program(host))) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_SETUP);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
         return false;
     }
     host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
@@ -224,7 +224,7 @@ bool pf_sdio_pio_restore_command(pf_sdio_pio_t *host)
     }
     if ((!host->command_program_loaded && !load_command_program(host)) ||
         (!host->data_rx_program_loaded && !load_data_rx_program(host))) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_SETUP);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
         return false;
     }
     pio_sm_clear_fifos(host->pio, host->command_sm);
@@ -304,7 +304,7 @@ bool pf_sdio_pio_clocks(pf_sdio_pio_t *host, uint32_t cycles, uint32_t timeout_u
         !host->dma_claimed || host->mode_restore_failed ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED))) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_SETUP);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
         return false;
     }
     pf_sdio_pio_abort(host);
@@ -321,14 +321,14 @@ bool pf_sdio_pio_clocks(pf_sdio_pio_t *host, uint32_t cycles, uint32_t timeout_u
     uint32_t start = time_us_32();
     for (uint32_t cycle = 0u; cycle < cycles; cycle++) {
         if ((uint32_t)(time_us_32() - start) >= timeout_us) {
-            wire_error(host, PF_STORAGE_NATIVE_ERROR_PIO_TIMEOUT, PF_STORAGE_NATIVE_PHASE_SETUP);
+            wire_error(host, PF_STORAGE_SD_WIRE_ERROR_PIO_TIMEOUT, PF_STORAGE_SD_WIRE_PHASE_SETUP);
             pf_sdio_pio_abort(host);
             return false;
         }
         for (uint level = 0u; level < 2u; level++) {
             while ((gpio_get(host->config.pins.clock_gpio) != 0u) != (level == 0u)) {
                 if ((uint32_t)(time_us_32() - start) >= timeout_us) {
-                    wire_error(host, PF_STORAGE_NATIVE_ERROR_PIO_TIMEOUT, PF_STORAGE_NATIVE_PHASE_SETUP);
+                    wire_error(host, PF_STORAGE_SD_WIRE_ERROR_PIO_TIMEOUT, PF_STORAGE_SD_WIRE_PHASE_SETUP);
                     pf_sdio_pio_abort(host);
                     return false;
                 }
@@ -354,14 +354,14 @@ bool pf_sdio_pio_set_clock(pf_sdio_pio_t *host, uint32_t clock_hz)
         ((uint64_t)host->system_clock_hz < (uint64_t)4u * clock_hz) || host->mode_restore_failed ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND))) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_SETUP);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
         return false;
     }
     uint32_t divider_ticks = clock_hz <= 25000000u
         ? (uint32_t)(((uint64_t)host->system_clock_hz + 2u * clock_hz - 1u) / (2u * clock_hz)) * 256u
         : (uint32_t)(((uint64_t)host->system_clock_hz * 128u + clock_hz - 1u) / clock_hz);
     if ((divider_ticks < 512u) || (divider_ticks > 0xffffffu)) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_SETUP);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
         return false;
     }
     bool resume = host->clock_owner == PF_SDIO_PIO_CLOCK_COMMAND;
@@ -378,7 +378,7 @@ bool pf_sdio_pio_set_clock(pf_sdio_pio_t *host, uint32_t clock_hz)
         host->data_rx_program_loaded = false;
         if (!load_data_rx_program(host)) {
             host->mode_restore_failed = true;
-            wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_SETUP);
+            wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_SETUP);
             return false;
         }
     } else {
@@ -529,7 +529,7 @@ bool pf_sdio_pio_exchange(pf_sdio_pio_t *host, const uint8_t *tx, size_t tx_size
          (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND)) ||
         (rx_bits != 0u && (rx == NULL || capacity < rx_bits / 8u)) ||
         rx_bits > 136u || rx_bits % 8u != 0u) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_COMMAND);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_COMMAND);
         return false;
     }
     if (host->clock_owner == PF_SDIO_PIO_CLOCK_UNOWNED) {
@@ -562,7 +562,7 @@ bool pf_sdio_pio_exchange(pf_sdio_pio_t *host, const uint8_t *tx, size_t tx_size
         }
         if (((uint32_t)(time_us_32() - start) >= timeout_us) &&
             (!pio_interrupt_get(host->pio, RESPONSE_IRQ) || (read < count))) {
-            wire_error(host, PF_STORAGE_NATIVE_ERROR_PIO_TIMEOUT, PF_STORAGE_NATIVE_PHASE_COMMAND);
+            wire_error(host, PF_STORAGE_SD_WIRE_ERROR_PIO_TIMEOUT, PF_STORAGE_SD_WIRE_PHASE_COMMAND);
             pio_sm_clear_fifos(host->pio, host->command_sm);
             pio_sm_restart(host->pio, host->command_sm);
             pio_sm_exec(host->pio, host->command_sm, pio_encode_jmp(host->command_program_offset));
@@ -585,7 +585,7 @@ bool pf_sdio_pio_rx_start(pf_sdio_pio_t *host, uint32_t *destination,
         (destination == NULL) || (((uintptr_t)destination & 3u) != 0u) ||
         (words == 0u) || (nibbles == 0u) || ((nibbles & 7u) != 0u) || (blocks == 0u) ||
         ((uint64_t)(nibbles / 8u) * blocks != words)) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_DATA);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_DATA);
         return false;
     }
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -618,7 +618,7 @@ bool pf_sdio_pio_rx_poll(pf_sdio_pio_t *host, uint32_t start,
     uint32_t timeout_us, bool *complete)
 {
     if ((host == NULL) || (host->pio == NULL) || !host->dma_claimed || (complete == NULL)) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_DATA);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_DATA);
         return false;
     }
     *complete = pio_interrupt_get(host->pio, RX_IRQ) && !dma_channel_is_busy(host->dma_channel);
@@ -679,14 +679,14 @@ bool pf_sdio_pio_rx_progress(pf_sdio_pio_t *host, const uint32_t *buffer,
 {
     if ((host == NULL) || !host->dma_claimed || (buffer == NULL) || (completed_words == NULL) ||
         (capacity_words > UINT32_MAX / sizeof(uint32_t))) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_DATA);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_DATA);
         return false;
     }
     uint32_t write_addr = dma_channel_hw_addr(host->dma_channel)->write_addr;
     uint32_t start = (uint32_t)(uintptr_t)buffer;
     if ((write_addr < start) || (write_addr - start > capacity_words * sizeof(uint32_t)) ||
         ((write_addr & (sizeof(uint32_t) - 1u)) != 0u)) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_DATA);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_DATA);
         return false;
     }
     *completed_words = (write_addr - start) / sizeof(uint32_t);
@@ -702,7 +702,7 @@ bool pf_sdio_pio_tx_start(pf_sdio_pio_t *host, const uint32_t *image,
         (host->clock_owner != PF_SDIO_PIO_CLOCK_DATA_TX) ||
         (image == NULL) || (((uintptr_t)image & 3u) != 0u) ||
         (words == 0u) || (nibbles == 0u) || ((uint64_t)words * 8u != nibbles)) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_DATA);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_DATA);
         return false;
     }
     pio_sm_clear_fifos(host->pio, host->data_sm);
@@ -745,7 +745,7 @@ bool pf_sdio_pio_tx_finish(pf_sdio_pio_t *host, uint32_t timeout_us,
 {
     if ((host == NULL) || (host->pio == NULL) || !host->dma_claimed ||
         !host->data_tx_program_loaded || (response_word == NULL)) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_DATA);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_DATA);
         return false;
     }
     uint32_t start = time_us_32();
@@ -780,13 +780,13 @@ bool pf_sdio_pio_tx_finish(pf_sdio_pio_t *host, uint32_t timeout_us,
 bool pf_sdio_pio_wait_ready(pf_sdio_pio_t *host, uint32_t timeout_us)
 {
     if ((host == NULL) || (host->pio == NULL)) {
-        wire_error(host, PF_STORAGE_NATIVE_ERROR_STATE, PF_STORAGE_NATIVE_PHASE_BUSY);
+        wire_error(host, PF_STORAGE_SD_WIRE_ERROR_STATE, PF_STORAGE_SD_WIRE_PHASE_BUSY);
         return false;
     }
     uint32_t start = time_us_32();
     while (gpio_get(host->config.pins.data_gpio[0]) == 0u) {
         if ((uint32_t)(time_us_32() - start) > timeout_us) {
-            wire_error(host, PF_STORAGE_NATIVE_ERROR_BUSY_TIMEOUT, PF_STORAGE_NATIVE_PHASE_BUSY);
+            wire_error(host, PF_STORAGE_SD_WIRE_ERROR_BUSY_TIMEOUT, PF_STORAGE_SD_WIRE_PHASE_BUSY);
             return false;
         }
         wire_idle(host);
@@ -794,7 +794,7 @@ bool pf_sdio_pio_wait_ready(pf_sdio_pio_t *host, uint32_t timeout_us)
     return true;
 }
 
-static pf_storage_transport_result_t bus_init(void *context)
+static pf_storage_bus_result_t bus_init(void *context)
 {
     pf_sdio_pio_t *host = context;
     pf_sdio_pio_config_t config = host->config;
@@ -802,7 +802,7 @@ static pf_storage_transport_result_t bus_init(void *context)
     bool initialized = pf_sdio_pio_init(host, &config);
     host->config = config;
     host->wait_hook = wait;
-    return initialized ? PF_STORAGE_TRANSPORT_OK : PF_STORAGE_TRANSPORT_NOT_READY;
+    return initialized ? PF_STORAGE_BUS_OK : PF_STORAGE_BUS_NOT_READY;
 }
 
 static void bus_deinit(void *context)
@@ -816,22 +816,22 @@ static void bus_deinit(void *context)
 }
 static void bus_abort(void *context) { pf_sdio_pio_abort(context); }
 
-static pf_storage_transport_result_t bus_set_clock(void *context, uint32_t requested, uint32_t *actual)
+static pf_storage_bus_result_t bus_set_clock(void *context, uint32_t requested, uint32_t *actual)
 {
     pf_sdio_pio_t *host = context;
     if (!pf_sdio_pio_set_clock(host, requested)) {
-        return PF_STORAGE_TRANSPORT_IO_ERROR;
+        return PF_STORAGE_BUS_IO_ERROR;
     }
     *actual = host->current_clock_hz;
-    return PF_STORAGE_TRANSPORT_OK;
+    return PF_STORAGE_BUS_OK;
 }
 
 /** @brief Copy only wire status, never expose mutable DMA/PIO resources to protocol clients. */
-static pf_storage_native_state_t native_state(void *context)
+static pf_storage_sd_wire_state_t sd_wire_state(void *context)
 {
     pf_sdio_pio_t *host = context;
     uint32_t maximum = clock_get_hz(clk_sys) / 4u;
-    pf_storage_native_state_t state = {
+    pf_storage_sd_wire_state_t state = {
         .ready = host->pio != NULL,
         .healthy = host->pio != NULL && !host->mode_restore_failed,
         .data_high = host->pio != NULL && gpio_get(host->config.pins.data_gpio[0]) != 0u,
@@ -841,7 +841,7 @@ static pf_storage_native_state_t native_state(void *context)
     return state;
 }
 
-static void native_hooks(void *context, pf_storage_native_error_hook_t error,
+static void sd_wire_hooks(void *context, pf_storage_sd_wire_error_hook_t error,
                          void *error_context, void (*idle)(void))
 {
     pf_sdio_pio_t *host = context;
@@ -850,50 +850,50 @@ static void native_hooks(void *context, pf_storage_native_error_hook_t error,
     host->idle_hook = idle;
 }
 
-static bool native_clocks(void *context, uint32_t cycles, uint32_t timeout_us)
+static bool sd_wire_clocks(void *context, uint32_t cycles, uint32_t timeout_us)
 {
     return pf_sdio_pio_clocks(context, cycles, timeout_us);
 }
-static bool native_restore(void *context) { return pf_sdio_pio_restore_command(context); }
-static bool native_exchange(void *context, const uint8_t *tx, size_t tx_size, uint16_t bits,
+static bool sd_wire_restore(void *context) { return pf_sdio_pio_restore_command(context); }
+static bool sd_wire_exchange(void *context, const uint8_t *tx, size_t tx_size, uint16_t bits,
                             uint8_t *rx, size_t capacity, size_t *received, uint32_t timeout_us)
 {
     return pf_sdio_pio_exchange(context, tx, tx_size, bits, rx, capacity, received, timeout_us);
 }
-static bool native_rx_start(void *context, uint32_t *buffer, uint32_t words,
+static bool sd_wire_rx_start(void *context, uint32_t *buffer, uint32_t words,
                             uint32_t nibbles, uint32_t blocks)
 {
     return pf_sdio_pio_rx_start(context, buffer, words, nibbles, blocks);
 }
-static bool native_rx_finish(void *context, uint32_t timeout_us)
+static bool sd_wire_rx_finish(void *context, uint32_t timeout_us)
 {
     return pf_sdio_pio_rx_finish(context, timeout_us);
 }
-static void native_rx_cleanup(void *context) { pf_sdio_pio_rx_cleanup(context); }
-static bool native_rx_poll(void *context, uint32_t start, uint32_t timeout_us, bool *complete)
+static void sd_wire_rx_cleanup(void *context) { pf_sdio_pio_rx_cleanup(context); }
+static bool sd_wire_rx_poll(void *context, uint32_t start, uint32_t timeout_us, bool *complete)
 {
     return pf_sdio_pio_rx_poll(context, start, timeout_us, complete);
 }
-static void native_rx_wait(void *context) { pf_sdio_pio_rx_wait(context); }
-static bool native_rx_progress(void *context, const uint32_t *buffer, uint32_t capacity, uint32_t *words)
+static void sd_wire_rx_wait(void *context) { pf_sdio_pio_rx_wait(context); }
+static bool sd_wire_rx_progress(void *context, const uint32_t *buffer, uint32_t capacity, uint32_t *words)
 {
     return pf_sdio_pio_rx_progress(context, buffer, capacity, words);
 }
-static bool native_tx_start(void *context, const uint32_t *buffer, uint32_t words, uint32_t nibbles)
+static bool sd_wire_tx_start(void *context, const uint32_t *buffer, uint32_t words, uint32_t nibbles)
 {
     pf_sdio_pio_t *host = context;
     return (host->clock_owner == PF_SDIO_PIO_CLOCK_DATA_TX || pf_sdio_pio_tx_prepare(host)) &&
            pf_sdio_pio_tx_start(host, buffer, words, nibbles);
 }
-static bool native_tx_finish(void *context, uint32_t timeout_us, uint32_t *response)
+static bool sd_wire_tx_finish(void *context, uint32_t timeout_us, uint32_t *response)
 {
     return pf_sdio_pio_tx_finish(context, timeout_us, response);
 }
-static bool native_wait_ready(void *context, uint32_t timeout_us)
+static bool sd_wire_wait_ready(void *context, uint32_t timeout_us)
 {
     return pf_sdio_pio_wait_ready(context, timeout_us);
 }
-static bool native_enable_wait(void *context)
+static bool sd_wire_enable_wait(void *context)
 {
 #if PF_CONFIG_SD_CARD_INTERRUPT_WAIT
     return pf_sdio_pio_enable_wait(context);
@@ -903,18 +903,18 @@ static bool native_enable_wait(void *context)
 #endif
 }
 
-pf_storage_transport_t pf_sdio_pio_transport(pf_sdio_pio_t *host)
+pf_storage_bus_t pf_sdio_pio_bus(pf_sdio_pio_t *host)
 {
-    static const pf_storage_native_ops_t native = {
-        .state = native_state, .hooks = native_hooks, .clocks = native_clocks, .idle = native_restore,
-        .exchange = native_exchange, .rx_start = native_rx_start, .rx_finish = native_rx_finish,
-        .rx_cancel = native_rx_cleanup, .rx_poll = native_rx_poll, .rx_wait = native_rx_wait,
-        .rx_progress = native_rx_progress, .tx_start = native_tx_start,
-        .tx_finish = native_tx_finish, .wait_high = native_wait_ready,
+    static const pf_storage_sd_wire_ops_t sd_wire = {
+        .state = sd_wire_state, .hooks = sd_wire_hooks, .clocks = sd_wire_clocks, .idle = sd_wire_restore,
+        .exchange = sd_wire_exchange, .rx_start = sd_wire_rx_start, .rx_finish = sd_wire_rx_finish,
+        .rx_cancel = sd_wire_rx_cleanup, .rx_poll = sd_wire_rx_poll, .rx_wait = sd_wire_rx_wait,
+        .rx_progress = sd_wire_rx_progress, .tx_start = sd_wire_tx_start,
+        .tx_finish = sd_wire_tx_finish, .wait_high = sd_wire_wait_ready,
     };
-    static const pf_storage_transport_ops_t ops = {
+    static const pf_storage_bus_ops_t ops = {
         .init = bus_init, .deinit = bus_deinit, .abort = bus_abort, .set_clock = bus_set_clock,
-        .native = &native, .time_us = time_us_64, .delay_ms = sleep_ms, .enable_wait = native_enable_wait,
+        .sd_wire = &sd_wire, .time_us = time_us_64, .delay_ms = sleep_ms, .enable_wait = sd_wire_enable_wait,
     };
-    return (pf_storage_transport_t){ .context = host, .ops = &ops, .mode = PF_STORAGE_TRANSPORT_NATIVE_SD };
+    return (pf_storage_bus_t){ .context = host, .ops = &ops, .mode = PF_STORAGE_BUS_NATIVE_SD };
 }

@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "hardware/pio.h"
-#include "../native.h"
+#include "../sd_wire.h"
 
 /** Physical clock ownership, private to this backend's resource management. */
 typedef enum {
@@ -40,10 +40,10 @@ typedef struct {
     uint32_t previous_input_sync_bypass;/**< Saved GPIO synchronizer state. */
     uint32_t input_sync_bypass_mask;    /**< Bits owned by this transport. */
     pf_sdio_pio_clock_owner_t clock_owner; /**< Current CLK owner. */
-    pf_storage_native_error_t last_error; /**< Latest physical failure. */
+    pf_storage_sd_wire_error_t last_error; /**< Latest physical failure. */
     pf_sdio_pio_wait_hook_t wait_hook; /**< Optional bounded scheduler wait. */
     void (*idle_hook)(void);           /**< Optional bounded ordinary polling callback. */
-    pf_storage_native_error_hook_t error_hook; /**< Optional diagnostic reporting. */
+    pf_storage_sd_wire_error_hook_t error_hook; /**< Optional diagnostic reporting. */
     void *hook_context;                /**< Borrowed diagnostic callback argument. */
     bool mode_restore_failed;          /**< Command program restoration failed. */
     bool command_program_loaded;       /**< Command program owns instruction memory. */
@@ -57,7 +57,7 @@ typedef struct {
 } pf_sdio_pio_t;
 
 /** Return a non-owning common lifecycle descriptor; serial transfer is unsupported. */
-pf_storage_transport_t pf_sdio_pio_transport(pf_sdio_pio_t *transport);
+pf_storage_bus_t pf_sdio_pio_bus(pf_sdio_pio_t *transport);
 /** Enable the optional platform wait adapter for this backend. */
 bool pf_sdio_pio_enable_wait(pf_sdio_pio_t *transport);
 /** Acquire physical resources. Duplicate initialization leaves the live context unchanged. */

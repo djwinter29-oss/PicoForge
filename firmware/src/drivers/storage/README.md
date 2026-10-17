@@ -16,9 +16,9 @@ remain above this layer:
 ```text
 drivers/
   storage/
-    storage_transport.h / storage_transport.c
+    bus.h / bus.c
     serial.h / serial.c
-    native.h / native.c
+    sd_wire.h / sd_wire.c
     spi/spi.h / spi.c
     sdio_pio/sdio_pio.h / sdio_pio.c / sdio_pio.pio
     sdio_pio/ports/freertos/sdio_wait.c
@@ -27,9 +27,9 @@ drivers/
   nor_flash/     NOR opcodes, status, page programming, erase and verification
 ```
 
-The [common transport interface](storage_transport.h) contains shared pin types, lifecycle, clock and platform services.
-Wire operations are separate SDK-independent capabilities: [raw serial](serial.h) and [native CMD/DAT](native.h).
-`pf_storage_transport_t` is a non-owning descriptor: board/storage integration owns the concrete context, and the caller
+The [common bus interface](bus.h) contains shared pin types, lifecycle, clock and platform services.
+Wire operations are separate SDK-independent capabilities: [raw serial](serial.h) and [SD CMD/DAT](sd_wire.h).
+`pf_storage_bus_t` is a non-owning descriptor: board/storage integration owns the concrete context, and the caller
 serializes access. Protocol clients
 do not dereference backend contexts or operations, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
 It creates no task, queue, filesystem policy, or automatic mode-switch manager.
@@ -46,6 +46,17 @@ The native wait-hook type is `pf_sdio_pio_wait_hook_t`; generated PIO programs u
 `pf_qspi_pio_*`. These replace the former backend `pf_storage_*` names without compatibility aliases.
 The common and wire interfaces use `pf_storage_*` / `PF_STORAGE_*` symbols. Concrete clock ownership and PIO/DMA
 resource state remain private to each backend.
+
+| Interface | C namespace | Header guard |
+| --- | --- | --- |
+| Common bus | `pf_storage_bus_*`, `pf_storage_bus_t` | `PF_STORAGE_BUS_H` |
+| Raw serial | `pf_storage_serial_*` | `PF_STORAGE_SERIAL_H` |
+| SD CMD/DAT wire | `pf_storage_sd_wire_*` | `PF_STORAGE_SD_WIRE_H` |
+
+Backend factories are `pf_spi_bus`, `pf_sdio_pio_bus`, and `pf_qspi_pio_bus`. The common operations expose
+`serial` and `sd_wire` capabilities. The bus result/mode constants use `PF_STORAGE_BUS_*`; SD wire diagnostics use
+`PF_STORAGE_SD_WIRE_*`. Callers must use these names; no compatibility aliases are provided.
+Device configuration members named `transport` and NOR's protocol transaction API remain unchanged.
 
 | Physical mode | Implementation | Device configurations |
 | --- | --- | --- |
@@ -74,8 +85,8 @@ SPI supports bounded FIFO polling for NOR; SD-SPI retains SDK blocking bulk I/O 
 
 Configure and zero-initialize the concrete context, obtain its non-owning bus handle, then initialize it before
 device-protocol operations. Contexts must outlive all synchronous calls; do not copy a live context. The common
-interface exposes `pf_storage_transport_init`, `pf_storage_transport_set_clock`, `pf_storage_transport_abort`, and
-`pf_storage_transport_deinit`. Wire dispatch uses `pf_storage_serial_*` or `pf_storage_native_*` from their capability
+interface exposes `pf_storage_bus_init`, `pf_storage_bus_set_clock`, `pf_storage_bus_abort`, and
+`pf_storage_bus_deinit`. Wire dispatch uses `pf_storage_serial_*` or `pf_storage_sd_wire_*` from their capability
 headers; the common lifecycle has no device-shaped transfer operation. Concrete backend headers are only for
 board/storage composition and physical-engine tests.
 
@@ -109,7 +120,7 @@ is unknown and media is assumed present. Repeated configuration queries do not r
 
 ### Pin Allocation and Runtime State
 
-[storage_transport.h](storage_transport.h) defines SDK-independent `pf_storage_spi_pins_t`, `pf_storage_sdio_pins_t`, and
+[bus.h](bus.h) defines SDK-independent `pf_storage_spi_pins_t`, `pf_storage_sdio_pins_t`, and
 `pf_storage_qspi_pins_t`. Native DAT0-DAT3 and quad IO0-IO3 are explicit arrays in logical order; the physical engines
 validate their ascending, consecutive mapping. Pin allocation types do not include card detect, WP/HOLD policy,
 controller pointers, clock rates, or mutable hardware ownership.
@@ -128,7 +139,7 @@ transfer-clock target in `clock_hz`; its mode replaces the former separate SD tr
 Pin allocation, controller selection, and DET configuration are no longer SD
 configuration fields. Backend integration supplies `pins.clock_gpio`, `pins.cs_gpio`, or all four `pins.data_gpio`
 entries as appropriate. The former `storage_bus.[ch]`, `pf_storage_bus_*`, and `PF_STORAGE_BUS_*` names are replaced
-by `storage_transport.[ch]`, `pf_storage_transport_*`, and `PF_STORAGE_TRANSPORT_*`, without compatibility aliases.
+by `bus.[ch]`, `pf_storage_bus_*`, and `PF_STORAGE_BUS_*`, without compatibility aliases.
 Physical backend descriptor factories now end in `_transport`. Transport selection, board wiring, and transfer
 behavior are unchanged.
 For SD API naming migration, see the [SD architecture](../../../../docs/sdcard-design.md#architecture).

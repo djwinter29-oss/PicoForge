@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 #include "config/config.h"
-#include "drivers/storage/storage_transport.h"
+#include "drivers/storage/bus.h"
 
 static uint32_t topology_gpio_limit(uint32_t gpio_count)
 {

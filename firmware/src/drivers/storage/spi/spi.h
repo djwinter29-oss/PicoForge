@@ -19,23 +19,23 @@ typedef struct {
 /** Validate controller pin routing and distinct chip select without touching hardware. */
 bool pf_spi_config_valid(const pf_spi_t *context);
 /** Acquire a mode-0 controller reference and configure idle-high CS. */
-pf_storage_transport_result_t pf_spi_init(pf_spi_t *context);
+pf_storage_bus_result_t pf_spi_init(pf_spi_t *context);
 /** Release this device; release bus pins only after the last reference. */
 void pf_spi_deinit(pf_spi_t *context);
 /** Set this device's clock and report the SDK-selected rate. */
-pf_storage_transport_result_t pf_spi_set_clock(pf_spi_t *context, uint32_t requested_hz,
+pf_storage_bus_result_t pf_spi_set_clock(pf_spi_t *context, uint32_t requested_hz,
                                               uint32_t *actual_hz);
 /** Assert/deassert CS; selection restores this device's clock. */
-pf_storage_transport_result_t pf_spi_select(pf_spi_t *context, bool selected);
+pf_storage_bus_result_t pf_spi_select(pf_spi_t *context, bool selected);
 /** Exchange bytes; NULL transmit sends 0xff, NULL receive discards input.
  * CS, including error cleanup, is controlled by the caller; no bytes are replayed.
  */
-pf_storage_transport_result_t pf_spi_exchange(pf_spi_t *context, const uint8_t *tx,
+pf_storage_bus_result_t pf_spi_exchange(pf_spi_t *context, const uint8_t *tx,
                                              uint8_t *rx, size_t length);
 /** Execute one command/address/dummy/payload transaction with guaranteed CS cleanup. */
-pf_storage_transport_result_t pf_spi_transfer(pf_spi_t *context,
+pf_storage_bus_result_t pf_spi_transfer(pf_spi_t *context,
     const pf_storage_serial_phase_t *phases, size_t count);
 /** Return a non-owning generic lifecycle/serial-dispatch handle. */
-pf_storage_transport_t pf_spi_transport(pf_spi_t *context);
+pf_storage_bus_t pf_spi_bus(pf_spi_t *context);
 
 #endif

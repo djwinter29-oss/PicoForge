@@ -3,7 +3,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #define PF_SPI_PRODUCTION_TEST
 #include "spi_production_fixture.h"
 #include "sd_protocol.h"
-#include "storage_transport.h"
+#include "bus.h"
 #include "serial.h"
 #include "spi.h"
 
@@ -86,13 +86,13 @@ static void reset(uint8_t response)
         .instance = &test_spi, .pins.clock_gpio = 2u, .pins.mosi_gpio = 3u,
         .pins.miso_gpio = 0u, .pins.cs_gpio = 1u, .clock_hz = 25000000u,
     };
-    TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_spi_init(&physical_bus));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&physical_bus));
     card_initialized = card_block_addressed = true;
     card_sector_count = 128;
     configuration_set = false;
     last_init_response_received = false;
     last_init_command = last_init_response = 0;
-    active_config = (pf_sd_config_t){ .transport = pf_spi_transport(&physical_bus) };
+    active_config = (pf_sd_config_t){ .transport = pf_spi_bus(&physical_bus) };
     position = 0; length = 5;
     queue[0] = 0xff; queue[1] = 0; queue[2] = queue[3] = 0xff; queue[4] = response;
     busy = selected = fail_trailing = short_payload = false;
@@ -120,12 +120,12 @@ void tearDown(void)
 
 static unsigned selection_attempts;
 
-static pf_storage_transport_result_t reject_selection(void *context, bool select)
+static pf_storage_bus_result_t reject_selection(void *context, bool select)
 {
     TEST_ASSERT_EQUAL_PTR(&physical_bus, context);
     TEST_ASSERT_TRUE(select);
     ++selection_attempts;
-    return PF_STORAGE_TRANSPORT_IO_ERROR;
+    return PF_STORAGE_BUS_IO_ERROR;
 }
 
 void test_spi_selection_failure_stops_every_command_and_transfer_without_cleanup_or_replay(void)
@@ -134,7 +134,7 @@ void test_spi_selection_failure_stops_every_command_and_transfer_without_cleanup
     uint8_t response;
     for (unsigned operation = 0u; operation < 8u; ++operation) {
         reset(0);
-        pf_storage_transport_ops_t ops = *active_config.transport.ops;
+        pf_storage_bus_ops_t ops = *active_config.transport.ops;
         pf_storage_serial_ops_t serial_ops = *ops.serial;
         serial_ops.select = reject_selection;
         ops.serial = &serial_ops;

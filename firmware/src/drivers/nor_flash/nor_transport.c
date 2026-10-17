@@ -6,13 +6,13 @@
 
 static uint64_t now(void *context)
 {
-    return pf_storage_transport_time_us(context);
+    return pf_storage_bus_time_us(context);
 }
 
 /** @brief Frame one NOR transaction as raw phases; invalidate failed hardware without replay. */
 static pf_nor_result_t execute(void *context, const pf_nor_transaction_t *transaction)
 {
-    pf_storage_transport_t *bus = context;
+    pf_storage_bus_t *bus = context;
     if (!pf_nor_transaction_valid(transaction)) {
         return PF_NOR_INVALID_ARGUMENT;
     }
@@ -38,12 +38,12 @@ static pf_nor_result_t execute(void *context, const pf_nor_transaction_t *transa
     }
     pf_nor_result_t result = pf_nor_result_from_storage(pf_storage_serial_transfer(bus, phases, count));
     if (result == PF_NOR_IO_ERROR || result == PF_NOR_TIMEOUT) {
-        pf_storage_transport_deinit(bus);
+        pf_storage_bus_deinit(bus);
     }
     return result;
 }
 
-pf_nor_result_t pf_nor_transport_init(pf_storage_transport_t *bus, pf_nor_transport_t *transport)
+pf_nor_result_t pf_nor_transport_init(pf_storage_bus_t *bus, pf_nor_transport_t *transport)
 {
     if (transport == NULL || bus == NULL) {
         return PF_NOR_INVALID_ARGUMENT;
@@ -53,7 +53,7 @@ pf_nor_result_t pf_nor_transport_init(pf_storage_transport_t *bus, pf_nor_transp
     if (validation != PF_NOR_OK) {
         return validation;
     }
-    pf_nor_result_t result = pf_nor_result_from_storage(pf_storage_transport_init(bus));
+    pf_nor_result_t result = pf_nor_result_from_storage(pf_storage_bus_init(bus));
     if (result == PF_NOR_OK) {
         *transport = (pf_nor_transport_t){
             .context = bus, .execute = execute, .time_us = now,

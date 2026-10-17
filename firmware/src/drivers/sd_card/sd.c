@@ -24,7 +24,7 @@ void pf_sd_unlock(void)
 #include "sd_spi.h"
 #define PF_SELECTED_TRANSPORT PF_SD_TRANSPORT_SPI
 #define pf_selected_init(config) pf_sd_spi_init(config)
-#define PF_SELECTED_MODE PF_STORAGE_TRANSPORT_SPI
+#define PF_SELECTED_MODE PF_STORAGE_BUS_SPI
 #define pf_selected_is_initialized() pf_sd_spi_is_initialized()
 #define pf_selected_block_count() pf_sd_spi_block_count()
 #define pf_selected_read(first, buffer, count) pf_sd_spi_read_blocks((first), (buffer), (count))
@@ -37,7 +37,7 @@ void pf_sd_unlock(void)
 #include "sd_native.h"
 #define PF_SELECTED_TRANSPORT PF_SD_TRANSPORT_SDIO_PIO
 #define pf_selected_init(config) pf_sd_native_init(config)
-#define PF_SELECTED_MODE PF_STORAGE_TRANSPORT_NATIVE_SD
+#define PF_SELECTED_MODE PF_STORAGE_BUS_NATIVE_SD
 #define pf_selected_is_initialized() pf_sd_native_is_initialized()
 #define pf_selected_block_count() pf_sd_native_block_count()
 #define pf_selected_read(first, buffer, count) pf_sd_native_read_blocks((first), (buffer), (count))
