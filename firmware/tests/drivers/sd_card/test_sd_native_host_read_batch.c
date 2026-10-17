@@ -69,6 +69,7 @@ void test_host_clock_uses_integer_rounding_through_25mhz_and_fractional_fast_mod
     pf_test_sdio_pio_t pio = {0};
     test_wire = (pf_storage_sdio_pio_t){.pio = &pio, .system_clock_hz = 250000000u};
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     TEST_ASSERT_TRUE(pf_sd_native_host_set_clock(&host, 25000000u));
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
@@ -106,7 +107,8 @@ void test_prepare_initialization_resets_host_and_emits_exactly_eighty_low_speed_
         .data_rx_program_loaded = true,
         .dma_claimed = true,
     };
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire), .bus_width = 1u };
+    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire), .bus_width = 4u };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_clock_gpio = test_wire.config.pins.clock_gpio;
     pf_test_sdio_gpio_level = 0u;
@@ -141,6 +143,7 @@ void test_abort_preserves_diagnostics_and_unresolved_streams_without_card_comman
         .last_error = PF_SD_DETAIL_DMA_TIMEOUT,
         .errors = { .data_timeouts = 3u, .dma_timeouts = 2u },
     };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_sd_native_host_abort(&host);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_DMA_TIMEOUT, host.last_error);
@@ -176,6 +179,7 @@ void test_read_batch_decode_tracks_complete_blocks_and_crc_boundaries(void)
 {
     test_wire = (pf_storage_sdio_pio_t){.dma_channel = 3u, .dma_claimed = true};
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t wire_blocks[4][PF_SD_BLOCK_SIZE];
     uint8_t decoded[4][PF_SD_BLOCK_SIZE] = {{0}};
     uint32_t decoded_count = 0u;
@@ -205,6 +209,7 @@ void test_read_batch_decode_rejects_invalid_dma_addresses_and_crc(void)
 {
     test_wire = (pf_storage_sdio_pio_t){.dma_channel = 3u, .dma_claimed = true};
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t wire_blocks[4][PF_SD_BLOCK_SIZE];
     uint8_t decoded[4][PF_SD_BLOCK_SIZE] = {{0}};
     uint32_t decoded_count = 0u;
@@ -260,6 +265,7 @@ void test_single_read_crc_is_counted_without_profiling_and_requires_four_bit_mod
         .clock_div_ticks = 6u * 256u,
     };
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire), .bus_width = 4u };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
     uint8_t payload[PF_SD_BLOCK_SIZE];
 
@@ -268,13 +274,13 @@ void test_single_read_crc_is_counted_without_profiling_and_requires_four_bit_mod
         block, pf_test_sdio_batch_rx));
     pf_test_sdio_batch_rx_size = PF_SD_NATIVE_IMAGE_SIZE;
     pf_test_sdio_batch_rx[PF_SD_NATIVE_IMAGE_SIZE - 1u] ^= 1u;
-    TEST_ASSERT_FALSE(pf_sd_native_host_read_sector(&host, 7u, true, payload));
+    TEST_ASSERT_FALSE(pf_sd_native_host_read_sector(&host, 7u, payload));
     TEST_ASSERT_EQUAL_UINT32(1u, host.errors.data_crc_errors);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_DATA_CRC, host.last_error);
 
     host.bus_width = 1u;
     pf_test_sdio_command_count = 0u;
-    TEST_ASSERT_FALSE(pf_sd_native_host_read_sector(&host, 7u, true, payload));
+    TEST_ASSERT_FALSE(pf_sd_native_host_read_sector(&host, 7u, payload));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_FOUR_BIT, host.last_error);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
 }
@@ -291,6 +297,7 @@ void test_read_batch_loads_pio_count_before_dma_and_framing(void)
         .dma_claimed = true,
     };
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint32_t destination[SDIO_DATA_WORD_COUNT * SDIO_READ_BATCH_BLOCKS];
 
     TEST_ASSERT_TRUE(pf_storage_sdio_pio_rx_start(&test_wire, destination,
@@ -326,6 +333,7 @@ void test_rx_cleanup_aborts_dma_before_clearing_and_restarting_pio(void)
     pf_test_sdio_pio_t pio = {0};
     test_wire = (pf_storage_sdio_pio_t){.pio = &pio, .data_sm = 1u, .dma_channel = 3u, .dma_claimed = true};
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     pf_test_sdio_dma_busy = true;
     pf_storage_sdio_pio_rx_cleanup(&test_wire);
     const pf_test_sdio_event_t expected[] = {
@@ -342,6 +350,7 @@ void test_stock_system_clock_produces_exact_qualified_bus_clock(void)
     pf_test_sdio_pio_t pio = {0};
     test_wire = (pf_storage_sdio_pio_t){.pio = &pio, .system_clock_hz = 150000000u};
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     TEST_ASSERT_TRUE(pf_sd_native_host_set_clock(&host, 25000000u));
     TEST_ASSERT_EQUAL_UINT32(3u * 256u, test_wire.clock_div_ticks);
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
@@ -387,6 +396,7 @@ void test_production_cmd18_reader_decodes_all_blocks_then_stops_stream(void)
         .data_rx_multiblock_supported = true,
         .bus_width = 4u,
     };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t expected[2][PF_SD_BLOCK_SIZE];
     uint8_t received[2][PF_SD_BLOCK_SIZE] = {{0}};
 
@@ -398,7 +408,7 @@ void test_production_cmd18_reader_decodes_all_blocks_then_stops_stream(void)
     pf_test_sdio_dma_busy_delay = 2u;
     pf_test_sdio_dma_poll_hook = observe_overlapped_decode;
 
-    TEST_ASSERT_TRUE(pf_sd_native_host_read_blocks(&host, 17u, true,
+    TEST_ASSERT_TRUE(pf_sd_native_host_read_blocks(&host, 17u,
                                                    &received[0][0], 2u));
     TEST_ASSERT_EQUAL_MEMORY(expected, received, sizeof(expected));
     TEST_ASSERT_GREATER_OR_EQUAL_UINT(2u, overlap_polls);
@@ -436,13 +446,14 @@ void test_production_cmd18_reader_stops_after_crc_failure_and_preserves_unresolv
         .data_rx_multiblock_supported = true,
         .bus_width = 4u,
     };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t expected[2][PF_SD_BLOCK_SIZE] = {{0}};
     uint8_t received[2][PF_SD_BLOCK_SIZE] = {{0}};
 
     make_receive_batch(expected, 2u);
     pf_test_sdio_batch_rx[PF_SD_NATIVE_IMAGE_SIZE + PF_SD_BLOCK_SIZE] ^= 1u;
 
-    TEST_ASSERT_FALSE(pf_sd_native_host_read_blocks(&host, 17u, true,
+    TEST_ASSERT_FALSE(pf_sd_native_host_read_blocks(&host, 17u,
                                                     &received[0][0], 2u));
     TEST_ASSERT_EQUAL_UINT32(1u, host.errors.data_crc_errors);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_DATA_CRC, host.last_error);
@@ -454,7 +465,7 @@ void test_production_cmd18_reader_stops_after_crc_failure_and_preserves_unresolv
     host.read_stream_unresolved = false;
     make_receive_batch(expected, 2u);
     pf_test_sdio_command_error = 12u;
-    TEST_ASSERT_FALSE(pf_sd_native_host_read_blocks(&host, 17u, true,
+    TEST_ASSERT_FALSE(pf_sd_native_host_read_blocks(&host, 17u,
                                                     &received[0][0], 2u));
     TEST_ASSERT_TRUE(host.read_stream_unresolved);
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);

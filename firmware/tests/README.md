@@ -31,6 +31,14 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | Card presence, automount and recovery | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [usb](usb) |
 
+Shared CRC7, command-frame, CSD and address-conversion tests live in
+[test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c); native wire-codec tests remain in
+[test_sd_native_protocol.c](drivers/sd_card/test_sd_native_protocol.c).
+[SPI behavior tests](drivers/sd_card/test_sd_spi.c) inject selection failures across command, register, single-block,
+multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
+and preserved stream recovery. Optional wait setup is tested with
+[FreeRTOS port serialization](drivers/sd_card/ports/freertos/test_sd_port_serialization_sdio.c).
+
 Run all C behavior tests with:
 
 ```sh

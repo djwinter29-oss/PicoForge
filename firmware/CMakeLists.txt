@@ -192,7 +192,6 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
 else()
     add_library(pf_sd_spi_backend STATIC
         src/drivers/sd_card/sd_spi.c
-        src/drivers/sd_card/sd_spi_protocol.c
         src/drivers/storage/spi/spi.c
     )
     target_include_directories(pf_sd_spi_backend PUBLIC
@@ -223,7 +222,6 @@ target_link_libraries(pf_sd_card PUBLIC
 if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     target_sources(pf_sd_card PRIVATE
         src/drivers/sd_card/ports/freertos/sd_port.c
-        src/drivers/sd_card/ports/freertos/sd_wait.c
     )
     target_compile_definitions(pf_sd_card PRIVATE
         PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>

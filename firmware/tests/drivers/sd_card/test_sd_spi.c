@@ -3,7 +3,6 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #define PF_SPI_PRODUCTION_TEST
 #include "spi_production_fixture.h"
 #include "sd_protocol.h"
-#include "sd_spi_protocol.h"
 #include "storage_transport.h"
 #include "spi.h"
 
@@ -89,10 +88,10 @@ static void reset(uint8_t response)
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_spi_init(&physical_bus));
     card_initialized = card_block_addressed = true;
     card_sector_count = 128;
-    configuration_set = spi_configured = false;
+    configuration_set = false;
     last_init_response_received = false;
     last_init_command = last_init_response = 0;
-    active_config = (pf_sd_spi_config_t){ .transport = pf_storage_spi_transport(&physical_bus) };
+    active_config = (pf_sd_config_t){ .transport = pf_storage_spi_transport(&physical_bus) };
     position = 0; length = 5;
     queue[0] = 0xff; queue[1] = 0; queue[2] = queue[3] = 0xff; queue[4] = response;
     busy = selected = fail_trailing = short_payload = false;
@@ -116,6 +115,72 @@ void tearDown(void)
     pf_sd_set_profiling_enabled(false);
     pf_sd_profile_set_clock(NULL);
     pf_sd_set_idle_hook(NULL);
+}
+
+static unsigned selection_attempts;
+
+static pf_storage_transport_result_t reject_selection(void *context, bool select)
+{
+    TEST_ASSERT_EQUAL_PTR(&physical_bus, context);
+    TEST_ASSERT_TRUE(select);
+    ++selection_attempts;
+    return PF_STORAGE_TRANSPORT_IO_ERROR;
+}
+
+void test_spi_selection_failure_stops_every_command_and_transfer_without_cleanup_or_replay(void)
+{
+    uint8_t data[1024] = {0};
+    uint8_t response;
+    for (unsigned operation = 0u; operation < 8u; ++operation) {
+        reset(0);
+        pf_storage_transport_ops_t ops = *active_config.transport.ops;
+        ops.select = reject_selection;
+        active_config.transport.ops = &ops;
+        selection_attempts = 0u;
+        switch (operation) {
+        case 0u: TEST_ASSERT_FALSE(send_command(0u, 0u, &response, NULL, 0u)); break;
+        case 1u: TEST_ASSERT_FALSE(read_register(SD_CMD_SEND_CSD, data)); break;
+        case 2u: TEST_ASSERT_FALSE(read_register(SD_CMD_SEND_CID, data)); break;
+        case 3u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(0u, data, 1u)); break;
+        case 4u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0u, data, 1u)); break;
+        case 5u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(0u, data, 2u)); break;
+        case 6u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0u, data, 2u)); break;
+        case 7u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_sync()); break;
+        }
+        TEST_ASSERT_FALSE(card_initialized);
+        TEST_ASSERT_EQUAL_UINT(1u, selection_attempts);
+        TEST_ASSERT_EQUAL_UINT(0u, selects + deselects + exchanges + writes + reads);
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_sync());
+        TEST_ASSERT_EQUAL_UINT(1u, selection_attempts);
+    }
+}
+
+void test_spi_application_prefix_accepts_only_ready_or_idle(void)
+{
+    for (unsigned value = 0u; value < 256u; ++value) {
+        reset(0);
+        queue[1] = (uint8_t)value;
+        length = 5u;
+        queue[3] = 0xffu;
+        queue[4] = value <= 1u ? 0u : 0xffu;
+        uint8_t response;
+        TEST_ASSERT_EQUAL(value <= 1u, send_application_command(41u, 0u, &response));
+        TEST_ASSERT_EQUAL_UINT(value <= 1u ? 2u : 1u, command_count);
+    }
+}
+
+void test_spi_write_response_accepts_only_the_accepted_token(void)
+{
+    for (unsigned value = 0u; value < 256u; ++value) {
+        reset(0);
+        selected = true;
+        clock_step = 25000u;
+        queue[0] = (uint8_t)value;
+        length = 1u;
+        uint8_t response;
+        TEST_ASSERT_EQUAL((value & 0x1fu) == 0x05u, receive_write_response(&response));
+        TEST_ASSERT_EQUAL_UINT(value == 0xffu ? 2u : 1u, exchanges);
+    }
 }
 
 void test_spi_writes_accept_success_and_explicit_rejection_without_replay(void)

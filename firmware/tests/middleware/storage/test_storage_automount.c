@@ -6,7 +6,7 @@ void setUp(void)
 {
     config_available = transport_selected = true;
     requests = (void *)1;
-    card_config.transport = PF_SD_TRANSPORT_SDIO_PIO;
+    card_config.transport.mode = PF_STORAGE_TRANSPORT_NATIVE_SD;
 }
 void tearDown(void) { TEST_ASSERT_EQUAL_UINT(0, reservation_depth); }
 

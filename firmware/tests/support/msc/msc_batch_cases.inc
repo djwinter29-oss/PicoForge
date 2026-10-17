@@ -15,7 +15,6 @@ static bool pf_storage_worker_recover_card(void);
 #if PF_CONFIG_SD_CARD_TRANSPORT == 1
 #include "drivers/sd_card/sd_spi.h"
 #define pf_sd_native_init pf_sd_spi_init
-#define pf_sd_native_config_t pf_sd_spi_config_t
 #define pf_sd_native_get_init_stage pf_sd_spi_get_init_stage
 #define pf_sd_native_init_stage_t pf_sd_spi_init_stage_t
 #define pf_sd_native_is_initialized pf_sd_spi_is_initialized
@@ -25,10 +24,10 @@ static bool pf_storage_worker_recover_card(void);
 #define pf_sd_native_read_blocks pf_sd_spi_read_blocks
 #define pf_sd_native_write_blocks pf_sd_spi_write_blocks
 #define pf_sd_native_sync pf_sd_spi_sync
-#define TEST_TRANSPORT PF_SD_TRANSPORT_SPI
+#define TEST_TRANSPORT PF_STORAGE_TRANSPORT_SPI
 #else
 #include "drivers/sd_card/sd_native.h"
-#define TEST_TRANSPORT PF_SD_TRANSPORT_SDIO_PIO
+#define TEST_TRANSPORT PF_STORAGE_TRANSPORT_NATIVE_SD
 #endif
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */
@@ -50,7 +49,7 @@ bool __real_mscd_control_xfer_cb(uint8_t p,uint8_t s,const tusb_control_request_
 { (void)p; (void)s; (void)r; return false; }
 bool tud_msc_set_sense(uint8_t l,uint8_t k,uint8_t a,uint8_t q)
 { (void)l; (void)k; (void)a; (void)q; return true; }
-pf_sd_result_t pf_sd_native_init(const pf_sd_native_config_t *c)
+pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *c)
 { (void)c; initialized=true; return PF_SD_OK; }
 pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void)
 { return (pf_sd_native_init_stage_t)99; }
@@ -77,7 +76,7 @@ pf_sd_result_t pf_sd_native_sync(void)
 void pf_sd_get_profile(pf_sd_profile_t *p) { *p=(pf_sd_profile_t){0}; }
 static void msc_batch_regression(void)
 {
- pf_sd_config_t c={.transport=TEST_TRANSPORT};
+ pf_sd_config_t c={.transport.mode=TEST_TRANSPORT};
  TEST_ASSERT_TRUE(pf_sd_init(&c)==PF_SD_OK);
  pf_usb_msc_request(true); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
  uint8_t raw[1538], out[1538]; uint8_t *data=raw+1, *readback=out+1;

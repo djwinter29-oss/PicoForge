@@ -98,6 +98,7 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         .data_rx_program_loaded = true,
     };
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t scr[8];
 
     for (unsigned failure = 0u; failure < sizeof(failure_stages) / sizeof(failure_stages[0]);

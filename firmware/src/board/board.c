@@ -66,12 +66,10 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
             .pio = topology->pio_index == 0u ? pio0 : pio1,
         };
     }
-    config->transport = PF_SD_TRANSPORT_SDIO_PIO;
-    config->bus.native = (pf_sd_native_config_t){
+    *config = (pf_sd_config_t){
         .transport = pf_storage_sdio_pio_transport(&sd_transport),
         .clock_hz = topology->clock_hz,
     };
-    pf_storage_transport_t *transport = &config->bus.native.transport;
 #else
     if (!storage_configured) {
         sd_transport = (pf_storage_spi_t){
@@ -79,12 +77,10 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
             .pins = topology->spi_pins, .clock_hz = 400000u,
         };
     }
-    config->transport = PF_SD_TRANSPORT_SPI;
-    config->bus.spi = (pf_sd_spi_config_t){
+    *config = (pf_sd_config_t){
         .transport = pf_storage_spi_transport(&sd_transport),
         .clock_hz = topology->spi_clock_hz,
     };
-    pf_storage_transport_t *transport = &config->bus.spi.transport;
 #endif
     if (topology->card_detect_enabled) {
         if (!storage_configured) {
@@ -96,8 +92,8 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
                 gpio_disable_pulls(topology->card_detect_gpio);
             }
         }
-        transport->present = card_present;
-        transport->presence_context = topology;
+        config->transport.present = card_present;
+        config->transport.presence_context = topology;
     }
     storage_configured = true;
     return true;

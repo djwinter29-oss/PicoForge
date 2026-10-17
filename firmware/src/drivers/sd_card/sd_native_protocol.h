@@ -32,10 +32,6 @@
 #define PF_SD_NATIVE_FUSED_COPY 0
 #endif
 
-uint8_t pf_sd_native_crc7(const uint8_t *data, size_t size);
-bool pf_sd_native_build_command(uint8_t command, uint32_t argument, uint8_t frame[6]);
-bool pf_sd_native_parse_response(uint8_t command, const uint8_t frame[6],
-								   uint32_t *argument, bool check_crc);
 /** Decode native short response framing/CRC, without interpreting card status. */
 pf_sd_detail_error_t pf_sd_native_decode_response(
     uint8_t command, const uint8_t frame[6], uint32_t *argument, bool check_crc);
@@ -43,9 +39,7 @@ bool pf_sd_native_response_words_to_bytes(const uint32_t *words, uint16_t respon
                                             uint8_t *response, size_t response_capacity);
 bool pf_sd_native_parse_r3_response(const uint8_t frame[6], uint32_t *ocr);
 bool pf_sd_native_write_response_accepted(uint32_t response_word);
-bool pf_sd_native_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2);
 bool pf_sd_native_validate_r2_response(const uint8_t frame[17]);
-bool pf_sd_native_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count);
 /** Require a ready, error-free card in transfer state. */
 bool pf_sd_native_status_is_transfer_ready(uint32_t status);
 /** Check group-1 function 1 busy status in a version-1 switch-status block. */

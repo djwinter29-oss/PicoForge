@@ -33,14 +33,38 @@ typedef struct {
     bool data_rx_multiblock_supported; /**< False after a qualified single-block fallback. */
 } pf_sd_native_host_t;
 
+/** @brief Decode a short response and record framing/CRC failures in the protocol state. */
+static inline bool pf_sd_native_host_parse_response(pf_sd_native_host_t *host, uint8_t command,
+                                                    const uint8_t response[6], uint32_t *argument)
+{
+    pf_sd_detail_error_t error = pf_sd_native_decode_response(command, response, argument, true);
+    if (error == PF_SD_DETAIL_NONE) {
+        return true;
+    }
+    if (error == PF_SD_DETAIL_RESPONSE_CRC) {
+        ++host->errors.command_crc_errors;
+    }
+    host->last_error = error;
+    return false;
+}
+
+/** @brief Validate status using the caller's R1 or R6 mask; R7 is classified separately. */
+static inline bool pf_sd_native_host_response_status_ok(pf_sd_native_host_t *host, uint32_t argument, uint32_t mask)
+{
+    if ((argument & mask) == 0u) {
+        return true;
+    }
+    host->last_error = PF_SD_DETAIL_CARD_STATUS;
+    return false;
+}
+
 /**
  * First use requires a zero-initialized host (static storage or {0}); this function
  * checks transport readiness before clearing the structure. Never pass an indeterminate host.
  * Duplicate init of a live host returns false without changing it or its resources.
  * Deinit releases resources and zeroes the host, allowing init again.
  */
-bool pf_sd_native_host_init(pf_sd_native_host_t *host,
-                              const pf_sd_native_config_t *config);
+bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_config_t *config);
 void pf_sd_native_host_deinit(pf_sd_native_host_t *host);
 bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t clock_hz);
 /** Reset host hardware and generate 80 clocks at the configured low-speed rate. */
@@ -55,28 +79,27 @@ bool pf_sd_native_host_command(pf_sd_native_host_t *host, uint8_t command,
 bool pf_sd_native_host_command_bytes(pf_sd_native_host_t *host, uint8_t command,
                                        uint32_t argument, uint16_t response_bits,
                                        uint8_t *response, size_t response_capacity);
-bool pf_sd_native_host_read_sector(pf_sd_native_host_t *host, uint32_t sector,
-                                     bool block_addressed, uint8_t block[512]);
+/** @brief Read and CRC-check one SDHC/SDXC sector; NULL discards the payload. */
+bool pf_sd_native_host_read_sector(pf_sd_native_host_t *host, uint32_t sector, uint8_t block[512]);
 /** Read and CRC-check the 8-byte SCR in the card's default one-bit mode. */
 bool pf_sd_native_host_read_scr(pf_sd_native_host_t *host, uint32_t relative_card_address,
                                uint8_t scr[8]);
 /** Read and CRC-check the 64-byte data block returned by SD CMD6. */
 bool pf_sd_native_host_read_switch_status(pf_sd_native_host_t *host, uint32_t argument,
                                          uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE]);
-/** Read and CRC-check sectors; NULL blocks discards payload for qualification only. */
+/** Read and CRC-check SDHC/SDXC sector addresses; NULL blocks discards payload for qualification only. */
 bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sector,
-                                      bool block_addressed, uint8_t *blocks,
-                                      uint32_t block_count);
+                                  uint8_t *blocks, uint32_t block_count);
+/** @brief Write one SDHC/SDXC sector with CMD24; uncertain completion is never replayed. */
 bool pf_sd_native_host_write_sector(pf_sd_native_host_t *host, uint32_t sector,
-                                      bool block_addressed, const uint8_t block[512]);
+                                   const uint8_t block[512]);
 /**
  * Write blocks with CMD25. The transfer stays open after success so a call starting at the next
  * sector continues it without a new CMD25; any other bus access must first call
  * pf_sd_native_host_recover(), which terminates the stream; earlier blocks may already be programmed.
  */
 bool pf_sd_native_host_write_blocks(pf_sd_native_host_t *host, uint32_t first_sector,
-                                      bool block_addressed, const uint8_t *blocks,
-                                      uint32_t block_count);
+                                   const uint8_t *blocks, uint32_t block_count);
 /** @return true when a write stream is open and a write at @p sector would continue it. */
 bool pf_sd_native_host_write_stream_continues(const pf_sd_native_host_t *host, uint32_t sector);
 /** Resolve pending streams (CMD12) and failed command-mode restoration.

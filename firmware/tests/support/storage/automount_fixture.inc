@@ -46,9 +46,9 @@ pf_sd_result_t pf_sd_native_sync(void)
     ++sync_calls;
     return media.initialized && sync_ok ? PF_SD_OK : PF_SD_NOT_READY;
 }
-pf_sd_result_t pf_sd_native_init(const pf_sd_native_config_t *config)
+pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
 {
-    TEST_ASSERT_EQUAL_PTR(&card_config.bus.native, config);
+    TEST_ASSERT_EQUAL_PTR(&card_config, config);
     TEST_ASSERT_EQUAL(PF_SD_OWNER_FIRMWARE, active_owner);
     TEST_ASSERT_NOT_EQUAL(0, disconnects);
     TEST_ASSERT_NOT_EQUAL(0, reservation_depth);

@@ -160,7 +160,7 @@ void pio_sm_put_blocking(PIO pio, uint sm, uint32_t value)
 #if defined(PF_TEST_SDIO_WIRE_ONLY)
             response[5] = 1u;
 #else
-            response[5] = (uint8_t)((pf_sd_native_crc7(response, 5u) << 1u) | 1u);
+            response[5] = (uint8_t)((pf_sd_crc7(response, 5u) << 1u) | 1u);
 #endif
             if (pf_test_sdio_corrupt_command_crc &&
                 ((pf_test_sdio_corrupt_command == 0u) ||

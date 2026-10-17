@@ -23,7 +23,8 @@ void pf_sd_unlock(void)
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
 #include "sd_spi.h"
 #define PF_SELECTED_TRANSPORT PF_SD_TRANSPORT_SPI
-#define pf_selected_init(config) pf_sd_spi_init(&(config)->bus.spi)
+#define pf_selected_init(config) pf_sd_spi_init(config)
+#define PF_SELECTED_MODE PF_STORAGE_TRANSPORT_SPI
 #define pf_selected_is_initialized() pf_sd_spi_is_initialized()
 #define pf_selected_block_count() pf_sd_spi_block_count()
 #define pf_selected_read(first, buffer, count) pf_sd_spi_read_blocks((first), (buffer), (count))
@@ -35,7 +36,8 @@ void pf_sd_unlock(void)
 #else
 #include "sd_native.h"
 #define PF_SELECTED_TRANSPORT PF_SD_TRANSPORT_SDIO_PIO
-#define pf_selected_init(config) pf_sd_native_init(&(config)->bus.native)
+#define pf_selected_init(config) pf_sd_native_init(config)
+#define PF_SELECTED_MODE PF_STORAGE_TRANSPORT_NATIVE_SD
 #define pf_selected_is_initialized() pf_sd_native_is_initialized()
 #define pf_selected_block_count() pf_sd_native_block_count()
 #define pf_selected_read(first, buffer, count) pf_sd_native_read_blocks((first), (buffer), (count))
@@ -113,7 +115,7 @@ bool pf_sd_take_reinit_request(void)
 pf_sd_result_t pf_sd_init(const pf_sd_config_t *config)
 {
     pf_sd_lock();
-    if ((config == NULL) || (config->transport != PF_SELECTED_TRANSPORT)) {
+    if ((config == NULL) || (config->transport.mode != PF_SELECTED_MODE)) {
         pf_sd_result_t result =
             record_failure(PF_SD_OPERATION_INIT, PF_SD_INVALID_ARGUMENT);
         pf_sd_unlock();

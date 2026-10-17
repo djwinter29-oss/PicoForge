@@ -80,9 +80,9 @@ static void check_contracts(void)
     }
     TEST_ASSERT_EQUAL_UINT(0, backend_calls);
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_init(NULL));
-    pf_sd_config_t config = { .transport = OTHER_TRANSPORT };
+    pf_sd_config_t config = { .transport.mode = OTHER_TRANSPORT };
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_init(&config));
-    config.transport = TEST_TRANSPORT;
+    config.transport.mode = TEST_TRANSPORT;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_init(&config));
     initialized = false;
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_msc_acquire());
@@ -158,7 +158,7 @@ static void check_serialization(void)
 {
     for (operation = 0; operation < 3; ++operation) {
         for (contender = 0; contender < 3; ++contender) {
-            pf_sd_config_t config = { .transport = TEST_TRANSPORT };
+            pf_sd_config_t config = { .transport.mode = TEST_TRANSPORT };
             TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_msc_release());
             TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_init(&config));
             TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_msc_acquire());

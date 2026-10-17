@@ -29,7 +29,7 @@ void pf_sd_get_info(pf_sd_info_t *info)
 }
 bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 {
-    config->transport = PF_SD_TRANSPORT_SDIO_PIO;
+    config->transport.mode = PF_STORAGE_TRANSPORT_NATIVE_SD;
     return true;
 }
 BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)

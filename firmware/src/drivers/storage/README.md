@@ -101,8 +101,9 @@ into the selected context; mutable clock settings, controller references, PIO st
 channels, and initialization flags remain runtime state, never fields modified in the board profile. Re-preparing
 serial storage after deinitialization restores its configuration from that profile.
 
-SD configuration callers now supply a persistent descriptor in `bus.native.transport` or `bus.spi.transport`, plus
-the protocol's transfer-clock target. Pin allocation, controller selection, and DET configuration are no longer SD
+SD configuration callers supply a persistent descriptor in `pf_sd_config_t.transport`, plus the protocol's
+transfer-clock target in `clock_hz`; its mode replaces the former separate SD transport tag and backend union.
+Pin allocation, controller selection, and DET configuration are no longer SD
 configuration fields. Backend integration supplies `pins.clock_gpio`, `pins.cs_gpio`, or all four `pins.data_gpio`
 entries as appropriate. The former `storage_bus.[ch]`, `pf_storage_bus_*`, and `PF_STORAGE_BUS_*` names are replaced
 by `storage_transport.[ch]`, `pf_storage_transport_*`, and `PF_STORAGE_TRANSPORT_*`, without compatibility aliases.

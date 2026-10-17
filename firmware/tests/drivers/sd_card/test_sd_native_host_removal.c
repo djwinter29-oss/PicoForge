@@ -53,6 +53,7 @@ void test_forget_removed_clears_stream_state_before_restoring_mode(void)
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_observed_host = &host;
     pf_test_sdio_expect_streams_cleared = true;
@@ -84,6 +85,7 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_can_add_program = false;
     pf_sd_native_host_forget_removed_card(&host);
@@ -98,6 +100,7 @@ void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 {
     test_wire = (pf_storage_sdio_pio_t){};
     pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
+    TEST_ASSERT_TRUE(pf_storage_transport_native_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_sd_native_host_forget_removed_card(NULL);
     pf_sd_native_host_forget_removed_card(&host);
@@ -116,20 +119,20 @@ void test_confirm_card_removed_invalidates_card_before_forgetting_host_streams(v
         .command_program_loaded = true,
         .data_rx_program_loaded = true,
     };
-    sdio_pio_host = (pf_sd_native_host_t){
+    native_host = (pf_sd_native_host_t){
         .transport = pf_storage_sdio_pio_transport(&test_wire),
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
     configuration_set = false;
     card_initialized = true;
-    pf_test_sdio_observed_host = &sdio_pio_host;
+    pf_test_sdio_observed_host = &native_host;
     pf_test_sdio_expect_streams_cleared = true;
 
     pf_sd_native_confirm_card_removed();
 
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_TRUE(pf_test_sdio_streams_were_cleared);
-    TEST_ASSERT_FALSE(sdio_pio_host.write_stream_open);
-    TEST_ASSERT_FALSE(sdio_pio_host.read_stream_unresolved);
+    TEST_ASSERT_FALSE(native_host.write_stream_open);
+    TEST_ASSERT_FALSE(native_host.read_stream_unresolved);
 }

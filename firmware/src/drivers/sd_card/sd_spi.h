@@ -4,14 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "sd_block.h"
-#include "../storage/storage_transport.h"
-
-/** Protocol settings over a board-owned raw serial transport. */
-typedef struct {
-    pf_storage_transport_t transport; /**< Non-owning descriptor; context outlives all SD access. */
-    uint32_t clock_hz; /**< 0 selects 25 MHz after the 400 kHz initialization phase. */
-} pf_sd_spi_config_t;
+#include "sd.h"
 
 typedef enum {
     PF_SD_SPI_INIT_STAGE_NONE = 0,
@@ -30,7 +23,7 @@ typedef enum {
  * Initialize the configured card. The first successful SPI setup locks this
  * singleton to the supplied configuration; repeating it retries card init.
  */
-pf_sd_result_t pf_sd_spi_init(const pf_sd_spi_config_t *config);
+pf_sd_result_t pf_sd_spi_init(const pf_sd_config_t *config);
 
 /** Return the stage that failed in the most recent card-init attempt. */
 pf_sd_spi_init_stage_t pf_sd_spi_get_init_stage(void);

@@ -53,7 +53,7 @@ static void check_baremetal(void)
     pf_sd_unlock(); pf_sd_unlock(); pf_sd_unlock();
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_init(NULL));
     TEST_ASSERT_EQUAL(PF_SD_NOT_CONFIGURED, pf_sd_read_blocks(0, NULL, 0));
-    pf_sd_config_t config = { .transport = TEST_TRANSPORT };
+    pf_sd_config_t config = { .transport.mode = TEST_TRANSPORT };
     TEST_ASSERT_TRUE(pf_sd_port_init(&config));
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_init(&config));
     uint8_t input[1024], output[1024];

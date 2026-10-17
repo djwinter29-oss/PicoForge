@@ -23,7 +23,6 @@ sd_card/
   sd_native_host.c / .h       Native command/data sequencing and streams
   sd_native_protocol.c / .h   Native response parsing and four-lane CRC
   sd_spi.c / .h               SPI initialization and block operations
-  sd_spi_protocol.c / .h      SPI response and token helpers
   sd_port.h / ports/          FreeRTOS and bare-metal integration
 ```
 
@@ -33,24 +32,33 @@ legacy/SDSC handling. Backend function/type prefixes are `pf_sd_native_*` and `p
 backend header names are now `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
 physical storage layer, not the native protocol's name or directory.
 
-Production filenames use the short `sd` prefix, including `ports/*/sd_port.c` and the FreeRTOS `sd_wait.c`.
+Production filenames use the short `sd` prefix, including `ports/*/sd_port.c`.
 Facade functions/types now use `pf_sd_*` and constants/header guards use `PF_SD_*`, replacing `pf_sd_card_*` /
 `PF_SD_CARD_*`. Native protocol/host functions/types use `pf_sd_native_*` and constants use `PF_SD_NATIVE_*`,
 replacing `pf_sdio_pio_*` / `PF_SDIO_PIO_*`; SPI names already use `pf_sd_spi_*` / `PF_SD_SPI_*`.
-The native configuration member is now `bus.native`, replacing `bus.sdio_pio`. Callers must migrate; no compatibility
-aliases are provided. Result values, behavior, build targets, and CMake options are unchanged. In particular,
+Configuration is now one `pf_sd_config_t` containing `transport` and `clock_hz`; the former transport tag,
+`bus.native`/`bus.spi` union, and backend-specific configuration types are removed. Callers must migrate; no
+compatibility aliases are provided. Result values, build targets, and CMake options are unchanged. In particular,
 `PF_SDIO_PIO_HIGH_SPEED` and `PF_SDIO_PIO_FUSED_COPY` remain CMake options and set the C definitions
 `PF_SD_NATIVE_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
 Unit-test filenames use the same source basenames, with port tests beneath the matching `ports/freertos` or
 `ports/baremetal` subtree.
 
-Both backend configurations now borrow a `pf_storage_transport_t` descriptor and retain only the protocol transfer-clock
-target. They no longer contain GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
+Both backends use the same configuration shape, borrowing a `pf_storage_transport_t` descriptor plus the protocol
+transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
+no GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
 See [pin allocation and runtime state](../firmware/src/drivers/storage/README.md#pin-allocation-and-runtime-state)
 for authoritative ownership and configuration-migration details. The former `pf_sd_native_set_wait_hook` API is removed;
 the execution port requests optional waits through `pf_storage_transport_enable_wait`, without PIO/IRQ knowledge.
 `pf_sd_port_init` now returns `bool`; callers must handle failure when optional waits were requested. Application
 startup reports this as a fatal setup error rather than silently ignoring a failed wait binding.
+
+The native host owns negotiated bus width, stream state, and response diagnostics; CID and capacity are retained
+directly in card information rather than duplicated in separate globals. Native transfer helpers take sector addresses
+only, because native initialization rejects SDSC. Shared CRC, command, and register helpers are called directly.
+Diagnostic and idle callbacks are bound once during host initialization, not on every wire operation.
+SPI token handling stays local to its driver, which shares one CID/CSD register-read path. A failed SPI selection
+invalidates the card and returns immediately without exchanging bytes, issuing commands, or attempting deselection.
 
 ### Physical Storage Bus
 
@@ -71,9 +79,7 @@ flowchart TD
     Card --> SPI[SPI card lifecycle]
     Native --> Host[SD command/data adapter and stream policy]
     Native --> NativeProtocol[Native responses and four-lane CRC]
-    SPI --> SPIProtocol[SPI response and data tokens]
     NativeProtocol --> Shared[Shared SD protocol helpers]
-    SPIProtocol --> Shared
     SPI --> Shared
     Host --> NativeBus[storage/sdio_pio: wire operations, PIO and DMA]
     NativeBus --> PIO[PIO and DMA hardware]
@@ -97,7 +103,6 @@ flowchart TD
 | Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/sdio_pio.c), [sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/sdio_pio.pio) |
 | SPI card protocol | [sd_spi.c](../firmware/src/drivers/sd_card/sd_spi.c) |
 | Shared SPI hardware transport | [spi.c](../firmware/src/drivers/storage/spi/spi.c) |
-| SPI response/token validation and pin-function checks | [sd_spi_protocol.c](../firmware/src/drivers/sd_card/sd_spi_protocol.c) |
 | FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
 
 The build selects one backend; it reuses the shared protocol library. SPI-only
@@ -124,14 +129,13 @@ The CMake cache variable `PF_SD_CARD_TRANSPORT` selects `SDIO_PIO` (default) or
 `SPI`; the build defines `PF_CONFIG_SD_CARD_TRANSPORT` consistently for board,
 facade, and backend code. Use `tools/firmware/build.sh --sd-card-transport SPI`
 or `-DPF_SD_CARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
-the selected member of `pf_sd_config_t.bus`; pin assignments belong in
+`pf_sd_config_t.transport` and `clock_hz`; pin assignments belong in
 board support, not application code or reusable protocol helpers.
 
 | Interface | Native SDIO-PIO | SD-SPI |
 | --- | --- | --- |
-| Configuration member | `bus.native` | `bus.spi` |
-| Configuration type | `pf_sd_native_config_t` | `pf_sd_spi_config_t` |
-| Physical interface | `bus.native.transport` | `bus.spi.transport` |
+| Configuration type | `pf_sd_config_t` | `pf_sd_config_t` |
+| Physical interface | `transport` (`NATIVE_SD` mode) | `transport` (`SPI` mode) |
 | Backend API prefix | `pf_sd_native_` | `pf_sd_spi_` |
 | Zero clock request | Fixed 25 MHz transfer target | 25 MHz |
 | Requested clock bounds | Only 0 or 25 MHz; initialization at 400 kHz | 400 kHz to 25 MHz |
@@ -707,8 +711,9 @@ preallocated files), and card busy time before choosing further optimizations.
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
-The optional native wait integration lives in
-[sd_wait.c](../firmware/src/drivers/sd_card/ports/freertos/sd_wait.c). It reserves
+The FreeRTOS [SD port](../firmware/src/drivers/sd_card/ports/freertos/sd_port.c) requests the optional adapter through
+the common transport interface. Its physical implementation lives in
+[sdio_wait.c](../firmware/src/drivers/storage/sdio_pio/ports/freertos/sdio_wait.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.

@@ -3,22 +3,6 @@
 
 #include <string.h>
 
-uint8_t pf_sd_native_crc7(const uint8_t *data, size_t size)
-{
-    return pf_sd_crc7(data, size);
-}
-
-bool pf_sd_native_build_command(uint8_t command, uint32_t argument, uint8_t frame[6])
-{
-    return pf_sd_build_command(command, argument, frame);
-}
-
-bool pf_sd_native_parse_response(uint8_t command, const uint8_t frame[6],
-                                   uint32_t *argument, bool check_crc)
-{
-    return pf_sd_native_decode_response(command, frame, argument, check_crc) == PF_SD_DETAIL_NONE;
-}
-
 pf_sd_detail_error_t pf_sd_native_decode_response(
     uint8_t command, const uint8_t frame[6], uint32_t *argument, bool check_crc)
 {
@@ -29,7 +13,7 @@ pf_sd_detail_error_t pf_sd_native_decode_response(
         return PF_SD_DETAIL_RESPONSE_INDEX;
     }
     if ((frame[5] & 1u) == 0u ||
-        (check_crc && ((frame[5] >> 1u) != pf_sd_native_crc7(frame, 5u)))) {
+        (check_crc && ((frame[5] >> 1u) != pf_sd_crc7(frame, 5u)))) {
         return PF_SD_DETAIL_RESPONSE_CRC;
     }
 
@@ -91,20 +75,10 @@ bool pf_sd_native_write_response_accepted(uint32_t response_word)
     return (response_word & 0x0fu) == 0x05u;
 }
 
-bool pf_sd_native_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2)
-{
-    return pf_sd_cmd8_supports_v2(response_argument, supports_v2);
-}
-
 bool pf_sd_native_validate_r2_response(const uint8_t frame[17])
 {
     return (frame != NULL) && (frame[0] == 0x3fu) && ((frame[16] & 1u) != 0u) &&
-           ((frame[16] >> 1u) == pf_sd_native_crc7(frame + 1u, 15u));
-}
-
-bool pf_sd_native_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count)
-{
-    return pf_sd_csd_sector_count(csd, sector_count);
+           ((frame[16] >> 1u) == pf_sd_crc7(frame + 1u, 15u));
 }
 
 bool pf_sd_native_status_is_transfer_ready(uint32_t status)

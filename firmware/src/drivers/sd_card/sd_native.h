@@ -4,8 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "sd_block.h"
-#include "../storage/storage_transport.h"
+#include "sd.h"
 
 /** Fixed transfer target; integer PIO divider rounds down when not exactly representable. */
 #define PF_SD_NATIVE_TRANSFER_CLOCK_HZ 25000000u
@@ -15,12 +14,6 @@
 #ifndef PF_SD_NATIVE_HIGH_SPEED
 #define PF_SD_NATIVE_HIGH_SPEED 0
 #endif
-
-/** Protocol settings over a board-owned native transport; the context must outlive all SD access. */
-typedef struct {
-    pf_storage_transport_t transport; /**< Non-owning, immutable native wire descriptor. */
-    uint32_t clock_hz;       /**< Only 0 or 25000000 accepted; High Speed is a separate build opt-in. */
-} pf_sd_native_config_t;
 
 typedef enum {
     PF_SD_NATIVE_INIT_STAGE_NONE = 0,
@@ -63,7 +56,7 @@ typedef enum {
  * disabled unless PF_SD_NATIVE_HIGH_SPEED is enabled at build time; that path
  * permits one 50-to-25 MHz startup fallback, never runtime transfer replay.
  */
-pf_sd_result_t pf_sd_native_init(const pf_sd_native_config_t *config);
+pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config);
 
 /** Return the stage that failed in the most recent card-init attempt. */
 pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void);
