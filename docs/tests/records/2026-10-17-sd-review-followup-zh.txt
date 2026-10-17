@@ -1,0 +1,33 @@
+SD 审查后续总结（2026-10-17）
+仓库 /home/home/repo/PicoForge；branch tidyup；HEAD 6ee2faf6d5dfe0282c15240728469e267407c4cc。
+起始工作区干净；未找到适用 AGENTS.md，.agents/.codex 为空。最终只保留以下本次改动；未 commit/push/PR。
+
+实际文件：
+- docs/sdcard-design.md：修正 native 失败多块写 readiness 说明及初始化 LBA 0 栈探测资源表；明确 fused-copy/IRQ-wait 独立轴、同源码/config 2×2、历史数据局限。
+- firmware/tests/drivers/sd_card/test_sd_native_init.c：新增失败批量写已关闭流仍失效、无重放、后续 sync/read/write NOT_READY 的聚焦回归。
+- docs/tests/records/2026-10-17-sd-review-followup-zh.txt：本总结（-o 输出文件）。
+
+审查项处置：
+1. 上次 83/100：未找到该评分的完整逐项报告，故不能独立重新计算分数；其“未确认新生产缺陷、主要缺 BOT/实体卡 HIL”结论在本次限定复核范围仍成立。未确认新生产代码缺陷。
+2. docs/sdcard-design.md：文档可修，已修上述三处；补一条真实行为回归。
+3. docs/sd-self-test.md：CMD18/CMD25、32 KiB 自测、同步/关闭/完整校验、历史 HIL 限制与当前路径相符；未重做现有功能，未修改历史描述。
+4. 2026-10-15-sd-msc-review-host.md：历史证据保留；旧工具名、旧逐块 callback 和“当时缺记录”描述不能当当前树状态。其 SPI 不确定写失效、checked sync/eject、PREVENT 和所有权措施已有实现/测试。实际当前 MSC 可接受多块 callback 并在成功多块写后 checked sync。
+5. 2026-10-15-cmd25-persistence.md/.json：历史六次实体卡 A/B 保留，支持保留 persistence；不支持本次性能提升或 fused/IRQ 排名。
+6. msc.c ponytail comment：当前 TinyUSB 512-byte staging 与同步 callback、pre-CSW 错误边界描述成立；多块 callback/RMW/锁/checked completion 已实现。真实 BOT reset/短输入/CSW 故障和 USB-to-card completion：需要未授权 HIL，未伪装为主机单测已解决。
+7. sd_native_host.c 64-sector comment：单个 33,280-byte wire buffer、已完成块 decode 与后续 RX overlap 已实现；不是 chained ping-pong。链式 DMA/SRAM placement/buffer 调整需要测量与预算，未修改。
+8. active paths/focused tests：native 固定 clock、CMD18 stop/recovery、CMD25 stream、SPI CRC/短传输/stop、facade 序列化、MSC callback 与可选 IRQ race 均复核现有测试。锁、双 TX buffer、CMD18/CMD25 不重复实现。
+
+worker 本次实际验证（原始日志 /tmp/picoforge-sd-review-20261017-*.log）：
+- 安装已有 Ceedling 1.1.10：11 个聚焦文件，83 Tests，0 Failures，0 Ignored；退出 0（ceedling.log）。
+  native_init、native_host_read_batch/tx/removal、sd_spi、msc_batch_sdio、copy_fused0/1、sdio_wait、serialization_sdio/spi。
+- 新增回归后重跑 test:test_sd_native_init：24 Tests 0 Failures 0 Ignored，退出 0（regression.log）。
+- /usr/bin/python3 -m pytest tests/contracts/test_tinyusb_msc_contract.py：1 passed in 0.01s，退出 0（contract.log）。
+- 默认 python3 和 host/python/.venv/bin/python 两次 pytest 尝试：No module named pytest，退出 1；使用已安装系统 pytest 重跑成功，无依赖安装/升级。
+- git diff --check：退出 0。
+未跑：Pico 2 SPI/SDIO configure/build（仅测试/文档变化，固件源码无变化）；PIO 模型（无相关实现变化）；任何实体板、闪存、SD 文件写删、media/format/partition、HIL。
+
+性能：PF_SDIO_PIO_FUSED_COPY 是 CRC/payload 数据通路融合；PF_SD_CARD_INTERRUPT_WAIT 是 FreeRTOS completion wait policy，两轴独立且可能交互。
+需同源码/config 的重复同卡 2×2：OFF/poll、ON/poll、OFF/IRQ、ON/IRQ。当前源码两默认均 OFF，保持不变。
+保存 CMD25 比较精确配置：150 MHz CPU、25 MHz SDIO、Release、fused OFF、IRQ wait OFF、preallocate ON、32 KiB buffer、128 MiB，同 SD8GB 卡；比较的是 persistent vs closed-per-call，历史中位吞吐增益 40.93%，非新 worker HIL。
+2026-10-14 CRC 记录是 150/25 MHz、无 preallocation、不同历史源码；未完整声明两开关配置，不能补猜。2026-10-13 记录是 12.5 MHz/其他演进配置。所查仓库 records 与 scratch 文件名检索未找到现成 fused/poll 匹配对照或四格数据；早期 ephemeral raw JSON 未找到。
+主机测试/编译不能判断哪个更快，硬件重复比较因本次明确禁止外设操作而 blocked。不改 ON 默认、不合并开关、不声称新增性能收益。

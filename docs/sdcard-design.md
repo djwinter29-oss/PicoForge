@@ -514,12 +514,12 @@ of the next image with transmission/programming of the current sector, but use
 only one DMA channel. Failed writes are not automatically replayed. Stop-command
 recovery is not a guarantee against data loss on power failure.
 
-A failed native multi-block write returns an error without replay. Initialization
-is invalidated when cleanup leaves the CMD25 stream unresolved (command-mode
-restoration or CMD12 response/busy recovery failed). If cleanup succeeds, the
-card remains initialized; this does not mean the failed write was atomic or that
-no data reached the card. Earlier accepted blocks, and possibly the failing block,
-may already be programmed. CMD12 terminates the stream; it is not the first point
+Every failed native multi-block write returns an error without replay,
+invalidates initialization and aborts the host, even if stream cleanup succeeds.
+Unresolved CMD25 state is retained for checked recovery during explicit
+reinitialization. Successful cleanup does not mean the failed write was atomic
+or that no data reached the card. Earlier accepted blocks, and possibly the
+failing block, may already be programmed. CMD12 terminates the stream; it is not the first point
 at which blocks can reach media. Every failed native CMD24 write invalidates
 initialization, including ordinary card rejection, even if command-mode
 restoration succeeds; explicit reinitialization is required. In SPI, a
@@ -618,7 +618,7 @@ controller; CS is an ordinary, independently controlled GPIO.
 | Clock source | `clk_sys` drives SM dividers; effective rate is reported in telemetry | SDK SPI baud-rate configuration; actual rate is reported |
 | Timing source | SDK microsecond timer for bounded polling; SDK sleeps during identification | Same; no dedicated timer/alarm claimed |
 | Static native receive/transfer wire buffer | 64 x 130 words x 4 bytes = 33,280 bytes | None |
-| Static initialization probe buffer | None; no startup sector probe | None |
+| Static initialization probe buffer | None; LBA 0 validation uses a 512-byte stack buffer plus the single-sector wire image below | None |
 | Single-sector wire image | 520 bytes on stack for native single-block read/write paths | No full-sector bounce buffer |
 | Multi-block write wire images | Two x 520 bytes = 1,040 bytes on stack | None |
 | Other stack/static data | SCR/switch-status buffers, command responses, host/configuration state, CID and capacity; additional stack beyond images required | Small command/CSD/CID buffers and configuration/telemetry state |
@@ -763,8 +763,30 @@ The host still requires both PIO completion and DMA completion. Boot without a
 running scheduler retains polling. This adapter supports the current serialized,
 single-core runtime, not concurrent card callers or a second-core owner.
 
-Measure each option separately at the same supported clock, card, filesystem,
-file size, and timing boundary. Record effective clocks, error/recovery counts,
+`PF_SDIO_PIO_FUSED_COPY` and `PF_SD_CARD_INTERRUPT_WAIT` are independent
+compile-time axes: the former fuses CRC/payload copying in the protocol data
+path; the latter selects the FreeRTOS completion-wait policy. They are not
+alternatives and may interact through CPU, DMA, PIO and scheduler timing.
+To compare their main effects and interaction, use the same source revision,
+hardware configuration, and card. Repeat equivalent workloads for all four
+combinations, alternating order where practical; vary only these two options:
+
+| Fused copy | IRQ wait | Completion policy |
+| --- | --- | --- |
+| OFF | OFF | Polling |
+| ON | OFF | Polling |
+| OFF | ON | FreeRTOS IRQ wait |
+| ON | ON | FreeRTOS IRQ wait |
+
+Keep the supported clock, card, filesystem, file size, and timing boundary fixed.
+The saved [CMD25 persistence A/B](tests/records/2026-10-15-cmd25-persistence.md)
+uses fused OFF and IRQ wait OFF in both variants (150 MHz CPU, 25 MHz SDIO,
+Release, preallocation ON); it measures persistence only. Earlier throughput
+records compare other source/configuration changes and do not supply a matched
+fused/polling or full 2x2 control. Host codec/race tests and builds establish
+behavior and compilation, not which combination is faster. Hardware comparison
+requires separate authorization; keep both defaults OFF until measured results
+justify a change. Record effective clocks, error/recovery counts,
 CRC integrity, SRAM and stack high-water marks, CPU availability, and latency,
 not only average MB/s. Keep normal and preallocated filesystem results separate.
 CRC checks and bounded cleanup remain mandatory. Chained DMA and a faster bus

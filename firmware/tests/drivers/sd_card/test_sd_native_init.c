@@ -429,6 +429,24 @@ void test_runtime_read_failure_is_not_replayed_and_clock_stays_fixed(void)
     TEST_ASSERT_EQUAL_UINT(1u, reads);
 }
 
+void test_failed_batch_write_with_closed_stream_invalidates_and_refuses_replay(void)
+{
+    uint8_t blocks[2u * PF_SD_BLOCK_SIZE] = {0};
+    batch_write_ok = false;
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_native_write_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_FALSE(native_host.write_stream_open);
+    TEST_ASSERT_FALSE(card_initialized);
+    TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
+    TEST_ASSERT_EQUAL_UINT(1u, batch_writes);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_sync());
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_write_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_EQUAL_UINT(1u, batch_writes);
+    TEST_ASSERT_EQUAL_UINT(0u, reads);
+    TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
+}
+
 void test_removed_media_never_attempts_read_or_reinitialization(void)
 {
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
