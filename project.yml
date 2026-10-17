@@ -53,18 +53,18 @@
 :flags:
   :test:
     :compile:
-      :test_sdio_pio_init:
-        - -DPF_SDIO_PIO_HIGH_SPEED=1
+      :test_sd_native_init:
+        - -DPF_SD_NATIVE_HIGH_SPEED=1
       :test_levelx_nor:
         - -DLX_INCLUDE_USER_DEFINE_FILE
-      :test_sd_card_serialization:
+      :test_sd_port_serialization:
         - -std=c11
         - -D_XOPEN_SOURCE=700
         - -pthread
-      :test_sd_card_:
+      :test_sd_port_:
         - -ffunction-sections
         - -fdata-sections
-      :/test_sd_card_.*_spi/:
+      :/test_sd_port_.*spi/:
         - -DPF_CONFIG_SD_CARD_TRANSPORT=1
       :test_storage_automount:
         - -ffunction-sections
@@ -80,9 +80,9 @@
       :test_msc_batch_spi:
         - -DPF_CONFIG_SD_CARD_TRANSPORT=1
     :link:
-      :test_sd_card_serialization:
+      :test_sd_port_serialization:
         - -pthread
-      :test_sd_card_:
+      :test_sd_port_:
         - -Wl,--gc-sections
       :test_storage_automount:
         - -Wl,--gc-sections

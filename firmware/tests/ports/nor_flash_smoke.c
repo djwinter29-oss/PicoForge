@@ -2,7 +2,7 @@
 #include <string.h>
 
 #include "board/board_storage.h"
-#include "drivers/nor_flash/nor_flash.h"
+#include "drivers/nor_flash/nor.h"
 #include "pico/stdlib.h"
 
 int main(void)
@@ -10,24 +10,24 @@ int main(void)
     stdio_init_all();
     pf_nor_transport_t transport;
     pf_storage_bus_t bus = {0};
-    pf_nor_flash_t flash;
+    pf_nor_t flash;
     uint8_t single[32], quad[32];
     pf_nor_result_t result = pf_nor_result_from_storage(pf_board_storage_prepare(&bus));
     if (result == PF_NOR_OK) {
         result = pf_nor_transport_init(&bus, &transport);
     }
     if (result == PF_NOR_OK) {
-        result = pf_nor_flash_init(&flash, &transport);
+        result = pf_nor_init(&flash, &transport);
     }
     if (result == PF_NOR_OK) {
-        result = pf_nor_flash_read(&flash, 0u, single, sizeof(single));
+        result = pf_nor_read(&flash, 0u, single, sizeof(single));
     }
 #if PF_NOR_QSPI
     if (result == PF_NOR_OK) {
-        result = pf_nor_flash_enable_quad(&flash);
+        result = pf_nor_enable_quad(&flash);
     }
     if (result == PF_NOR_OK) {
-        result = pf_nor_flash_read(&flash, 0u, quad, sizeof(quad));
+        result = pf_nor_read(&flash, 0u, quad, sizeof(quad));
     }
     if (result == PF_NOR_OK && memcmp(single, quad, sizeof(single)) != 0) {
         result = PF_NOR_VERIFY_ERROR;

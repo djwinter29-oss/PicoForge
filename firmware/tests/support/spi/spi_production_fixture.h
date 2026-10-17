@@ -5,9 +5,9 @@
 #include "./hardware/spi.h"
 #include "./hardware/gpio.h"
 #include "./pico/stdlib.h"
-#include "sd_card_protocol.h"
+#include "sd_protocol.h"
 static uint16_t spi_fixture_crc16(const uint8_t *data, size_t size);
-#define pf_sd_card_crc16 spi_fixture_crc16
-#include "../../../src/drivers/sd_card/sd_card_spi.c"
-#undef pf_sd_card_crc16
+#define pf_sd_crc16 spi_fixture_crc16
+#include "../../../src/drivers/sd_card/sd_spi.c"
+#undef pf_sd_crc16
 #endif

@@ -1,10 +1,10 @@
 #include "unity.h"
 #include <string.h>
-#include "drivers/sd_card/sd_card_msc.h"
-#include "drivers/sd_card/sd_card_port.h"
-#include "drivers/sd_card/sd_card_native.h"
+#include "drivers/sd_card/sd_msc.h"
+#include "drivers/sd_card/sd_port.h"
+#include "drivers/sd_card/sd_native.h"
 #define WORKER_SOURCE "../../../src/middleware/storage/storage_worker.c"
-#define FACADE_SOURCE "../../../src/drivers/sd_card/sd_card.c"
+#define FACADE_SOURCE "../../../src/drivers/sd_card/sd.c"
 #define MSC_SOURCE "../../../src/usb/msc.c"
 #include WORKER_SOURCE
 #include FACADE_SOURCE
@@ -12,49 +12,49 @@
 
 static unsigned reservation_depth, try_lock_calls;
 static bool lock_unavailable;
-static pf_sd_card_info_t media = { .presence_known = true, .present = true };
+static pf_sd_info_t media = { .presence_known = true, .present = true };
 static uint32_t now;
 static bool mounted, queue_fails, queued_recovery, sync_ok = true, init_fails;
 static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
 static unsigned sync_calls, disconnects, init_calls;
 static pf_storage_result_t mount_result = PF_STORAGE_OK;
 
-bool pf_sd_card_port_try_lock(void)
+bool pf_sd_port_try_lock(void)
 {
     ++try_lock_calls;
     if (lock_unavailable) return false;
     ++reservation_depth;
     return true;
 }
-void pf_sd_card_port_lock(void) { ++reservation_depth; }
-void pf_sd_card_port_unlock(void)
+void pf_sd_port_lock(void) { ++reservation_depth; }
+void pf_sd_port_unlock(void)
 { TEST_ASSERT_NOT_EQUAL(0, reservation_depth); --reservation_depth; }
-bool pf_sdio_pio_is_initialized(void) { return media.initialized; }
-uint32_t pf_sdio_pio_block_count(void) { return 128u; }
-void pf_sdio_pio_get_info(pf_sd_card_info_t *info) { *info = media; }
-pf_sdio_pio_init_stage_t pf_sdio_pio_get_init_stage(void)
-{ return PF_SDIO_PIO_INIT_STAGE_NONE; }
-void pf_sd_card_get_profile(pf_sd_card_profile_t *profile)
-{ *profile = (pf_sd_card_profile_t){0}; }
-void pf_sdio_pio_confirm_card_removed(void)
+bool pf_sd_native_is_initialized(void) { return media.initialized; }
+uint32_t pf_sd_native_block_count(void) { return 128u; }
+void pf_sd_native_get_info(pf_sd_info_t *info) { *info = media; }
+pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void)
+{ return PF_SD_NATIVE_INIT_STAGE_NONE; }
+void pf_sd_get_profile(pf_sd_profile_t *profile)
+{ *profile = (pf_sd_profile_t){0}; }
+void pf_sd_native_confirm_card_removed(void)
 {
     ++removals;
     media.initialized = false;
 }
-pf_sd_card_result_t pf_sdio_pio_sync(void)
+pf_sd_result_t pf_sd_native_sync(void)
 {
     ++sync_calls;
-    return media.initialized && sync_ok ? PF_SD_CARD_OK : PF_SD_CARD_NOT_READY;
+    return media.initialized && sync_ok ? PF_SD_OK : PF_SD_NOT_READY;
 }
-pf_sd_card_result_t pf_sdio_pio_init(const pf_sdio_pio_config_t *config)
+pf_sd_result_t pf_sd_native_init(const pf_sd_native_config_t *config)
 {
-    TEST_ASSERT_EQUAL_PTR(&card_config.bus.sdio_pio, config);
-    TEST_ASSERT_EQUAL(PF_SD_CARD_OWNER_FIRMWARE, active_owner);
+    TEST_ASSERT_EQUAL_PTR(&card_config.bus.native, config);
+    TEST_ASSERT_EQUAL(PF_SD_OWNER_FIRMWARE, active_owner);
     TEST_ASSERT_NOT_EQUAL(0, disconnects);
     TEST_ASSERT_NOT_EQUAL(0, reservation_depth);
     ++init_calls;
     media.initialized = !init_fails;
-    return media.initialized ? PF_SD_CARD_OK : PF_SD_CARD_NOT_READY;
+    return media.initialized ? PF_SD_OK : PF_SD_NOT_READY;
 }
 bool pf_storage_is_mounted(void) { return mounted; }
 pf_storage_result_t pf_storage_unmount(FRESULT *result)
@@ -69,7 +69,7 @@ pf_storage_result_t pf_storage_unmount(FRESULT *result)
     return PF_STORAGE_OK;
 }
 void pf_storage_forget_filesystem_format(void) { ++forget_calls; }
-pf_storage_result_t pf_storage_mount(const pf_sd_card_config_t *config, FRESULT *result)
+pf_storage_result_t pf_storage_mount(const pf_sd_config_t *config, FRESULT *result)
 {
     (void)config; (void)result;
     ++mount_calls;

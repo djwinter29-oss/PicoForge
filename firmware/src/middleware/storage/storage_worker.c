@@ -3,7 +3,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
-#include "drivers/sd_card/sd_card.h"
+#include "drivers/sd_card/sd.h"
 #include "drivers/system.h"
 #include "middleware/storage/storage.h"
 
@@ -32,7 +32,7 @@ static uint8_t request_storage[sizeof(storage_request_t)];
 static uint8_t reply_storage[STORAGE_REPLY_COUNT * sizeof(pf_storage_worker_reply_t)];
 static QueueHandle_t requests;
 static QueueHandle_t replies;
-static pf_sd_card_config_t card_config;
+static pf_sd_config_t card_config;
 static bool config_available;
 static bool busy;
 static uint32_t active_session;
@@ -108,7 +108,7 @@ static void attempt_auto_mount(void)
 
 static void service_card_presence(void)
 {
-    pf_sd_card_info_t info;
+    pf_sd_info_t info;
 
     if (!config_available) {
         return;
@@ -121,9 +121,9 @@ static void service_card_presence(void)
     card_service_busy = true;
     taskEXIT_CRITICAL();
 
-    pf_sd_card_lock();
-    pf_sd_card_get_info(&info);
-    bool firmware_owned = pf_sd_card_get_owner() == PF_SD_CARD_OWNER_FIRMWARE;
+    pf_sd_lock();
+    pf_sd_get_info(&info);
+    bool firmware_owned = pf_sd_get_owner() == PF_SD_OWNER_FIRMWARE;
     bool mounted_card_uninitialized = pf_storage_is_mounted() && !info.initialized;
     if (firmware_owned && mounted_card_uninitialized && (!info.presence_known || info.present)) {
         if (pf_storage_unmount(NULL) != PF_STORAGE_OK) {
@@ -151,7 +151,7 @@ static void service_card_presence(void)
             auto_mount_pending = true;
             mount_retry_waiting = false;
             if (!stable_card_present) {
-                pf_sd_card_confirm_removed();
+                pf_sd_confirm_removed();
                 if (pf_storage_is_mounted()) {
                     (void)pf_storage_unmount(NULL);
                 }
@@ -170,7 +170,7 @@ static void service_card_presence(void)
     if (auto_mount_blocked) {
         goto done;
     }
-    if (pf_sd_card_take_reinit_request()) {
+    if (pf_sd_take_reinit_request()) {
         auto_mount_pending = true;
         mount_retry_waiting = false;
     }
@@ -188,7 +188,7 @@ static void service_card_presence(void)
     attempt_auto_mount();
 
 done:
-    pf_sd_card_unlock();
+    pf_sd_unlock();
     taskENTER_CRITICAL();
     card_service_busy = false;
     taskEXIT_CRITICAL();
@@ -198,11 +198,11 @@ static void recover_card(void)
 {
     auto_mount_blocked = true;
     auto_mount_pending = false;
-    pf_sd_card_lock();
-    (void)pf_sd_card_take_reinit_request();
+    pf_sd_lock();
+    (void)pf_sd_take_reinit_request();
     /* Failure remains in facade diagnostics. Never mount or replay. */
-    (void)pf_sd_card_init(&card_config);
-    pf_sd_card_unlock();
+    (void)pf_sd_init(&card_config);
+    pf_sd_unlock();
     taskENTER_CRITICAL();
     busy = false;
     taskEXIT_CRITICAL();
@@ -246,7 +246,7 @@ static void storage_task(void *context)
     }
 }
 
-bool pf_storage_worker_init(const pf_sd_card_config_t *config)
+bool pf_storage_worker_init(const pf_sd_config_t *config)
 {
     if (requests != NULL) {
         return false;
@@ -352,15 +352,15 @@ bool pf_storage_worker_self_test_start(uint32_t size_mib, bool host_owned)
         rejection = PF_SELF_TEST_ERROR_USB_OWNER;
     } else if ((size_mib == 0u) || (size_mib > PF_STORAGE_SELF_TEST_MAX_MIB)) {
         rejection = PF_SELF_TEST_ERROR_SIZE;
-    } else if (!pf_sd_card_try_lock()) {
+    } else if (!pf_sd_try_lock()) {
         rejection = PF_SELF_TEST_ERROR_BUSY;
     } else {
-        if (!config_available || !pf_sd_card_is_initialized()) {
+        if (!config_available || !pf_sd_is_initialized()) {
             rejection = PF_SELF_TEST_ERROR_CARD;
         } else if (!pf_storage_is_mounted()) {
             rejection = PF_SELF_TEST_ERROR_NOT_MOUNTED;
         }
-        pf_sd_card_unlock();
+        pf_sd_unlock();
     }
     taskENTER_CRITICAL();
     if (busy || card_service_busy) {

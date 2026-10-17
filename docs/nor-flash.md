@@ -20,10 +20,10 @@ erased bits; it never erases implicitly. A failed write can leave partial change
 
 ## Layers and Wiring
 
-- [Common NOR protocol](../firmware/src/drivers/nor_flash/nor_flash.h) owns
+- [Common NOR protocol](../firmware/src/drivers/nor_flash/nor.h) owns
   device commands, geometry, write-enable checks, status and operation deadlines.
-- [Transaction interface](../firmware/src/drivers/nor_flash/nor_flash_transport.h) and
-  [common adapter](../firmware/src/drivers/nor_flash/nor_flash_transport.c) use the same storage-bus handle for SPI
+- [Transaction interface](../firmware/src/drivers/nor_flash/nor_transport.h) and
+  [common adapter](../firmware/src/drivers/nor_flash/nor_transport.c) use the same storage-bus handle for SPI
   and QSPI-PIO. Transactions contain single-lane command/address/dummy phases and single- or quad-lane data.
   The adapter forwards transactions, maps physical results, and supplies the protocol's microsecond clock.
 - Physical signaling uses the [shared SPI engine](../firmware/src/drivers/storage/spi/storage_spi.c), also used by
@@ -42,9 +42,15 @@ The protocol and common adapter live together in `firmware/src/drivers/nor_flash
 
 ```text
 nor_flash/
-  nor_flash.c / .h          NOR protocol, geometry, programming and erase
-  nor_flash_transport.c / .h  Common storage-bus adapter and result translation
+  nor.c / .h            NOR protocol, geometry, programming and erase
+  nor_transport.c / .h  Common storage-bus adapter and result translation
 ```
+
+Production and unit-test filenames use the short `nor` prefix. The device type is `pf_nor_t`, and protocol entry
+points are `pf_nor_init`, `pf_nor_read`, `pf_nor_program`, `pf_nor_erase`, `pf_nor_sync`, and `pf_nor_enable_quad`.
+These replace the former `pf_nor_flash_*` type and functions; callers must migrate without compatibility aliases.
+Transport/result names already use `pf_nor_*` / `PF_NOR_*` and are unchanged. Build targets, options, and upstream
+LevelX `lx_nor_flash_*` names retain their existing names.
 
 `pf_nor_transport_init` replaces the former `pf_nor_spi_init` / `pf_nor_qspi_pio_init` entry points. Pass a persistent,
 configured `pf_storage_bus_t` handle and a transport output; the common adapter initializes the bus and derives quad
@@ -56,9 +62,9 @@ The former NOR-specific board wrapper is removed. The
 [board storage interface](../firmware/src/board/board_storage.h) prepares the selected physical descriptor and
 board-specific idle pins without initializing the bus or referencing NOR. The standalone smoke follows this sequence:
 
-1. `pf_board_storage_prepare(&bus)` obtains a handle to the board profile's static physical context and prepares
+1. `pf_board_storage_prepare(&bus)` configures board-owned runtime state from the immutable profile and prepares
    WP/HOLD for SPI. It acquires no SPI/PIO resources.
-2. `pf_nor_transport_init(&bus, &transport)` initializes the bus; `pf_nor_flash_init` identifies the flash.
+2. `pf_nor_transport_init(&bus, &transport)` initializes the bus; `pf_nor_init` identifies the flash.
 3. After all operations, call `pf_storage_bus_deinit(&bus)`, then `pf_board_storage_release_pins()`.
    Release prepared pins even if subsequent bus/device initialization fails.
 
@@ -83,8 +89,9 @@ Never hard-tie those pins to 3V3 when using quad transfers.
 All contexts are caller-owned and must remain alive for the transport/device
 lifetime. Zero-initialize transport contexts, serialize all access and dedicate
 the selected pins/controller to this driver. Deinitialize before reinitializing.
-A bus I/O error or timeout deinitializes the transport without replay. The caller owns the bus handle; the board
-profile owns the concrete context. Recover by deinitializing the bus, releasing board pins, then repeating
+A bus I/O error or timeout deinitializes the transport without replay. The caller owns the bus handle;
+[board_storage.c](../firmware/src/board/board_storage.c) owns the concrete runtime context, separate from the immutable
+[board profile](../firmware/src/board/board_profile.c). Recover by deinitializing the bus, releasing board pins, then repeating
 preparation, transport initialization, and flash initialization.
 WP/HOLD setup belongs to board support, not the common adapter. In SPI mode these pins remain driven high after a bus
 transfer failure until board pin release; external pull-ups keep their idle levels afterward.
@@ -132,7 +139,7 @@ establish correctness across all data patterns.
 ## Tests and Remaining Qualification
 
 ```sh
-ceedling test:test_nor_flash
+ceedling test:test_nor
 python3 -m pytest tests/pio/test_nor_qspi_timing.py
 ```
 

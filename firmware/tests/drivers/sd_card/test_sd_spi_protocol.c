@@ -1,7 +1,7 @@
 #include "unity.h"
-#include "sd_card_spi_protocol.h"
-#include "sd_card_block.h"
-#include "sd_card_protocol.h"
+#include "sd_spi_protocol.h"
+#include "sd_block.h"
+#include "sd_protocol.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -38,7 +38,7 @@ void test_converts_block_and_byte_address_arguments(void)
     TEST_ASSERT_TRUE(pf_sd_spi_block_argument(0x12345678u, true, &argument));
     TEST_ASSERT_EQUAL_HEX32(0x12345678u, argument);
     TEST_ASSERT_TRUE(pf_sd_spi_block_argument(17u, false, &argument));
-    TEST_ASSERT_EQUAL_UINT32(17u * PF_SD_CARD_BLOCK_SIZE, argument);
+    TEST_ASSERT_EQUAL_UINT32(17u * PF_SD_BLOCK_SIZE, argument);
 }
 
 void test_rejects_unrepresentable_byte_address(void)
@@ -46,7 +46,7 @@ void test_rejects_unrepresentable_byte_address(void)
     uint32_t argument = 0u;
 
     TEST_ASSERT_FALSE(pf_sd_spi_block_argument(
-        (UINT32_MAX / PF_SD_CARD_BLOCK_SIZE) + 1u, false, &argument));
+        (UINT32_MAX / PF_SD_BLOCK_SIZE) + 1u, false, &argument));
     TEST_ASSERT_FALSE(pf_sd_spi_block_argument(0u, true, NULL));
 }
 

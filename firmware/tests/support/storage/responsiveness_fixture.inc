@@ -9,27 +9,27 @@
 
 static bool unavailable, reserved, initialized, mounted, queue_fails;
 static unsigned queries, queued, recovery_requests, normal_submissions, messages;
-bool pf_sd_card_try_lock(void)
+bool pf_sd_try_lock(void)
 {
     TEST_ASSERT_FALSE(reserved);
     reserved = !unavailable;
     return reserved;
 }
-void pf_sd_card_unlock(void) { TEST_ASSERT_TRUE(reserved); reserved = false; }
-bool pf_sd_card_is_initialized(void) { TEST_ASSERT_TRUE(reserved); return initialized; }
+void pf_sd_unlock(void) { TEST_ASSERT_TRUE(reserved); reserved = false; }
+bool pf_sd_is_initialized(void) { TEST_ASSERT_TRUE(reserved); return initialized; }
 bool pf_storage_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
-void pf_sd_card_get_info(pf_sd_card_info_t *info)
+void pf_sd_get_info(pf_sd_info_t *info)
 {
     TEST_ASSERT_TRUE(reserved);
     ++queries;
-    *info = (pf_sd_card_info_t){
+    *info = (pf_sd_info_t){
         .initialized = initialized, .presence_known = true, .present = true,
         .cid_valid = initialized, .bus_clock_hz = 25000000, .block_count = 128
     };
 }
-bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
+bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 {
-    config->transport = PF_SD_CARD_TRANSPORT_SDIO_PIO;
+    config->transport = PF_SD_TRANSPORT_SDIO_PIO;
     return true;
 }
 BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)

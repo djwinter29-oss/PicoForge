@@ -14,6 +14,7 @@ pf_storage_bus_result_t pf_board_storage_prepare(pf_storage_bus_t *bus);
 
 /** @brief Release board-specific idle pins after the caller deinitializes the bus.
  * Does not deinitialize transport hardware, synchronize media, or send device commands.
+ * Leaves pins unchanged if the physical context still owns live hardware resources.
  */
 void pf_board_storage_release_pins(void);
 

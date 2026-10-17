@@ -52,7 +52,7 @@ static UINT read_words(LX_NOR_FLASH *control, ULONG *address, ULONG *destination
     if (destination == NULL || words == 0u || !address_valid(volume, address, words, &offset)) {
         return LX_ERROR;
     }
-    return raw_result(volume, pf_nor_flash_read(volume->flash, offset, destination, (size_t)words * 4u));
+    return raw_result(volume, pf_nor_read(volume->flash, offset, destination, (size_t)words * 4u));
 }
 
 static UINT write_words(LX_NOR_FLASH *control, ULONG *address, ULONG *source, ULONG words)
@@ -62,7 +62,7 @@ static UINT write_words(LX_NOR_FLASH *control, ULONG *address, ULONG *source, UL
     if (source == NULL || words == 0u || !address_valid(volume, address, words, &offset)) {
         return LX_ERROR;
     }
-    return raw_result(volume, pf_nor_flash_program(volume->flash, offset, source, (size_t)words * 4u));
+    return raw_result(volume, pf_nor_program(volume->flash, offset, source, (size_t)words * 4u));
 }
 
 static UINT erase_block(LX_NOR_FLASH *control, ULONG block, ULONG erase_count)
@@ -72,7 +72,7 @@ static UINT erase_block(LX_NOR_FLASH *control, ULONG block, ULONG erase_count)
     if (block >= volume->size / 4096u) {
         return raw_result(volume, PF_NOR_INVALID_ARGUMENT);
     }
-    return raw_result(volume, pf_nor_flash_erase(volume->flash, volume->offset + block * 4096u));
+    return raw_result(volume, pf_nor_erase(volume->flash, volume->offset + block * 4096u));
 }
 
 static UINT verify_block(LX_NOR_FLASH *control, ULONG block)
@@ -83,7 +83,7 @@ static UINT verify_block(LX_NOR_FLASH *control, ULONG block)
         return raw_result(volume, PF_NOR_INVALID_ARGUMENT);
     }
     for (uint32_t offset = 0u; offset < 4096u; offset += sizeof(words)) {
-        UINT result = raw_result(volume, pf_nor_flash_read(volume->flash,
+        UINT result = raw_result(volume, pf_nor_read(volume->flash,
             volume->offset + block * 4096u + offset, words, sizeof(words)));
         if (result != LX_SUCCESS) {
             return result;
@@ -120,7 +120,7 @@ static UINT driver_init(LX_NOR_FLASH *control)
     return LX_SUCCESS;
 }
 
-UINT pf_levelx_nor_open(pf_levelx_nor_t *volume, pf_nor_flash_t *flash,
+UINT pf_levelx_nor_open(pf_levelx_nor_t *volume, pf_nor_t *flash,
                         uint32_t offset, uint32_t size)
 {
     if (volume == NULL || volume->opened || flash == NULL || !flash->initialized ||
@@ -177,7 +177,7 @@ UINT pf_levelx_nor_sync(pf_levelx_nor_t *volume)
     if (volume == NULL || !volume->opened || volume->faulted) {
         return LX_ERROR;
     }
-    return raw_result(volume, pf_nor_flash_sync(volume->flash));
+    return raw_result(volume, pf_nor_sync(volume->flash));
 }
 
 UINT pf_levelx_nor_close(pf_levelx_nor_t *volume)

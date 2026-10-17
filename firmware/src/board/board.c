@@ -39,7 +39,7 @@ bool pf_board_init(void)
     return true;
 }
 
-bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
+bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 {
     const pf_board_resources_t *topology = pf_board_resources_get();
 
@@ -49,8 +49,8 @@ bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
     }
 
  #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-    config->transport = PF_SD_CARD_TRANSPORT_SDIO_PIO;
-    config->bus.sdio_pio = (pf_sdio_pio_config_t){
+    config->transport = PF_SD_TRANSPORT_SDIO_PIO;
+    config->bus.native = (pf_sd_native_config_t){
         .pins = topology->native_pins,
         .pio = (topology->pio_index == 0u) ? pio0 : pio1,
         .clock_hz = topology->clock_hz,
@@ -61,7 +61,7 @@ bool pf_board_get_sd_card_config(pf_sd_card_config_t *config)
         .card_detect_pull_up = topology->card_detect_pull_up,
     };
 #else
-    config->transport = PF_SD_CARD_TRANSPORT_SPI;
+    config->transport = PF_SD_TRANSPORT_SPI;
     config->bus.spi = (pf_sd_spi_config_t){
         .spi = (topology->spi_index == 0u) ? spi0 : spi1,
         .pins = topology->spi_pins,

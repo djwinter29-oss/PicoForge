@@ -26,13 +26,13 @@ TEST_SOURCE_FILE("lx_nor_flash_partial_defragment.c")
 
 #define BLOCKS 12u
 static uint8_t memory[BLOCKS * 4096u];
-static pf_nor_flash_t flash;
+static pf_nor_t flash;
 static pf_levelx_nor_t volume;
 static unsigned erases[BLOCKS], programs;
 static bool fail_io;
 static int fail_program_after;
 
-pf_nor_result_t pf_nor_flash_read(pf_nor_flash_t *device, uint32_t address, void *data, size_t length)
+pf_nor_result_t pf_nor_read(pf_nor_t *device, uint32_t address, void *data, size_t length)
 {
     (void)device;
     if (fail_io) return PF_NOR_IO_ERROR;
@@ -41,7 +41,7 @@ pf_nor_result_t pf_nor_flash_read(pf_nor_flash_t *device, uint32_t address, void
     return PF_NOR_OK;
 }
 
-pf_nor_result_t pf_nor_flash_program(pf_nor_flash_t *device, uint32_t address,
+pf_nor_result_t pf_nor_program(pf_nor_t *device, uint32_t address,
                                     const void *data, size_t length)
 {
     (void)device;
@@ -63,7 +63,7 @@ pf_nor_result_t pf_nor_flash_program(pf_nor_flash_t *device, uint32_t address,
     return PF_NOR_OK;
 }
 
-pf_nor_result_t pf_nor_flash_erase(pf_nor_flash_t *device, uint32_t address)
+pf_nor_result_t pf_nor_erase(pf_nor_t *device, uint32_t address)
 {
     (void)device;
     if (fail_io) return PF_NOR_IO_ERROR;
@@ -74,7 +74,7 @@ pf_nor_result_t pf_nor_flash_erase(pf_nor_flash_t *device, uint32_t address)
     return PF_NOR_OK;
 }
 
-pf_nor_result_t pf_nor_flash_sync(pf_nor_flash_t *device)
+pf_nor_result_t pf_nor_sync(pf_nor_t *device)
 {
     (void)device;
     return fail_io ? PF_NOR_IO_ERROR : PF_NOR_OK;
@@ -85,7 +85,7 @@ void setUp(void)
     memset(memory, 0xff, sizeof(memory));
     memset(erases, 0, sizeof(erases));
     memset(&volume, 0, sizeof(volume));
-    flash = (pf_nor_flash_t){
+    flash = (pf_nor_t){
         .initialized = true, .capacity_bytes = sizeof(memory),
         .page_size = 256u, .erase_size = 4096u,
     };

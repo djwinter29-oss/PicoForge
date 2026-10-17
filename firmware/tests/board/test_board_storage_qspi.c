@@ -3,7 +3,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "serial_fake.h"
 #include "storage_bus.h"
 #include "storage_qspi_pio.h"
-#include "nor_flash_transport.h"
+#include "nor_transport.h"
 #include <string.h>
 
 #define PF_BOARD_STORAGE_QSPI 1
@@ -41,6 +41,8 @@ void test_quad_profile_prepares_only_a_descriptor_before_device_initialization(v
     TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&bus, &transport));
     TEST_ASSERT_TRUE(transport.quad_supported);
     TEST_ASSERT_TRUE(serial_storage.initialized);
+    pf_board_storage_release_pins();
+    TEST_ASSERT_TRUE(serial_pins_prepared);
 }
 
 void test_failed_acquisition_can_be_cleaned_up_and_retried(void)
@@ -56,4 +58,19 @@ void test_failed_acquisition_can_be_cleaned_up_and_retried(void)
     serial_fake.no_program = false;
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_board_storage_prepare(&bus));
     TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&bus, &transport));
+}
+
+void test_quad_runtime_changes_never_modify_the_authoritative_profile(void)
+{
+    const pf_board_resources_t *profile = pf_board_resources_get();
+    pf_board_resources_t saved = *profile;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_board_storage_prepare(&bus));
+    TEST_ASSERT_EQUAL_MEMORY(&profile->qspi_pins, &serial_storage.pins, sizeof(serial_storage.pins));
+    serial_storage.pins.data_gpio[3] = 9u;
+    serial_storage.clock_hz = 2000000u;
+    TEST_ASSERT_EQUAL_MEMORY(&saved, profile, sizeof(saved));
+    pf_board_storage_release_pins();
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_board_storage_prepare(&bus));
+    TEST_ASSERT_EQUAL_MEMORY(&profile->qspi_pins, &serial_storage.pins, sizeof(serial_storage.pins));
+    TEST_ASSERT_EQUAL_UINT32(profile->serial_clock_hz, serial_storage.clock_hz);
 }

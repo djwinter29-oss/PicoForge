@@ -59,9 +59,31 @@ native SD and quad-SPI use their own physical engines. These are alternative mod
 to attach multiple active devices. DET remains a board/device-presence input.
 
 The standalone serial-storage profile is defined in [board_profile.c](../../board/board_profile.c) and exposed through
-[board_storage.h](../../board/board_storage.h). Board preparation supplies a physical descriptor and applies SPI
+[board_storage.h](../../board/board_storage.h). [board_storage.c](../../board/board_storage.c) owns the mutable
+serial runtime context, separate from the immutable profile. Board preparation supplies a physical descriptor and applies SPI
 WP/HOLD idle levels; it does not initialize the bus or depend on NOR. The NOR adapter initializes that descriptor.
 After device operations, the caller deinitializes the bus before releasing board-specific pins.
+
+### Pin Allocation and Runtime State
+
+[storage_bus.h](storage_bus.h) defines SDK-independent `pf_storage_spi_pins_t`, `pf_storage_sdio_pins_t`, and
+`pf_storage_qspi_pins_t`. Native DAT0-DAT3 and quad IO0-IO3 are explicit arrays in logical order; the physical engines
+validate their ascending, consecutive mapping. Pin allocation types do not include card detect, WP/HOLD policy,
+controller pointers, clock rates, or mutable hardware ownership.
+
+The immutable board resource profile contains `native_pins`, `spi_pins`, and `qspi_pins`, derived from one connector
+signal assignment in [board_profile.c](../../board/board_profile.c). SD and NOR share `spi_pins`; neither has a second
+board-specific SPI map. DET polarity/pulls and SPI WP/HOLD remain board/device configuration.
+
+SD configuration and concrete storage contexts embed the corresponding shared type as `pins`. Board integration copies
+that allocation into the selected context; mutable clock settings, controller references, PIO state machines, DMA
+channels, and initialization flags remain runtime state, never fields modified in the board profile. Re-preparing
+serial storage after deinitialization restores its configuration from that profile.
+
+Direct configuration callers must migrate former flat fields to `pins`, for example `config.pins.clock_gpio` and
+`config.pins.cs_gpio` (formerly SD-SPI `chip_select_gpio`). QSPI callers now supply all four `pins.data_gpio` entries
+rather than only a base GPIO. Transport selection, board wiring, and transfer behavior are unchanged.
+For SD API naming migration, see the [SD architecture](../../../../docs/sdcard-design.md#architecture).
 
 Before switching devices, the caller must sync/unmount as appropriate, finish the device protocol, deinitialize the
 bus, and satisfy the new device's power requirements. Bus abort/deinit never claims to finish an interrupted write

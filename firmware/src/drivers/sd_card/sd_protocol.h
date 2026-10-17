@@ -1,0 +1,44 @@
+#ifndef PF_SD_PROTOCOL_H
+#define PF_SD_PROTOCOL_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "sd_block.h"
+
+/** Calculate the SD command CRC7; NULL input returns zero. */
+uint8_t pf_sd_crc7(const uint8_t *data, size_t size);
+/** Build a six-byte SD command in caller-owned storage, including CRC7. */
+bool pf_sd_build_command(uint8_t command, uint32_t argument, uint8_t frame[6]);
+/** Classify a native CMD8 argument; bit 22 indicates an illegal command. */
+bool pf_sd_cmd8_supports_v2(uint32_t response_argument, bool *supports_v2);
+/** Decode a caller-owned CSD v1/v2 register into a representable sector count. */
+bool pf_sd_csd_sector_count(const uint8_t csd[16], uint32_t *sector_count);
+/** Decode the CSD TRAN_SPEED field into hertz, rejecting reserved encodings. */
+bool pf_sd_csd_transfer_hz(const uint8_t csd[16], uint32_t *transfer_hz);
+/** Return whether the SCR advertises native four-bit bus support. */
+bool pf_sd_scr_supports_four_bit(const uint8_t scr[8]);
+/** Calculate serial SD data CRC16; NULL input returns zero. */
+uint16_t pf_sd_crc16(const uint8_t *data, size_t size);
+
+/** Driver-internal: run the idle hook, if any, while polling a long card wait. */
+void pf_sd_idle(void);
+
+/** Driver-internal: install a wrapping microsecond clock with static lifetime. */
+void pf_sd_profile_set_clock(uint32_t (*clock_us)(void));
+/** Driver-internal: start an optional phase measurement. */
+uint32_t pf_sd_profile_begin(void);
+/** Driver-internal: finish a phase; durations must be shorter than one clock wrap. */
+void pf_sd_profile_end(pf_sd_profile_phase_t phase, uint32_t start);
+/** Driver-internal: count an event when profiling is enabled. */
+void pf_sd_profile_event(pf_sd_profile_event_t event);
+
+/** Convert a sector index to an SDHC block or SDSC byte address, rejecting overflow. */
+bool pf_sd_block_argument(uint32_t block, bool block_addressed, uint32_t *argument);
+
+/** Validate buffer, capacity, and size_t byte bounds; zero-length transfers are no-ops. */
+pf_sd_result_t pf_sd_validate_transfer(uint32_t first_block, const void *buffer,
+												uint32_t block_count, uint32_t capacity);
+
+#endif

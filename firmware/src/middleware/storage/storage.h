@@ -5,7 +5,7 @@
 
 #include "ff.h"
 
-typedef struct pf_sd_card_config pf_sd_card_config_t;
+typedef struct pf_sd_config pf_sd_config_t;
 
 #define PF_STORAGE_VOLUME "0:"
 
@@ -34,7 +34,7 @@ typedef enum {
  * The optional result pointer receives the underlying FatFs result code.
  */
 pf_storage_result_t pf_storage_mount(
-    const pf_sd_card_config_t *sd_card_config, FRESULT *filesystem_result);
+    const pf_sd_config_t *sd_card_config, FRESULT *filesystem_result);
 
 /** Unmount the volume after all open FatFs objects have been closed. */
 pf_storage_result_t pf_storage_unmount(FRESULT *filesystem_result);

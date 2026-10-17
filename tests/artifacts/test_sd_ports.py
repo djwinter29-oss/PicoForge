@@ -19,7 +19,7 @@ def check_build(directory):
     commands = json.loads((directory / "compile_commands.json").read_text())
     files = [item["file"] for item in commands]
     ports = [file for file in files if "/drivers/sd_card/ports/" in file]
-    expected = str(DRIVER / "ports/baremetal/sd_card_port.c")
+    expected = str(DRIVER / "ports/baremetal/sd_port.c")
     if ports != [expected]:
         raise AssertionError(f"Expected only bare-metal port in {directory}: {ports}")
     for item in commands:
@@ -31,8 +31,8 @@ def check_build(directory):
     if re.search(r"\b(?:[xv]Task\w*|[xv]Queue\w*|[xv]Port\w*|pvPort\w*|vApplication\w*)$", symbols,
                  re.MULTILINE):
         raise AssertionError(f"FreeRTOS symbols in {elf}")
-    for symbol in ("pf_sd_card_init", "pf_sd_card_read_blocks", "pf_sd_card_write_blocks",
-                   "pf_sd_card_sync", "pf_sd_card_port_try_lock"):
+    for symbol in ("pf_sd_init", "pf_sd_read_blocks", "pf_sd_write_blocks",
+                   "pf_sd_sync", "pf_sd_port_try_lock"):
         if not re.search(r"\b" + symbol + r"$", symbols, re.MULTILINE):
             raise AssertionError(f"Missing {symbol} in {elf}")
     print(f"Bare-metal compile/link: exactly one port, no kernel includes/symbols: {elf}")

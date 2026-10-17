@@ -14,7 +14,7 @@ typedef struct {
 /** Create the statically allocated sole FatFs worker before the scheduler starts.
  * Configuration is copied; NULL allows status commands but prevents mounting.
  */
-bool pf_storage_worker_init(const pf_sd_card_config_t *config);
+bool pf_storage_worker_init(const pf_sd_config_t *config);
 
 /** Submit one command from the USB task; false means busy or invalid input.
  * Strings are copied. Caller must supply current MSC ownership and session ID.

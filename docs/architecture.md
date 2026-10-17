@@ -61,7 +61,7 @@ Provide reusable application-facing services. Storage middleware mounts FatFs ov
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sd_card/`. Storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. FatFs consumes the transport-neutral [SD-card block API](../firmware/src/drivers/sd_card/sd_card_block.h); transport configuration lives in [board support](../firmware/src/board/board.h). See the [hardware setup options](hardware-setup.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sd_card/`. Storage and filesystem policy belongs in middleware. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. FatFs consumes the transport-neutral [SD-card block API](../firmware/src/drivers/sd_card/sd_block.h); transport configuration lives in [board support](../firmware/src/board/board.h). See the [hardware setup options](hardware-setup.md).
 
 ### SD-Card Driver Structure
 

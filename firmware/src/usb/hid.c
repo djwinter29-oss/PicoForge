@@ -5,7 +5,7 @@
 #include "tusb.h"
 #include "hid.h"
 #include "board/board.h"
-#include "drivers/sd_card/sd_card_block.h"
+#include "drivers/sd_card/sd_block.h"
 #include "drivers/led.h"
 #include "drivers/temperature.h"
 #include "msc.h"
@@ -53,21 +53,21 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
 
 bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence)
 {
-    pf_sd_card_config_t config;
-    pf_sd_card_info_t info;
+    pf_sd_config_t config;
+    pf_sd_info_t info;
 
-    if (!pf_sd_card_try_lock()) {
+    if (!pf_sd_try_lock()) {
         return false;
     }
-    pf_sd_card_get_info(&info);
-    pf_sd_card_unlock();
+    pf_sd_get_info(&info);
+    pf_sd_unlock();
     memset(report, 0, sizeof(*report));
     report->version = PF_HID_REPORT_VERSION;
     report->sequence = sequence;
     report->component_type = PF_HID_MEMORY_TYPE_SD_CARD;
     if (pf_board_get_sd_card_config(&config)) {
         report->flags |= PF_HID_MEMORY_CONFIGURED;
-        report->mode = (config.transport == PF_SD_CARD_TRANSPORT_SPI)
+        report->mode = (config.transport == PF_SD_TRANSPORT_SPI)
             ? PF_HID_MEMORY_MODE_SPI
             : PF_HID_MEMORY_MODE_SDIO;
     }

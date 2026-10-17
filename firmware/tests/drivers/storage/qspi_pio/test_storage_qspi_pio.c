@@ -3,7 +3,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "serial_fake.h"
 #include "storage_bus.h"
 #include "storage_qspi_pio.h"
-#include "nor_flash_transport.h"
+#include "nor_transport.h"
 #include <string.h>
 
 serial_fake_t serial_fake;
@@ -86,5 +86,17 @@ void test_program_capacity_failure_releases_claim_without_selecting_device(void)
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_NOT_READY, pf_storage_qspi_pio_init(&context));
     TEST_ASSERT_FALSE(context.initialized);
     TEST_ASSERT_EQUAL_UINT(1, serial_fake.unclaim);
+    TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
+}
+
+void test_quad_pin_allocation_rejects_swapped_and_out_of_range_lanes_before_acquisition(void)
+{
+    context.pins.data_gpio[1] = 2u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_qspi_pio_init(&context));
+    context.pins.data_gpio[1] = 1u;
+    context.pins.data_gpio[3] = NUM_BANK0_GPIOS;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_qspi_pio_init(&context));
+    TEST_ASSERT_FALSE(context.initialized);
+    TEST_ASSERT_EQUAL_UINT(0, serial_fake.program_count);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
 }

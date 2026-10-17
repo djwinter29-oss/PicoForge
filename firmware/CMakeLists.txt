@@ -99,8 +99,8 @@ set_property(CACHE PF_NOR_TRANSPORT PROPERTY STRINGS SPI QSPI_PIO)
 option(PF_BUILD_LEVELX "Build the standalone LevelX NOR port (no FatFs backend yet)" OFF)
 if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX)
     add_library(pf_nor_flash STATIC
-        src/drivers/nor_flash/nor_flash.c
-        src/drivers/nor_flash/nor_flash_transport.c)
+        src/drivers/nor_flash/nor.c
+        src/drivers/nor_flash/nor_transport.c)
     target_include_directories(pf_nor_flash PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
     if(PF_NOR_TRANSPORT STREQUAL "SPI")
         target_sources(pf_nor_flash PRIVATE
@@ -146,7 +146,7 @@ if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
 endif()
 
 add_library(pf_sd_card_protocol STATIC
-    src/drivers/sd_card/sd_card_protocol.c
+    src/drivers/sd_card/sd_protocol.c
 )
 target_include_directories(pf_sd_card_protocol PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
@@ -154,16 +154,16 @@ target_include_directories(pf_sd_card_protocol PUBLIC
 
 if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     add_library(pf_sdio_backend STATIC
-        src/drivers/sd_card/sd_card_native.c
-        src/drivers/sd_card/sd_card_native_host.c
-        src/drivers/sd_card/sd_card_native_protocol.c
+        src/drivers/sd_card/sd_native.c
+        src/drivers/sd_card/sd_native_host.c
+        src/drivers/sd_card/sd_native_protocol.c
         src/drivers/storage/sdio_pio/storage_sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
     option(PF_SDIO_PIO_HIGH_SPEED "Opt in to native 50 MHz startup with one 25 MHz fallback" OFF)
     target_compile_definitions(pf_sdio_backend PRIVATE
-        PF_SDIO_PIO_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>
-        PF_SDIO_PIO_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
+        PF_SD_NATIVE_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>
+        PF_SD_NATIVE_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
     )
     pico_generate_pio_header(pf_sdio_backend
         "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/sdio_pio/storage_sdio_pio.pio"
@@ -185,8 +185,8 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     set(PF_SD_CARD_BACKEND pf_sdio_backend)
 else()
     add_library(pf_sd_spi_backend STATIC
-        src/drivers/sd_card/sd_card_spi.c
-        src/drivers/sd_card/sd_card_spi_protocol.c
+        src/drivers/sd_card/sd_spi.c
+        src/drivers/sd_card/sd_spi_protocol.c
         src/drivers/storage/spi/storage_spi.c
     )
     target_include_directories(pf_sd_spi_backend PUBLIC
@@ -203,7 +203,7 @@ else()
 endif()
 
 add_library(pf_sd_card STATIC
-    src/drivers/sd_card/sd_card.c
+    src/drivers/sd_card/sd.c
 )
 target_include_directories(pf_sd_card PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
@@ -216,8 +216,8 @@ target_link_libraries(pf_sd_card PUBLIC
 
 if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/ports/freertos/sd_card_port.c
-        src/drivers/sd_card/ports/freertos/sd_card_wait.c
+        src/drivers/sd_card/ports/freertos/sd_port.c
+        src/drivers/sd_card/ports/freertos/sd_wait.c
     )
     target_compile_definitions(pf_sd_card PRIVATE
         PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
@@ -225,7 +225,7 @@ if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     target_link_libraries(pf_sd_card PRIVATE FreeRTOS-Kernel-Static hardware_irq)
 else()
     target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/ports/baremetal/sd_card_port.c
+        src/drivers/sd_card/ports/baremetal/sd_port.c
     )
     # The USB/storage application requires FreeRTOS; this target checks the
     # reusable driver without importing the kernel or accessing card hardware.

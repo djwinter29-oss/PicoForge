@@ -1,5 +1,5 @@
 #include "storage.h"
-#include "sd_card.h"
+#include "sd.h"
 
 #include <stdatomic.h>
 
@@ -19,9 +19,9 @@ static pf_storage_filesystem_format_t storage_format_from_fatfs(BYTE fs_type)
 }
 
 pf_storage_result_t pf_storage_mount(
-    const pf_sd_card_config_t *sd_card_config, FRESULT *filesystem_result)
+    const pf_sd_config_t *sd_card_config, FRESULT *filesystem_result)
 {
-    pf_sd_card_result_t sd_card_result;
+    pf_sd_result_t sd_card_result;
     FRESULT mount_result;
 
     if (filesystem_result != NULL) {
@@ -36,8 +36,8 @@ pf_storage_result_t pf_storage_mount(
 
     atomic_store(&storage_format, PF_STORAGE_FILESYSTEM_UNKNOWN);
 
-    sd_card_result = pf_sd_card_init(sd_card_config);
-    if (sd_card_result != PF_SD_CARD_OK) {
+    sd_card_result = pf_sd_init(sd_card_config);
+    if (sd_card_result != PF_SD_OK) {
         return PF_STORAGE_SD_CARD_ERROR;
     }
 

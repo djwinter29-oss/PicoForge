@@ -8,7 +8,12 @@ Install Ruby 3 or newer and GCC/gcov, then run the setup wrapper from the reposi
 tools/validation/setup-ceedling-testing.sh
 ```
 
-The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin` directory to `PATH` and run it from the root. Name test files `test_*.c` and place them beneath the matching source subtree; for example, `firmware/src/drivers/sd_card/sd_card_native_protocol.c` is covered by `firmware/tests/drivers/sd_card/test_sdio_pio_protocol.c`.
+The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin`
+directory to `PATH` and run it from the root. Name test files `test_<source_basename>[_<scenario>].c` beneath the matching
+source subtree. For example, [sd_native_protocol.c](../src/drivers/sd_card/sd_native_protocol.c) is covered by
+[test_sd_native_protocol.c](drivers/sd_card/test_sd_native_protocol.c). Keep related scenario tests alongside it.
+FreeRTOS port tests live under [ports/freertos](drivers/sd_card/ports/freertos), and bare-metal port tests under
+[ports/baremetal](drivers/sd_card/ports/baremetal), matching their production port directories.
 
 Run `tools/validation/coverage-firmware.sh` to execute `gcov:all` and generate HTML and Cobertura reports under `build/ceedling/artifacts/gcov/gcovr/`. Coverage requires at least one unit test.
 
@@ -21,7 +26,8 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | --- | --- |
 | Native/SPI initialization, transfers, CRC faults, recovery and interrupt-wait races | [drivers/sd_card](drivers/sd_card) |
 | Physical SPI, SDIO-PIO and QSPI-PIO lifecycle and wire operations | [drivers/storage](drivers/storage) |
-| Facade ownership, serialization and bare-metal ports | [drivers/sd_card](drivers/sd_card) |
+| FreeRTOS facade ownership and serialization | [drivers/sd_card/ports/freertos](drivers/sd_card/ports/freertos) |
+| Bare-metal facade and port behavior | [drivers/sd_card/ports/baremetal](drivers/sd_card/ports/baremetal) |
 | Card presence, automount and recovery | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [usb](usb) |
 
@@ -38,6 +44,7 @@ syntax checks, firmware builds and the remaining Python validation.
 Reusable hardware/RTOS fakes and private translation-unit fixtures live under
 [support](support). Tests select scoped fake-header paths with
 `TEST_INCLUDE_PATH`; they do not add fake SDK headers to firmware builds.
+Standalone firmware smoke programs stay under [ports](ports); they are not host unit tests.
 Where private state or static functions must be exercised, fixtures include
 the production translation unit rather than copying functions out of source
 strings. Assertions use Unity so failures appear in Ceedling results.

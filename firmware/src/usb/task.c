@@ -9,7 +9,7 @@
 #include "middleware/cli/cli.h"
 #include "middleware/storage/storage_worker.h"
 #include "board/board.h"
-#include "drivers/sd_card/sd_card_port.h"
+#include "drivers/sd_card/sd_port.h"
 
 #include <string.h>
 
@@ -221,10 +221,10 @@ static void usb_task(void *context)
 
 void pf_usb_start(void)
 {
-    pf_sd_card_config_t config;
+    pf_sd_config_t config;
     bool configured = pf_board_get_sd_card_config(&config);
     if (configured) {
-        pf_sd_card_port_init(&config);
+        pf_sd_port_init(&config);
     }
     if (!pf_storage_worker_init(configured ? &config : NULL)) {
         panic("Failed to create storage worker");

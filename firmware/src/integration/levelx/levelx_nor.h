@@ -1,7 +1,7 @@
 #ifndef PF_LEVELX_NOR_H
 #define PF_LEVELX_NOR_H
 
-#include "drivers/nor_flash/nor_flash.h"
+#include "drivers/nor_flash/nor.h"
 #include "lx_api.h"
 
 /** Caller-owned LevelX volume. Zero initialize before first use and serialize
@@ -10,7 +10,7 @@
  */
 typedef struct {
     LX_NOR_FLASH control;
-    pf_nor_flash_t *flash;
+    pf_nor_t *flash;
     ULONG buffer[LX_NOR_SECTOR_SIZE];
     uint32_t offset;
     uint32_t size;
@@ -26,7 +26,7 @@ typedef struct {
  * media: never point this at an unrelated filesystem or valuable raw data.
  * No erase-all/format is performed. Reserve two erase blocks from exported capacity.
  */
-UINT pf_levelx_nor_open(pf_levelx_nor_t *volume, pf_nor_flash_t *flash,
+UINT pf_levelx_nor_open(pf_levelx_nor_t *volume, pf_nor_t *flash,
                         uint32_t offset, uint32_t size);
 /** Read/write one 512-byte sector; buffers need no special alignment.
  * Failed writes may have committed: inspect/recover, do not blindly replay.

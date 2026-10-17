@@ -1,5 +1,5 @@
 #include "self_test.h"
-#include "sd_card_block.h"
+#include "sd_block.h"
 
 #include <string.h>
 
@@ -98,7 +98,7 @@ void pf_storage_self_test_run(uint32_t size_mib,
         filesystem_error(&status, result);
         goto cleanup;
     }
-    uint64_t free_bytes = (uint64_t)free_clusters * filesystem->csize * PF_SD_CARD_BLOCK_SIZE;
+    uint64_t free_bytes = (uint64_t)free_clusters * filesystem->csize * PF_SD_BLOCK_SIZE;
     if (free_bytes < (uint64_t)status.target_bytes + PF_STORAGE_SELF_TEST_BUFFER_SIZE) {
         status.error = PF_SELF_TEST_ERROR_SPACE;
         goto cleanup;
