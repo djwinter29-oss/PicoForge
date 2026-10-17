@@ -72,7 +72,7 @@ void tearDown(void) {}
 void test_native_descriptor_lifecycle_has_no_serial_or_device_protocol_dependency(void)
 {
     pf_storage_sdio_pio_t host = {.config = pins()};
-    pf_storage_transport_t bus = pf_storage_sdio_pio_bus(&host);
+    pf_storage_transport_t bus = pf_storage_sdio_pio_transport(&host);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_SDIO_PIO, bus.mode);
     TEST_ASSERT_NULL(bus.ops->transfer);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
@@ -95,7 +95,7 @@ void test_native_descriptor_lifecycle_has_no_serial_or_device_protocol_dependenc
 void test_common_lifecycle_retains_configuration_and_wait_binding_for_retry_and_reinitialization(void)
 {
     pf_storage_sdio_pio_t host = {.config = pins(), .wait_hook = on_wait};
-    pf_storage_transport_t transport = pf_storage_sdio_pio_bus(&host);
+    pf_storage_transport_t transport = pf_storage_sdio_pio_transport(&host);
     TEST_ASSERT_TRUE(pf_storage_transport_valid(&transport, PF_STORAGE_TRANSPORT_SDIO_PIO));
     pf_test_sdio_can_add_program = false;
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_NOT_READY, pf_storage_transport_init(&transport));

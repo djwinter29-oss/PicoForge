@@ -73,7 +73,7 @@ void setUp(void)
     card_initialized = true;
     card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
     active_config = (pf_sd_native_config_t){
-        .transport = pf_storage_sdio_pio_bus(&test_wire), .clock_hz = 25000000u
+        .transport = pf_storage_sdio_pio_transport(&test_wire), .clock_hz = 25000000u
     };
     sdio_pio_host.transport = active_config.transport;
     test_wire.current_clock_hz = 25000000u;

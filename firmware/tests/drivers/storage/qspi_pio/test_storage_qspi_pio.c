@@ -23,7 +23,7 @@ void tearDown(void) { pf_storage_qspi_pio_deinit(&context); }
 
 void test_quad_read_clocks_single_command_address_dummy_then_quad_payload(void)
 {
-    pf_storage_transport_t bus = pf_storage_qspi_pio_bus(&context);
+    pf_storage_transport_t bus = pf_storage_qspi_pio_transport(&context);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
     serial_fake.input = 0xa;
     uint8_t input[2];
@@ -56,7 +56,7 @@ void test_quad_write_outputs_most_significant_nibble_first(void)
 void test_fifo_timeout_releases_cs_programs_and_state_machine(void)
 {
     pf_nor_transport_t transport;
-    pf_storage_transport_t bus = pf_storage_qspi_pio_bus(&context);
+    pf_storage_transport_t bus = pf_storage_qspi_pio_transport(&context);
     TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&bus, &transport));
     TEST_ASSERT_TRUE(transport.quad_supported);
     serial_fake.fifo_full = true;
@@ -74,7 +74,7 @@ void test_invalid_qspi_shape_does_not_touch_cs_and_clock_reports_quantized_rate(
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_qspi_pio_transfer(&context, &command));
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
     uint32_t actual;
-    pf_storage_transport_t bus = pf_storage_qspi_pio_bus(&context);
+    pf_storage_transport_t bus = pf_storage_qspi_pio_transport(&context);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_set_clock(&bus, 8000000, &actual));
     TEST_ASSERT_EQUAL_UINT32(8000000, actual);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_INVALID_ARGUMENT, pf_storage_transport_set_clock(&bus, 1, &actual));

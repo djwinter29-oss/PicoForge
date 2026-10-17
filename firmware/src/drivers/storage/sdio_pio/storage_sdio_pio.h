@@ -52,7 +52,7 @@ typedef struct {
 } pf_storage_sdio_pio_t;
 
 /** Return a non-owning common lifecycle descriptor; serial transfer is unsupported. */
-pf_storage_transport_t pf_storage_sdio_pio_bus(pf_storage_sdio_pio_t *transport);
+pf_storage_transport_t pf_storage_sdio_pio_transport(pf_storage_sdio_pio_t *transport);
 /** Enable the optional platform wait adapter for this backend. */
 bool pf_storage_sdio_pio_enable_wait(pf_storage_sdio_pio_t *transport);
 /** Acquire physical resources. Duplicate initialization leaves the live context unchanged. */

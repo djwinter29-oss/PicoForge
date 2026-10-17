@@ -13,6 +13,10 @@ typedef struct {
     uint32_t cs_gpio;    /**< Active-low device select. */
 } pf_storage_spi_pins_t;
 
+/** Check RP2040/RP2350 SPI pin roles; board/backend callers separately validate GPIO bounds and conflicts. */
+bool pf_storage_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
+                                         uint32_t mosi_gpio, uint32_t miso_gpio);
+
 /** Immutable native SD signal allocation, independent of PIO resources. */
 typedef struct {
     uint32_t clock_gpio;   /**< SD clock output. */

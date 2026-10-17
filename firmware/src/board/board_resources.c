@@ -3,9 +3,7 @@
 #include <stddef.h>
 
 #include "config/config.h"
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-#include "sd_spi_protocol.h"
-#endif
+#include "drivers/storage/storage_transport.h"
 
 static uint32_t topology_gpio_limit(uint32_t gpio_count)
 {
@@ -91,7 +89,7 @@ static bool spi_pins_are_valid(const pf_board_resources_t *topology,
           (topology->card_detect_gpio == topology->led_gpio)))) {
         return false;
     }
-    return pf_sd_spi_pins_match_controller(topology->spi_index, topology->spi_pins.clock_gpio,
+    return pf_storage_spi_pins_match_controller(topology->spi_index, topology->spi_pins.clock_gpio,
                                            topology->spi_pins.mosi_gpio, topology->spi_pins.miso_gpio);
 }
 #endif

@@ -11,8 +11,4 @@ bool pf_sd_spi_write_response_is_accepted(uint8_t response);
 bool pf_sd_spi_block_argument(uint32_t block, bool block_addressed,
                              uint32_t *argument);
 
-/** Return whether SCK, MOSI (TX) and MISO (RX) pins belong to SPI controller 0 or 1 (RP2040/RP2350). */
-bool pf_sd_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
-                                     uint32_t mosi_gpio, uint32_t miso_gpio);
-
 #endif

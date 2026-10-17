@@ -36,6 +36,6 @@ pf_storage_transport_result_t pf_storage_spi_exchange(pf_storage_spi_t *context,
 pf_storage_transport_result_t pf_storage_spi_transfer(pf_storage_spi_t *context,
     const pf_storage_serial_transaction_t *transaction);
 /** Return a non-owning generic lifecycle/serial-dispatch handle. */
-pf_storage_transport_t pf_storage_spi_bus(pf_storage_spi_t *context);
+pf_storage_transport_t pf_storage_spi_transport(pf_storage_spi_t *context);
 
 #endif

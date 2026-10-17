@@ -20,7 +20,7 @@ void setUp(void)
         .pins.miso_gpio = 0, .pins.cs_gpio = 1, .clock_hz = 25000000 };
     nor = (pf_storage_spi_t){ .instance = spi0, .pins.clock_gpio = 2, .pins.mosi_gpio = 3,
         .pins.miso_gpio = 0, .pins.cs_gpio = 5, .clock_hz = 10000000, .timeout_us = 100000 };
-    nor_bus = pf_storage_spi_bus(&nor);
+    nor_bus = pf_storage_spi_transport(&nor);
 }
 
 void tearDown(void)
@@ -108,7 +108,7 @@ void test_selected_device_prevents_another_device_from_clocking_the_bus(void)
 
 void test_generic_spi_dispatch_clocks_dummy_bytes_and_receives_payload(void)
 {
-    pf_storage_transport_t bus = pf_storage_spi_bus(&sd);
+    pf_storage_transport_t bus = pf_storage_spi_transport(&sd);
     TEST_ASSERT_EQUAL(PF_STORAGE_TRANSPORT_OK, pf_storage_transport_init(&bus));
     serial_fake.input = 0x91;
     uint8_t input[2];

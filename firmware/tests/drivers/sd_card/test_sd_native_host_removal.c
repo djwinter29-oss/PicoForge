@@ -36,8 +36,23 @@ void tearDown(void) {}
 void test_forget_removed_clears_stream_state_before_restoring_mode(void)
 {
     pf_test_sdio_pio_t pio = {0};
-    test_wire = (pf_storage_sdio_pio_t){.pio = &pio, .command_sm = 0u, .data_sm = 1u, .clock_program_offset = 2u, .data_tx_program_offset = 3u, .clock_program_loaded = true, .command_program_loaded = true, .data_rx_program_loaded = true, .data_tx_program_loaded = true, .mode_restore_failed = true};
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_bus(&test_wire), .write_stream_open = true, .read_stream_unresolved = true };
+    test_wire = (pf_storage_sdio_pio_t){
+        .pio = &pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .clock_program_offset = 2u,
+        .data_tx_program_offset = 3u,
+        .clock_program_loaded = true,
+        .command_program_loaded = true,
+        .data_rx_program_loaded = true,
+        .data_tx_program_loaded = true,
+        .mode_restore_failed = true,
+    };
+    pf_sd_native_host_t host = {
+        .transport = pf_storage_sdio_pio_transport(&test_wire),
+        .write_stream_open = true,
+        .read_stream_unresolved = true,
+    };
 
     pf_test_sdio_observed_host = &host;
     pf_test_sdio_expect_streams_cleared = true;
@@ -57,8 +72,18 @@ void test_forget_removed_clears_stream_state_before_restoring_mode(void)
 void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void)
 {
     pf_test_sdio_pio_t pio = {0};
-    test_wire = (pf_storage_sdio_pio_t){.pio = &pio, .command_sm = 0u, .data_sm = 1u, .data_rx_program_offset = 4u, .data_rx_program_loaded = true};
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_bus(&test_wire), .write_stream_open = true, .read_stream_unresolved = true };
+    test_wire = (pf_storage_sdio_pio_t){
+        .pio = &pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .data_rx_program_offset = 4u,
+        .data_rx_program_loaded = true,
+    };
+    pf_sd_native_host_t host = {
+        .transport = pf_storage_sdio_pio_transport(&test_wire),
+        .write_stream_open = true,
+        .read_stream_unresolved = true,
+    };
 
     pf_test_sdio_can_add_program = false;
     pf_sd_native_host_forget_removed_card(&host);
@@ -72,7 +97,7 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
 void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 {
     test_wire = (pf_storage_sdio_pio_t){};
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_bus(&test_wire) };
+    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire) };
 
     pf_sd_native_host_forget_removed_card(NULL);
     pf_sd_native_host_forget_removed_card(&host);
@@ -84,8 +109,18 @@ void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 void test_confirm_card_removed_invalidates_card_before_forgetting_host_streams(void)
 {
     pf_test_sdio_pio_t pio = {0};
-    test_wire = (pf_storage_sdio_pio_t){.pio = &pio, .command_sm = 0u, .data_sm = 1u, .command_program_loaded = true, .data_rx_program_loaded = true};
-    sdio_pio_host = (pf_sd_native_host_t){ .transport = pf_storage_sdio_pio_bus(&test_wire), .write_stream_open = true, .read_stream_unresolved = true };
+    test_wire = (pf_storage_sdio_pio_t){
+        .pio = &pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .command_program_loaded = true,
+        .data_rx_program_loaded = true,
+    };
+    sdio_pio_host = (pf_sd_native_host_t){
+        .transport = pf_storage_sdio_pio_transport(&test_wire),
+        .write_stream_open = true,
+        .read_stream_unresolved = true,
+    };
     configuration_set = false;
     card_initialized = true;
     pf_test_sdio_observed_host = &sdio_pio_host;

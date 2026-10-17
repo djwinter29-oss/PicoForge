@@ -88,8 +88,22 @@ void tearDown(void)
 
 static pf_sd_native_host_t make_host(pf_test_sdio_pio_t *pio)
 {
-    test_wire = (pf_storage_sdio_pio_t){.pio = pio, .command_sm = 0u, .data_sm = 1u, .dma_channel = 3u, .dma_claimed = true, .command_program_offset = 1u, .data_rx_program_offset = 2u, .data_tx_program_offset = 3u, .clock_program_offset = 4u, .clock_div_ticks = 3u * 256u, .current_clock_hz = 25000000u, .command_program_loaded = true, .data_rx_program_loaded = true};
-    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_bus(&test_wire), .bus_width = 4u };
+    test_wire = (pf_storage_sdio_pio_t){
+        .pio = pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .dma_channel = 3u,
+        .dma_claimed = true,
+        .command_program_offset = 1u,
+        .data_rx_program_offset = 2u,
+        .data_tx_program_offset = 3u,
+        .clock_program_offset = 4u,
+        .clock_div_ticks = 3u * 256u,
+        .current_clock_hz = 25000000u,
+        .command_program_loaded = true,
+        .data_rx_program_loaded = true,
+    };
+    pf_sd_native_host_t host = { .transport = pf_storage_sdio_pio_transport(&test_wire), .bus_width = 4u };
     return host;
 }
 

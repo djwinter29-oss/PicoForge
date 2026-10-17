@@ -204,7 +204,7 @@ static pf_storage_transport_result_t bus_transfer(void *context, const pf_storag
     return pf_storage_qspi_pio_transfer(context, transaction);
 }
 
-pf_storage_transport_t pf_storage_qspi_pio_bus(pf_storage_qspi_pio_t *context)
+pf_storage_transport_t pf_storage_qspi_pio_transport(pf_storage_qspi_pio_t *context)
 {
     static const pf_storage_transport_ops_t ops = {
         .init = bus_init, .deinit = bus_deinit, .abort = bus_deinit, .set_clock = bus_clock,

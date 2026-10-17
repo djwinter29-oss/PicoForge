@@ -92,7 +92,7 @@ static void reset(uint8_t response)
     configuration_set = spi_configured = false;
     last_init_response_received = false;
     last_init_command = last_init_response = 0;
-    active_config = (pf_sd_spi_config_t){ .transport = pf_storage_spi_bus(&physical_bus) };
+    active_config = (pf_sd_spi_config_t){ .transport = pf_storage_spi_transport(&physical_bus) };
     position = 0; length = 5;
     queue[0] = 0xff; queue[1] = 0; queue[2] = queue[3] = 0xff; queue[4] = response;
     busy = selected = fail_trailing = short_payload = false;

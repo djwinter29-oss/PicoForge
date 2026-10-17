@@ -34,7 +34,7 @@ pf_storage_transport_result_t pf_board_storage_prepare(pf_storage_transport_t *b
         .pio = profile->pio_index == 0u ? pio0 : pio1,
         .pins = profile->qspi_pins, .clock_hz = profile->serial_clock_hz,
     };
-    *bus = pf_storage_qspi_pio_bus(&serial_storage);
+    *bus = pf_storage_qspi_pio_transport(&serial_storage);
 #else
     if (profile->spi_index > 1u || profile->serial_timeout_us == 0u ||
         profile->serial_wp_gpio >= NUM_BANK0_GPIOS || profile->serial_hold_gpio >= NUM_BANK0_GPIOS ||
@@ -56,7 +56,7 @@ pf_storage_transport_result_t pf_board_storage_prepare(pf_storage_transport_t *b
             return PF_STORAGE_TRANSPORT_INVALID_ARGUMENT;
         }
     }
-    *bus = pf_storage_spi_bus(&serial_storage);
+    *bus = pf_storage_spi_transport(&serial_storage);
     gpio_init(profile->serial_wp_gpio);
     gpio_put(profile->serial_wp_gpio, true);
     gpio_set_dir(profile->serial_wp_gpio, GPIO_OUT);

@@ -28,6 +28,6 @@ pf_storage_transport_result_t pf_storage_qspi_pio_set_clock(pf_storage_qspi_pio_
 pf_storage_transport_result_t pf_storage_qspi_pio_transfer(pf_storage_qspi_pio_t *context,
     const pf_storage_serial_transaction_t *transaction);
 /** Return a non-owning lifecycle and serial-dispatch handle. */
-pf_storage_transport_t pf_storage_qspi_pio_bus(pf_storage_qspi_pio_t *context);
+pf_storage_transport_t pf_storage_qspi_pio_transport(pf_storage_qspi_pio_t *context);
 
 #endif

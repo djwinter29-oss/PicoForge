@@ -887,7 +887,7 @@ static bool native_enable_wait(void *context)
 #endif
 }
 
-pf_storage_transport_t pf_storage_sdio_pio_bus(pf_storage_sdio_pio_t *host)
+pf_storage_transport_t pf_storage_sdio_pio_transport(pf_storage_sdio_pio_t *host)
 {
     static const pf_storage_native_ops_t native = {
         .state = native_state, .hooks = native_hooks, .prepare = native_prepare, .restore = native_restore,

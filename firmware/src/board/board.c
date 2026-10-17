@@ -68,7 +68,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
     }
     config->transport = PF_SD_TRANSPORT_SDIO_PIO;
     config->bus.native = (pf_sd_native_config_t){
-        .transport = pf_storage_sdio_pio_bus(&sd_transport),
+        .transport = pf_storage_sdio_pio_transport(&sd_transport),
         .clock_hz = topology->clock_hz,
     };
     pf_storage_transport_t *transport = &config->bus.native.transport;
@@ -81,7 +81,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
     }
     config->transport = PF_SD_TRANSPORT_SPI;
     config->bus.spi = (pf_sd_spi_config_t){
-        .transport = pf_storage_spi_bus(&sd_transport),
+        .transport = pf_storage_spi_transport(&sd_transport),
         .clock_hz = topology->spi_clock_hz,
     };
     pf_storage_transport_t *transport = &config->bus.spi.transport;

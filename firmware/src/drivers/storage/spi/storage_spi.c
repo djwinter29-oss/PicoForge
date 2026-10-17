@@ -31,10 +31,8 @@ bool pf_storage_spi_config_valid(const pf_storage_spi_t *context)
             }
         }
     }
-    uint32_t controller = spi_get_index(context->instance);
-    return context->pins.clock_gpio % 4u == 2u && context->pins.mosi_gpio % 4u == 3u &&
-           context->pins.miso_gpio % 4u == 0u && (context->pins.clock_gpio / 8u) % 2u == controller &&
-           (context->pins.mosi_gpio / 8u) % 2u == controller && (context->pins.miso_gpio / 8u) % 2u == controller;
+    return pf_storage_spi_pins_match_controller(spi_get_index(context->instance), context->pins.clock_gpio,
+                                                context->pins.mosi_gpio, context->pins.miso_gpio);
 }
 
 pf_storage_transport_result_t pf_storage_spi_init(pf_storage_spi_t *context)
@@ -232,7 +230,7 @@ static pf_storage_transport_result_t bus_exchange(void *context, const uint8_t *
     return pf_storage_spi_exchange(context, tx, rx, length);
 }
 
-pf_storage_transport_t pf_storage_spi_bus(pf_storage_spi_t *context)
+pf_storage_transport_t pf_storage_spi_transport(pf_storage_spi_t *context)
 {
     static const pf_storage_transport_ops_t ops = {
         .init = bus_init, .deinit = bus_deinit, .abort = bus_deinit, .set_clock = bus_clock,
