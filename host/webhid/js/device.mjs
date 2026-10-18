@@ -411,7 +411,7 @@ export class PicoForgeWebHid {
     if (!this.device || this.state.busy || !this.state.board_status?.led_available) return;
     this.update({ busy: true, error: null });
     try {
-      await this.device.sendFeatureReport(LED_COMMAND_REPORT_ID, Uint8Array.from([1, on ? 1 : 0]));
+      await this.device.sendFeatureReport(LED_COMMAND_REPORT_ID, Uint8Array.from([2, on ? 1 : 0]));
       const boardStatus = { ...this.state.board_status, led_on: on };
       const runtime = this.state.runtime ? { ...this.state.runtime, led_on: on } : null;
       this.update({ runtime, board_status: boardStatus, busy: false });

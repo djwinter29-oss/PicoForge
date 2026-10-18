@@ -346,6 +346,12 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   emitPaddedInput(5, [3, 2, 0, 0]);
   assert.match(client.state.error, /Invalid HID MSC/);
   emitPaddedInput(5, [3, 0, 0, 0]);
+  runtime[10] = 0x08;
+  emitPaddedInput(2, runtime);
+  await client.setLed(true);
+  assert.deepEqual(firstDevice.lastFeature, { reportId: 4, payload: [2, 1] });
+  await client.setLed(false);
+  assert.deepEqual(firstDevice.lastFeature, { reportId: 4, payload: [2, 0] });
   await client.setMsc(true);
   assert.deepEqual(firstDevice.lastFeature, { reportId: 5, payload: [2, 1] });
   assert.equal(client.state.msc.transition_pending, true);
