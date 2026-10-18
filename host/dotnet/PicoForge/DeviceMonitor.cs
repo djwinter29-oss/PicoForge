@@ -8,12 +8,20 @@ internal interface IDeviceMonitor
     bool SetSelfTest(string action, uint sizeMib);
 }
 
+/// <summary>HID command writes used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
+internal interface IHidCommands
+{
+    void SetLed(bool on);
+    void SetMsc(bool enabled, bool force = false);
+    void SetSelfTest(string action, uint sizeMib);
+}
+
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
     private readonly object gate = new();
     // Handle operations always acquire deviceGate before the snapshot gate.
     private readonly object deviceGate = new();
-    private PicoForgeHid? activeClient;
+    private IHidCommands? activeClient;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
     public StatusResponse Snapshot
@@ -21,14 +29,20 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         get { lock (gate) return snapshot; }
     }
 
+    // deviceGate keeps activeClient stable, so the write runs outside the snapshot gate without going stale.
     public bool SetLed(bool on)
     {
         lock (deviceGate)
-        lock (gate)
         {
-            if (activeClient is null || snapshot.BoardStatus?.LedAvailable != true) return false;
-            activeClient.SetLed(on);
-            snapshot = snapshot with { BoardStatus = snapshot.BoardStatus with { LedOn = on } };
+            IHidCommands? client;
+            lock (gate)
+            {
+                if (activeClient is null || snapshot.BoardStatus?.LedAvailable != true) return false;
+                client = activeClient;
+            }
+            client.SetLed(on);
+            lock (gate)
+                snapshot = snapshot with { BoardStatus = snapshot.BoardStatus! with { LedOn = on } };
             return true;
         }
     }
@@ -36,18 +50,25 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     public MscStatusResponse? SetMsc(bool enabled, bool force = false)
     {
         lock (deviceGate)
-        lock (gate)
         {
-            if (activeClient is null) return null;
-            if (force && (enabled || snapshot.Msc is not
-                { Enabled: true, TransitionPending: false, ForceReturnSupported: true })) return null;
-            activeClient.SetMsc(enabled, force);
-            snapshot = snapshot with
+            IHidCommands? client;
+            lock (gate)
             {
-                Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false,
-                    snapshot.Msc?.ForceReturnSupported ?? false)
-            };
-            return snapshot.Msc;
+                if (activeClient is null) return null;
+                if (force && (enabled || snapshot.Msc is not
+                    { Enabled: true, TransitionPending: false, ForceReturnSupported: true })) return null;
+                client = activeClient;
+            }
+            client.SetMsc(enabled, force);
+            lock (gate)
+            {
+                snapshot = snapshot with
+                {
+                    Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false,
+                        snapshot.Msc?.ForceReturnSupported ?? false)
+                };
+                return snapshot.Msc;
+            }
         }
     }
 
@@ -119,10 +140,14 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     public bool SetSelfTest(string action, uint sizeMib)
     {
         lock (deviceGate)
-        lock (gate)
         {
-            if (activeClient is null || snapshot.SelfTest is null) return false;
-            activeClient.SetSelfTest(action, sizeMib);
+            IHidCommands? client;
+            lock (gate)
+            {
+                if (activeClient is null || snapshot.SelfTest is null) return false;
+                client = activeClient;
+            }
+            client.SetSelfTest(action, sizeMib);
             return true;
         }
     }

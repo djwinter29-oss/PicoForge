@@ -51,7 +51,8 @@ def test_loader_uses_manifest_not_stale_images_and_fails_without_it(tmp_path):
     assert not probe_log.exists()
     (build / "pico_forge_elf.txt").write_text(f"{elf}\n")
     subprocess.run(command, env=env, text=True, capture_output=True, check=True)
-    assert f"program {{{elf}}} verify reset exit" in probe_log.read_text()
+    escaped_elf = str(elf).replace(" ", "\\ ")
+    assert f"program {escaped_elf} verify reset exit" in probe_log.read_text()
     elf.unlink()
     result = subprocess.run(command, env=env, text=True, capture_output=True)
     assert result.returncode != 0

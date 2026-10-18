@@ -1,6 +1,11 @@
 # Static review remediation validation
 
-Software-only checks, including cross-compiled target builds; no hardware qualification claimed. Edits remain uncommitted.
+Historical record, not current validation. The table and findings below describe the checks run on the working-tree
+edits made on top of `bde8d7e` before they were committed as `ac4ae7a`; the former "edits remain uncommitted"
+statement was true only at that time. Later changes (for example the DeviceMonitor command-write locking and the
+`tools/firmware/load.sh` Tcl quoting) are not covered by these results. For current procedures and commands, see the
+[test guide](../../tests/README.md). Software-only checks, including cross-compiled target builds; no hardware
+qualification claimed.
 
 | Command | Final outcome |
 |---|---|

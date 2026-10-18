@@ -2,7 +2,7 @@ using HidSharp;
 
 namespace PicoForge;
 
-internal sealed class PicoForgeHid : IDisposable
+internal sealed class PicoForgeHid : IHidCommands, IDisposable
 {
     private readonly HidDevice device;
     private readonly HidStream stream;

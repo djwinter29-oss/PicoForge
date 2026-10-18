@@ -180,8 +180,16 @@ if ! command -v "$OPENOCD_EXE" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Backslash-escape every Tcl-special character so the value stays one literal word.
 tcl_escape() {
-    printf '%s' "$1" | sed 's/[{}]/\\&/g'
+    case "$1" in
+        *"
+"*|*"$(printf '\r')"*)
+            echo "Unsupported newline in OpenOCD argument: $1" >&2
+            exit 1
+            ;;
+    esac
+    printf '%s' "$1" | sed 's/[][\\{}$";[:space:]]/\\&/g'
 }
 
 ELF_PATH_TCL=$(tcl_escape "$ELF_PATH")
@@ -189,12 +197,12 @@ set -- "$OPENOCD_EXE" -f interface/cmsis-dap.cfg
 
 if [ -n "$DEBUG_PROBE_SERIAL" ]; then
     DEBUG_PROBE_SERIAL_TCL=$(tcl_escape "$DEBUG_PROBE_SERIAL")
-    set -- "$@" -c "adapter serial {$DEBUG_PROBE_SERIAL_TCL}"
+    set -- "$@" -c "adapter serial $DEBUG_PROBE_SERIAL_TCL"
 fi
 
 set -- "$@" \
     -f "$OPENOCD_TARGET" \
     -c "adapter speed $ADAPTER_SPEED_KHZ" \
-    -c "program {$ELF_PATH_TCL} verify reset exit"
+    -c "program $ELF_PATH_TCL verify reset exit"
 
 "$@"

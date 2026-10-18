@@ -55,6 +55,49 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public async Task CommandWritesDoNotBlockSnapshotAndPublishState()
+    {
+        foreach (var command in new Func<DeviceMonitor, object?>[]
+        {
+            m => m.SetLed(true),
+            m => m.SetMsc(true),
+            m => m.SetSelfTest("start", 1),
+        })
+        {
+            using var monitor = new DeviceMonitor();
+            var client = new BlockingCommands();
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            typeof(DeviceMonitor).GetField("activeClient", flags)!.SetValue(monitor, client);
+            typeof(DeviceMonitor).GetField("snapshot", flags)!.SetValue(monitor, new StatusResponse(true, null, null,
+                null, null, new BoardStatusResponse(false, null, true, false), null, null,
+                new SelfTestStatusResponse(0, "idle", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false)));
+            var call = Task.Run(() => command(monitor));
+            try
+            {
+                await Task.Run(() => client.Entered.Wait()).WaitAsync(TimeSpan.FromSeconds(2));
+                var read = await Task.Run(() => monitor.Snapshot).WaitAsync(TimeSpan.FromSeconds(2));
+                Assert.True(read.Connected);
+            }
+            finally
+            {
+                client.Release.Set();
+            }
+            Assert.NotNull(await call);
+            Assert.NotEqual(false, await call);
+        }
+    }
+
+    private sealed class BlockingCommands : IHidCommands
+    {
+        public ManualResetEventSlim Entered { get; } = new();
+        public ManualResetEventSlim Release { get; } = new();
+        private void Block() { Entered.Set(); Release.Wait(); }
+        public void SetLed(bool on) => Block();
+        public void SetMsc(bool enabled, bool force = false) => Block();
+        public void SetSelfTest(string action, uint sizeMib) => Block();
+    }
+
+    [Fact]
     public void RejectsUnsupportedMemoryVersionsAndModes()
     {
         var report = new byte[30];
