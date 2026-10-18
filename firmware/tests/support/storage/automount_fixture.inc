@@ -3,7 +3,7 @@
 #include "drivers/sd_card/sd_msc.h"
 #include "drivers/sd_card/sd_port.h"
 #include "drivers/sd_card/sd_native.h"
-#define WORKER_SOURCE "../../../src/middleware/storage/storage_worker.c"
+#define WORKER_SOURCE "../../../src/app/storage/storage_worker.c"
 #define FACADE_SOURCE "../../../src/drivers/sd_card/sd.c"
 #define MSC_SOURCE "../../../src/usb/msc.c"
 #include WORKER_SOURCE

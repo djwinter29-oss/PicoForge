@@ -10,6 +10,20 @@ ROOT = Path(__file__).resolve().parents[2]
 STORAGE = ROOT / "firmware/src/drivers/storage"
 
 
+def test_storage_application_policy_stays_out_of_middleware():
+    middleware = ROOT / "firmware/src/middleware/storage"
+    application = ROOT / "firmware/src/app/storage"
+    for module in ("commands", "self_test", "storage_worker"):
+        for extension in ("c", "h"):
+            assert (application / f"{module}.{extension}").is_file()
+            assert not (middleware / f"{module}.{extension}").exists()
+    for source in sorted(middleware.glob("*.c")) + sorted(middleware.glob("*.h")):
+        headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
+        assert not any(header.startswith("app/") or Path(header).name in (
+            "commands.h", "self_test.h", "storage_worker.h"
+        ) for header in headers), source
+
+
 def test_physical_engines_do_not_include_device_or_filesystem_headers():
     sources = sorted(STORAGE.rglob("*.c")) + sorted(STORAGE.rglob("*.h"))
     assert sources

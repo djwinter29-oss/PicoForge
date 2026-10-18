@@ -35,8 +35,22 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | Physical SPI, SDIO-PIO and QSPI-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
 | FreeRTOS facade ownership and serialization | [drivers/sd_card](drivers/sd_card), `test_sd_port_freertos_*` |
 | Bare-metal facade and port behavior | [drivers/sd_card](drivers/sd_card), `test_sd_port_baremetal_*` |
-| Card presence, automount and recovery | [middleware/storage](middleware/storage) |
+| Storage commands, file self-test, presence, automount and recovery | [app/storage](app/storage) |
+| Logical block dispatch, SD adaptation, and mount binding lifecycle | [middleware/storage](middleware/storage) |
+| Device-independent FatFs results, geometry, and write protection | [integration/fatfs](integration/fatfs) |
 | USB memory reports, self-test admission and MSC callback behavior | [usb](usb) |
+
+The volume lifecycle test is [test_fatfs_volume.c](middleware/storage/test_fatfs_volume.c), matching
+[fatfs_volume.c](../src/middleware/storage/fatfs_volume.c); public `pf_storage_*` APIs are unchanged.
+[Block-device tests](middleware/storage/test_block_device.c) reject each missing callback and test the transfer-byte
+ceiling on a real 32-bit host build. The latter is explicitly ignored on 64-bit hosts. On x86 Linux with GCC multilib
+and 32-bit libc development support installed, run it without changing the normal Ceedling configuration:
+
+```sh
+ceedling --mixin='={project: {build_root: build/ceedling-block32}, flags: {test: {compile: {test_block_device: [-m32]}, link: {test_block_device: [-m32]}}}}' test:test_block_device
+```
+
+The callbacks only record dispatch, so the byte-count boundary test does not allocate or access gigabytes of memory.
 
 Shared CRC7, command-frame, CSD and address-conversion tests live in
 [test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c); native wire-codec tests remain in

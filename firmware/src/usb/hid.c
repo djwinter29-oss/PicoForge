@@ -9,8 +9,8 @@
 #include "drivers/led.h"
 #include "drivers/temperature.h"
 #include "msc.h"
-#include "middleware/storage/storage.h"
-#include "middleware/storage/storage_worker.h"
+#include "middleware/storage/fatfs_volume.h"
+#include "app/storage/storage_worker.h"
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {

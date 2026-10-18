@@ -1,3 +1,4 @@
+/** @file Application SD/filesystem command execution and replies. */
 #include "commands.h"
 #include "sd_block.h"
 #include "embedded_cli.h"

@@ -7,7 +7,7 @@
 #include "msc.h"
 #include "usb_task.h"
 #include "middleware/cli/cli.h"
-#include "middleware/storage/storage_worker.h"
+#include "app/storage/storage_worker.h"
 #include "board/board.h"
 #include "drivers/sd_card/sd_port.h"
 

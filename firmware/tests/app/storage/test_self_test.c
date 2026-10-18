@@ -1,7 +1,7 @@
 #include "unity.h"
-#include "self_test.h"
+#include "app/storage/self_test.h"
 #include "Mockff.h"
-#include "Mockstorage.h"
+#include "Mockfatfs_volume.h"
 
 #include <string.h>
 

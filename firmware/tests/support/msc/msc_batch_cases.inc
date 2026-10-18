@@ -32,6 +32,8 @@ static bool pf_storage_worker_recover_card(void);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */
 #include "../../../src/integration/fatfs/diskio.c"
+#include "../../../src/middleware/storage/block_device.c"
+#include "../../../src/middleware/storage/sd_block_device.c"
 #pragma GCC diagnostic pop
 pthread_mutex_t creation_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t media[8][512];
@@ -77,6 +79,7 @@ void pf_sd_get_profile(pf_sd_profile_t *p) { *p=(pf_sd_profile_t){0}; }
 static void msc_batch_regression(void)
 {
  pf_sd_config_t c={.transport.mode=TEST_TRANSPORT};
+ pf_fatfs_bind_device(pf_storage_sd_block_device());
  TEST_ASSERT_TRUE(pf_sd_init(&c)==PF_SD_OK);
  pf_usb_msc_request(true); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
  uint8_t raw[1538], out[1538]; uint8_t *data=raw+1, *readback=out+1;

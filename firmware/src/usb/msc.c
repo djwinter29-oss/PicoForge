@@ -7,8 +7,8 @@
 #include "tusb.h"
 #include "drivers/sd_card/sd_block.h"
 #include "drivers/sd_card/sd_msc.h"
-#include "middleware/storage/storage.h"
-#include "middleware/storage/storage_worker.h"
+#include "middleware/storage/fatfs_volume.h"
+#include "app/storage/storage_worker.h"
 
 static bool msc_enabled;
 static bool msc_ejected;

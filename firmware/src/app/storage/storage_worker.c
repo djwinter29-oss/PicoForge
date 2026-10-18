@@ -1,3 +1,4 @@
+/** @file Application storage-owner task, command sessions, and media policy. */
 #include "storage_worker.h"
 
 #include "FreeRTOS.h"
@@ -5,7 +6,7 @@
 #include "queue.h"
 #include "drivers/sd_card/sd.h"
 #include "drivers/system.h"
-#include "middleware/storage/storage.h"
+#include "middleware/storage/fatfs_volume.h"
 
 #include <string.h>
 #include <stdatomic.h>

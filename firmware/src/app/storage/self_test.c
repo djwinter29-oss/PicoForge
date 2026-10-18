@@ -1,3 +1,4 @@
+/** @file Application file-verification benchmark and cleanup. */
 #include "self_test.h"
 #include "sd_block.h"
 

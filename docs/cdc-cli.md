@@ -184,9 +184,9 @@ most 1 KiB; adding commands requires preserving that output budget. Exceeding th
 ring fails explicitly rather than silently dropping output. HID/MSC continue to
 be serviced by the same task.
 
-[The static storage worker](../firmware/src/middleware/storage/storage_worker.c)
+[The static storage worker](../firmware/src/app/storage/storage_worker.c)
 is the sole FatFs caller for CLI operations. It uses an 8 KiB stack, a one-request
-queue, and eight 256-byte reply slots. [The command dispatcher](../firmware/src/middleware/storage/commands.c)
+queue, and eight 256-byte reply slots. [The command dispatcher](../firmware/src/app/storage/commands.c)
 has no RTOS or USB dependency. The worker sends bounded lines through the queue;
 only the USB task calls CLI print APIs. Replies carry a session ID so old output
 does not leak into a newly opened terminal. Backpressure suspends the worker,

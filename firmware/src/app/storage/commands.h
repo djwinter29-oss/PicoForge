@@ -1,7 +1,7 @@
 #ifndef PF_STORAGE_COMMANDS_H
 #define PF_STORAGE_COMMANDS_H
 
-#include "storage.h"
+#include "middleware/storage/fatfs_volume.h"
 
 #define PF_STORAGE_COMMAND_ARGS_SIZE 128u
 #define PF_STORAGE_REPLY_SIZE 256u

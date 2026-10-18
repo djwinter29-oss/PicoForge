@@ -2,7 +2,7 @@
 #define PF_STORAGE_WORKER_H
 
 #include <stdint.h>
-#include "middleware/storage/commands.h"
+#include "commands.h"
 #include "self_test.h"
 
 typedef struct {

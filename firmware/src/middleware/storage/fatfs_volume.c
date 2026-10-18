@@ -1,12 +1,18 @@
-#include "storage.h"
+/** @file
+ * @brief SD initialization, FatFs drive-zero binding, and serialized volume lifecycle.
+ */
+#include "fatfs_volume.h"
 #include "sd.h"
+#include "sd_block_device.h"
+#include "fatfs_disk.h"
 
 #include <stdatomic.h>
 
-static FATFS storage_filesystem;
-static bool storage_mounted;
-static atomic_int storage_format = ATOMIC_VAR_INIT(PF_STORAGE_FILESYSTEM_UNKNOWN);
+static FATFS storage_filesystem; /**< FatFs state owned by the serialized volume service. */
+static bool storage_mounted; /**< Registration state; caller serialization is required. */
+static atomic_int storage_format = ATOMIC_VAR_INIT(PF_STORAGE_FILESYSTEM_UNKNOWN); /**< Atomic telemetry cache. */
 
+/** @brief Translate FatFs format metadata into the public telemetry values. */
 static pf_storage_filesystem_format_t storage_format_from_fatfs(BYTE fs_type)
 {
     switch (fs_type) {
@@ -41,12 +47,14 @@ pf_storage_result_t pf_storage_mount(
         return PF_STORAGE_SD_CARD_ERROR;
     }
 
+    pf_fatfs_bind_device(pf_storage_sd_block_device());
     mount_result = f_mount(&storage_filesystem, PF_STORAGE_VOLUME, 1u);
     if (filesystem_result != NULL) {
         *filesystem_result = mount_result;
     }
     if (mount_result != FR_OK) {
         (void)f_mount(NULL, PF_STORAGE_VOLUME, 0u);
+        pf_fatfs_bind_device(NULL);
         return PF_STORAGE_FILESYSTEM_ERROR;
     }
 
@@ -75,6 +83,7 @@ pf_storage_result_t pf_storage_unmount(FRESULT *filesystem_result)
     }
 
     storage_mounted = false;
+    pf_fatfs_bind_device(NULL);
     atomic_store(&storage_format, PF_STORAGE_FILESYSTEM_UNKNOWN);
     return PF_STORAGE_OK;
 }

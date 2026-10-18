@@ -1,8 +1,8 @@
 #include "unity.h"
-#include "commands.h"
+#include "app/storage/commands.h"
 #include "embedded_cli.h"
 #include "Mockff.h"
-#include "Mockstorage.h"
+#include "Mockfatfs_volume.h"
 #include "Mocksd_block.h"
 
 #include <string.h>

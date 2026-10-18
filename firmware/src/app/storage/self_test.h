@@ -2,7 +2,7 @@
 #define PF_STORAGE_SELF_TEST_H
 
 #include <stdint.h>
-#include "storage.h"
+#include "middleware/storage/fatfs_volume.h"
 
 #define PF_STORAGE_SELF_TEST_PATH "0:/PFTEST.BIN"
 #define PF_STORAGE_SELF_TEST_MAX_MIB 128u

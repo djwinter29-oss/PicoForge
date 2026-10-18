@@ -1,6 +1,6 @@
 #include "unity.h"
 #include <string.h>
-#define WORKER_SOURCE "../../../src/middleware/storage/storage_worker.c"
+#define WORKER_SOURCE "../../../src/app/storage/storage_worker.c"
 #define HID_SOURCE "../../../src/usb/hid.c"
 #define USB_TASK_SOURCE "../../../src/usb/task.c"
 #include WORKER_SOURCE

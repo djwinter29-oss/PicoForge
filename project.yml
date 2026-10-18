@@ -66,9 +66,11 @@
         - -fdata-sections
       :/test_sd_port_.*spi/:
         - -DPF_CONFIG_SD_CARD_TRANSPORT=1
-      :test_storage_automount:
+      :test_storage_worker_automount:
         - -ffunction-sections
         - -fdata-sections
+      :test_fatfs_volume:
+        - -std=c11
       :test_hid_sd_responsiveness:
         - -DPF_FIRMWARE_VERSION_MAJOR=1u
         - -DPF_FIRMWARE_VERSION_MINOR=2u
@@ -87,7 +89,7 @@
         - -pthread
       :test_sd_port_:
         - -Wl,--gc-sections
-      :test_storage_automount:
+      :test_storage_worker_automount:
         - -Wl,--gc-sections
       :test_hid_sd_responsiveness:
         - -Wl,--gc-sections
