@@ -39,6 +39,7 @@ jobs:
       - name: Check shell script syntax
         run: |
           sh -n tools/firmware/build.sh
+          sh -n tools/firmware/load.sh
 
       - name: Build firmware
         run: tools/firmware/build.sh --board "${{ matrix.board }}"

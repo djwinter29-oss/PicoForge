@@ -1,11 +1,7 @@
 /** @file Application SD/filesystem command execution and replies. */
 #include "storage_commands.h"
 #include "app/storage/fatfs_volume.h"
-#if PF_STORAGE_BACKEND_NOR
-#include "nor_media.h"
-#else
 #include "sd_media.h"
-#endif
 #include "embedded_cli.h"
 
 #include <stdio.h>
@@ -61,7 +57,6 @@ static void volume_path(const char *path, char target[104])
     (void)snprintf(target, 104u, "%s%s", PF_FATFS_VOLUME_PATH, path);
 }
 
-#if !PF_STORAGE_BACKEND_NOR
 static void status_command(bool host_owned, pf_storage_reply_t reply, void *context)
 {
     pf_sd_info_t info;
@@ -256,8 +251,6 @@ static void diagnostics_command(const char *action, bool host_owned,
     (void)reply(line, context);
 }
 
-#endif
-
 static void list_command(const char *path, pf_storage_reply_t reply, void *context)
 {
     DIR directory;
@@ -404,31 +397,6 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
     operation = embeddedCliGetToken(tokens, 1u);
     first = embeddedCliGetToken(tokens, 2u);
     second = embeddedCliGetToken(tokens, 3u);
-#if PF_STORAGE_BACKEND_NOR
-    if (strcmp(family, "sd") == 0) {
-        bool diagnostic_status = count >= 1u && strcmp(operation, "diagnostics") == 0 &&
-            (count == 1u || (count == 2u && strcmp(first, "status") == 0));
-        if ((count == 1u && strcmp(operation, "status") == 0) || diagnostic_status) {
-            pf_nor_media_diagnostics_t diagnostics;
-            pf_nor_media_get_diagnostics(&diagnostics);
-            char line[PF_STORAGE_REPLY_SIZE];
-            (void)snprintf(line, sizeof(line),
-                "backend=nor owner=%s initialized=%u sequence=%lu result=%u raw=%lu LevelX=%lu system=%lu",
-                diagnostics.usb_owned ? "USB" : "Pico", (unsigned)diagnostics.ready,
-                (unsigned long)diagnostics.sequence, (unsigned)diagnostics.result,
-                (unsigned long)diagnostics.raw_result, (unsigned long)diagnostics.levelx_result,
-                (unsigned long)diagnostics.system_error);
-            (void)reply(line, context);
-            (void)snprintf(line, sizeof(line), "failure_operation=%u failure_owner=%s LevelX_block_error=synthetic",
-                (unsigned)diagnostics.operation, diagnostics.sequence == 0u ? "none" :
-                (diagnostics.failure_usb_owned ? "USB" : "Pico"));
-            (void)reply(line, context);
-            return;
-        }
-        (void)reply("SD diagnostics unavailable: this build uses external LevelX NOR.", context);
-        return;
-    }
-#else
     if ((strcmp(family, "sd") == 0) && (count == 1u) && (strcmp(operation, "status") == 0)) {
         status_command(host_owned, reply, context);
         return;
@@ -447,7 +415,6 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
         diagnostics_command(count == 2u ? first : NULL, host_owned, reply, context);
         return;
     }
-#endif
     if ((strcmp(family, "fs") != 0) || (count == 0u)) {
         (void)reply("Usage: sd <status|info|profile|diagnostics> | fs <mount|unmount|format|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
         return;
@@ -467,19 +434,11 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
                        "Filesystem already mounted.", context);
             return;
         }
-#if PF_STORAGE_BACKEND_NOR
-        if (pf_nor_media_initialize() != PF_BLOCK_OK) {
-            (void)reply("Mount failed: external NOR initialization or LevelX recovery failed.", context);
-            return;
-        }
-        const pf_block_device_t *device = pf_nor_media_firmware_device();
-#else
         if (pf_sd_media_initialize() != PF_SD_OK) {
             (void)reply("Mount failed: SD initialization or board configuration unavailable.", context);
             return;
         }
         const pf_block_device_t *device = pf_sd_media_firmware_device();
-#endif
         FRESULT result;
         if (formatting) {
             result = pf_fatfs_volume_format(device);

@@ -24,7 +24,7 @@ throughput change after the architecture refactor, but three runs cannot establi
 - Fixed flags: fused copy OFF, interrupt wait OFF, file preallocation OFF.
 - Each run wrote and read-verified all 67,108,864 bytes and removed `/PFTEST.BIN`.
 - Total payload: 1,152 MiB written and 1,152 MiB read, plus filesystem metadata operations.
-- No formatting, NOR access or raw-sector test was performed. MSC remained disabled.
+- No formatting or raw-sector test was performed. MSC remained disabled.
 - Dashboard HID supplied benchmark control/status; CDC diagnostics were captured before and after each image.
 - Throughput is application filesystem MiB/s, not decimal MB/s or raw bus bandwidth.
 - Write timing includes pattern generation, writes, sync and close; read timing includes verification and close.

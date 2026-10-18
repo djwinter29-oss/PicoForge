@@ -24,18 +24,10 @@ typedef struct {
     uint32_t data_gpio[4]; /**< DAT0-DAT3 in logical order; ascending, consecutive GPIOs. */
 } pf_storage_sdio_pins_t;
 
-/** Immutable single/quad serial signal allocation. */
-typedef struct {
-    uint32_t clock_gpio;   /**< Serial clock output. */
-    uint32_t data_gpio[4]; /**< IO0-IO3 in logical order; ascending, consecutive GPIOs. */
-    uint32_t cs_gpio;      /**< Active-low device select. */
-} pf_storage_qspi_pins_t;
-
 /** Physical signaling mode, not an attached device's command protocol. */
 typedef enum {
     PF_STORAGE_BUS_SPI,       /**< Full-duplex single-lane SPI. */
     PF_STORAGE_BUS_NATIVE_SD, /**< Separate bidirectional CMD and DAT signals. */
-    PF_STORAGE_BUS_QSPI,      /**< Single/quad serial signaling. */
 } pf_storage_bus_mode_t;
 
 /** Physical outcome; device drivers translate into their public results. */

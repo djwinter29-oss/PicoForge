@@ -22,14 +22,13 @@ for (const name of ["web", "webhid"]) {
     assert.doesNotMatch(liveReport, /System clock|runtime-clock/);
     assert.doesNotMatch(html, /Report sequence|id="sequence"/);
     assert.equal((html.match(/<span>System clock<\/span>/g) ?? []).length, 1);
-    assert.match(liveReport, /Memory presence/);
+    assert.match(liveReport, /SD presence/);
     assert.match(liveReport, /id="card-presence"/);
-    assert.match(liveReport, /<dt>Memory type<\/dt><dd id="memory-type">/);
+    assert.doesNotMatch(html, /Memory type|Memory presence|id="memory-type"/);
     assert.doesNotMatch(liveReport, /USB device|id="usb-state"/);
     const memoryReport = section('aria-labelledby="memory-title"');
     assert.doesNotMatch(memoryReport, /id="memory-presence"|<dt>Presence<\/dt>/);
     assert.doesNotMatch(memoryReport, /id="memory-type"/);
-    assert.equal((html.match(/id="memory-type"/g) ?? []).length, 1);
     assert.match(memoryReport, /<dt>Manufacturer<\/dt>/);
     const selfTest = section('aria-labelledby="self-test-title"');
     assert.match(selfTest, /<h2 id="self-test-title">Memory Tests<\/h2>/);

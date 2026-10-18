@@ -8,11 +8,11 @@ host source collection.
 Install Ruby 3 or newer and GCC/gcov, then run the setup wrapper from the repository root. The wrapper uses `uv` if available or Python 3.10+ with venv support to provision gcovr:
 
 ```sh
-git submodule update --init firmware/third_party/embedded-cli firmware/third_party/levelx
+git submodule update --init firmware/third_party/embedded-cli
 tools/validation/setup-ceedling-testing.sh
 ```
 
-Both source submodules are required even for Ceedling configuration validation; the setup wrapper does not fetch them.
+The source submodule is required even for Ceedling configuration validation; the setup wrapper does not fetch it.
 
 The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin`
 directory to `PATH` and run it from the root. Name test files `test_<source_basename>[_<scenario>].c` beneath the matching
@@ -37,7 +37,7 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | Behavior | Test directory |
 | --- | --- |
 | Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sd_card](drivers/sd_card) |
-| Physical SPI, SDIO-PIO and QSPI-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
+| Physical SPI and SDIO-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
 | FreeRTOS SD reservation and application ownership integration | [app/storage](app/storage), `test_sd_media_freertos_serialization_*` |
 | SD media ownership and byte transfers with the bare-metal port | [app/storage](app/storage), `test_sd_media_baremetal_*` |
 | Media configuration, owner-gated I/O, retained diagnostics, commands, file benchmark, automount and recovery | [app/storage](app/storage) |
@@ -74,8 +74,7 @@ multi-block and sync paths, requiring zero subsequent bus activity. Native tests
 and preserved stream recovery. Optional wait setup is tested with
 [SD media/FreeRTOS reservation integration](app/storage/test_sd_media_freertos_serialization_sdio.c).
 Storage tests cover raw phase validation before CS, arbitrary released-line clock counts/deadlines, short/long native
-response byte packing and partial failure capture. NOR adapter tests verify opcode/address construction and payload
-bit-count overflow independently of the physical engines. The SD host test retains the exact 80-clock, low-speed
+response byte packing and partial failure capture. The SD host test retains the exact 80-clock, low-speed
 initialization check.
 Common lifecycle tests live in [test_bus.c](drivers/storage/test_bus.c), raw serial dispatch
 tests in [test_serial.c](drivers/storage/test_serial.c), and native dispatch tests in
@@ -131,19 +130,6 @@ python3 -m pytest tests/contracts/test_tinyusb_dcd_contract.py -q
 ```
 
 These checks validate integration synchronization, not the real controller or an SMP-enabled firmware image.
-
-Raw NOR protocol tests live under [drivers/nor_flash](drivers/nor_flash).
-See [external NOR support](../../docs/nor-flash.md#tests-and-remaining-qualification)
-for the standalone SPI/QSPI smoke builds, PIO model and hardware-test boundaries.
-
-[LevelX integration tests](integration/levelx/test_levelx_nor.c) run the pinned
-upstream NOR engine on a simulated flash using `ceedling test:test_levelx_nor`.
-Initialize `firmware/third_party/levelx` first. See
-[the LevelX port guidance](../../docs/nor-flash.md#levelx-nor-port) for configuration,
-region ownership, failure recovery and the limits of host fault-injection tests.
-Build-selected NOR filesystem and MSC tests are described in the
-[NOR backend test commands](../../docs/nor-flash.md#build-selected-fatfs-and-usb-msc), including real FatFs/LevelX
-file persistence over simulated flash and owner-gated USB handoff tests.
 
 Application CLI tests compile the pinned Embedded CLI submodule, so initialize
 submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/cdc-cli.md#validation)

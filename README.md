@@ -56,7 +56,7 @@ Stock clocks are 125 MHz for RP2040 and 150 MHz for RP2350; `--sys-clk-mhz` sele
 ELF, UF2, BIN, HEX, map and disassembly outputs share the basename. The CMake target is `pico_forge`.
 `pico_forge_elf.txt` in the build directory records the exact ELF path for flashing and validation;
 tools never select an image by wildcard or modification time. Use separate build directories for different
-boards, storage backends or transports: those distinctions are not all encoded in the requested filename.
+boards or SD transports: those distinctions are not all encoded in the requested filename.
 
 ### 2. Flash Your Board
 

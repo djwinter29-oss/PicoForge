@@ -66,41 +66,27 @@ void test_invalid_phases_and_missing_capability_never_call_backend(void)
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_transfer(&bus, &phase, 1u));
 }
 
-void test_shape_rejects_invalid_lanes_sizes_and_quad_full_duplex(void)
+void test_shape_rejects_invalid_lanes_sizes_and_unsupported_widths(void)
 {
     uint8_t data;
     pf_storage_serial_phase_t phase = {.bit_count = 8u, .lanes = 1u};
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_serial_phases_valid(&phase, 1u, 1u));
     phase.bit_count = 0u;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_phases_valid(&phase, 1u, 4u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_phases_valid(&phase, 1u, 1u));
     phase.bit_count = 3u;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_serial_phases_valid(&phase, 1u, 4u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_UNSUPPORTED, pf_storage_serial_phases_valid(&phase, 1u, 1u));
     phase.tx = &data;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_phases_valid(&phase, 1u, 4u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_phases_valid(&phase, 1u, 1u));
     phase.bit_count = 8u;
     phase.rx = &data;
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_serial_phases_valid(&phase, 1u, 1u));
     phase.lanes = 4u;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_phases_valid(&phase, 1u, 4u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_UNSUPPORTED, pf_storage_serial_phases_valid(&phase, 1u, 1u));
     phase.rx = NULL;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_serial_phases_valid(&phase, 1u, 4u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_phases_valid(&phase, 1u, 4u));
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_UNSUPPORTED, pf_storage_serial_phases_valid(&phase, 1u, 1u));
     phase.lanes = 2u;
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_phases_valid(&phase, 1u, 4u));
-}
-
-void test_capability_queries_use_operation_lanes_not_mode_and_reject_missing_services(void)
-{
-    pf_storage_bus_ops_t ops = operations;
-    pf_storage_bus_t bus = {.context = &context, .ops = &ops, .mode = PF_STORAGE_BUS_SPI};
-    bool quad = true;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_serial_valid(&bus, &quad));
-    TEST_ASSERT_FALSE(quad);
-    bus.mode = PF_STORAGE_BUS_QSPI;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_serial_valid(&bus, &quad));
-    TEST_ASSERT_FALSE(quad);
-    ops.time_us = NULL;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_serial_valid(&bus, &quad));
 }
 
 void test_missing_manual_serial_operations_are_explicit_without_transferring(void)

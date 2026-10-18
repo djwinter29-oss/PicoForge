@@ -166,18 +166,16 @@ Volume lifecycle calls and FatFs operations require caller serialization through
 storage-owner task/reservation. `pf_fatfs_volume_is_mounted()` is an atomic snapshot of the last completed registration
 transition, not physical presence. Registration and filesystem-format telemetry are independent atomic snapshots;
 reading either grants no media access and does not serialize check-and-act operations or a filesystem transaction.
-The service manages one volume over a caller-selected
-logical device, not a device registry or multi-volume manager. The build selects SD or LevelX NOR; other backends must
-provide valid logical sectors and perform their own initialization before mounting.
+The service manages one volume over a caller-supplied logical device, not a device registry or multi-volume manager.
+The SD application initializes the card and supplies its logical block device before mounting.
 
 SD telemetry, board configuration, media initialization, filesystem mounting/formatting, and USB ownership transitions
 remain outside the generic contract. SD MSC still uses its owner-specific SD API; it must not use the firmware-owned
-descriptor to bypass those transitions. Build-selected NOR uses a LevelX logical adapter and separate owner-gated
-descriptors, never raw flash. See [NOR filesystem and MSC selection](nor-flash.md#build-selected-fatfs-and-usb-msc)
-for region safety, configuration, initialization and qualification boundaries.
+descriptor to bypass those transitions.
 
-The build selects one backend; both modes use the consolidated protocol library. Native wire helpers retain their
-`pf_sd_native_*` names; SPI also reuses its transport-independent CMD6 arguments and switch-status decoders.
+The board selects SDIO-PIO or SD-SPI transport; both modes use the consolidated protocol library. Native wire helpers
+retain their `pf_sd_native_*` names; SPI also reuses its transport-independent CMD6 arguments and switch-status
+decoders.
 `PF_SDIO_PIO_FUSED_COPY` configures this library, where the data codec is compiled.
 Per-function/data sections let the firmware linker discard unused protocol helpers and tables. SPI-only
 builds omit native SDIO code, including its 33,280-byte receive buffer and 8 KiB
@@ -472,8 +470,8 @@ Public block-operation result values and HID report layouts remain unchanged.
 Native `sd info` adds a detailed error and an initialization/runtime phase,
 alongside counters that remain enabled when performance profiling is off.
 Initialization has one failure exit that aborts host I/O and releases the bus.
-Runtime failures likewise invalidate the card and abort the host; neither reads
-nor writes are replayed. The startup 50-to-25 MHz fallback is the only automatic
+Runtime failures likewise invalidate the card and abort the host; failed reads
+and writes are never replayed. The startup 50-to-25 MHz fallback is the only automatic
 transfer-speed fallback.
 
 ## Read Workflow

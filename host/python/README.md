@@ -8,7 +8,7 @@ The shared Python/.NET page refreshes automatically. Its first summary row inclu
 (`Unknown` for legacy firmware). LED control is in Live Report; USB-drive control is beside the SD-card self-test.
 Selecting Start authorizes self-test writes and replacement of the reserved test file without a separate checkbox.
 
-Use **Enable USB drive** to hand selected SD/NOR storage to the host. Firmware unmounts its filesystem before USB
+Use **Enable USB drive** to hand the SD card to the host. Firmware unmounts its filesystem before USB
 briefly re-enumerates with an added MSC interface, keeping the HID identity and interface stable.
 
 **Disable USB drive** requires data-loss confirmation, then requests Pico-side detach and remount over HID.

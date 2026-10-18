@@ -72,39 +72,33 @@ export function renderStatus(snapshot) {
 
 function renderMemory(memory, filesystemFormat) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
-  const nor = memory?.component_type === "nor-flash";
-  const manufacturer = memory?.manufacturer ?? (memory?.jedec_id
-    ? { id: 0xef, product_name: "W25Q128", jedec_id: memory.jedec_id } : null);
+  const manufacturer = memory?.manufacturer;
   set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
-  set("#memory-note", nor ? "External NOR: capacity shown as usable logical storage / physical chip."
-    : !memory?.configured ? "No SD-card transport configured"
+  set("#memory-note", !memory?.configured ? "No SD-card transport configured"
     : memory.presence_known && !memory.present
       ? "No card detected. Check card insertion and the active-high DET connection on GP8."
       : memory.present && !memory.initialized
         ? "Card detected but not initialized; check UART logs and SD wiring."
         : memory.initialized ? "Card metadata is available." : "Card presence has not been established.");
-  set("#memory-type", memory?.component_type ?? "--");
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
-  set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) +
-    (nor ? ` usable / ${formatBytes(memory.physical_capacity_bytes)} physical` : "") : "--");
+  set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
   set("#memory-filesystem", filesystemLabels[filesystemFormat] ?? "Unknown");
   set("#memory-manufacturer", formatManufacturer(manufacturer));
-  set("#memory-product", nor ? (manufacturer ? `${manufacturer.product_name} · JEDEC ${manufacturer.jedec_id}` : "--") : manufacturer
+  set("#memory-product", manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
-  set("#memory-serial", nor ? (memory.device_uid ?? "Not reported") :
-    manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
+  set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
 }
 
 function formatManufacturer(manufacturer) {
   if (!manufacturer) return "--";
   const id = manufacturer.id ?? manufacturer.manufacturer_id;
   if (!Number.isInteger(id) || id < 0 || id > 0xff) return "Unknown manufacturer";
-  const names = { 0x03: "SanDisk", 0x41: "Kingston", 0xef: "Winbond" };
+  const names = { 0x03: "SanDisk", 0x41: "Kingston" };
   return `${names[id] ?? "Unknown manufacturer"} (0x${id.toString(16).padStart(2, "0")})`;
 }
 

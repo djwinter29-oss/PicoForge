@@ -20,8 +20,7 @@ See [firmware test guidance](../firmware/tests/README.md) for test placement, sc
 | Test | Purpose |
 | --- | --- |
 | [contracts/test_tinyusb_msc_contract.py](contracts/test_tinyusb_msc_contract.py) | Verify pinned TinyUSB source ordering and MSC linker-wrapper configuration |
-| [contracts/test_storage_layers.py](contracts/test_storage_layers.py) | Verify physical storage mode layout and independence from SD/NOR/filesystem headers |
-| [contracts/test_storage_backend.py](contracts/test_storage_backend.py) | Validate SD/NOR build selection, explicit region bounds, and build-wrapper routing |
+| [contracts/test_storage_layers.py](contracts/test_storage_layers.py) | Verify physical storage mode layout and independence from SD/filesystem headers |
 | [test_validation_integrity.py](test_validation_integrity.py) | Exercise validation tools with copied sources and valid/broken ARM ELF fixtures |
 
 Run from the repository root:
@@ -56,7 +55,7 @@ These project-level tests assert properties of supplied cross-build artifacts:
 
 | Test | Purpose |
 | --- | --- |
-| [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers and selected SD/NOR build dependencies |
+| [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers and SD build dependencies |
 | [artifacts/test_sd_ports.py](artifacts/test_sd_ports.py) | Verify bare-metal compilation manifests and linked symbols |
 
 For existing Pico 2 validation builds, run from the repository root:

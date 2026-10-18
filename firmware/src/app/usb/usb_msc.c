@@ -187,13 +187,9 @@ static void apply_msc_request(void)
     request_pending = false;
     if (recovery_requested) {
         recovery_requested = false;
-#if PF_STORAGE_BACKEND_NOR
-        bool initialized = pf_nor_media_ready();
-#else
         pf_sd_info_t info;
         pf_sd_get_info(&info);
         bool initialized = info.initialized;
-#endif
         if (!msc_enabled || initialized || removal_prevented ||
             pf_storage_worker_busy() || pf_fatfs_volume_is_mounted() ||
             !pf_storage_worker_recover_media()) {
@@ -286,14 +282,10 @@ static void apply_msc_request(void)
         msc_enabled = true;
     } else {
         bool media_absent;
-#if PF_STORAGE_BACKEND_NOR
-        media_absent = false;
-#else
         pf_sd_info_t info;
         pf_sd_get_info(&info);
         media_absent = info.presence_known && !info.present &&
                        pf_storage_worker_media_absent();
-#endif
         if (removal_prevented ||
             (!media_absent && (!msc_ejected || pf_msc_storage_sync() != PF_BLOCK_OK))) {
             transition_pending = false;
@@ -358,11 +350,7 @@ void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8], uint8_t product_id[16
     (void)lun;
     transfer_sense_pending = false;
     memcpy(vendor_id, "PicoForge", 8u);
-#if PF_STORAGE_BACKEND_NOR
-    memcpy(product_id, "LevelX NOR", 10u);
-#else
     memcpy(product_id, "SD Card", 7u);
-#endif
     memcpy(product_rev, "1.0", 3u);
 }
 

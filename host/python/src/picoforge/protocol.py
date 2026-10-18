@@ -130,7 +130,7 @@ def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, obje
 
 
 def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
-    """Decode memory state, bus settings, capacity and SD CID or NOR factory UID."""
+    """Decode SD-card state, bus settings, capacity and CID."""
     data = bytes(report)
     if len(data) < MEMORY_INPUT_SIZE or data[0] != MEMORY_REPORT_ID:
         raise ValueError("unexpected HID memory report length or ID")
@@ -141,13 +141,11 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "<BBBBBII", payload[:13]
     )
     cid = payload[13:29]
-    nor = version in (3, 4) and component_type == 2
-    if version != REPORT_VERSION and not nor:
+    if version != REPORT_VERSION:
         raise ValueError(f"unsupported HID memory report version {version}")
     if flags & ~0x3f:
         raise ValueError("unknown HID memory flags")
-    valid_mode = mode in (2, 3) if nor else component_type in (0, 1) and mode in (0, 1, 2)
-    if not valid_mode:
+    if component_type not in (0, 1) or mode not in (0, 1, 2):
         raise ValueError("unknown HID memory type or mode")
     configured, presence_known, present, initialized, cid_valid, capacity_valid = (
         bool(flags & (1 << bit)) for bit in range(6)
@@ -161,13 +159,7 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
     if initialized != bool(clock_hz and blocks) or (not initialized and any(cid)):
         raise ValueError("invalid memory metadata values")
     manufacturer = None
-    if nor and initialized:
-        if (cid[:3] != bytes.fromhex("ef4018") or any(cid[15:] if version == 4 else cid[7:])
-            or int.from_bytes(cid[3:7], "little") != 16777216 or blocks * 512 > 16777216):
-            raise ValueError("invalid NOR identification or capacity")
-        manufacturer = {"id": cid[0], "product_name": "W25Q128", "jedec_id": "ef4018",
-                        "serial_number": None}
-    elif cid_valid:
+    if cid_valid:
         try:
             oem = cid[1:3].decode("ascii")
             product = cid[3:8].decode("ascii")
@@ -191,14 +183,12 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "presence_known": presence_known,
         "present": present if presence_known else None,
         "initialized": initialized,
-        "component_type": "nor-flash" if nor else "sd-card" if component_type == 1 else None,
-        "mode": {0: None, 1: "sdio", 2: "spi", 3: "qspi"}[mode],
+        "component_type": "sd-card" if component_type == 1 else None,
+        "mode": {0: None, 1: "sdio", 2: "spi"}[mode],
         "bus_clock_hz": clock_hz if initialized else None,
         "block_count": blocks if capacity_valid else None,
         "capacity_bytes": blocks * 512 if capacity_valid else None,
         "manufacturer": manufacturer,
-        **({"physical_capacity_bytes": int.from_bytes(cid[3:7], "little") if initialized else None,
-            "device_uid": "0x" + cid[7:15].hex() if initialized and version == 4 else None} if nor else {}),
     }
 
 

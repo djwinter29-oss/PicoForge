@@ -36,9 +36,9 @@ and host compatibility. Both dashboards show these metrics in Runtime status.
 FreeRTOS-Kernel 11.3.1 runs with `configNUMBER_OF_CORES=2`. The Pico port launches core 1 when the scheduler
 starts on core 0; applications must not launch a second independent core entry point. USB, storage, timer and
 idle tasks use the kernel's all-core affinity default and may migrate. Different priorities may execute
-simultaneously. Affinity capability remains enabled for SDK flash-safe execution, which temporarily uses a
+simultaneously. Affinity capability remains enabled for Pico SDK boot-flash-safe execution, which temporarily uses a
 core-specific lockout task; application tasks are not pinned. Task/ISR kernel critical sections exclude both cores,
-while existing media reservations serialize physical engines and LevelX. FatFs retains one executor.
+while existing media reservations serialize physical storage operations. FatFs retains one executor.
 SMP schedules tasks, not arbitrary hardware resources: board setup and IRQ installation still occur before scheduler
 startup, and IRQ routing stays on its initialization core. Peripheral ownership remains explicit rather than being
 inferred from the executing core. Two-core scheduling is not a hard real-time guarantee.
@@ -64,8 +64,8 @@ concurrency tests; sustained concurrent USB/media workloads still require target
 Dependency upgrades must pass the pinned-driver surface contract before the guard can be considered compatible.
 On the connected Pico2 at 250 MHz CPU / 50 MHz SDIO, probe inspection confirmed the active and passive idle tasks
 executing on separate cores. The dashboard enable command completed worker-owned unmount and re-enumerated the
-SD card as a 119.1 GiB USB block device with its existing partition. NOR SMP builds and host handoff tests pass,
-but NOR hardware handoff and sustained dual-core stress remain unqualified.
+SD card as a 119.1 GiB USB block device with its existing partition. Host handoff tests pass, but sustained dual-core
+stress remains unqualified.
 
 The example uses static allocation for its application task and the port-provided idle-task memory. Software timers are enabled because the Pico port uses the timer-pend API for SDK synchronization interoperation. Additional tasks should document their stack, priority, ownership, and whether allocation is static or dynamic. The current firmware disables dynamic task allocation.
 
@@ -94,9 +94,8 @@ Own product behavior, startup, and composition of the services needed by a firmw
 
 ### Middleware
 
-Provide reusable application-facing services. Storage middleware mounts FatFs over the logical block-device API;
-the application selects SD or translated external NOR and remains responsible for board-approved configuration and
-mounting policy. See [build-selected NOR storage](nor-flash.md#build-selected-fatfs-and-usb-msc).
+Provide reusable application-facing services. Storage middleware mounts FatFs over the logical block-device API; the application is responsible for SD-card
+configuration, ownership, and mounting policy.
 The firmware currently uses the USB device role; a USB host role is not selected.
 
 ### Drivers
@@ -128,7 +127,7 @@ Embedded CLI is also pinned as a Git submodule. Its application session module i
 of the USB transport and RTOS; see [CDC CLI](cdc-cli.md) for the dependency pin,
 session lifecycle, command-extension rules, memory budget, and validation plan.
 
-The application storage-owner task initializes the selected SD or LevelX NOR backend and mounts its existing volume through the
+The application storage-owner task initializes the SD-card interface and mounts its existing volume through the
 device-independent `pf_fatfs_volume_mount()` service; mounting never formats media. FatFs uses a logical block device,
 selected by the application. The SD API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes
 to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. Mount, unmount, and file
@@ -139,15 +138,15 @@ binding lifetimes, and ownership contracts.
 Application storage policy stays in `app/storage`: `fatfs_volume.c/.h` owns the singleton FatFs instance,
 mount registration and format telemetry; `storage_commands.c/.h` executes CDC storage commands,
 `file_benchmark.c/.h` verifies and times a dedicated file, `storage_worker.c/.h` serializes requests and owns
-automount/recovery policy, and `sd_media.c/.h` and `nor_media.c/.h` own their respective application lifecycle and
-firmware/USB ownership. SD driver dispatch, protocol, telemetry and execution-port locks remain below the application;
+automount/recovery policy, and `sd_media.c/.h` owns the application media lifecycle and firmware/USB ownership.
+SD driver dispatch, protocol, telemetry and execution-port locks remain below the application;
 retained ownership/operation diagnostics belong to `sd_media`. Its static firmware descriptor gates FatFs I/O,
 while the middleware SD adapter is explicitly raw and has no application ownership policy.
 The worker asks `sd_media` to obtain SD configuration and initialize its execution port before task startup;
-the USB task no longer configures SD. Backend-independent command and worker headers do not expose SD configuration.
-NOR builds omit SD protocol/port targets and the SD block adapter; board SD configuration is unavailable without
-touching SD pins. Common FatFs/logical-block middleware links only the selected adapter's device dependencies.
-Automatic mount failures retain backend, volume and FatFs result codes and log the first or changed failure;
+the USB task no longer configures SD. Command and worker headers do not expose SD configuration.
+The firmware build includes the SD protocol/port targets and SD block adapter. Common FatFs/logical-block middleware
+uses the SD block adapter.
+Automatic mount failures retain SD initialization, volume and FatFs result codes and log the first or changed failure;
 identical retries remain paced and do not repeat that worker warning. Successful mounting resets warning suppression.
 Mount registration and format are independent atomic telemetry snapshots; neither grants filesystem access.
 Worker presence fields remain worker-owned: readers inspect them only while the kernel-protected
@@ -210,5 +209,5 @@ board tests use scoped SDK fakes.
 
 Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow.
 The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support constructs the
-selected transport configuration. External NOR SPI/QSPI-PIO support is implemented; its physical timing, USB interoperability,
-and power-loss qualification remain outstanding. See [NOR flash](nor-flash.md) for supported parts and region safety.
+selected SDIO-PIO or SD-SPI transport configuration. Physical timing, card compatibility, USB interoperability, and
+power-loss qualification remain subject to the limits recorded in the SD validation guide.

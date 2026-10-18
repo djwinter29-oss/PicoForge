@@ -72,35 +72,6 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
 }
 
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
-  test(`${name} displays NOR metadata and permits a one MiB benchmark`, () => {
-    const elements = new Map();
-    const element = selector => {
-      if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", valueAsNumber: 1 });
-      return elements.get(selector);
-    };
-    const previous = globalThis.document;
-    globalThis.document = { querySelector: element };
-    try {
-      render({ connected: true, memory: {
-        configured: true, initialized: true, presence_known: true, present: true,
-        component_type: "nor-flash", mode: "spi", bus_clock_hz: 992063,
-        capacity_bytes: 3000000, physical_capacity_bytes: 16777216,
-        manufacturer: { id: 0xef, product_name: "W25Q128", jedec_id: "ef4018", serial_number: null },
-      }, filesystem_format: "fat12", self_test: { state: "idle" } });
-      assert.equal(element("#memory-state").textContent, "Ready");
-      assert.equal(element("#memory-type").textContent, "nor-flash");
-      assert.match(element("#memory-manufacturer").textContent, /Winbond/);
-      assert.match(element("#memory-product").textContent, /W25Q128.*ef4018/);
-      assert.match(element("#memory-size").textContent, /usable.*16.00 MiB physical/);
-      assert.equal(element("#memory-serial").textContent, "Not reported");
-      assert.equal(element("#self-test-start").disabled, false);
-      render({ connected: true, memory: { configured: true, initialized: true,
-        component_type: "nor-flash", device_uid: "0x0123456789abcdef",
-        jedec_id: "ef4018" } });
-      assert.equal(element("#memory-serial").textContent, "0x0123456789abcdef");
-    } finally { globalThis.document = previous; }
-  });
-
   test(`${name} reports SD-card presence in Live Report and resolves known manufacturer names`, () => {
     const elements = new Map();
     const element = selector => {

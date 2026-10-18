@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Validation regressions using copied sources and real ARM ELF binutils."""
 import hashlib
-import json
 import os
 import runpy
 import shlex
 from pathlib import Path
 import shutil
 import struct
+import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +32,7 @@ def test_ceedling_tests_mirror_source_directories_and_module_names():
         )
 
 
-def test_ceedling_ci_initializes_both_source_dependencies_before_setup():
+def test_ceedling_ci_initializes_source_dependency_before_setup():
     workflow = (ROOT / '.github/workflows/host-validation.yml').read_text()
     setup = workflow.split('  ceedling-setup:', 1)[1]
     initialization, _ = setup.split('tools/validation/setup-ceedling-testing.sh', 1)
@@ -42,9 +42,42 @@ def test_ceedling_ci_initializes_both_source_dependencies_before_setup():
     ]
     assert len(commands) == 1
     assert commands[0][:4] == ['git', 'submodule', 'update', '--init']
-    assert set(commands[0][4:]) == {
-        'firmware/third_party/embedded-cli', 'firmware/third_party/levelx',
-    }
+    assert commands[0][4:] == ['firmware/third_party/embedded-cli']
+
+
+@pytest.mark.parametrize("script", ["build.sh", "load.sh"])
+@pytest.mark.parametrize("option", [
+    "--storage-backend", "--nor-transport", "--nor-region-offset", "--nor-region-size", "--levelx",
+])
+def test_firmware_wrappers_reject_removed_options(script, option):
+    result = subprocess.run(
+        ["sh", str(ROOT / "tools/firmware" / script), option, "NOR"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert f"Unknown argument: {option}" in result.stderr
+
+
+@pytest.mark.parametrize("cache_entry", [
+    "PF_STORAGE_BACKEND:STRING=NOR",
+    "PF_BUILD_NOR_SMOKE:BOOL=ON",
+    "PF_BUILD_LEVELX:BOOL=ON",
+])
+@pytest.mark.parametrize("explicit_elf", [False, True])
+def test_skip_build_refuses_legacy_nor_cache(tmp_path, cache_entry, explicit_elf):
+    (tmp_path / "CMakeCache.txt").write_text(cache_entry + "\n")
+    elf = tmp_path / "old.elf"
+    elf.write_bytes(b"obsolete firmware")
+    (tmp_path / "pico_forge_elf.txt").write_text(str(elf) + "\n")
+    command = [
+        "sh", str(ROOT / "tools/firmware/load.sh"), "--skip-build", "--build-dir", str(tmp_path),
+        "--openocd-exe", "/nonexistent/openocd",
+    ]
+    if explicit_elf:
+        command.extend(["--elf", str(elf)])
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0
+    assert "legacy NOR configuration; refusing to flash it" in result.stderr
 
 
 def elf_fixture(path, broken=None):
@@ -126,27 +159,6 @@ def test_source_contract_rejects_changed_ordering(tmp_path, monkeypatch):
         'set_sense_medium_not_present(p_cbw->lun);', '/* missing failure sense */'))
     with pytest.raises(ValueError):
         contract['check_contract'](tmp_path)
-
-
-@pytest.mark.parametrize("backend,sources,valid", [
-    ("NOR", [], True),
-    ("NOR", ["drivers/sd_card/sd.c"], False),
-    ("NOR", ["middleware/storage/sd_block_device.c"], False),
-    ("SD", ["drivers/sd_card/sd.c", "middleware/storage/sd_block_device.c"], True),
-    ("SD", ["drivers/sd_card/sd.c"], False),
-])
-def test_storage_manifest_rejects_wrong_backend_dependencies(tmp_path, backend, sources, valid):
-    checker = runpy.run_path(str(ARTIFACT_TESTS / 'test_msc_elf.py'))
-    (tmp_path / 'CMakeCache.txt').write_text(f'PF_STORAGE_BACKEND:STRING={backend}\n')
-    (tmp_path / 'compile_commands.json').write_text(json.dumps([
-        {'file': str(tmp_path / 'firmware/src' / source)} for source in sources
-    ]))
-    paths = [tmp_path / 'pico_forge_rp2350_150_20261018.elf']
-    if valid:
-        checker['test_selected_storage_build_dependencies'](paths)
-    else:
-        with pytest.raises(AssertionError):
-            checker['test_selected_storage_build_dependencies'](paths)
 
 
 def test_elf_identity(checker, tmp_path, capsys):

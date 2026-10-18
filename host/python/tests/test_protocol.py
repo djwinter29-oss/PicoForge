@@ -20,24 +20,20 @@ def info_report(mcu=2, name="PicoForge", serial="0123456789abcdef"):
 
 
 class ProtocolTests(unittest.TestCase):
-    def test_nor_memory_layout(self):
+    def test_rejects_unsupported_memory_versions_and_modes(self):
         report = bytearray(30)
-        report[:6] = bytes([3, 3, 1, 0x3f, 2, 2])
-        struct.pack_into("<II", report, 6, 992063, 6000)
-        report[14:17] = bytes.fromhex("ef4018")
-        struct.pack_into("<I", report, 17, 16777216)
-        memory = parse_memory_report(report)
-        self.assertEqual(memory["component_type"], "nor-flash")
-        self.assertEqual(memory["capacity_bytes"], 6000 * 512)
-        self.assertEqual(memory["physical_capacity_bytes"], 16777216)
-        self.assertEqual(memory["manufacturer"]["jedec_id"], "ef4018")
-        self.assertIsNone(memory["manufacturer"]["serial_number"])
-        self.assertIsNone(memory["device_uid"])
+        report[0] = 3
+        report[1] = 3
+        with self.assertRaisesRegex(ValueError, "unsupported HID memory report version"):
+            parse_memory_report(report)
         report[1] = 4
-        report[21:29] = bytes.fromhex("0123456789abcdef")
-        self.assertEqual(parse_memory_report(report)["device_uid"], "0x0123456789abcdef")
-        report[29] = 1
-        with self.assertRaisesRegex(ValueError, "NOR"):
+        with self.assertRaisesRegex(ValueError, "unsupported HID memory report version"):
+            parse_memory_report(report)
+        report[1:6] = bytes([2, 0, 0, 2, 2])
+        with self.assertRaisesRegex(ValueError, "unknown HID memory type or mode"):
+            parse_memory_report(report)
+        report[4:6] = bytes([1, 3])
+        with self.assertRaisesRegex(ValueError, "unknown HID memory type or mode"):
             parse_memory_report(report)
 
     def test_decodes_info_and_product_name(self):

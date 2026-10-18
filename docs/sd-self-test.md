@@ -1,7 +1,7 @@
 # Storage File Benchmark
 
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
-It operates on the already-mounted build-selected SD or LevelX NOR volume; the existing host UI/API calls it a
+It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
 self-test. The HID report layout and numeric state/error values are unchanged: wire state 2 (`mounting`) means
 preparing an existing mount, and wire error 5 (`card`) means the selected media is unavailable.
 
@@ -26,7 +26,7 @@ byte counts, average MiB/s, verification results, and cleanup errors.
    does not make ownership available until the worker finishes.
 
 Do not reset, unplug, remove the card, or change transport while the test runs.
-This test writes flash and contributes to card wear. Back up important data
+This test writes to the SD card and contributes to card wear. Back up important data
 before testing. It is not a filesystem repair or full-capacity authenticity test.
 
 The fixed filename `/PFTEST.BIN` is reserved for self-tests. **Starting a test

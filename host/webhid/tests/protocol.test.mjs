@@ -72,36 +72,17 @@ function infoReport({ reportId = true, mcu = 2, name = "PicoForge", serial = "01
   return reportId ? Uint8Array.from([1, ...payload]) : payload;
 }
 
-test("NOR memory layout reports physical and logical capacity without inventing an SD CID", () => {
+test("memory decoder rejects unsupported versions, components, and modes", () => {
   const bytes = new Uint8Array(29);
   const view = new DataView(bytes.buffer);
-  bytes.set([3, 1, 0x3f, 2, 2]);
-  view.setUint32(5, 992063, true);
-  view.setUint32(9, 6000, true);
-  bytes.set([0xef, 0x40, 0x18], 13);
-  view.setUint32(16, 16777216, true);
-  const memory = decodeMemoryReport(3, view);
-  assert.equal(memory.component_type, "nor-flash");
-  assert.equal(memory.mode, "spi");
-  assert.equal(memory.capacity_bytes, 6000 * 512);
-  assert.equal(memory.physical_capacity_bytes, 16777216);
-  assert.equal(memory.manufacturer.jedec_id, "ef4018");
-  assert.equal(memory.manufacturer.serial_number, null);
-  assert.equal(memory.device_uid, null);
+  bytes[0] = 3;
+  assert.throws(() => decodeMemoryReport(3, view), /Unsupported HID memory report version/);
   bytes[0] = 4;
-  bytes.set([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef], 20);
-  assert.equal(decodeMemoryReport(3, view).device_uid, "0x0123456789abcdef");
-  bytes[4] = 3;
-  assert.equal(decodeMemoryReport(3, view).mode, "qspi");
-  bytes[28] = 1;
-  assert.throws(() => decodeMemoryReport(3, view), /NOR/);
-  bytes.fill(0);
-  bytes.set([3, 0, 1, 2, 2]);
-  assert.equal(decodeMemoryReport(3, view).initialized, false);
-  bytes[0] = 4;
-  assert.equal(decodeMemoryReport(3, view).device_uid, null);
-  bytes[20] = 1;
-  assert.throws(() => decodeMemoryReport(3, view), /CID/);
+  assert.throws(() => decodeMemoryReport(3, view), /Unsupported HID memory report version/);
+  bytes.set([2, 0, 0, 2, 2]);
+  assert.throws(() => decodeMemoryReport(3, view), /Unknown HID memory type or mode/);
+  bytes.set([2, 0, 0, 1, 3]);
+  assert.throws(() => decodeMemoryReport(3, view), /Unknown HID memory type or mode/);
 });
 
 test("decode stable product, MCU, and serial identity", () => {

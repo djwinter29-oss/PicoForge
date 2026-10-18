@@ -6,8 +6,6 @@ remain above this layer:
 
 - [SD-card design](../../../../docs/sdcard-design.md): initialization, commands, registers, CRC validation,
   addressing, and sector/stream policy.
-- [NOR flash](../../../../docs/nor-flash.md): identification, quad enable, programming, erase, and standalone
-  LevelX integration.
 - [CDC CLI guide](../../../../docs/cdc-cli.md): filesystem commands and mounting policy.
 - [Hardware setup](../../../../docs/hardware-setup.md): board selection, power, debug connections, and other GPIOs.
 
@@ -22,9 +20,7 @@ drivers/
     spi/spi.h / spi.c
     sdio_pio/sdio_pio.h / sdio_pio.c / sdio_pio.pio
     sdio_pio/sdio_wait_freertos.c
-    qspi_pio/qspi_pio.h / qspi_pio.c / qspi_pio.pio
   sd_card/       SD initialization, registers, framing, sector and stream policy
-  nor_flash/     NOR opcodes, status, page programming, erase and verification
 ```
 
 The [common bus interface](bus.h) contains shared pin types, lifecycle, clock and platform services.
@@ -33,17 +29,16 @@ Wire operations are separate SDK-independent capabilities: [raw serial](serial.h
 serializes access. Protocol clients
 do not dereference backend contexts or operations, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
 It creates no task, queue, filesystem policy, or automatic mode-switch manager.
-Common mode tags describe SPI, native SD, or QSPI signaling, not the backend's PIO/SPI-controller implementation.
+Common mode tags describe SPI or native SD signaling, not the backend's PIO/SPI-controller implementation.
 Backend filenames, functions, types, and header guards use the same module name:
 
 | Module | C API and types | Header guard |
 | --- | --- | --- |
 | SPI | `pf_spi_*`, `pf_spi_t` | `PF_SPI_H` |
 | Native SD PIO | `pf_sdio_pio_*`, `pf_sdio_pio_t` | `PF_SDIO_PIO_H` |
-| QSPI PIO | `pf_qspi_pio_*`, `pf_qspi_pio_t` | `PF_QSPI_PIO_H` |
 
-The native wait-hook type is `pf_sdio_pio_wait_hook_t`; generated PIO programs use `pf_sdio_pio_*` or
-`pf_qspi_pio_*`. These replace the former backend `pf_storage_*` names without compatibility aliases.
+The native wait-hook type is `pf_sdio_pio_wait_hook_t`; generated PIO programs use `pf_sdio_pio_*`. These replace
+the former backend `pf_storage_*` names without compatibility aliases.
 The common and wire interfaces use `pf_storage_*` / `PF_STORAGE_*` symbols. Concrete clock ownership and PIO/DMA
 resource state remain private to each backend.
 
@@ -53,22 +48,17 @@ resource state remain private to each backend.
 | Raw serial | `pf_storage_serial_*` | `PF_STORAGE_SERIAL_H` |
 | SD CMD/DAT wire | `pf_storage_sd_wire_*` | `PF_STORAGE_SD_WIRE_H` |
 
-Backend factories are `pf_spi_bus`, `pf_sdio_pio_bus`, and `pf_qspi_pio_bus`. The common operations expose
+Backend factories are `pf_spi_bus` and `pf_sdio_pio_bus`. The common operations expose
 `serial` and `sd_wire` capabilities. The bus result/mode constants use `PF_STORAGE_BUS_*`; SD wire diagnostics use
 `PF_STORAGE_SD_WIRE_*`. Callers must use these names; no compatibility aliases are provided.
-Device configuration members named `transport` and NOR's protocol transaction API remain unchanged.
+Device configuration members named `transport` remain unchanged.
 
 | Physical mode | Implementation | Device configurations |
 | --- | --- | --- |
-| SPI | [spi.h](spi/spi.h), [spi.c](spi/spi.c) | SD-SPI and NOR-SPI |
+| SPI | [spi.h](spi/spi.h), [spi.c](spi/spi.c) | SD-SPI |
 | Native SD PIO | [sdio_pio.h](sdio_pio/sdio_pio.h), [sdio_pio.c](sdio_pio/sdio_pio.c), [PIO programs](sdio_pio/sdio_pio.pio) | Native four-bit SD memory cards |
-| QSPI-PIO | [qspi_pio.h](qspi_pio/qspi_pio.h), [qspi_pio.c](qspi_pio/qspi_pio.c), [PIO programs](qspi_pio/qspi_pio.pio) | NOR single/quad-lane serial transfers |
 
-SPI and QSPI execute ordered raw phases under one CS assertion. Each phase specifies borrowed TX/RX buffers, bit count,
-and one or four lanes; an unbuffered phase drives ones. All phases are validated before CS is asserted. Buffered phases
-must contain whole bytes; hardware SPI also requires whole-byte clock-only phases, while QSPI permits individual clocks.
-Quad phases are half-duplex. The NOR adapter builds opcode/address/dummy/payload phases; physical engines do not parse
-them. SD-SPI uses manual CS and byte exchange so response, token, busy-polling and multiblock boundaries stay unchanged.
+SD-SPI uses manual CS and byte exchange so response, token, busy-polling and multiblock boundaries stay unchanged.
 
 Native CMD exchange takes caller-framed bytes and returns response bytes, including partial capture on failure.
 The current PIO engine supports six TX bytes and byte-aligned responses up to 136 bits; it never builds CRC or interprets
@@ -77,9 +67,9 @@ They are not replaced by blocking read/write calls. Here, SDIO means native SD m
 SDIO I/O cards.
 
 The transport owns GPIO mux/direction, programmed clock timing, PIO/DMA resources, FIFO/IRQ state, hardware waits,
-and hardware cleanup. Device adapters retain SD commands, addressing, register decoding and stream state, or NOR
-opcodes and erase/program behavior. They translate physical errors into their existing public device results.
-SPI supports bounded FIFO polling for NOR; SD-SPI retains SDK blocking bulk I/O with protocol-level deadlines.
+and hardware cleanup. The SD adapter retains commands, addressing, register decoding and stream state, and translates
+physical errors into its existing public device results.
+SD-SPI retains SDK blocking bulk I/O with protocol-level deadlines.
 
 ### Lifecycle and Shared Pins
 
@@ -143,29 +133,23 @@ The [FreeRTOS wait adapter](sdio_pio/sdio_wait_freertos.c) owns PIO IRQ details;
 requests that the transport enable it. The backend retains its physical configuration and installed wait hook across
 common-interface initialization failures and deinitialization, so reinitialization does not need device-side pin setup.
 
-[Board support](../../board/) remains authoritative for GP2-GP8. SD-SPI and NOR-SPI use one shared SPI implementation;
-native SD and quad-SPI use their own physical engines. These are alternative modes of the shared pins, not permission
-to attach multiple active devices. DET remains a board/device-presence input.
+[Board support](../../board/) remains authoritative for GP2-GP8. SD-SPI and native SD use their respective physical
+engines. These are alternative modes of the shared pins, not permission to attach multiple active devices. DET remains
+a board/card-presence input.
 
-The standalone serial-storage profile is defined in [board_profile.c](../../board/board_profile.c) and exposed through
-[board_storage.h](../../board/board_storage.h). [board_storage.c](../../board/board_storage.c) owns the mutable
-serial runtime context, separate from the immutable profile. Board preparation supplies a physical descriptor and applies SPI
-WP/HOLD idle levels; it does not initialize the bus or depend on NOR. The NOR adapter initializes that descriptor.
-After device operations, the caller deinitializes the bus before releasing board-specific pins.
-For SD, [board.c](../../board/board.c) owns the selected static backend context and prepares card-detect GPIO/pulls
-from the same immutable profile. Its descriptor carries an optional board presence callback; without one, presence
-is unknown and media is assumed present. Repeated configuration queries do not reset a live backend.
+[Board support](../../board/board_profile.c) defines the immutable SD pin profile.
+[board.c](../../board/board.c) owns the selected static SD transport context and prepares card-detect GPIO/pulls
+from that profile. Its descriptor carries an optional board presence callback; without one, presence is unknown and
+media is assumed present. Repeated configuration queries do not reset a live transport.
 
 ### Pin Allocation and Runtime State
 
-[bus.h](bus.h) defines SDK-independent `pf_storage_spi_pins_t`, `pf_storage_sdio_pins_t`, and
-`pf_storage_qspi_pins_t`. Native DAT0-DAT3 and quad IO0-IO3 are explicit arrays in logical order; the physical engines
-validate their ascending, consecutive mapping. Pin allocation types do not include card detect, WP/HOLD policy,
-controller pointers, clock rates, or mutable hardware ownership.
+[bus.h](bus.h) defines SDK-independent `pf_storage_spi_pins_t` and `pf_storage_sdio_pins_t`. Native DAT0-DAT3 are
+an explicit array in logical order; the physical engine validates their ascending, consecutive mapping. Pin allocation
+types do not include card detect, controller pointers, clock rates, or mutable hardware ownership.
 
-The immutable board resource profile contains `native_pins`, `spi_pins`, and `qspi_pins`, derived from one connector
-signal assignment in [board_profile.c](../../board/board_profile.c). SD and NOR share `spi_pins`; neither has a second
-board-specific SPI map. DET polarity/pulls and SPI WP/HOLD remain board/device configuration.
+The immutable board resource profile contains `native_pins` and `spi_pins`, derived from one connector signal
+assignment in [board_profile.c](../../board/board_profile.c). DET polarity and pulls remain board configuration.
 
 Concrete storage contexts embed the corresponding shared type as `pins`. Board integration copies that allocation
 into the selected context; mutable clock settings, controller references, PIO state machines, DMA
@@ -182,24 +166,24 @@ Physical backend descriptor factories now end in `_transport`. Transport selecti
 behavior are unchanged.
 For SD API naming migration, see the [SD architecture](../../../../docs/sdcard-design.md#architecture).
 
-Before switching devices, the caller must sync/unmount as appropriate, finish the device protocol, deinitialize the
-bus, and satisfy the new device's power requirements. Bus abort/deinit never claims to finish an interrupted write
-or make filesystem data durable.
+Before switching SD transports, the caller must sync/unmount as appropriate, finish the card protocol, deinitialize
+the bus, and satisfy the card's power requirements. Bus abort/deinit never claims to finish an interrupted write or
+make filesystem data durable.
 
 ## Memory and Storage Connections
 
-Use GP2-GP7 for one memory device and choose one mode column below. GP7 is the CS pin in SD-SPI, QSPI-PIO, and SPI-NOR
-modes; it is controlled by GPIO/PIO, not automatic hardware CS. SDIO has no CS signal.
+Use GP2-GP7 for one SD card and choose one mode below. GP7 is the CS pin in SD-SPI and is controlled by GPIO, not
+automatic hardware CS. SDIO has no CS signal.
 
-| MCU GPIO | Header pin | SDIO-PIO | SD-SPI (SPI0) | QSPI-PIO | SPI-NOR flash (SPI0) |
-| --- | --- | --- | --- | --- | --- |
-| GP2 | 4 | CLK | CLK / SCK | CLK | CLK / SCK |
-| GP3 | 5 | CMD | SI / MOSI | IO0 | IO0 / MOSI |
-| GP4 | 6 | DAT0 | SO / MISO | IO1 | IO1 / MISO |
-| GP5 | 7 | DAT1 | - | IO2 | WP (hold high) |
-| GP6 | 9 | DAT2 | - | IO3 | HOLD (hold high) |
-| GP7 | 10 | DAT3 | CS (GPIO-controlled) | CS | CS (GPIO-controlled) |
-| GP8 | 11 | DET (optional) | DET (optional) | - | - |
+| MCU GPIO | Header pin | SDIO-PIO | SD-SPI (SPI0) |
+| --- | --- | --- | --- |
+| GP2 | 4 | CLK | CLK / SCK |
+| GP3 | 5 | CMD | SI / MOSI |
+| GP4 | 6 | DAT0 | SO / MISO |
+| GP5 | 7 | DAT1 | - |
+| GP6 | 9 | DAT2 | - |
+| GP7 | 10 | DAT3 | CS (GPIO-controlled) |
+| GP8 | 11 | DET (optional) | DET (optional) |
 
 - `-` means unused in that mode, not necessarily disconnected. GP8 is optional SD-card detect.
 - Use 3.3 V and common ground, never 5 V. Power off before replacing a breakout.
@@ -215,12 +199,9 @@ modes; it is controlled by GPIO/PIO, not automatic hardware CS. SDIO has no CS s
 
 ## Lab Hardware Examples
 
-The lab uses two types of memory/storage breakout: the Adafruit microSD board and W25Q128 flash board described below.
-These are reference examples, not an exclusive list of compatible devices. Other SD-card or SPI/QSPI memory devices
-can use this pin allocation if their supply and logic levels, signal functions, pull-ups, and timing requirements are
-compatible. Check each device's pinout and protocol; firmware may need device-specific initialization or commands.
-The active-high DET behavior and WP/HOLD requirements below describe these particular lab boards and must be checked
-for any replacement. Use in the lab does not establish that all interface modes have been validated.
+The lab uses the Adafruit microSD breakout described below as a reference example, not an exclusive list of compatible
+devices. Check each card and breakout's pinout, supply, logic levels, pull-ups and timing requirements. Use in the lab
+does not establish that all cards or interface modes have been validated.
 
 ### SD-Card Breakout
 
@@ -371,26 +352,11 @@ cmake -S firmware -B build/firmware-pico2-hs200 \
 cmake --build build/firmware-pico2-hs200 --parallel 4
 ```
 
-### W25Q128 Flash Breakout
-
-The [Adafruit QSPI DIP Breakout - W25Q128](https://www.adafruit.com/product/5634) is a 3.3 V, 16 MB serial NOR flash
-supporting QSPI and SPI; see its
-[pinout guide](https://learn.adafruit.com/adafruit-qspi-dip-breakout-boards/pinouts). Connect CLK, IO0, IO1, IO2, IO3, and
-CS to GP2, GP3, GP4, GP5, GP6, and GP7 respectively in both modes. This keeps IO0-IO3 on consecutive GP3-GP6 and shares
-CS on GP7 with the SD breakout. Use pull-ups on GP7/CS, GP5/IO2/WP, and GP6/IO3/HOLD to keep them high through reset;
-in SPI-NOR mode, keep GP5/GP6 high or as inputs with those external pull-ups. Never hard-tie IO2/IO3 to 3V3 when they
-are used as QSPI data signals. The QSPI-PIO engine samples the contiguous data window GP3-GP6; the NOR protocol
-configures the flash's quad-enable setting before quad reads. Mode changes require protocol reinitialization, not
-just changing the GPIO mux. See [external NOR support](../../../../docs/nor-flash.md) for the standalone raw-driver
-build, supported command set and validation limits. NOR hardware operation and FatFs support are not yet qualified
-or implemented, respectively.
-
 ## Tests and Qualification
 
 Host C tests cover common lifecycle dispatch and concrete transports under
 [firmware/tests/](../../../tests/drivers/). The assembled
-[SDIO](../../../../tests/pio/test_sdio_pio_timing.py) and
-[QSPI](../../../../tests/pio/test_nor_qspi_timing.py) instruction models check wire timing assumptions;
+[SDIO](../../../../tests/pio/test_sdio_pio_timing.py) instruction model checks wire timing assumptions;
 [storage-layer contracts](../../../../tests/contracts/test_storage_layers.py) check the directory structure and
 physical-driver header independence. Use the existing [test guidance](../../../../tests/README.md) for commands.
 Host tests, firmware builds, and PIO models do not establish electrical margins, card compatibility, sustained

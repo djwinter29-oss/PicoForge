@@ -9,12 +9,6 @@ FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 SYS_CLK_MHZ="${PF_SYS_CLK_MHZ:-0}"
 SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
 SD_CARD_PORT="${PF_SD_CARD_PORT:-FREERTOS}"
-NOR_SMOKE=OFF
-NOR_TRANSPORT="${PF_NOR_TRANSPORT:-SPI}"
-BUILD_LEVELX=OFF
-STORAGE_BACKEND="${PF_STORAGE_BACKEND:-SD}"
-NOR_REGION_OFFSET="${PF_NOR_REGION_OFFSET:-}"
-NOR_REGION_SIZE="${PF_NOR_REGION_SIZE:-}"
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
 while [ "$#" -gt 0 ]; do
@@ -55,27 +49,6 @@ while [ "$#" -gt 0 ]; do
             SD_CARD_PORT="$2"
             shift 2
             ;;
-        --nor-transport)
-            NOR_TRANSPORT="$2"
-            NOR_SMOKE=ON
-            shift 2
-            ;;
-        --storage-backend)
-            STORAGE_BACKEND="$2"
-            shift 2
-            ;;
-        --nor-region-offset)
-            NOR_REGION_OFFSET="$2"
-            shift 2
-            ;;
-        --nor-region-size)
-            NOR_REGION_SIZE="$2"
-            shift 2
-            ;;
-        --levelx)
-            BUILD_LEVELX=ON
-            shift
-            ;;
         --help)
             cat <<'EOF'
 Usage: tools/firmware/build.sh [options]
@@ -90,13 +63,6 @@ Options:
     --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
     --sd-card-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
     --sd-card-port NAME  FREERTOS application or BAREMETAL driver smoke (default: FREERTOS)
-    --nor-transport NAME  Build standalone raw NOR smoke instead: SPI or QSPI_PIO
-                         Default directory: build/nor-BOARD-TRANSPORT
-    --storage-backend NAME  Application storage: SD (default) or NOR
-                           NOR selects the application, not the raw smoke, with --nor-transport
-    --nor-region-offset BYTES  Required reserved external LevelX region offset for NOR application
-    --nor-region-size BYTES    Required reserved external region size; decimal or hex, no defaults
-    --levelx             Also build the LevelX NOR library and no-I/O link smoke
 EOF
             exit 0
             ;;
@@ -105,23 +71,7 @@ EOF
             exit 1
             ;;
     esac
-    case "$NOR_TRANSPORT" in
-        SPI|QSPI_PIO) ;;
-        *) echo "--nor-transport must be SPI or QSPI_PIO" >&2; exit 2 ;;
-    esac
 done
-
-case "$STORAGE_BACKEND" in
-    SD) ;;
-    NOR)
-        NOR_SMOKE=OFF
-        if [ -z "$NOR_REGION_OFFSET" ] || [ -z "$NOR_REGION_SIZE" ]; then
-            echo "NOR application requires --nor-region-offset and --nor-region-size (or PF_NOR_REGION_*)." >&2
-            exit 2
-        fi
-        ;;
-    *) echo "--storage-backend must be SD or NOR" >&2; exit 2 ;;
-esac
 
 case "$SD_CARD_PORT" in
     FREERTOS|BAREMETAL) ;;
@@ -149,7 +99,7 @@ fi
 if [ -z "$FREERTOS_KERNEL_PATH_VALUE" ]; then
     FREERTOS_KERNEL_PATH_VALUE="$SOURCE_DIR/third_party/FreeRTOS-Kernel"
 fi
-if [ "$NOR_SMOKE" = OFF ] && [ "$SD_CARD_PORT" = FREERTOS ] &&
+if [ "$SD_CARD_PORT" = FREERTOS ] &&
    [ ! -f "$FREERTOS_KERNEL_PATH_VALUE/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake" ]; then
     echo "FreeRTOS-Kernel is not available at $FREERTOS_KERNEL_PATH_VALUE." >&2
     echo "Initialize the dependency with 'git submodule update --init --recursive', or pass --freertos-kernel-path." >&2
@@ -169,11 +119,7 @@ if [ -z "$GENERATOR" ]; then
 fi
 if [ -z "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD"
-    if [ "$NOR_SMOKE" = ON ]; then
-        BUILD_DIR="$REPO_ROOT/build/nor-$BOARD-$NOR_TRANSPORT"
-    elif [ "$STORAGE_BACKEND" = NOR ]; then
-        BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-NOR-$NOR_TRANSPORT"
-    elif [ "$SD_CARD_PORT" = BAREMETAL ]; then
+    if [ "$SD_CARD_PORT" = BAREMETAL ]; then
         BUILD_DIR="$BUILD_DIR-baremetal"
     fi
 elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
@@ -188,11 +134,5 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPF_FIRMWARE_VERSION="$FIRMWARE_VERSION" \
     -DPF_SYS_CLK_MHZ="$SYS_CLK_MHZ" \
     -DPF_SD_CARD_PORT="$SD_CARD_PORT" \
-    -DPF_BUILD_NOR_SMOKE="$NOR_SMOKE" \
-    -DPF_NOR_TRANSPORT="$NOR_TRANSPORT" \
-    -DPF_BUILD_LEVELX="$BUILD_LEVELX" \
-    -DPF_STORAGE_BACKEND="$STORAGE_BACKEND" \
-    -DPF_NOR_REGION_OFFSET="$NOR_REGION_OFFSET" \
-    -DPF_NOR_REGION_SIZE="$NOR_REGION_SIZE" \
     -DPF_SD_CARD_TRANSPORT="$SD_CARD_TRANSPORT"
 cmake --build "$BUILD_DIR" --parallel

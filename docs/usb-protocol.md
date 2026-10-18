@@ -113,23 +113,6 @@ CID and capacity retained internally for SD diagnostics after initialization or 
 Input Report 3 while the card is uninitialized. Its CID-valid and capacity-valid flags remain clear, and CID, clock,
 and capacity fields remain zero, so a card failure does not invalidate the dashboard's live status stream.
 
-### NOR memory telemetry (Input Report 3, layouts 3 and 4)
-
-NOR uses the same 29-byte memory payload, version `4`, component type `2` and mode `2` (SPI) or `3` (QSPI).
-Offsets and flag meanings stay the same, except CID-valid means NOR identity-valid. Offset 9 reports
-**LevelX logical sectors**, not raw chip capacity. Identity bytes at offset 13 hold the identified JEDEC ID
-(`EF 40 18` for the supported W25Q128), followed by four little-endian physical-capacity bytes at offset 16,
-eight factory UID bytes at offsets 20..27 (device transmission order, most significant byte first),
-then one reserved zero byte at offset 28. Legacy layout `3` has nine reserved zero bytes at offsets 20..28
-and no UID; updated hosts continue accepting it.
-The current driver accepts only that JEDEC identity; hosts must not interpret these bytes as an SD CID.
-Until the volume is ready, clock, capacity and identity remain zero and presence is unknown, not falsely absent.
-The dashboard displays logical and physical capacity separately; manufacturer/product derive from the validated
-JEDEC ID. `device_uid` is `0x` followed by exactly 16 lowercase hexadecimal digits, preserving leading zeros and all 64 bits;
-it is null before initialization and for layout 3. The dashboards use this factory UID as the NOR device serial,
-distinct from the Pico USB serial. Manufacturing date and revision are not read and are not invented.
-Update firmware and host software together; SD continues using layout 2 unchanged.
-
 ## Feature Report 4
 
 Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED state (`0` off or `1` on). Setting a state is idempotent; the command is ignored if malformed or if the selected board has no controllable LED. The resulting state is reported in subsequent Input Report 2 telemetry.
@@ -143,7 +126,7 @@ Input report 5 carries a 4-byte status payload every 500 ms: version `3`, enable
 request-rejected; the last three fields are booleans. Updated hosts accept legacy status layout `2` but only enable
 force return after observing layout `3`. Older host software must be updated before using this firmware.
 
-MSC is disabled at boot. Enabling requires initialized selected SD or NOR media and no outstanding storage command
+MSC is disabled at boot. Enabling requires initialized SD media and no outstanding storage command
 or replies. If firmware has mounted the filesystem, enabling queues an unmount on the sole storage worker and keeps
 the transition pending until it completes. Successful unmount pauses automount before USB ownership acquisition;
 failed unmount rejects the request and leaves firmware ownership intact. No formatting occurs.
@@ -171,7 +154,7 @@ is required. Older firmware without status layout `3` cannot use dashboard Disab
 This command never synthesizes a successful SCSI eject.
 
 Firmware still rejects busy storage or a failed device-side sync. After a successful sync, it disconnects USB
-before releasing selected SD/NOR ownership under the shared media reservation. The sole storage worker attempts
+before releasing SD ownership under the shared media reservation. The sole storage worker attempts
 initialization and mounting once. Pending remains set until that attempt completes. A failed initialization/mount
 sets request-rejected with enabled false, logs the failure, and leaves storage unmounted with automatic retries
 blocked until an explicit successful `fs mount`. A pre-detach failure leaves MSC enabled. No automatic formatting,
