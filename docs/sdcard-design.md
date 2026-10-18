@@ -8,6 +8,15 @@ resource ownership. Wiring and electrical requirements remain in the
 [storage transport guide](../firmware/src/drivers/storage/README.md#memory-and-storage-connections); filesystem
 commands and mounting policy remain in [the CDC CLI guide](cdc-cli.md).
 
+## Guide
+
+- [Architecture](#architecture) and [block-device boundary](#filesystem-block-device-boundary).
+- [Transport and execution-port selection](#interfacing-with-the-driver).
+- [Initialization](#initialization-workflow), [reads](#read-workflow), and [writes](#write-workflow).
+- [Hardware resources](#hardware-resource-inventory) and [profiling](#performance-controls-and-status).
+- [Ownership](#ownership-workflow) and [validation limits](#validation-and-limits).
+- [Historical qualification](#previously-recorded-qualification) and dated follow-ups at the end of this guide.
+
 ## Architecture
 
 One configured card is exposed through a transport-neutral, synchronous block
@@ -32,16 +41,13 @@ sd_card/
 The native and SPI implementations use one protocol module but retain their distinct initialization,
 response formats, data framing, and recovery sequences. Native requires modern SDHC/SDXC; SPI retains its existing
 legacy/SDSC handling. Backend function/type prefixes are `pf_sd_native_*` and `pf_sd_spi_*`;
-backend header names are now `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
+backend header names are `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
 physical storage layer, not the native protocol's name or directory.
 
 Production filenames use the short `sd` prefix, including `sd_port_freertos.c` and `sd_port_baremetal.c`.
-Facade functions/types now use `pf_sd_*` and constants/header guards use `PF_SD_*`, replacing `pf_sd_card_*` /
-`PF_SD_CARD_*`. Native protocol/host functions/types use `pf_sd_native_*` and constants use `PF_SD_NATIVE_*`,
-replacing `pf_sdio_pio_*` / `PF_SDIO_PIO_*`; SPI names already use `pf_sd_spi_*` / `PF_SD_SPI_*`.
-Configuration is now one `pf_sd_config_t` containing `transport` and `clock_hz`; the former transport tag,
-`bus.native`/`bus.spi` union, and backend-specific configuration types are removed. Callers must migrate; no
-compatibility aliases are provided. Result values, build targets, and CMake options are unchanged. In particular,
+Facade functions/types use `pf_sd_*` and constants/header guards use `PF_SD_*`. Native protocol/host functions/types
+use `pf_sd_native_*` and constants use `PF_SD_NATIVE_*`; SPI uses `pf_sd_spi_*` / `PF_SD_SPI_*`.
+The `pf_sdio_pio_*` namespace belongs to the physical PIO transport, not the SD protocol.
 `PF_SDIO_PIO_HIGH_SPEED` and `PF_SDIO_PIO_FUSED_COPY` remain CMake options and set the C definitions
 `PF_SD_NATIVE_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
 Unit-test filenames use the same source basenames, with environment-suffixed port tests alongside the other SD tests.
@@ -50,9 +56,9 @@ Both backends use the same configuration shape, borrowing a `pf_storage_bus_t` d
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
 no GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
 See [pin allocation and runtime state](../firmware/src/drivers/storage/README.md#pin-allocation-and-runtime-state)
-for authoritative ownership and configuration-migration details. The former `pf_sd_native_set_wait_hook` API is removed;
-the execution port requests optional waits through `pf_storage_bus_enable_wait`, without PIO/IRQ knowledge.
-`pf_sd_port_init` now returns `bool`; callers must handle failure when optional waits were requested. Application
+for authoritative physical ownership and configuration details.
+The execution port requests optional waits through `pf_storage_bus_enable_wait`, without PIO/IRQ knowledge.
+`pf_sd_port_init` returns `bool`; callers must handle failure when optional waits were requested. Application
 startup reports this as a fatal setup error rather than silently ignoring a failed wait binding.
 
 The native host owns negotiated bus width, stream state, and response diagnostics; CID and capacity are retained
@@ -947,9 +953,12 @@ for those hardware records.
 
 ### Previously Recorded Qualification
 
-These observations were previously recorded in the architecture guide. They
-are retained as historical, configuration-specific results, not as qualification
-of this documentation change or every compatible card:
+The remainder of this guide records historical, configuration-specific observations and review follow-ups.
+Earlier clocking, recovery, and qualification algorithms may differ from the current workflows above.
+These records do not qualify every compatible card or the current firmware.
+For later controlled comparisons, see the
+[2026-10-18 speed matrix](tests/records/2026-10-18-sdio-speed-matrix.md) and
+[repeat measurement](tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
 
 | Card/configuration | Recorded result |
 | --- | --- |

@@ -37,8 +37,7 @@ Backend filenames, functions, types, and header guards use the same module name:
 | SPI | `pf_spi_*`, `pf_spi_t` | `PF_SPI_H` |
 | Native SD PIO | `pf_sdio_pio_*`, `pf_sdio_pio_t` | `PF_SDIO_PIO_H` |
 
-The native wait-hook type is `pf_sdio_pio_wait_hook_t`; generated PIO programs use `pf_sdio_pio_*`. These replace
-the former backend `pf_storage_*` names without compatibility aliases.
+The native wait-hook type is `pf_sdio_pio_wait_hook_t`; generated PIO programs use `pf_sdio_pio_*`.
 The common and wire interfaces use `pf_storage_*` / `PF_STORAGE_*` symbols. Concrete clock ownership and PIO/DMA
 resource state remain private to each backend.
 
@@ -153,18 +152,14 @@ assignment in [board_profile.c](../../board/board_profile.c). DET polarity and p
 
 Concrete storage contexts embed the corresponding shared type as `pins`. Board integration copies that allocation
 into the selected context; mutable clock settings, controller references, PIO state machines, DMA
-channels, and initialization flags remain runtime state, never fields modified in the board profile. Re-preparing
-serial storage after deinitialization restores its configuration from that profile.
+channels, and initialization flags remain runtime state, never fields modified in the board profile.
 
 SD configuration callers supply a persistent descriptor in `pf_sd_config_t.transport`, plus the protocol's
-transfer-clock target in `clock_hz`; its mode replaces the former separate SD transport tag and backend union.
-Pin allocation, controller selection, and DET configuration are no longer SD
-configuration fields. Backend integration supplies `pins.clock_gpio`, `pins.cs_gpio`, or all four `pins.data_gpio`
-entries as appropriate. The former `storage_bus.[ch]`, `pf_storage_bus_*`, and `PF_STORAGE_BUS_*` names are replaced
-by `bus.[ch]`, `pf_storage_bus_*`, and `PF_STORAGE_BUS_*`, without compatibility aliases.
-Physical backend descriptor factories now end in `_transport`. Transport selection, board wiring, and transfer
-behavior are unchanged.
-For SD API naming migration, see the [SD architecture](../../../../docs/sdcard-design.md#architecture).
+transfer-clock target in `clock_hz`. Pin allocation, controller selection, and DET configuration belong to board
+integration, not the SD protocol configuration. Backend integration supplies `pins.clock_gpio`, `pins.cs_gpio`, or
+all four `pins.data_gpio` entries as appropriate.
+Physical backend descriptor factories are `pf_spi_bus` and `pf_sdio_pio_bus`.
+See the [SD architecture](../../../../docs/sdcard-design.md#architecture) for the protocol configuration contract.
 
 Before switching SD transports, the caller must sync/unmount as appropriate, finish the card protocol, deinitialize
 the bus, and satisfy the card's power requirements. Bus abort/deinit never claims to finish an interrupted write or

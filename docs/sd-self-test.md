@@ -143,9 +143,17 @@ tools/validation/setup-ceedling-testing.sh test:test_file_benchmark
 ```
 
 Host tests cover report layout/validation, average calculations, start/cancel
-encoding, API status codes and OpenAPI generation, consent gating, progress,
+encoding, API status codes and OpenAPI generation, mounted-volume admission, progress,
 cleanup messages, and direct-client event handling. Run them through
 `tools/validation/test-host.sh` using the configured Python environment.
+
+### Historical Measurements
+
+The observations below describe earlier firmware and test workflows, including older buffer sizes and unmount
+behavior. They do not override the current [running safeguards](#running) or [measurement boundaries](#measurement).
+For later card/clock comparisons, see the
+[2026-10-18 speed matrix](tests/records/2026-10-18-sdio-speed-matrix.md) and its
+[repeat measurement](tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
 
 On 2026-10-13, the same connected Pico 2 and 16 GB card passed the 32 MiB test
 before batching, after CMD25 writes, and after CMD18 reads were added, in SDIO
@@ -209,7 +217,7 @@ Final Pico 2 hardware validation at 150 MHz CPU / 12.5 MHz SDIO passed three
 128 MiB write/read/verify runs: read 4.693–4.696 MB/s, write 5.032–5.169 MB/s,
 zero mismatches and successful cleanup. These are short filesystem benchmarks,
 not a continuous acquisition guarantee. See
-`tests/records/2026-10-13-sdio-read-throughput.md` for artifacts and scope.
+[the read-throughput record](tests/records/2026-10-13-sdio-read-throughput.md) for artifacts and scope.
 Run the Ceedling SDIO read-batch regressions for DMA boundary and recovery
 checks; see [firmware test guidance](../firmware/tests/README.md#host-behavior-regressions).
 At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
@@ -225,10 +233,11 @@ layout passed, but native browser-to-device WebHID access was not exercised by
 the automated browser in this environment. The integrated browser/CDP connection
 was unavailable, so local Playwright/Chromium was used.
 
-The .NET development launch currently encounters an existing static-web-assets
+At the time of that validation, the .NET development launch encountered a static-web-assets
 path issue in this workspace; its normal launch and generated OpenAPI endpoint
-test were verified. SPI benchmark performance, physical direct-WebHID access,
-long-duration endurance, media-removal, and power-loss recovery remain unverified.
+test were verified. Those runs did not qualify SPI benchmark performance, physical direct-WebHID access,
+long-duration endurance, media removal, or power-loss recovery. Later SPI measurements are recorded in the
+[transport qualification notes](../firmware/src/drivers/storage/README.md#spi-clock-qualification-2026-10-17).
 
 The 2026-10-15 static review follow-up fixes cached MSC transfer sense at handled
 BOT and bus resets. Data paths, clocks and buffer defaults are unchanged; no

@@ -1,9 +1,9 @@
 # PicoForge Hardware Setup Options
 
-Reference hardware setup for standard Pico/Pico 2 boards and external breakouts. See the
-[storage transport guide](../firmware/src/drivers/storage/README.md) for memory/storage modes, wiring, electrical
-requirements, and qualification records. Select one mode per connected device. Some options are not implemented in
-firmware. `TBD` means unassigned.
+Reference hardware setup for standard Pico/Pico 2 boards and an external SD-card breakout. See the
+[storage transport guide](../firmware/src/drivers/storage/README.md) for SDIO-PIO/SD-SPI wiring, card electrical
+requirements, and qualification records. Choose one SD transport at build time. Expansion GPIO examples below
+describe available hardware functions, not implemented application features.
 
 ## Board and Build Selection
 
@@ -86,7 +86,12 @@ Complete hardware SPI pin groups (CS may be software-controlled):
 | SPI0 option B | GP20 (pin 26) | GP19 (pin 25) | GP22 (pin 29) | GP21 (pin 27) |
 | SPI1 | GP28 (pin 34) | GP27 (pin 32) | GP26 (pin 31) | GP15 (pin 20), software GPIO |
 
-SPI0 options A/B are alternatives. The GP16-GP22 SPI0 groups are available for expansion only when the memory device is not using SPI0; an SPI-mode storage profile and an SPI0 expansion device cannot operate independently at the same time, even on different GPIO mappings. SPI1 is the independent expansion controller while storage uses SPI0. Select only one pin mapping per controller and avoid GPIO conflicts with other assignments. GP23/GP24 are used internally for SMPS control and USB VBUS sensing; GP25 drives the onboard LED and GP29 senses VSYS. These pins are not on the user header. See the [official Pico pin functions](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pin_functions).
+SPI0 options A/B are alternatives. The GP16-GP22 SPI0 groups are available for expansion only when the SD card is
+not using SPI0; an SD-SPI profile and an SPI0 expansion device cannot operate independently on different GPIO
+mappings. SPI1 is the independent expansion controller while SD uses SPI0. Select only one pin mapping per controller
+and avoid GPIO conflicts. On the reference boards, GP23/GP24 serve internal power/USB functions, GP25 drives the LED,
+and GP29 senses VSYS; these pins are not on the user header. Verify the selected board's
+[official pin functions](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pin_functions).
 
 ## Firmware Resource Mapping
 
@@ -97,7 +102,10 @@ Firmware resources that do not use header GPIOs:
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
-When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or SPI at build time in `firmware/src/config/config.h`; detected cards are mounted by the storage worker as described in [the mounting policy](cdc-cli.md). Validate card I/O on hardware before enabling storage use.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or
+SD-SPI with `tools/firmware/build.sh --sd-card-transport SDIO_PIO` or `--sd-card-transport SPI`; CMake supplies
+the transport selection used by `firmware/src/config/config.h`. Detected cards are mounted by the worker as described in
+[the mounting policy](cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

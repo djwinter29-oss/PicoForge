@@ -20,8 +20,9 @@ This is a buildable starting point, not yet the complete application framework. 
 
 HID Report 6 starts/cancels a large-file [SD self-test](sd-self-test.md) and
 publishes verification progress and phase timings. Its RTOS-independent engine
-lives beside storage middleware and runs in the same sole FatFs worker, with
-exclusive ownership and create-new/cleanup safeguards. Browser, Python, and
+lives in `app/storage` and runs in the same sole FatFs worker, with
+exclusive ownership, explicit replacement of the reserved `/PFTEST.BIN` file, and checked cleanup.
+See the [self-test safeguards](sd-self-test.md#running). Browser, Python, and
 .NET dashboards expose the controls and calculate average read/write metrics.
 
 ## Core and Runtime Policy
@@ -94,8 +95,8 @@ Own product behavior, startup, and composition of the services needed by a firmw
 
 ### Middleware
 
-Provide reusable application-facing services. Storage middleware mounts FatFs over the logical block-device API; the application is responsible for SD-card
-configuration, ownership, and mounting policy.
+Provide reusable application-facing services. Storage middleware adapts FatFs disk I/O to the logical block-device
+API; the application owns the FatFs volume, SD-card configuration, ownership, and mounting policy.
 The firmware currently uses the USB device role; a USB host role is not selected.
 
 ### Drivers
@@ -154,7 +155,7 @@ Worker presence fields remain worker-owned: readers inspect them only while the 
 
 Product-specific USB behavior lives under `app/usb`: `usb_task.c/.h` owns task startup, CDC command sessions and report
 scheduling; `usb_hid.c/.h` owns the product HID protocol; `usb_msc.c/.h` owns SCSI callbacks and application handoff
-coordination; `msc_storage.h` selects the application media service. `usb_descriptors.c` defines product interfaces.
+coordination; `msc_storage.h` maps MSC operations to the SD media service. `usb_descriptors.c` defines product interfaces.
 TinyUSB configuration remains under `integration/usb`; the pinned TinyUSB stack supplies reusable USB machinery.
 No extra middleware forwarding layer or runtime backend registry is introduced.
 

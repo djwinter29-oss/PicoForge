@@ -124,15 +124,19 @@ The computer and firmware cannot access the card's files at the same time.
 Do not unplug or remove the card during writes.
 
 The dashboard's [SD-card self-test](docs/sd-self-test.md) writes and verifies a
-temporary file. It requires explicit write consent and refuses to overwrite
-an existing test file. Back up your data first; this is not a filesystem repair
-or a guarantee of card reliability.
+temporary `/PFTEST.BIN` file and **replaces any existing file at that path**.
+Selecting Start authorizes those writes. Back up your data first; this is not a filesystem repair or a
+guarantee of card reliability.
 
 ## Help and Documentation
 
 - [Hardware setup](docs/hardware-setup.md): wiring, supported connections, and board notes.
 - [Console guide](docs/cdc-cli.md): file commands, mounting, and recovery.
 - [SD-card self-test](docs/sd-self-test.md): running tests and understanding results.
+- [Architecture](docs/architecture.md): application layers, runtime, and storage ownership.
+- [SD-card design](docs/sdcard-design.md): driver interfaces, initialization, and transfer policy.
+- [Physical transports](firmware/src/drivers/storage/README.md): SDIO-PIO, SD-SPI, and card wiring.
+- [USB protocol](docs/usb-protocol.md): HID reports, commands, and host compatibility.
 - [Contributing](CONTRIBUTING.md): development and validation guidance.
 - [Security reporting](SECURITY.md): report vulnerabilities privately.
 
