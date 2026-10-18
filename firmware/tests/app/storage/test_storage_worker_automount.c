@@ -14,7 +14,12 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
 {
     poll(2);
     TEST_ASSERT_EQUAL_UINT(0, mount_calls);
+    init_fails = true;
     poll(1);
+    TEST_ASSERT_EQUAL_UINT(0, mount_calls);
+    TEST_ASSERT_TRUE(auto_mount_pending && mount_retry_waiting && !mounted);
+    init_fails = false;
+    poll(50);
     TEST_ASSERT_TRUE(mount_calls == 1 && mounted);
     poll(60);
     TEST_ASSERT_EQUAL_UINT(1, mount_calls);
@@ -35,12 +40,12 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     poll(1);
     TEST_ASSERT_TRUE(removals == 1 && forget_calls == 1);
     media.present = true;
-    mount_result = PF_STORAGE_FILESYSTEM_ERROR;
+    mount_result = PF_FATFS_VOLUME_FILESYSTEM_ERROR;
     poll(3);
     TEST_ASSERT_TRUE(mount_calls == 2 && auto_mount_pending);
     poll(49);
     TEST_ASSERT_EQUAL_UINT(2, mount_calls);
-    mount_result = PF_STORAGE_OK;
+    mount_result = PF_FATFS_VOLUME_OK;
     poll(1);
     TEST_ASSERT_TRUE(mount_calls == 3 && mounted);
 
@@ -93,7 +98,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     mounted = false;
     auto_mount_pending = true;
     mount_retry_waiting = stable_presence_valid = presence_sample_valid = false;
-    mount_result = PF_STORAGE_FILESYSTEM_ERROR;
+    mount_result = PF_FATFS_VOLUME_FILESYSTEM_ERROR;
     media = (pf_sd_info_t){0};
     unsigned previous_mounts = mount_calls;
     now = 0u;
@@ -103,7 +108,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     service_card_presence();
     TEST_ASSERT_EQUAL_UINT(previous_mounts + 1u, mount_calls);
     now = CARD_MOUNT_RETRY_MS;
-    mount_result = PF_STORAGE_OK;
+    mount_result = PF_FATFS_VOLUME_OK;
     service_card_presence();
     TEST_ASSERT_TRUE(mount_calls == previous_mounts + 2u && mounted);
 

@@ -72,7 +72,7 @@ void setUp(void)
         .geometry = device_geometry, .read = device_read, .write = device_write, .sync = device_sync,
     };
     static const pf_block_device_t device = {.ops = &ops};
-    pf_fatfs_bind_device(&device);
+    pf_fatfs_disk_bind(&device);
     reported_block_count = 1234u;
     last_first_block = 0u;
     last_block_count = 0u;
@@ -82,7 +82,7 @@ void setUp(void)
     sync_calls = 0u;
 }
 
-void tearDown(void) { pf_fatfs_bind_device(NULL); }
+void tearDown(void) { pf_fatfs_disk_bind(NULL); }
 
 void test_status_reports_drive_zero_readiness(void)
 {
@@ -185,7 +185,7 @@ void test_unbound_incompatible_and_empty_devices_are_not_ready(void)
     sector_size = 512u;
     reported_block_count = 0u;
     TEST_ASSERT_EQUAL(STA_NOINIT, disk_status(0u));
-    pf_fatfs_bind_device(NULL);
+    pf_fatfs_disk_bind(NULL);
     TEST_ASSERT_EQUAL(STA_NOINIT, disk_status(0u));
     TEST_ASSERT_EQUAL(RES_NOTRDY, disk_ioctl(0u, CTRL_SYNC, NULL));
 }

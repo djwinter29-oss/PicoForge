@@ -7,6 +7,7 @@
 #include "drivers/sd_card/sd.h"
 #include "drivers/system.h"
 #include "middleware/storage/fatfs_volume.h"
+#include "middleware/storage/sd_block_device.h"
 
 #include <string.h>
 #include <stdatomic.h>
@@ -106,8 +107,14 @@ static bool send_reply(const char *line, void *context)
 
 static void attempt_auto_mount(void)
 {
-    pf_storage_result_t result = pf_storage_mount(&card_config, NULL);
-    auto_mount_pending = (result != PF_STORAGE_OK) && (result != PF_STORAGE_ALREADY_MOUNTED);
+    if (pf_fatfs_volume_is_mounted()) {
+        auto_mount_pending = false;
+    } else if (pf_sd_init(&card_config) != PF_SD_OK) {
+        auto_mount_pending = true;
+    } else {
+        pf_fatfs_volume_result_t result = pf_fatfs_volume_mount(pf_sd_block_device(), NULL);
+        auto_mount_pending = (result != PF_FATFS_VOLUME_OK) && (result != PF_FATFS_VOLUME_ALREADY_MOUNTED);
+    }
     last_mount_attempt_ms = pf_system_uptime_ms();
     mount_retry_waiting = auto_mount_pending;
 }
@@ -130,12 +137,12 @@ static void service_card_presence(void)
     pf_sd_lock();
     pf_sd_get_info(&info);
     bool firmware_owned = pf_sd_get_owner() == PF_SD_OWNER_FIRMWARE;
-    bool mounted_card_uninitialized = pf_storage_is_mounted() && !info.initialized;
+    bool mounted_card_uninitialized = pf_fatfs_volume_is_mounted() && !info.initialized;
     if (firmware_owned && mounted_card_uninitialized && (!info.presence_known || info.present)) {
-        if (pf_storage_unmount(NULL) != PF_STORAGE_OK) {
+        if (pf_fatfs_volume_unmount(NULL) != PF_FATFS_VOLUME_OK) {
             goto done;
         }
-        pf_storage_forget_filesystem_format();
+        pf_fatfs_volume_forget_filesystem_format();
         auto_mount_pending = true;
         mount_retry_waiting = false;
     }
@@ -158,10 +165,10 @@ static void service_card_presence(void)
             mount_retry_waiting = false;
             if (!stable_card_present) {
                 pf_sd_confirm_removed();
-                if (pf_storage_is_mounted()) {
-                    (void)pf_storage_unmount(NULL);
+                if (pf_fatfs_volume_is_mounted()) {
+                    (void)pf_fatfs_volume_unmount(NULL);
                 }
-                pf_storage_forget_filesystem_format();
+                pf_fatfs_volume_forget_filesystem_format();
                 goto done;
             }
         }
@@ -180,7 +187,7 @@ static void service_card_presence(void)
         auto_mount_pending = true;
         mount_retry_waiting = false;
     }
-    if (pf_storage_is_mounted()) {
+    if (pf_fatfs_volume_is_mounted()) {
         auto_mount_pending = false;
         goto done;
     }
@@ -237,14 +244,14 @@ static void storage_task(void *context)
             recover_card();
             continue;
         }
-        bool previously_mounted = pf_storage_is_mounted();
+        bool previously_mounted = pf_fatfs_volume_is_mounted();
         pf_storage_command_execute(config_available ? &card_config : NULL,
                                     request.host_owned, request.family, request.arguments,
                                     send_reply, &request);
-        if (previously_mounted && !pf_storage_is_mounted()) {
+        if (previously_mounted && !pf_fatfs_volume_is_mounted()) {
             auto_mount_pending = false;
         }
-        if (pf_storage_is_mounted()) {
+        if (pf_fatfs_volume_is_mounted()) {
             auto_mount_blocked = false;
         }
         pf_storage_worker_reply_t reply = { .session = request.session, .done = true };
@@ -370,7 +377,7 @@ bool pf_storage_worker_self_test_start(uint32_t size_mib, bool host_owned)
     } else {
         if (!config_available || !pf_sd_is_initialized()) {
             rejection = PF_SELF_TEST_ERROR_CARD;
-        } else if (!pf_storage_is_mounted()) {
+        } else if (!pf_fatfs_volume_is_mounted()) {
             rejection = PF_SELF_TEST_ERROR_NOT_MOUNTED;
         }
         pf_sd_unlock();

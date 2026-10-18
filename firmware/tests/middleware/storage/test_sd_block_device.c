@@ -44,7 +44,7 @@ void tearDown(void) { TEST_ASSERT_EQUAL_UINT(0u, depth); }
 void test_sd_device_snapshots_geometry_under_existing_reservation_and_preserves_owner_checks(void)
 {
     pf_block_geometry_t geometry;
-    const pf_block_device_t *device = pf_storage_sd_block_device();
+    const pf_block_device_t *device = pf_sd_block_device();
     TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_block_geometry(device, &geometry));
     TEST_ASSERT_EQUAL_UINT(8u, geometry.sector_count);
     TEST_ASSERT_EQUAL_UINT(512u, geometry.sector_size);
@@ -65,7 +65,7 @@ void test_sd_device_snapshots_geometry_under_existing_reservation_and_preserves_
 void test_sd_device_maps_results_and_forwards_each_request_exactly_once(void)
 {
     uint8_t buffer[1024];
-    const pf_block_device_t *device = pf_storage_sd_block_device();
+    const pf_block_device_t *device = pf_sd_block_device();
     const pf_sd_result_t sd_results[] = {
         PF_SD_OK, PF_SD_INVALID_ARGUMENT, PF_SD_NOT_CONFIGURED, PF_SD_NOT_READY,
         PF_SD_IO_ERROR, PF_SD_INIT_FAILED, PF_SD_CONFIG_LOCKED,

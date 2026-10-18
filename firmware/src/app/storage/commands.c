@@ -1,6 +1,8 @@
 /** @file Application SD/filesystem command execution and replies. */
 #include "commands.h"
 #include "sd_block.h"
+#include "sd.h"
+#include "middleware/storage/sd_block_device.h"
 #include "embedded_cli.h"
 
 #include <stdio.h>
@@ -53,7 +55,7 @@ static bool valid_path(const char *path)
 
 static void volume_path(const char *path, char target[104])
 {
-    (void)snprintf(target, 104u, "%s%s", PF_STORAGE_VOLUME, path);
+    (void)snprintf(target, 104u, "%s%s", PF_FATFS_VOLUME_PATH, path);
 }
 
 static void status_command(bool host_owned, pf_storage_reply_t reply, void *context)
@@ -67,7 +69,7 @@ static void status_command(bool host_owned, pf_storage_reply_t reply, void *cont
                    host_owned ? "USB" : "Pico",
                    pf_sd_transport_name(),
                    info.presence_known ? (info.present ? "yes" : "no") : "unknown",
-                   (unsigned)info.initialized, (unsigned)pf_storage_is_mounted(),
+                   (unsigned)info.initialized, (unsigned)pf_fatfs_volume_is_mounted(),
                    (unsigned long)info.bus_clock_hz, (unsigned long)info.block_count,
                    (unsigned long long)info.block_count * PF_SD_BLOCK_SIZE);
     (void)reply(line, context);
@@ -424,26 +426,34 @@ void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
         return;
     }
     if ((count == 1u) && (strcmp(operation, "mount") == 0)) {
-        FRESULT result;
-        pf_storage_result_t storage_result = pf_storage_mount(config, &result);
-        if (storage_result == PF_STORAGE_OK) {
-            (void)reply("Filesystem mounted.", context);
-        } else if (storage_result == PF_STORAGE_ALREADY_MOUNTED) {
+        if (pf_fatfs_volume_is_mounted()) {
             (void)reply("Filesystem already mounted.", context);
-        } else if (storage_result == PF_STORAGE_FILESYSTEM_ERROR) {
+            return;
+        }
+        if (config == NULL || pf_sd_init(config) != PF_SD_OK) {
+            (void)reply("Mount failed: SD initialization or board configuration unavailable.", context);
+            return;
+        }
+        FRESULT result;
+        pf_fatfs_volume_result_t storage_result = pf_fatfs_volume_mount(pf_sd_block_device(), &result);
+        if (storage_result == PF_FATFS_VOLUME_OK) {
+            (void)reply("Filesystem mounted.", context);
+        } else if (storage_result == PF_FATFS_VOLUME_ALREADY_MOUNTED) {
+            (void)reply("Filesystem already mounted.", context);
+        } else if (storage_result == PF_FATFS_VOLUME_FILESYSTEM_ERROR) {
             report_result(result, reply, context);
         } else {
-            (void)reply("Mount failed: SD initialization or board configuration unavailable.", context);
+            (void)reply("Mount failed: invalid block-device descriptor.", context);
         }
         return;
     }
-    if (!pf_storage_is_mounted()) {
+    if (!pf_fatfs_volume_is_mounted()) {
         (void)reply("Filesystem not mounted. Run fs mount first.", context);
         return;
     }
     if ((count == 1u) && (strcmp(operation, "unmount") == 0)) {
         FRESULT result;
-        if (pf_storage_unmount(&result) == PF_STORAGE_OK) {
+        if (pf_fatfs_volume_unmount(&result) == PF_FATFS_VOLUME_OK) {
             (void)reply("Filesystem unmounted; MSC handoff is now allowed.", context);
         } else {
             report_result(result, reply, context);
@@ -453,7 +463,7 @@ void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
     if ((count == 1u) && (strcmp(operation, "df") == 0)) {
         DWORD free_clusters;
         FATFS *filesystem;
-        FRESULT result = f_getfree(PF_STORAGE_VOLUME, &free_clusters, &filesystem);
+        FRESULT result = f_getfree(PF_FATFS_VOLUME_PATH, &free_clusters, &filesystem);
         if (result == FR_OK) {
             char line[PF_STORAGE_REPLY_SIZE];
             (void)snprintf(line, sizeof(line), "total=%llu bytes free=%llu bytes",

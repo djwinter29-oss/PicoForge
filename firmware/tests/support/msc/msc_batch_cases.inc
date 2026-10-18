@@ -5,8 +5,8 @@
 #include <pthread.h>
 #define PF_STORAGE_H
 #define PF_STORAGE_WORKER_H
-static bool pf_storage_is_mounted(void);
-static void pf_storage_forget_filesystem_format(void);
+static bool pf_fatfs_volume_is_mounted(void);
+static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_card(void);
@@ -31,7 +31,7 @@ static bool pf_storage_worker_recover_card(void);
 #endif
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */
-#include "../../../src/integration/fatfs/diskio.c"
+#include "../../../src/middleware/storage/fatfs_disk.c"
 #include "../../../src/middleware/storage/block_device.c"
 #include "../../../src/middleware/storage/sd_block_device.c"
 #pragma GCC diagnostic pop
@@ -41,8 +41,8 @@ static unsigned reads, writes, syncs, last_count;
 static uint32_t capacity = 8;
 static bool initialized, uncertain;
 static pf_sd_result_t read_error, write_error, sync_error;
-static bool pf_storage_is_mounted(void) { return false; }
-static void pf_storage_forget_filesystem_format(void) {}
+static bool pf_fatfs_volume_is_mounted(void) { return false; }
+static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return false; }
 static bool pf_storage_worker_media_absent(void) { return false; }
 static bool pf_storage_worker_recover_card(void) { return false; }
@@ -79,7 +79,7 @@ void pf_sd_get_profile(pf_sd_profile_t *p) { *p=(pf_sd_profile_t){0}; }
 static void msc_batch_regression(void)
 {
  pf_sd_config_t c={.transport.mode=TEST_TRANSPORT};
- pf_fatfs_bind_device(pf_storage_sd_block_device());
+ pf_fatfs_disk_bind(pf_sd_block_device());
  TEST_ASSERT_TRUE(pf_sd_init(&c)==PF_SD_OK);
  pf_usb_msc_request(true); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
  uint8_t raw[1538], out[1538]; uint8_t *data=raw+1, *readback=out+1;

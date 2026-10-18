@@ -66,7 +66,7 @@ void pf_storage_self_test_run(uint32_t size_mib,
         goto finish;
     }
     status.target_bytes = size_mib * 1024u * 1024u;
-    if (!pf_storage_is_mounted()) {
+    if (!pf_fatfs_volume_is_mounted()) {
         status.error = PF_SELF_TEST_ERROR_NOT_MOUNTED;
         goto finish;
     }
@@ -94,7 +94,7 @@ void pf_storage_self_test_run(uint32_t size_mib,
     }
     DWORD free_clusters;
     FATFS *filesystem;
-    result = f_getfree(PF_STORAGE_VOLUME, &free_clusters, &filesystem);
+    result = f_getfree(PF_FATFS_VOLUME_PATH, &free_clusters, &filesystem);
     if (result != FR_OK) {
         filesystem_error(&status, result);
         goto cleanup;

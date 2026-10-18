@@ -1,3 +1,6 @@
+/** @file
+ * @brief Adapt FatFs drive-zero callbacks to the bound logical block device.
+ */
 #include "ff.h"
 #include "diskio.h"
 #include "fatfs_disk.h"
@@ -7,7 +10,7 @@
 
 static const pf_block_device_t *disk_device;
 
-void pf_fatfs_bind_device(const pf_block_device_t *device)
+void pf_fatfs_disk_bind(const pf_block_device_t *device)
 {
     disk_device = device;
 }

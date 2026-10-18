@@ -301,7 +301,7 @@ add_library(pf_storage STATIC
     src/middleware/storage/sd_block_device.c
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
-    src/integration/fatfs/diskio.c
+    src/middleware/storage/fatfs_disk.c
     src/middleware/storage/fatfs_volume.c
 )
 target_include_directories(pf_storage PUBLIC

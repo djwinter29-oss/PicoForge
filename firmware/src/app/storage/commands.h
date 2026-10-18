@@ -2,6 +2,7 @@
 #define PF_STORAGE_COMMANDS_H
 
 #include "middleware/storage/fatfs_volume.h"
+#include "drivers/sd_card/sd.h"
 
 #define PF_STORAGE_COMMAND_ARGS_SIZE 128u
 #define PF_STORAGE_REPLY_SIZE 256u

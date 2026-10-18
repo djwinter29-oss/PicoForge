@@ -161,7 +161,7 @@ static void apply_msc_request(void)
         pf_sd_info_t info;
         pf_sd_get_info(&info);
         if (!msc_enabled || info.initialized || removal_prevented ||
-            pf_storage_worker_busy() || pf_storage_is_mounted() ||
+            pf_storage_worker_busy() || pf_fatfs_volume_is_mounted() ||
             !pf_storage_worker_recover_card()) {
             transition_pending = false;
             request_rejected = true;
@@ -198,7 +198,7 @@ static void apply_msc_request(void)
             request_rejected = true;
             return;
         }
-        if (pf_storage_is_mounted()) {
+        if (pf_fatfs_volume_is_mounted()) {
             transition_pending = false;
             request_rejected = true;
             return;
@@ -209,7 +209,7 @@ static void apply_msc_request(void)
             request_rejected = true;
             return;
         }
-        pf_storage_forget_filesystem_format();
+        pf_fatfs_volume_forget_filesystem_format();
         msc_ejected = false;
         removal_prevented = false;
         msc_enabled = true;

@@ -24,6 +24,17 @@ def test_storage_application_policy_stays_out_of_middleware():
         ) for header in headers), source
 
 
+def test_fatfs_volume_does_not_depend_on_the_sd_backend():
+    middleware = ROOT / "firmware/src/middleware/storage"
+    for extension in ("c", "h"):
+        source = middleware / f"fatfs_volume.{extension}"
+        assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", source.read_text()), source
+        headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
+        assert not any("sd_card/" in header or Path(header).name in (
+            "sd.h", "sd_block.h", "sd_block_device.h"
+        ) for header in headers), source
+
+
 def test_physical_engines_do_not_include_device_or_filesystem_headers():
     sources = sorted(STORAGE.rglob("*.c")) + sorted(STORAGE.rglob("*.h"))
     assert sources

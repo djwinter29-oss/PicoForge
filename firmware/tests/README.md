@@ -36,12 +36,13 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | FreeRTOS facade ownership and serialization | [drivers/sd_card](drivers/sd_card), `test_sd_port_freertos_*` |
 | Bare-metal facade and port behavior | [drivers/sd_card](drivers/sd_card), `test_sd_port_baremetal_*` |
 | Storage commands, file self-test, presence, automount and recovery | [app/storage](app/storage) |
-| Logical block dispatch, SD adaptation, and mount binding lifecycle | [middleware/storage](middleware/storage) |
-| Device-independent FatFs results, geometry, and write protection | [integration/fatfs](integration/fatfs) |
+| Logical blocks, SD adaptation, volume lifecycle, and FatFs disk results/geometry/protection | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [usb](usb) |
 
 The volume lifecycle test is [test_fatfs_volume.c](middleware/storage/test_fatfs_volume.c), matching
-[fatfs_volume.c](../src/middleware/storage/fatfs_volume.c); public `pf_storage_*` APIs are unchanged.
+[fatfs_volume.c](../src/middleware/storage/fatfs_volume.c). It binds a caller-supplied block device through
+`pf_fatfs_volume_*` APIs without SD initialization or driver mocks. Application command/automount tests cover
+SD initialization failure before binding, and already-mounted commands avoid reinitializing live media.
 [Block-device tests](middleware/storage/test_block_device.c) reject each missing callback and test the transfer-byte
 ceiling on a real 32-bit host build. The latter is explicitly ignored on 64-bit hosts. On x86 Linux with GCC multilib
 and 32-bit libc development support installed, run it without changing the normal Ceedling configuration:

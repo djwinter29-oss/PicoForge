@@ -78,6 +78,7 @@ flowchart TD
     Board[Board profile and build-time transport selection] --> Config[pf_board_get_sd_card_config]
     Config --> Card[SD-card configuration and dispatch]
     App[Application storage worker, commands and self-test] --> Storage[Storage mount service]
+    App --> SDAdapter
     Storage --> FatFs[FatFs]
     FatFs --> Disk[FatFs disk-I/O adapter]
     Disk --> Block[Logical block-device interface]
@@ -108,7 +109,7 @@ flowchart TD
 | Block operations, result codes, and telemetry | [sd_block.h](../firmware/src/drivers/sd_card/sd_block.h) |
 | Filesystem-independent logical sectors and geometry | [block_device.h](../firmware/src/middleware/storage/block_device.h) |
 | Logical sectors backed by the serialized SD facade | [sd_block_device.c](../firmware/src/middleware/storage/sd_block_device.c) |
-| Single FatFs volume lifecycle, currently backed by SD | [fatfs_volume.c](../firmware/src/middleware/storage/fatfs_volume.c) |
+| Device-independent single FatFs volume lifecycle | [fatfs_volume.c](../firmware/src/middleware/storage/fatfs_volume.c) |
 | USB-only ownership and block capabilities | [sd_msc.h](../firmware/src/drivers/sd_card/sd_msc.h) |
 | Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../firmware/src/drivers/sd_card/sd_protocol.c) |
 | Native card initialization and transfer policy | [sd_native.c](../firmware/src/drivers/sd_card/sd_native.c) |
@@ -116,7 +117,7 @@ flowchart TD
 | Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/sdio_pio.c), [sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/sdio_pio.pio) |
 | SPI card protocol | [sd_spi.c](../firmware/src/drivers/sd_card/sd_spi.c) |
 | Shared SPI hardware transport | [spi.c](../firmware/src/drivers/storage/spi/spi.c) |
-| FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
+| FatFs result/status conversion and CTRL_SYNC | [fatfs_disk.c](../firmware/src/middleware/storage/fatfs_disk.c) |
 
 ### Filesystem Block-Device Boundary
 
@@ -124,9 +125,10 @@ Application policy lives in [app/storage/](../firmware/src/app/storage/): the so
 command sessions, media debounce/automount and recovery, while command execution and the fixed-file benchmark live
 alongside it. CMake builds these as `pf_app_storage`, which depends on reusable `pf_storage`, not the reverse.
 The middleware retains mount/unmount and logical block-device services; it does not include application headers or
-own benchmark status, command replies, or application queues. The mount service is named `fatfs_volume.c/.h` to
-identify its filesystem-specific responsibility; existing `pf_storage_*` public names and configuration options are
-unchanged. The generic interface remains `block_device.c/.h`, and the SD backend remains `sd_block_device.c/.h`.
+own benchmark status, command replies, or application queues. The mount service is named `fatfs_volume.c/.h` with
+`pf_fatfs_volume_*` APIs and `PF_FATFS_VOLUME_*` constants. The generic interface remains `block_device.c/.h`, and
+`sd_block_device.c/.h` exposes `pf_sd_block_device()`. The FatFs disk adapter exposes `pf_fatfs_disk_bind()`.
+These replace the earlier storage-prefixed volume/adapter APIs without compatibility aliases.
 
 FatFs disk I/O uses a borrowed `pf_block_device_t`, not SD commands or the physical storage bus. Its operations provide
 media metadata, sector reads, sector writes, and sync with device-independent results. Geometry includes sector
@@ -134,16 +136,19 @@ count, byte size, erase granularity, and write protection. Shared dispatch rejec
 geometry, empty or overflowing batches, and out-of-range sectors before data transfer. Read-only media still permits
 reads and sync. Backend errors propagate without retries, uncertain-write replay, or success-shaped substitutions.
 
-The [FatFs binding](../firmware/src/integration/fatfs/fatfs_disk.h) selects drive zero explicitly. Its borrowed
+The [FatFs binding](../firmware/src/middleware/storage/fatfs_disk.h) selects drive zero explicitly. Its borrowed
 descriptor, operation table, and context must outlive the binding. Bind only before mounting or after unmounting,
 serialized with FatFs calls; there is no runtime device registry or automatic discovery. Unbound drives report
 `STA_NOINIT`/`RES_NOTRDY`. The current fixed-sector FatFs configuration accepts only its configured sector size;
 incompatible geometry is not mounted. Write protection maps to `STA_PROTECT` and `RES_WRPRT`.
-The binding header stays beside `diskio.c`, the implementation of FatFs's required callbacks, and the upstream-named
-`diskio.h` in `integration/fatfs/`. These library-specific interfaces are not part of the generic block contract.
+The project-owned adapter and binding live together as `middleware/storage/fatfs_disk.c/.h`. The upstream-named
+`diskio.h` and library configuration `ffconf.h` remain in `integration/fatfs/`. The adapter implements FatFs's required
+`disk_*` callbacks; those library-specific interfaces are not part of the generic block contract.
 
-The storage mount policy still initializes SD, binds its static block descriptor before `f_mount`, and unbinds after
-a successful unmount or failed mount cleanup. A failed unmount retains the binding. The SD adapter delegates I/O and
+The application initializes SD and supplies its static block descriptor to `pf_fatfs_volume_mount()`. The volume
+service has no SD dependency: it binds the caller's initialized logical device before `f_mount` and unbinds after
+a successful unmount or failed mount cleanup. The borrowed descriptor, operation table, and context must remain
+valid until unbound. A failed unmount retains the binding. The SD adapter delegates I/O and
 sync to the existing facade, retaining recursive reservations, owner checks, and device diagnostics. Geometry remains
 queryable while USB owns initialized media, matching the previous disk-I/O behavior, but firmware reads, writes, and
 sync remain rejected by the facade. Geometry validation does not replace the backend's checks at transfer time.
@@ -153,10 +158,11 @@ before generic transfer validation queries geometry again; this deliberate dupli
 weakening either boundary without evidence of a performance problem.
 
 Volume lifecycle calls, mount-state queries, and FatFs operations require caller serialization through the existing
-storage-owner task/reservation. `pf_storage_is_mounted()` reports registration state, not physical presence or an
+storage-owner task/reservation. `pf_fatfs_volume_is_mounted()` reports registration state, not physical presence or an
 independently thread-safe snapshot. Only the filesystem-format telemetry cache uses atomic access; reading it neither
-grants media access nor synchronizes a filesystem transaction. The service remains one SD-backed FatFs volume, not
-a generic multi-device volume manager.
+grants media access nor synchronizes a filesystem transaction. The service manages one volume over a caller-selected
+logical device, not a device registry or multi-volume manager. The current application selects SD; other backends must
+provide valid logical sectors and perform their own initialization before mounting.
 
 SD telemetry, board configuration, media initialization, filesystem mounting/formatting, and USB ownership transitions
 remain outside the generic contract. MSC still uses its owner-specific SD API; it must not use the firmware-owned
@@ -294,8 +300,8 @@ pf_sd_result_t read_first_sector(uint8_t sector[PF_SD_BLOCK_SIZE])
 }
 ```
 
-For filesystem access, pass the board configuration to `pf_storage_mount()` and
-use FatFs through the storage-owner workflow. Do not mix raw-sector writes with
+For filesystem access, initialize SD with the board configuration, then pass `pf_sd_block_device()` to
+`pf_fatfs_volume_mount()` through the storage-owner workflow. Do not mix raw-sector writes with
 a mounted filesystem.
 
 - Blocks are always 512 bytes, with 32-bit sector addresses and capacity.

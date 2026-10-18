@@ -148,7 +148,7 @@ static FRESULT unlink_file(const TCHAR *path, int calls)
 
 static void prepare(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
     if (expect_preallocation) {
@@ -209,7 +209,7 @@ void test_preallocated_self_test_keeps_full_verification_and_cleanup(void)
 void test_preallocation_failure_closes_and_removes_only_the_new_file(void)
 {
     pf_storage_self_test_set_preallocation_enabled(true);
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
     f_expand_ExpectAnyArgsAndReturn(FR_DENIED);
@@ -281,7 +281,7 @@ void test_self_test_preserves_existing_mount_after_cancellation(void)
 
 void test_self_test_rejects_unmounted_volume_without_mounting_or_file_io(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(false);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
     pf_storage_self_test_run(1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_NOT_MOUNTED, final_status.error);
@@ -313,7 +313,7 @@ void test_self_test_removes_existing_file_and_runs_full_verification(void)
 
 void test_self_test_deletion_failure_stops_before_space_check_or_creation(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(stat_existing);
     f_unlink_ExpectAnyArgsAndReturn(FR_DENIED);
     pf_storage_self_test_run(1u, clock_ms, update, NULL);
@@ -325,7 +325,7 @@ void test_self_test_deletion_failure_stops_before_space_check_or_creation(void)
 
 void test_self_test_refuses_directory_without_unlink(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(stat_directory);
     pf_storage_self_test_run(1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
@@ -334,7 +334,7 @@ void test_self_test_refuses_directory_without_unlink(void)
 
 void test_self_test_inspection_error_stops_without_deletion(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(NULL);
     f_stat_ExpectAnyArgsAndReturn(FR_DISK_ERR);
     pf_storage_self_test_run(1u, clock_ms, update, NULL);
@@ -350,7 +350,7 @@ void test_self_test_inspection_error_stops_without_deletion(void)
 
 void test_self_test_open_failure_does_not_unlink_a_file(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_ExpectAnyArgsAndReturn(FR_DENIED);
     pf_storage_self_test_run(1u, clock_ms, update, NULL);
@@ -363,7 +363,7 @@ void test_self_test_open_failure_does_not_unlink_a_file(void)
 void test_self_test_insufficient_space_does_not_create_a_file(void)
 {
     available_clusters = 0u;
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     pf_storage_self_test_run(32u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_SPACE, final_status.error);
@@ -399,7 +399,7 @@ void test_self_test_reports_unlink_cleanup_failure(void)
 void test_preallocation_and_close_failure_preserves_new_file(void)
 {
     pf_storage_self_test_set_preallocation_enabled(true);
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
     f_expand_ExpectAnyArgsAndReturn(FR_DENIED);

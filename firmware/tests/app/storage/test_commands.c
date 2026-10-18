@@ -4,6 +4,8 @@
 #include "Mockff.h"
 #include "Mockfatfs_volume.h"
 #include "Mocksd_block.h"
+#include "Mocksd.h"
+#include "Mocksd_block_device.h"
 
 #include <string.h>
 
@@ -13,6 +15,8 @@ static BYTE expected_mode;
 static UINT written_size;
 static FRESULT write_result;
 static bool directory_entry;
+static pf_sd_config_t config;
+static const pf_block_device_t device = {0};
 
 static FRESULT open_file(FIL *file, const TCHAR *path, BYTE mode, int calls)
 {
@@ -115,24 +119,24 @@ void test_refuses_filesystem_access_while_usb_owns_card(void)
 
 void test_requires_mount_before_file_operations(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(false);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
     run("ls");
     TEST_ASSERT_NOT_NULL(strstr(output, "not mounted"));
 }
 
 void test_rejects_unsafe_paths_and_unconfirmed_removal(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     run("stat /../a");
     TEST_ASSERT_NOT_NULL(strstr(output, "Invalid path"));
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     run("rm /a");
     TEST_ASSERT_NOT_NULL(strstr(output, "requires fs rm"));
 }
 
 void test_reports_existing_file_without_overwriting(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_open_ExpectAnyArgsAndReturn(FR_EXIST);
     run("write /existing text");
     TEST_ASSERT_NOT_NULL(strstr(output, "EXIST"));
@@ -140,14 +144,14 @@ void test_reports_existing_file_without_overwriting(void)
 
 void test_rejects_invalid_cat_limits(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     run("cat /a 4097");
     TEST_ASSERT_NOT_NULL(strstr(output, "1..4096"));
 }
 
 void test_creates_directory_and_reports_fatfs_errors(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_mkdir_StubWithCallback(mkdir_denied);
     run("mkdir /new");
     TEST_ASSERT_NOT_NULL(strstr(output, "DENIED"));
@@ -155,11 +159,14 @@ void test_creates_directory_and_reports_fatfs_errors(void)
 
 void test_mount_and_unmount_report_success(void)
 {
-    pf_storage_mount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
-    run("mount");
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_sd_init_ExpectAndReturn(&config, PF_SD_OK);
+    pf_sd_block_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
+    pf_storage_command_execute(&config, false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
-    pf_storage_is_mounted_ExpectAndReturn(true);
-    pf_storage_unmount_ExpectAnyArgsAndReturn(PF_STORAGE_OK);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_unmount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
     run("unmount");
     TEST_ASSERT_NOT_NULL(strstr(output, "handoff is now allowed"));
 }
@@ -167,15 +174,40 @@ void test_mount_and_unmount_report_success(void)
 void test_mount_reports_fatfs_failure(void)
 {
     FRESULT result = FR_NO_FILESYSTEM;
-    pf_storage_mount_ExpectAnyArgsAndReturn(PF_STORAGE_FILESYSTEM_ERROR);
-    pf_storage_mount_ReturnThruPtr_filesystem_result(&result);
-    run("mount");
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_sd_init_ExpectAndReturn(&config, PF_SD_OK);
+    pf_sd_block_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
+    pf_fatfs_volume_mount_ReturnThruPtr_filesystem_result(&result);
+    pf_storage_command_execute(&config, false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "NO_FILESYSTEM"));
+}
+
+void test_mount_does_not_initialize_an_already_mounted_device(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    run("mount");
+    TEST_ASSERT_NOT_NULL(strstr(output, "already mounted"));
+}
+
+void test_mount_rejects_missing_configuration_without_binding(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    run("mount");
+    TEST_ASSERT_NOT_NULL(strstr(output, "configuration unavailable"));
+}
+
+void test_mount_reports_card_initialization_failure_without_binding(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_sd_init_ExpectAndReturn(&config, PF_SD_INIT_FAILED);
+    pf_storage_command_execute(&config, false, "fs", "mount", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "SD initialization"));
 }
 
 void test_lists_directory_and_closes_handle(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_opendir_ExpectAnyArgsAndReturn(FR_OK);
     f_readdir_StubWithCallback(read_directory);
     f_closedir_ExpectAnyArgsAndReturn(FR_OK);
@@ -185,7 +217,7 @@ void test_lists_directory_and_closes_handle(void)
 
 void test_directory_failure_still_closes_handle(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_opendir_ExpectAnyArgsAndReturn(FR_OK);
     f_readdir_ExpectAnyArgsAndReturn(FR_DISK_ERR);
     f_closedir_ExpectAnyArgsAndReturn(FR_OK);
@@ -195,7 +227,7 @@ void test_directory_failure_still_closes_handle(void)
 
 void test_stat_reports_size_and_attributes(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(file_stat);
     run("stat /a");
     TEST_ASSERT_NOT_NULL(strstr(output, "size=42 attributes=0x20"));
@@ -203,7 +235,7 @@ void test_stat_reports_size_and_attributes(void)
 
 void test_cat_bounds_read_and_escapes_terminal_controls(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_open_StubWithCallback(open_file);
     f_read_StubWithCallback(read_file);
     f_close_ExpectAnyArgsAndReturn(FR_OK);
@@ -214,7 +246,7 @@ void test_cat_bounds_read_and_escapes_terminal_controls(void)
 
 void test_cat_closes_file_after_read_failure(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_open_StubWithCallback(open_file);
     f_read_ExpectAnyArgsAndReturn(FR_DISK_ERR);
     f_close_ExpectAnyArgsAndReturn(FR_OK);
@@ -225,7 +257,7 @@ void test_cat_closes_file_after_read_failure(void)
 void test_write_uses_create_new_then_syncs_and_closes(void)
 {
     expected_mode = FA_WRITE | FA_CREATE_NEW;
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_open_StubWithCallback(open_file);
     f_write_StubWithCallback(write_file);
     f_sync_ExpectAnyArgsAndReturn(FR_OK);
@@ -237,7 +269,7 @@ void test_write_uses_create_new_then_syncs_and_closes(void)
 void test_append_uses_append_mode_and_reports_sync_failure(void)
 {
     expected_mode = FA_WRITE | FA_OPEN_APPEND;
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_open_StubWithCallback(open_file);
     f_write_StubWithCallback(write_file);
     f_sync_ExpectAnyArgsAndReturn(FR_DISK_ERR);
@@ -251,7 +283,7 @@ void test_short_write_is_an_error_and_still_syncs_and_closes(void)
 {
     expected_mode = FA_WRITE | FA_CREATE_NEW;
     written_size = 3u;
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_open_StubWithCallback(open_file);
     f_write_StubWithCallback(write_file);
     f_sync_ExpectAnyArgsAndReturn(FR_OK);
@@ -262,7 +294,7 @@ void test_short_write_is_an_error_and_still_syncs_and_closes(void)
 
 void test_move_preserves_existing_destination(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_rename_StubWithCallback(rename_file);
     run("mv /a /b");
     TEST_ASSERT_NOT_NULL(strstr(output, "EXIST"));
@@ -271,7 +303,7 @@ void test_move_preserves_existing_destination(void)
 void test_remove_requires_confirmation_and_rejects_directories(void)
 {
     directory_entry = true;
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(file_stat);
     run("rm /a --confirm");
     TEST_ASSERT_NOT_NULL(strstr(output, "Refusing directory removal"));
@@ -279,7 +311,7 @@ void test_remove_requires_confirmation_and_rejects_directories(void)
 
 void test_confirmed_file_removal_calls_unlink(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(file_stat);
     f_unlink_ExpectAnyArgsAndReturn(FR_OK);
     run("rm /a --confirm");
@@ -291,7 +323,7 @@ void test_df_reports_64_bit_capacity(void)
     DWORD clusters = 1000u;
     FATFS filesystem = { .n_fatent = 2000002u, .csize = 32u };
     FATFS *pointer = &filesystem;
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_ExpectAnyArgsAndReturn(FR_OK);
     f_getfree_ReturnThruPtr_nclst(&clusters);
     f_getfree_ReturnThruPtr_fatfs(&pointer);
@@ -307,7 +339,7 @@ void test_status_is_available_during_host_ownership(void)
     };
     pf_sd_get_info_ExpectAnyArgs();
     pf_sd_get_info_ReturnThruPtr_info(&info);
-    pf_storage_is_mounted_ExpectAndReturn(false);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
     pf_sd_transport_name_ExpectAndReturn("sdio");
     pf_storage_command_execute(NULL, true, "sd", "status", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "owner=USB"));
@@ -433,7 +465,7 @@ static bool disconnected_reply(const char *line, void *context)
 
 void test_cancelled_listing_still_closes_directory(void)
 {
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_opendir_ExpectAnyArgsAndReturn(FR_OK);
     f_readdir_StubWithCallback(read_directory);
     f_closedir_ExpectAnyArgsAndReturn(FR_OK);
@@ -443,7 +475,7 @@ void test_cancelled_listing_still_closes_directory(void)
 void test_disconnected_output_does_not_skip_write_sync_or_close(void)
 {
     expected_mode = FA_WRITE | FA_CREATE_NEW;
-    pf_storage_is_mounted_ExpectAndReturn(true);
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_open_StubWithCallback(open_file);
     f_write_StubWithCallback(write_file);
     f_sync_ExpectAnyArgsAndReturn(FR_OK);

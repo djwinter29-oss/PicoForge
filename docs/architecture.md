@@ -79,13 +79,21 @@ Own board support, configuration, logging, version metadata, and integration wit
 
 ## External Components
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The SD memory-card protocols are implemented in `firmware/src/drivers/sd_card/`; their reusable SPI and PIO engines live in `firmware/src/drivers/storage/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/`, configured and adapted under `firmware/src/integration/fatfs/`, and compiled into the firmware.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The SD memory-card protocols are implemented in `firmware/src/drivers/sd_card/`; their reusable SPI and PIO engines live in `firmware/src/drivers/storage/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/` and compiled into the firmware.
+Its upstream disk interface and configuration live under `firmware/src/integration/fatfs/`; project-owned disk
+adaptation and volume lifecycle live under `firmware/src/middleware/storage/`.
 
 Embedded CLI is also pinned as a Git submodule. Its middleware is independent
 of the USB transport and RTOS; see [CDC CLI](cdc-cli.md) for the dependency pin,
 session lifecycle, command-extension rules, memory budget, and validation plan.
 
-`pf_storage_mount()` explicitly initializes the configured SD card and mounts the existing FAT/exFAT volume; it never formats the card. FatFs is built with exFAT and long-filename support enabled. The transport-neutral SD-card API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. A local exFAT-image smoke test passed mount, create/write/sync, read/verify, delete, and unmount. No startup call currently selects a transport or mounts the volume. FatFs accesses media only through the transport-neutral SD-card block API and is configured without cross-task locking, so mount, unmount, and file operations must be serialized through one storage-owner task. Keep middleware independent of FreeRTOS task APIs where practical; put scheduler and port-specific integration behind the platform/runtime boundary.
+The application storage-owner task initializes SD and mounts its existing FAT/exFAT volume through the
+device-independent `pf_fatfs_volume_mount()` service; mounting never formats media. FatFs uses a logical block device,
+with SD supplied by the current application. The SD API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes
+to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. Mount, unmount, and file
+operations require caller serialization because FatFs is configured without cross-task locking. See the
+[filesystem block-device boundary](sdcard-design.md#filesystem-block-device-boundary) for authoritative layering,
+binding lifetimes, and ownership contracts.
 
 ## Testing and Validation
 

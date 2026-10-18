@@ -17,7 +17,7 @@ static uint32_t now;
 static bool mounted, queue_fails, queued_recovery, sync_ok = true, init_fails;
 static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
 static unsigned sync_calls, disconnects, init_calls;
-static pf_storage_result_t mount_result = PF_STORAGE_OK;
+static pf_fatfs_volume_result_t mount_result = PF_FATFS_VOLUME_OK;
 
 bool pf_sd_port_try_lock(void)
 {
@@ -50,14 +50,16 @@ pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
 {
     TEST_ASSERT_EQUAL_PTR(&card_config, config);
     TEST_ASSERT_EQUAL(PF_SD_OWNER_FIRMWARE, active_owner);
-    TEST_ASSERT_NOT_EQUAL(0, disconnects);
     TEST_ASSERT_NOT_EQUAL(0, reservation_depth);
-    ++init_calls;
+    if (auto_mount_blocked) {
+        TEST_ASSERT_NOT_EQUAL(0, disconnects);
+        ++init_calls;
+    }
     media.initialized = !init_fails;
     return media.initialized ? PF_SD_OK : PF_SD_NOT_READY;
 }
-bool pf_storage_is_mounted(void) { return mounted; }
-pf_storage_result_t pf_storage_unmount(FRESULT *result)
+bool pf_fatfs_volume_is_mounted(void) { return mounted; }
+pf_fatfs_volume_result_t pf_fatfs_volume_unmount(FRESULT *result)
 {
     (void)result;
     if (media.presence_known && !media.present) {
@@ -66,14 +68,18 @@ pf_storage_result_t pf_storage_unmount(FRESULT *result)
     }
     ++unmount_calls;
     mounted = false;
-    return PF_STORAGE_OK;
+    return PF_FATFS_VOLUME_OK;
 }
-void pf_storage_forget_filesystem_format(void) { ++forget_calls; }
-pf_storage_result_t pf_storage_mount(const pf_sd_config_t *config, FRESULT *result)
+void pf_fatfs_volume_forget_filesystem_format(void) { ++forget_calls; }
+static const pf_block_device_t block_device = {0};
+const pf_block_device_t *pf_sd_block_device(void) { return &block_device; }
+pf_fatfs_volume_result_t pf_fatfs_volume_mount(const pf_block_device_t *device, FRESULT *result)
 {
-    (void)config; (void)result;
+    TEST_ASSERT_EQUAL_PTR(&block_device, device);
+    TEST_ASSERT_TRUE(media.initialized);
+    (void)result;
     ++mount_calls;
-    if (mount_result == PF_STORAGE_OK) mounted = media.initialized = true;
+    if (mount_result == PF_FATFS_VOLUME_OK) mounted = true;
     return mount_result;
 }
 uint32_t pf_system_uptime_ms(void) { return now; }

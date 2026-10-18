@@ -17,7 +17,7 @@ bool pf_sd_try_lock(void)
 }
 void pf_sd_unlock(void) { TEST_ASSERT_TRUE(reserved); reserved = false; }
 bool pf_sd_is_initialized(void) { TEST_ASSERT_TRUE(reserved); return initialized; }
-bool pf_storage_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
+bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
 void pf_sd_get_info(pf_sd_info_t *info)
 {
     TEST_ASSERT_TRUE(reserved);

@@ -6,8 +6,8 @@ TEST_SOURCE_FILE("firmware/tests/support/msc/msc_reset_model.c")
 TEST_SOURCE_FILE("firmware/tests/support/msc/msc_reset_queue.c")
 #define PF_STORAGE_H
 #define PF_STORAGE_WORKER_H
-static bool pf_storage_is_mounted(void);
-static void pf_storage_forget_filesystem_format(void);
+static bool pf_fatfs_volume_is_mounted(void);
+static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_card(void);
@@ -17,8 +17,8 @@ static unsigned locks, syncs, sense, asc;
 static pf_sd_result_t read_result=PF_SD_OK, write_result=PF_SD_OK;
 static pf_sd_result_t sync_result=PF_SD_OK, owner_result=PF_SD_OK;
 static pf_sd_owner_t owner=PF_SD_OWNER_USB_MSC;
-static bool pf_storage_is_mounted(void) { return mounted; }
-static void pf_storage_forget_filesystem_format(void) {}
+static bool pf_fatfs_volume_is_mounted(void) { return mounted; }
+static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
 static bool pf_storage_worker_media_absent(void) { return false; }
 static bool pf_storage_worker_recover_card(void) { return false; }

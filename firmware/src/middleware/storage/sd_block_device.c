@@ -54,7 +54,7 @@ static pf_block_result_t sync_blocks(void *context)
     return sd_result_to_block(pf_sd_sync());
 }
 
-const pf_block_device_t *pf_storage_sd_block_device(void)
+const pf_block_device_t *pf_sd_block_device(void)
 {
     static const pf_block_device_ops_t ops = {
         .geometry = geometry, .read = read_blocks, .write = write_blocks, .sync = sync_blocks,
