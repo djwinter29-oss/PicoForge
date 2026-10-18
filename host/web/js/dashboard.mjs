@@ -56,8 +56,8 @@ export function renderStatus(snapshot) {
     ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
       : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
     : msc?.transition_pending ? "Preparing storage and changing USB mode; the device will reconnect."
-      : msc?.enabled ? "Host owns storage. Disable USB drive returns it to Pico after data-loss confirmation."
-        : "Firmware owns storage. Enable USB drive to unmount it safely and reconnect as a USB disk.";
+      : "";
+  document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
   renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
 

@@ -46,6 +46,7 @@ async function setMsc() {
   mscControl.disabled = true;
   document.querySelector("#msc-note").textContent = force ? "Detaching USB drive on Pico and attempting remount..."
     : "Preparing storage for USB...";
+  document.querySelector("#msc-note").hidden = false;
   try {
     const response = await fetch(force ? "/api/msc/force-return" : "/api/msc", {
       method: "POST",

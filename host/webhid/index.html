@@ -88,13 +88,9 @@
     <section class="runtime self-test" aria-labelledby="self-test-title">
       <div class="section-heading">
         <h2 id="self-test-title">Memory Tests</h2>
-        <button class="button" id="msc-control" type="button" disabled
-          aria-describedby="msc-warning">Enable USB drive</button>
+        <button class="button" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
-      <p class="sample-time storage-note" id="msc-note" role="status">USB drive off.</p>
-      <p class="sample-time storage-note" id="msc-warning">
-        Disabling can lose cached host writes and corrupt the filesystem. Stop host file activity; safely eject if possible.
-      </p>
+      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
       <p class="sample-time">Writes and verifies /PFTEST.BIN, replacing any existing file at that path.</p>
       <div class="self-test-controls">
         <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="128" step="1" value="32"></label>

@@ -36,8 +36,9 @@ for (const name of ["web", "webhid"]) {
     assert.match(selfTest, /id="msc-control"/);
     assert.match(selfTest, /id="msc-note"/);
     assert.doesNotMatch(selfTest, /msc-force-return|Force return to Pico/);
-    assert.match(selfTest, /aria-describedby="msc-warning"/);
-    assert.match(selfTest, /lose cached host writes and corrupt the filesystem/);
+    assert.doesNotMatch(selfTest, /msc-warning|Firmware owns storage|Disabling can lose/);
+    assert.match(selfTest, /id="msc-note" role="status" hidden><\/p>/);
+    assert.match(selfTest, /Writes and verifies \/PFTEST.BIN, replacing any existing file at that path/);
     assert.match(selfTest, /id="self-test-start"/);
     if (name === "webhid") {
       assert.match(html, /id="connect"/);
@@ -45,7 +46,9 @@ for (const name of ["web", "webhid"]) {
     }
   });
 
-  test("WebHID Disable confirms before sending Pico-side detach and does not send on cancellation", async () => {
+}
+
+test("WebHID Disable confirms before sending Pico-side detach and does not send on cancellation", async () => {
     const previousDocument = globalThis.document;
     const previousWindow = globalThis.window;
     const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -72,6 +75,7 @@ for (const name of ["web", "webhid"]) {
     try {
       await import("../js/app.mjs");
       await elements.get("#connect").click();
+      assert.equal(elements.get("#msc-note").hidden, true);
       await elements.get("#msc-control").click();
       assert.equal(sent.length, 0);
       confirmed = true;
@@ -95,8 +99,7 @@ for (const name of ["web", "webhid"]) {
       if (secureDescriptor) Object.defineProperty(globalThis, "isSecureContext", secureDescriptor);
       else delete globalThis.isSecureContext;
     }
-  });
-}
+});
 
 test("shared Disable confirms Pico-side return while Enable needs no confirmation or host eject", async () => {
   const previousDocument = globalThis.document;
@@ -130,6 +133,7 @@ test("shared Disable confirms Pico-side return while Enable needs no confirmatio
     await import("../../web/js/app.mjs");
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#msc-control").disabled, false);
+    assert.equal(elements.get("#msc-note").hidden, true);
     await elements.get("#msc-control").click();
     assert.match(warning, /writes may be lost.*filesystem may be corrupted/);
     assert.equal(requests.length, 0);
@@ -148,6 +152,7 @@ test("shared Disable confirms Pico-side return while Enable needs no confirmatio
     await poll();
     assert.equal(elements.get("#msc-control").disabled, true);
     assert.match(elements.get("#msc-note").textContent, /Update firmware/);
+    assert.equal(elements.get("#msc-note").hidden, false);
     await elements.get("#msc-control").click();
     assert.equal(requests.length, 2);
   } finally {
