@@ -2,10 +2,10 @@
 #include <string.h>
 #include "selected_transport.h"
 
-#define DRIVER_SOURCE "../../../src/drivers/sd_card/sd.c"
-#define PORT_SOURCE "../../../src/drivers/sd_card/sd_port_baremetal.c"
+#define DRIVER_SOURCE "drivers/sd_card/sd.c"
+#define PORT_SOURCE "drivers/sd_card/sd_port_baremetal.c"
 #include DRIVER_SOURCE
-#define MEDIA_SOURCE "../../../src/app/storage/sd_media.c"
+#define MEDIA_SOURCE "app/storage/sd_media.c"
 #include MEDIA_SOURCE
 #include PORT_SOURCE
 bool pf_fatfs_volume_is_mounted(void) { return false; }

@@ -3,12 +3,12 @@
 #include "app/storage/sd_media.h"
 #include "drivers/sd_card/sd_port.h"
 #include "drivers/sd_card/sd_native.h"
-#define WORKER_SOURCE "../../../src/app/storage/storage_worker.c"
-#define FACADE_SOURCE "../../../src/drivers/sd_card/sd.c"
-#define MSC_SOURCE "../../../src/app/usb/usb_msc.c"
+#define WORKER_SOURCE "app/storage/storage_worker.c"
+#define FACADE_SOURCE "drivers/sd_card/sd.c"
+#define MSC_SOURCE "app/usb/usb_msc.c"
 #include WORKER_SOURCE
 #include FACADE_SOURCE
-#define MEDIA_SOURCE "../../../src/app/storage/sd_media.c"
+#define MEDIA_SOURCE "app/storage/sd_media.c"
 #include MEDIA_SOURCE
 #include MSC_SOURCE
 

@@ -4,7 +4,7 @@
 #include "storage_commands.h"
 #include "embedded_cli.h"
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
-#define WORKER_SOURCE "../../../src/app/storage/storage_worker.c"
+#define WORKER_SOURCE "app/storage/storage_worker.c"
 #include WORKER_SOURCE
 
 static bool nor_ready, usb_owned, remount, mounted, init_fails;

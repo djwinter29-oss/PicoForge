@@ -9,7 +9,7 @@ static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_media(void);
 static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
-#include "../../../src/app/usb/usb_msc.c"
+#include "app/usb/usb_msc.c"
 #include "block_device.h"
 
 static uint8_t media[4u * 512u];

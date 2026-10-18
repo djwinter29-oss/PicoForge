@@ -12,7 +12,7 @@ static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_media(void);
 static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
-#include "../../../src/app/usb/usb_msc.c"
+#include "app/usb/usb_msc.c"
 #include "drivers/sd_card/sd.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == 1
 #include "drivers/sd_card/sd_spi.h"
@@ -33,9 +33,9 @@ static bool pf_storage_worker_unmount_for_usb(void);
 #endif
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */
-#include "../../../src/middleware/storage/fatfs_disk.c"
-#include "../../../src/middleware/storage/block_device.c"
-#include "../../../src/middleware/storage/sd_block_device.c"
+#include "middleware/storage/fatfs_disk.c"
+#include "middleware/storage/block_device.c"
+#include "middleware/storage/sd_block_device.c"
 #pragma GCC diagnostic pop
 pthread_mutex_t creation_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t media[8][512];

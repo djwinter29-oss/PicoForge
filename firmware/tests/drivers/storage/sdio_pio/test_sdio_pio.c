@@ -3,9 +3,9 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #define PF_TEST_SDIO_WIRE_ONLY 1
 #include "sdio_sdk_stubs.h"
-#include "../../../../src/drivers/storage/sdio_pio/sdio_pio.c"
-#include "../../../../src/drivers/storage/bus.c"
-#include "../../../../src/drivers/storage/sd_wire.c"
+#include "drivers/storage/sdio_pio/sdio_pio.c"
+#include "drivers/storage/bus.c"
+#include "drivers/storage/sd_wire.c"
 #include "sdio_sdk_stubs.c"
 
 #if defined(PF_SD_BLOCK_H) || defined(PF_SD_NATIVE_HOST_H) || defined(PF_NOR_H)

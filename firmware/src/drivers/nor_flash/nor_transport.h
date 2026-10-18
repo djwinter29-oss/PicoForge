@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "../storage/bus.h"
+#include "drivers/storage/bus.h"
 
 typedef enum {
     PF_NOR_OK = 0,

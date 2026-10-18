@@ -11,7 +11,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/storage")
 #define __StackOneTop test_stack
 #define __StackOneBottom test_stack
 #define configNUMBER_OF_CORES 2
-#define RUNTIME_SOURCE "../../../src/integration/freertos/runtime_stats.c"
+#define RUNTIME_SOURCE "integration/freertos/runtime_stats.c"
 #include RUNTIME_SOURCE
 
 char test_end[1], test_scratch[1], test_stack[1];

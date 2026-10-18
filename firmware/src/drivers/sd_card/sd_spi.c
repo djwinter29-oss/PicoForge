@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "sd_protocol.h"
-#include "../storage/serial.h"
+#include "drivers/storage/serial.h"
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u

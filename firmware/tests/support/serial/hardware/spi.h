@@ -1,5 +1,5 @@
 #pragma once
-#include "../serial_fake.h"
+#include "serial_fake.h"
 typedef struct { uint index; } spi_inst_t;
 extern spi_inst_t serial_spi[2];
 #define spi0 (&serial_spi[0])

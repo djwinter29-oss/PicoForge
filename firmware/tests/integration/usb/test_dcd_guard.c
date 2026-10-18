@@ -1,7 +1,7 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/usb_dcd")
 
-#include "../../../src/integration/usb/dcd_guard.c"
+#include "integration/usb/dcd_guard.c"
 
 #include <pthread.h>
 #include <sched.h>

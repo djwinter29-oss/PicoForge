@@ -10,8 +10,8 @@ TEST_INCLUDE_PATH("firmware/third_party/levelx/common/inc")
 #include "ff.h"
 
 /* Scope the real filesystem engine to this integration test, not all tests including ff.h. */
-#define FATFS_SOURCE "../../../third_party/fatfs/source/ff.c"
-#define FATFS_UNICODE_SOURCE "../../../third_party/fatfs/source/ffunicode.c"
+#define FATFS_SOURCE "ff.c"
+#define FATFS_UNICODE_SOURCE "ffunicode.c"
 #include FATFS_SOURCE
 #include FATFS_UNICODE_SOURCE
 

@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "hardware/pio.h"
-#include "../sd_wire.h"
+#include "drivers/storage/sd_wire.h"
 
 /** Physical clock ownership, private to this backend's resource management. */
 typedef enum {

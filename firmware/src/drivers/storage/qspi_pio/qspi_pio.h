@@ -1,7 +1,7 @@
 #ifndef PF_QSPI_PIO_H
 #define PF_QSPI_PIO_H
 
-#include "../serial.h"
+#include "drivers/storage/serial.h"
 #include "hardware/pio.h"
 
 /** Dedicated polling state machine, consecutive IO0..IO3, GPIO0..31 on both MCUs.

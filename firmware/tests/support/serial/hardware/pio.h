@@ -1,5 +1,5 @@
 #pragma once
-#include "../serial_fake.h"
+#include "serial_fake.h"
 #define NUM_BANK0_GPIOS 30u
 typedef struct { unsigned index; uint32_t input_sync_bypass; struct { uint32_t clkdiv; } sm[4]; } serial_pio_t;
 typedef serial_pio_t *PIO;

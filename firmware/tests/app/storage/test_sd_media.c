@@ -1,5 +1,5 @@
 #include "unity.h"
-#define MEDIA_SOURCE "../../../src/app/storage/sd_media.c"
+#define MEDIA_SOURCE "app/storage/sd_media.c"
 #include MEDIA_SOURCE
 #include "block_device.h"
 #include "sd_block_device.h"

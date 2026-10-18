@@ -1,6 +1,6 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
-#include "../../support/storage/responsiveness_fixture.inc"
+#include "storage/responsiveness_fixture.inc"
 
 void setUp(void)
 {

@@ -13,7 +13,7 @@ static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_media(void);
 static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
-#include "../../../src/app/usb/usb_msc.c"
+#include "app/usb/usb_msc.c"
 static bool initialized=true, worker_busy, mounted;
 static unsigned locks, syncs, sense, asc;
 static pf_sd_result_t read_result=PF_SD_OK, write_result=PF_SD_OK;

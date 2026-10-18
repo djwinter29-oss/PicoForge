@@ -1,7 +1,7 @@
 #ifndef PF_SPI_H
 #define PF_SPI_H
 
-#include "../serial.h"
+#include "drivers/storage/serial.h"
 #include "hardware/spi.h"
 
 /** Caller-owned SPI device. Devices on one controller must use identical bus pins.

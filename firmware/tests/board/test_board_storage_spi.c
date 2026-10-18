@@ -10,11 +10,11 @@ TEST_INCLUDE_PATH("firmware/tests/support/serial")
 
 #define PF_BOARD_STORAGE_QSPI 0
 #define pf_board_resources_get default_board_resources_get
-#include "../../src/board/board_profile.c"
+#include "board/board_profile.c"
 #undef pf_board_resources_get
 static pf_board_resources_t test_profile;
 const pf_board_resources_t *pf_board_resources_get(void) { return &test_profile; }
-#include "../../src/board/board_storage.c"
+#include "board/board_storage.c"
 
 serial_fake_t serial_fake;
 spi_inst_t serial_spi[2] = {{0}, {1}};

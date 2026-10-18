@@ -11,11 +11,11 @@ static pf_sdio_pio_t test_wire;
 #include <stdint.h>
 #include <string.h>
 
-#include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
-#include "../../../src/drivers/storage/bus.c"
-#include "../../../src/drivers/storage/sd_wire.c"
-#include "../../../src/drivers/sd_card/sd_native_host.c"
-#include "../../../src/drivers/sd_card/sd_protocol.c"
+#include "drivers/storage/sdio_pio/sdio_pio.c"
+#include "drivers/storage/bus.c"
+#include "drivers/storage/sd_wire.c"
+#include "drivers/sd_card/sd_native_host.c"
+#include "drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
 _Static_assert(PF_SD_PROFILE_COMMAND == 0 &&

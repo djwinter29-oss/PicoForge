@@ -10,6 +10,17 @@ ROOT = Path(__file__).resolve().parents[2]
 STORAGE = ROOT / "firmware/src/drivers/storage"
 
 
+def test_project_c_includes_do_not_traverse_relative_directories():
+    for directory in ("firmware/src", "firmware/tests", "host", "tools"):
+        for source in (ROOT / directory).rglob("*"):
+            if source.suffix not in (".c", ".h", ".inc") or "third_party" in source.parts:
+                continue
+            assert not re.search(
+                r'^\s*#\s*(?:include\s*|define\s+\w+\s+)[<"]\.\.?/',
+                source.read_text(), re.MULTILINE
+            ), source
+
+
 def test_storage_application_policy_stays_out_of_middleware():
     middleware = ROOT / "firmware/src/middleware/storage"
     application = ROOT / "firmware/src/app/storage"
@@ -99,7 +110,7 @@ def test_physical_engines_do_not_include_device_or_filesystem_headers():
     )
     for source in sources:
         for header in re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE):
-            assert header in ("sd_wire.h", "../sd_wire.h") or not forbidden.search(header), (
+            assert header in ("sd_wire.h", "drivers/storage/sd_wire.h") or not forbidden.search(header), (
                 f"{source.relative_to(ROOT)} includes device policy: {header}"
             )
 

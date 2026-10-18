@@ -8,7 +8,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include <sched.h>
 #include <stdatomic.h>
 
-#include "../../../../src/drivers/storage/sdio_pio/sdio_wait_freertos.c"
+#include "drivers/storage/sdio_pio/sdio_wait_freertos.c"
 
 typedef struct {
     bool flag[3];

@@ -1,6 +1,6 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
-#define HID_SOURCE "../../../src/app/usb/usb_hid.c"
+#define HID_SOURCE "app/usb/usb_hid.c"
 #include HID_SOURCE
 
 static bool media_busy;
