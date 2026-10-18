@@ -10,10 +10,7 @@
 #if PF_STORAGE_BACKEND_NOR
 #include "nor_media.h"
 #else
-#include "board/board.h"
-#include "drivers/sd_card/sd.h"
-#include "drivers/sd_card/sd_port.h"
-#include "middleware/storage/sd_block_device.h"
+#include "sd_media.h"
 #endif
 
 #include <string.h>
@@ -43,9 +40,6 @@ static uint8_t request_storage[sizeof(storage_request_t)];
 static uint8_t reply_storage[STORAGE_REPLY_COUNT * sizeof(pf_storage_worker_reply_t)];
 static QueueHandle_t requests;
 static QueueHandle_t replies;
-#if !PF_STORAGE_BACKEND_NOR
-static pf_sd_config_t card_config;
-#endif
 static bool config_available;
 static bool busy;
 static uint32_t active_session;
@@ -133,7 +127,7 @@ static void attempt_auto_mount(void)
 #if PF_STORAGE_BACKEND_NOR
         media_result = pf_nor_media_initialize();
 #else
-        media_result = (unsigned)pf_sd_init(&card_config);
+        media_result = (unsigned)pf_sd_media_initialize();
 #endif
         if (media_result != PF_BLOCK_OK) {
             auto_mount_pending = true;
@@ -141,7 +135,7 @@ static void attempt_auto_mount(void)
 #if PF_STORAGE_BACKEND_NOR
             volume_result = pf_fatfs_volume_mount(pf_nor_media_firmware_device(), &filesystem_result);
 #else
-            volume_result = pf_fatfs_volume_mount(pf_sd_block_device(), &filesystem_result);
+            volume_result = pf_fatfs_volume_mount(pf_sd_media_firmware_device(), &filesystem_result);
 #endif
             auto_mount_pending = (volume_result != PF_FATFS_VOLUME_OK) &&
                                  (volume_result != PF_FATFS_VOLUME_ALREADY_MOUNTED);
@@ -214,7 +208,7 @@ nor_done:
 
     pf_sd_lock();
     pf_sd_get_info(&info);
-    bool firmware_owned = pf_sd_get_owner() == PF_SD_OWNER_FIRMWARE;
+    bool firmware_owned = pf_sd_media_get_owner() == PF_SD_MEDIA_OWNER_FIRMWARE;
     bool mounted_card_uninitialized = pf_fatfs_volume_is_mounted() && !info.initialized;
     if (firmware_owned && mounted_card_uninitialized && (!info.presence_known || info.present)) {
         if (pf_fatfs_volume_unmount(NULL) != PF_FATFS_VOLUME_OK) {
@@ -261,7 +255,7 @@ nor_done:
     if (auto_mount_blocked) {
         goto done;
     }
-    if (pf_sd_take_reinit_request()) {
+    if (pf_sd_media_take_reinit_request()) {
         auto_mount_pending = true;
         mount_retry_waiting = false;
     }
@@ -295,9 +289,9 @@ static void recover_media(void)
     (void)pf_nor_media_initialize();
 #else
     pf_sd_lock();
-    (void)pf_sd_take_reinit_request();
+    (void)pf_sd_media_take_reinit_request();
     /* Failure remains in facade diagnostics. Never mount or replay. */
-    (void)pf_sd_init(&card_config);
+    (void)pf_sd_media_initialize();
     pf_sd_unlock();
 #endif
     taskENTER_CRITICAL();
@@ -360,11 +354,11 @@ bool pf_storage_worker_init(void)
     }
     config_available = true;
 #else
-    config_available = pf_board_get_sd_card_config(&card_config);
-    if (config_available && !pf_sd_port_init(&card_config)) {
-        PF_LOG_ERROR("storage", "Failed to initialize SD transport waits");
+    pf_sd_result_t setup_result = pf_sd_media_setup();
+    if (setup_result != PF_SD_OK && setup_result != PF_SD_NOT_CONFIGURED) {
         return false;
     }
+    config_available = setup_result == PF_SD_OK;
 #endif
     requests = xQueueCreateStatic(1u, sizeof(storage_request_t), request_storage, &request_control);
     replies = xQueueCreateStatic(STORAGE_REPLY_COUNT, sizeof(pf_storage_worker_reply_t),

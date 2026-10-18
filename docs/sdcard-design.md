@@ -18,8 +18,8 @@ Native and SPI protocol files live together under `firmware/src/drivers/sd_card/
 
 ```text
 sd_card/
-  sd.c / .h                   Public configuration, ownership and diagnostics
-  sd_block.h / sd_msc.h        Block and USB ownership interfaces
+  sd.c / .h                   Serialized protocol dispatch and configuration
+  sd_block.h                  Raw block operations, telemetry and profiling
   sd_protocol.c / .h          Command/register helpers, native responses and data codecs
   sd_native.c / .h            Native initialization and block operations
   sd_native_host.c / .h       Native command/data sequencing and streams
@@ -76,14 +76,15 @@ ownership or packed response words. The existing packed-response diagnostic API 
 ```mermaid
 flowchart TD
     Board[Board profile and build-time transport selection] --> Config[pf_board_get_sd_card_config]
-    Config --> Card[SD-card configuration and dispatch]
+    Config --> Gate[Application sd_media lifecycle and ownership]
+    Gate --> Card[SD-card configuration and dispatch]
     App[Application storage worker, commands and self-test] --> Storage[Storage mount service]
     App --> SDAdapter
     Storage --> FatFs[FatFs]
     FatFs --> Disk[FatFs disk-I/O adapter]
     Disk --> Block[Logical block-device interface]
-    Block --> SDAdapter[SD block-device adapter]
-    SDAdapter --> Gate[SD facade and firmware ownership gate]
+    Block --> Gate
+    Gate --> SDAdapter[Raw SD block-device geometry adapter]
     MSC[USB MSC callbacks] --> Gate
     Gate --> Card
     Card --> Native[SDIO-PIO card lifecycle]
@@ -104,13 +105,14 @@ flowchart TD
 | --- | --- |
 | Application storage task, automount, commands, and file benchmark | [app/storage/](../firmware/src/app/storage/) |
 | Board-approved pins and controller selection | [board.c](../firmware/src/board/board.c), [board_profile.c](../firmware/src/board/board_profile.c) |
-| Singleton configuration, dispatch, diagnostics, and firmware/USB ownership | [sd.c](../firmware/src/drivers/sd_card/sd.c) |
+| Serialized protocol dispatch and driver initialization stage | [sd.c](../firmware/src/drivers/sd_card/sd.c) |
+| Application board configuration, diagnostics, firmware/USB ownership and gated FatFs access | [sd_media.c](../firmware/src/app/storage/sd_media.c) |
 | Execution-environment selection, reservations, and optional waits | [sd_port.h](../firmware/src/drivers/sd_card/sd_port.h), [FreeRTOS](../firmware/src/drivers/sd_card/sd_port_freertos.c), [bare-metal](../firmware/src/drivers/sd_card/sd_port_baremetal.c) |
 | Block operations, result codes, and telemetry | [sd_block.h](../firmware/src/drivers/sd_card/sd_block.h) |
 | Filesystem-independent logical sectors and geometry | [block_device.h](../firmware/src/middleware/storage/block_device.h) |
 | Logical sectors backed by the serialized SD facade | [sd_block_device.c](../firmware/src/middleware/storage/sd_block_device.c) |
 | Device-independent single FatFs volume lifecycle | [fatfs_volume.c](../firmware/src/middleware/storage/fatfs_volume.c) |
-| USB-only ownership and block capabilities | [sd_msc.h](../firmware/src/drivers/sd_card/sd_msc.h) |
+| Application USB ownership and owner-specific block capabilities | [sd_media.h](../firmware/src/app/storage/sd_media.h) |
 | Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../firmware/src/drivers/sd_card/sd_protocol.c) |
 | Native card initialization and transfer policy | [sd_native.c](../firmware/src/drivers/sd_card/sd_native.c) |
 | Native SD command/data adapter and stream policy | [sd_native_host.c](../firmware/src/drivers/sd_card/sd_native_host.c) |
@@ -149,9 +151,10 @@ The application initializes SD and supplies its static block descriptor to `pf_f
 service has no SD dependency: it binds the caller's initialized logical device before `f_mount` and unbinds after
 a successful unmount or failed mount cleanup. The borrowed descriptor, operation table, and context must remain
 valid until unbound. A failed unmount retains the binding. The SD adapter delegates I/O and
-sync to the existing facade, retaining recursive reservations, owner checks, and device diagnostics. Geometry remains
+sync to the raw serialized driver, while `sd_media` wraps firmware access with owner checks and retained diagnostics.
+The application binds `pf_sd_media_firmware_device()`, not the raw `pf_sd_block_device()`. Geometry remains
 queryable while USB owns initialized media, matching the previous disk-I/O behavior, but firmware reads, writes, and
-sync remain rejected by the facade. Geometry validation does not replace the backend's checks at transfer time.
+sync remain rejected by `sd_media`. Geometry validation does not replace the backend's checks at transfer time.
 The interface adds no lock and does not hold a reservation across a filesystem transaction.
 Geometry success indicates available metadata, not permission to perform I/O. FatFs checks sector compatibility
 before generic transfer validation queries geometry again; this deliberate duplication is retained rather than
@@ -161,7 +164,7 @@ Volume lifecycle calls, mount-state queries, and FatFs operations require caller
 storage-owner task/reservation. `pf_fatfs_volume_is_mounted()` reports registration state, not physical presence or an
 independently thread-safe snapshot. Only the filesystem-format telemetry cache uses atomic access; reading it neither
 grants media access nor synchronizes a filesystem transaction. The service manages one volume over a caller-selected
-logical device, not a device registry or multi-volume manager. The current application selects SD; other backends must
+logical device, not a device registry or multi-volume manager. The build selects SD or LevelX NOR; other backends must
 provide valid logical sectors and perform their own initialization before mounting.
 
 SD telemetry, board configuration, media initialization, filesystem mounting/formatting, and USB ownership transitions
@@ -278,30 +281,25 @@ selected port. These are host/build checks, not physical-card qualification.
 
 ### Block API
 
-Applications should normally use the facade rather than bypassing its ownership
-gate with direct backend calls. This example initializes and reads without
+Applications use `app/storage/sd_media.h` rather than bypassing its ownership gate with raw driver calls.
+`pf_sd_media_setup()` obtains the board configuration and initializes the execution port before task startup.
+This worker-context example initializes and reads without
 mounting a filesystem or writing media:
 
 ```c
-#include "board.h"
-#include "sd.h"
+#include "app/storage/sd_media.h"
 
 pf_sd_result_t read_first_sector(uint8_t sector[PF_SD_BLOCK_SIZE])
 {
-    pf_sd_config_t config;
-
-    if (!pf_board_get_sd_card_config(&config)) {
-        return PF_SD_NOT_CONFIGURED;
-    }
-    pf_sd_result_t result = pf_sd_init(&config);
+    pf_sd_result_t result = pf_sd_media_initialize();
     if (result != PF_SD_OK) {
         return result;
     }
-    return pf_sd_read_blocks(0u, sector, 1u);
+    return pf_sd_media_read_blocks(0u, sector, 1u);
 }
 ```
 
-For filesystem access, initialize SD with the board configuration, then pass `pf_sd_block_device()` to
+For filesystem access, initialize SD through `sd_media`, then pass `pf_sd_media_firmware_device()` to
 `pf_fatfs_volume_mount()` through the storage-owner workflow. Do not mix raw-sector writes with
 a mounted filesystem.
 
@@ -320,13 +318,14 @@ a mounted filesystem.
   `pf_sd_unlock()` where needed. Per-call locking does not serialize a
   FatFs transaction: `FF_FS_REENTRANT` is disabled, and all FatFs operations
   must remain in the storage-owner workflow with its busy/ownership reservation.
-- Use `pf_sd_sync()` after writes. A successful SDIO multi-block write can
+- Use `pf_sd_media_sync()` after application writes (`pf_sd_sync()` is the raw driver operation).
+  A successful SDIO multi-block write can
   leave a CMD25 stream open; sync ends the stream and checks stop completion.
 - On read failure, buffer contents may be partially updated or invalid. A failed
   write can have committed some sectors; do not blindly replay it.
 - `pf_sd_get_info()` reports presence, initialization, effective clock,
   capacity, and CID. Without card detect, presence is not independently known.
-- `pf_sd_get_diagnostics()` retains the most recent failed facade operation,
+- `pf_sd_media_get_diagnostics()` retains the most recent failed facade operation,
   result, owner, selected transport, backend initialization stage, and a snapshot
   of the profiling event counters. `sd diagnostics` exposes this without
   changing profiling state; counters remain zero unless profiling was enabled
@@ -862,14 +861,14 @@ are not assumed improvements, and no new hardware throughput claim is made.
 ```mermaid
 sequenceDiagram
     participant FW as Storage owner task
-    participant Card as SD-card facade
+    participant Card as Application sd_media service
     participant USB as USB/MSC integration
     participant Host as USB host
     FW->>Card: Firmware block operations and sync
     FW->>FW: Finish work, close files, unmount filesystem
     USB->>Card: Set owner to USB MSC after integration checks
     Host->>USB: Sector read/write or synchronize
-    USB->>Card: pf_sd_msc_read/write_blocks or msc_sync
+    USB->>Card: pf_sd_media_usb_read/write_blocks or usb_sync
     Note over FW,Card: Firmware block operations return NOT_READY during MSC ownership
     Host->>USB: Safely eject and allow removal
     USB->>Card: Set owner back to firmware
@@ -877,11 +876,10 @@ sequenceDiagram
     FW->>FW: Invalidate cached filesystem state and reinitialize before remount
 ```
 
-The generic block header exposes only firmware operations. USB-only acquire,
-release, and block operations live in the dedicated MSC integration header;
-there is no arbitrary public owner setter. Acquisition still cannot inspect
-FatFs state without creating a cross-layer dependency, so the USB integration
-atomically checks worker activity and mount state before acquiring the card.
+The raw SD driver exposes serialized card operations without application ownership policy.
+Application acquire/release, owner-specific transfers and retained diagnostics live in `app/storage/sd_media.h`;
+there is no arbitrary public owner setter. The application service checks readiness and mounted state on acquisition.
+Application USB also reserves the shared SD lock across worker-idle and mount-state checks and acquisition.
 Release similarly requires checked host eject/synchronization. In the FreeRTOS
 application, a statically
 allocated FreeRTOS recursive mutex
@@ -889,7 +887,7 @@ serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
 [CDC recovery workflow](cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
 before returning ownership and queues worker-only reinitialization. It never
-reports sync/eject success or replays writes. Automatic mounting remains
+reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
 inhibited until a successful explicit `fs mount`; presence debounce continues.
 The recovery latch is runtime-only and resets on reboot. The workflow cannot
 repair filesystem damage or guarantee recovery from an unresolved card stream.
@@ -904,8 +902,8 @@ request because the host may have changed the filesystem. See
 [USB protocol and MSC lifecycle](usb-protocol.md) for transition rules.
 
 Backend headers remain available to their implementation and focused transport
-tests, but application and integration code must use the facade. Backend calls
-do not provide ownership or task serialization and are not an application API.
+tests. Application filesystem and MSC I/O must use `sd_media`; telemetry may query the serialized raw driver.
+Raw driver calls do not enforce application ownership. Backend calls additionally bypass task serialization.
 
 ## Validation And Limits
 
@@ -1004,7 +1002,7 @@ sustained operation is qualified by these tests.
 
 Application READ10/WRITE10 cached sense is now invalidated after TinyUSB handles
 an accepted BOT reset at SETUP, and after its MSC driver bus-reset processing.
-GNU linker wrappers in `firmware/src/usb/msc.c` interpose the built-in driver's
+GNU linker wrappers in `firmware/src/app/usb/usb_msc.c` interpose the built-in driver's
 external references from `usbd.c`; the vendored stack is unchanged. No ISR or
 enqueue-time hook mutates this cache. Earlier queued failures cannot erase a
 reset, and failures after handled reset retain their fresh sense. Rejected

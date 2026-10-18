@@ -7,7 +7,7 @@ static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_media(void);
-#include "../../src/usb/msc.c"
+#include "../../../src/app/usb/usb_msc.c"
 #include "block_device.h"
 
 static uint8_t media[4u * 512u];

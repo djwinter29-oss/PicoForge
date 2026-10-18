@@ -11,12 +11,12 @@ static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_media(void);
-#include "../../src/usb/msc.c"
+#include "../../../src/app/usb/usb_msc.c"
 static bool initialized=true, worker_busy, mounted;
 static unsigned locks, syncs, sense, asc;
 static pf_sd_result_t read_result=PF_SD_OK, write_result=PF_SD_OK;
 static pf_sd_result_t sync_result=PF_SD_OK, owner_result=PF_SD_OK;
-static pf_sd_owner_t owner=PF_SD_OWNER_USB_MSC;
+static pf_sd_media_owner_t owner=PF_SD_MEDIA_OWNER_USB_MSC;
 static bool pf_fatfs_volume_is_mounted(void) { return mounted; }
 static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
@@ -28,13 +28,15 @@ void pf_sd_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }
 bool pf_sd_is_initialized(void) { return initialized; }
 uint32_t pf_sd_block_count(void) { return 128; }
 void pf_sd_get_info(pf_sd_info_t *i) { *i=(pf_sd_info_t){.present=true,.presence_known=true}; }
-pf_sd_result_t pf_sd_msc_acquire(void)
-{ if(owner_result==PF_SD_OK) owner=PF_SD_OWNER_USB_MSC; return owner_result; }
-pf_sd_result_t pf_sd_msc_release(void)
-{ if(owner_result==PF_SD_OK) owner=PF_SD_OWNER_FIRMWARE; return owner_result; }
-pf_sd_result_t pf_sd_msc_sync(void) { ++syncs; return sync_result; }
-pf_sd_result_t pf_sd_msc_read_blocks(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return read_result; }
-pf_sd_result_t pf_sd_msc_write_blocks(uint32_t l, const void *b, uint32_t n) { (void)l;(void)b;(void)n; return write_result; }
+pf_sd_result_t pf_sd_media_acquire_usb(void)
+{ if(owner_result==PF_SD_OK) owner=PF_SD_MEDIA_OWNER_USB_MSC; return owner_result; }
+pf_sd_result_t pf_sd_media_release_usb(void)
+{ if(owner_result==PF_SD_OK) owner=PF_SD_MEDIA_OWNER_FIRMWARE; return owner_result; }
+pf_sd_result_t pf_sd_media_release_usb_for_recovery(void)
+{ TEST_ASSERT_FALSE(initialized); return pf_sd_media_release_usb(); }
+pf_sd_result_t pf_sd_media_usb_sync(void) { ++syncs; return sync_result; }
+pf_sd_result_t pf_sd_media_usb_read_blocks(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return read_result; }
+pf_sd_result_t pf_sd_media_usb_write_blocks(uint32_t l, const void *b, uint32_t n) { (void)l;(void)b;(void)n; return write_result; }
 bool tud_msc_set_sense(uint8_t l, uint8_t s, uint8_t a, uint8_t q) { (void)l;(void)q; sense=s; asc=a; return true; }
 /* Callback-boundary model of the pinned source ordering, not a BOT test. */
 static void request_sense(unsigned expected_key, unsigned expected_asc)
@@ -182,7 +184,7 @@ void setUp(void)
  initialized=true; worker_busy=mounted=false;
  locks=syncs=sense=asc=0;
  read_result=write_result=sync_result=owner_result=PF_SD_OK;
- owner=PF_SD_OWNER_USB_MSC;
+ owner=PF_SD_MEDIA_OWNER_USB_MSC;
  msc_enabled=true;
  msc_ejected=removal_prevented=request_pending=requested_enabled=false;
  transition_pending=request_rejected=recovery_requested=false;
@@ -252,9 +254,9 @@ void test_sync_eject_removal_prevention_and_owner_handoff(void)
  initialized=true;
  worker_busy=true; pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
  worker_busy=false; owner_result=PF_SD_IO_ERROR;
- pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled && owner==PF_SD_OWNER_USB_MSC);
+ pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled && owner==PF_SD_MEDIA_OWNER_USB_MSC);
  owner_result=PF_SD_OK; transfer_sense_pending=true;
- pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(!msc_enabled && owner==PF_SD_OWNER_FIRMWARE && !transfer_sense_pending);
+ pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(!msc_enabled && owner==PF_SD_MEDIA_OWNER_FIRMWARE && !transfer_sense_pending);
  before=syncs; tud_msc_write10_complete_cb(0); TEST_ASSERT_TRUE(syncs==before);
  TEST_ASSERT_TRUE(locks==0 && !mounted);
 }

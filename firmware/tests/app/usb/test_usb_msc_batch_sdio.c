@@ -2,6 +2,7 @@
 
 TEST_INCLUDE_PATH("firmware/tests/support/msc")
 TEST_SOURCE_FILE("sd.c")
+TEST_SOURCE_FILE("sd_media.c")
 TEST_SOURCE_FILE("sd_port_freertos.c")
 
 #include "msc_batch_cases.inc"
@@ -9,7 +10,7 @@ TEST_SOURCE_FILE("sd_port_freertos.c")
 void setUp(void) {}
 void tearDown(void) {}
 
-void test_spi_batches_preserve_bytes_bounds_ownership_and_completion(void)
+void test_sdio_batches_preserve_bytes_bounds_ownership_and_completion(void)
 {
     msc_batch_regression();
 }

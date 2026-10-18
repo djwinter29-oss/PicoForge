@@ -343,7 +343,8 @@ target_link_libraries(pf_app_storage PUBLIC
 )
 if(PF_STORAGE_BACKEND STREQUAL "NOR")
     target_sources(pf_app_storage PRIVATE src/app/storage/nor_media.c)
-    target_link_libraries(pf_app_storage PUBLIC pf_logging)
+else()
+    target_sources(pf_app_storage PRIVATE src/app/storage/sd_media.c)
 endif()
 
 add_library(pf_board STATIC
@@ -369,19 +370,20 @@ if(PF_STORAGE_BACKEND STREQUAL "NOR")
     target_compile_definitions(pf_board PRIVATE PF_BOARD_STORAGE_QSPI=$<STREQUAL:${PF_NOR_TRANSPORT},QSPI_PIO>)
     target_link_libraries(pf_board PUBLIC pf_nor_flash)
 endif()
+target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
 
 add_executable(pf_hello_world
     src/main.c
-    src/usb/usb_descriptors.c
-    src/usb/hid.c
-    src/usb/msc.c
-    src/usb/task.c
+    src/app/usb/usb_descriptors.c
+    src/app/usb/usb_hid.c
+    src/app/usb/usb_msc.c
+    src/app/usb/usb_task.c
 )
 
 target_include_directories(pf_hello_world PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/usb"
-    "${CMAKE_CURRENT_LIST_DIR}/src/usb"
+    "${CMAKE_CURRENT_LIST_DIR}/src/app/usb"
 )
 
 target_link_libraries(pf_hello_world

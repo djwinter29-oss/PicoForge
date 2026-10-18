@@ -5,8 +5,7 @@
 #include "Mockfatfs_volume.h"
 #include "Mocksd_block.h"
 #include "Mocksd.h"
-#include "Mocksd_block_device.h"
-#include "Mockboard.h"
+#include "Mocksd_media.h"
 
 #include <string.h>
 
@@ -160,9 +159,8 @@ void test_creates_directory_and_reports_fatfs_errors(void)
 void test_mount_and_unmount_report_success(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
-    pf_sd_init_ExpectAnyArgsAndReturn(PF_SD_OK);
-    pf_sd_block_device_ExpectAndReturn(&device);
+    pf_sd_media_initialize_ExpectAndReturn(PF_SD_OK);
+    pf_sd_media_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
     pf_storage_command_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
@@ -176,9 +174,8 @@ void test_mount_reports_fatfs_failure(void)
 {
     FRESULT result = FR_NO_FILESYSTEM;
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
-    pf_sd_init_ExpectAnyArgsAndReturn(PF_SD_OK);
-    pf_sd_block_device_ExpectAndReturn(&device);
+    pf_sd_media_initialize_ExpectAndReturn(PF_SD_OK);
+    pf_sd_media_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
     pf_fatfs_volume_mount_ReturnThruPtr_filesystem_result(&result);
     pf_storage_command_execute(false, "fs", "mount", reply, NULL);
@@ -195,7 +192,7 @@ void test_mount_does_not_initialize_an_already_mounted_device(void)
 void test_mount_rejects_missing_configuration_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(false);
+    pf_sd_media_initialize_ExpectAndReturn(PF_SD_NOT_READY);
     run("mount");
     TEST_ASSERT_NOT_NULL(strstr(output, "configuration unavailable"));
 }
@@ -203,8 +200,7 @@ void test_mount_rejects_missing_configuration_without_binding(void)
 void test_mount_reports_card_initialization_failure_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
-    pf_sd_init_ExpectAnyArgsAndReturn(PF_SD_INIT_FAILED);
+    pf_sd_media_initialize_ExpectAndReturn(PF_SD_INIT_FAILED);
     pf_storage_command_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "SD initialization"));
 }
@@ -419,18 +415,18 @@ void test_profile_rejects_unknown_actions(void)
 
 void test_diagnostics_reports_last_failure(void)
 {
-    pf_sd_diagnostics_t diagnostics = {
+    pf_sd_media_diagnostics_t diagnostics = {
         .sequence = 7u,
-        .operation = PF_SD_OPERATION_WRITE,
+        .operation = PF_SD_MEDIA_OPERATION_WRITE,
         .result = PF_SD_IO_ERROR,
-        .owner = PF_SD_OWNER_USB_MSC,
+        .owner = PF_SD_MEDIA_OWNER_USB_MSC,
         .transport = PF_SD_TRANSPORT_SPI,
         .transport_init_stage = 9u,
     };
     diagnostics.profile.events[PF_SD_PROFILE_CRC_FAILURE] = 2u;
     diagnostics.profile.events[PF_SD_PROFILE_TIMEOUT] = 3u;
-    pf_sd_get_diagnostics_ExpectAnyArgs();
-    pf_sd_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
+    pf_sd_media_get_diagnostics_ExpectAnyArgs();
+    pf_sd_media_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
 
     pf_storage_command_execute(true, "sd", "diagnostics", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
@@ -449,10 +445,10 @@ void test_diagnostics_clear_requires_firmware_ownership(void)
 
 void test_diagnostics_clear_resets_then_reports(void)
 {
-    pf_sd_diagnostics_t diagnostics = { 0 };
-    pf_sd_clear_diagnostics_Expect();
-    pf_sd_get_diagnostics_ExpectAnyArgs();
-    pf_sd_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
+    pf_sd_media_diagnostics_t diagnostics = { 0 };
+    pf_sd_media_clear_diagnostics_Expect();
+    pf_sd_media_get_diagnostics_ExpectAnyArgs();
+    pf_sd_media_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
 
     pf_storage_command_execute(false, "sd", "diagnostics clear", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));

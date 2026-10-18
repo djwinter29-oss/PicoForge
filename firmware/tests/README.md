@@ -35,9 +35,9 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | Physical SPI, SDIO-PIO and QSPI-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
 | FreeRTOS facade ownership and serialization | [drivers/sd_card](drivers/sd_card), `test_sd_port_freertos_*` |
 | Bare-metal facade and port behavior | [drivers/sd_card](drivers/sd_card), `test_sd_port_baremetal_*` |
-| Storage commands, file self-test, presence, automount and recovery | [app/storage](app/storage) |
+| Media configuration, owner-gated I/O, retained diagnostics, commands, file benchmark, automount and recovery | [app/storage](app/storage) |
 | Logical blocks, SD adaptation, volume lifecycle, and FatFs disk results/geometry/protection | [middleware/storage](middleware/storage) |
-| USB memory reports, self-test admission and MSC callback behavior | [usb](usb) |
+| USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |
 
 The volume lifecycle test is [test_fatfs_volume.c](middleware/storage/test_fatfs_volume.c), matching
 [fatfs_volume.c](../src/middleware/storage/fatfs_volume.c). It binds a caller-supplied block device through
@@ -73,7 +73,7 @@ Common lifecycle tests live in [test_bus.c](drivers/storage/test_bus.c), raw ser
 tests in [test_serial.c](drivers/storage/test_serial.c), and native dispatch tests in
 [test_sd_wire.c](drivers/storage/test_sd_wire.c). Concrete backend tests remain under their corresponding storage
 subdirectories. Cross-layer HID/card-unavailable scenarios are owned by
-[test_hid_sd_responsiveness.c](usb/test_hid_sd_responsiveness.c), matching the HID source module.
+[test_usb_hid_sd_responsiveness.c](app/usb/test_usb_hid_sd_responsiveness.c), matching the HID source module.
 
 Run all C behavior tests with:
 

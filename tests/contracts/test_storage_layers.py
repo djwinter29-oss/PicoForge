@@ -37,11 +37,38 @@ def test_fatfs_volume_does_not_depend_on_the_sd_backend():
 
 def test_file_benchmark_and_application_headers_do_not_expose_sd():
     application = ROOT / "firmware/src/app/storage"
-    sources = [application / "file_benchmark.c", *application.glob("*.h")]
+    sources = [application / "file_benchmark.c", *(
+        source for source in application.glob("*.h") if source.name != "sd_media.h"
+    )]
     for source in sources:
         text = source.read_text()
         assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", text), source
         assert not re.search(r'#include\s*"[^"]*(?:sd_card/|sd_block\.h|sd\.h)', text), source
+
+
+def test_usb_product_behavior_lives_in_the_application():
+    application = ROOT / "firmware/src/app/usb"
+    for module in ("usb_task", "usb_hid", "usb_msc"):
+        for extension in ("c", "h"):
+            assert (application / f"{module}.{extension}").is_file()
+    assert (application / "usb_descriptors.c").is_file()
+    assert (ROOT / "firmware/src/integration/usb/tusb_config.h").is_file()
+    assert not list((ROOT / "firmware/src/usb").glob("*.[ch]"))
+
+
+def test_sd_ownership_policy_stays_above_driver_and_middleware():
+    driver = ROOT / "firmware/src/drivers/sd_card"
+    for source in (driver / "sd.c", driver / "sd.h", driver / "sd_block.h"):
+        text = source.read_text()
+        assert not re.search(r"\b(?:active_owner|reinit_after_usb_owner|pf_sd_media_\w+|PF_SD_OWNER_\w+)\b", text), source
+        assert not re.search(r'#include\s*"[^"]*(?:app/|middleware/)', text), source
+    assert not (driver / "sd_msc.h").exists()
+    for source in (ROOT / "firmware/src/app").rglob("*.c"):
+        if source.name == "sd_media.c":
+            continue
+        assert not re.search(r"\bpf_sd_(?:init|read_blocks|write_blocks|sync)\s*\(", source.read_text()), source
+    for source in (ROOT / "firmware/src/middleware/storage").glob("*.[ch]"):
+        assert not re.search(r'#include\s*"[^"]*app/', source.read_text()), source
 
 
 def test_physical_engines_do_not_include_device_or_filesystem_headers():

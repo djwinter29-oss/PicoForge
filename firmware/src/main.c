@@ -4,7 +4,7 @@
 #include "board/board.h"
 #include "drivers/temperature.h"
 #include "middleware/logging/logging.h"
-#include "usb/usb_task.h"
+#include "app/usb/usb_task.h"
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 {

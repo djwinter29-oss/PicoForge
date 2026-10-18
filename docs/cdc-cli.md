@@ -174,7 +174,7 @@ dependency. Its output callback and input/process API are documented in
 come from the upstream framework. Callbacks execute in the USB task, so keep
 them bounded and non-blocking; do not run long operations there.
 
-[The USB task](../firmware/src/usb/task.c) is the sole owner of CDC and the CLI.
+[The USB task](../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI.
 The CLI uses a 4 KiB aligned static arena, 64-byte RX buffer, 128-byte command
 buffer, 256-byte history buffer, and eight application-binding slots. The CDC
 adapter has a 2 KiB output ring. It processes at most 32 received characters

@@ -1,5 +1,5 @@
 /** @file
- * @brief Adapt the serialized SD facade without bypassing its ownership checks.
+ * @brief Adapt raw serialized SD sectors; application access must use the sd_media owner-gated descriptor.
  */
 #include "sd_block_device.h"
 #include "sd_block.h"
@@ -17,7 +17,7 @@ static pf_block_result_t sd_result_to_block(pf_sd_result_t result)
     }
 }
 
-/** @brief Snapshot metadata under the facade reservation; owner-gated I/O remains separate. */
+/** @brief Snapshot raw metadata under the driver reservation; no application ownership is implied. */
 static pf_block_result_t geometry(void *context, pf_block_geometry_t *geometry)
 {
     (void)context;

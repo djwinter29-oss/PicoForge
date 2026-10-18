@@ -12,9 +12,7 @@ typedef struct pf_sd_config {
 
 /** @brief Initialize the build-selected backend; the first accepted configuration remains locked. */
 pf_sd_result_t pf_sd_init(const pf_sd_config_t *config);
-/** @brief Return the current firmware or USB MSC owner. */
-pf_sd_owner_t pf_sd_get_owner(void);
-/** @brief Consume the reinitialization request left by USB MSC release. */
-bool pf_sd_take_reinit_request(void);
+/** @brief Query the selected driver initialization stage for diagnostics. */
+uint32_t pf_sd_get_init_stage(void);
 
 #endif

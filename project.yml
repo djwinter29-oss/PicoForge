@@ -86,27 +86,29 @@
         - -DPF_STORAGE_BACKEND_NOR=1
       :test_fatfs_volume:
         - -std=c11
-      :test_hid_sd_responsiveness:
+      :test_usb_hid_sd_responsiveness:
         - -DPF_FIRMWARE_VERSION_MAJOR=1u
         - -DPF_FIRMWARE_VERSION_MINOR=2u
         - -DPF_FIRMWARE_VERSION_PATCH=3u
         - -ffunction-sections
         - -fdata-sections
-      :test_hid_nor:
+      :test_usb_hid_nor:
         - -DPF_STORAGE_BACKEND_NOR=1
         - -DPF_FIRMWARE_VERSION_MAJOR=0u
         - -DPF_FIRMWARE_VERSION_MINOR=0u
         - -DPF_FIRMWARE_VERSION_PATCH=0u
         - -ffunction-sections
         - -fdata-sections
-      :test_msc_batch:
+      :test_usb_msc_batch:
         - -D_XOPEN_SOURCE=700
         - -pthread
-      :test_msc_nor:
+        - -ffunction-sections
+        - -fdata-sections
+      :test_usb_msc_nor:
         - -DPF_STORAGE_BACKEND_NOR=1
-      :test_msc_batch_sdio:
+      :test_usb_msc_batch_sdio:
         - -DPF_CONFIG_SD_CARD_TRANSPORT=0
-      :test_msc_batch_spi:
+      :test_usb_msc_batch_spi:
         - -DPF_CONFIG_SD_CARD_TRANSPORT=1
     :link:
       :test_nor_media:
@@ -119,12 +121,13 @@
         - -Wl,--gc-sections
       :test_storage_worker_nor:
         - -Wl,--gc-sections
-      :test_hid_sd_responsiveness:
+      :test_usb_hid_sd_responsiveness:
         - -Wl,--gc-sections
-      :test_hid_nor:
+      :test_usb_hid_nor:
         - -Wl,--gc-sections
-      :test_msc_callbacks:
+      :test_usb_msc_callbacks:
         - -Wl,--wrap=mscd_reset
         - -Wl,--wrap=mscd_control_xfer_cb
-      :test_msc_batch:
+      :test_usb_msc_batch:
         - -pthread
+        - -Wl,--gc-sections

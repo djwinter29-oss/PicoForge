@@ -31,7 +31,7 @@ static inline pf_block_result_t pf_msc_storage_write(uint32_t first, const void 
 }
 #else
 #include "drivers/sd_card/sd_block.h"
-#include "drivers/sd_card/sd_msc.h"
+#include "app/storage/sd_media.h"
 
 /** @brief Translate SD diagnostics without depending on result-enum numeric equivalence. */
 static inline pf_block_result_t pf_msc_storage_result(pf_sd_result_t result)
@@ -49,20 +49,20 @@ static inline bool pf_msc_storage_try_lock(void) { return pf_sd_try_lock(); }
 static inline void pf_msc_storage_unlock(void) { pf_sd_unlock(); }
 static inline bool pf_msc_storage_ready(void) { return pf_sd_is_initialized(); }
 static inline uint32_t pf_msc_storage_count(void) { return pf_sd_block_count(); }
-static inline pf_block_result_t pf_msc_storage_acquire(void) { return pf_msc_storage_result(pf_sd_msc_acquire()); }
-static inline pf_block_result_t pf_msc_storage_release(void) { return pf_msc_storage_result(pf_sd_msc_release()); }
+static inline pf_block_result_t pf_msc_storage_acquire(void) { return pf_msc_storage_result(pf_sd_media_acquire_usb()); }
+static inline pf_block_result_t pf_msc_storage_release(void) { return pf_msc_storage_result(pf_sd_media_release_usb()); }
 static inline pf_block_result_t pf_msc_storage_release_for_recovery(void)
 {
-    return pf_msc_storage_result(pf_sd_msc_release());
+    return pf_msc_storage_result(pf_sd_media_release_usb_for_recovery());
 }
-static inline pf_block_result_t pf_msc_storage_sync(void) { return pf_msc_storage_result(pf_sd_msc_sync()); }
+static inline pf_block_result_t pf_msc_storage_sync(void) { return pf_msc_storage_result(pf_sd_media_usb_sync()); }
 static inline pf_block_result_t pf_msc_storage_read(uint32_t first, void *buffer, uint32_t count)
 {
-    return pf_msc_storage_result(pf_sd_msc_read_blocks(first, buffer, count));
+    return pf_msc_storage_result(pf_sd_media_usb_read_blocks(first, buffer, count));
 }
 static inline pf_block_result_t pf_msc_storage_write(uint32_t first, const void *buffer, uint32_t count)
 {
-    return pf_msc_storage_result(pf_sd_msc_write_blocks(first, buffer, count));
+    return pf_msc_storage_result(pf_sd_media_usb_write_blocks(first, buffer, count));
 }
 #endif
 

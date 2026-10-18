@@ -4,7 +4,6 @@
 #include "sd_block.h"
 
 static bool ready;
-static pf_sd_owner_t owner;
 static unsigned depth, calls;
 static pf_sd_result_t result;
 static const void *last_buffer;
@@ -20,7 +19,7 @@ pf_sd_result_t pf_sd_read_blocks(uint32_t first, void *buffer, uint32_t count)
     last_first = first;
     last_count = count;
     last_buffer = buffer;
-    return owner == PF_SD_OWNER_FIRMWARE ? result : PF_SD_NOT_READY;
+    return result;
 }
 pf_sd_result_t pf_sd_write_blocks(uint32_t first, const void *buffer, uint32_t count)
 {
@@ -28,20 +27,19 @@ pf_sd_result_t pf_sd_write_blocks(uint32_t first, const void *buffer, uint32_t c
     last_first = first;
     last_count = count;
     last_buffer = buffer;
-    return owner == PF_SD_OWNER_FIRMWARE ? result : PF_SD_NOT_READY;
+    return result;
 }
-pf_sd_result_t pf_sd_sync(void) { ++calls; return owner == PF_SD_OWNER_FIRMWARE ? result : PF_SD_NOT_READY; }
+pf_sd_result_t pf_sd_sync(void) { ++calls; return result; }
 
 void setUp(void)
 {
     ready = true;
-    owner = PF_SD_OWNER_FIRMWARE;
     depth = calls = 0u;
     result = PF_SD_OK;
 }
 void tearDown(void) { TEST_ASSERT_EQUAL_UINT(0u, depth); }
 
-void test_sd_device_snapshots_geometry_under_existing_reservation_and_preserves_owner_checks(void)
+void test_sd_device_snapshots_geometry_under_existing_reservation_and_propagates_readiness(void)
 {
     pf_block_geometry_t geometry;
     const pf_block_device_t *device = pf_sd_block_device();
@@ -50,14 +48,13 @@ void test_sd_device_snapshots_geometry_under_existing_reservation_and_preserves_
     TEST_ASSERT_EQUAL_UINT(512u, geometry.sector_size);
     TEST_ASSERT_EQUAL_UINT(1u, geometry.erase_sector_count);
     TEST_ASSERT_FALSE(geometry.write_protected);
-    owner = PF_SD_OWNER_USB_MSC;
+    result = PF_SD_NOT_READY;
     TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_block_geometry(device, &geometry));
     uint8_t buffer[512];
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_block_read(device, 0u, buffer, 1u));
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_block_write(device, 0u, buffer, 1u));
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_block_sync(device));
     TEST_ASSERT_EQUAL_UINT(3u, calls);
-    owner = PF_SD_OWNER_FIRMWARE;
     ready = false;
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_block_geometry(device, &geometry));
 }

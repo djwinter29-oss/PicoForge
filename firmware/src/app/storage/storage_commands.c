@@ -4,9 +4,7 @@
 #if PF_STORAGE_BACKEND_NOR
 #include "nor_media.h"
 #else
-#include "board/board.h"
-#include "drivers/sd_card/sd.h"
-#include "middleware/storage/sd_block_device.h"
+#include "sd_media.h"
 #endif
 #include "embedded_cli.h"
 
@@ -220,7 +218,7 @@ static void diagnostics_command(const char *action, bool host_owned,
             (void)reply("Clearing diagnostics requires firmware card ownership.", context);
             return;
         }
-        pf_sd_clear_diagnostics();
+        pf_sd_media_clear_diagnostics();
     }
 
     static const char *const operation_names[] = {
@@ -230,8 +228,8 @@ static void diagnostics_command(const char *action, bool host_owned,
         "ok", "invalid_argument", "config_locked", "not_configured",
         "init_failed", "not_ready", "io_error"
     };
-    pf_sd_diagnostics_t diagnostics;
-    pf_sd_get_diagnostics(&diagnostics);
+    pf_sd_media_diagnostics_t diagnostics;
+    pf_sd_media_get_diagnostics(&diagnostics);
     unsigned operation = (unsigned)diagnostics.operation;
     unsigned result = (unsigned)diagnostics.result;
     char line[PF_STORAGE_REPLY_SIZE];
@@ -243,7 +241,7 @@ static void diagnostics_command(const char *action, bool host_owned,
             ? operation_names[operation] : "unknown",
         result < sizeof(result_names) / sizeof(result_names[0])
             ? result_names[result] : "unknown",
-        diagnostics.owner == PF_SD_OWNER_USB_MSC ? "USB" : "Pico",
+        diagnostics.owner == PF_SD_MEDIA_OWNER_USB_MSC ? "USB" : "Pico",
         diagnostics.transport == PF_SD_TRANSPORT_SPI ? "spi" : "sdio",
         (unsigned long)diagnostics.transport_init_stage);
     if (!reply(line, context)) {
@@ -451,12 +449,11 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
         }
         const pf_block_device_t *device = pf_nor_media_firmware_device();
 #else
-        pf_sd_config_t config;
-        if (!pf_board_get_sd_card_config(&config) || pf_sd_init(&config) != PF_SD_OK) {
+        if (pf_sd_media_initialize() != PF_SD_OK) {
             (void)reply("Mount failed: SD initialization or board configuration unavailable.", context);
             return;
         }
-        const pf_block_device_t *device = pf_sd_block_device();
+        const pf_block_device_t *device = pf_sd_media_firmware_device();
 #endif
         FRESULT result;
         pf_fatfs_volume_result_t storage_result = pf_fatfs_volume_mount(device, &result);

@@ -1,13 +1,15 @@
 #include "unity.h"
 #include <string.h>
-#include "drivers/sd_card/sd_msc.h"
+#include "app/storage/sd_media.h"
 #include "drivers/sd_card/sd_port.h"
 #include "drivers/sd_card/sd_native.h"
 #define WORKER_SOURCE "../../../src/app/storage/storage_worker.c"
 #define FACADE_SOURCE "../../../src/drivers/sd_card/sd.c"
-#define MSC_SOURCE "../../../src/usb/msc.c"
+#define MSC_SOURCE "../../../src/app/usb/usb_msc.c"
 #include WORKER_SOURCE
 #include FACADE_SOURCE
+#define MEDIA_SOURCE "../../../src/app/storage/sd_media.c"
+#include MEDIA_SOURCE
 #include MSC_SOURCE
 
 static unsigned reservation_depth, try_lock_calls;
@@ -46,10 +48,26 @@ pf_sd_result_t pf_sd_native_sync(void)
     ++sync_calls;
     return media.initialized && sync_ok ? PF_SD_OK : PF_SD_NOT_READY;
 }
+pf_sd_result_t pf_sd_native_read_blocks(uint32_t first, void *buffer, uint32_t count)
+{
+    (void)first;
+    (void)buffer;
+    (void)count;
+    TEST_FAIL_MESSAGE("Automount must not read raw sectors through the descriptor fake");
+    return PF_SD_IO_ERROR;
+}
+pf_sd_result_t pf_sd_native_write_blocks(uint32_t first, const void *buffer, uint32_t count)
+{
+    (void)first;
+    (void)buffer;
+    (void)count;
+    TEST_FAIL_MESSAGE("Automount must not write raw sectors through the descriptor fake");
+    return PF_SD_IO_ERROR;
+}
 pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
 {
-    TEST_ASSERT_EQUAL_PTR(&card_config, config);
-    TEST_ASSERT_EQUAL(PF_SD_OWNER_FIRMWARE, active_owner);
+    TEST_ASSERT_EQUAL_PTR(&media_config, config);
+    TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE, active_owner);
     TEST_ASSERT_NOT_EQUAL(0, reservation_depth);
     if (auto_mount_blocked) {
         TEST_ASSERT_NOT_EQUAL(0, disconnects);
@@ -75,7 +93,7 @@ static const pf_block_device_t block_device = {0};
 const pf_block_device_t *pf_sd_block_device(void) { return &block_device; }
 pf_fatfs_volume_result_t pf_fatfs_volume_mount(const pf_block_device_t *device, FRESULT *result)
 {
-    TEST_ASSERT_EQUAL_PTR(&block_device, device);
+    TEST_ASSERT_EQUAL_PTR(pf_sd_media_firmware_device(), device);
     TEST_ASSERT_TRUE(media.initialized);
     if (result != NULL) {
         *result = mount_result == PF_FATFS_VOLUME_OK ? FR_OK : FR_NO_FILESYSTEM;

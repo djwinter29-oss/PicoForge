@@ -1,14 +1,15 @@
 #include "unity.h"
 #include "Mocklogging.h"
+#include "block_device.h"
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
 #include "../../support/storage/automount_fixture.inc"
 
 void setUp(void)
 {
     pf_log_write_Ignore();
-    config_available = transport_selected = true;
+    config_available = configured = transport_selected = true;
     requests = (void *)1;
-    card_config.transport.mode = PF_STORAGE_BUS_NATIVE_SD;
+    media_config.transport.mode = PF_STORAGE_BUS_NATIVE_SD;
 }
 void tearDown(void) { TEST_ASSERT_EQUAL_UINT(0, reservation_depth); }
 
@@ -68,7 +69,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
 
     mounted = false;
     reinit_after_usb_owner = true;
-    active_owner = PF_SD_OWNER_USB_MSC;
+    active_owner = PF_SD_MEDIA_OWNER_USB_MSC;
     poll(60);
     TEST_ASSERT_TRUE(mount_calls == 4 && reinit_after_usb_owner);
     media.present = false;
@@ -79,7 +80,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     media.present = true;
     poll(3);
     TEST_ASSERT_TRUE(mount_calls == 4 && !media.initialized);
-    active_owner = PF_SD_OWNER_FIRMWARE;
+    active_owner = PF_SD_MEDIA_OWNER_FIRMWARE;
     busy = true;
     poll(3);
     TEST_ASSERT_TRUE(mount_calls == 4 && reinit_after_usb_owner);
@@ -118,13 +119,13 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     mounted = false;
     pf_usb_msc_request(true);
     pf_usb_msc_task();
-    TEST_ASSERT_TRUE(msc_enabled && active_owner == PF_SD_OWNER_USB_MSC);
+    TEST_ASSERT_TRUE(msc_enabled && active_owner == PF_SD_MEDIA_OWNER_USB_MSC);
     poll(3);
     TEST_ASSERT_TRUE(!mounted && !auto_mount_pending);
     TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0, 0, false, true));
     pf_usb_msc_request(false);
     pf_usb_msc_task();
-    TEST_ASSERT_TRUE(!msc_enabled && active_owner == PF_SD_OWNER_FIRMWARE &&
+    TEST_ASSERT_TRUE(!msc_enabled && active_owner == PF_SD_MEDIA_OWNER_FIRMWARE &&
                      reinit_after_usb_owner);
     busy = true;
     poll(1);
@@ -152,7 +153,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     mounted = false;
     pf_usb_msc_request(true);
     pf_usb_msc_task();
-    TEST_ASSERT_TRUE(msc_enabled && active_owner == PF_SD_OWNER_USB_MSC && !msc_ejected);
+    TEST_ASSERT_TRUE(msc_enabled && active_owner == PF_SD_MEDIA_OWNER_USB_MSC && !msc_ejected);
     pf_usb_msc_request(false);
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(request_rejected && msc_enabled);
@@ -183,7 +184,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0, 0, 0));
     pf_usb_msc_request(false);
     pf_usb_msc_task();
-    TEST_ASSERT_TRUE(!msc_enabled && active_owner == PF_SD_OWNER_FIRMWARE &&
+    TEST_ASSERT_TRUE(!msc_enabled && active_owner == PF_SD_MEDIA_OWNER_FIRMWARE &&
                      reinit_after_usb_owner);
     TEST_ASSERT_EQUAL_UINT(old_syncs, sync_calls);
     previous_mounts = mount_calls;
@@ -197,7 +198,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     mounted = false;
     pf_usb_msc_request(true);
     pf_usb_msc_task();
-    TEST_ASSERT_TRUE(msc_enabled && active_owner == PF_SD_OWNER_USB_MSC);
+    TEST_ASSERT_TRUE(msc_enabled && active_owner == PF_SD_MEDIA_OWNER_USB_MSC);
     unsigned before_disconnects = disconnects;
     pf_usb_msc_request_recovery();
     pf_usb_msc_task();
@@ -235,7 +236,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     pf_usb_msc_request_recovery();
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(!msc_enabled && !request_rejected && queued_recovery && busy);
-    TEST_ASSERT_TRUE(active_owner == PF_SD_OWNER_FIRMWARE &&
+    TEST_ASSERT_TRUE(active_owner == PF_SD_MEDIA_OWNER_FIRMWARE &&
                      disconnects == before_disconnects + 1u);
     TEST_ASSERT_EQUAL_UINT(before_syncs, sync_calls);
     queued_recovery = false;

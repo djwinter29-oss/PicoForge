@@ -279,7 +279,7 @@ Filesystem, MSC and file-self-test reports remain available. No new NOR identity
 
 ```sh
 ceedling test:test_levelx_block_device test:test_nor_media test:test_storage_worker_nor test:test_storage_commands_nor
-ceedling test:test_msc_nor test:test_levelx_nor
+ceedling test:test_usb_msc_nor test:test_levelx_nor
 python3 -m pytest -q tests/contracts/test_storage_backend.py
 ```
 

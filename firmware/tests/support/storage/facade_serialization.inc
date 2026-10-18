@@ -8,7 +8,16 @@
 #define FACADE_SOURCE "../../../src/drivers/sd_card/sd.c"
 #define PORT_SOURCE "../../../src/drivers/sd_card/sd_port_freertos.c"
 #include FACADE_SOURCE
+#define MEDIA_SOURCE "../../../src/app/storage/sd_media.c"
+#include MEDIA_SOURCE
 #include PORT_SOURCE
+bool pf_fatfs_volume_is_mounted(void) { return false; }
+static pf_sd_result_t initialize_media(const pf_sd_config_t *config)
+{
+    configured = true;
+    media_config = *config;
+    return pf_sd_media_initialize();
+}
 
 pthread_mutex_t creation_lock = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool entered, release_io, contender_started, contender_done;
@@ -51,21 +60,21 @@ void pf_sd_native_confirm_card_removed(void) { initialized = false; }
 void pf_sd_get_profile(pf_sd_profile_t *profile)
 { *profile = (pf_sd_profile_t){0}; }
 
-static pf_sd_result_t set_owner(pf_sd_owner_t owner)
+static pf_sd_result_t set_owner(pf_sd_media_owner_t owner)
 {
-    return owner == PF_SD_OWNER_USB_MSC
-        ? pf_sd_msc_acquire() : pf_sd_msc_release();
+    return owner == PF_SD_MEDIA_OWNER_USB_MSC
+        ? pf_sd_media_acquire_usb() : pf_sd_media_release_usb();
 }
 static pf_sd_result_t call_operation(unsigned op, bool msc)
 {
     expected_operation = op;
-    if (op == 0) return msc ? pf_sd_msc_read_blocks(expected_block,
-        (void *)expected_buffer, expected_count) : pf_sd_read_blocks(expected_block,
+    if (op == 0) return msc ? pf_sd_media_usb_read_blocks(expected_block,
+        (void *)expected_buffer, expected_count) : pf_sd_media_read_blocks(expected_block,
         (void *)expected_buffer, expected_count);
-    if (op == 1) return msc ? pf_sd_msc_write_blocks(expected_block,
-        expected_buffer, expected_count) : pf_sd_write_blocks(expected_block,
+    if (op == 1) return msc ? pf_sd_media_usb_write_blocks(expected_block,
+        expected_buffer, expected_count) : pf_sd_media_write_blocks(expected_block,
         expected_buffer, expected_count);
-    return msc ? pf_sd_msc_sync() : pf_sd_sync();
+    return msc ? pf_sd_media_usb_sync() : pf_sd_media_sync();
 }
 static void check_contracts(void)
 {
@@ -81,20 +90,20 @@ static void check_contracts(void)
     TEST_ASSERT_EQUAL_UINT(0, backend_calls);
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_init(NULL));
     pf_sd_config_t config = { .transport.mode = OTHER_TRANSPORT };
-    TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_init(&config));
+    TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, initialize_media(&config));
     config.transport.mode = TEST_TRANSPORT;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_init(&config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, initialize_media(&config));
     initialized = false;
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_msc_acquire());
-    pf_sd_diagnostics_t diagnostics;
-    pf_sd_get_diagnostics(&diagnostics);
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_media_acquire_usb());
+    pf_sd_media_diagnostics_t diagnostics;
+    pf_sd_media_get_diagnostics(&diagnostics);
     TEST_ASSERT_NOT_EQUAL(0, diagnostics.sequence);
-    TEST_ASSERT_EQUAL(PF_SD_OPERATION_MSC_ACQUIRE, diagnostics.operation);
+    TEST_ASSERT_EQUAL(PF_SD_MEDIA_OPERATION_MSC_ACQUIRE, diagnostics.operation);
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, diagnostics.result);
     TEST_ASSERT_EQUAL_UINT32(99, diagnostics.transport_init_stage);
     for (unsigned owner = 0; owner < 2; ++owner) {
         initialized = true;
-        TEST_ASSERT_EQUAL(PF_SD_OK, set_owner((pf_sd_owner_t)owner));
+        TEST_ASSERT_EQUAL(PF_SD_OK, set_owner((pf_sd_media_owner_t)owner));
         for (unsigned op = 0; op < 3; ++op) {
             for (unsigned result = PF_SD_OK; result <= PF_SD_IO_ERROR; ++result) {
                 initialized = result != PF_SD_NOT_READY;
@@ -115,7 +124,7 @@ static void check_contracts(void)
     backend_result = PF_SD_OK;
     for (unsigned owner = 0; owner < 2; ++owner) {
         initialized = true;
-        TEST_ASSERT_EQUAL(PF_SD_OK, set_owner((pf_sd_owner_t)owner));
+        TEST_ASSERT_EQUAL(PF_SD_OK, set_owner((pf_sd_media_owner_t)owner));
         expected_block = 7;
         expected_count = 2;
         expected_buffer = data;
@@ -125,11 +134,11 @@ static void check_contracts(void)
             TEST_ASSERT_EQUAL_UINT(before + 1, backend_calls);
         }
     }
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_msc_release());
-    pf_sd_clear_diagnostics();
-    pf_sd_get_diagnostics(&diagnostics);
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_release_usb());
+    pf_sd_media_clear_diagnostics();
+    pf_sd_media_get_diagnostics(&diagnostics);
     TEST_ASSERT_NOT_EQUAL(0, diagnostics.sequence);
-    TEST_ASSERT_EQUAL(PF_SD_OPERATION_NONE, diagnostics.operation);
+    TEST_ASSERT_EQUAL(PF_SD_MEDIA_OPERATION_NONE, diagnostics.operation);
     contract_test = false;
 }
 
@@ -138,8 +147,8 @@ static void *io(void *unused)
 {
     (void)unused;
     uint8_t data[512] = {0};
-    pf_sd_result_t result = operation == 0 ? pf_sd_msc_read_blocks(0, data, 1) :
-        operation == 1 ? pf_sd_msc_write_blocks(0, data, 1) : pf_sd_msc_sync();
+    pf_sd_result_t result = operation == 0 ? pf_sd_media_usb_read_blocks(0, data, 1) :
+        operation == 1 ? pf_sd_media_usb_write_blocks(0, data, 1) : pf_sd_media_usb_sync();
     assert(result == PF_SD_OK);
     return NULL;
 }
@@ -150,7 +159,7 @@ static void *other(void *unused)
     assert(!pf_sd_try_lock());
     if (contender == 0) pf_sd_confirm_removed();
     else if (contender == 1) { pf_sd_info_t info; pf_sd_get_info(&info); }
-    else assert(pf_sd_msc_release() == PF_SD_OK);
+    else assert(pf_sd_media_release_usb() == PF_SD_OK);
     atomic_store(&contender_done, true);
     return NULL;
 }
@@ -159,9 +168,9 @@ static void check_serialization(void)
     for (operation = 0; operation < 3; ++operation) {
         for (contender = 0; contender < 3; ++contender) {
             pf_sd_config_t config = { .transport.mode = TEST_TRANSPORT };
-            TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_msc_release());
-            TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_init(&config));
-            TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_msc_acquire());
+            TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_release_usb());
+            TEST_ASSERT_EQUAL(PF_SD_OK, initialize_media(&config));
+            TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_acquire_usb());
             entered = release_io = contender_started = contender_done = false;
             pthread_t a, b;
             TEST_ASSERT_EQUAL_INT(0, pthread_create(&a, NULL, io, NULL));
