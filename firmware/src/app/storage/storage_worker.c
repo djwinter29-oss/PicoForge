@@ -5,7 +5,7 @@
 #include "task.h"
 #include "queue.h"
 #include "drivers/system.h"
-#include "middleware/storage/fatfs_volume.h"
+#include "app/storage/fatfs_volume.h"
 #include "middleware/logging/logging.h"
 #if PF_STORAGE_BACKEND_NOR
 #include "nor_media.h"

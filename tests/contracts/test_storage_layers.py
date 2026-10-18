@@ -13,26 +13,43 @@ STORAGE = ROOT / "firmware/src/drivers/storage"
 def test_storage_application_policy_stays_out_of_middleware():
     middleware = ROOT / "firmware/src/middleware/storage"
     application = ROOT / "firmware/src/app/storage"
-    for module in ("storage_commands", "file_benchmark", "storage_worker"):
+    for module in ("storage_commands", "file_benchmark", "storage_worker", "fatfs_volume"):
         for extension in ("c", "h"):
             assert (application / f"{module}.{extension}").is_file()
             assert not (middleware / f"{module}.{extension}").exists()
     for source in sorted(middleware.glob("*.c")) + sorted(middleware.glob("*.h")):
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
         assert not any(header.startswith("app/") or Path(header).name in (
-            "storage_commands.h", "file_benchmark.h", "storage_worker.h"
+            "storage_commands.h", "file_benchmark.h", "storage_worker.h", "fatfs_volume.h", "cli.h"
         ) for header in headers), source
 
 
 def test_fatfs_volume_does_not_depend_on_the_sd_backend():
-    middleware = ROOT / "firmware/src/middleware/storage"
+    application = ROOT / "firmware/src/app/storage"
     for extension in ("c", "h"):
-        source = middleware / f"fatfs_volume.{extension}"
+        source = application / f"fatfs_volume.{extension}"
         assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", source.read_text()), source
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
         assert not any("sd_card/" in header or Path(header).name in (
             "sd.h", "sd_block.h", "sd_block_device.h"
         ) for header in headers), source
+
+
+def test_product_cli_is_application_owned_and_logging_does_not_select_uart():
+    for extension in ("c", "h"):
+        assert (ROOT / f"firmware/src/app/cli/cli.{extension}").is_file()
+        assert not (ROOT / f"firmware/src/middleware/cli/cli.{extension}").exists()
+    for source in (ROOT / "firmware/src/middleware").rglob("*.[ch]"):
+        text = source.read_text()
+        headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', text, re.MULTILINE)
+        assert not any(header.startswith("app/") or Path(header).name in (
+            "cli.h", "fatfs_volume.h"
+        ) for header in headers), source
+    logging = (ROOT / "firmware/src/middleware/logging/logging.c").read_text()
+    assert "stdio_filter_driver" not in logging
+    assert "stdio_uart" not in logging
+    board = (ROOT / "firmware/src/board/board.c").read_text()
+    assert board.index("stdio_uart_init_full(") < board.index("stdio_filter_driver(&stdio_uart)")
 
 
 def test_file_benchmark_and_application_headers_do_not_expose_sd():

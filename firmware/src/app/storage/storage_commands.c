@@ -1,6 +1,6 @@
 /** @file Application SD/filesystem command execution and replies. */
 #include "storage_commands.h"
-#include "middleware/storage/fatfs_volume.h"
+#include "app/storage/fatfs_volume.h"
 #if PF_STORAGE_BACKEND_NOR
 #include "nor_media.h"
 #else

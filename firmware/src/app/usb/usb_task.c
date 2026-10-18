@@ -6,7 +6,7 @@
 #include "usb_hid.h"
 #include "usb_msc.h"
 #include "usb_task.h"
-#include "middleware/cli/cli.h"
+#include "app/cli/cli.h"
 #include "app/storage/storage_worker.h"
 
 #include <string.h>

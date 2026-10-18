@@ -1,3 +1,6 @@
+/** @file
+ * @brief Application CLI session interface over Embedded CLI.
+ */
 #ifndef PF_CLI_H
 #define PF_CLI_H
 

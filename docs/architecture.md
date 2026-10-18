@@ -4,7 +4,7 @@
 
 ## Current Firmware
 
-`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `pf_hello_world` for the selected `PICO_BOARD`. The TinyUSB configuration lives under `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID interface. Board topology assigns and initializes the monitor UART before the logger selects it for output; USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides serialized severity-tagged lines. The USB task services the [CDC CLI](cdc-cli.md) and publishes a versioned HID status report every 250 ms. HID Feature report 1 carries stable product, MCU, and USB serial identity; Input report 2 carries dynamic uptime, system clock, USB/CDC state, internal temperature, and LED state; Feature report 4 accepts LED set-state commands. Hosts read identity once per connection and receive changing values through the periodic input report. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4. The onboard LED uses the selected SDK board's `PICO_DEFAULT_LED_PIN` (GPIO 25 for the current `pico` and `pico2` targets). Simple system, temperature, and LED drivers live flat under `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines in `drivers/storage/`. The shared protocol is documented in [usb-protocol.md](usb-protocol.md). The development VID/PID is `0xCAFE:0x4011` and is not for product release. `firmware/src/main.c` initializes board UART and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature, and LED behavior still require board validation.
+`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `pf_hello_world` for the selected `PICO_BOARD`. The TinyUSB configuration lives under `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger; USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides serialized severity-tagged lines. The USB task services the [CDC CLI](cdc-cli.md) and publishes a versioned HID status report every 250 ms. HID Feature report 1 carries stable product, MCU, and USB serial identity; Input report 2 carries dynamic uptime, system clock, USB/CDC state, internal temperature, and LED state; Feature report 4 accepts LED set-state commands. Hosts read identity once per connection and receive changing values through the periodic input report. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4. The onboard LED uses the selected SDK board's `PICO_DEFAULT_LED_PIN` (GPIO 25 for the current `pico` and `pico2` targets). Simple system, temperature, and LED drivers live flat under `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines in `drivers/storage/`. The shared protocol is documented in [usb-protocol.md](usb-protocol.md). The development VID/PID is `0xCAFE:0x4011` and is not for product release. `firmware/src/main.c` initializes board UART and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature, and LED behavior still require board validation.
 
 Input Report 3 publishes SD-card detection/initialization state, selected bus mode, effective bus speed, CSD-derived capacity, and CID identity every second. Input Report 5 reports MSC ownership transitions, while Feature Report 5 requests enable/disable. In MSC mode the USB descriptor appends MSC after CDC and HID, preserving the PID and HID interface number; see [usb-protocol.md](usb-protocol.md). The owner gate rejects firmware block calls while the host owns the card. Enabling is rejected if FatFs is mounted or CLI storage work is pending; disabling is rejected until storage work is complete and the host ejects and allows removal. The Python, .NET, and WebHID dashboards expose the toggle and decode both reports.
 
@@ -84,9 +84,10 @@ Own board support, configuration, logging, version metadata, and integration wit
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The SD memory-card protocols are implemented in `firmware/src/drivers/sd_card/`; their reusable SPI and PIO engines live in `firmware/src/drivers/storage/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/` and compiled into the firmware.
 Its upstream disk interface and configuration live under `firmware/src/integration/fatfs/`; project-owned disk
-adaptation and volume lifecycle live under `firmware/src/middleware/storage/`.
+adaptation lives under `firmware/src/middleware/storage/`, while the singleton volume lifecycle lives in
+`firmware/src/app/storage/`.
 
-Embedded CLI is also pinned as a Git submodule. Its middleware is independent
+Embedded CLI is also pinned as a Git submodule. Its application session module is independent
 of the USB transport and RTOS; see [CDC CLI](cdc-cli.md) for the dependency pin,
 session lifecycle, command-extension rules, memory budget, and validation plan.
 
@@ -98,7 +99,8 @@ operations require caller serialization because FatFs is configured without cros
 [filesystem block-device boundary](sdcard-design.md#filesystem-block-device-boundary) for authoritative layering,
 binding lifetimes, and ownership contracts.
 
-Application storage policy stays in `app/storage`: `storage_commands.c/.h` executes CDC storage commands,
+Application storage policy stays in `app/storage`: `fatfs_volume.c/.h` owns the singleton FatFs instance,
+mount registration and format telemetry; `storage_commands.c/.h` executes CDC storage commands,
 `file_benchmark.c/.h` verifies and times a dedicated file, `storage_worker.c/.h` serializes requests and owns
 automount/recovery policy, and `sd_media.c/.h` and `nor_media.c/.h` own their respective application lifecycle and
 firmware/USB ownership. SD driver dispatch, protocol, telemetry and execution-port locks remain below the application;
@@ -116,6 +118,11 @@ scheduling; `usb_hid.c/.h` owns the product HID protocol; `usb_msc.c/.h` owns SC
 coordination; `msc_storage.h` selects the application media service. `usb_descriptors.c` defines product interfaces.
 TinyUSB configuration remains under `integration/usb`; the pinned TinyUSB stack supplies reusable USB machinery.
 No extra middleware forwarding layer or runtime backend registry is introduced.
+
+The product CLI instance, prompt, built-in commands and buffer/history settings live in `app/cli`, using Embedded
+CLI directly. USB owns CDC transport and connection sessions. Middleware storage retains only logical block dispatch,
+device adapters and FatFs disk callbacks; middleware logging retains formatting and severity filtering, with stdio
+output selection performed by board startup. Neither middleware service depends on application headers.
 
 ### Storage Handoff Invariants
 

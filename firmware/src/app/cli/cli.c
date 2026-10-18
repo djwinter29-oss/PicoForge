@@ -1,3 +1,6 @@
+/** @file
+ * @brief Product CLI instance, prompt, built-in commands and static configuration.
+ */
 #include "cli.h"
 
 #include "embedded_cli.h"
@@ -6,10 +9,10 @@
 
 #define CLI_STORAGE_SIZE 4096u
 
-static CLI_UINT cli_storage[BYTES_TO_CLI_UINTS(CLI_STORAGE_SIZE)];
-static EmbeddedCli *cli;
-static pf_cli_write_char_t output;
-static void *output_context;
+static CLI_UINT cli_storage[BYTES_TO_CLI_UINTS(CLI_STORAGE_SIZE)]; /**< Application-lifetime CLI allocation. */
+static EmbeddedCli *cli; /**< Active singleton using cli_storage. */
+static pf_cli_write_char_t output; /**< Borrowed synchronous session output callback. */
+static void *output_context; /**< Borrowed callback context, valid for the session. */
 
 static void write_character(EmbeddedCli *instance, char character)
 {

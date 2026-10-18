@@ -7,7 +7,7 @@
 
 #include "board/board.h"
 #include "drivers/sd_card/sd_port.h"
-#include "middleware/storage/fatfs_volume.h"
+#include "app/storage/fatfs_volume.h"
 #include "middleware/storage/sd_block_device.h"
 #include "middleware/logging/logging.h"
 #include "config/config.h"

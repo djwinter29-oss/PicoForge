@@ -1,8 +1,8 @@
 /** @file
- * @brief FatFs drive-zero binding and serialized, device-independent volume lifecycle.
+ * @brief Application FatFs volume instance, drive-zero binding and mount telemetry.
  */
 #include "fatfs_volume.h"
-#include "fatfs_disk.h"
+#include "middleware/storage/fatfs_disk.h"
 
 #include <stdatomic.h>
 #include <stddef.h>

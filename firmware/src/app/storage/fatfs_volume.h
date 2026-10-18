@@ -1,5 +1,5 @@
 /** @file
- * @brief Single FatFs volume lifecycle over a caller-selected logical block device.
+ * @brief Application singleton FatFs volume over a caller-selected logical block device.
  */
 #ifndef PF_FATFS_VOLUME_H
 #define PF_FATFS_VOLUME_H
@@ -7,7 +7,7 @@
 #include <stdbool.h>
 
 #include "ff.h"
-#include "block_device.h"
+#include "middleware/storage/block_device.h"
 
 /** FatFs logical volume managed by this service. */
 #define PF_FATFS_VOLUME_PATH "0:"

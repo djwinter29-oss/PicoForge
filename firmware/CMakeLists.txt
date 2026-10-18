@@ -297,7 +297,7 @@ target_include_directories(embedded_cli PUBLIC
 )
 
 add_library(pf_cli STATIC
-    src/middleware/cli/cli.c
+    src/app/cli/cli.c
 )
 target_include_directories(pf_cli PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
@@ -309,7 +309,6 @@ add_library(pf_storage STATIC
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
     src/middleware/storage/fatfs_disk.c
-    src/middleware/storage/fatfs_volume.c
 )
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
@@ -327,6 +326,7 @@ if(PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
 endif()
 
 add_library(pf_app_storage STATIC
+    src/app/storage/fatfs_volume.c
     src/app/storage/storage_commands.c
     src/app/storage/file_benchmark.c
     src/app/storage/storage_worker.c

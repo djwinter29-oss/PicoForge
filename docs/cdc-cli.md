@@ -170,10 +170,10 @@ for the tested SPI CLI workflow and remaining qualification limits.
 
 ## Integration
 
-[CLI middleware](../firmware/src/middleware/cli/cli.c) owns the static Embedded
+[Application CLI](../firmware/src/app/cli/cli.c) owns the static Embedded
 CLI instance and command bindings. It has no TinyUSB, board, or FreeRTOS
 dependency. Its output callback and input/process API are documented in
-[cli.h](../firmware/src/middleware/cli/cli.h). Add session bindings using
+[cli.h](../firmware/src/app/cli/cli.h). Add session bindings using
 `pf_cli_add_binding()` after initialization; argument-tokenization helpers
 come from the upstream framework. Callbacks execute in the USB task, so keep
 them bounded and non-blocking; do not run long operations there.

@@ -111,7 +111,7 @@ flowchart TD
 | Block operations, result codes, and telemetry | [sd_block.h](../firmware/src/drivers/sd_card/sd_block.h) |
 | Filesystem-independent logical sectors and geometry | [block_device.h](../firmware/src/middleware/storage/block_device.h) |
 | Logical sectors backed by the serialized SD facade | [sd_block_device.c](../firmware/src/middleware/storage/sd_block_device.c) |
-| Device-independent single FatFs volume lifecycle | [fatfs_volume.c](../firmware/src/middleware/storage/fatfs_volume.c) |
+| Application single-volume FatFs lifecycle and format telemetry | [fatfs_volume.c](../firmware/src/app/storage/fatfs_volume.c) |
 | Application USB ownership and owner-specific block capabilities | [sd_media.h](../firmware/src/app/storage/sd_media.h) |
 | Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../firmware/src/drivers/sd_card/sd_protocol.c) |
 | Native card initialization and transfer policy | [sd_native.c](../firmware/src/drivers/sd_card/sd_native.c) |
@@ -126,9 +126,11 @@ flowchart TD
 Application policy lives in [app/storage/](../firmware/src/app/storage/): the sole storage-owner task handles USB
 command sessions, media debounce/automount and recovery, while command execution and the fixed-file benchmark live
 alongside it. CMake builds these as `pf_app_storage`, which depends on reusable `pf_storage`, not the reverse.
-The middleware retains mount/unmount and logical block-device services; it does not include application headers or
-own benchmark status, command replies, or application queues. The mount service is named `fatfs_volume.c/.h` with
-`pf_fatfs_volume_*` APIs and `PF_FATFS_VOLUME_*` constants. The generic interface remains `block_device.c/.h`, and
+The application owns the singleton FatFs instance, mount/unmount state and cached format telemetry in
+`app/storage/fatfs_volume.c/.h`. Middleware retains logical blocks, raw device adapters and FatFs disk callbacks;
+it does not include application headers or own volume lifecycle, benchmark status, command replies or queues.
+The application mount service retains `pf_fatfs_volume_*` APIs and `PF_FATFS_VOLUME_*` constants.
+The generic interface remains `block_device.c/.h`, and
 `sd_block_device.c/.h` exposes `pf_sd_block_device()`. The FatFs disk adapter exposes `pf_fatfs_disk_bind()`.
 These replace the earlier storage-prefixed volume/adapter APIs without compatibility aliases.
 

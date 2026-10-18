@@ -41,11 +41,13 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | FreeRTOS SD reservation and application ownership integration | [app/storage](app/storage), `test_sd_media_freertos_serialization_*` |
 | SD media ownership and byte transfers with the bare-metal port | [app/storage](app/storage), `test_sd_media_baremetal_*` |
 | Media configuration, owner-gated I/O, retained diagnostics, commands, file benchmark, automount and recovery | [app/storage](app/storage) |
-| Logical blocks, SD adaptation, volume lifecycle, and FatFs disk results/geometry/protection | [middleware/storage](middleware/storage) |
+| Singleton volume lifecycle and format telemetry | [app/storage](app/storage) |
+| Product CLI prompt, built-ins, completion and history | [app/cli](app/cli) |
+| Logical blocks, SD adaptation, and FatFs disk results/geometry/protection | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |
 
-The volume lifecycle test is [test_fatfs_volume.c](middleware/storage/test_fatfs_volume.c), matching
-[fatfs_volume.c](../src/middleware/storage/fatfs_volume.c). It binds a caller-supplied block device through
+The volume lifecycle test is [test_fatfs_volume.c](app/storage/test_fatfs_volume.c), matching
+[fatfs_volume.c](../src/app/storage/fatfs_volume.c). It binds a caller-supplied block device through
 `pf_fatfs_volume_*` APIs without SD initialization or driver mocks. Application command/automount tests cover
 SD initialization failure before binding, and already-mounted commands avoid reinitializing live media.
 [Block-device tests](middleware/storage/test_block_device.c) reject each missing callback and test the transfer-byte
@@ -126,6 +128,6 @@ Build-selected NOR filesystem and MSC tests are described in the
 [NOR backend test commands](../../docs/nor-flash.md#build-selected-fatfs-and-usb-msc), including real FatFs/LevelX
 file persistence over simulated flash and owner-gated USB handoff tests.
 
-CLI middleware tests compile the pinned Embedded CLI submodule, so initialize
+Application CLI tests compile the pinned Embedded CLI submodule, so initialize
 submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/cdc-cli.md#validation)
 for the focused command and board-only checks.

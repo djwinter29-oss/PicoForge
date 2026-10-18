@@ -5,7 +5,7 @@
 #include "board/board_storage.h"
 #include "drivers/nor_flash/nor.h"
 #include "middleware/storage/levelx_block_device.h"
-#include "middleware/storage/fatfs_volume.h"
+#include "app/storage/fatfs_volume.h"
 #include "middleware/logging/logging.h"
 #include "FreeRTOS.h"
 #include "semphr.h"

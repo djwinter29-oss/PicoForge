@@ -5,7 +5,6 @@
 #include <stdio.h>
 
 #include "pico/stdio.h"
-#include "pico/stdio_uart.h"
 
 enum { PF_LOG_LINE_SIZE = 256 };
 
@@ -18,7 +17,6 @@ void pf_log_init(void)
         return;
     }
 
-    stdio_filter_driver(&stdio_uart);
     initialized = true;
 }
 

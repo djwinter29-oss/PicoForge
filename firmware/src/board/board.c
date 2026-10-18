@@ -42,6 +42,7 @@ bool pf_board_init(void)
         stdio_uart_init_full(uart, topology->monitor_uart_baud_rate,
                              (int)topology->monitor_uart_tx_gpio,
                              (int)topology->monitor_uart_rx_gpio);
+        stdio_filter_driver(&stdio_uart);
         monitor_uart_initialized = true;
     }
 
