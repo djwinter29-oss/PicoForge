@@ -43,7 +43,7 @@ static const pf_board_resources_t board_resources = {
         .data_gpio = { STORAGE_IO0, STORAGE_IO1, STORAGE_IO2, STORAGE_IO3 },
     },
 #if PF_BOARD_STORAGE_QSPI
-    .serial_clock_hz = 1000000u,
+    .serial_clock_hz = 50000000u,
 #else
     .serial_clock_hz = 40000000u,
 #endif

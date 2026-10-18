@@ -1,4 +1,4 @@
-"""Model assembled NOR symbol instructions; not electrical qualification."""
+"""Model assembled NOR streaming instructions; not electrical qualification."""
 import os
 from pathlib import Path
 import re
@@ -32,18 +32,20 @@ def programs(tmp_path_factory):
 def test_symbol_order_and_clock_edges(programs, lanes, name, value):
     ops = programs[name]
     assert len(ops) == 4
-    assert [op >> 13 for op in ops] == [4, 3, 2, 4]  # PULL, OUT, IN, PUSH
-    assert [bool(op & 0x1000) for op in ops] == [False, False, True, False]
-    assert ops[0] & 0xff == 0xa0  # blocking pull
-    assert ops[3] & 0xff == 0x20  # blocking push
-    assert ops[1] & 0xff == lanes  # OUT PINS
-    assert ops[2] & 0xff == lanes  # IN PINS
+    assert [op >> 13 for op in ops] == [3, 5, 5, 2]  # OUT, NOP, NOP, IN
+    assert [bool(op & 0x1000) for op in ops] == [False, True, True, False]
+    assert all(op & 0x0f00 == 0 for op in ops)  # no instruction delays
+    assert ops[0] & 0xff == lanes  # OUT PINS, automatic pull configured by transport
+    assert ops[1] & 0xefff == ops[2] & 0xefff == 0xa042  # NOP
+    assert ops[3] & 0xff == lanes  # IN PINS, late sample and automatic push
     symbols = [(value >> shift) & ((1 << lanes) - 1)
                for shift in range(8 - lanes, -1, -lanes)]
     received = 0
+    osr = value << 24
     for symbol in symbols:
-        osr = symbol << (32 - lanes)
         pins = osr >> (32 - lanes)
+        assert pins == symbol
+        osr = (osr << lanes) & 0xffffffff
         received = (received << lanes) | pins
     assert received == value
     assert len(symbols) == 8 // lanes

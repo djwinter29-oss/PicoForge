@@ -23,6 +23,7 @@ static pf_storage_bus_t bus;
 void setUp(void)
 {
     memset(&serial_fake, 0, sizeof(serial_fake));
+    serial_fake.system_hz = 200000000u;
     test_profile = *default_board_resources_get();
 }
 
@@ -38,8 +39,12 @@ void test_effective_pio_clock_reads_integer_and_fractional_divider(void)
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_board_storage_prepare(&bus));
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&bus));
     serial_storage.sm = 0u;
-    serial_storage.pio->sm[0].clkdiv = (31u << 16u) | (64u << 8u);
-    TEST_ASSERT_EQUAL_UINT32(1000000u, pf_board_storage_clock_hz());
+    serial_storage.pio->sm[0].clkdiv = 1u << 16u;
+    TEST_ASSERT_EQUAL_UINT32(50000000u, pf_board_storage_clock_hz());
+    serial_storage.pio->sm[0].clkdiv = (1u << 16u) | (64u << 8u);
+    TEST_ASSERT_EQUAL_UINT32(40000000u, pf_board_storage_clock_hz());
+    serial_storage.pio->sm[0].clkdiv = 0u;
+    TEST_ASSERT_EQUAL_UINT32(762u, pf_board_storage_clock_hz());
 }
 
 void test_quad_profile_prepares_only_a_descriptor_before_device_initialization(void)
@@ -54,7 +59,7 @@ void test_quad_profile_prepares_only_a_descriptor_before_device_initialization(v
     TEST_ASSERT_EQUAL_UINT32(2u, serial_storage.pins.clock_gpio);
     TEST_ASSERT_EQUAL_UINT32(3u, serial_storage.pins.data_gpio[0]);
     TEST_ASSERT_EQUAL_UINT32(7u, serial_storage.pins.cs_gpio);
-    TEST_ASSERT_EQUAL_UINT32(1000000u, serial_storage.clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(50000000u, serial_storage.clock_hz);
     TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.gpio_initialized);
     TEST_ASSERT_EQUAL_UINT(0u, serial_fake.program_count);
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_NOT_READY, pf_board_storage_prepare(&bus));
@@ -88,6 +93,15 @@ void test_conflicting_profile_is_rejected_before_pio_or_gpio_changes(void)
     TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.gpio_initialized);
     TEST_ASSERT_EQUAL_UINT(0u, serial_fake.program_count);
     TEST_ASSERT_FALSE(serial_pins_prepared);
+}
+
+void test_quad_clock_policy_accepts_50mhz_and_rejects_higher_requests(void)
+{
+    TEST_ASSERT_TRUE(pf_board_resources_validate_serial(&test_profile, true));
+    test_profile.serial_clock_hz = 50000001u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate_serial(&test_profile, true));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_board_storage_prepare(&bus));
+    TEST_ASSERT_EQUAL_UINT(0u, serial_fake.program_count);
 }
 
 void test_quad_runtime_changes_never_modify_the_authoritative_profile(void)

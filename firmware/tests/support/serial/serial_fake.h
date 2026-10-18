@@ -13,6 +13,8 @@ typedef struct {
     bool short_io, fifo_full, selected, no_program;
     unsigned pending, peak_pending, delayed_reads;
     bool fifo_write;
+    uint32_t shift_bits; /**< PIO automatic pull/push threshold. */
+    uint32_t system_hz; /**< Optional simulated system clock; zero selects the SDK default. */
 } serial_fake_t;
 extern serial_fake_t serial_fake;
 #endif

@@ -78,13 +78,21 @@ The board requests 40 MHz for NOR SPI and configures a 100 ms stalled-FIFO deadl
 a realizable baud rate no higher than requested: at the reference 125 MHz system clock this is 31.25 MHz,
 not 40 MHz. HID telemetry reports the actual baud rate. The NOR board policy accepts SPI requests up to 40 MHz;
 generic SPI also serves SD and has no NOR-specific clock ceiling.
-QSPI-PIO still starts at 1 MHz and rejects requested clocks above 10 MHz.
+QSPI-PIO requests 50 MHz and accepts rates up to 50 MHz. Its four-instruction clock loop requires at least
+a 200 MHz system clock for that rate; use `--sys-clk-mhz 200` (`PF_SYS_CLK_MHZ=200` for direct CMake).
+This is an out-of-spec overclock on RP2040 and RP2350 and requires explicit approval and board qualification.
+Unrepresentable rates fail initialization rather than silently falling back. SPI clock policy is unchanged.
 Signal integrity at higher SPI clocks depends on the board, breakout and wiring; qualify with write/read verification,
 not just successful identification. The bus clock is not the file throughput: polling, NOR program/erase verification,
 LevelX and FAT all add overhead.
 PIO divides
-the actual system clock for four instructions per symbol, with one high-clock
-instruction. CPU/FIFO pacing introduces additional low-clock gaps, so the
+the actual system clock for four instructions per symbol, with two high-clock
+instructions and input sampling at the following falling edge. Synchronous data inputs bypass the PIO input
+synchronizers; deinitialization restores the previous setting for only the owned pins.
+Automatic pull/push streams complete bytes, while partial dummy phases still clock the exact requested symbols.
+Up to four bytes may be outstanding, bounding RX occupancy even when interrupted. The 100 ms timeout measures
+continuous FIFO stalls, not total transaction length; timer reads are avoided while progress continues.
+CPU/FIFO pacing introduces additional low-clock gaps, so the
 requested frequency is a maximum symbol cadence, not sustained throughput.
 Both implementations use bounded polling rather than DMA. The QSPI transport
 claims one state machine and eight instructions on PIO0 or PIO1, and restricts
@@ -119,7 +127,7 @@ pins. No hardware flashing is performed by these commands.
 From the repository root:
 
 ```sh
-tools/firmware/build.sh --board pico2 --nor-transport QSPI_PIO
+tools/firmware/build.sh --board pico2 --sys-clk-mhz 200 --nor-transport QSPI_PIO
 ```
 
 Use `--nor-transport SPI` for the SDK SPI transport. These commands use separate
@@ -132,7 +140,7 @@ Equivalent direct CMake configuration:
 ```sh
 cmake -S firmware -B build/nor-pico2-qspi -G Ninja \
     -DPICO_SDK_PATH="$PWD/firmware/third_party/pico-sdk" \
-    -DPICO_BOARD=pico2 -DPF_BUILD_NOR_SMOKE=ON -DPF_NOR_TRANSPORT=QSPI_PIO
+    -DPICO_BOARD=pico2 -DPF_SYS_CLK_MHZ=200 -DPF_BUILD_NOR_SMOKE=ON -DPF_NOR_TRANSPORT=QSPI_PIO
 cmake --build build/nor-pico2-qspi --parallel
 ```
 
@@ -160,7 +168,8 @@ The C tests execute the protocol with a fake NOR array enforcing page boundaries
 write enable and 1-to-0 programming. They check range rejection, preserved
 neighboring data, timeouts, quad-enable verification and ignored/protected writes.
 The pytest model assembles the actual PIO programs and checks symbol width,
-bit order, clock sidesets and blocking FIFO boundaries. Neither executes the
+bit order, clock sidesets and late sampling. Transport tests cover automatic byte shifts, bounded FIFO occupancy,
+stall timeouts, divider limits and synchronizer restoration. Neither executes the
 physical SDK transport on a board.
 
 Board qualification remains required for CS timing, pin turnaround, actual
@@ -179,7 +188,7 @@ FileX and ThreadX are not dependencies of this port.
 
 ```sh
 git submodule update --init firmware/third_party/levelx
-tools/firmware/build.sh --board pico2 --nor-transport QSPI_PIO --levelx
+tools/firmware/build.sh --board pico2 --sys-clk-mhz 200 --nor-transport QSPI_PIO --levelx
 ceedling test:test_levelx_nor
 ```
 
@@ -278,7 +287,7 @@ After independently approving the external region, set its offset and size in yo
 ```sh
 : "${PF_NOR_REGION_OFFSET:?Set the approved external region offset in bytes}"
 : "${PF_NOR_REGION_SIZE:?Set the approved external region size in bytes}"
-tools/firmware/build.sh --board pico2 --storage-backend NOR --nor-transport QSPI_PIO \
+tools/firmware/build.sh --board pico2 --sys-clk-mhz 200 --storage-backend NOR --nor-transport QSPI_PIO \
     --nor-region-offset "$PF_NOR_REGION_OFFSET" --nor-region-size "$PF_NOR_REGION_SIZE"
 ```
 
