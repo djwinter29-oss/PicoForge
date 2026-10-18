@@ -8,6 +8,10 @@
 #include USB_TASK_SOURCE
 
 static bool unavailable, reserved, initialized, mounted, queue_fails, retained_cid;
+static TickType_t fake_ticks;
+static bool fake_connected = true;
+static bool fake_done;
+static unsigned reply_count, drained_replies;
 static unsigned queries, queued, recovery_requests, normal_submissions, messages;
 bool pf_sd_try_lock(void)
 {
@@ -37,6 +41,13 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 }
 BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
 {
+    if (queue == replies) {
+        TEST_ASSERT_EQUAL_UINT32(50u, timeout);
+        TEST_ASSERT_EQUAL_UINT(8u, reply_count);
+        fake_ticks += timeout;
+        cdc_cli_task();
+        return 0;
+    }
     const storage_request_t *request = item;
     TEST_ASSERT_EQUAL_PTR(requests, queue);
     TEST_ASSERT_EQUAL_UINT32(0, timeout);
@@ -67,10 +78,37 @@ void pf_runtime_stats_read(pf_runtime_stats_t *stats)
         .ram_used_bytes = 65536u, .ram_total_bytes = 532480u};
 }
 bool tud_mounted(void) { return true; }
-bool tud_cdc_connected(void) { return true; }
+bool tud_cdc_connected(void) { return fake_connected; }
 bool pf_temperature_read_centidegrees(int16_t *temperature)
 { *temperature = 2500; return true; }
 bool pf_led_is_available(void) { return true; }
 bool pf_led_is_on(void) { return false; }
 void pico_get_unique_board_id_string(char *id, size_t size)
 { memset(id, 0, size); }
+
+TickType_t xTaskGetTickCount(void) { return fake_ticks; }
+BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t timeout)
+{
+    TEST_ASSERT_EQUAL_PTR(replies, queue);
+    TEST_ASSERT_EQUAL_UINT(0u, timeout);
+    if (!reply_count) return 0;
+    pf_storage_worker_reply_t *reply = item;
+    *reply = (pf_storage_worker_reply_t){ .session = cli_session };
+    --reply_count;
+    ++drained_replies;
+    reply->done = fake_done && reply_count == 0;
+    return pdPASS;
+}
+uint32_t tud_cdc_write_available(void) { return 0; }
+uint32_t tud_cdc_write(const void *buffer, uint32_t size) { (void)buffer; (void)size; return 0; }
+uint32_t tud_cdc_write_flush(void) { return 0; }
+uint32_t tud_cdc_available(void) { return 0; }
+uint32_t tud_cdc_read(void *buffer, uint32_t size) { (void)buffer; (void)size; return 0; }
+void tud_cdc_read_flush(void) {}
+bool tud_cdc_write_clear(void) { return true; }
+bool pf_cli_init(pf_cli_write_char_t writer, void *context) { (void)writer; (void)context; return true; }
+bool pf_cli_add_binding(CliCommandBinding binding) { (void)binding; return true; }
+void pf_cli_process(void) {}
+void pf_cli_receive_char(char character) { (void)character; }
+void panic(const char *format, ...) { (void)format; TEST_FAIL_MESSAGE("Unexpected panic"); }
+pf_fatfs_volume_filesystem_format_t pf_fatfs_volume_filesystem_format(void) { return PF_FATFS_VOLUME_FILESYSTEM_EXFAT; }

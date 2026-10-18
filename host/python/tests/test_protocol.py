@@ -1,3 +1,5 @@
+import csv
+from pathlib import Path
 import struct
 import unittest
 
@@ -20,6 +22,18 @@ def info_report(mcu=2, name="PicoForge", serial="0123456789abcdef"):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_shared_filesystem_vectors(self):
+        fixture = Path(__file__).resolve().parents[3] / "tests/fixtures/hid-filesystem.csv"
+        with fixture.open() as source:
+            for vector in csv.DictReader(source):
+                with self.subTest(vector=vector["name"]):
+                    report = bytes.fromhex(vector["hex"])
+                    if vector["expected"] == "invalid":
+                        with self.assertRaises(ValueError):
+                            parse_filesystem_report(report)
+                    else:
+                        self.assertEqual(parse_filesystem_report(report)["format"], vector["expected"])
+
     def test_rejects_unsupported_memory_versions_and_modes(self):
         report = bytearray(30)
         report[0] = 3

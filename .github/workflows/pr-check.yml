@@ -14,12 +14,18 @@ permissions:
 
 jobs:
   firmware:
-    name: Firmware (${{ matrix.board }})
+    name: Firmware (${{ matrix.board }}, ${{ matrix.transport }}, ${{ matrix.port }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        board: [pico, pico2]
+        include:
+          - {board: pico, transport: SDIO_PIO, port: FREERTOS}
+          - {board: pico2, transport: SDIO_PIO, port: FREERTOS}
+          - {board: pico, transport: SPI, port: FREERTOS}
+          - {board: pico2, transport: SPI, port: FREERTOS}
+          - {board: pico, transport: SPI, port: BAREMETAL}
+          - {board: pico2, transport: SDIO_PIO, port: BAREMETAL}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,16 +48,20 @@ jobs:
           sh -n tools/firmware/load.sh
 
       - name: Build firmware
-        run: tools/firmware/build.sh --board "${{ matrix.board }}"
+        run: >-
+          tools/firmware/build.sh --board "${{ matrix.board }}"
+          --sd-card-transport "${{ matrix.transport }}" --sd-card-port "${{ matrix.port }}"
+          --build-dir build/firmware
 
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt
 
       - name: Run project tests
+        if: matrix.port == 'FREERTOS'
         run: |
           python3 -m pytest tests/contracts tests/pio tests/test_validation_integrity.py \
             tests/artifacts/test_msc_elf.py \
-            --elf "$(cat "build/firmware-${{ matrix.board }}/pico_forge_elf.txt")" \
+            --elf "$(cat "build/firmware/pico_forge_elf.txt")" \
             --junitxml=build/project-tests.xml
 
   host-validation:

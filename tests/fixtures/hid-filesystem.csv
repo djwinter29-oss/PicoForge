@@ -1,0 +1,11 @@
+name,hex,expected
+unknown,07020800,unknown
+fat12,07020801,fat12
+fat16,07020802,fat16
+fat32,07020803,fat32
+exfat,07020804,exfat
+unknown_format,07020805,invalid
+wrong_version,07040804,invalid
+truncated,070208,invalid
+nonzero_padding,0702080401,invalid
+zero_padding,0702080400,exfat

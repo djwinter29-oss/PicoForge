@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -471,4 +472,13 @@ test("every true disconnect clears stale telemetry including self-test state", a
   client = newClient(hid);
   await client.connect();
   expectCleared(client);
+});
+test("shared canonical filesystem vectors", () => {
+  const fixture = readFileSync(new URL("../../../tests/fixtures/hid-filesystem.csv", import.meta.url), "utf8");
+  for (const row of fixture.trim().split("\n").slice(1)) {
+    const [name, hex, expected] = row.split(",");
+    const bytes = Uint8Array.from(Buffer.from(hex, "hex"));
+    if (expected === "invalid") assert.throws(() => decodeFilesystemReport(bytes[0], bytes.slice(1)), undefined, name);
+    else assert.equal(decodeFilesystemReport(bytes[0], bytes.slice(1)).format, expected, name);
+  }
 });

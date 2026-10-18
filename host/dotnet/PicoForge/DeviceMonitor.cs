@@ -11,6 +11,8 @@ internal interface IDeviceMonitor
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
     private readonly object gate = new();
+    // Handle operations always acquire deviceGate before the snapshot gate.
+    private readonly object deviceGate = new();
     private PicoForgeHid? activeClient;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
@@ -21,6 +23,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     public bool SetLed(bool on)
     {
+        lock (deviceGate)
         lock (gate)
         {
             if (activeClient is null || snapshot.BoardStatus?.LedAvailable != true) return false;
@@ -32,6 +35,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     public MscStatusResponse? SetMsc(bool enabled, bool force = false)
     {
+        lock (deviceGate)
         lock (gate)
         {
             if (activeClient is null) return null;
@@ -56,6 +60,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 client = new PicoForgeHid();
                 var hardware = client.ReadInfo();
+                lock (deviceGate)
                 lock (gate)
                 {
                     activeClient = client;
@@ -64,23 +69,27 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    lock (gate)
+                    lock (deviceGate)
                     {
                         var report = client.ReadInputReport();
-                        var runtime = report?.Runtime;
-                        var memory = report?.Memory;
-                        var msc = report?.Msc;
-                        var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
-                        snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
-                            report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
-                            memory ?? snapshot.Memory, msc ?? snapshot.Msc,
-                            report?.SelfTest ?? snapshot.SelfTest,
-                            report?.FilesystemFormat ?? snapshot.FilesystemFormat);
+                        lock (gate)
+                        {
+                            var runtime = report?.Runtime;
+                            var memory = report?.Memory;
+                            var msc = report?.Msc;
+                            var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
+                            snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
+                                report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
+                                memory ?? snapshot.Memory, msc ?? snapshot.Msc,
+                                report?.SelfTest ?? snapshot.SelfTest,
+                                report?.FilesystemFormat ?? snapshot.FilesystemFormat);
+                        }
                     }
                 }
             }
             catch (Exception error) when (IsDeviceError(error))
             {
+                lock (deviceGate)
                 lock (gate)
                 {
                     activeClient = null;
@@ -89,9 +98,12 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             }
             finally
             {
-                lock (gate)
+                lock (deviceGate)
                 {
-                    if (ReferenceEquals(activeClient, client)) activeClient = null;
+                    lock (gate)
+                    {
+                        if (ReferenceEquals(activeClient, client)) activeClient = null;
+                    }
                     client?.Dispose();
                 }
             }
@@ -106,6 +118,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     public bool SetSelfTest(string action, uint sizeMib)
     {
+        lock (deviceGate)
         lock (gate)
         {
             if (activeClient is null || snapshot.SelfTest is null) return false;

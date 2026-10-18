@@ -211,3 +211,29 @@ Physical wiring, pinout qualification, and tests requiring a board or probe belo
 The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support constructs the
 selected SDIO-PIO or SD-SPI transport configuration. Physical timing, card compatibility, USB interoperability, and
 power-loss qualification remain subject to the limits recorded in the SD validation guide.
+### Review remediation software checks
+
+`INCLUDE_uxTaskGetStackHighWaterMark=1` enables the existing FreeRTOS stack-fill scan. USB and Storage sample
+only their own task (`NULL` handle), at 30-second intervals in their normal loops, and log the minimum untouched
+stack in **StackType_t words**, not bytes. Sampling does not scan a concurrently executing task on the other core.
+It does not reset the watermark, allocate memory, or add a new task. Existing overflow checking remains enabled.
+Sampling can be delayed by a long storage operation; UART logging and scanning add occasional service overhead.
+Unused fill bytes are an observation, not certified margin (unwritten stack reservations can remain filled).
+No target stack observations were collected during remediation.
+
+The canonical hardware-free filesystem HID vectors live in `tests/fixtures/hid-filesystem.csv`. Python, .NET,
+and WebHID consume all valid/invalid vectors directly. Firmware produces reports rather than parsing host input
+filesystem reports: Ceedling checks its exFAT encoder against the same fixture. Invalid telemetry vectors apply
+to the host decoders, not the firmware's separate command parser. This small fixture covers format, version,
+length and padding boundaries; it is not exhaustive coverage of every HID report family.
+
+PR and manual release-package workflows use six builds: both boards with both FreeRTOS transports, plus SPI
+bare-metal on Pico and SDIO bare-metal on Pico 2. Thus all transport/port combinations and both MCU toolchains
+are covered without eight builds. MSC ELF checks run only for the FreeRTOS application; bare-metal produces a
+link-smoke target, not a USB application. Manual release packaging attaches ELF/UF2 and checksums as workflow
+artifacts with read-only repository permissions. It does not publish a release; default development version
+metadata is retained, so these are validation packages rather than versioned release binaries.
+
+Host regressions cannot certify MSC end-to-end enumeration/BOT/host-cache behavior, power-loss recovery,
+sustained dual-core stress, or target stack margin. Those remain hardware qualification gaps. No hardware,
+media access, HIL, flashing, or physical measurements were performed for this remediation.

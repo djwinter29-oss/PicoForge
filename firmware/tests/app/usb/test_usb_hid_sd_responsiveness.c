@@ -1,4 +1,5 @@
 #include "unity.h"
+#include <stdio.h>
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
 #include "storage/responsiveness_fixture.inc"
 
@@ -159,4 +160,56 @@ void test_hid_retained_card_identity_is_hidden_until_initialized(void)
         TEST_ASSERT_EQUAL_MEMORY(&report, &control_report, sizeof(report));
     }
     retained_cid = false;
+}
+
+void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(void)
+{
+    replies = (void *)2;
+    busy = true;
+    benchmark_active = false;
+    active_session = cli_session;
+    cancelled = false;
+    cli_connected = fake_connected = true;
+    cli_stalled = cli_stall_reported = false;
+    cli_tx_count = USB_CLI_TX_SIZE;
+    cli_last_progress = fake_ticks = 0;
+    reply_count = 8;
+    drained_replies = 0;
+    fake_done = false;
+    storage_request_t request = { .session = cli_session };
+    TEST_ASSERT_FALSE(send_reply("blocked", &request));
+    TEST_ASSERT_TRUE(cli_stalled && cancelled && busy);
+    TEST_ASSERT_EQUAL_UINT(8, drained_replies);
+    TEST_ASSERT_EQUAL_UINT(USB_CLI_STALL_TIMEOUT, fake_ticks);
+    reply_count = 1;
+    fake_done = true;
+    cdc_cli_task();
+    TEST_ASSERT_FALSE(pf_storage_worker_busy());
+    TEST_ASSERT_TRUE(pf_storage_worker_submit("sd", "status", false, cli_session));
+    fake_connected = false;
+    cdc_cli_task();
+    TEST_ASSERT_FALSE(cli_connected || cli_stalled);
+    TEST_ASSERT_EQUAL_UINT(0, cli_tx_count);
+    fake_connected = true;
+}
+
+void test_filesystem_encoder_matches_shared_exfat_vector(void)
+{
+    FILE *fixture = fopen("tests/fixtures/hid-filesystem.csv", "r");
+    TEST_ASSERT_NOT_NULL(fixture);
+    char row[128];
+    bool found = false;
+    while (fgets(row, sizeof(row), fixture)) {
+        if (strncmp(row, "exfat,", 6) != 0) continue;
+        unsigned bytes[4];
+        TEST_ASSERT_EQUAL_INT(4, sscanf(row + 6, "%2x%2x%2x%2x", &bytes[0], &bytes[1], &bytes[2], &bytes[3]));
+        pf_hid_filesystem_report_t report;
+        pf_hid_build_filesystem_report(&report, (uint8_t)bytes[2]);
+        uint8_t expected[] = { (uint8_t)bytes[1], (uint8_t)bytes[2], (uint8_t)bytes[3] };
+        TEST_ASSERT_EQUAL_UINT8(PF_HID_FILESYSTEM_REPORT_ID, bytes[0]);
+        TEST_ASSERT_EQUAL_MEMORY(expected, &report, sizeof(expected));
+        found = true;
+    }
+    fclose(fixture);
+    TEST_ASSERT_TRUE(found);
 }

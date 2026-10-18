@@ -13,6 +13,48 @@ namespace PicoForge.Tests;
 public sealed class ProtocolTests
 {
     [Fact]
+    public void SharedFilesystemVectors()
+    {
+        foreach (var line in File.ReadLines(Path.Combine(AppContext.BaseDirectory, "hid-filesystem.csv")).Skip(1))
+        {
+            var fields = line.Split(',');
+            var bytes = Convert.FromHexString(fields[1]);
+            if (fields[2] == "invalid")
+                Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseFilesystemReport(bytes));
+            else Assert.Equal(fields[2], HidProtocol.ParseFilesystemReport(bytes));
+        }
+    }
+
+    [Fact]
+    public async Task SnapshotDoesNotAcquireDeviceHandleLock()
+    {
+        using var monitor = new DeviceMonitor();
+        var deviceGate = typeof(DeviceMonitor).GetField("deviceGate",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(monitor)!;
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var holder = Task.Run(() =>
+        {
+            lock (deviceGate)
+            {
+                held.Set();
+                release.Wait();
+            }
+        });
+        try
+        {
+            await Task.Run(() => held.Wait()).WaitAsync(TimeSpan.FromSeconds(2));
+            var read = await Task.Run(() => monitor.Snapshot).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(read.Connected);
+        }
+        finally
+        {
+            release.Set();
+            await holder;
+        }
+    }
+
+    [Fact]
     public void RejectsUnsupportedMemoryVersionsAndModes()
     {
         var report = new byte[30];

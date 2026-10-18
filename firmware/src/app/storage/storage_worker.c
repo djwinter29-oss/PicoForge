@@ -314,7 +314,14 @@ static void storage_task(void *context)
     (void)context;
     storage_request_t request;
 
+    TickType_t last_stack_sample = xTaskGetTickCount();
+
     for (;;) {
+        if ((TickType_t)(xTaskGetTickCount() - last_stack_sample) >= pdMS_TO_TICKS(30000u)) {
+            PF_LOG_INFO("stack", "Storage minimum free stack: %u words",
+                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
+            last_stack_sample = xTaskGetTickCount();
+        }
         if (xQueueReceive(requests, &request,
                           pdMS_TO_TICKS(MEDIA_SERVICE_POLL_MS)) != pdPASS) {
             service_media();

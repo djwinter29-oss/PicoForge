@@ -1,4 +1,4 @@
-name: Release (Placeholder)
+name: Release build packages
 
 'on':
   workflow_dispatch: {}
@@ -7,9 +7,67 @@ permissions:
   contents: read
 
 jobs:
-  pending:
-    name: Release packaging not configured
+  firmware:
+    name: Firmware (${{ matrix.board }}, ${{ matrix.transport }}, ${{ matrix.port }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {board: pico, transport: SDIO_PIO, port: FREERTOS}
+          - {board: pico2, transport: SDIO_PIO, port: FREERTOS}
+          - {board: pico, transport: SPI, port: FREERTOS}
+          - {board: pico2, transport: SPI, port: FREERTOS}
+          - {board: pico, transport: SPI, port: BAREMETAL}
+          - {board: pico2, transport: SDIO_PIO, port: BAREMETAL}
     steps:
-      - name: Report pending release workflow
-        run: echo "Release packaging will be added when firmware build and release checks exist."
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+
+      - name: Install Arm GNU Toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@98c40e51546516419841748d3210c290df0d2c6c # v1
+        with:
+          release: "13.3.Rel1"
+
+      - name: Check shell script syntax
+        run: |
+          sh -n tools/firmware/build.sh
+          sh -n tools/firmware/load.sh
+
+      - name: Build firmware
+        run: >-
+          tools/firmware/build.sh --board "${{ matrix.board }}"
+          --sd-card-transport "${{ matrix.transport }}" --sd-card-port "${{ matrix.port }}"
+          --build-dir build/firmware
+
+      - name: Install project test dependencies
+        run: python3 -m pip install --requirement tests/requirements.txt
+
+      - name: Run project tests
+        if: matrix.port == 'FREERTOS'
+        run: |
+          python3 -m pytest tests/contracts tests/pio tests/test_validation_integrity.py \
+            tests/artifacts/test_msc_elf.py \
+            --elf "$(cat "build/firmware/pico_forge_elf.txt")" \
+            --junitxml=build/project-tests.xml
+
+      - name: Package firmware outputs
+        run: |
+          mkdir package
+          cp build/firmware/*.elf build/firmware/*.uf2 package/
+          cd package
+          sha256sum *.elf *.uf2 > SHA256SUMS
+
+      - name: Attach build package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: firmware-${{ matrix.board }}-${{ matrix.transport }}-${{ matrix.port }}
+          path: package/
+          if-no-files-found: error

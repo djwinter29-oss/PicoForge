@@ -4,6 +4,7 @@
 #include "tusb.h"
 
 #include "usb_hid.h"
+#include "middleware/logging/logging.h"
 #include "usb_msc.h"
 #include "usb_task.h"
 #include "app/cli/cli.h"
@@ -16,6 +17,7 @@
 #define USB_CLI_TX_SIZE 2048U
 #define USB_CLI_OUTPUT_RESERVE 1024U
 #define USB_CLI_RX_BUDGET 32U
+#define USB_CLI_STALL_TIMEOUT (pdMS_TO_TICKS(5000U))
 #define USB_RECONNECT_DETACH_MS 250U
 #define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
 #define USB_HID_MEMORY_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
@@ -35,6 +37,9 @@ static uint32_t cli_tx_tail;
 static uint32_t cli_tx_count;
 static bool cli_connected;
 static uint32_t cli_session;
+static TickType_t cli_last_progress;
+static bool cli_stall_reported;
+static bool cli_stalled; /**< Timed-out session; drain completion until DTR closes. */
 
 static void storage_command(EmbeddedCli *instance, char *args, void *context)
 {
@@ -83,6 +88,7 @@ static void cli_drain_output(void)
         }
         cli_tx_tail = (cli_tx_tail + written) % USB_CLI_TX_SIZE;
         cli_tx_count -= written;
+        cli_last_progress = xTaskGetTickCount();
         available -= written;
     }
     (void)tud_cdc_write_flush();
@@ -96,6 +102,7 @@ static void cdc_cli_task(void)
         while (pf_storage_worker_poll(&reply)) {
         }
         cli_connected = false;
+        cli_stalled = cli_stall_reported = false;
         cli_tx_head = 0u;
         cli_tx_tail = 0u;
         cli_tx_count = 0u;
@@ -120,10 +127,33 @@ static void cdc_cli_task(void)
         }
         ++cli_session;
         cli_connected = true;
+        cli_last_progress = xTaskGetTickCount();
         pf_cli_process();
     }
 
     cli_drain_output();
+    if (!cli_stalled && (cli_tx_count > 0u) &&
+        ((TickType_t)(xTaskGetTickCount() - cli_last_progress) >= USB_CLI_STALL_TIMEOUT)) {
+        cli_stalled = true;
+        pf_storage_worker_cancel(cli_session);
+    }
+    if (cli_stalled) {
+        pf_storage_worker_reply_t reply;
+        while (pf_storage_worker_poll(&reply)) {
+        }
+        if (!cli_stall_reported && (USB_CLI_TX_SIZE - cli_tx_count) >= USB_CLI_OUTPUT_RESERVE) {
+            pf_cli_print("CDC output timed out; command output truncated. Changes may have completed. Close/reopen DTR; inspect before retrying.");
+            /* Keep the notice ordered after buffered output and emit it only once. */
+            cli_last_progress = xTaskGetTickCount();
+            cli_stall_reported = true;
+        }
+        tud_cdc_read_flush();
+        cli_drain_output();
+        return;
+    }
+    if (cli_tx_count == 0u) {
+        cli_last_progress = xTaskGetTickCount();
+    }
     if ((USB_CLI_TX_SIZE - cli_tx_count) >= USB_CLI_OUTPUT_RESERVE) {
         pf_storage_worker_reply_t reply;
         if (pf_storage_worker_poll(&reply) && !reply.done && (reply.session == cli_session)) {
@@ -154,7 +184,14 @@ static void usb_task(void *context)
     TickType_t last_self_test_report = last_hid_report;
     TickType_t last_filesystem_report = last_hid_report;
 
+    TickType_t last_stack_sample = xTaskGetTickCount();
+
     while (true) {
+        if ((TickType_t)(xTaskGetTickCount() - last_stack_sample) >= pdMS_TO_TICKS(30000u)) {
+            PF_LOG_INFO("stack", "USB minimum free stack: %u words",
+                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
+            last_stack_sample = xTaskGetTickCount();
+        }
         TickType_t now = xTaskGetTickCount();
 
         tud_task();
@@ -225,7 +262,8 @@ void pf_usb_start(void)
     if (!tusb_init()) {
         panic("Failed to initialize TinyUSB");
     }
-    /* A debugger or watchdog reset leaves the host on the old address; a visible detach forces re-enumeration. */
+    /* ponytail: boot-only 250 ms detach permits stable enumeration after debugger/watchdog reset.
+     * Runtime MSC transitions do not incur this wait. */
     tud_disconnect();
     /* The scheduler is not running yet; do not depend on alarm/RTOS wakeups here. */
     busy_wait_ms(USB_RECONNECT_DETACH_MS);

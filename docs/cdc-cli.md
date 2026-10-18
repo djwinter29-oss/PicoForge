@@ -224,3 +224,15 @@ commands first using an existing file and `fs unmount`; only test mutations on a
 disposable file after backing up the card. Verify that MSC enable is rejected
 while mounted or busy and allowed after unmount; after host eject/disable, confirm
 that `fs mount` works again. Do not reset while a filesystem command is in progress.
+### Stalled output
+
+USB tracks successful transfers from the CLI ring to TinyUSB. After five seconds with buffered output and no
+progress, it cancels reply production for that DTR session and drains the worker queue, including completion,
+even while the host is not reading. The session accepts no further input until DTR closes and reopens.
+Buffered output keeps its order; when space becomes available an explicit truncation notice follows it.
+Disconnect clears buffered output and drains completion as before. USB continues its paced service loop.
+
+This is a bounded-memory protocol trade-off: a slow host can receive incomplete command output. Cancellation
+stops display producers, not completed filesystem mutations; file close/cleanup still precedes completion.
+A missing success reply does not mean a write or format failed. Inspect state before retrying a mutation.
+The timeout measures firmware buffer progress, not proof of host application consumption.

@@ -64,6 +64,7 @@ uint64_t time_us_64(void);
 
 #define configASSERT(condition) assert(condition)
 
+#define INCLUDE_uxTaskGetStackHighWaterMark 1
 #define INCLUDE_vTaskDelay 1
 #define INCLUDE_vTaskDelete 1
 #define INCLUDE_vTaskPrioritySet 1
