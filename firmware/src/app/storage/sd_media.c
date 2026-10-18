@@ -120,8 +120,7 @@ bool pf_sd_media_take_reinit_request(void)
 
 /** @brief Keep the owner identity stable throughout one synchronous read batch. */
 static pf_sd_result_t read_blocks_for_owner(pf_sd_media_owner_t owner,
-                                                uint32_t first_block, void *buffer,
-                                                uint32_t block_count)
+                                           uint32_t first_block, void *buffer, uint32_t block_count)
 {
     pf_sd_lock();
     if (active_owner != owner) {
@@ -136,16 +135,14 @@ static pf_sd_result_t read_blocks_for_owner(pf_sd_media_owner_t owner,
     return result;
 }
 
-pf_sd_result_t pf_sd_media_read_blocks(uint32_t first_block, void *buffer,
-                                           uint32_t block_count)
+pf_sd_result_t pf_sd_media_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
 {
     return read_blocks_for_owner(PF_SD_MEDIA_OWNER_FIRMWARE, first_block, buffer, block_count);
 }
 
 /** @brief Keep the owner identity stable throughout one synchronous write batch; never retry. */
 static pf_sd_result_t write_blocks_for_owner(pf_sd_media_owner_t owner,
-                                                 uint32_t first_block, const void *buffer,
-                                                 uint32_t block_count)
+                                            uint32_t first_block, const void *buffer, uint32_t block_count)
 {
     pf_sd_lock();
     if (active_owner != owner) {
@@ -160,9 +157,7 @@ static pf_sd_result_t write_blocks_for_owner(pf_sd_media_owner_t owner,
     return result;
 }
 
-pf_sd_result_t pf_sd_media_write_blocks(uint32_t first_block,
-                                            const void *buffer,
-                                            uint32_t block_count)
+pf_sd_result_t pf_sd_media_write_blocks(uint32_t first_block, const void *buffer, uint32_t block_count)
 {
     return write_blocks_for_owner(PF_SD_MEDIA_OWNER_FIRMWARE, first_block, buffer, block_count);
 }
@@ -226,15 +221,12 @@ pf_sd_result_t pf_sd_media_release_usb_for_recovery(void)
     return result;
 }
 
-pf_sd_result_t pf_sd_media_usb_read_blocks(uint32_t first_block, void *buffer,
-                                               uint32_t block_count)
+pf_sd_result_t pf_sd_media_usb_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
 {
     return read_blocks_for_owner(PF_SD_MEDIA_OWNER_USB_MSC, first_block, buffer, block_count);
 }
 
-pf_sd_result_t pf_sd_media_usb_write_blocks(uint32_t first_block,
-                                                const void *buffer,
-                                                uint32_t block_count)
+pf_sd_result_t pf_sd_media_usb_write_blocks(uint32_t first_block, const void *buffer, uint32_t block_count)
 {
     return write_blocks_for_owner(PF_SD_MEDIA_OWNER_USB_MSC, first_block, buffer, block_count);
 }

@@ -192,7 +192,7 @@ void test_mount_does_not_initialize_an_already_mounted_device(void)
 void test_mount_rejects_missing_configuration_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_media_initialize_ExpectAndReturn(PF_SD_NOT_READY);
+    pf_sd_media_initialize_ExpectAndReturn(PF_SD_NOT_CONFIGURED);
     run("mount");
     TEST_ASSERT_NOT_NULL(strstr(output, "configuration unavailable"));
 }

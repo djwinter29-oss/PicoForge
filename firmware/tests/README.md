@@ -1,6 +1,9 @@
 # Firmware Unit Tests
 
-Ceedling 1.1.10 with Unity and CMock is configured by the repository-root `project.yml`. Tests should target hardware-independent platform, driver, and middleware code, and mirror the corresponding subtree under `firmware/src/`. The source/include root is `firmware/src/`; the Pico SDK-bound `main.c` is explicitly excluded from host source collection.
+Ceedling 1.1.10 with Unity and CMock is configured by the repository-root `project.yml`. Tests target host-testable
+application, board, driver, integration and middleware code, and mirror the corresponding subtree under
+`firmware/src/`. The source/include root is `firmware/src/`; the Pico SDK-bound `main.c` is explicitly excluded from
+host source collection.
 
 Install Ruby 3 or newer and GCC/gcov, then run the setup wrapper from the repository root. The wrapper uses `uv` if available or Python 3.10+ with venv support to provision gcovr:
 
@@ -16,8 +19,10 @@ directory to `PATH` and run it from the root. Name test files `test_<source_base
 source subtree. For example, [sd_protocol.c](../src/drivers/sd_card/sd_protocol.c) is covered by
 [test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c) and
 [test_sd_protocol_native.c](drivers/sd_card/test_sd_protocol_native.c). Keep related scenario tests alongside it.
-Port tests live under [drivers/sd_card](drivers/sd_card), with `test_sd_port_freertos_*` and
-`test_sd_port_baremetal_*` names matching the flat, environment-suffixed production files.
+Cross-layer tests live alongside the module that owns the behavior, not the lowest-level dependency they exercise.
+SD firmware/USB ownership and reservation tests live under [app/storage](app/storage), named
+`test_sd_media_freertos_serialization_*` and `test_sd_media_baremetal_*`. These exercise the application service
+together with the raw driver and execution port for both SPI and SDIO; they are not standalone driver-port tests.
 The layout contract in [test_validation_integrity.py](../../tests/test_validation_integrity.py) checks every Ceedling
 test against a C module in the matching source directory. Scenario suffixes are allowed; they do not create a new
 production module. Support fixtures and standalone smoke programs are not Ceedling test modules.
@@ -33,8 +38,8 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | --- | --- |
 | Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sd_card](drivers/sd_card) |
 | Physical SPI, SDIO-PIO and QSPI-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
-| FreeRTOS facade ownership and serialization | [drivers/sd_card](drivers/sd_card), `test_sd_port_freertos_*` |
-| Bare-metal facade and port behavior | [drivers/sd_card](drivers/sd_card), `test_sd_port_baremetal_*` |
+| FreeRTOS SD reservation and application ownership integration | [app/storage](app/storage), `test_sd_media_freertos_serialization_*` |
+| SD media ownership and byte transfers with the bare-metal port | [app/storage](app/storage), `test_sd_media_baremetal_*` |
 | Media configuration, owner-gated I/O, retained diagnostics, commands, file benchmark, automount and recovery | [app/storage](app/storage) |
 | Logical blocks, SD adaptation, volume lifecycle, and FatFs disk results/geometry/protection | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |
@@ -64,7 +69,7 @@ option reaches the consolidated protocol compilation.
 [SPI behavior tests](drivers/sd_card/test_sd_spi.c) inject selection failures across command, register, single-block,
 multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
 and preserved stream recovery. Optional wait setup is tested with
-[FreeRTOS port serialization](drivers/sd_card/test_sd_port_freertos_serialization_sdio.c).
+[SD media/FreeRTOS reservation integration](app/storage/test_sd_media_freertos_serialization_sdio.c).
 Storage tests cover raw phase validation before CS, arbitrary released-line clock counts/deadlines, short/long native
 response byte packing and partial failure capture. NOR adapter tests verify opcode/address construction and payload
 bit-count overflow independently of the physical engines. The SD host test retains the exact 80-clock, low-speed

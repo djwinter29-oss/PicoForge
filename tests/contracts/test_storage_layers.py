@@ -63,10 +63,12 @@ def test_sd_ownership_policy_stays_above_driver_and_middleware():
         assert not re.search(r"\b(?:active_owner|reinit_after_usb_owner|pf_sd_media_\w+|PF_SD_OWNER_\w+)\b", text), source
         assert not re.search(r'#include\s*"[^"]*(?:app/|middleware/)', text), source
     assert not (driver / "sd_msc.h").exists()
-    for source in (ROOT / "firmware/src/app").rglob("*.c"):
+    for source in (ROOT / "firmware/src/app").rglob("*.[ch]"):
         if source.name == "sd_media.c":
             continue
-        assert not re.search(r"\bpf_sd_(?:init|read_blocks|write_blocks|sync)\s*\(", source.read_text()), source
+        assert not re.search(
+            r"\bpf_sd_(?:init|read_blocks|write_blocks|sync|block_device)\s*\(", source.read_text()
+        ), source
     for source in (ROOT / "firmware/src/middleware/storage").glob("*.[ch]"):
         assert not re.search(r'#include\s*"[^"]*app/', source.read_text()), source
 

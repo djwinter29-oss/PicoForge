@@ -113,6 +113,7 @@ def test_source_contract_rejects_changed_ordering(tmp_path, monkeypatch):
     monkeypatch.setenv("CC", "/nonexistent/compiler")
     contract = runpy.run_path(str(ROOT / 'tests/contracts/test_tinyusb_msc_contract.py'))
     for relative in ('firmware/CMakeLists.txt',
+                     'firmware/src/integration/usb/tusb_config.h',
                      'firmware/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c',
                      'firmware/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c'):
         dest = tmp_path / relative
