@@ -248,3 +248,64 @@ void test_recovery_reports_failure_or_completion_and_never_mounts_or_retries(voi
     TEST_ASSERT_FALSE(mounted || busy);
     TEST_ASSERT_EQUAL_UINT(0u, mount_calls);
 }
+
+void test_benchmark_cancellation_and_cleanup_hold_admission_until_completion_is_observed(void)
+{
+    busy = benchmark_active = true;
+    benchmark_status = (pf_file_benchmark_status_t){.state = PF_FILE_BENCHMARK_WRITING};
+    TEST_ASSERT_TRUE(pf_storage_worker_benchmark_cancel());
+    TEST_ASSERT_TRUE(benchmark_cancelled);
+    TEST_ASSERT_TRUE(pf_storage_worker_busy());
+    TEST_ASSERT_FALSE(pf_storage_worker_submit("fs", "mount", false, 3u));
+    pf_file_benchmark_status_t status = {.state = PF_FILE_BENCHMARK_CLEANUP};
+    TEST_ASSERT_FALSE(benchmark_update(&status, NULL));
+    TEST_ASSERT_TRUE(pf_storage_worker_busy());
+    TEST_ASSERT_FALSE(pf_storage_worker_benchmark_cancel());
+    TEST_ASSERT_FALSE(pf_storage_worker_submit("fs", "mount", false, 3u));
+    benchmark_status.state = PF_FILE_BENCHMARK_CANCELLED;
+    benchmark_finished = true;
+    pf_storage_worker_benchmark_status(&status);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_CANCELLED, status.state);
+    TEST_ASSERT_FALSE(pf_storage_worker_busy());
+    TEST_ASSERT_TRUE(pf_storage_worker_submit("fs", "mount", false, 3u));
+}
+
+void test_disconnected_command_finishes_mutation_and_drains_only_completion_before_readmission(void)
+{
+    service_media();
+    TEST_ASSERT_TRUE(pf_storage_worker_submit("fs", "unmount", false, 42u));
+    pf_storage_worker_cancel(41u);
+    TEST_ASSERT_FALSE(cancelled);
+    pf_storage_worker_cancel(42u);
+    TEST_ASSERT_TRUE(cancelled);
+    execute_command(&queued_request);
+    TEST_ASSERT_FALSE(mounted);
+    TEST_ASSERT_EQUAL_UINT(1u, unmount_calls);
+    TEST_ASSERT_EQUAL_UINT(1u, reply_count);
+    TEST_ASSERT_TRUE(pf_storage_worker_busy());
+    pf_storage_worker_reply_t reply;
+    TEST_ASSERT_TRUE(pf_storage_worker_poll(&reply));
+    TEST_ASSERT_TRUE(reply.done);
+    TEST_ASSERT_EQUAL_UINT32(42u, reply.session);
+    TEST_ASSERT_FALSE(pf_storage_worker_busy());
+    TEST_ASSERT_TRUE(pf_storage_worker_submit("fs", "mount", false, 43u));
+    TEST_ASSERT_FALSE(cancelled);
+}
+
+void test_failed_explicit_mount_after_recovery_keeps_automount_blocked(void)
+{
+    recover_media();
+    mount_result = PF_FATFS_VOLUME_FILESYSTEM_ERROR;
+    mount_reason = FR_NO_FILESYSTEM;
+    TEST_ASSERT_TRUE(pf_storage_worker_submit("fs", "mount", false, 7u));
+    execute_command(&queued_request);
+    TEST_ASSERT_TRUE(auto_mount_blocked);
+    TEST_ASSERT_FALSE(mounted);
+    pf_storage_worker_reply_t reply;
+    while (pf_storage_worker_poll(&reply)) {}
+    now += MEDIA_MOUNT_RETRY_MS;
+    service_media();
+    TEST_ASSERT_EQUAL_UINT(1u, mount_calls);
+    TEST_ASSERT_EQUAL_UINT(2u, init_calls);
+    TEST_ASSERT_FALSE(pf_storage_worker_busy());
+}

@@ -6,12 +6,26 @@
 
 #include "middleware/storage/block_device.h"
 
+/** Application operation associated with a retained NOR failure. */
+typedef enum {
+    PF_NOR_MEDIA_OPERATION_NONE = 0, /**< No recorded failure. */
+    PF_NOR_MEDIA_OPERATION_PREPARE, /**< Board serial-resource preparation. */
+    PF_NOR_MEDIA_OPERATION_INITIALIZE, /**< Transport/flash initialization or quad enable. */
+    PF_NOR_MEDIA_OPERATION_OPEN, /**< LevelX region open. */
+    PF_NOR_MEDIA_OPERATION_CLOSE, /**< LevelX close before recovery. */
+    PF_NOR_MEDIA_OPERATION_READ, /**< Logical block read. */
+    PF_NOR_MEDIA_OPERATION_WRITE, /**< Logical block write. */
+    PF_NOR_MEDIA_OPERATION_SYNC, /**< Logical block sync. */
+} pf_nor_media_operation_t;
+
 /** Retained NOR failure plus current access state; vendor codes remain numeric diagnostics. */
 typedef struct {
     uint32_t sequence; /**< Failure counter; successful recovery does not clear it. */
+    pf_nor_media_operation_t operation; /**< Operation that failed, or NONE before any failure. */
+    bool failure_usb_owned; /**< Owner at failure time, independent of current ownership. */
     pf_block_result_t result; /**< Last failed application operation result. */
     uint32_t raw_result; /**< Raw NOR failure code. */
-    uint32_t levelx_result; /**< LevelX operation failure code. */
+    uint32_t levelx_result; /**< Open/close code; block adapter reports synthetic LX_ERROR on failure. */
     uint32_t system_error; /**< LevelX system-error callback code. */
     bool ready; /**< Current initialized, open and nonfaulted state. */
     bool usb_owned; /**< Current exclusive owner is USB. */

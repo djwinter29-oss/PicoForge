@@ -419,6 +419,10 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
                 (unsigned long)diagnostics.raw_result, (unsigned long)diagnostics.levelx_result,
                 (unsigned long)diagnostics.system_error);
             (void)reply(line, context);
+            (void)snprintf(line, sizeof(line), "failure_operation=%u failure_owner=%s LevelX_block_error=synthetic",
+                (unsigned)diagnostics.operation, diagnostics.sequence == 0u ? "none" :
+                (diagnostics.failure_usb_owned ? "USB" : "Pico"));
+            (void)reply(line, context);
             return;
         }
         (void)reply("SD diagnostics unavailable: this build uses external LevelX NOR.", context);

@@ -2,6 +2,7 @@
 void pf_sd_lock(void) {}
 void pf_sd_unlock(void) {}
 #include "board_resources.h"
+#include "bus.h"
 #include "config/config.h"
 #include "sd_protocol.h"
 

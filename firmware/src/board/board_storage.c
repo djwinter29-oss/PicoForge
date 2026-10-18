@@ -23,24 +23,16 @@ pf_storage_bus_result_t pf_board_storage_prepare(pf_storage_bus_t *bus)
         return PF_STORAGE_BUS_NOT_READY;
     }
     const pf_board_resources_t *profile = pf_board_resources_get();
-    if (profile == NULL || profile->serial_clock_hz == 0u || profile->serial_clock_hz > 10000000u) {
+    if (!pf_board_resources_validate_serial(profile, PF_BOARD_STORAGE_QSPI)) {
         return PF_STORAGE_BUS_INVALID_ARGUMENT;
     }
 #if PF_BOARD_STORAGE_QSPI
-    if (profile->pio_index > 1u) {
-        return PF_STORAGE_BUS_INVALID_ARGUMENT;
-    }
     serial_storage = (pf_qspi_pio_t){
         .pio = profile->pio_index == 0u ? pio0 : pio1,
         .pins = profile->qspi_pins, .clock_hz = profile->serial_clock_hz,
     };
     *bus = pf_qspi_pio_bus(&serial_storage);
 #else
-    if (profile->spi_index > 1u || profile->serial_timeout_us == 0u ||
-        profile->serial_wp_gpio >= NUM_BANK0_GPIOS || profile->serial_hold_gpio >= NUM_BANK0_GPIOS ||
-        profile->serial_wp_gpio == profile->serial_hold_gpio) {
-        return PF_STORAGE_BUS_INVALID_ARGUMENT;
-    }
     serial_storage = (pf_spi_t){
         .instance = profile->spi_index == 0u ? spi0 : spi1,
         .pins = profile->spi_pins, .clock_hz = profile->serial_clock_hz,
@@ -48,13 +40,6 @@ pf_storage_bus_result_t pf_board_storage_prepare(pf_storage_bus_t *bus)
     };
     if (!pf_spi_config_valid(&serial_storage)) {
         return PF_STORAGE_BUS_INVALID_ARGUMENT;
-    }
-    const uint32_t pins[] = { profile->spi_pins.clock_gpio, profile->spi_pins.mosi_gpio,
-                             profile->spi_pins.miso_gpio, profile->spi_pins.cs_gpio };
-    for (size_t index = 0u; index < sizeof(pins) / sizeof(pins[0]); ++index) {
-        if (pins[index] == profile->serial_wp_gpio || pins[index] == profile->serial_hold_gpio) {
-            return PF_STORAGE_BUS_INVALID_ARGUMENT;
-        }
     }
     *bus = pf_spi_bus(&serial_storage);
     gpio_init(profile->serial_wp_gpio);

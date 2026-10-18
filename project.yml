@@ -53,6 +53,15 @@
 :flags:
   :test:
     :compile:
+      :test_board_resources_nor:
+        - -DPF_STORAGE_BACKEND_NOR=1
+        - -DPF_BOARD_STORAGE_QSPI=0
+      :test_board_storage_qspi:
+        - -DPF_STORAGE_BACKEND_NOR=1
+        - -DPF_BOARD_STORAGE_QSPI=1
+      :test_board_storage_spi:
+        - -DPF_STORAGE_BACKEND_NOR=1
+        - -DPF_BOARD_STORAGE_QSPI=0
       :test_sd_native_init:
         - -DPF_SD_NATIVE_HIGH_SPEED=1
       :test_levelx_nor:

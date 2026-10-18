@@ -5,10 +5,15 @@ TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "serial.h"
 #include "spi.h"
 #include "nor_transport.h"
+#include "board_resources.h"
 #include <string.h>
 
 #define PF_BOARD_STORAGE_QSPI 0
+#define pf_board_resources_get default_board_resources_get
 #include "../../src/board/board_profile.c"
+#undef pf_board_resources_get
+static pf_board_resources_t test_profile;
+const pf_board_resources_t *pf_board_resources_get(void) { return &test_profile; }
 #include "../../src/board/board_storage.c"
 
 serial_fake_t serial_fake;
@@ -20,6 +25,7 @@ void setUp(void)
     pf_storage_bus_deinit(&bus);
     pf_board_storage_release_pins();
     memset(&serial_fake, 0, sizeof(serial_fake));
+    test_profile = *default_board_resources_get();
 }
 
 void tearDown(void)
@@ -75,6 +81,16 @@ void test_invalid_output_and_idle_deinit_do_not_touch_pins(void)
     pf_board_storage_release_pins();
     TEST_ASSERT_EQUAL_UINT32(0, serial_fake.gpio_initialized);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.init);
+}
+
+void test_conflicting_profile_is_rejected_before_idle_pin_or_bus_changes(void)
+{
+    test_profile.serial_hold_gpio = test_profile.monitor_uart_tx_gpio;
+    TEST_ASSERT_FALSE(pf_board_resources_validate(&test_profile));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_board_storage_prepare(&bus));
+    TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.gpio_initialized);
+    TEST_ASSERT_EQUAL_UINT(0u, serial_fake.init);
+    TEST_ASSERT_FALSE(serial_pins_prepared);
 }
 
 void test_pin_preparation_can_be_released_after_bus_initialization_fails(void)

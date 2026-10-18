@@ -136,6 +136,26 @@ output selection performed by board startup. Neither middleware service depends 
 - Uncertain failed writes are not replayed. Host tests cover exclusion, failed sync retention, no-replay and recovery
   rejection/completion; they do not establish physical USB BOT or power-loss qualification.
 
+### Storage Worker State
+
+Admission and ownership transitions are coordinated by the USB task, not arbitrary concurrent callers. The worker
+and USB task publish admission/completion state under critical sections; command cancellation is atomic.
+
+| Activity | Admission state | Completion rule |
+|---|---|---|
+| Idle | `busy=false`, `media_service_busy=false` | USB may admit a request or transfer ownership under reservation. |
+| Background media service | `media_service_busy=true`, `busy=false` | Worker releases the service gate after the serialized lifecycle operation. |
+| Command queued/executing/reply draining | `busy=true`, `benchmark_active=false` | USB must drain the done reply, even for a disconnected session. |
+| Benchmark queued/executing/cleanup | `busy=true`, `benchmark_active=true`, `benchmark_finished=false` | Cancellation requests cleanup; it does not release admission. |
+| Benchmark completion published | `busy=true`, `benchmark_active=true`, `benchmark_finished=true` | USB polling observes completion and clears all three flags; the result persists. |
+| Explicit recovery queued/executing | `busy=true`, `benchmark_active=false` | Worker reports recovery outcome and releases admission without a command reply. |
+
+`busy` and `media_service_busy` exclude each other. `benchmark_finished` implies `benchmark_active`, which implies
+`busy` until USB observes completion. Recovery and commands share the admission gate but not reply completion:
+recovery has no CDC session. Mount-policy flags are independent of operation admission. Recovery sets
+`auto_mount_blocked`; only a successful explicit `fs mount` clears it. A failed initialization or mount leaves it set.
+Per-block reservations alone never authorize USB takeover while file cleanup or reply draining is outstanding.
+
 ## Testing and Validation
 
 Ceedling is configured by the repository-root `project.yml`. Host unit tests belong under `firmware/tests/` and mirror

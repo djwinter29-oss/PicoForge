@@ -275,6 +275,17 @@ The separate recovery release rejects healthy media and does not sync or claim d
 
 For compatibility, `sd status` and `sd diagnostics` report the selected NOR media with `backend=nor`, current
 ownership/readiness and a retained failure sequence, block result, raw NOR result, LevelX result and system error.
+An additional line reports `failure_operation` and `failure_owner`, independently of current ownership. Operation
+codes are 0 none, 1 board preparation, 2 transport/flash initialization (including quad enable), 3 LevelX open,
+4 LevelX close, 5 read, 6 write and 7 sync. Before any failure the owner is `none`. Successful recovery and rejected
+owner I/O do not replace the retained failure. LevelX open/close retain their returned codes; logical block failures
+use the synthetic `LX_ERROR` summary because the block adapter does not expose the original LevelX return code.
+`LevelX_block_error=synthetic` labels that convention, not an additional failure.
+
+Board validation checks common UART/LED resources and the selected NOR SPI or QSPI topology, ignoring unused SD
+wiring. Serial preparation repeats that check before changing idle pins or publishing a bus descriptor. Every
+selected signal must be unique, in GPIO range and disjoint from UART/LED, including SPI WP/HOLD; QSPI data lanes
+must be consecutive. This validation does not acquire transport hardware or establish electrical compatibility.
 Successful recovery does not clear the retained failure. Adapter I/O failures report `LX_ERROR`; initialization
 and close failures retain the returned LevelX status. `sd info`, `sd profile`, and diagnostic clearing remain
 SD-only. Recovery completion or failure is logged on UART, and leaves the volume unmounted in either case.

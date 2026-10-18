@@ -23,9 +23,12 @@ static bool firmware_context = false, usb_context = true; /**< Static descriptor
 static pf_nor_media_diagnostics_t last_failure; /**< Retained across successful recovery. */
 
 /** @brief Retain backend failure before reinitialization can reset LevelX state. */
-static void record_failure(pf_block_result_t result, uint32_t raw, uint32_t levelx)
+static void record_failure(pf_nor_media_operation_t operation, pf_block_result_t result,
+                           uint32_t raw, uint32_t levelx)
 {
     ++last_failure.sequence;
+    last_failure.operation = operation;
+    last_failure.failure_usb_owned = usb_owner;
     last_failure.result = result;
     last_failure.raw_result = raw;
     last_failure.levelx_result = levelx;
@@ -99,7 +102,7 @@ pf_block_result_t pf_nor_media_initialize(void)
     }
     UINT close_result = volume.opened ? pf_levelx_nor_close(&volume) : LX_SUCCESS;
     if (close_result != LX_SUCCESS) {
-        record_failure(PF_BLOCK_IO_ERROR, volume.last_raw_result, close_result);
+        record_failure(PF_NOR_MEDIA_OPERATION_CLOSE, PF_BLOCK_IO_ERROR, volume.last_raw_result, close_result);
         PF_LOG_ERROR("nor", "Failed to close faulted LevelX volume");
         pf_nor_media_unlock();
         return PF_BLOCK_IO_ERROR;
@@ -107,7 +110,7 @@ pf_block_result_t pf_nor_media_initialize(void)
     pf_storage_bus_deinit(&bus);
     if (!prepared) {
         if (pf_board_storage_prepare(&bus) != PF_STORAGE_BUS_OK) {
-            record_failure(PF_BLOCK_NOT_READY, PF_NOR_OK, LX_SUCCESS);
+            record_failure(PF_NOR_MEDIA_OPERATION_PREPARE, PF_BLOCK_NOT_READY, PF_NOR_OK, LX_SUCCESS);
             PF_LOG_ERROR("nor", "External NOR board preparation failed");
             pf_nor_media_unlock();
             return PF_BLOCK_NOT_READY;
@@ -125,7 +128,7 @@ pf_block_result_t pf_nor_media_initialize(void)
     }
 #endif
     if (result != PF_NOR_OK) {
-        record_failure(PF_BLOCK_IO_ERROR, result, LX_SUCCESS);
+        record_failure(PF_NOR_MEDIA_OPERATION_INITIALIZE, PF_BLOCK_IO_ERROR, result, LX_SUCCESS);
         PF_LOG_ERROR("nor", "External NOR initialization failed: %u", (unsigned)result);
         pf_storage_bus_deinit(&bus);
         flash.initialized = false;
@@ -134,7 +137,7 @@ pf_block_result_t pf_nor_media_initialize(void)
     }
     UINT status = pf_levelx_nor_open(&volume, &flash, PF_NOR_REGION_OFFSET, PF_NOR_REGION_SIZE);
     if (status != LX_SUCCESS) {
-        record_failure(PF_BLOCK_IO_ERROR, volume.last_raw_result, status);
+        record_failure(PF_NOR_MEDIA_OPERATION_OPEN, PF_BLOCK_IO_ERROR, volume.last_raw_result, status);
         PF_LOG_ERROR("nor", "LevelX open failed: %u raw=%u system=%u", (unsigned)status,
                      (unsigned)volume.last_raw_result, (unsigned)volume.last_system_error);
         pf_nor_media_unlock();
@@ -161,7 +164,7 @@ static pf_block_result_t read_blocks(void *context, uint32_t first, void *buffer
     pf_block_result_t result = usb_owner == *(const bool *)context && pf_nor_media_ready()
         ? pf_block_read(&raw_device, first, buffer, count) : PF_BLOCK_NOT_READY;
     if (result == PF_BLOCK_IO_ERROR) {
-        record_failure(result, volume.last_raw_result, LX_ERROR);
+        record_failure(PF_NOR_MEDIA_OPERATION_READ, result, volume.last_raw_result, LX_ERROR);
     }
     pf_nor_media_unlock();
     return result;
@@ -173,7 +176,7 @@ static pf_block_result_t write_blocks(void *context, uint32_t first, const void 
     pf_block_result_t result = usb_owner == *(const bool *)context && pf_nor_media_ready()
         ? pf_block_write(&raw_device, first, buffer, count) : PF_BLOCK_NOT_READY;
     if (result == PF_BLOCK_IO_ERROR) {
-        record_failure(result, volume.last_raw_result, LX_ERROR);
+        record_failure(PF_NOR_MEDIA_OPERATION_WRITE, result, volume.last_raw_result, LX_ERROR);
     }
     pf_nor_media_unlock();
     return result;
@@ -185,7 +188,7 @@ static pf_block_result_t sync_blocks(void *context)
     pf_block_result_t result = usb_owner == *(const bool *)context && pf_nor_media_ready()
         ? pf_block_sync(&raw_device) : PF_BLOCK_NOT_READY;
     if (result == PF_BLOCK_IO_ERROR) {
-        record_failure(result, volume.last_raw_result, LX_ERROR);
+        record_failure(PF_NOR_MEDIA_OPERATION_SYNC, result, volume.last_raw_result, LX_ERROR);
     }
     pf_nor_media_unlock();
     return result;

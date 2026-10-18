@@ -1,3 +1,6 @@
+/** @file
+ * @brief Hardware-free validation of common resources and the build-selected storage topology.
+ */
 #include "board_resources.h"
 
 #include <stddef.h>
@@ -5,11 +8,81 @@
 #include "config/config.h"
 #include "drivers/storage/bus.h"
 
+#if !PF_STORAGE_BACKEND_NOR
 static uint32_t topology_gpio_limit(uint32_t gpio_count)
 {
     return (gpio_count < 32u) ? gpio_count : 32u;
 }
+#endif
 
+/** @brief Check common output resources independently of unused storage wiring. */
+static bool common_resources_valid(const pf_board_resources_t *topology)
+{
+    if (topology == NULL || topology->gpio_count == 0u) {
+        return false;
+    }
+    uint32_t limit = topology->gpio_count;
+    return (!topology->led_enabled || topology->led_gpio < limit) &&
+        (!topology->monitor_uart_enabled ||
+         (topology->monitor_uart_index <= 1u && topology->monitor_uart_baud_rate != 0u &&
+          topology->monitor_uart_tx_gpio < limit && topology->monitor_uart_rx_gpio < limit &&
+          topology->monitor_uart_tx_gpio != topology->monitor_uart_rx_gpio &&
+          (!topology->led_enabled ||
+           (topology->led_gpio != topology->monitor_uart_tx_gpio &&
+            topology->led_gpio != topology->monitor_uart_rx_gpio))));
+}
+
+bool pf_board_resources_validate_serial(const pf_board_resources_t *topology, bool quad)
+{
+    if (!common_resources_valid(topology) || topology->serial_clock_hz == 0u ||
+        topology->serial_clock_hz > 10000000u) {
+        return false;
+    }
+    uint32_t pins[6];
+    if (quad) {
+        if (topology->pio_index > 1u || topology->qspi_pins.clock_gpio >= 32u ||
+            topology->qspi_pins.data_gpio[0] > 28u) {
+            return false;
+        }
+        pins[0] = topology->qspi_pins.clock_gpio;
+        pins[1] = topology->qspi_pins.cs_gpio;
+        for (unsigned lane = 0u; lane < 4u; ++lane) {
+            if (topology->qspi_pins.data_gpio[lane] != topology->qspi_pins.data_gpio[0] + lane) {
+                return false;
+            }
+            pins[lane + 2u] = topology->qspi_pins.data_gpio[lane];
+        }
+    } else {
+        if (topology->spi_index > 1u || topology->serial_timeout_us == 0u ||
+            !pf_storage_spi_pins_match_controller(topology->spi_index, topology->spi_pins.clock_gpio,
+                topology->spi_pins.mosi_gpio, topology->spi_pins.miso_gpio)) {
+            return false;
+        }
+        pins[0] = topology->spi_pins.clock_gpio;
+        pins[1] = topology->spi_pins.cs_gpio;
+        pins[2] = topology->spi_pins.mosi_gpio;
+        pins[3] = topology->spi_pins.miso_gpio;
+        pins[4] = topology->serial_wp_gpio;
+        pins[5] = topology->serial_hold_gpio;
+    }
+    uint32_t limit = topology->gpio_count;
+    for (unsigned index = 0u; index < 6u; ++index) {
+        if (pins[index] >= limit ||
+            (topology->led_enabled && pins[index] == topology->led_gpio) ||
+            (topology->monitor_uart_enabled &&
+             (pins[index] == topology->monitor_uart_tx_gpio || pins[index] == topology->monitor_uart_rx_gpio))) {
+            return false;
+        }
+        for (unsigned previous = 0u; previous < index; ++previous) {
+            if (pins[index] == pins[previous]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+#if !PF_STORAGE_BACKEND_NOR
 static bool pin_is_valid(uint32_t pin, uint32_t gpio_limit)
 {
     return (pin != PF_BOARD_PIN_UNASSIGNED) && (pin < gpio_limit);
@@ -93,34 +166,24 @@ static bool spi_pins_are_valid(const pf_board_resources_t *topology,
                                            topology->spi_pins.mosi_gpio, topology->spi_pins.miso_gpio);
 }
 #endif
+#endif
 
 bool pf_board_resources_validate(const pf_board_resources_t *topology)
 {
+#if PF_STORAGE_BACKEND_NOR
+    return pf_board_resources_validate_serial(topology, PF_BOARD_STORAGE_QSPI);
+#else
     uint32_t gpio_limit;
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
     uint32_t data_gpio_base;
     uint32_t clock_gpio;
 #endif
 
-    if ((topology == NULL) || (topology->gpio_count == 0u)) {
+    if (!common_resources_valid(topology)) {
         return false;
     }
     gpio_limit = topology_gpio_limit(topology->gpio_count);
 
-    if (topology->led_enabled && !pin_is_valid(topology->led_gpio, gpio_limit)) {
-        return false;
-    }
-    if (topology->monitor_uart_enabled &&
-        ((topology->monitor_uart_index > 1u) ||
-         !pin_is_valid(topology->monitor_uart_tx_gpio, gpio_limit) ||
-         !pin_is_valid(topology->monitor_uart_rx_gpio, gpio_limit) ||
-         (topology->monitor_uart_tx_gpio == topology->monitor_uart_rx_gpio) ||
-         (topology->monitor_uart_baud_rate == 0u) ||
-         (topology->led_enabled &&
-          ((topology->monitor_uart_tx_gpio == topology->led_gpio) ||
-           (topology->monitor_uart_rx_gpio == topology->led_gpio))))) {
-        return false;
-    }
     if (!topology->sd_card_enabled) {
         return true;
     }
@@ -175,5 +238,6 @@ bool pf_board_resources_validate(const pf_board_resources_t *topology)
     }
 
     return true;
+#endif
 #endif
 }

@@ -23,6 +23,8 @@ bool pf_storage_worker_init(void);
 
 /** Submit one command from the USB task; false means busy or invalid input.
  * Strings are copied. Caller must supply current MSC ownership and session ID.
+ * The USB task also coordinates owner transitions, so this snapshot cannot race
+ * another USB caller. Admission stays busy until the completion reply is drained.
  */
 bool pf_storage_worker_submit(const char *family, const char *arguments,
                               bool host_owned, uint32_t session);
@@ -30,10 +32,10 @@ bool pf_storage_worker_submit(const char *family, const char *arguments,
 /** True until all work and replies are drained. Only call from the USB task. */
 bool pf_storage_worker_busy(void);
 
-/** True only after the serialized worker confirms debounced removal. */
+/** True only after the serialized worker confirms debounced removal. USB-task query. */
 bool pf_storage_worker_media_absent(void);
 
-/** Queue explicit fault recovery; caller reserves the media until USB detaches
+/** Queue explicit fault recovery from the USB task; caller reserves media until USB detaches
  * and firmware ownership is restored. Reinitializes only, never mounts.
  * Initialization failure is retained in backend diagnostics/logging; telemetry reports
  * readiness. Automatic mounting is blocked until a successful explicit fs mount.
@@ -50,10 +52,12 @@ void pf_storage_worker_cancel(uint32_t session);
 
 /** Start a verified file benchmark from the USB task. False records rejection.
  * Requires firmware ownership, initialized media, and no pending storage work.
+ * Caller supplies current ownership and coordinates all USB ownership transitions.
+ * Admission remains busy through cleanup; USB polling observes completion and releases it.
  */
 bool pf_storage_worker_benchmark_start(uint32_t size_mib, bool host_owned);
 
-/** Request cancellation from USB; cleanup still runs before ownership release. */
+/** Request cancellation from the USB task; cleanup still runs before admission is released. */
 bool pf_storage_worker_benchmark_cancel(void);
 
 /** Copy a coherent benchmark snapshot from the USB task; result persists. */

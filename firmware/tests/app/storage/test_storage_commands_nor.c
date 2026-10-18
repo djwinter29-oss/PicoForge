@@ -86,6 +86,7 @@ void test_nor_status_and_diagnostics_expose_retained_failure_and_current_state(v
     pf_nor_media_diagnostics_t diagnostics = {
         .sequence = 7u, .result = PF_BLOCK_IO_ERROR, .raw_result = 3u,
         .levelx_result = 1u, .system_error = 9u, .ready = true, .usb_owned = false,
+        .operation = PF_NOR_MEDIA_OPERATION_WRITE, .failure_usb_owned = true,
     };
     const char *commands[] = {"status", "diagnostics", "diagnostics status"};
     for (unsigned index = 0u; index < 3u; ++index) {
@@ -95,5 +96,6 @@ void test_nor_status_and_diagnostics_expose_retained_failure_and_current_state(v
         pf_storage_command_execute(false, "sd", commands[index], reply, NULL);
         TEST_ASSERT_NOT_NULL(strstr(output, "backend=nor owner=Pico initialized=1 sequence=7"));
         TEST_ASSERT_NOT_NULL(strstr(output, "raw=3 LevelX=1 system=9"));
+        TEST_ASSERT_NOT_NULL(strstr(output, "failure_operation=6 failure_owner=USB LevelX_block_error=synthetic"));
     }
 }
