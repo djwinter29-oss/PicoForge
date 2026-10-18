@@ -60,6 +60,11 @@ static pf_block_result_t device_sync(void *context)
     return sync_result;
 }
 
+static pf_block_result_t device_trim(void *context, uint32_t first, uint32_t count)
+{
+    return device_write(context, first, NULL, count);
+}
+
 void setUp(void)
 {
     card_ready = true;
@@ -69,7 +74,7 @@ void setUp(void)
     write_protected = false;
     sector_size = 512u;
     static const pf_block_device_ops_t ops = {
-        .geometry = device_geometry, .read = device_read, .write = device_write, .sync = device_sync,
+        .geometry = device_geometry, .read = device_read, .write = device_write, .sync = device_sync, .trim = device_trim,
     };
     static const pf_block_device_t device = {.ops = &ops};
     pf_fatfs_disk_bind(&device);
@@ -164,6 +169,26 @@ void test_reports_sector_geometry_and_sync(void)
     TEST_ASSERT_EQUAL_UINT32(1u, block_size);
     TEST_ASSERT_EQUAL(RES_OK, disk_ioctl(0u, CTRL_SYNC, NULL));
     TEST_ASSERT_EQUAL_UINT32(1u, sync_calls);
+}
+
+void test_trim_converts_inclusive_fatfs_range_and_rejects_invalid_or_protected_ranges(void)
+{
+    LBA_t range[] = {7u, 9u};
+    TEST_ASSERT_EQUAL(RES_OK, disk_ioctl(0u, CTRL_TRIM, range));
+    TEST_ASSERT_EQUAL_UINT32(7u, last_first_block);
+    TEST_ASSERT_EQUAL_UINT32(3u, last_block_count);
+    TEST_ASSERT_EQUAL(RES_PARERR, disk_ioctl(0u, CTRL_TRIM, NULL));
+    range[1] = 6u;
+    TEST_ASSERT_EQUAL(RES_PARERR, disk_ioctl(0u, CTRL_TRIM, range));
+    range[1] = reported_block_count;
+    TEST_ASSERT_EQUAL(RES_PARERR, disk_ioctl(0u, CTRL_TRIM, range));
+    range[1] = 9u;
+    write_protected = true;
+    TEST_ASSERT_EQUAL(RES_WRPRT, disk_ioctl(0u, CTRL_TRIM, range));
+    write_protected = false;
+    write_result = PF_BLOCK_IO_ERROR;
+    TEST_ASSERT_EQUAL(RES_ERROR, disk_ioctl(0u, CTRL_TRIM, range));
+    TEST_ASSERT_EQUAL_UINT32(2u, write_calls);
 }
 
 void test_rejects_unsupported_or_malformed_ioctl_requests(void)

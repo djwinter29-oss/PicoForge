@@ -125,7 +125,7 @@ and no UID; updated hosts continue accepting it.
 The current driver accepts only that JEDEC identity; hosts must not interpret these bytes as an SD CID.
 Until the volume is ready, clock, capacity and identity remain zero and presence is unknown, not falsely absent.
 The dashboard displays logical and physical capacity separately; manufacturer/product derive from the validated
-JEDEC ID. `device_uid` is a fixed-width 16-digit lowercase hex string, preserving leading zeros and all 64 bits;
+JEDEC ID. `device_uid` is `0x` followed by exactly 16 lowercase hexadecimal digits, preserving leading zeros and all 64 bits;
 it is null before initialization and for layout 3. The dashboards use this factory UID as the NOR device serial,
 distinct from the Pico USB serial. Manufacturing date and revision are not read and are not invented.
 Update firmware and host software together; SD continues using layout 2 unchanged.

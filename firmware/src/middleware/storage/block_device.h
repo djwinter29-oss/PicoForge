@@ -33,6 +33,7 @@ typedef struct {
     pf_block_result_t (*read)(void *context, uint32_t first, void *buffer, uint32_t count); /**< Read sectors. */
     pf_block_result_t (*write)(void *context, uint32_t first, const void *buffer, uint32_t count); /**< Write sectors. */
     pf_block_result_t (*sync)(void *context); /**< Complete pending writes; never just discard them. */
+    pf_block_result_t (*trim)(void *context, uint32_t first, uint32_t count); /**< Optional release of unused sectors. */
 } pf_block_device_ops_t;
 
 /** Borrowed descriptor; operations and context outlive all users. NULL context is valid for singleton backends. */
@@ -51,5 +52,9 @@ pf_block_result_t pf_block_read(const pf_block_device_t *device, uint32_t first,
 pf_block_result_t pf_block_write(const pf_block_device_t *device, uint32_t first, const void *buffer, uint32_t count);
 /** Complete pending writes under the backend's durability contract; no ownership change or media initialization. */
 pf_block_result_t pf_block_sync(const pf_block_device_t *device);
+/** Release an unused sector range; unsupported backends return INVALID_ARGUMENT, never erase adjacent live data.
+ * Contents of released sectors are unspecified. This operation does not change filesystem allocation.
+ */
+pf_block_result_t pf_block_trim(const pf_block_device_t *device, uint32_t first, uint32_t count);
 
 #endif

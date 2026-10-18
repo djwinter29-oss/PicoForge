@@ -204,6 +204,10 @@ is forbidden. Two physical erase blocks are reserved from exported capacity.
 For a full 16 MiB device this exports `(4096 - 2) * 7 = 28658` sectors,
 14,672,896 bytes; obtain the exact capacity from `volume.sector_count` rather
 than assuming all raw bytes are available.
+To dedicate the entire external chip, explicitly approve erasing all existing external data and configure
+`PF_NOR_REGION_OFFSET=0` and `PF_NOR_REGION_SIZE=16777216`. Changing region geometry requires reprovisioning
+the LevelX region before formatting FatFs; `fs format --confirm` formats logical sectors, not raw LevelX metadata.
+The dashboard will still show less usable than physical capacity because of LevelX and filesystem overhead.
 
 LevelX runs in standalone mode: no ThreadX mutexes, interrupts or heap
 allocation are added. Serialize all instances and operations in one storage
@@ -211,9 +215,24 @@ owner, including the first open/global initialization. The config fixes the
 on-flash `ULONG` ABI at 32 bits on RP2040, RP2350 and 64-bit hosts. Context size
 is `sizeof(pf_levelx_nor_t)` for the selected build; allow additional task stack
 space for a 512-byte staging sector and upstream reclaim calls.
-Each volume also owns an 8 KiB upstream cache, including the logical-sector mapping bitmap.
+Each volume also owns an 8 KiB buffer backing the upstream logical-sector mapping bitmap and per-block
+obsolete-sector counts. Only their required bytes are supplied to the upstream cache initializer; its whole-sector
+metadata read cache is not enabled. Single-word metadata misses therefore do not fetch an entire 512-byte sector.
 The bitmap avoids a whole-region search for every previously unwritten sector; it is rebuilt on open,
 so it changes RAM use and startup work, not the on-flash layout. Cache initialization errors fail the open.
+Obsolete-sector counts allow searches to skip fully obsolete blocks without fetching their metadata from SPI,
+especially after repeated file creation/deletion has consumed the initial erased space.
+The port separately caches each block's wear-count word (16 KiB plus a 512-byte validity bitmap for the maximum
+16 MiB chip). Reclaim scans can then compare wear counts in RAM instead of fetching every block header over SPI.
+Verified header writes update the cache, raw erase invalidates the affected entry, and reopen clears it.
+All callbacks remain under the media reservation; cache hits do not bypass a latched fault.
+FatFs TRIM notifications release deleted-file sectors through LevelX instead of preserving stale data during
+reclamation. Release is logical, ownership-gated and range-checked; it does not raw-erase adjacent sectors.
+SD backends do not implement TRIM and return unsupported (`RES_PARERR`), as permitted for this optional FatFs hint.
+FatFs does not propagate hint failures; NOR media failures are explicitly logged, retained in trim diagnostics,
+and fault the volume so subsequent storage operations fail rather than claiming healthy media.
+Pre-existing freed sectors from older firmware are not retroactively released; repeated-test timing also depends
+on region history, reclaim work and the chip's program/erase latency.
 The upstream sector-mapping cache is configured for 4096 entries (48 KiB on RP2040/RP2350), rather than the
 16-entry upstream default. This retains mappings for typical 1 MiB file tests without repeated metadata searches.
 It is a bounded, four-way hashed cache, not a full-region map; larger/conflicting workloads can still miss.
@@ -319,7 +338,7 @@ For compatibility, `sd status` and `sd diagnostics` report the selected NOR medi
 ownership/readiness and a retained failure sequence, block result, raw NOR result, LevelX result and system error.
 An additional line reports `failure_operation` and `failure_owner`, independently of current ownership. Operation
 codes are 0 none, 1 board preparation, 2 transport/flash initialization (including quad enable), 3 LevelX open,
-4 LevelX close, 5 read, 6 write and 7 sync. Before any failure the owner is `none`. Successful recovery and rejected
+4 LevelX close, 5 read, 6 write, 7 sync and 8 trim. Before any failure the owner is `none`. Successful recovery and rejected
 owner I/O do not replace the retained failure. LevelX open/close retain their returned codes; logical block failures
 use the synthetic `LX_ERROR` summary because the block adapter does not expose the original LevelX return code.
 `LevelX_block_error=synthetic` labels that convention, not an additional failure.

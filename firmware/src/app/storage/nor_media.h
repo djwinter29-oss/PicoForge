@@ -16,6 +16,7 @@ typedef enum {
     PF_NOR_MEDIA_OPERATION_READ, /**< Logical block read. */
     PF_NOR_MEDIA_OPERATION_WRITE, /**< Logical block write. */
     PF_NOR_MEDIA_OPERATION_SYNC, /**< Logical block sync. */
+    PF_NOR_MEDIA_OPERATION_TRIM, /**< Release of unused logical sectors. */
 } pf_nor_media_operation_t;
 
 /** Retained NOR failure plus current access state; vendor codes remain numeric diagnostics. */

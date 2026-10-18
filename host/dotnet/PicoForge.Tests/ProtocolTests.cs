@@ -31,7 +31,7 @@ public sealed class ProtocolTests
         Assert.Null(memory.DeviceUid);
         report[1] = 4;
         Convert.FromHexString("0123456789abcdef").CopyTo(report, 21);
-        Assert.Equal("0123456789abcdef", HidProtocol.ParseMemoryReport(report).DeviceUid);
+        Assert.Equal("0x0123456789abcdef", HidProtocol.ParseMemoryReport(report).DeviceUid);
         report[29] = 1;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseMemoryReport(report));
     }

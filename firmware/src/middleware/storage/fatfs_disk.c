@@ -97,6 +97,17 @@ DRESULT disk_ioctl(BYTE drive, BYTE command, void *buffer)
     switch (command) {
     case CTRL_SYNC:
         return translate_result(pf_block_sync(disk_device));
+    case CTRL_TRIM: {
+        if (buffer == NULL) {
+            return RES_PARERR;
+        }
+        const LBA_t *range = buffer;
+        if (range[0] > range[1] || (uint64_t)range[1] >= geometry.sector_count) {
+            return RES_PARERR;
+        }
+        return translate_result(pf_block_trim(disk_device, (uint32_t)range[0],
+                                              (uint32_t)(range[1] - range[0]) + 1u));
+    }
     case GET_SECTOR_COUNT:
         if (buffer == NULL) {
             return RES_PARERR;

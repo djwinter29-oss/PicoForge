@@ -205,7 +205,7 @@ export function decodeMemoryReport(reportId, report) {
     manufacturer,
     ...(nor ? { physical_capacity_bytes: initialized ? view.getUint32(16, true) : null,
       device_uid: initialized && version === 4
-        ? Array.from(cid.subarray(7, 15), byte => byte.toString(16).padStart(2, "0")).join("") : null } : {}),
+        ? "0x" + Array.from(cid.subarray(7, 15), byte => byte.toString(16).padStart(2, "0")).join("") : null } : {}),
   };
 }
 

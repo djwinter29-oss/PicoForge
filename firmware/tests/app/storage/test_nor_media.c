@@ -135,6 +135,23 @@ void test_only_the_configured_region_is_opened_and_live_media_is_not_reinitializ
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_nor_media_acquire_usb());
 }
 
+void test_trim_obeys_owner_and_retains_and_logs_media_failure(void)
+{
+    TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_initialize());
+    const pf_block_device_t *firmware = pf_nor_media_firmware_device();
+    pf_levelx_nor_trim_ExpectAndReturn(opened, 2u, LX_SUCCESS);
+    TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_block_trim(firmware, 2u, 1u));
+    TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_acquire_usb());
+    TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_block_trim(firmware, 2u, 1u));
+    pf_levelx_nor_trim_ExpectAndReturn(opened, 2u, LX_ERROR);
+    pf_log_write_ExpectAnyArgs();
+    TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, pf_block_trim(pf_nor_media_usb_device(), 2u, 1u));
+    pf_nor_media_diagnostics_t diagnostics;
+    pf_nor_media_get_diagnostics(&diagnostics);
+    TEST_ASSERT_EQUAL(PF_NOR_MEDIA_OPERATION_TRIM, diagnostics.operation);
+    TEST_ASSERT_TRUE(diagnostics.failure_usb_owned);
+}
+
 void test_owner_gates_firmware_and_usb_io_and_release_publishes_one_remount(void)
 {
     uint8_t sector[512];

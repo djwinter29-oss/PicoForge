@@ -35,7 +35,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(memory["device_uid"])
         report[1] = 4
         report[21:29] = bytes.fromhex("0123456789abcdef")
-        self.assertEqual(parse_memory_report(report)["device_uid"], "0123456789abcdef")
+        self.assertEqual(parse_memory_report(report)["device_uid"], "0x0123456789abcdef")
         report[29] = 1
         with self.assertRaisesRegex(ValueError, "NOR"):
             parse_memory_report(report)

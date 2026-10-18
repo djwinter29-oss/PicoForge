@@ -90,7 +90,7 @@ test("NOR memory layout reports physical and logical capacity without inventing 
   assert.equal(memory.device_uid, null);
   bytes[0] = 4;
   bytes.set([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef], 20);
-  assert.equal(decodeMemoryReport(3, view).device_uid, "0123456789abcdef");
+  assert.equal(decodeMemoryReport(3, view).device_uid, "0x0123456789abcdef");
   bytes[4] = 3;
   assert.equal(decodeMemoryReport(3, view).mode, "qspi");
   bytes[28] = 1;

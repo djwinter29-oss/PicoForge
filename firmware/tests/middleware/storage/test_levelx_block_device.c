@@ -56,6 +56,17 @@ void test_geometry_reports_logical_not_physical_erase_units_and_readiness(void)
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_block_geometry(&device, &geometry));
 }
 
+void test_trim_releases_only_requested_sectors_and_stops_at_first_failure(void)
+{
+    pf_levelx_nor_trim_ExpectAndReturn(&volume, 2u, LX_SUCCESS);
+    pf_levelx_nor_trim_ExpectAndReturn(&volume, 3u, LX_ERROR);
+    TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, pf_block_trim(&device, 2u, 3u));
+    TEST_ASSERT_EQUAL(PF_BLOCK_INVALID_ARGUMENT, pf_block_trim(&device, 15u, 2u));
+    TEST_ASSERT_EQUAL(PF_BLOCK_INVALID_ARGUMENT, device.ops->trim(device.context, 0u, 0u));
+    volume.faulted = true;
+    TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, pf_block_trim(&device, 0u, 1u));
+}
+
 void test_batches_preserve_unaligned_bytes_and_sync_once(void)
 {
     uint8_t bytes[1537];

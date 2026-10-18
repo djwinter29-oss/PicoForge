@@ -90,10 +90,29 @@ static pf_block_result_t sync_blocks(void *context)
     return pf_levelx_nor_sync(volume) == LX_SUCCESS ? PF_BLOCK_OK : PF_BLOCK_IO_ERROR;
 }
 
+/** @brief Release only the requested logical sectors; stop on error without replay. */
+static pf_block_result_t trim_blocks(void *context, uint32_t first, uint32_t count)
+{
+    pf_levelx_nor_t *volume = context;
+    pf_block_result_t result = ready(volume);
+    if (result != PF_BLOCK_OK) {
+        return result;
+    }
+    if (count == 0u || first >= volume->sector_count || count > volume->sector_count - first) {
+        return PF_BLOCK_INVALID_ARGUMENT;
+    }
+    for (uint32_t index = 0u; index < count; ++index) {
+        if (pf_levelx_nor_trim(volume, first + index) != LX_SUCCESS) {
+            return PF_BLOCK_IO_ERROR;
+        }
+    }
+    return PF_BLOCK_OK;
+}
+
 pf_block_device_t pf_levelx_block_device(pf_levelx_nor_t *volume)
 {
     static const pf_block_device_ops_t ops = {
-        .geometry = geometry, .read = read_blocks, .write = write_blocks, .sync = sync_blocks,
+        .geometry = geometry, .read = read_blocks, .write = write_blocks, .sync = sync_blocks, .trim = trim_blocks,
     };
     return (pf_block_device_t){.ops = &ops, .context = volume};
 }

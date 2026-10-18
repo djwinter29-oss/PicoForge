@@ -120,6 +120,9 @@ static void open_volume(void)
 {
     TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_open(&volume, &flash, 4096u, (BLOCKS - 2u) * 4096u));
     TEST_ASSERT_EQUAL_UINT32(70u, volume.sector_count);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(BLOCKS - 2u,
+        volume.control.lx_nor_flash_extended_cache_obsolete_count_max_block);
+    TEST_ASSERT_EQUAL_UINT32(0u, volume.control.lx_nor_flash_extended_cache_entries);
 }
 
 void test_unmapped_sector_lookup_uses_bitmap_without_raw_region_scan(void)
@@ -134,6 +137,32 @@ void test_unmapped_sector_lookup_uses_bitmap_without_raw_region_scan(void)
     for (unsigned index = 0u; index < sizeof(data); index++) {
         TEST_ASSERT_EQUAL_HEX8(0xffu, data[index]);
     }
+}
+
+void test_wear_count_cache_tracks_verified_header_writes_erase_and_faults(void)
+{
+    open_volume();
+    LX_NOR_FLASH *control = &volume.control;
+    ULONG *address = control->lx_nor_flash_base_address;
+    ULONG header;
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address, &header, 1u));
+    unsigned before = reads;
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address, &header, 1u));
+    TEST_ASSERT_EQUAL_UINT32(before, reads);
+    header &= 0x7fffffffu;
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_write(control, address, &header, 1u));
+    ULONG output;
+    before = reads;
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address, &output, 1u));
+    TEST_ASSERT_EQUAL_UINT32(before, reads);
+    TEST_ASSERT_EQUAL_HEX32(header, output);
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_block_erase(control, 0u, 1u));
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address, &output, 1u));
+    TEST_ASSERT_EQUAL_HEX32(UINT32_MAX, output);
+    TEST_ASSERT_EQUAL_UINT32(before + 1u, reads);
+    fail_io = true;
+    TEST_ASSERT_NOT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_write(control, address, &header, 1u));
+    TEST_ASSERT_NOT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address, &output, 1u));
 }
 
 void test_real_levelx_rewrites_and_reopens_with_unaligned_buffers(void)
@@ -165,6 +194,27 @@ void test_sequential_read_retains_sector_mappings_beyond_upstream_default_cache(
     }
     TEST_ASSERT_EQUAL_UINT32(volume.sector_count, volume.control.lx_nor_flash_sector_mapping_cache_hits - hits);
     TEST_ASSERT_EQUAL_UINT32(misses, volume.control.lx_nor_flash_sector_mapping_cache_misses);
+}
+
+void test_trim_releases_mapping_without_erasing_neighbors_and_persists_after_reopen(void)
+{
+    open_volume();
+    uint8_t input[512], output[512];
+    memset(input, 0x5a, sizeof(input));
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, 0u, input));
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, 1u, input));
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_trim(&volume, 0u));
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_trim(&volume, 0u));
+    TEST_ASSERT_NOT_EQUAL(LX_SUCCESS, pf_levelx_nor_trim(&volume, volume.sector_count));
+    TEST_ASSERT_EQUAL_UINT32(1u, volume.control.lx_nor_flash_mapped_physical_sectors);
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_close(&volume));
+    open_volume();
+    TEST_ASSERT_EQUAL_UINT32(1u, volume.control.lx_nor_flash_mapped_physical_sectors);
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_read(&volume, 1u, output));
+    TEST_ASSERT_EQUAL_MEMORY(input, output, sizeof(input));
+    fail_io = true;
+    TEST_ASSERT_NOT_EQUAL(LX_SUCCESS, pf_levelx_nor_trim(&volume, 1u));
+    TEST_ASSERT_TRUE(volume.faulted);
 }
 
 void test_reclaim_preserves_cold_data_and_stays_inside_region(void)
@@ -305,7 +355,9 @@ void test_real_fatfs_creates_syncs_and_reopens_a_file_over_levelx(void)
     TEST_ASSERT_EQUAL_UINT(sizeof(output), transferred);
     TEST_ASSERT_EQUAL_MEMORY(input, output, sizeof(input));
     TEST_ASSERT_EQUAL(FR_OK, f_close(&file));
+    ULONG mapped = volume.control.lx_nor_flash_mapped_physical_sectors;
     TEST_ASSERT_EQUAL(FR_OK, f_unlink("0:/NOR.BIN"));
+    TEST_ASSERT_EQUAL_UINT32(2u, mapped - volume.control.lx_nor_flash_mapped_physical_sectors);
     TEST_ASSERT_EQUAL(FR_OK, f_mount(NULL, "0:", 0u));
     pf_fatfs_disk_bind(NULL);
 }

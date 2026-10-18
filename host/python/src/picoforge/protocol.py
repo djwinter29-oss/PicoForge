@@ -198,7 +198,7 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "capacity_bytes": blocks * 512 if capacity_valid else None,
         "manufacturer": manufacturer,
         **({"physical_capacity_bytes": int.from_bytes(cid[3:7], "little") if initialized else None,
-            "device_uid": cid[7:15].hex() if initialized and version == 4 else None} if nor else {}),
+            "device_uid": "0x" + cid[7:15].hex() if initialized and version == 4 else None} if nor else {}),
     }
 
 

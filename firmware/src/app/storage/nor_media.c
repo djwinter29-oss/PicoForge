@@ -201,11 +201,27 @@ static pf_block_result_t sync_blocks(void *context)
     return result;
 }
 
+/** @brief Release unused sectors only under the current owner's reservation; retain media failures. */
+static pf_block_result_t trim_blocks(void *context, uint32_t first, uint32_t count)
+{
+    pf_nor_media_lock();
+    pf_block_result_t result = usb_owner == *(const bool *)context && pf_nor_media_ready()
+        ? pf_block_trim(&raw_device, first, count) : PF_BLOCK_NOT_READY;
+    if (result == PF_BLOCK_IO_ERROR) {
+        record_failure(PF_NOR_MEDIA_OPERATION_TRIM, result, volume.last_raw_result, LX_ERROR);
+        PF_LOG_ERROR("nor", "Logical trim failed: first=%lu count=%lu raw=%u system=%u",
+                     (unsigned long)first, (unsigned long)count,
+                     (unsigned)volume.last_raw_result, (unsigned)volume.last_system_error);
+    }
+    pf_nor_media_unlock();
+    return result;
+}
+
 /** @brief Select a static descriptor whose context identifies the permitted owner. */
 static const pf_block_device_t *device_for_owner(bool usb)
 {
     static const pf_block_device_ops_t ops = {
-        .geometry = geometry, .read = read_blocks, .write = write_blocks, .sync = sync_blocks,
+        .geometry = geometry, .read = read_blocks, .write = write_blocks, .sync = sync_blocks, .trim = trim_blocks,
     };
     static const pf_block_device_t firmware = {.ops = &ops, .context = &firmware_context};
     static const pf_block_device_t host = {.ops = &ops, .context = &usb_context};

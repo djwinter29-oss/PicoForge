@@ -180,7 +180,7 @@ internal static class HidProtocol
                 && cid[(payload[0] == 4 ? 15 : 7)..].IndexOfAnyExcept((byte)0) < 0 && physicalCapacity == 16777216
                 && (ulong)blockCount * 512 <= physicalCapacity, "invalid NOR identification or capacity");
             jedecId = "ef4018";
-            deviceUid = payload[0] == 4 ? Convert.ToHexStringLower(cid.Slice(7, 8)) : null;
+            deviceUid = payload[0] == 4 ? "0x" + Convert.ToHexStringLower(cid.Slice(7, 8)) : null;
         }
         else if (cidValid)
         {

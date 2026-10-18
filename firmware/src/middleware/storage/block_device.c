@@ -25,10 +25,9 @@ pf_block_result_t pf_block_geometry(const pf_block_device_t *device, pf_block_ge
 }
 
 /** @brief Validate a batch without overflow; backend must recheck media/access state during I/O. */
-static pf_block_result_t validate_transfer(const pf_block_device_t *device, uint32_t first,
-                                          const void *buffer, uint32_t count, bool write)
+static pf_block_result_t validate_range(const pf_block_device_t *device, uint32_t first, uint32_t count, bool write)
 {
-    if (buffer == NULL || count == 0u) {
+    if (count == 0u) {
         return PF_BLOCK_INVALID_ARGUMENT;
     }
     pf_block_geometry_t geometry;
@@ -45,17 +44,26 @@ static pf_block_result_t validate_transfer(const pf_block_device_t *device, uint
 
 pf_block_result_t pf_block_read(const pf_block_device_t *device, uint32_t first, void *buffer, uint32_t count)
 {
-    pf_block_result_t result = validate_transfer(device, first, buffer, count, false);
+    pf_block_result_t result = buffer != NULL ? validate_range(device, first, count, false) : PF_BLOCK_INVALID_ARGUMENT;
     return result == PF_BLOCK_OK ? device->ops->read(device->context, first, buffer, count) : result;
 }
 
 pf_block_result_t pf_block_write(const pf_block_device_t *device, uint32_t first, const void *buffer, uint32_t count)
 {
-    pf_block_result_t result = validate_transfer(device, first, buffer, count, true);
+    pf_block_result_t result = buffer != NULL ? validate_range(device, first, count, true) : PF_BLOCK_INVALID_ARGUMENT;
     return result == PF_BLOCK_OK ? device->ops->write(device->context, first, buffer, count) : result;
 }
 
 pf_block_result_t pf_block_sync(const pf_block_device_t *device)
 {
     return valid_device(device) ? device->ops->sync(device->context) : PF_BLOCK_INVALID_ARGUMENT;
+}
+
+pf_block_result_t pf_block_trim(const pf_block_device_t *device, uint32_t first, uint32_t count)
+{
+    pf_block_result_t result = validate_range(device, first, count, true);
+    if (result != PF_BLOCK_OK) {
+        return result;
+    }
+    return device->ops->trim != NULL ? device->ops->trim(device->context, first, count) : PF_BLOCK_INVALID_ARGUMENT;
 }

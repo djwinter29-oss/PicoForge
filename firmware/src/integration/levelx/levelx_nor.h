@@ -4,6 +4,9 @@
 #include "drivers/nor_flash/nor.h"
 #include "lx_api.h"
 
+/** Maximum 4 KiB erase blocks on the supported 16 MiB W25Q128. */
+#define PF_LEVELX_NOR_MAX_BLOCKS 4096u
+
 /** Caller-owned LevelX volume. Zero initialize before first use and serialize
  * all LevelX operations with the same external reservation. The application worker
  * and USB task may access it serially on either core under that reservation; ISR access is unsupported.
@@ -13,7 +16,9 @@ typedef struct {
     LX_NOR_FLASH control; /**< Upstream control state owned by this volume. */
     pf_nor_t *flash; /**< Borrowed initialized raw flash. */
     ULONG buffer[LX_NOR_SECTOR_SIZE]; /**< Upstream sector staging. */
-    ULONG cache[2048]; /**< 8 KiB for the mapping bitmap and upstream read cache, covering a 16 MiB chip. */
+    ULONG cache[2048]; /**< 8 KiB backing the upstream logical mapping bitmap and obsolete-sector counts. */
+    ULONG erase_counts[PF_LEVELX_NOR_MAX_BLOCKS]; /**< Read-through wear-count words, coherent with verified writes. */
+    uint32_t erase_count_valid[PF_LEVELX_NOR_MAX_BLOCKS / 32u]; /**< Validity bitmap; cleared on reopen and block erase. */
     uint32_t offset; /**< Authorized raw-region start in bytes. */
     uint32_t size; /**< Authorized raw-region size in bytes. */
     uint32_t sector_count; /**< Exported 512-byte logical sectors. */
@@ -36,6 +41,10 @@ UINT pf_levelx_nor_open(pf_levelx_nor_t *volume, pf_nor_t *flash,
  */
 UINT pf_levelx_nor_read(pf_levelx_nor_t *volume, uint32_t sector, void *data);
 UINT pf_levelx_nor_write(pf_levelx_nor_t *volume, uint32_t sector, const void *data);
+/** Release one unused logical sector through LevelX; no raw erase or filesystem allocation change.
+ * Releasing an already unmapped sector succeeds. Failures require the same recovery as writes.
+ */
+UINT pf_levelx_nor_trim(pf_levelx_nor_t *volume, uint32_t sector);
 /** Synchronous raw-media completion, not FAT transaction atomicity. */
 UINT pf_levelx_nor_sync(pf_levelx_nor_t *volume);
 /** Close LevelX control state; does not release the caller's raw flash/transport. */

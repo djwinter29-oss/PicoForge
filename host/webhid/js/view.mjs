@@ -89,7 +89,7 @@ function renderMemory(memory, filesystemFormat) {
   set("#memory-product", nor ? (manufacturer ? `${manufacturer.product_name} · JEDEC ${manufacturer.jedec_id}` : "--") : manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
-  set("#memory-serial", nor ? (memory.device_uid ? `0x${memory.device_uid}` : "Not reported") :
+  set("#memory-serial", nor ? (memory.device_uid ?? "Not reported") :
     manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
 }
 
