@@ -25,7 +25,8 @@ The complete string is embedded in Pico SDK program metadata. HID reports the th
 so `1.2.3-rc1` appears as `1.2.3` in the dashboard, matching PicoUart.
 USB `bcdDevice` encodes major/minor as BCD (`1.2.3` becomes `0x0102`); major/minor above 99 produce a
 configuration warning and `0x0000`, while HID retains the numeric version.
-It is separate from the HID layout version. Other reports retain layout version `2`.
+It is separate from the HID layout version. Runtime report 2 and MSC status report 5 use layout `3`;
+other reports retain layout `2`.
 Updated hosts also accept identity layout `2` with four zero reserved bytes and show
 firmware version as `Unknown`. Older hosts reject layout `3`: restart Python/.NET hosts with the updated
 code and reload browser pages when upgrading firmware.
@@ -45,18 +46,42 @@ All identity fields are stable for a connection. `clk_sys` is intentionally excl
 
 ## Input Report 2
 
-Input report 2 has a 13-byte payload and is published every 250 ms. Its layout version is `2`.
+Input report 2 has a 23-byte payload and is published every 250 ms. Its layout version is `3`.
+Updated Python, .NET and WebHID hosts also accept the legacy 13-byte layout `2`, with CPU/RAM fields unavailable.
+Older hosts reject layout `3`; restart updated Python/.NET services and reload browser pages after upgrading.
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |
-| 0 | 1 | Layout version | `2` |
+| 0 | 1 | Layout version | `3` |
 | 1 | 1 | Sequence | Increments for each accepted periodic report |
 | 2 | 4 | Uptime | Unsigned milliseconds, little-endian; wraps after `2^32` ms |
 | 6 | 4 | `clk_sys` | Current unsigned frequency in Hz, little-endian |
 | 10 | 1 | Flags | Bit 0: USB mounted; bit 1: CDC DTR/open; bit 2: temperature valid; bit 3: board LED available; bit 4: board LED on; other bits reserved |
 | 11 | 2 | Temperature | Signed centidegrees Celsius, little-endian; meaningful only when bit 2 is set |
+| 13 | 2 | CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
+| 15 | 4 | RAM reserved | Static on-chip SRAM reservations in bytes |
+| 19 | 4 | Total RAM | SDK-selected on-chip SRAM capacity in bytes |
 
 The sequence byte wraps modulo 256. Temperature comes from the MCU's internal sensor and is an estimate, not a calibrated ambient measurement. If bit 4 is set, bit 3 must also be set. The input report supports `GET_REPORT`, returning current telemetry. The current system clock is sampled for each report, so hosts should treat it as dynamic.
+
+CPU usage is the mean non-idle fraction across both scheduler cores over the latest interval of at least 250 ms,
+calculated as one minus FreeRTOS's aggregate idle-task runtime divided by twice the elapsed SDK 64-bit microsecond time.
+One fully busy core and one idle core reports 50%; both busy reports 100%, and both idle reports 0%.
+Adjacent wall-clock/idle sampling skew is saturated at 0% rather than wrapping. The first sample establishes a
+baseline and reports unavailable; shorter requests reuse the previous result rather than resetting the interval.
+Interrupt time is attributed to the interrupted task by FreeRTOS, so this is task-load telemetry, not separate ISR
+accounting. Waiting or sleeping tasks are idle time only when the idle task actually runs; polling loops count as busy.
+
+RAM reserved is main SRAM through the SDK linker `__end__`, plus scratch-bank data and both reserved core stacks.
+Statically allocated FreeRTOS task stacks and control blocks are already included in main SRAM and are not counted
+twice. Total capacity comes from the SDK's `SRAM_BASE`/`SRAM_END`, not a board-specific constant. It excludes external
+RAM and does not measure stack high-water marks or live libc heap allocations. FreeRTOS dynamic allocation remains
+disabled. This value is normally constant for a firmware image.
+
+Both dashboards display CPU usage and RAM reserved (used/total KiB and percentage) in Runtime status. System clock
+appears once in the identity row, still updated from this runtime report. Unavailable fields display `--`.
+Report sequence remains available in the protocol and host decoders for diagnostics, but is not displayed.
+The Last report timestamp indicates dashboard freshness.
 
 ## Input Report 3
 
@@ -88,15 +113,77 @@ CID and capacity retained internally for SD diagnostics after initialization or 
 Input Report 3 while the card is uninitialized. Its CID-valid and capacity-valid flags remain clear, and CID, clock,
 and capacity fields remain zero, so a card failure does not invalidate the dashboard's live status stream.
 
+### NOR memory telemetry (Input Report 3, layouts 3 and 4)
+
+NOR uses the same 29-byte memory payload, version `4`, component type `2` and mode `2` (SPI) or `3` (QSPI).
+Offsets and flag meanings stay the same, except CID-valid means NOR identity-valid. Offset 9 reports
+**LevelX logical sectors**, not raw chip capacity. Identity bytes at offset 13 hold the identified JEDEC ID
+(`EF 40 18` for the supported W25Q128), followed by four little-endian physical-capacity bytes at offset 16,
+eight factory UID bytes at offsets 20..27 (device transmission order, most significant byte first),
+then one reserved zero byte at offset 28. Legacy layout `3` has nine reserved zero bytes at offsets 20..28
+and no UID; updated hosts continue accepting it.
+The current driver accepts only that JEDEC identity; hosts must not interpret these bytes as an SD CID.
+Until the volume is ready, clock, capacity and identity remain zero and presence is unknown, not falsely absent.
+The dashboard displays logical and physical capacity separately; manufacturer/product derive from the validated
+JEDEC ID. `device_uid` is `0x` followed by exactly 16 lowercase hexadecimal digits, preserving leading zeros and all 64 bits;
+it is null before initialization and for layout 3. The dashboards use this factory UID as the NOR device serial,
+distinct from the Pico USB serial. Manufacturing date and revision are not read and are not invented.
+Update firmware and host software together; SD continues using layout 2 unchanged.
+
 ## Feature Report 4
 
 Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED state (`0` off or `1` on). Setting a state is idempotent; the command is ignored if malformed or if the selected board has no controllable LED. The resulting state is reported in subsequent Input Report 2 telemetry.
 
 ## Report ID 5
 
-Feature report 5 controls USB Mass Storage Class (MSC) ownership. Its SET payload is 2 bytes: version `2`, then desired state (`0` disabled or `1` enabled). Input report 5 carries a 4-byte status payload every 500 ms: version `2`, enabled, transition-pending, and request-rejected; the last three fields are booleans.
+Feature report 5 controls USB Mass Storage Class (MSC) ownership. Its safe-toggle SET payload remains 2 bytes:
+version `2`, then desired state (`0` disabled or `1` enabled). The distinct confirmed force-return command is exactly
+`[3, 2]`, excluding the report ID; layout `2` never interprets action `2` as force.
+Input report 5 carries a 4-byte status payload every 500 ms: version `3`, enabled, transition-pending, and
+request-rejected; the last three fields are booleans. Updated hosts accept legacy status layout `2` but only enable
+force return after observing layout `3`. Older host software must be updated before using this firmware.
 
-MSC is disabled at boot. Enabling requires an initialized card, an unmounted firmware filesystem, and no outstanding CLI storage command. Both enable and disable requests are rejected while storage work or its replies are pending. Use the [CDC CLI](cdc-cli.md) to explicitly unmount before handoff. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
+MSC is disabled at boot. Enabling requires initialized selected SD or NOR media and no outstanding storage command
+or replies. If firmware has mounted the filesystem, enabling queues an unmount on the sole storage worker and keeps
+the transition pending until it completes. Successful unmount pauses automount before USB ownership acquisition;
+failed unmount rejects the request and leaves firmware ownership intact. No formatting occurs.
+Both enable and disable requests are rejected while unrelated storage work or its replies are pending.
+The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string,
+and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects
+the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration.
+While the host owns the card, firmware block I/O returns not-ready. The legacy layout-2 disable request requires
+host eject and permission to remove media. The confirmed dashboard Disable flow below does not require host eject.
+The device re-enumerates without MSC and firmware regains storage ownership. Do not unplug the card or reset
+the device while the host is writing.
+
+The layout-2 safe-disable command and `POST /api/msc` with `{"enabled":false}` remain available for clients that
+manually eject first. Host apps do not invoke OS unmount/eject tools. The dashboard Disable button uses the
+confirmed Pico-side return below instead of the legacy safe-disable command.
+
+### Confirmed force return
+
+The **Disable USB drive** dashboard action warns about data loss and requires explicit confirmation.
+Python and .NET expose `POST /api/msc/force-return` with `{"confirm_data_loss":true}`; absent, false or non-boolean
+confirmation is rejected before HID delivery. WebHID sends the same `[3, 2]` command directly.
+There is no separate Force button. On Windows, Linux and macOS the host only delivers the HID command; Pico
+performs detach, ownership transfer and remount. No host OS eject/unmount command or Linux-specific permission
+is required. Older firmware without status layout `3` cannot use dashboard Disable and displays an update message.
+This command never synthesizes a successful SCSI eject.
+
+Firmware still rejects busy storage or a failed device-side sync. After a successful sync, it disconnects USB
+before releasing selected SD/NOR ownership under the shared media reservation. The sole storage worker attempts
+initialization and mounting once. Pending remains set until that attempt completes. A failed initialization/mount
+sets request-rejected with enabled false, logs the failure, and leaves storage unmounted with automatic retries
+blocked until an explicit successful `fs mount`. A pre-detach failure leaves MSC enabled. No automatic formatting,
+filesystem repair, or replay of failed writes is performed.
+
+**Device sync cannot flush writes cached in the host.** Forced return can lose data or corrupt the filesystem even
+when Pico remounts successfully. Stop host file activity first and manually safely eject whenever possible before Disable.
+USB reconnection does not itself prove the remount succeeded; wait for pending to clear and inspect rejection/logs.
+This behavior has host-runnable regression coverage, including identical command delivery for Windows/Linux/macOS
+platform identities; physical validation on those operating systems remains outstanding.
+Live forced-detach validation requires separate authorization. WebHID also requires a browser supporting WebHID;
+OS-independent firmware behavior does not imply all browsers (for example Safari) support that API.
 
 For a card invalidated by an I/O failure, the explicit
 [CDC fault-recovery workflow](cdc-cli.md#faulted-msc-recovery) can detach faulted
@@ -107,7 +194,7 @@ status fields; normal HID enable/disable semantics are unchanged.
 
 Feature Report 6 starts or cancels the [SD file self-test](sd-self-test.md).
 Its payload is exactly 6 bytes: version `2` (byte 0), action (byte 1: `1` start,
-`0` cancel), and little-endian size in MiB (bytes 2..5). Start accepts 1..128;
+`0` cancel), and little-endian size in MiB (bytes 2..5). Start accepts 1..1024;
 Cancel requires size zero. Firmware rejects an unavailable card, USB ownership,
 an unmounted filesystem, invalid size, pending storage work, or an unavailable
 card reservation. An existing mounted filesystem is required.

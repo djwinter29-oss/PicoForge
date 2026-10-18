@@ -20,3 +20,15 @@ GET {{baseUrl}}/api/status
 
 ### OpenAPI description in Development
 GET {{baseUrl}}/openapi/v1.json
+
+### Force-return validation only: refuses without explicit data-loss confirmation (400)
+POST {{baseUrl}}/api/msc/force-return
+Content-Type: application/json
+
+{"confirm_data_loss":false}
+
+### UNSAFE: detach MSC and attempt a Pico remount; cached host writes may be lost or filesystem corrupted
+POST {{baseUrl}}/api/msc/force-return
+Content-Type: application/json
+
+{"confirm_data_loss":true}

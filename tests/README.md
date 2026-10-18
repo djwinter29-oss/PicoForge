@@ -21,6 +21,7 @@ See [firmware test guidance](../firmware/tests/README.md) for test placement, sc
 | --- | --- |
 | [contracts/test_tinyusb_msc_contract.py](contracts/test_tinyusb_msc_contract.py) | Verify pinned TinyUSB source ordering and MSC linker-wrapper configuration |
 | [contracts/test_storage_layers.py](contracts/test_storage_layers.py) | Verify physical storage mode layout and independence from SD/NOR/filesystem headers |
+| [contracts/test_storage_backend.py](contracts/test_storage_backend.py) | Validate SD/NOR build selection, explicit region bounds, and build-wrapper routing |
 | [test_validation_integrity.py](test_validation_integrity.py) | Exercise validation tools with copied sources and valid/broken ARM ELF fixtures |
 
 Run from the repository root:
@@ -55,21 +56,22 @@ These project-level tests assert properties of supplied cross-build artifacts:
 
 | Test | Purpose |
 | --- | --- |
-| [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers in final ARM ELF artifacts |
+| [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers and selected SD/NOR build dependencies |
 | [artifacts/test_sd_ports.py](artifacts/test_sd_ports.py) | Verify bare-metal compilation manifests and linked symbols |
 
 For existing Pico 2 validation builds, run from the repository root:
 
 ```sh
 python3 -m pytest tests -m artifacts \
-    --elf build/validation-pico2-SDIO_PIO/pf_hello_world.elf \
+    --elf "$(cat build/validation-pico2-SDIO_PIO/pico_forge_elf.txt)" \
     --baremetal-build-dir build/validation-pico2-SDIO_PIO-baremetal
 ```
 
 `validate.sh` invokes these tests after the corresponding firmware builds.
 Bare-metal smoke targets have no USB interface and are not MSC checker inputs.
 The MSC checker requires an unstripped ELF with DWARF and Arm GNU `nm`/`readelf`;
-the port checker requires `compile_commands.json` and Arm GNU `nm`.
+the storage dependency and port checks require `compile_commands.json` and `CMakeCache.txt`.
+The port checker also requires Arm GNU `nm`.
 Neither test builds or flashes firmware.
 Repeat either option to check multiple inputs. Selecting artifact tests without
 the corresponding input fails explicitly; missing files are never silently skipped.

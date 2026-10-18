@@ -50,7 +50,7 @@ jobs:
         run: |
           python3 -m pytest tests/contracts tests/pio tests/test_validation_integrity.py \
             tests/artifacts/test_msc_elf.py \
-            --elf "build/firmware-${{ matrix.board }}/pf_hello_world.elf" \
+            --elf "$(cat "build/firmware-${{ matrix.board }}/pico_forge_elf.txt")" \
             --junitxml=build/project-tests.xml
 
   host-validation:

@@ -20,6 +20,26 @@ def info_report(mcu=2, name="PicoForge", serial="0123456789abcdef"):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_nor_memory_layout(self):
+        report = bytearray(30)
+        report[:6] = bytes([3, 3, 1, 0x3f, 2, 2])
+        struct.pack_into("<II", report, 6, 992063, 6000)
+        report[14:17] = bytes.fromhex("ef4018")
+        struct.pack_into("<I", report, 17, 16777216)
+        memory = parse_memory_report(report)
+        self.assertEqual(memory["component_type"], "nor-flash")
+        self.assertEqual(memory["capacity_bytes"], 6000 * 512)
+        self.assertEqual(memory["physical_capacity_bytes"], 16777216)
+        self.assertEqual(memory["manufacturer"]["jedec_id"], "ef4018")
+        self.assertIsNone(memory["manufacturer"]["serial_number"])
+        self.assertIsNone(memory["device_uid"])
+        report[1] = 4
+        report[21:29] = bytes.fromhex("0123456789abcdef")
+        self.assertEqual(parse_memory_report(report)["device_uid"], "0x0123456789abcdef")
+        report[29] = 1
+        with self.assertRaisesRegex(ValueError, "NOR"):
+            parse_memory_report(report)
+
     def test_decodes_info_and_product_name(self):
         self.assertEqual(
             parse_info_report(info_report()),
@@ -79,8 +99,29 @@ class ProtocolTests(unittest.TestCase):
                 "temperature_centidegrees": 2345,
                 "led_available": True,
                 "led_on": True,
+                "cpu_usage_basis_points": None,
+                "ram_used_bytes": None,
+                "ram_total_bytes": None,
             },
         )
+
+    def test_runtime_layout_three_usage_and_legacy_compatibility(self):
+        prefix = bytes([2]) + struct.pack("<BBIIBh", 3, 9, 123456, 250000000, 0, 0)
+        report = prefix + struct.pack("<HII", 1234, 65536, 532480)
+        status = parse_status_report(report + bytes(8))
+        self.assertEqual(status["cpu_usage_basis_points"], 1234)
+        self.assertEqual(status["ram_used_bytes"], 65536)
+        self.assertEqual(status["ram_total_bytes"], 532480)
+        unknown = parse_status_report(prefix + struct.pack("<HII", 0xffff, 0, 270336))
+        self.assertIsNone(unknown["cpu_usage_basis_points"])
+        self.assertEqual(unknown["ram_used_bytes"], 0)
+        for cpu in (0, 10000):
+            self.assertEqual(parse_status_report(prefix + struct.pack("<HII", cpu, 270336, 270336))
+                             ["cpu_usage_basis_points"], cpu)
+        for malformed in (report[:-1], report + b"\x01", prefix + struct.pack("<HII", 10001, 1, 2),
+                          prefix + struct.pack("<HII", 0, 3, 2), prefix + struct.pack("<HII", 0, 0, 0)):
+            with self.subTest(report=malformed), self.assertRaises(ValueError):
+                parse_status_report(malformed)
 
     def test_rejects_unknown_status_flags(self):
         with self.assertRaisesRegex(ValueError, "unknown HID status flags"):
@@ -141,11 +182,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(build_msc_command_report(True), bytes([MSC_COMMAND_REPORT_ID, 2, 1]))
         self.assertEqual(build_msc_command_report(False), bytes([MSC_COMMAND_REPORT_ID, 2, 0]))
         self.assertEqual(parse_msc_status_report(bytes([5, 2, 1, 0, 0])),
-                         {"enabled": True, "transition_pending": False, "request_rejected": False})
+                         {"enabled": True, "transition_pending": False, "request_rejected": False,
+                          "force_return_supported": False})
         self.assertEqual(parse_msc_status_report(bytes([2, 0, 1, 1])),
-                         {"enabled": False, "transition_pending": True, "request_rejected": True})
+                         {"enabled": False, "transition_pending": True, "request_rejected": True,
+                          "force_return_supported": False})
         with self.assertRaises(ValueError):
             build_msc_command_report(1)
+        self.assertEqual(build_msc_command_report(False, force=True), bytes([5, 3, 2]))
+        self.assertTrue(parse_msc_status_report(bytes([5, 3, 1, 0, 0]))["force_return_supported"])
+        with self.assertRaises(ValueError):
+            build_msc_command_report(True, force=True)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,10 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
     try {
       render(snapshot);
       assert.equal(element("#self-test-start").disabled, false);
-      for (const invalid of [0, 129, 1.5, NaN]) {
+      element("#self-test-size").valueAsNumber = 1024;
+      render(snapshot);
+      assert.equal(element("#self-test-start").disabled, false);
+      for (const invalid of [0, 1025, 1.5, NaN]) {
         element("#self-test-size").valueAsNumber = invalid;
         render(snapshot);
         assert.equal(element("#self-test-start").disabled, true);
@@ -69,6 +72,35 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
 }
 
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
+  test(`${name} displays NOR metadata and permits a one MiB benchmark`, () => {
+    const elements = new Map();
+    const element = selector => {
+      if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", valueAsNumber: 1 });
+      return elements.get(selector);
+    };
+    const previous = globalThis.document;
+    globalThis.document = { querySelector: element };
+    try {
+      render({ connected: true, memory: {
+        configured: true, initialized: true, presence_known: true, present: true,
+        component_type: "nor-flash", mode: "spi", bus_clock_hz: 992063,
+        capacity_bytes: 3000000, physical_capacity_bytes: 16777216,
+        manufacturer: { id: 0xef, product_name: "W25Q128", jedec_id: "ef4018", serial_number: null },
+      }, filesystem_format: "fat12", self_test: { state: "idle" } });
+      assert.equal(element("#memory-state").textContent, "Ready");
+      assert.equal(element("#memory-type").textContent, "nor-flash");
+      assert.match(element("#memory-manufacturer").textContent, /Winbond/);
+      assert.match(element("#memory-product").textContent, /W25Q128.*ef4018/);
+      assert.match(element("#memory-size").textContent, /usable.*16.00 MiB physical/);
+      assert.equal(element("#memory-serial").textContent, "Not reported");
+      assert.equal(element("#self-test-start").disabled, false);
+      render({ connected: true, memory: { configured: true, initialized: true,
+        component_type: "nor-flash", device_uid: "0x0123456789abcdef",
+        jedec_id: "ef4018" } });
+      assert.equal(element("#memory-serial").textContent, "0x0123456789abcdef");
+    } finally { globalThis.document = previous; }
+  });
+
   test(`${name} reports SD-card presence in Live Report and resolves known manufacturer names`, () => {
     const elements = new Map();
     const element = selector => {
@@ -121,6 +153,43 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
 }
 
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
+  test(`${name} renders interval CPU and reserved RAM, including legacy and disconnected states`, () => {
+    const elements = new Map();
+    const element = selector => {
+      assert.notEqual(selector, "#runtime-clock", "system clock is shown only in the identity row");
+      assert.notEqual(selector, "#sequence", "report sequence is protocol-only diagnostics");
+      if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", valueAsNumber: 32 });
+      return elements.get(selector);
+    };
+    const previous = globalThis.document;
+    globalThis.document = { querySelector: element };
+    try {
+      const runtime = { system_clock_hz: 250_000_000, cpu_usage_basis_points: 1234,
+        ram_used_bytes: 65536, ram_total_bytes: 532480 };
+      render({ connected: true, runtime });
+      assert.equal(element("#identity-clock").textContent, "250 MHz");
+      assert.equal(element("#cpu-usage").textContent, "12.3%");
+      assert.equal(element("#ram-usage").textContent, "64.0 / 520 KiB (12.3%)");
+      for (const cpu of [0, 10000]) {
+        runtime.cpu_usage_basis_points = cpu;
+        render({ connected: true, runtime });
+        assert.equal(element("#cpu-usage").textContent, `${(cpu / 100).toFixed(1)}%`);
+      }
+      runtime.cpu_usage_basis_points = null;
+      render({ connected: true, runtime });
+      assert.equal(element("#cpu-usage").textContent, "--");
+      assert.match(element("#ram-usage").textContent, /520 KiB/);
+      for (const snapshot of [{ connected: true, runtime: { system_clock_hz: 125_000_000 } },
+        { connected: false }]) {
+        render(snapshot);
+        assert.equal(element("#cpu-usage").textContent, "--");
+        assert.equal(element("#ram-usage").textContent, "--");
+      }
+    } finally {
+      globalThis.document = previous;
+    }
+  });
+
   test(`${name} renders firmware release and does not confuse legacy protocol version with release`, () => {
     const elements = new Map();
     const element = selector => {

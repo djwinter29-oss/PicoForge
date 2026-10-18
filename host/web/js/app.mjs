@@ -5,14 +5,19 @@ const mscControl = document.querySelector("#msc-control");
 let requestInProgress = false;
 let currentSnapshot = null;
 let selfTestPendingSequence = null;
+let mscRequestInProgress = false;
+let mscError = null;
 
 async function updateStatus() {
-  if (requestInProgress) return;
+  if (requestInProgress || mscRequestInProgress) return;
   requestInProgress = true;
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
     if (!response.ok) throw new Error(`Status endpoint returned HTTP ${response.status}`);
-    currentSnapshot = await response.json();
+    const snapshot = await response.json();
+    if (mscRequestInProgress) return;
+    currentSnapshot = snapshot;
+    currentSnapshot.error = mscError ?? currentSnapshot.error;
     if (currentSnapshot.self_test?.sequence !== selfTestPendingSequence) selfTestPendingSequence = null;
     currentSnapshot.self_test_command_pending = selfTestPendingSequence !== null;
     renderStatus(currentSnapshot);
@@ -22,31 +27,49 @@ async function updateStatus() {
   } finally {
     requestInProgress = false;
     ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
-    mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
+    mscControl.disabled = mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
       || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
-      || selfTestPendingSequence !== null;
+      || selfTestPendingSequence !== null
+      || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
   }
 }
 
 async function setMsc() {
-  if (!currentSnapshot?.msc) return;
+  if (!currentSnapshot?.msc || mscRequestInProgress) return;
+  const force = currentSnapshot.msc.enabled;
+  if (force && (!currentSnapshot.msc.force_return_supported
+    || !window.confirm("Disable USB drive and return storage to Pico? "
+      + "Cached host writes may be lost and the filesystem may be corrupted. "
+      + "Stop all host file activity first. Pico will attempt to remount without formatting or repair. Continue?"))) return;
+  mscRequestInProgress = true;
+  mscError = null;
   mscControl.disabled = true;
+  document.querySelector("#msc-note").textContent = force ? "Detaching USB drive on Pico and attempting remount..."
+    : "Preparing storage for USB...";
+  document.querySelector("#msc-note").hidden = false;
   try {
-    const response = await fetch("/api/msc", {
+    const response = await fetch(force ? "/api/msc/force-return" : "/api/msc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: !currentSnapshot.msc.enabled }),
+      body: JSON.stringify(force ? { confirm_data_loss: true } : { enabled: !currentSnapshot.msc.enabled }),
     });
-    if (!response.ok) throw new Error(`MSC endpoint returned HTTP ${response.status}`);
     const result = await response.json();
-    currentSnapshot.msc = result.msc;
+    if (!response.ok) throw new Error(result.error ?? result.title ?? `MSC endpoint returned HTTP ${response.status}`);
+    const msc = result.msc ?? result;
+    if (typeof msc.enabled !== "boolean") throw new Error("MSC endpoint returned invalid ownership status");
+    currentSnapshot.msc = msc;
+    currentSnapshot.error = null;
     renderStatus(currentSnapshot);
   } catch (error) {
-    currentSnapshot.error = error.message;
+    mscError = error.message;
+    currentSnapshot.error = mscError;
     renderStatus(currentSnapshot);
   } finally {
+    mscRequestInProgress = false;
     mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
-      || Boolean(currentSnapshot.msc.transition_pending);
+      || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
+      || selfTestPendingSequence !== null
+      || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
   }
 }
 
@@ -93,6 +116,6 @@ document.querySelector("#self-test-start").addEventListener("click", () => selfT
 document.querySelector("#self-test-cancel").addEventListener("click", () => selfTest("cancel"));
 document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(currentSnapshot ?? {}));
 ledControl.addEventListener("click", setLed);
-mscControl.addEventListener("click", setMsc);
+mscControl.addEventListener("click", () => setMsc());
 void updateStatus();
 window.setInterval(updateStatus, 1000);

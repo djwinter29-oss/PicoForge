@@ -49,13 +49,22 @@ tools/firmware/build.sh --board pico2
 For the original Pico, use `--board pico` instead. The build uses the Pico SDK
 included with the project.
 
+Application outputs use `pico_forge_<mcu>_<cpu-MHz>_<YYYYMMDD>.*`, for example
+`pico_forge_rp2350_250_20261018.uf2`. The date is UTC at CMake configuration time; the build script reconfigures
+on each run. Reconfigure an existing directory before a new day's direct `cmake --build` to refresh its date.
+Stock clocks are 125 MHz for RP2040 and 150 MHz for RP2350; `--sys-clk-mhz` selects a different clock.
+ELF, UF2, BIN, HEX, map and disassembly outputs share the basename. The CMake target is `pico_forge`.
+`pico_forge_elf.txt` in the build directory records the exact ELF path for flashing and validation;
+tools never select an image by wildcard or modification time. Use separate build directories for different
+boards, storage backends or transports: those distinctions are not all encoded in the requested filename.
+
 ### 2. Flash Your Board
 
 1. Hold **BOOTSEL** while connecting the board to USB.
-2. Copy `build/firmware-pico2/pf_hello_world.uf2` to the drive that appears.
+2. Copy the generated `pico_forge_rp2350_150_<YYYYMMDD>.uf2` from `build/firmware-pico2/` to that drive.
 3. The board restarts automatically.
 
-For a Pico build, use `build/firmware-pico/pf_hello_world.uf2`.
+For a Pico build, use `pico_forge_rp2040_125_<YYYYMMDD>.uf2` from `build/firmware-pico/`.
 Always use the image built for your board.
 
 ### 3. Open the Dashboard

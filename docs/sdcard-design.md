@@ -1,5 +1,7 @@
 # SD-Card Driver Design
 
+Current source-review dispositions and remaining qualification: [SD remediation matrix](tests/sd-design-remediation.md).
+
 This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
@@ -16,13 +18,15 @@ Native and SPI protocol files live together under `firmware/src/drivers/sd_card/
 
 ```text
 sd_card/
-  sd.c / .h                   Public configuration, ownership and diagnostics
-  sd_block.h / sd_msc.h        Block and USB ownership interfaces
+  sd.c / .h                   Serialized protocol dispatch and configuration
+  sd_block.h                  Raw block operations, telemetry and profiling
   sd_protocol.c / .h          Command/register helpers, native responses and data codecs
   sd_native.c / .h            Native initialization and block operations
   sd_native_host.c / .h       Native command/data sequencing and streams
   sd_spi.c / .h               SPI initialization and block operations
-  sd_port.h / ports/          FreeRTOS and bare-metal integration
+  sd_port.h                   Execution-environment contract
+  sd_port_freertos.c           FreeRTOS reservations and optional waits
+  sd_port_baremetal.c          Single-foreground-context integration
 ```
 
 The native and SPI implementations use one protocol module but retain their distinct initialization,
@@ -31,7 +35,7 @@ legacy/SDSC handling. Backend function/type prefixes are `pf_sd_native_*` and `p
 backend header names are now `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
 physical storage layer, not the native protocol's name or directory.
 
-Production filenames use the short `sd` prefix, including `ports/*/sd_port.c`.
+Production filenames use the short `sd` prefix, including `sd_port_freertos.c` and `sd_port_baremetal.c`.
 Facade functions/types now use `pf_sd_*` and constants/header guards use `PF_SD_*`, replacing `pf_sd_card_*` /
 `PF_SD_CARD_*`. Native protocol/host functions/types use `pf_sd_native_*` and constants use `PF_SD_NATIVE_*`,
 replacing `pf_sdio_pio_*` / `PF_SDIO_PIO_*`; SPI names already use `pf_sd_spi_*` / `PF_SD_SPI_*`.
@@ -40,8 +44,7 @@ Configuration is now one `pf_sd_config_t` containing `transport` and `clock_hz`;
 compatibility aliases are provided. Result values, build targets, and CMake options are unchanged. In particular,
 `PF_SDIO_PIO_HIGH_SPEED` and `PF_SDIO_PIO_FUSED_COPY` remain CMake options and set the C definitions
 `PF_SD_NATIVE_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
-Unit-test filenames use the same source basenames, with port tests beneath the matching `ports/freertos` or
-`ports/baremetal` subtree.
+Unit-test filenames use the same source basenames, with environment-suffixed port tests alongside the other SD tests.
 
 Both backends use the same configuration shape, borrowing a `pf_storage_bus_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
@@ -73,10 +76,15 @@ ownership or packed response words. The existing packed-response diagnostic API 
 ```mermaid
 flowchart TD
     Board[Board profile and build-time transport selection] --> Config[pf_board_get_sd_card_config]
-    Config --> Card[SD-card configuration and dispatch]
-    Storage[Storage middleware] --> FatFs[FatFs]
+    Config --> Gate[Application sd_media lifecycle and ownership]
+    Gate --> Card[SD-card configuration and dispatch]
+    App[Application storage worker, commands and self-test] --> Storage[Storage mount service]
+    App --> SDAdapter
+    Storage --> FatFs[FatFs]
     FatFs --> Disk[FatFs disk-I/O adapter]
-    Disk --> Gate[Block API and firmware ownership gate]
+    Disk --> Block[Logical block-device interface]
+    Block --> Gate
+    Gate --> SDAdapter[Raw SD block-device geometry adapter]
     MSC[USB MSC callbacks] --> Gate
     Gate --> Card
     Card --> Native[SDIO-PIO card lifecycle]
@@ -95,18 +103,78 @@ flowchart TD
 
 | Responsibility | Implementation |
 | --- | --- |
+| Application storage task, automount, commands, and file benchmark | [app/storage/](../firmware/src/app/storage/) |
 | Board-approved pins and controller selection | [board.c](../firmware/src/board/board.c), [board_profile.c](../firmware/src/board/board_profile.c) |
-| Singleton configuration, dispatch, diagnostics, and firmware/USB ownership | [sd.c](../firmware/src/drivers/sd_card/sd.c) |
-| Execution-environment selection, reservations, and optional waits | [sd_port.h](../firmware/src/drivers/sd_card/sd_port.h), [ports/](../firmware/src/drivers/sd_card/ports/) |
+| Serialized protocol dispatch and driver initialization stage | [sd.c](../firmware/src/drivers/sd_card/sd.c) |
+| Application board configuration, diagnostics, firmware/USB ownership and gated FatFs access | [sd_media.c](../firmware/src/app/storage/sd_media.c) |
+| Execution-environment selection, reservations, and optional waits | [sd_port.h](../firmware/src/drivers/sd_card/sd_port.h), [FreeRTOS](../firmware/src/drivers/sd_card/sd_port_freertos.c), [bare-metal](../firmware/src/drivers/sd_card/sd_port_baremetal.c) |
 | Block operations, result codes, and telemetry | [sd_block.h](../firmware/src/drivers/sd_card/sd_block.h) |
-| USB-only ownership and block capabilities | [sd_msc.h](../firmware/src/drivers/sd_card/sd_msc.h) |
+| Filesystem-independent logical sectors and geometry | [block_device.h](../firmware/src/middleware/storage/block_device.h) |
+| Logical sectors backed by the serialized SD facade | [sd_block_device.c](../firmware/src/middleware/storage/sd_block_device.c) |
+| Application single-volume FatFs lifecycle and format telemetry | [fatfs_volume.c](../firmware/src/app/storage/fatfs_volume.c) |
+| Application USB ownership and owner-specific block capabilities | [sd_media.h](../firmware/src/app/storage/sd_media.h) |
 | Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../firmware/src/drivers/sd_card/sd_protocol.c) |
 | Native card initialization and transfer policy | [sd_native.c](../firmware/src/drivers/sd_card/sd_native.c) |
 | Native SD command/data adapter and stream policy | [sd_native_host.c](../firmware/src/drivers/sd_card/sd_native_host.c) |
 | Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../firmware/src/drivers/storage/sdio_pio/sdio_pio.c), [sdio_pio.pio](../firmware/src/drivers/storage/sdio_pio/sdio_pio.pio) |
 | SPI card protocol | [sd_spi.c](../firmware/src/drivers/sd_card/sd_spi.c) |
 | Shared SPI hardware transport | [spi.c](../firmware/src/drivers/storage/spi/spi.c) |
-| FatFs result/status conversion and CTRL_SYNC | [diskio.c](../firmware/src/integration/fatfs/diskio.c) |
+| FatFs result/status conversion and CTRL_SYNC | [fatfs_disk.c](../firmware/src/middleware/storage/fatfs_disk.c) |
+
+### Filesystem Block-Device Boundary
+
+Application policy lives in [app/storage/](../firmware/src/app/storage/): the sole storage-owner task handles USB
+command sessions, media debounce/automount and recovery, while command execution and the fixed-file benchmark live
+alongside it. CMake builds these as `pf_app_storage`, which depends on reusable `pf_storage`, not the reverse.
+The application owns the singleton FatFs instance, mount/unmount state and cached format telemetry in
+`app/storage/fatfs_volume.c/.h`. Middleware retains logical blocks, raw device adapters and FatFs disk callbacks;
+it does not include application headers or own volume lifecycle, benchmark status, command replies or queues.
+The application mount service retains `pf_fatfs_volume_*` APIs and `PF_FATFS_VOLUME_*` constants.
+The generic interface remains `block_device.c/.h`, and
+`sd_block_device.c/.h` exposes `pf_sd_block_device()`. The FatFs disk adapter exposes `pf_fatfs_disk_bind()`.
+These replace the earlier storage-prefixed volume/adapter APIs without compatibility aliases.
+
+FatFs disk I/O uses a borrowed `pf_block_device_t`, not SD commands or the physical storage bus. Its operations provide
+media metadata, sector reads, sector writes, and sync with device-independent results. Geometry includes sector
+count, byte size, erase granularity, and write protection. Shared dispatch rejects incomplete descriptors, invalid
+geometry, empty or overflowing batches, and out-of-range sectors before data transfer. Read-only media still permits
+reads and sync. Backend errors propagate without retries, uncertain-write replay, or success-shaped substitutions.
+
+The [FatFs binding](../firmware/src/middleware/storage/fatfs_disk.h) selects drive zero explicitly. Its borrowed
+descriptor, operation table, and context must outlive the binding. Bind only before mounting or after unmounting,
+serialized with FatFs calls; there is no runtime device registry or automatic discovery. Unbound drives report
+`STA_NOINIT`/`RES_NOTRDY`. The current fixed-sector FatFs configuration accepts only its configured sector size;
+incompatible geometry is not mounted. Write protection maps to `STA_PROTECT` and `RES_WRPRT`.
+The project-owned adapter and binding live together as `middleware/storage/fatfs_disk.c/.h`. The upstream-named
+`diskio.h` and library configuration `ffconf.h` remain in `integration/fatfs/`. The adapter implements FatFs's required
+`disk_*` callbacks; those library-specific interfaces are not part of the generic block contract.
+
+The application initializes SD and supplies its static block descriptor to `pf_fatfs_volume_mount()`. The volume
+service has no SD dependency: it binds the caller's initialized logical device before `f_mount` and unbinds after
+a successful unmount or failed mount cleanup. The borrowed descriptor, operation table, and context must remain
+valid until unbound. A failed unmount retains the binding. The SD adapter delegates I/O and
+sync to the raw serialized driver, while `sd_media` wraps firmware access with owner checks and retained diagnostics.
+The application binds `pf_sd_media_firmware_device()`, not the raw `pf_sd_block_device()`. Geometry remains
+queryable while USB owns initialized media, matching the previous disk-I/O behavior, but firmware reads, writes, and
+sync remain rejected by `sd_media`. Geometry validation does not replace the backend's checks at transfer time.
+The interface adds no lock and does not hold a reservation across a filesystem transaction.
+Geometry success indicates available metadata, not permission to perform I/O. FatFs checks sector compatibility
+before generic transfer validation queries geometry again; this deliberate duplication is retained rather than
+weakening either boundary without evidence of a performance problem.
+
+Volume lifecycle calls and FatFs operations require caller serialization through the existing
+storage-owner task/reservation. `pf_fatfs_volume_is_mounted()` is an atomic snapshot of the last completed registration
+transition, not physical presence. Registration and filesystem-format telemetry are independent atomic snapshots;
+reading either grants no media access and does not serialize check-and-act operations or a filesystem transaction.
+The service manages one volume over a caller-selected
+logical device, not a device registry or multi-volume manager. The build selects SD or LevelX NOR; other backends must
+provide valid logical sectors and perform their own initialization before mounting.
+
+SD telemetry, board configuration, media initialization, filesystem mounting/formatting, and USB ownership transitions
+remain outside the generic contract. SD MSC still uses its owner-specific SD API; it must not use the firmware-owned
+descriptor to bypass those transitions. Build-selected NOR uses a LevelX logical adapter and separate owner-gated
+descriptors, never raw flash. See [NOR filesystem and MSC selection](nor-flash.md#build-selected-fatfs-and-usb-msc)
+for region safety, configuration, initialization and qualification boundaries.
 
 The build selects one backend; both modes use the consolidated protocol library. Native wire helpers retain their
 `pf_sd_native_*` names; SPI also reuses its transport-independent CMD6 arguments and switch-status decoders.
@@ -157,8 +225,8 @@ back to native mode can require removing card power, not just resetting the MCU.
 independently of the transport. The default is `FREERTOS`, preserving the current
 application. There is one shared facade, protocol implementation, and selected
 transport backend, not separate RTOS and bare-metal drivers. Only
-[ports/freertos/](../firmware/src/drivers/sd_card/ports/freertos/) depends on
-FreeRTOS; [ports/baremetal/](../firmware/src/drivers/sd_card/ports/baremetal/)
+[sd_port_freertos.c](../firmware/src/drivers/sd_card/sd_port_freertos.c) depends on
+FreeRTOS; [sd_port_baremetal.c](../firmware/src/drivers/sd_card/sd_port_baremetal.c)
 uses the Pico SDK backend without importing or linking the kernel. These are
 execution-environment ports, not filesystem/application integration.
 
@@ -216,31 +284,26 @@ selected port. These are host/build checks, not physical-card qualification.
 
 ### Block API
 
-Applications should normally use the facade rather than bypassing its ownership
-gate with direct backend calls. This example initializes and reads without
+Applications use `app/storage/sd_media.h` rather than bypassing its ownership gate with raw driver calls.
+`pf_sd_media_setup()` obtains the board configuration and initializes the execution port before task startup.
+This worker-context example initializes and reads without
 mounting a filesystem or writing media:
 
 ```c
-#include "board.h"
-#include "sd.h"
+#include "app/storage/sd_media.h"
 
 pf_sd_result_t read_first_sector(uint8_t sector[PF_SD_BLOCK_SIZE])
 {
-    pf_sd_config_t config;
-
-    if (!pf_board_get_sd_card_config(&config)) {
-        return PF_SD_NOT_CONFIGURED;
-    }
-    pf_sd_result_t result = pf_sd_init(&config);
+    pf_sd_result_t result = pf_sd_media_initialize();
     if (result != PF_SD_OK) {
         return result;
     }
-    return pf_sd_read_blocks(0u, sector, 1u);
+    return pf_sd_media_read_blocks(0u, sector, 1u);
 }
 ```
 
-For filesystem access, pass the board configuration to `pf_storage_mount()` and
-use FatFs through the storage-owner workflow. Do not mix raw-sector writes with
+For filesystem access, initialize SD through `sd_media`, then pass `pf_sd_media_firmware_device()` to
+`pf_fatfs_volume_mount()` through the storage-owner workflow. Do not mix raw-sector writes with
 a mounted filesystem.
 
 - Blocks are always 512 bytes, with 32-bit sector addresses and capacity.
@@ -258,13 +321,14 @@ a mounted filesystem.
   `pf_sd_unlock()` where needed. Per-call locking does not serialize a
   FatFs transaction: `FF_FS_REENTRANT` is disabled, and all FatFs operations
   must remain in the storage-owner workflow with its busy/ownership reservation.
-- Use `pf_sd_sync()` after writes. A successful SDIO multi-block write can
+- Use `pf_sd_media_sync()` after application writes (`pf_sd_sync()` is the raw driver operation).
+  A successful SDIO multi-block write can
   leave a CMD25 stream open; sync ends the stream and checks stop completion.
 - On read failure, buffer contents may be partially updated or invalid. A failed
   write can have committed some sectors; do not blindly replay it.
 - `pf_sd_get_info()` reports presence, initialization, effective clock,
   capacity, and CID. Without card detect, presence is not independently known.
-- `pf_sd_get_diagnostics()` retains the most recent failed facade operation,
+- `pf_sd_media_get_diagnostics()` retains the most recent failed facade operation,
   result, owner, selected transport, backend initialization stage, and a snapshot
   of the profiling event counters. `sd diagnostics` exposes this without
   changing profiling state; counters remain zero unless profiling was enabled
@@ -313,16 +377,20 @@ flowchart TD
     Transport -->|SPI| Setup[Configure SPI mode 0 and GPIO-controlled CS]
     Setup --> Clocks[Send 80 idle clocks with CS released]
     Clocks --> SPIReset[CMD0 and CMD8]
-    SPIReset --> SPIReady[CMD55 plus ACMD41 until ready]
-    SPIReady --> OCR[CMD58 OCR and address mode]
-    OCR --> SPIIdentify[CMD16 if needed, CMD9 CSD, CMD10 CID]
+    SPIReset --> SPICrc[CMD59 enable CRC checking; R1 must be idle]
+    SPICrc --> SPIReady[CMD55 plus ACMD41 until ready]
+    SPIReady --> OCR[CMD58 OCR and address mode; CMD16 if needed]
+    OCR --> SPIIdentify[CMD9 CSD, CMD10 CID]
     SPIIdentify --> SPISwitch[Above 25 MHz: CMD6 check and switch if supported]
     SPISwitch --> SPISpeed[Set card-limited SPI baud rate, at most 50 MHz]
     SPISpeed --> Ready
 ```
 
 Any command, resource, or validation failure returns an initialization error;
-there are no repeated clock-step retries. Native mode requires SCR-advertised four-bit
+there are no repeated clock-step retries. SPI initialization sends CMD59 with CRC_ON_OFF=1 after a valid CMD8 classification and
+before ACMD41 (SD Physical Layer Simplified Specification 3.01, 7.2.2). The card is still idle, so R1 must be exactly
+IDLE (`0x01`); ready (`0x00`), any other R1, or an absent or short response fails with init stage `CRC_ENABLE`, because
+write payloads carry CRC16 that the card must then check. Native mode requires SCR-advertised four-bit
 support; there is no one-bit sector-I/O fallback. SPI accepts its supported
 ready/idle responses and checks OCR power-up and voltage compatibility.
 
@@ -510,12 +578,12 @@ of the next image with transmission/programming of the current sector, but use
 only one DMA channel. Failed writes are not automatically replayed. Stop-command
 recovery is not a guarantee against data loss on power failure.
 
-A failed native multi-block write returns an error without replay. Initialization
-is invalidated when cleanup leaves the CMD25 stream unresolved (command-mode
-restoration or CMD12 response/busy recovery failed). If cleanup succeeds, the
-card remains initialized; this does not mean the failed write was atomic or that
-no data reached the card. Earlier accepted blocks, and possibly the failing block,
-may already be programmed. CMD12 terminates the stream; it is not the first point
+Every failed native multi-block write returns an error without replay,
+invalidates initialization and aborts the host, even if stream cleanup succeeds.
+Unresolved CMD25 state is retained for checked recovery during explicit
+reinitialization. Successful cleanup does not mean the failed write was atomic
+or that no data reached the card. Earlier accepted blocks, and possibly the
+failing block, may already be programmed. CMD12 terminates the stream; it is not the first point
 at which blocks can reach media. Every failed native CMD24 write invalidates
 initialization, including ordinary card rejection, even if command-mode
 restoration succeeds; explicit reinitialization is required. In SPI, a
@@ -614,7 +682,7 @@ controller; CS is an ordinary, independently controlled GPIO.
 | Clock source | `clk_sys` drives SM dividers; effective rate is reported in telemetry | SDK SPI baud-rate configuration; actual rate is reported |
 | Timing source | SDK microsecond timer for bounded polling; SDK sleeps during identification | Same; no dedicated timer/alarm claimed |
 | Static native receive/transfer wire buffer | 64 x 130 words x 4 bytes = 33,280 bytes | None |
-| Static initialization probe buffer | None; no startup sector probe | None |
+| Static initialization probe buffer | None; LBA 0 validation uses a 512-byte stack buffer plus the single-sector wire image below | None |
 | Single-sector wire image | 520 bytes on stack for native single-block read/write paths | No full-sector bounce buffer |
 | Multi-block write wire images | Two x 520 bytes = 1,040 bytes on stack | None |
 | Other stack/static data | SCR/switch-status buffers, command responses, host/configuration state, CID and capacity; additional stack beyond images required | Small command/CSD/CID buffers and configuration/telemetry state |
@@ -637,28 +705,32 @@ this active-transport table.
 
 Profiling is disabled at boot. The storage-owner CLI supports `sd profile on`,
 `off`, `reset`, and `status` (or just `sd profile`). Snapshots report cumulative
-microseconds/calls for command, data, CRC/copy, busy, stop, and recovery work,
-plus CRC failures, batch fallbacks, timeouts, and recovery attempts. Changes
+microseconds/calls for command, data, CRC/copy, busy and stop work,
+plus CRC failures, batch fallbacks and timeouts. Recovery timing/attempt slots
+are reserved and unmetered on both SPI and native. Changes
 require firmware ownership. Profiling adds measurement overhead; phases overlap
 and must not be summed to infer total latency. Native write data timing includes
 overlapped next-block encoding and the PIO's response/busy completion; it does
 not isolate the card's internal programming time. SPI read DATA includes token
 waiting, payload transfer and both wire CRC bytes; CRC covers CPU validation
 separately. A token deadline emits one timeout event; I/O failures do not. Snapshots use
-`pf_sd_get_profile()`; the facade locks each snapshot, while direct backend
-profiling access requires external serialization.
+`pf_sd_get_profile()`. The public enable, reset and snapshot calls take the recursive facade reservation
+themselves (a no-op on bare metal's single foreground context), so they may be called with it already held;
+the driver-internal `pf_sd_profile_*` hot-path helpers are lock-free because their callers hold it.
 
 ### Profile Measurement Boundaries
 
 The existing enum order, `elapsed_us`/`calls` arrays and CLI labels
 `command`, `data`, `crc_copy`, `busy`, `stop`, `recovery` are retained for ABI
-and historical log compatibility. They are **inclusive instrumentation windows**,
+and historical log identification. Recovery now prints `recovery_us=reserved calls=reserved`
+and `recoveries=reserved` in profile/diagnostics output instead of misleading numeric zeros;
+field names/order and C API array sizes/enum values remain unchanged. The measured phases are **inclusive instrumentation windows**,
 not mutually exclusive stages. Reinterpreting them as exclusive phases would
 silently change existing results; no such reinterpretation is made.
 
 | Window | Current boundary and overlap |
 | --- | --- |
-| COMMAND | Command request/response helper; also counted inside STOP and recovery initialization |
+| COMMAND | Command request/response helper; also counted inside STOP and initialization |
 | SDIO CMD24 DATA | After TX starts, until both DMA and PIO completion (or timeout); PIO completion includes response token and DAT0 busy release; no separate BUSY measurement for that program |
 | SDIO CMD25 DATA | Per-block interval after TX starts through both completions; includes next-block CPU encoding, measured again under CRC/copy; also includes response and card busy |
 | SDIO RX DATA | CMD18 response accepted through DMA + PIO completion/timeout; completed-block decode/CRC/copy inside the wait is counted again as CRC/copy; final decode after completion lies outside DATA |
@@ -666,7 +738,7 @@ silently change existing results; no such reinterpretation is made.
 | CRC/copy | CPU encode/decode/CRC validation windows; may run while DMA/PIO is transferring; includes copy only for the native variants that perform it |
 | BUSY | Explicit ready wait; native TX PIO busy is already in DATA; explicit stop waits are also inside STOP |
 | STOP | Entire multiblock stop helper including command/response and busy, at unchanged clock |
-| RECOVERY | Native reinitialization attempt, including its command/data/CRC/busy windows; not all cleanup or retry time |
+| RECOVERY | Reserved/unmetered on SPI and native; no production instrumentation call records this slot |
 
 Do not sum these values to obtain latency, subtract CRC/copy to infer physical
 wire time, or compare individual windows across transports. The CMD25 host
@@ -690,8 +762,8 @@ perform no I/O. Size is bounded by signed callback return range and card capacit
 
 MSC reserves the recursive facade lock across validation, RMW and completion;
 firmware/FatFs I/O remains excluded by USB ownership. Diskio validates drive,
-nonzero count and address width and forwards multi-sector firmware requests;
-transport validation enforces card capacity. Both transports accept unaligned
+nonzero count and address width and forwards multi-sector firmware requests through the logical block interface;
+both logical-device and transport validation enforce card capacity. Both transports accept unaligned
 caller buffers: native SDIO encodes into the existing aligned double TX workspace
 and decodes from its bounded RX workspace; SPI blocking I/O consumes bytes.
 MSC retains only its existing aligned single-sector RMW scratch, with no new
@@ -737,9 +809,9 @@ preallocated files), and card busy time before choosing further optimizations.
 
 | Review improvement | Current status |
 | --- | --- |
-| Phase profiling and recovery diagnostics | Implemented, disabled by default; CLI and C API available |
-| Preserve batching after transient faults | Implemented; CRC/timeout/uncertain-stop failures enter bounded card recovery |
-| Remove initialization-only payload storage | Implemented; no startup probe; transfer CRC checks retained |
+| Phase profiling and failure diagnostics | Implemented, profiling disabled by default; recovery timing/attempt slots reserved/unmetered |
+| Preserve batching after transient faults | Not implemented: a runtime failure invalidates the card, aborts the host, and refuses replay; later explicit or worker initialization resolves open streams only after a successful stop |
+| Remove initialization-only payload storage | Implemented for payload storage; initialization keeps its single-sector LBA 0 validation, and transfer CRC checks are retained |
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; SB128 filesystem tests qualified at 25 MHz, not 50 MHz |
@@ -748,18 +820,44 @@ preallocated files), and card busy time before choosing further optimizations.
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
-The FreeRTOS [SD port](../firmware/src/drivers/sd_card/ports/freertos/sd_port.c) requests the optional adapter through
+The FreeRTOS [SD port](../firmware/src/drivers/sd_card/sd_port_freertos.c) requests the optional adapter through
 the common transport interface. Its physical implementation lives in
-[sdio_wait.c](../firmware/src/drivers/storage/sdio_pio/ports/freertos/sdio_wait.c). It reserves
+[sdio_wait_freertos.c](../firmware/src/drivers/storage/sdio_pio/sdio_wait_freertos.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.
 The host still requires both PIO completion and DMA completion. Boot without a
-running scheduler retains polling. This adapter supports the current serialized,
-single-core runtime, not concurrent card callers or a second-core owner.
+running scheduler retains polling. Waiter registration, notification and timeout cleanup use paired task/ISR
+kernel critical sections, including the SMP kernel lock when enabled. The ISR notifies and clears the waiter
+before releasing its critical section, so cleanup cannot race a notification to an expired waiter.
+Initialization and IRQ ownership remain on the startup core; the serialized waiting task need not own that core.
+Host tests cover cross-core timeout exclusion and duplicate/early completion; target SMP scheduling remains
+unqualified. Concurrent card operations are still unsupported without the execution-port reservation.
 
-Measure each option separately at the same supported clock, card, filesystem,
-file size, and timing boundary. Record effective clocks, error/recovery counts,
+`PF_SDIO_PIO_FUSED_COPY` and `PF_SD_CARD_INTERRUPT_WAIT` are independent
+compile-time axes: the former fuses CRC/payload copying in the protocol data
+path; the latter selects the FreeRTOS completion-wait policy. They are not
+alternatives and may interact through CPU, DMA, PIO and scheduler timing.
+To compare their main effects and interaction, use the same source revision,
+hardware configuration, and card. Repeat equivalent workloads for all four
+combinations, alternating order where practical; vary only these two options:
+
+| Fused copy | IRQ wait | Completion policy |
+| --- | --- | --- |
+| OFF | OFF | Polling |
+| ON | OFF | Polling |
+| OFF | ON | FreeRTOS IRQ wait |
+| ON | ON | FreeRTOS IRQ wait |
+
+Keep the supported clock, card, filesystem, file size, and timing boundary fixed.
+The saved [CMD25 persistence A/B](tests/records/2026-10-15-cmd25-persistence.md)
+uses fused OFF and IRQ wait OFF in both variants (150 MHz CPU, 25 MHz SDIO,
+Release, preallocation ON); it measures persistence only. Earlier throughput
+records compare other source/configuration changes and do not supply a matched
+fused/polling or full 2x2 control. Host codec/race tests and builds establish
+behavior and compilation, not which combination is faster. Hardware comparison
+requires separate authorization; keep both defaults OFF until measured results
+justify a change. Record effective clocks, error/recovery counts,
 CRC integrity, SRAM and stack high-water marks, CPU availability, and latency,
 not only average MB/s. Keep normal and preallocated filesystem results separate.
 CRC checks and bounded cleanup remain mandatory. Chained DMA and a faster bus
@@ -770,14 +868,14 @@ are not assumed improvements, and no new hardware throughput claim is made.
 ```mermaid
 sequenceDiagram
     participant FW as Storage owner task
-    participant Card as SD-card facade
+    participant Card as Application sd_media service
     participant USB as USB/MSC integration
     participant Host as USB host
     FW->>Card: Firmware block operations and sync
     FW->>FW: Finish work, close files, unmount filesystem
     USB->>Card: Set owner to USB MSC after integration checks
     Host->>USB: Sector read/write or synchronize
-    USB->>Card: pf_sd_msc_read/write_blocks or msc_sync
+    USB->>Card: pf_sd_media_usb_read/write_blocks or usb_sync
     Note over FW,Card: Firmware block operations return NOT_READY during MSC ownership
     Host->>USB: Safely eject and allow removal
     USB->>Card: Set owner back to firmware
@@ -785,11 +883,10 @@ sequenceDiagram
     FW->>FW: Invalidate cached filesystem state and reinitialize before remount
 ```
 
-The generic block header exposes only firmware operations. USB-only acquire,
-release, and block operations live in the dedicated MSC integration header;
-there is no arbitrary public owner setter. Acquisition still cannot inspect
-FatFs state without creating a cross-layer dependency, so the USB integration
-atomically checks worker activity and mount state before acquiring the card.
+The raw SD driver exposes serialized card operations without application ownership policy.
+Application acquire/release, owner-specific transfers and retained diagnostics live in `app/storage/sd_media.h`;
+there is no arbitrary public owner setter. The application service checks readiness and mounted state on acquisition.
+Application USB also reserves the shared SD lock across worker-idle and mount-state checks and acquisition.
 Release similarly requires checked host eject/synchronization. In the FreeRTOS
 application, a statically
 allocated FreeRTOS recursive mutex
@@ -797,7 +894,7 @@ serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
 [CDC recovery workflow](cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
 before returning ownership and queues worker-only reinitialization. It never
-reports sync/eject success or replays writes. Automatic mounting remains
+reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
 inhibited until a successful explicit `fs mount`; presence debounce continues.
 The recovery latch is runtime-only and resets on reboot. The workflow cannot
 repair filesystem damage or guarantee recovery from an unresolved card stream.
@@ -812,8 +909,8 @@ request because the host may have changed the filesystem. See
 [USB protocol and MSC lifecycle](usb-protocol.md) for transition rules.
 
 Backend headers remain available to their implementation and focused transport
-tests, but application and integration code must use the facade. Backend calls
-do not provide ownership or task serialization and are not an application API.
+tests. Application filesystem and MSC I/O must use `sd_media`; telemetry may query the serialized raw driver.
+Raw driver calls do not enforce application ownership. Backend calls additionally bypass task serialization.
 
 ## Validation And Limits
 
@@ -912,7 +1009,7 @@ sustained operation is qualified by these tests.
 
 Application READ10/WRITE10 cached sense is now invalidated after TinyUSB handles
 an accepted BOT reset at SETUP, and after its MSC driver bus-reset processing.
-GNU linker wrappers in `firmware/src/usb/msc.c` interpose the built-in driver's
+GNU linker wrappers in `firmware/src/app/usb/usb_msc.c` interpose the built-in driver's
 external references from `usbd.c`; the vendored stack is unchanged. No ISR or
 enqueue-time hook mutates this cache. Earlier queued failures cannot erase a
 reset, and failures after handled reset retain their fresh sense. Rejected

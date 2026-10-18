@@ -1,4 +1,11 @@
-# SD Card Self-Test
+# Storage File Benchmark
+
+The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
+It operates on the already-mounted build-selected SD or LevelX NOR volume; the existing host UI/API calls it a
+self-test. The HID report layout and numeric state/error values are unchanged: wire state 2 (`mounting`) means
+preparing an existing mount, and wire error 5 (`card`) means the selected media is unavailable.
+
+Current source-review dispositions and remaining qualification: [SD remediation matrix](tests/sd-design-remediation.md).
 
 The firmware can write a dedicated file, read it back, verify every byte, and
 report average filesystem write/read speeds over HID. The Python and .NET
@@ -10,7 +17,10 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
 2. Ensure the filesystem is mounted; use `fs mount` if it is not already mounted.
 3. Open one dashboard and connect to its vendor HID interface.
-4. Choose an integer file size from 1 to 128 MiB; the default is 32 MiB.
+4. Choose an integer file size from 1 to 1024 MiB; the default is 32 MiB.
+   The test streams through its fixed buffer, not a file-sized RAM allocation. Larger tests take longer and
+   write more data; sufficient free space and (when enabled) contiguous preallocation are still required.
+   Update firmware and host software together to use sizes above the previous 128 MiB limit.
 5. Select **Start self-test**. This authorizes writes and replacement of `/PFTEST.BIN`; no checkbox is required.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and
    does not make ownership available until the worker finishes.
@@ -129,7 +139,7 @@ short writes, cancellation, existing-file replacement and deletion failures, ins
 and close failures, and failed cleanup:
 
 ```sh
-tools/validation/setup-ceedling-testing.sh test:test_self_test
+tools/validation/setup-ceedling-testing.sh test:test_file_benchmark
 ```
 
 Host tests cover report layout/validation, average calculations, start/cancel

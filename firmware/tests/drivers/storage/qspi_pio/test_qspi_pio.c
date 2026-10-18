@@ -14,9 +14,11 @@ static pf_qspi_pio_t context;
 void setUp(void)
 {
     memset(&serial_fake, 0, sizeof(serial_fake));
+    serial_fake.system_hz = 200000000u;
+    memset(serial_pio, 0, sizeof(serial_pio));
     context = (pf_qspi_pio_t){
         .pio = pio0, .pins.clock_gpio = 6, .pins.data_gpio = {0, 1, 2, 3},
-        .pins.cs_gpio = 7, .clock_hz = 10000000,
+        .pins.cs_gpio = 7, .clock_hz = 50000000,
     };
 }
 
@@ -44,6 +46,7 @@ void test_quad_read_clocks_single_command_address_dummy_then_quad_payload(void)
     TEST_ASSERT_FALSE(serial_fake.selected);
     TEST_ASSERT_EQUAL_UINT(1, serial_fake.lanes);
     TEST_ASSERT_EQUAL_UINT32((1u << 6) | 1u, serial_fake.output_mask);
+    TEST_ASSERT_EQUAL_UINT(0u, serial_fake.now);
 }
 
 void test_quad_write_outputs_most_significant_nibble_first(void)
@@ -127,4 +130,85 @@ void test_quad_pin_allocation_rejects_swapped_and_out_of_range_lanes_before_acqu
     TEST_ASSERT_FALSE(context.initialized);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.program_count);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
+}
+
+void test_50mhz_uses_four_instruction_divider_and_restores_only_owned_input_sync_bits(void)
+{
+    pio0->input_sync_bypass = (1u << 20u) | 2u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_init(&context));
+    TEST_ASSERT_EQUAL_HEX32(1u << 16u, pio0->sm[context.sm].clkdiv);
+    TEST_ASSERT_EQUAL_HEX32((1u << 20u) | 15u, pio0->input_sync_bypass);
+    uint32_t actual = 0u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_set_clock(&context, 50000000u, &actual));
+    TEST_ASSERT_EQUAL_UINT32(50000000u, actual);
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_qspi_pio_set_clock(&context, 50000001u, &actual));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_set_clock(&context, 41000000u, &actual));
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(41000000u, actual);
+    pf_qspi_pio_deinit(&context);
+    TEST_ASSERT_EQUAL_HEX32((1u << 20u) | 2u, pio0->input_sync_bypass);
+    context.clock_hz = 50000001u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_qspi_pio_init(&context));
+    context.clock_hz = 50000000u;
+    serial_fake.system_hz = 125000000u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_qspi_pio_init(&context));
+}
+
+void test_streaming_quad_bytes_pipelines_without_overrunning_receive_fifo(void)
+{
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_init(&context));
+    uint8_t output[16], input[16];
+    for (unsigned index = 0u; index < sizeof(output); ++index) output[index] = (uint8_t)(index * 17u);
+    pf_storage_serial_phase_t phases[] = {
+        {.tx = output, .bit_count = sizeof(output) * 8u, .lanes = 4u},
+        {.rx = input, .bit_count = sizeof(input) * 8u, .lanes = 4u},
+    };
+    serial_fake.input = 0xau;
+    serial_fake.delayed_reads = 6u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_transfer(&context, phases, 2u));
+    TEST_ASSERT_EQUAL_UINT(4u, serial_fake.peak_pending);
+    TEST_ASSERT_EQUAL_UINT(0u, serial_fake.pending);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT(100000u, serial_fake.now);
+    for (unsigned index = 0u; index < sizeof(output); ++index) {
+        TEST_ASSERT_EQUAL_HEX8(output[index] >> 4u, serial_fake.bytes[index * 2u]);
+        TEST_ASSERT_EQUAL_HEX8(output[index] & 15u, serial_fake.bytes[index * 2u + 1u]);
+        TEST_ASSERT_EQUAL_HEX8(0xaau, input[index]);
+    }
+}
+
+void test_receive_stall_times_out_and_restores_owned_resources(void)
+{
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_init(&context));
+    uint8_t input[16];
+    const pf_storage_serial_phase_t phase = {.rx = input, .bit_count = sizeof(input) * 8u, .lanes = 4u};
+    serial_fake.delayed_reads = 100u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_TIMEOUT, pf_qspi_pio_transfer(&context, &phase, 1u));
+    TEST_ASSERT_EQUAL_UINT(4u, serial_fake.peak_pending);
+    TEST_ASSERT_FALSE(context.initialized || serial_fake.selected);
+    TEST_ASSERT_EQUAL_HEX32(0u, pio0->input_sync_bypass);
+}
+
+void test_quad_word_reads_preserve_byte_order_unaligned_buffers_and_exact_tail_clocks(void)
+{
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_init(&context));
+    for (unsigned length = 1u; length <= 11u; ++length) {
+        uint8_t data[13];
+        memset(data, 0xcdu, sizeof(data));
+        serial_fake.receive_index = serial_fake.receive_count = 0u;
+        serial_fake.symbols = serial_fake.length = 0u;
+        for (unsigned offset = 0u; offset + 4u <= length; offset += 4u) {
+            uint32_t word = 0u;
+            for (unsigned byte = 0u; byte < 4u; ++byte) word = (word << 8u) | (offset + byte);
+            serial_fake.receive_words[serial_fake.receive_count++] = word;
+        }
+        for (unsigned offset = length & ~3u; offset < length; ++offset)
+            serial_fake.receive_words[serial_fake.receive_count++] = offset;
+        const pf_storage_serial_phase_t phase = {.rx = data + 1u, .bit_count = length * 8u, .lanes = 4u};
+        TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_qspi_pio_transfer(&context, &phase, 1u));
+        TEST_ASSERT_EQUAL_UINT(length * 2u, serial_fake.symbols);
+        TEST_ASSERT_EQUAL_UINT(serial_fake.receive_count, serial_fake.receive_index);
+        TEST_ASSERT_EQUAL_HEX8(0xcdu, data[0]);
+        TEST_ASSERT_EQUAL_HEX8(0xcdu, data[length + 1u]);
+        for (unsigned offset = 0u; offset < length; ++offset)
+            TEST_ASSERT_EQUAL_HEX8(offset, data[offset + 1u]);
+    }
 }

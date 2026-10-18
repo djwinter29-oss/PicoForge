@@ -1,4 +1,6 @@
 #include "unity.h"
+void pf_sd_lock(void) {}
+void pf_sd_unlock(void) {}
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
@@ -8,12 +10,12 @@ static pf_sdio_pio_t test_wire;
 
 #include <string.h>
 
-#include "../../../src/drivers/sd_card/sd_native.c"
-#include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
-#include "../../../src/drivers/storage/bus.c"
-#include "../../../src/drivers/storage/sd_wire.c"
-#include "../../../src/drivers/sd_card/sd_native_host.c"
-#include "../../../src/drivers/sd_card/sd_protocol.c"
+#include "drivers/sd_card/sd_native.c"
+#include "drivers/storage/sdio_pio/sdio_pio.c"
+#include "drivers/storage/bus.c"
+#include "drivers/storage/sd_wire.c"
+#include "drivers/sd_card/sd_native_host.c"
+#include "drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
 pf_sd_native_host_t *pf_test_sdio_observed_host;

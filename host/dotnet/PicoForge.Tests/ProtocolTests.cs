@@ -13,6 +13,30 @@ namespace PicoForge.Tests;
 public sealed class ProtocolTests
 {
     [Fact]
+    public void ParsesNorMemoryLayoutAndRejectsNonzeroReservedBytes()
+    {
+        var report = new byte[30];
+        new byte[] { 3, 3, 1, 0x3f, 2, 2 }.CopyTo(report, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(6), 992063);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(10), 6000);
+        new byte[] { 0xef, 0x40, 0x18 }.CopyTo(report, 14);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(17), 16777216);
+        var memory = HidProtocol.ParseMemoryReport(report);
+        Assert.Equal("nor-flash", memory.ComponentType);
+        Assert.Equal("spi", memory.Mode);
+        Assert.Equal(6000ul * 512, memory.CapacityBytes);
+        Assert.Equal(16777216u, memory.PhysicalCapacityBytes);
+        Assert.Equal("ef4018", memory.JedecId);
+        Assert.Null(memory.Manufacturer);
+        Assert.Null(memory.DeviceUid);
+        report[1] = 4;
+        Convert.FromHexString("0123456789abcdef").CopyTo(report, 21);
+        Assert.Equal("0x0123456789abcdef", HidProtocol.ParseMemoryReport(report).DeviceUid);
+        report[29] = 1;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseMemoryReport(report));
+    }
+
+    [Fact]
     public void ParsesProductMcuAndSerialIdentity()
     {
         var report = CreateInfoReport();
@@ -93,6 +117,33 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void ParsesRuntimeUsageAndRejectsInvalidExtensions()
+    {
+        var report = new byte[24];
+        report[0] = 2;
+        report[1] = 3;
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(7), 250_000_000);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 1234);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(16), 65536);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 532480);
+        var runtime = HidProtocol.ParseStatusReport(report);
+        Assert.Equal((ushort)1234, runtime.CpuUsageBasisPoints);
+        Assert.Equal(65536u, runtime.RamUsedBytes);
+        Assert.Equal(532480u, runtime.RamTotalBytes);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report.AsSpan(0, 23)));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport([.. report, 1]));
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), ushort.MaxValue);
+        Assert.Null(HidProtocol.ParseStatusReport(report).CpuUsageBasisPoints);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 10001);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 0);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 65535);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+    }
+
+    [Fact]
     public void RejectsDynamicLedOnStatusWhenLedUnavailable()
     {
         var report = new byte[14];
@@ -160,6 +211,9 @@ public sealed class ProtocolTests
             HidProtocol.BuildMscCommandReport(true));
         Assert.Equal(new byte[] { HidProtocol.MscCommandReportId, 2, 0 },
             HidProtocol.BuildMscCommandReport(false));
+        Assert.Equal(new byte[] { 5, 3, 2 }, HidProtocol.BuildMscCommandReport(false, force: true));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.BuildMscCommandReport(true, force: true));
+        Assert.True(HidProtocol.ParseMscStatusReport([5, 3, 1, 0, 0]).ForceReturnSupported);
     }
 
     [Fact]
@@ -190,7 +244,8 @@ public sealed class ProtocolTests
     {
         Assert.Equal(new byte[] { 6, 2, 1, 32, 0, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("start", 32));
         Assert.Equal(new byte[] { 6, 2, 0, 0, 0, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("cancel"));
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.BuildSelfTestCommandReport("start", 129));
+        Assert.Equal(new byte[] { 6, 2, 1, 0, 4, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("start", 1024));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.BuildSelfTestCommandReport("start", 1025));
         var report = new byte[33];
         report[0] = 6;
         report[1] = 2;
@@ -205,6 +260,13 @@ public sealed class ProtocolTests
         Assert.Equal(2097152d, status.WriteBytesPerSecond!.Value);
         Assert.Equal(4194304d, status.ReadBytesPerSecond!.Value);
         Assert.True(status.VolumeMounted);
+        foreach (var offset in new[] { 5, 9, 13 })
+            BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(offset), 1073741824);
+        Assert.Equal(1073741824u, HidProtocol.ParseSelfTestReport(report).TargetBytes);
+        Assert.Equal(100d, HidProtocol.ParseSelfTestReport(report).ProgressPercent);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(5), 1073741825);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(5), 1073741824);
         report[4] = 3;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
         report[4] = 2;
@@ -231,17 +293,38 @@ public sealed class ProtocolTests
         app.MapOpenApi();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var snapshot = JsonDocument.Parse(await client.GetStringAsync("/api/status"));
+        var runtime = snapshot.RootElement.GetProperty("runtime");
+        Assert.Equal(1234, runtime.GetProperty("cpu_usage_basis_points").GetInt32());
+        Assert.Equal(65536, runtime.GetProperty("ram_used_bytes").GetInt32());
+        Assert.Equal(532480, runtime.GetProperty("ram_total_bytes").GetInt32());
         var openApi = await client.GetStringAsync("/openapi/v1.json");
         Assert.Contains("/api/self-test", openApi);
+        Assert.Contains("/api/msc/force-return", openApi);
+        var forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = false });
+        Assert.Equal(HttpStatusCode.BadRequest, forceResponse.StatusCode);
+        Assert.False(monitor.ForcedReturn);
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        Assert.Equal(HttpStatusCode.OK, forceResponse.StatusCode);
+        Assert.True(monitor.ForcedReturn);
+        using var forceStatus = JsonDocument.Parse(await forceResponse.Content.ReadAsStringAsync());
+        Assert.True(forceStatus.RootElement.GetProperty("msc").GetProperty("transition_pending").GetBoolean());
         var response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 16 });
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(("start", 16u), monitor.LastCommand);
-        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 129 });
+        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 1024 });
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(("start", 1024u), monitor.LastCommand);
+        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 1025 });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         monitor.Available = false;
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        Assert.Equal(HttpStatusCode.Conflict, forceResponse.StatusCode);
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         monitor.ExpectedError = new TimeoutException("HID timeout");
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, forceResponse.StatusCode);
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         await app.StopAsync();
@@ -252,9 +335,19 @@ public sealed class ProtocolTests
         public bool Available { get; set; } = true;
         public (string Action, uint Size) LastCommand { get; private set; }
         public Exception? ExpectedError { get; set; }
-        public StatusResponse Snapshot => new(true, null, null, null, null, null, null, null);
+        public bool ForcedReturn { get; private set; }
+        public StatusResponse Snapshot => new(true, null, null,
+            new RuntimeStatusResponse(0, 42, 250_000_000, true, false,
+                false, null, false, false, 1234, 65536, 532480),
+            null, null, null, null);
         public bool SetLed(bool on) => false;
-        public MscStatusResponse? SetMsc(bool enabled) => null;
+        public MscStatusResponse? SetMsc(bool enabled, bool force = false)
+        {
+            if (ExpectedError is not null) throw ExpectedError;
+            if (!Available) return null;
+            ForcedReturn = force && !enabled;
+            return new MscStatusResponse(true, true, false, true);
+        }
         public bool SetSelfTest(string action, uint sizeMib)
         {
             if (ExpectedError is not null) throw ExpectedError;

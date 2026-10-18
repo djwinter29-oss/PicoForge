@@ -13,6 +13,8 @@ static bool stuck, allow_write, allow_quad, protected;
 static bool volatile_status;
 static unsigned programs, erases, calls;
 static pf_nor_result_t injected;
+static pf_nor_result_t uid_result;
+static const uint8_t unique_id[8] = {0x01u, 0x23u, 0x45u, 0x67u, 0x89u, 0xabu, 0xcdu, 0xefu};
 
 static uint64_t now(void *context)
 {
@@ -38,6 +40,14 @@ static pf_nor_result_t execute(void *context, const pf_nor_transaction_t *transa
         break;
     case 0x9f:
         memcpy(transaction->rx, id, 3u);
+        break;
+    case 0x4b:
+        TEST_ASSERT_EQUAL_UINT8(0u, transaction->address_bytes);
+        TEST_ASSERT_EQUAL_UINT8(32u, transaction->dummy_cycles);
+        TEST_ASSERT_EQUAL_UINT8(1u, transaction->data_lanes);
+        TEST_ASSERT_EQUAL_UINT32(8u, transaction->length);
+        if (uid_result != PF_NOR_OK) return uid_result;
+        memcpy(transaction->rx, unique_id, sizeof(unique_id));
         break;
     case 0x06:
         if (allow_write) {
@@ -109,6 +119,7 @@ void setUp(void)
     volatile_status = false;
     programs = erases = calls = 0u;
     injected = PF_NOR_OK;
+    uid_result = PF_NOR_OK;
 }
 
 void tearDown(void) {}
@@ -127,6 +138,16 @@ void test_identifies_geometry_without_modifying_array(void)
     TEST_ASSERT_EQUAL_UINT32(16777216u, flash.capacity_bytes);
     TEST_ASSERT_EQUAL_UINT32(256u, flash.page_size);
     TEST_ASSERT_EQUAL_UINT32(4096u, flash.erase_size);
+    TEST_ASSERT_EQUAL_MEMORY(unique_id, flash.unique_id, sizeof(unique_id));
+    TEST_ASSERT_EQUAL_UINT32(0u, programs + erases);
+}
+
+void test_uid_read_failure_prevents_successful_initialization(void)
+{
+    uid_result = PF_NOR_IO_ERROR;
+    pf_nor_transport_t transport = {.execute = execute, .time_us = now};
+    TEST_ASSERT_EQUAL(PF_NOR_IO_ERROR, pf_nor_init(&flash, &transport));
+    TEST_ASSERT_FALSE(flash.initialized);
     TEST_ASSERT_EQUAL_UINT32(0u, programs + erases);
 }
 

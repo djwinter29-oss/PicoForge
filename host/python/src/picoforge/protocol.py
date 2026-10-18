@@ -17,7 +17,7 @@ FILESYSTEM_PAYLOAD_SIZE = 3
 FILESYSTEM_INPUT_SIZE = FILESYSTEM_PAYLOAD_SIZE + 1
 REPORT_VERSION = 2
 INFO_PAYLOAD_SIZE = 42
-STATUS_PAYLOAD_SIZE = 13
+STATUS_PAYLOAD_SIZE = 23
 MEMORY_PAYLOAD_SIZE = 29
 PRODUCT_NAME_SIZE = 20
 SERIAL_NUMBER_SIZE = 16
@@ -81,16 +81,28 @@ def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object
 def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
     """Decode a report-ID-prefixed periodic HID Input report."""
     data = bytes(report)
-    if len(data) < STATUS_INPUT_SIZE or data[0] != STATUS_REPORT_ID:
+    if len(data) < 14 or data[0] != STATUS_REPORT_ID:
         raise ValueError("unexpected HID status report length or ID")
-    payload = data[1:STATUS_INPUT_SIZE]
-    if any(data[STATUS_INPUT_SIZE:]):
+    version = data[1]
+    if version not in (2, 3):
+        raise ValueError(f"unsupported HID status report version {version}")
+    size = STATUS_INPUT_SIZE if version == 3 else 14
+    if len(data) < size:
+        raise ValueError("unexpected HID status report length")
+    payload = data[1:size]
+    if any(data[size:]):
         raise ValueError("unexpected HID status report padding")
     version, sequence, uptime_ms, system_clock_hz, flags, temperature_centidegrees = struct.unpack(
-        "<BBIIBh", payload
+        "<BBIIBh", payload[:13]
     )
-    if version != REPORT_VERSION:
-        raise ValueError(f"unsupported HID status report version {version}")
+    cpu_usage = ram_used = ram_total = None
+    if version == 3:
+        cpu_usage, ram_used, ram_total = struct.unpack("<HII", payload[13:])
+        if cpu_usage > 10000 and cpu_usage != 0xffff:
+            raise ValueError("invalid CPU usage in HID status report")
+        if ram_total == 0 or ram_used > ram_total:
+            raise ValueError("invalid RAM usage in HID status report")
+        cpu_usage = None if cpu_usage == 0xffff else cpu_usage
     if system_clock_hz == 0:
         raise ValueError("invalid system clock in HID status report")
     if flags & ~STATUS_KNOWN_FLAGS:
@@ -111,11 +123,14 @@ def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "temperature_centidegrees": temperature_centidegrees if temperature_valid else None,
         "led_available": led_available,
         "led_on": led_on,
+        "cpu_usage_basis_points": cpu_usage,
+        "ram_used_bytes": ram_used,
+        "ram_total_bytes": ram_total,
     }
 
 
 def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
-    """Decode dynamic SD-card state, negotiated link, capacity, and CID."""
+    """Decode memory state, bus settings, capacity and SD CID or NOR factory UID."""
     data = bytes(report)
     if len(data) < MEMORY_INPUT_SIZE or data[0] != MEMORY_REPORT_ID:
         raise ValueError("unexpected HID memory report length or ID")
@@ -126,11 +141,13 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "<BBBBBII", payload[:13]
     )
     cid = payload[13:29]
-    if version != REPORT_VERSION:
+    nor = version in (3, 4) and component_type == 2
+    if version != REPORT_VERSION and not nor:
         raise ValueError(f"unsupported HID memory report version {version}")
     if flags & ~0x3f:
         raise ValueError("unknown HID memory flags")
-    if component_type not in (0, 1) or mode not in (0, 1, 2):
+    valid_mode = mode in (2, 3) if nor else component_type in (0, 1) and mode in (0, 1, 2)
+    if not valid_mode:
         raise ValueError("unknown HID memory type or mode")
     configured, presence_known, present, initialized, cid_valid, capacity_valid = (
         bool(flags & (1 << bit)) for bit in range(6)
@@ -144,7 +161,13 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
     if initialized != bool(clock_hz and blocks) or (not initialized and any(cid)):
         raise ValueError("invalid memory metadata values")
     manufacturer = None
-    if cid_valid:
+    if nor and initialized:
+        if (cid[:3] != bytes.fromhex("ef4018") or any(cid[15:] if version == 4 else cid[7:])
+            or int.from_bytes(cid[3:7], "little") != 16777216 or blocks * 512 > 16777216):
+            raise ValueError("invalid NOR identification or capacity")
+        manufacturer = {"id": cid[0], "product_name": "W25Q128", "jedec_id": "ef4018",
+                        "serial_number": None}
+    elif cid_valid:
         try:
             oem = cid[1:3].decode("ascii")
             product = cid[3:8].decode("ascii")
@@ -168,12 +191,14 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "presence_known": presence_known,
         "present": present if presence_known else None,
         "initialized": initialized,
-        "component_type": "sd-card" if component_type == 1 else None,
-        "mode": {0: None, 1: "sdio", 2: "spi"}[mode],
+        "component_type": "nor-flash" if nor else "sd-card" if component_type == 1 else None,
+        "mode": {0: None, 1: "sdio", 2: "spi", 3: "qspi"}[mode],
         "bus_clock_hz": clock_hz if initialized else None,
         "block_count": blocks if capacity_valid else None,
         "capacity_bytes": blocks * 512 if capacity_valid else None,
         "manufacturer": manufacturer,
+        **({"physical_capacity_bytes": int.from_bytes(cid[3:7], "little") if initialized else None,
+            "device_uid": "0x" + cid[7:15].hex() if initialized and version == 4 else None} if nor else {}),
     }
 
 
@@ -208,15 +233,19 @@ def parse_msc_status_report(report: bytes | bytearray | list[int]) -> dict[str, 
     if len(payload) != 4 or any(data[offset + 4 :]):
         raise ValueError("unexpected HID MSC status report length or padding")
     version, enabled, pending, rejected = payload
-    if version != REPORT_VERSION or any(value > 1 for value in (enabled, pending, rejected)):
+    if version not in (REPORT_VERSION, 3) or any(value > 1 for value in (enabled, pending, rejected)):
         raise ValueError("invalid HID MSC status report")
     return {"enabled": bool(enabled), "transition_pending": bool(pending),
-            "request_rejected": bool(rejected)}
+            "request_rejected": bool(rejected), "force_return_supported": version == 3}
 
 
-def build_msc_command_report(enable: bool) -> bytes:
+def build_msc_command_report(enable: bool, *, force: bool = False) -> bytes:
     if not isinstance(enable, bool):
         raise ValueError("MSC enable state must be boolean")
+    if not isinstance(force, bool) or (force and enable):
+        raise ValueError("Force return requires disabling MSC")
+    if force:
+        return bytes((MSC_COMMAND_REPORT_ID, 3, 2))
     return bytes((MSC_COMMAND_REPORT_ID, REPORT_VERSION, int(enable)))
 
 
@@ -225,8 +254,8 @@ def build_self_test_command_report(action: str, size_mib: int = 32) -> bytes:
         raise ValueError("Self-test action must be start or cancel")
     if action == "cancel":
         size_mib = 0
-    elif not isinstance(size_mib, int) or isinstance(size_mib, bool) or not 1 <= size_mib <= 128:
-        raise ValueError("Self-test size must be an integer from 1 to 128 MiB")
+    elif not isinstance(size_mib, int) or isinstance(size_mib, bool) or not 1 <= size_mib <= 1024:
+        raise ValueError("Self-test size must be an integer from 1 to 1024 MiB")
     return bytes((SELF_TEST_REPORT_ID, REPORT_VERSION, int(action == "start"))) + struct.pack("<I", size_mib)
 
 
@@ -237,7 +266,7 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> dict[str, o
     )
     if (version != REPORT_VERSION or state > 8 or flags & ~3 or reserved
         or error > 11 or request_error > 11 or fs_result > 19
-        or target > 128 * 1024 * 1024 or written > target or read > written
+        or target > 1024 * 1024 * 1024 or written > target or read > written
         or (state == 6 and (not target or written != target or read != target or mismatches or error or flags & 1))):
         raise ValueError("Invalid HID self-test report")
     names = ("idle", "queued", "mounting", "writing", "reading", "cleanup", "passed", "failed", "cancelled")

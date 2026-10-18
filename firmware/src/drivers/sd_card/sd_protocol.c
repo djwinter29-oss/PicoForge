@@ -44,20 +44,28 @@ static uint32_t (*profile_clock)(void);
 static bool profiling_enabled;
 static pf_sd_profile_t profile_metrics;
 
+/* Public profile operations take the recursive facade reservation; the pf_sd_profile_* hot-path helpers below do not
+ * because their callers already hold it. */
 void pf_sd_set_profiling_enabled(bool enabled)
 {
+    pf_sd_lock();
     profiling_enabled = enabled;
+    pf_sd_unlock();
 }
 
 void pf_sd_reset_profile(void)
 {
+    pf_sd_lock();
     memset(&profile_metrics, 0, sizeof(profile_metrics));
+    pf_sd_unlock();
 }
 
 void pf_sd_get_profile(pf_sd_profile_t *profile)
 {
     if (profile != NULL) {
+        pf_sd_lock();
         *profile = profile_metrics;
+        pf_sd_unlock();
     }
 }
 

@@ -23,7 +23,14 @@ export function renderStatus(snapshot) {
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
   document.querySelector("#identity-clock").textContent = clock;
-  document.querySelector("#runtime-clock").textContent = clock;
+  document.querySelector("#cpu-usage").textContent = runtime?.cpu_usage_basis_points == null
+    ? "--" : `${(runtime.cpu_usage_basis_points / 100).toFixed(1)}%`;
+  const ramUsed = runtime?.ram_used_bytes;
+  const ramTotal = runtime?.ram_total_bytes;
+  document.querySelector("#ram-usage").textContent = runtime?.ram_total_bytes
+    ? `${(ramUsed / 1024).toFixed(1)} / ${(ramTotal / 1024).toFixed(0)} KiB ` +
+      `(${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
+    : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
@@ -31,7 +38,6 @@ export function renderStatus(snapshot) {
   const cardPresence = !memory?.configured ? "Not configured"
     : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown";
   setState("#card-presence", cardPresence, memory?.presence_known ? memory.present : undefined);
-  document.querySelector("#sequence").textContent = runtime?.sequence ?? "--";
   const board = snapshot.board_status;
   document.querySelector("#temperature").textContent = board?.temperature_valid
     ? `${(board.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
@@ -42,12 +48,16 @@ export function renderStatus(snapshot) {
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Disable USB drive" : "Enable USB drive";
   mscControl.disabled = !connected || !msc || Boolean(msc.transition_pending)
-    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending);
-  document.querySelector("#msc-note").textContent = msc?.request_rejected
-    ? "Request refused. Safely eject the drive on the host before disabling."
-    : msc?.transition_pending ? "USB mode changing; the device will reconnect."
-      : msc?.enabled ? "Host owns the card. Safely eject before disabling or using it in firmware."
-        : "Firmware owns the card. Unmount firmware storage before enabling; the device then reconnects.";
+    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
+    || Boolean(msc?.enabled && !msc.force_return_supported);
+  document.querySelector("#msc-note").textContent = msc?.enabled && !msc.force_return_supported
+    ? "Update firmware to disable the USB drive from Pico; this firmware requires manual host eject."
+    : msc?.request_rejected
+    ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
+      : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
+    : msc?.transition_pending ? "Preparing storage and changing USB mode; the device will reconnect."
+      : "";
+  document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
   renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
 
@@ -62,9 +72,12 @@ export function renderStatus(snapshot) {
 
 function renderMemory(memory, filesystemFormat) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
-  const manufacturer = memory?.manufacturer;
+  const nor = memory?.component_type === "nor-flash";
+  const manufacturer = memory?.manufacturer ?? (memory?.jedec_id
+    ? { id: 0xef, product_name: "W25Q128", jedec_id: memory.jedec_id } : null);
   set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
-  set("#memory-note", !memory?.configured ? "No SD-card transport configured"
+  set("#memory-note", nor ? "External NOR: capacity shown as usable logical storage / physical chip."
+    : !memory?.configured ? "No SD-card transport configured"
     : memory.presence_known && !memory.present
       ? "No card detected. Check card insertion and the active-high DET connection on GP8."
       : memory.present && !memory.initialized
@@ -75,27 +88,30 @@ function renderMemory(memory, filesystemFormat) {
   set("#memory-speed", memory?.bus_clock_hz
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
-  set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
+  set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) +
+    (nor ? ` usable / ${formatBytes(memory.physical_capacity_bytes)} physical` : "") : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
   set("#memory-filesystem", filesystemLabels[filesystemFormat] ?? "Unknown");
   set("#memory-manufacturer", formatManufacturer(manufacturer));
-  set("#memory-product", manufacturer
+  set("#memory-product", nor ? (manufacturer ? `${manufacturer.product_name} · JEDEC ${manufacturer.jedec_id}` : "--") : manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
-  set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
+  set("#memory-serial", nor ? (memory.device_uid ?? "Not reported") :
+    manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
 }
 
 function formatManufacturer(manufacturer) {
   if (!manufacturer) return "--";
   const id = manufacturer.id ?? manufacturer.manufacturer_id;
   if (!Number.isInteger(id) || id < 0 || id > 0xff) return "Unknown manufacturer";
-  const names = { 0x03: "SanDisk", 0x41: "Kingston" };
+  const names = { 0x03: "SanDisk", 0x41: "Kingston", 0xef: "Winbond" };
   return `${names[id] ?? "Unknown manufacturer"} (0x${id.toString(16).padStart(2, "0")})`;
 }
 
 function formatBytes(bytes) {
   const gibibytes = bytes / (1024 ** 3);
-  return gibibytes >= 1 ? `${gibibytes.toFixed(2)} GiB` : `${(bytes / (1024 ** 2)).toFixed(0)} MiB`;
+  return gibibytes >= 1 ? `${gibibytes.toFixed(2)} GiB`
+    : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 ** 2)).toFixed(2)} MiB`;
 }
 
 function setState(selector, label, active) {
@@ -134,7 +150,7 @@ export function renderSelfTest(snapshot) {
   const mounted = ["fat12", "fat16", "fat32", "exfat"].includes(snapshot.filesystem_format);
   const ready = snapshot.connected && snapshot.memory?.initialized && mounted && status && !snapshot.msc?.enabled;
   const size = document.querySelector("#self-test-size");
-  const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 128;
+  const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 1024;
   document.querySelector("#self-test-start").disabled = !ready || status.active || pending || Boolean(snapshot.busy)
     || !validSize || Boolean(snapshot.msc?.transition_pending);
   document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup" || pending || Boolean(snapshot.busy);

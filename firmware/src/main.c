@@ -4,7 +4,10 @@
 #include "board/board.h"
 #include "drivers/temperature.h"
 #include "middleware/logging/logging.h"
-#include "usb/usb_task.h"
+#include "app/usb/usb_task.h"
+
+_Static_assert(SYS_CLK_HZ == PF_IMAGE_SYS_CLK_MHZ * 1000000u,
+               "Image clock label differs from SDK clock; configure PF_SYS_CLK_MHZ explicitly");
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 {

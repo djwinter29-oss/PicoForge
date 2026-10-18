@@ -1,18 +1,20 @@
 #include "unity.h"
+void pf_sd_lock(void) {}
+void pf_sd_unlock(void) {}
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
-#include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
-#include "../../../src/drivers/storage/bus.c"
-#include "../../../src/drivers/storage/sd_wire.c"
+#include "drivers/storage/sdio_pio/sdio_pio.c"
+#include "drivers/storage/bus.c"
+#include "drivers/storage/sd_wire.c"
 
 static pf_sdio_pio_t test_wire;
 static bool test_present(const void *context) { (void)context; return pf_test_sdio_gpio_level != 0u; }
 
 #include <string.h>
 
-#include "../../../src/drivers/sd_card/sd_native.c"
-#include "../../../src/drivers/sd_card/sd_protocol.c"
+#include "drivers/sd_card/sd_native.c"
+#include "drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
 pf_sd_native_host_t *pf_test_sdio_observed_host;
@@ -425,6 +427,24 @@ void test_runtime_read_failure_is_not_replayed_and_clock_stays_fixed(void)
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, block, 1u));
     TEST_ASSERT_EQUAL_UINT(1u, reads);
+}
+
+void test_failed_batch_write_with_closed_stream_invalidates_and_refuses_replay(void)
+{
+    uint8_t blocks[2u * PF_SD_BLOCK_SIZE] = {0};
+    batch_write_ok = false;
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_native_write_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_FALSE(native_host.write_stream_open);
+    TEST_ASSERT_FALSE(card_initialized);
+    TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
+    TEST_ASSERT_EQUAL_UINT(1u, batch_writes);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_sync());
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_write_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_EQUAL_UINT(1u, batch_writes);
+    TEST_ASSERT_EQUAL_UINT(0u, reads);
+    TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
 }
 
 void test_removed_media_never_attempts_read_or_reinitialization(void)

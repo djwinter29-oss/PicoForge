@@ -50,11 +50,11 @@
       </div>
       <dl class="runtime-grid">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
-        <div><dt>System clock</dt><dd id="runtime-clock">--</dd></div>
+        <div><dt>CPU usage</dt><dd id="cpu-usage" title="Non-idle task time over the reporting interval">--</dd></div>
+        <div><dt>RAM reserved</dt><dd id="ram-usage" title="Static data and reserved stacks, not live stack occupancy">--</dd></div>
         <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
-        <div><dt>SD card presence</dt><dd id="card-presence">--</dd></div>
+        <div><dt>Memory presence</dt><dd id="card-presence">--</dd></div>
         <div><dt>Memory type</dt><dd id="memory-type">--</dd></div>
-        <div><dt>Report sequence</dt><dd id="sequence">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
         <div><dt>Onboard LED</dt><dd id="led-state">--</dd></div>
       </dl>
@@ -70,14 +70,14 @@
       </div>
       <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
-        <div><dt>Card state</dt><dd id="memory-state">--</dd></div>
+        <div><dt>Memory state</dt><dd id="memory-state">--</dd></div>
         <div><dt>Mode</dt><dd id="memory-mode">--</dd></div>
         <div><dt>Bus speed</dt><dd id="memory-speed">--</dd></div>
         <div><dt>Capacity</dt><dd id="memory-size">--</dd></div>
         <div><dt>Filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
         <div><dt>Manufacturer</dt><dd id="memory-manufacturer">--</dd></div>
         <div><dt>Product</dt><dd id="memory-product">--</dd></div>
-        <div><dt>Card serial</dt><dd id="memory-serial">--</dd></div>
+        <div><dt>Device serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
     </section>
 
@@ -86,10 +86,10 @@
         <h2 id="self-test-title">Memory Tests</h2>
         <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
-      <p class="sample-time storage-note" id="msc-note" role="status">USB drive off; safely eject before disabling.</p>
+      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
       <p class="sample-time">Writes and verifies /PFTEST.BIN, replacing any existing file at that path.</p>
       <div class="self-test-controls">
-        <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="128" step="1" value="32"></label>
+        <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
         <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
         <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
       </div>

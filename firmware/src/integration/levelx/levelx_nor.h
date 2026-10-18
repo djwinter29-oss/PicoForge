@@ -4,21 +4,31 @@
 #include "drivers/nor_flash/nor.h"
 #include "lx_api.h"
 
+/** Maximum 4 KiB erase blocks on the supported 16 MiB W25Q128. */
+#define PF_LEVELX_NOR_MAX_BLOCKS 4096u
+
+/** Cached block-header words: wear count and minimum/maximum logical sector. */
+#define PF_LEVELX_NOR_HEADER_WORDS 3u
+
 /** Caller-owned LevelX volume. Zero initialize before first use and serialize
- * all LevelX operations in one storage-owner task, not an ISR or second core.
+ * all LevelX operations with the same external reservation. The application worker
+ * and USB task may access it serially on either core under that reservation; ISR access is unsupported.
  * The raw flash and transport must outlive the volume. Do not copy an open volume.
  */
 typedef struct {
-    LX_NOR_FLASH control;
-    pf_nor_t *flash;
-    ULONG buffer[LX_NOR_SECTOR_SIZE];
-    uint32_t offset;
-    uint32_t size;
-    uint32_t sector_count;
-    pf_nor_result_t last_raw_result;
-    UINT last_system_error;
-    bool opened;
-    bool faulted;
+    LX_NOR_FLASH control; /**< Upstream control state owned by this volume. */
+    pf_nor_t *flash; /**< Borrowed initialized raw flash. */
+    ULONG buffer[LX_NOR_SECTOR_SIZE]; /**< Upstream sector staging. */
+    ULONG cache[2048]; /**< 8 KiB backing the upstream logical mapping bitmap and obsolete-sector counts. */
+    ULONG block_headers[PF_LEVELX_NOR_MAX_BLOCKS][PF_LEVELX_NOR_HEADER_WORDS]; /**< Verified read-through headers. */
+    uint32_t header_valid[PF_LEVELX_NOR_HEADER_WORDS][PF_LEVELX_NOR_MAX_BLOCKS / 32u]; /**< Per-word validity. */
+    uint32_t offset; /**< Authorized raw-region start in bytes. */
+    uint32_t size; /**< Authorized raw-region size in bytes. */
+    uint32_t sector_count; /**< Exported 512-byte logical sectors. */
+    pf_nor_result_t last_raw_result; /**< Retained raw I/O result. */
+    UINT last_system_error; /**< Retained upstream system-error code. */
+    bool opened; /**< Upstream state requires close before reopening. */
+    bool faulted; /**< I/O prohibited until close and recovery. */
 } pf_levelx_nor_t;
 
 /** Open/recover an initialized NOR region, aligned to 4KiB and at least 4 blocks.
@@ -34,6 +44,10 @@ UINT pf_levelx_nor_open(pf_levelx_nor_t *volume, pf_nor_t *flash,
  */
 UINT pf_levelx_nor_read(pf_levelx_nor_t *volume, uint32_t sector, void *data);
 UINT pf_levelx_nor_write(pf_levelx_nor_t *volume, uint32_t sector, const void *data);
+/** Release one unused logical sector through LevelX; no raw erase or filesystem allocation change.
+ * Releasing an already unmapped sector succeeds. Failures require the same recovery as writes.
+ */
+UINT pf_levelx_nor_trim(pf_levelx_nor_t *volume, uint32_t sector);
 /** Synchronous raw-media completion, not FAT transaction atomicity. */
 UINT pf_levelx_nor_sync(pf_levelx_nor_t *volume);
 /** Close LevelX control state; does not release the caller's raw flash/transport. */

@@ -5,7 +5,9 @@
 The initial raw driver supports the W25Q128 JEDEC ID `EF 40 18`, 16 MiB
 capacity, 256-byte program pages and 4 KiB erase sectors. It provides
 identification, reads, page-split programming, aligned sector erase, readiness
-polling and readback verification of program/erase operations.
+polling and readback verification of program/erase operations. Initialization also reads the factory-programmed
+64-bit Unique ID using `4Bh`, 32 dummy clocks and eight single-lane data bytes. This read does not program or erase
+flash. UID transport failures fail initialization explicitly; the UID is not an authentication credential.
 
 Quad enable uses the W25Q128JV-compatible `35h` / volatile-status-enable `50h` /
 status-register-2-write `31h` sequence. Verify the actual part marking and
@@ -13,10 +15,9 @@ datasheet before using quad mode: a JEDEC ID alone does not identify every
 revision's status-register command behavior. Other NOR parts, QPI mode,
 four-byte addressing and SFDP discovery are not supported.
 
-This is not yet a FatFs backend. An optional LevelX NOR port provides logical
-sectors and upstream reclamation/wear management, but filesystem mounting and
-USB MSC export remain unimplemented. Raw programming requires previously
-erased bits; it never erases implicitly. A failed write can leave partial changes.
+An optional LevelX NOR port provides logical sectors and upstream reclamation/wear management.
+The application can select these sectors for FatFs and USB MSC at build time; SD remains the default.
+Raw programming requires previously erased bits; it never erases implicitly. A failed write can leave partial changes.
 
 ## Layers and Wiring
 
@@ -73,16 +74,36 @@ board-specific idle pins without initializing the bus or referencing NOR. The st
 `PF_BOARD_STORAGE_QSPI` selects the serial board profile for the standalone target; CMake derives it from
 `PF_NOR_TRANSPORT`. The SD application retains its existing profile and does not prepare the alternative serial device.
 
-The board configuration starts at 1 MHz and configures SPI with a 100 ms per-byte FIFO deadline. QSPI-PIO rejects
-requested clocks above 10 MHz; generic SPI also serves SD and has no NOR-specific clock ceiling. Custom NOR SPI
-callers must retain the previous at-most-10 MHz policy and configure bounded polling; higher clocks are not qualified.
+The board requests 40 MHz for NOR SPI and configures a 100 ms stalled-FIFO deadline. The Pico SDK chooses
+a realizable baud rate no higher than requested: at the reference 125 MHz system clock this is 31.25 MHz,
+not 40 MHz. HID telemetry reports the actual baud rate. The NOR board policy accepts SPI requests up to 40 MHz;
+generic SPI also serves SD and has no NOR-specific clock ceiling.
+QSPI-PIO requests 50 MHz and accepts rates up to 50 MHz. Its four-instruction clock loop requires at least
+a 200 MHz system clock for that rate; use `--sys-clk-mhz 200` (`PF_SYS_CLK_MHZ=200` for direct CMake).
+This is an out-of-spec overclock on RP2040 and RP2350 and requires explicit approval and board qualification.
+Unrepresentable rates fail initialization rather than silently falling back. SPI clock policy is unchanged.
+Signal integrity at higher SPI clocks depends on the board, breakout and wiring; qualify with write/read verification,
+not just successful identification. The bus clock is not the file throughput: polling, NOR program/erase verification,
+LevelX and FAT all add overhead.
 PIO divides
-the actual system clock for four instructions per symbol, with one high-clock
-instruction. CPU/FIFO pacing introduces additional low-clock gaps, so the
+the actual system clock for four instructions per symbol, with two high-clock
+instructions and input sampling at the following falling edge. Synchronous data inputs bypass the PIO input
+synchronizers; deinitialization restores the previous setting for only the owned pins.
+Automatic pull/push streams complete bytes, while partial dummy phases still clock the exact requested symbols.
+Quad reads use four-byte FIFO words with MSB-first unpacking and exact byte tails; single-lane phases and writes
+retain byte transfers. This reduces CPU FIFO servicing without changing flash commands or programming behavior.
+Up to four FIFO words may be outstanding, bounding RX occupancy even when interrupted. The 100 ms timeout measures
+continuous FIFO stalls, not total transaction length; timer reads are avoided while progress continues.
+CPU/FIFO pacing introduces additional low-clock gaps, so the
 requested frequency is a maximum symbol cadence, not sustained throughput.
 Both implementations use bounded polling rather than DMA. The QSPI transport
 claims one state machine and eight instructions on PIO0 or PIO1, and restricts
 its clock/data pins to GPIO0..31 on both MCU families.
+
+Bounded SPI polling pipelines up to eight bytes, matching the hardware receive FIFO depth so interrupted transfers
+cannot overflow RX. Timer reads occur only while neither FIFO makes progress, not once per payload byte.
+The deadline is a maximum continuous stall interval; successful transfers still drain every transmitted byte.
+SD-SPI's zero-timeout SDK bulk path is unchanged. NOR program/erase readback verification remains enabled.
 
 Keep external CS/WP/HOLD pull-ups as documented. IO2/IO3 are inputs in the PIO
 single-lane phase and data signals in quad mode. SPI holds WP/HOLD high.
@@ -108,12 +129,12 @@ pins. No hardware flashing is performed by these commands.
 From the repository root:
 
 ```sh
-tools/firmware/build.sh --board pico2 --nor-transport QSPI_PIO
+tools/firmware/build.sh --board pico2 --sys-clk-mhz 200 --nor-transport QSPI_PIO
 ```
 
 Use `--nor-transport SPI` for the SDK SPI transport. These commands use separate
 `build/nor-BOARD-TRANSPORT` directories and produce `pf_nor_flash_smoke.uf2`,
-not the default SD/USB application's `pf_hello_world.uf2`. The existing
+not the default SD/USB application's [named PicoForge image](../README.md#1-build-the-firmware). The existing
 application name and default build behavior are unchanged.
 
 Equivalent direct CMake configuration:
@@ -121,7 +142,7 @@ Equivalent direct CMake configuration:
 ```sh
 cmake -S firmware -B build/nor-pico2-qspi -G Ninja \
     -DPICO_SDK_PATH="$PWD/firmware/third_party/pico-sdk" \
-    -DPICO_BOARD=pico2 -DPF_BUILD_NOR_SMOKE=ON -DPF_NOR_TRANSPORT=QSPI_PIO
+    -DPICO_BOARD=pico2 -DPF_SYS_CLK_MHZ=200 -DPF_BUILD_NOR_SMOKE=ON -DPF_NOR_TRANSPORT=QSPI_PIO
 cmake --build build/nor-pico2-qspi --parallel
 ```
 
@@ -149,7 +170,8 @@ The C tests execute the protocol with a fake NOR array enforcing page boundaries
 write enable and 1-to-0 programming. They check range rejection, preserved
 neighboring data, timeouts, quad-enable verification and ignored/protected writes.
 The pytest model assembles the actual PIO programs and checks symbol width,
-bit order, clock sidesets and blocking FIFO boundaries. Neither executes the
+bit order, clock sidesets and late sampling. Transport tests cover automatic byte shifts, bounded FIFO occupancy,
+stall timeouts, divider limits and synchronizer restoration. Neither executes the
 physical SDK transport on a board.
 
 Board qualification remains required for CS timing, pin turnaround, actual
@@ -168,7 +190,7 @@ FileX and ThreadX are not dependencies of this port.
 
 ```sh
 git submodule update --init firmware/third_party/levelx
-tools/firmware/build.sh --board pico2 --nor-transport QSPI_PIO --levelx
+tools/firmware/build.sh --board pico2 --sys-clk-mhz 200 --nor-transport QSPI_PIO --levelx
 ceedling test:test_levelx_nor
 ```
 
@@ -193,6 +215,10 @@ is forbidden. Two physical erase blocks are reserved from exported capacity.
 For a full 16 MiB device this exports `(4096 - 2) * 7 = 28658` sectors,
 14,672,896 bytes; obtain the exact capacity from `volume.sector_count` rather
 than assuming all raw bytes are available.
+To dedicate the entire external chip, explicitly approve erasing all existing external data and configure
+`PF_NOR_REGION_OFFSET=0` and `PF_NOR_REGION_SIZE=16777216`. Changing region geometry requires reprovisioning
+the LevelX region before formatting FatFs; `fs format --confirm` formats logical sectors, not raw LevelX metadata.
+The dashboard will still show less usable than physical capacity because of LevelX and filesystem overhead.
 
 LevelX runs in standalone mode: no ThreadX mutexes, interrupts or heap
 allocation are added. Serialize all instances and operations in one storage
@@ -200,10 +226,39 @@ owner, including the first open/global initialization. The config fixes the
 on-flash `ULONG` ABI at 32 bits on RP2040, RP2350 and 64-bit hosts. Context size
 is `sizeof(pf_levelx_nor_t)` for the selected build; allow additional task stack
 space for a 512-byte staging sector and upstream reclaim calls.
+Each volume also owns an 8 KiB buffer backing the upstream logical-sector mapping bitmap and per-block
+obsolete-sector counts. Only their required bytes are supplied to the upstream cache initializer; its whole-sector
+metadata read cache is not enabled. Single-word metadata misses therefore do not fetch an entire 512-byte sector.
+The bitmap avoids a whole-region search for every previously unwritten sector; it is rebuilt on open,
+so it changes RAM use and startup work, not the on-flash layout. Cache initialization errors fail the open.
+Obsolete-sector counts allow searches to skip fully obsolete blocks without fetching their metadata from SPI,
+especially after repeated file creation/deletion has consumed the initial erased space.
+The port separately caches each block's wear count and minimum/maximum logical-sector words (48 KiB plus
+1.5 KiB of validity bitmaps for the maximum 16 MiB chip). Reclaim and logical-sector searches can then compare
+block headers in RAM instead of fetching each word over SPI. Verified writes, including writes crossing block
+boundaries, update only the covered header words; raw erase invalidates all three words, and reopen clears them.
+All callbacks remain under the media reservation; cache hits do not bypass a latched fault.
+FatFs TRIM notifications release deleted-file sectors through LevelX instead of preserving stale data during
+reclamation. Release is logical, ownership-gated and range-checked; it does not raw-erase adjacent sectors.
+SD backends do not implement TRIM and return unsupported (`RES_PARERR`), as permitted for this optional FatFs hint.
+FatFs does not propagate hint failures; NOR media failures are explicitly logged, retained in trim diagnostics,
+and fault the volume so subsequent storage operations fail rather than claiming healthy media.
+Pre-existing freed sectors from older firmware are not retroactively released; repeated-test timing also depends
+on region history, reclaim work and the chip's program/erase latency.
+The upstream sector-mapping cache is configured for 8192 entries (96 KiB on RP2040/RP2350), rather than the
+16-entry upstream default. This retains more mappings during sequential reads up to roughly 4 MiB, avoiding
+the previous 4096-entry cache's repeated metadata searches on larger file tests. This uses 48 KiB more SRAM;
+allow room for application stacks and other buffers when enabling the NOR backend.
+It is a bounded, four-way hashed cache, not a full-region map; larger/conflicting workloads can still miss.
+Together, the mapping and header changes add 81 KiB over the previous 4096-entry/wear-count-only configuration.
+The reference RP2040 application reserves approximately 229 KiB of its 264 KiB SRAM with these caches.
+Measured file reads include mapping lookup, FAT access and pattern verification; raw QSPI throughput is not
+an end-to-end filesystem throughput guarantee. The read path still uses bounded CPU polling, not DMA.
 
 **Open is not read-only.** Upstream LevelX can initialize metadata on blank
-media and repair/reclaim existing metadata during open. There is intentionally
-no automatic open in board startup and no destructive erase-all/format wrapper.
+media and repair/reclaim existing metadata during open. The raw driver and link smoke do not automatically open media.
+The NOR filesystem application does open its explicitly configured region in the storage worker; there is no
+destructive raw erase-all wrapper.
 Only supply an explicitly designated LevelX region, never an SD filesystem,
 boot flash, or unrelated raw data. LevelX's on-flash layout is not FAT.
 
@@ -221,6 +276,110 @@ errors and partial program interruption. These bounded fault cases are not an
 exhaustive proof of power-fail safety or endurance. Physical erase interruption,
 real device timing and wear distribution still require dedicated qualification.
 
-The next storage step is adapting these logical sectors to FatFs and its
-storage-owner lifecycle without changing SD behavior. The default SD/FatFs
-application is unchanged by this port.
+## Build-Selected FatFs and USB MSC
+
+`PF_STORAGE_BACKEND=SD|NOR` selects the application filesystem and MSC backend; the default is `SD`.
+NOR automatically builds the pinned LevelX port and
+[logical adapter](../firmware/src/middleware/storage/levelx_block_device.h). `PF_BUILD_LEVELX=ON` also makes the
+adapter available to SD application builds without selecting NOR or opening flash.
+The [application NOR service](../firmware/src/app/storage/nor_media.h) owns initialization, a recursive FreeRTOS
+reservation, and separate owner-gated firmware/USB descriptors. Raw NOR is never exposed directly as rewritable sectors.
+
+NOR configuration requires **both** `PF_NOR_REGION_OFFSET` and `PF_NOR_REGION_SIZE`; neither has a default.
+Values accept decimal or hexadecimal bytes, must be 4 KiB aligned, and must fit within the supported external
+16 MiB W25Q128. The application requires at least 48 KiB: after LevelX's two reserved blocks this provides at least
+FatFs's minimum 64 logical sectors. The region must be explicitly reserved for LevelX; do not use Pico boot flash
+or a region containing unrelated raw data. Runtime initialization validates the detected part and region again.
+
+After independently approving the external region, set its offset and size in your shell and build:
+
+```sh
+: "${PF_NOR_REGION_OFFSET:?Set the approved external region offset in bytes}"
+: "${PF_NOR_REGION_SIZE:?Set the approved external region size in bytes}"
+tools/firmware/build.sh --board pico2 --sys-clk-mhz 200 --storage-backend NOR --nor-transport QSPI_PIO \
+    --nor-region-offset "$PF_NOR_REGION_OFFSET" --nor-region-size "$PF_NOR_REGION_SIZE"
+```
+
+This produces the [named PicoForge image](../README.md#1-build-the-firmware) under
+`build/firmware-pico2-NOR-QSPI_PIO`, not a raw smoke.
+Use `SPI` for the supported single-lane transport, or `--storage-backend SD` for the existing SD workflow.
+Without `--storage-backend NOR`, the existing `--nor-transport` option still selects the standalone raw smoke.
+For direct CMake, pass the same `PF_STORAGE_BACKEND`, `PF_NOR_TRANSPORT`, and `PF_NOR_REGION_*` values.
+The NOR filesystem/MSC application requires the FreeRTOS configuration.
+When intentionally flashing later, `tools/firmware/load.sh` accepts the same backend, transport and region options.
+It preserves NOR selection when invoking the build wrapper and rejects a known cached-backend mismatch before
+flashing an implicitly selected ELF. `--skip-build` avoids rebuilding; an explicit `--elf` remains the caller's choice.
+
+The worker normally opens LevelX and attempts to mount an **existing** FAT/exFAT volume.
+For an unformatted logical volume, mounting reports a FatFs error; use `fs mount` to see the result.
+After initialization, USB MSC can expose that unmounted logical volume for intentional host-side provisioning.
+Host formatting is destructive to the logical region and must be explicitly authorized.
+Alternatively, `fs format --confirm` creates FAT on the selected LevelX logical volume and mounts it.
+This command requires Pico ownership and an unmounted volume (`fs unmount` first if necessary); it destroys
+existing logical files but does not raw-erase the chip or access outside the configured LevelX region.
+Formatting failure is reported and can leave partially changed filesystem contents.
+Logical capacity excludes LevelX metadata/reserve space; USB reports that logical capacity.
+Filesystem capacity is smaller again after FAT overhead. Reserve a sufficiently large region for file tests:
+a 64 KiB region cannot hold a 1 MiB test; a 4 MiB region provides about 3.5 MiB of logical capacity.
+Changing region geometry is not a filesystem resize. Previously unrelated contents in newly included blocks can
+prevent LevelX open (`LX_SYSTEM_INVALID_BLOCK`); FAT formatting cannot repair invalid LevelX metadata.
+Any raw re-provisioning must be separately authorized for the exact disposable region; the format CLI never
+automatically erases raw contents.
+
+The dashboards report NOR type, readiness, SPI/QSPI mode, effective bus clock, logical and physical capacity,
+and JEDEC-derived Winbond/W25Q128 identity using
+[NOR memory telemetry](usb-protocol.md#nor-memory-telemetry-input-report-3-layouts-3-and-4).
+The NOR device serial displays the chip's factory 64-bit UID as 16 hexadecimal digits, not the Pico USB serial.
+Revision and manufacturing date are unavailable and are not fabricated.
+The same [file write/verify test](sd-self-test.md) supports NOR when mounted and Pico-owned, subject to free space.
+Use a 1 MiB size for the 4 MiB region; the default 32 MiB test does not fit.
+
+Only `LX_SECTOR_NOT_FOUND` reads map to erased `0xff` sectors; other failures remain errors. The lower-level LevelX API
+continues to report its native statuses unchanged.
+
+MSC enable rejects mounted or busy firmware access. Host reads/writes use only the USB descriptor; firmware operations
+remain rejected while USB owns media. Eject and release check sync results; uncertain writes are never replayed.
+Release publishes a worker remount request. Explicit recovery of faulted USB-owned media detaches USB and hands the
+reservation to the worker before closing/reinitializing/reopening LevelX; this is not reported as a clean eject or
+successful flush. Recovery leaves automount blocked until a successful explicit `fs mount`.
+
+The application exposes named firmware/USB descriptor getters and explicit USB acquire/release operations.
+MSC holds the media reservation across its worker-idle check and ownership transition; the NOR service checks
+readiness and mounted state on acquisition, not worker admission. Normal release requires caller-checked eject/sync.
+The separate recovery release rejects healthy media and does not sync or claim durability.
+
+The separately confirmed [force-return action](usb-protocol.md#confirmed-force-return) supports healthy NOR as well
+as SD without weakening normal Disable or fault-recovery checks. It disconnects before releasing ownership and
+attempts one worker mount; host-cached writes can still be lost and the filesystem can be corrupted.
+
+For compatibility, `sd status` and `sd diagnostics` report the selected NOR media with `backend=nor`, current
+ownership/readiness and a retained failure sequence, block result, raw NOR result, LevelX result and system error.
+An additional line reports `failure_operation` and `failure_owner`, independently of current ownership. Operation
+codes are 0 none, 1 board preparation, 2 transport/flash initialization (including quad enable), 3 LevelX open,
+4 LevelX close, 5 read, 6 write, 7 sync and 8 trim. Before any failure the owner is `none`. Successful recovery and rejected
+owner I/O do not replace the retained failure. LevelX open/close retain their returned codes; logical block failures
+use the synthetic `LX_ERROR` summary because the block adapter does not expose the original LevelX return code.
+`LevelX_block_error=synthetic` labels that convention, not an additional failure.
+
+Board validation checks common UART/LED resources and the selected NOR SPI or QSPI topology, ignoring unused SD
+wiring. Serial preparation repeats that check before changing idle pins or publishing a bus descriptor. Every
+selected signal must be unique, in GPIO range and disjoint from UART/LED, including SPI WP/HOLD; QSPI data lanes
+must be consecutive. This validation does not acquire transport hardware or establish electrical compatibility.
+Successful recovery does not clear the retained failure. Adapter I/O failures report `LX_ERROR`; initialization
+and close failures retain the returned LevelX status. `sd info`, `sd profile`, and diagnostic clearing remain
+SD-only. Recovery completion or failure is logged on UART, and leaves the volume unmounted in either case.
+NOR builds omit SD protocol/execution-port targets and the middleware SD adapter, and board SD configuration
+returns unavailable without preparing SD hardware.
+The SD-specific HID memory report remains unconfigured rather than advertising NOR as an SD card.
+Filesystem, MSC and file-self-test reports remain available. No new NOR identity/HID protocol is implemented.
+
+```sh
+ceedling test:test_levelx_block_device test:test_nor_media test:test_storage_worker_nor test:test_storage_commands_nor
+ceedling test:test_usb_msc_nor test:test_levelx_nor
+python3 -m pytest -q tests/contracts/test_storage_backend.py
+```
+
+The tests include real FatFs file create/write/sync/reopen/read/delete through the adapter and pinned LevelX engine
+over simulated NOR, plus owner exclusion, batch/partial MSC transfers, failed-write non-replay, retry and recovery.
+They are not physical NOR, USB BOT, endurance or power-loss qualification. No NOR filesystem hardware qualification
+is claimed.

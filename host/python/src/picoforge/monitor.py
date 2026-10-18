@@ -77,17 +77,28 @@ class DeviceMonitor:
             self._snapshot["board_status"] = board_status
         return board_status
 
-    def set_msc(self, enable: bool) -> dict[str, object]:
+    def set_msc(self, enable: bool, *, force: bool = False) -> dict[str, object]:
         if not isinstance(enable, bool):
             raise ValueError("MSC enable state must be boolean")
+        if not isinstance(force, bool) or (force and enable):
+            raise ValueError("Force return requires disabling MSC")
         with self._device_lock:
             if self._active_client is None:
                 raise RuntimeError("PicoForge HID is not connected")
-            self._active_client.set_msc(enable)
+            snapshot = self.snapshot()
+            msc = snapshot.get("msc") or {}
+            if force and (not msc.get("force_return_supported") or not msc.get("enabled")
+                          or msc.get("transition_pending")):
+                raise RuntimeError("Force return requires enabled MSC and firmware with force-return support")
+            if force:
+                self._active_client.set_msc(False, force=True)
+            else:
+                self._active_client.set_msc(enable)
         with self._lock:
             previous = self._snapshot.get("msc") or {}
             status = {"enabled": previous.get("enabled", False),
-                      "transition_pending": True, "request_rejected": False}
+                      "transition_pending": True, "request_rejected": False,
+                      "force_return_supported": previous.get("force_return_supported", False)}
             self._snapshot["msc"] = status
         return status
 

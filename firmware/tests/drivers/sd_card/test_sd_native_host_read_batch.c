@@ -1,4 +1,6 @@
 #include "unity.h"
+void pf_sd_lock(void) {}
+void pf_sd_unlock(void) {}
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
@@ -10,11 +12,11 @@ static pf_sdio_pio_t test_wire;
 #include <stdint.h>
 #include <string.h>
 
-#include "../../../src/drivers/storage/sdio_pio/sdio_pio.c"
-#include "../../../src/drivers/storage/bus.c"
-#include "../../../src/drivers/storage/sd_wire.c"
-#include "../../../src/drivers/sd_card/sd_native_host.c"
-#include "../../../src/drivers/sd_card/sd_protocol.c"
+#include "drivers/storage/sdio_pio/sdio_pio.c"
+#include "drivers/storage/bus.c"
+#include "drivers/storage/sd_wire.c"
+#include "drivers/sd_card/sd_native_host.c"
+#include "drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
 pf_sd_native_host_t *pf_test_sdio_observed_host;
@@ -322,9 +324,9 @@ void test_read_batch_loads_pio_count_before_dma_and_framing(void)
     };
     TEST_ASSERT_EQUAL_UINT(sizeof(expected) / sizeof(expected[0]), pf_test_sdio_event_count);
     TEST_ASSERT_EQUAL_MEMORY(expected, pf_test_sdio_events, sizeof(expected));
-    TEST_ASSERT_LESS_OR_EQUAL_UINT(PF_STORAGE_SELF_TEST_BUFFER_SIZE,
+    TEST_ASSERT_LESS_OR_EQUAL_UINT(PF_FILE_BENCHMARK_BUFFER_SIZE,
                                   SDIO_READ_BATCH_BLOCKS * PF_SD_BLOCK_SIZE);
-    TEST_ASSERT_EQUAL_UINT(0u, PF_STORAGE_SELF_TEST_BUFFER_SIZE % PF_SD_BLOCK_SIZE);
+    TEST_ASSERT_EQUAL_UINT(0u, PF_FILE_BENCHMARK_BUFFER_SIZE % PF_SD_BLOCK_SIZE);
 }
 
 void test_rx_cleanup_aborts_dma_before_clearing_and_restarting_pio(void)

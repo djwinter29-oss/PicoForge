@@ -10,7 +10,7 @@ typedef enum {
     PF_LOG_LEVEL_ERROR,
 } log_level_t;
 
-/** Select the UART stdio driver after board UART initialization. */
+/** Enable logging after board startup selects and initializes the stdio output. */
 void pf_log_init(void);
 
 /** Set the minimum emitted severity; this may be changed while tasks are running. */

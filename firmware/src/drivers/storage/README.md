@@ -21,7 +21,7 @@ drivers/
     sd_wire.h / sd_wire.c
     spi/spi.h / spi.c
     sdio_pio/sdio_pio.h / sdio_pio.c / sdio_pio.pio
-    sdio_pio/ports/freertos/sdio_wait.c
+    sdio_pio/sdio_wait_freertos.c
     qspi_pio/qspi_pio.h / qspi_pio.c / qspi_pio.pio
   sd_card/       SD initialization, registers, framing, sector and stream policy
   nor_flash/     NOR opcodes, status, page programming, erase and verification
@@ -139,7 +139,7 @@ Released-line clock generation takes a count at the current rate and a caller de
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 
 Platform time, bounded delays, and optional scheduler-wait setup are also dispatched through the descriptor.
-The [FreeRTOS wait adapter](sdio_pio/ports/freertos/sdio_wait.c) owns PIO IRQ details; SD's execution port only
+The [FreeRTOS wait adapter](sdio_pio/sdio_wait_freertos.c) owns PIO IRQ details; SD's execution port only
 requests that the transport enable it. The backend retains its physical configuration and installed wait hook across
 common-interface initialization failures and deinitialization, so reinitialization does not need device-side pin setup.
 

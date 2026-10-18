@@ -8,7 +8,16 @@ The shared Python/.NET page refreshes automatically. Its first summary row inclu
 (`Unknown` for legacy firmware). LED control is in Live Report; USB-drive control is beside the SD-card self-test.
 Selecting Start authorizes self-test writes and replacement of the reserved test file without a separate checkbox.
 
-Use **Enable USB drive** to hand the SD card to the host; USB briefly re-enumerates with an added MSC interface while keeping the HID identity and interface stable. Safely eject it in the host operating system before disabling MSC; the Pico then regains card ownership. Firmware storage must be unmounted before enabling host ownership.
+Use **Enable USB drive** to hand selected SD/NOR storage to the host. Firmware unmounts its filesystem before USB
+briefly re-enumerates with an added MSC interface, keeping the HID identity and interface stable.
+
+**Disable USB drive** requires data-loss confirmation, then requests Pico-side detach and remount over HID.
+The same command is used on Windows, Linux and macOS; the host app never runs OS eject/unmount commands and
+requires no UDisks2 or eject permissions. The button requires supporting firmware; older firmware shows an
+update message instead of silently falling back to a different behavior. See the authoritative
+[force-return contract and risks](../../docs/usb-protocol.md#confirmed-force-return); a successful remount
+does not establish filesystem integrity. This is OS-independent command behavior, not physical qualification
+on every OS. Native HID access still requires the platform's usual permissions and drivers.
 
 The dashboard also controls the [SD-card self-test](../../docs/sd-self-test.md)
 over HID and displays progress, verified byte counts, and average MiB/s. Its

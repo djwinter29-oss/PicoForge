@@ -7,7 +7,11 @@ internal static class StatusEndpoints
     public sealed record SetLedRequest(bool On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
     public sealed record SetMscRequest(bool Enabled);
-    /// <summary>Start a 1..128 MiB temporary-file test or request cancellation.</summary>
+    /// <summary>Explicit acknowledgement that forced detach may lose data and corrupt the filesystem.</summary>
+    public sealed record ForceReturnMscRequest(bool ConfirmDataLoss);
+    /// <summary>MSC ownership and asynchronous transition status after command delivery.</summary>
+    public sealed record SetMscResponse(MscStatusResponse Msc);
+    /// <summary>Start a 1..1024 MiB temporary-file test or request cancellation.</summary>
     public sealed record SetSelfTestRequest(string Action, uint SizeMib = 32);
     /// <summary>Command delivery acknowledgement; completion comes from HID telemetry.</summary>
     public sealed record SelfTestAcceptedResponse(bool Accepted);
@@ -37,6 +41,14 @@ internal static class StatusEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+        endpoints.MapPost("/api/msc/force-return", ForceReturnMsc)
+            .WithName("ForceReturnMsc")
+            .WithSummary("Force storage back to Pico after acknowledging possible data loss")
+            .WithDescription("Bypasses host eject, not device sync. Pending includes one remount attempt; never formats or repairs.")
+            .Produces<SetMscResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
         return endpoints;
     }
 
@@ -63,13 +75,32 @@ internal static class StatusEndpoints
             : Results.Ok(status);
     }
 
+    private static Results<Ok<SetMscResponse>, ProblemHttpResult> ForceReturnMsc(
+        ForceReturnMscRequest request, IDeviceMonitor monitor, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!request.ConfirmDataLoss)
+            return TypedResults.Problem(statusCode: 400, title: "Explicit confirm_data_loss: true is required");
+        try
+        {
+            var status = monitor.SetMsc(false, force: true);
+            return status is null
+                ? TypedResults.Problem(statusCode: 409, title: "Enabled MSC with force-return support is unavailable")
+                : TypedResults.Ok(new SetMscResponse(status));
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
+    }
+
     private static Results<Accepted<SelfTestAcceptedResponse>, ProblemHttpResult> SetSelfTest(
         SetSelfTestRequest request, IDeviceMonitor monitor, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (request.Action is not ("start" or "cancel") ||
-            (request.Action == "start" && request.SizeMib is not (>= 1 and <= 128)))
-            return TypedResults.Problem(statusCode: 400, title: "Expected start/cancel and a size from 1 to 128 MiB");
+            (request.Action == "start" && request.SizeMib is not (>= 1 and <= 1024)))
+            return TypedResults.Problem(statusCode: 400, title: "Expected start/cancel and a size from 1 to 1024 MiB");
         try
         {
             if (!monitor.SetSelfTest(request.Action, request.SizeMib))

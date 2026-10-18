@@ -1,8 +1,10 @@
 #include "unity.h"
+void pf_sd_lock(void) {}
+void pf_sd_unlock(void) {}
 
 #define PF_SD_NATIVE_FUSED_COPY 1
 
-#include "../../../src/drivers/sd_card/sd_protocol.c"
+#include "drivers/sd_card/sd_protocol.c"
 
 #include <string.h>
 

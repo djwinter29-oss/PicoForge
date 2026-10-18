@@ -1,8 +1,8 @@
 #include "unity.h"
 #include <string.h>
-#define WORKER_SOURCE "../../../src/middleware/storage/storage_worker.c"
-#define HID_SOURCE "../../../src/usb/hid.c"
-#define USB_TASK_SOURCE "../../../src/usb/task.c"
+#define WORKER_SOURCE "app/storage/storage_worker.c"
+#define HID_SOURCE "app/usb/usb_hid.c"
+#define USB_TASK_SOURCE "app/usb/usb_task.c"
 #include WORKER_SOURCE
 #include HID_SOURCE
 #include USB_TASK_SOURCE
@@ -17,7 +17,7 @@ bool pf_sd_try_lock(void)
 }
 void pf_sd_unlock(void) { TEST_ASSERT_TRUE(reserved); reserved = false; }
 bool pf_sd_is_initialized(void) { TEST_ASSERT_TRUE(reserved); return initialized; }
-bool pf_storage_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
+bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
 void pf_sd_get_info(pf_sd_info_t *info)
 {
     TEST_ASSERT_TRUE(reserved);
@@ -61,6 +61,11 @@ void pf_cli_print(const char *message)
 uint8_t pf_system_mcu_id(void) { return PF_SYSTEM_MCU_RP2040; }
 uint32_t pf_system_clock_hz(void) { return 125000000u; }
 uint32_t pf_system_uptime_ms(void) { return 123u; }
+void pf_runtime_stats_read(pf_runtime_stats_t *stats)
+{
+    *stats = (pf_runtime_stats_t){.cpu_usage_basis_points = 1234u,
+        .ram_used_bytes = 65536u, .ram_total_bytes = 532480u};
+}
 bool tud_mounted(void) { return true; }
 bool tud_cdc_connected(void) { return true; }
 bool pf_temperature_read_centidegrees(int16_t *temperature)

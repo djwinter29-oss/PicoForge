@@ -2,7 +2,7 @@
  * @brief Common NOR adapter over caller-owned SPI or QSPI storage buses.
  */
 #include "nor_transport.h"
-#include "../storage/serial.h"
+#include "drivers/storage/serial.h"
 
 static uint64_t now(void *context)
 {

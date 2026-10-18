@@ -5,15 +5,16 @@
 
 /** Raw W25Q128 device. Caller owns it and serializes all access, including transports. */
 typedef struct {
-    pf_nor_transport_t transport;
-    uint32_t capacity_bytes;
-    uint32_t erase_size;
-    uint32_t page_size;
-    bool initialized;
-    bool quad_enabled;
+    pf_nor_transport_t transport; /**< Borrowed transport callbacks and context. */
+    uint32_t capacity_bytes; /**< Identified physical capacity in bytes. */
+    uint32_t erase_size; /**< Erase-sector size in bytes. */
+    uint32_t page_size; /**< Program-page size in bytes. */
+    uint8_t unique_id[8]; /**< Factory 64-bit UID in device transmission order, most significant byte first. */
+    bool initialized; /**< Geometry and UID were successfully read. */
+    bool quad_enabled; /**< QE verified for quad reads. */
 } pf_nor_t;
 
-/** Identify EF 40 18 (W25Q128), wait for readiness; never erase or format.
+/** Identify EF 40 18 (W25Q128), read factory UID with 4Bh, wait for readiness; never erase or format.
  * Quad configuration requires a W25Q128JV-compatible 35h/50h/31h command set.
  */
 pf_nor_result_t pf_nor_init(pf_nor_t *flash, const pf_nor_transport_t *transport);

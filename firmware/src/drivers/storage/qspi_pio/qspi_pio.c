@@ -5,8 +5,14 @@
 #include "qspi_pio.pio.h"
 #include "pico/stdlib.h"
 
+/** @brief Round the four-instruction clock divider up so the requested rate is never exceeded. */
+static uint64_t clock_divider(uint32_t requested_hz)
+{
+    return ((uint64_t)clock_get_hz(clk_sys) * 64u + requested_hz - 1u) / requested_hz;
+}
+
 /** @brief Restart the state machine with the selected lane count and pin ownership. */
-static void configure(pf_qspi_pio_t *context, bool quad, bool receive)
+static void configure(pf_qspi_pio_t *context, bool quad, bool receive, uint8_t bits)
 {
     pio_sm_set_enabled(context->pio, context->sm, false);
     uint32_t offset = quad ? context->quad_offset : context->single_offset;
@@ -15,10 +21,9 @@ static void configure(pf_qspi_pio_t *context, bool quad, bool receive)
     sm_config_set_out_pins(&config, context->pins.data_gpio[0], quad ? 4u : 1u);
     sm_config_set_in_pins(&config, context->pins.data_gpio[0] + (quad ? 0u : 1u));
     sm_config_set_sideset_pins(&config, context->pins.clock_gpio);
-    sm_config_set_out_shift(&config, false, false, 32u);
-    sm_config_set_in_shift(&config, false, false, 32u);
-    float divider = (float)clock_get_hz(clk_sys) / (4.0f * (float)context->clock_hz);
-    sm_config_set_clkdiv(&config, divider);
+    sm_config_set_out_shift(&config, false, true, bits);
+    sm_config_set_in_shift(&config, false, true, bits);
+    sm_config_set_clkdiv(&config, (float)clock_divider(context->clock_hz) / 256.0f);
     pio_sm_init(context->pio, context->sm, offset, &config);
     pio_sm_set_pins_with_mask(context->pio, context->sm, 0u, 1u << context->pins.clock_gpio);
     uint32_t data_mask = 15u << context->pins.data_gpio[0];
@@ -29,40 +34,65 @@ static void configure(pf_qspi_pio_t *context, bool quad, bool receive)
     pio_sm_set_enabled(context->pio, context->sm, true);
 }
 
-/** @brief Clock one symbol with a bounded FIFO wait. */
-static pf_storage_bus_result_t symbol(pf_qspi_pio_t *context, uint8_t output,
-                               uint8_t bits, uint8_t *input)
+/** @brief Pipeline FIFO words, bounding outstanding RX words to FIFO capacity. */
+static pf_storage_bus_result_t exchange(pf_qspi_pio_t *context, const pf_storage_serial_phase_t *phase,
+                                       uint8_t bits)
 {
-    uint64_t start = time_us_64();
-    while (pio_sm_is_tx_fifo_full(context->pio, context->sm)) {
-        if (time_us_64() - start >= 100000u) {
+    size_t count = phase->bit_count / bits;
+    size_t sent = 0u, received = 0u;
+    uint64_t stall_start = 0u;
+    bool stalled = false;
+    configure(context, phase->lanes == 4u, phase->rx != NULL, bits);
+    while (received < count) {
+        bool progress = false;
+        if (sent < count && sent - received < 4u && !pio_sm_is_tx_fifo_full(context->pio, context->sm)) {
+            uint32_t output = phase->tx != NULL ? phase->tx[sent] : UINT32_MAX;
+            pio_sm_put(context->pio, context->sm, (uint32_t)output << (32u - bits));
+            ++sent;
+            progress = true;
+        }
+        if (received < sent && !pio_sm_is_rx_fifo_empty(context->pio, context->sm)) {
+            uint32_t input = pio_sm_get(context->pio, context->sm);
+            if (phase->rx != NULL) {
+                if (bits == 32u) {
+                    for (unsigned byte = 0u; byte < 4u; ++byte) {
+                        phase->rx[received * 4u + byte] = (uint8_t)(input >> (24u - byte * 8u));
+                    }
+                } else {
+                    phase->rx[received] = (uint8_t)input;
+                }
+            }
+            ++received;
+            progress = true;
+        }
+        if (progress) {
+            stalled = false;
+        } else if (!stalled) {
+            stall_start = time_us_64();
+            stalled = true;
+        } else if (time_us_64() - stall_start >= 100000u) {
             return PF_STORAGE_BUS_TIMEOUT;
         }
     }
-    pio_sm_put(context->pio, context->sm, (uint32_t)output << (32u - bits));
-    while (pio_sm_is_rx_fifo_empty(context->pio, context->sm)) {
-        if (time_us_64() - start >= 100000u) {
-            return PF_STORAGE_BUS_TIMEOUT;
-        }
-    }
-    *input = (uint8_t)(pio_sm_get(context->pio, context->sm) & ((1u << bits) - 1u));
     return PF_STORAGE_BUS_OK;
 }
 
-/** @brief Exchange one byte, most-significant symbol first. */
-static pf_storage_bus_result_t byte(pf_qspi_pio_t *context, uint8_t output,
-                             uint8_t lanes, uint8_t *input)
+/** @brief Drain quad reads in four-byte FIFO words; byte tails never clock beyond the requested payload. */
+static pf_storage_bus_result_t transfer_phase(pf_qspi_pio_t *context, const pf_storage_serial_phase_t *phase)
 {
-    *input = 0u;
-    for (int shift = 8 - lanes; shift >= 0; shift -= lanes) {
-        uint8_t received;
-        pf_storage_bus_result_t result = symbol(context, (uint8_t)(output >> shift), lanes, &received);
-        if (result != PF_STORAGE_BUS_OK) {
+    if (phase->lanes == 4u && phase->rx != NULL && phase->bit_count >= 32u) {
+        pf_storage_serial_phase_t bulk = *phase;
+        bulk.bit_count &= ~(size_t)31u;
+        pf_storage_bus_result_t result = exchange(context, &bulk, 32u);
+        if (result != PF_STORAGE_BUS_OK || bulk.bit_count == phase->bit_count) {
             return result;
         }
-        *input = (uint8_t)((*input << lanes) | received);
+        pf_storage_serial_phase_t tail = *phase;
+        tail.rx += bulk.bit_count / 8u;
+        tail.bit_count -= bulk.bit_count;
+        return exchange(context, &tail, 8u);
     }
-    return PF_STORAGE_BUS_OK;
+    return exchange(context, phase, phase->tx != NULL || phase->rx != NULL ? 8u : phase->lanes);
 }
 
 pf_storage_bus_result_t pf_qspi_pio_transfer(pf_qspi_pio_t *context,
@@ -80,28 +110,15 @@ pf_storage_bus_result_t pf_qspi_pio_transfer(pf_qspi_pio_t *context,
     }
     gpio_put(context->pins.cs_gpio, false);
     busy_wait_us_32(1u);
-    uint8_t ignored;
     for (size_t phase_index = 0u; result == PF_STORAGE_BUS_OK && phase_index < count; ++phase_index) {
-        const pf_storage_serial_phase_t *phase = &phases[phase_index];
-        configure(context, phase->lanes == 4u, phase->rx != NULL);
-        if (phase->tx == NULL && phase->rx == NULL) {
-            for (size_t bit = 0u; result == PF_STORAGE_BUS_OK && bit < phase->bit_count;
-                 bit += phase->lanes) {
-                result = symbol(context, 0xffu, phase->lanes, &ignored);
-            }
-        } else {
-            for (size_t index = 0u; result == PF_STORAGE_BUS_OK && index < phase->bit_count / 8u; ++index) {
-                result = byte(context, phase->tx != NULL ? phase->tx[index] : 0xffu, phase->lanes, &ignored);
-                if (result == PF_STORAGE_BUS_OK && phase->rx != NULL) {
-                    phase->rx[index] = ignored;
-                }
-            }
-        }
+        result = transfer_phase(context, &phases[phase_index]);
     }
+    pio_sm_set_enabled(context->pio, context->sm, false);
+    pio_sm_set_pins_with_mask(context->pio, context->sm, 0u, 1u << context->pins.clock_gpio);
     gpio_put(context->pins.cs_gpio, true);
     busy_wait_us_32(1u);
     if (result == PF_STORAGE_BUS_OK) {
-        configure(context, false, false);
+        configure(context, false, false, 8u);
     } else {
         pf_qspi_pio_deinit(context);
     }
@@ -117,11 +134,11 @@ pf_storage_bus_result_t pf_qspi_pio_init(pf_qspi_pio_t *context)
         context->pins.cs_gpio >= NUM_BANK0_GPIOS || context->pins.cs_gpio == context->pins.clock_gpio ||
         (context->pins.clock_gpio >= context->pins.data_gpio[0] && context->pins.clock_gpio <= context->pins.data_gpio[0] + 3u) ||
         (context->pins.cs_gpio >= context->pins.data_gpio[0] && context->pins.cs_gpio <= context->pins.data_gpio[0] + 3u) ||
-        context->clock_hz == 0u || context->clock_hz > 10000000u) {
+        context->clock_hz == 0u || context->clock_hz > 50000000u) {
         return PF_STORAGE_BUS_INVALID_ARGUMENT;
     }
-    float divider = (float)clock_get_hz(clk_sys) / (4.0f * (float)context->clock_hz);
-    if (divider < 1.0f || divider >= 65536.0f) {
+    uint64_t divider = clock_divider(context->clock_hz);
+    if (divider < 256u || divider >= 65536u * 256u) {
         return PF_STORAGE_BUS_INVALID_ARGUMENT;
     }
     for (uint32_t lane = 1u; lane < 4u; ++lane) {
@@ -152,8 +169,12 @@ pf_storage_bus_result_t pf_qspi_pio_init(pf_qspi_pio_t *context)
     for (uint32_t lane = 0u; lane < 4u; lane++) {
         pio_gpio_init(context->pio, context->pins.data_gpio[0] + lane);
     }
+    uint32_t data_mask = 15u << context->pins.data_gpio[0];
+    context->saved_sync_bypass = context->pio->input_sync_bypass & data_mask;
+    /* Clocked NOR data needs the half-cycle setup window, not two extra system-clock input delays. */
+    pio_set_input_sync_bypass_with_mask(context->pio, data_mask, data_mask);
     context->initialized = true;
-    configure(context, false, false);
+    configure(context, false, false, 8u);
     return PF_STORAGE_BUS_OK;
 }
 
@@ -168,6 +189,8 @@ void pf_qspi_pio_deinit(pf_qspi_pio_t *context)
     pio_sm_unclaim(context->pio, context->sm);
     pio_remove_program(context->pio, &pf_qspi_pio_single_program, context->single_offset);
     pio_remove_program(context->pio, &pf_qspi_pio_quad_program, context->quad_offset);
+    pio_set_input_sync_bypass_with_mask(context->pio, context->saved_sync_bypass,
+                                      15u << context->pins.data_gpio[0]);
     gpio_init(context->pins.clock_gpio);
     for (uint32_t lane = 0u; lane < 4u; lane++) {
         gpio_init(context->pins.data_gpio[0] + lane);
@@ -178,20 +201,19 @@ void pf_qspi_pio_deinit(pf_qspi_pio_t *context)
 pf_storage_bus_result_t pf_qspi_pio_set_clock(pf_qspi_pio_t *context,
                                                     uint32_t requested_hz, uint32_t *actual_hz)
 {
-    if (context == NULL || actual_hz == NULL || requested_hz == 0u || requested_hz > 10000000u) {
+    if (context == NULL || actual_hz == NULL || requested_hz == 0u || requested_hz > 50000000u) {
         return PF_STORAGE_BUS_INVALID_ARGUMENT;
     }
     if (!context->initialized) {
         return PF_STORAGE_BUS_NOT_READY;
     }
     uint32_t system_hz = clock_get_hz(clk_sys);
-    float divider = (float)system_hz / (4.0f * (float)requested_hz);
-    if (divider < 1.0f || divider >= 65536.0f) {
+    uint64_t divider_256 = clock_divider(requested_hz);
+    if (divider_256 < 256u || divider_256 >= 65536u * 256u) {
         return PF_STORAGE_BUS_INVALID_ARGUMENT;
     }
     context->clock_hz = requested_hz;
-    configure(context, false, false);
-    uint32_t divider_256 = (uint32_t)(divider * 256.0f);
+    configure(context, false, false, 8u);
     *actual_hz = (uint32_t)(((uint64_t)system_hz * 64u) / divider_256);
     return PF_STORAGE_BUS_OK;
 }

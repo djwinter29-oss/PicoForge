@@ -13,7 +13,7 @@ export const MSC_COMMAND_REPORT_ID = 5;
 export const SELF_TEST_REPORT_ID = 6;
 export const FILESYSTEM_REPORT_ID = 7;
 const INFO_PAYLOAD_SIZE = 42;
-const STATUS_PAYLOAD_SIZE = 13;
+const STATUS_PAYLOAD_SIZE = 23;
 const MEMORY_PAYLOAD_SIZE = 29;
 const MSC_STATUS_SIZE = 4;
 const FILESYSTEM_PAYLOAD_SIZE = 3;
@@ -22,6 +22,22 @@ function asView(report) {
   if (report instanceof DataView) return report;
   if (report instanceof Uint8Array) return new DataView(report.buffer, report.byteOffset, report.byteLength);
   throw new Error("Invalid HID report data");
+}
+
+function inputPayload(reportId, report) {
+  const view = asView(report);
+  const size = ({
+    [STATUS_REPORT_ID]: view.byteLength && view.getUint8(0) === 2 ? 13 : STATUS_PAYLOAD_SIZE,
+    [MEMORY_REPORT_ID]: MEMORY_PAYLOAD_SIZE,
+    [MSC_COMMAND_REPORT_ID]: MSC_STATUS_SIZE,
+    [SELF_TEST_REPORT_ID]: 32,
+    [FILESYSTEM_REPORT_ID]: FILESYSTEM_PAYLOAD_SIZE,
+  })[reportId];
+  // Windows uses the collection's maximum Input length; bytes beyond this report are not protocol fields.
+  if (size === undefined || view.byteLength < size || view.byteLength > 32) {
+    throw new Error(`Unexpected HID input report ${reportId} size`);
+  }
+  return new DataView(view.buffer, view.byteOffset, size);
 }
 
 function featurePayload(report, reportId, payloadSize) {
@@ -70,13 +86,24 @@ export function decodeInfoReport(report) {
 export function decodeStatusReport(reportId, report) {
   if (reportId !== STATUS_REPORT_ID) throw new Error(`Unexpected HID status report ID ${reportId}`);
   const view = asView(report);
-  if (view.byteLength < STATUS_PAYLOAD_SIZE) throw new Error("Unexpected HID status report size");
-  for (let index = STATUS_PAYLOAD_SIZE; index < view.byteLength; index++) {
+  if (view.byteLength < 13) throw new Error("Unexpected HID status report size");
+  const version = view.getUint8(0);
+  if (version !== 2 && version !== 3) throw new Error(`Unsupported HID status report version ${version}`);
+  const size = version === 3 ? STATUS_PAYLOAD_SIZE : 13;
+  if (view.byteLength < size) throw new Error("Unexpected HID status report size");
+  for (let index = size; index < view.byteLength; index++) {
     if (view.getUint8(index) !== 0) throw new Error("Unexpected HID status report padding");
   }
-  const version = view.getUint8(0);
   const flags = view.getUint8(10);
-  if (version !== 2) throw new Error(`Unsupported HID status report version ${version}`);
+  let cpuUsage = null, ramUsed = null, ramTotal = null;
+  if (version === 3) {
+    cpuUsage = view.getUint16(13, true);
+    ramUsed = view.getUint32(15, true);
+    ramTotal = view.getUint32(19, true);
+    if (cpuUsage > 10000 && cpuUsage !== 0xffff) throw new Error("Invalid CPU usage in HID status report");
+    if (ramTotal === 0 || ramUsed > ramTotal) throw new Error("Invalid RAM usage in HID status report");
+    if (cpuUsage === 0xffff) cpuUsage = null;
+  }
   if ((flags & ~0x1f) !== 0) throw new Error("Unknown HID status flags");
   const ledAvailable = Boolean(flags & 0x08);
   const ledOn = Boolean(flags & 0x10);
@@ -95,6 +122,9 @@ export function decodeStatusReport(reportId, report) {
     temperature_centidegrees: temperatureValid ? view.getInt16(11, true) : null,
     led_available: ledAvailable,
     led_on: ledOn,
+    cpu_usage_basis_points: cpuUsage,
+    ram_used_bytes: ramUsed,
+    ram_total_bytes: ramTotal,
   };
 }
 
@@ -112,9 +142,12 @@ export function decodeMemoryReport(reportId, report) {
   const mode = view.getUint8(4);
   const busClockHz = view.getUint32(5, true);
   const blockCount = view.getUint32(9, true);
-  if (version !== 2) throw new Error(`Unsupported HID memory report version ${version}`);
+  const nor = [3, 4].includes(version) && componentType === 2;
+  if (version !== 2 && !nor) throw new Error(`Unsupported HID memory report version ${version}`);
   if ((flags & ~0x3f) !== 0) throw new Error("Unknown HID memory flags");
-  if (componentType > 1 || mode > 2) throw new Error("Unknown HID memory type or mode");
+  if (nor ? ![2, 3].includes(mode) : componentType > 1 || mode > 2) {
+    throw new Error("Unknown HID memory type or mode");
+  }
   const configured = Boolean(flags & 0x01);
   const presenceKnown = Boolean(flags & 0x02);
   const present = Boolean(flags & 0x04);
@@ -132,7 +165,15 @@ export function decodeMemoryReport(reportId, report) {
   const cid = new Uint8Array(view.buffer, view.byteOffset + 13, 16);
   if (!initialized && cid.some(byte => byte !== 0)) throw new Error("Unexpected CID without initialized card");
   let manufacturer = null;
-  if (cidValid) {
+  if (nor && initialized) {
+    if (cid[0] !== 0xef || cid[1] !== 0x40 || cid[2] !== 0x18
+      || cid.subarray(version === 4 ? 15 : 7).some(byte => byte !== 0)
+      || view.getUint32(16, true) !== 16777216 || blockCount * 512 > 16777216) {
+      throw new Error("Invalid NOR identification or capacity");
+    }
+    manufacturer = { id: cid[0], product_name: "W25Q128", jedec_id: "ef4018",
+      serial_number: null };
+  } else if (cidValid) {
     const oemId = new TextDecoder("ascii").decode(cid.subarray(1, 3));
     const productName = new TextDecoder("ascii").decode(cid.subarray(3, 8));
     if (!/^[\x20-\x7e]{2}$/.test(oemId) || !/^[\x20-\x7e]{5}$/.test(productName)) {
@@ -156,12 +197,15 @@ export function decodeMemoryReport(reportId, report) {
     presence_known: presenceKnown,
     present: presenceKnown ? present : null,
     initialized,
-    component_type: componentType === 1 ? "sd-card" : null,
-    mode: ({ 1: "sdio", 2: "spi" })[mode] ?? null,
+    component_type: nor ? "nor-flash" : componentType === 1 ? "sd-card" : null,
+    mode: ({ 1: "sdio", 2: "spi", 3: "qspi" })[mode] ?? null,
     bus_clock_hz: initialized ? busClockHz : null,
     block_count: capacityValid ? blockCount : null,
     capacity_bytes: capacityValid ? blockCount * 512 : null,
     manufacturer,
+    ...(nor ? { physical_capacity_bytes: initialized ? view.getUint32(16, true) : null,
+      device_uid: initialized && version === 4
+        ? "0x" + Array.from(cid.subarray(7, 15), byte => byte.toString(16).padStart(2, "0")).join("") : null } : {}),
   };
 }
 
@@ -187,10 +231,11 @@ export function decodeMscStatus(report) {
   const enabled = payload.getUint8(1);
   const pending = payload.getUint8(2);
   const rejected = payload.getUint8(3);
-  if (version !== 2 || enabled > 1 || pending > 1 || rejected > 1) {
+  if (![2, 3].includes(version) || enabled > 1 || pending > 1 || rejected > 1) {
     throw new Error("Invalid HID MSC status report");
   }
-  return { enabled: Boolean(enabled), transition_pending: Boolean(pending), request_rejected: Boolean(rejected) };
+  return { enabled: Boolean(enabled), transition_pending: Boolean(pending), request_rejected: Boolean(rejected),
+    force_return_supported: version === 3 };
 }
 
 export function boardStatusFromRuntime(runtime) {
@@ -205,8 +250,8 @@ export function boardStatusFromRuntime(runtime) {
 export function buildSelfTestCommand(action, sizeMiB = 32) {
   if (action !== "start" && action !== "cancel") throw new Error("Self-test action must be start or cancel");
   if (action === "cancel") sizeMiB = 0;
-  else if (!Number.isInteger(sizeMiB) || sizeMiB < 1 || sizeMiB > 128) {
-    throw new Error("Self-test size must be an integer from 1 to 128 MiB");
+  else if (!Number.isInteger(sizeMiB) || sizeMiB < 1 || sizeMiB > 1024) {
+    throw new Error("Self-test size must be an integer from 1 to 1024 MiB");
   }
   const command = new Uint8Array(6);
   command[0] = 2;
@@ -230,7 +275,7 @@ export function decodeSelfTestReport(report) {
   const mismatches = payload.getUint32(24, true);
   if (payload.getUint8(0) !== 2 || state > 8 || flags & ~3 || payload.getUint8(31)
     || error > 11 || requestError > 11 || filesystemResult > 19
-    || target > 128 * 1024 * 1024 || written > target || read > written
+    || target > 1024 * 1024 * 1024 || written > target || read > written
     || (state === 6 && (!target || written !== target || read !== target || mismatches || error || flags & 1))) {
     throw new Error("Invalid HID self-test report");
   }
@@ -276,21 +321,24 @@ export class PicoForgeWebHid {
     this.onInputReport = event => {
       if (event.device !== this.device) return;
       try {
+        if (![STATUS_REPORT_ID, MEMORY_REPORT_ID, FILESYSTEM_REPORT_ID,
+          MSC_COMMAND_REPORT_ID, SELF_TEST_REPORT_ID].includes(event.reportId)) return;
+        const payload = inputPayload(event.reportId, event.data);
         if (event.reportId === STATUS_REPORT_ID) {
-          const runtime = decodeStatusReport(event.reportId, event.data);
+          const runtime = decodeStatusReport(event.reportId, payload);
           this.update({ runtime, board_status: boardStatusFromRuntime(runtime),
             updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === MEMORY_REPORT_ID) {
-          const memory = decodeMemoryReport(event.reportId, event.data);
+          const memory = decodeMemoryReport(event.reportId, payload);
           this.update({ memory, updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === FILESYSTEM_REPORT_ID) {
-          const filesystem = decodeFilesystemReport(event.reportId, event.data);
+          const filesystem = decodeFilesystemReport(event.reportId, payload);
           this.update({ filesystem_format: filesystem.format, updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === MSC_COMMAND_REPORT_ID) {
-          const msc = decodeMscStatus(event.data);
+          const msc = decodeMscStatus(payload);
           this.update({ msc, updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === SELF_TEST_REPORT_ID) {
-          const selfTest = decodeSelfTestReport(event.data);
+          const selfTest = decodeSelfTestReport(payload);
           this.update({ self_test: selfTest, self_test_command_pending: false,
             updated_at: new Date().toISOString(), error: null });
         }
@@ -377,7 +425,7 @@ export class PicoForgeWebHid {
     if (!this.device || this.state.busy || !this.state.board_status?.led_available) return;
     this.update({ busy: true, error: null });
     try {
-      await this.device.sendFeatureReport(LED_COMMAND_REPORT_ID, Uint8Array.from([1, on ? 1 : 0]));
+      await this.device.sendFeatureReport(LED_COMMAND_REPORT_ID, Uint8Array.from([2, on ? 1 : 0]));
       const boardStatus = { ...this.state.board_status, led_on: on };
       const runtime = this.state.runtime ? { ...this.state.runtime, led_on: on } : null;
       this.update({ runtime, board_status: boardStatus, busy: false });
@@ -386,12 +434,16 @@ export class PicoForgeWebHid {
     }
   }
 
-  async setMsc(enable) {
+  async setMsc(enable, force = false) {
     if (typeof enable !== "boolean") throw new Error("MSC state must be boolean");
+    if (typeof force !== "boolean" || (force && enable)) throw new Error("Force return requires disabling MSC");
+    if (force && (!this.state.msc?.enabled || !this.state.msc?.force_return_supported
+      || this.state.msc?.transition_pending)) throw new Error("Enabled MSC with force-return support is unavailable");
     if (!this.device || this.state.busy) return;
     this.update({ busy: true, error: null });
     try {
-      await this.device.sendFeatureReport(MSC_COMMAND_REPORT_ID, Uint8Array.from([2, enable ? 1 : 0]));
+      await this.device.sendFeatureReport(MSC_COMMAND_REPORT_ID,
+        Uint8Array.from(force ? [3, 2] : [2, enable ? 1 : 0]));
       const msc = { ...(this.state.msc ?? {}), transition_pending: true, request_rejected: false };
       this.update({ msc, busy: false });
     } catch (error) {

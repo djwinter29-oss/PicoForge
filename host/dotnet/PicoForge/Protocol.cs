@@ -10,7 +10,8 @@ public sealed record HardwareInfoResponse(string ProductName, string Mcu, byte M
 /// <summary>Dynamic telemetry reported periodically by the PicoForge HID input report.</summary>
 public sealed record RuntimeStatusResponse(byte Sequence, uint UptimeMs, uint SystemClockHz,
     bool UsbMounted, bool CdcOpen, bool TemperatureValid, short? TemperatureCentidegrees,
-    bool LedAvailable, bool LedOn)
+    bool LedAvailable, bool LedOn, ushort? CpuUsageBasisPoints = null,
+    uint? RamUsedBytes = null, uint? RamTotalBytes = null)
 {
     public BoardStatusResponse ToBoardStatus() => new(TemperatureValid, TemperatureCentidegrees,
         LedAvailable, LedOn);
@@ -27,9 +28,11 @@ public sealed record SdCardIdentity(byte ManufacturerId, string OemId, string Pr
 /// <summary>Presence, transport, negotiated bus, capacity, and card identity.</summary>
 public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool PresenceKnown,
     bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
-    uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer);
+    uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer,
+    uint? PhysicalCapacityBytes = null, string? JedecId = null, string? DeviceUid = null);
 
-public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected);
+public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected,
+    bool ForceReturnSupported = false);
 
 /// <summary>Verified SD-card file benchmark progress, elapsed times, and cleanup state.</summary>
 public sealed record SelfTestStatusResponse(byte Sequence, string State, uint TargetBytes,
@@ -66,7 +69,7 @@ internal static class HidProtocol
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
     public const int InfoPayloadSize = 42;
-    public const int StatusPayloadSize = 13;
+    public const int StatusPayloadSize = 23;
     public const int MemoryPayloadSize = 29;
     public const int FilesystemPayloadSize = 3;
     public const int MscStatusPayloadSize = 4;
@@ -101,12 +104,25 @@ internal static class HidProtocol
 
     public static RuntimeStatusResponse ParseStatusReport(ReadOnlySpan<byte> report)
     {
-        Require(report.Length >= StatusInputSize && report[0] == StatusReportId,
+        Require(report.Length >= 14 && report[0] == StatusReportId,
             "unexpected HID status report length or ID");
-        Require(report[StatusInputSize..].IndexOfAnyExcept((byte)0) < 0,
+        Require(report[1] is 2 or 3, "unsupported HID status report version");
+        var size = report[1] == 3 ? StatusInputSize : 14;
+        Require(report.Length >= size, "unexpected HID status report length");
+        Require(report[size..].IndexOfAnyExcept((byte)0) < 0,
             "unexpected HID status report padding");
-        var payload = report.Slice(1, StatusPayloadSize);
-        Require(payload[0] == ReportVersion, "unsupported HID status report version");
+        var payload = report.Slice(1, size - 1);
+        ushort? cpuUsage = null;
+        uint? ramUsed = null, ramTotal = null;
+        if (payload[0] == 3)
+        {
+            var cpu = BinaryPrimitives.ReadUInt16LittleEndian(payload[13..]);
+            Require(cpu <= 10000 || cpu == ushort.MaxValue, "invalid CPU usage in HID status report");
+            cpuUsage = cpu == ushort.MaxValue ? null : cpu;
+            ramUsed = ReadUInt32LittleEndian(payload[15..]);
+            ramTotal = ReadUInt32LittleEndian(payload[19..]);
+            Require(ramTotal != 0 && ramUsed <= ramTotal, "invalid RAM usage in HID status report");
+        }
         var flags = payload[10];
         Require((flags & ~0x1f) == 0, "unknown HID status flags");
         var clockHz = ReadUInt32LittleEndian(payload[6..]);
@@ -118,7 +134,8 @@ internal static class HidProtocol
         var temperature = (short)(payload[11] | payload[12] << 8);
         return new(payload[1], ReadUInt32LittleEndian(payload[2..]), clockHz,
             (flags & 0x01) != 0, (flags & 0x02) != 0,
-            temperatureValid, temperatureValid ? temperature : null, ledAvailable, ledOn);
+            temperatureValid, temperatureValid ? temperature : null, ledAvailable, ledOn,
+            cpuUsage, ramUsed, ramTotal);
     }
 
     public static MemoryStatusResponse ParseMemoryReport(ReadOnlySpan<byte> report)
@@ -128,12 +145,13 @@ internal static class HidProtocol
         Require(report[(MemoryPayloadSize + 1)..].IndexOfAnyExcept((byte)0) < 0,
             "unexpected HID memory report padding");
         var payload = report[1..];
-        Require(payload[0] == ReportVersion, "unsupported HID memory report version");
+        var nor = payload[0] is 3 or 4 && payload[3] == 2;
+        Require(payload[0] == ReportVersion || nor, "unsupported HID memory report version");
         var flags = payload[2];
         Require((flags & ~0x3f) == 0, "unknown HID memory flags");
         var component = payload[3];
         var mode = payload[4];
-        Require(component <= 1 && mode <= 2, "unknown HID memory type or mode");
+        Require(nor ? mode is 2 or 3 : component <= 1 && mode <= 2, "unknown HID memory type or mode");
         var configured = (flags & 0x01) != 0;
         var presenceKnown = (flags & 0x02) != 0;
         var present = (flags & 0x04) != 0;
@@ -152,7 +170,19 @@ internal static class HidProtocol
                 (initialized || cid.IndexOfAnyExcept((byte)0) < 0),
             "invalid memory metadata values");
         SdCardIdentity? identity = null;
-        if (cidValid)
+        uint? physicalCapacity = null;
+        string? jedecId = null;
+        string? deviceUid = null;
+        if (nor && initialized)
+        {
+            physicalCapacity = ReadUInt32LittleEndian(cid[3..]);
+            Require(cid[0] == 0xef && cid[1] == 0x40 && cid[2] == 0x18
+                && cid[(payload[0] == 4 ? 15 : 7)..].IndexOfAnyExcept((byte)0) < 0 && physicalCapacity == 16777216
+                && (ulong)blockCount * 512 <= physicalCapacity, "invalid NOR identification or capacity");
+            jedecId = "ef4018";
+            deviceUid = payload[0] == 4 ? "0x" + Convert.ToHexStringLower(cid.Slice(7, 8)) : null;
+        }
+        else if (cidValid)
         {
             var oem = Encoding.ASCII.GetString(cid.Slice(1, 2));
             var product = Encoding.ASCII.GetString(cid.Slice(3, 5));
@@ -164,13 +194,14 @@ internal static class HidProtocol
                 BinaryPrimitives.ReadUInt32BigEndian(cid[9..]), 2000 + (date >> 4), date & 0x0f);
         }
         return new(payload[1], configured, presenceKnown, presenceKnown ? present : null,
-            initialized, component == 1 ? "sd-card" : null, mode switch
+            initialized, nor ? "nor-flash" : component == 1 ? "sd-card" : null, mode switch
             {
                 1 => "sdio",
                 2 => "spi",
+                3 => "qspi",
                 _ => null
             }, initialized ? busClockHz : null, capacityValid ? blockCount : null,
-            capacityValid ? (ulong)blockCount * 512 : null, identity);
+            capacityValid ? (ulong)blockCount * 512 : null, identity, physicalCapacity, jedecId, deviceUid);
     }
 
     public static string ParseFilesystemReport(ReadOnlySpan<byte> report)
@@ -195,13 +226,17 @@ internal static class HidProtocol
     public static MscStatusResponse ParseMscStatusReport(ReadOnlySpan<byte> report)
     {
         var payload = FeaturePayload(report, MscCommandReportId, MscStatusPayloadSize);
-        Require(payload[0] == ReportVersion && payload[1] <= 1 && payload[2] <= 1 && payload[3] <= 1,
+        Require(payload[0] is 2 or 3 && payload[1] <= 1 && payload[2] <= 1 && payload[3] <= 1,
             "invalid HID MSC status report");
-        return new(payload[1] != 0, payload[2] != 0, payload[3] != 0);
+        return new(payload[1] != 0, payload[2] != 0, payload[3] != 0, payload[0] == 3);
     }
 
-    public static byte[] BuildMscCommandReport(bool enabled) =>
-        [MscCommandReportId, ReportVersion, enabled ? (byte)1 : (byte)0];
+    public static byte[] BuildMscCommandReport(bool enabled, bool force = false)
+    {
+        Require(!force || !enabled, "Force return requires disabling MSC");
+        return force ? [MscCommandReportId, 3, 2]
+            : [MscCommandReportId, ReportVersion, enabled ? (byte)1 : (byte)0];
+    }
 
     public static byte[] BuildLedCommandReport(bool on) =>
         [LedCommandReportId, ReportVersion, on ? (byte)1 : (byte)0];
@@ -210,7 +245,7 @@ internal static class HidProtocol
     {
         Require(action is "start" or "cancel", "self-test action must be start or cancel");
         if (action == "cancel") sizeMib = 0;
-        else Require(sizeMib is >= 1 and <= 128, "self-test size must be 1..128 MiB");
+        else Require(sizeMib is >= 1 and <= 1024, "self-test size must be 1..1024 MiB");
         var command = new byte[7];
         command[0] = SelfTestReportId;
         command[1] = ReportVersion;
@@ -230,7 +265,7 @@ internal static class HidProtocol
         var mismatches = ReadUInt32LittleEndian(payload[24..]);
         Require(payload[0] == ReportVersion && state <= 8 && (flags & ~3) == 0 && payload[31] == 0
                 && payload[28] <= 11 && payload[29] <= 19 && payload[30] <= 11
-                && target <= 128u * 1024u * 1024u && written <= target && read <= written
+                && target <= 1024u * 1024u * 1024u && written <= target && read <= written
                 && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0 && (flags & 1) == 0 && payload[28] == 0)),
             "invalid HID self-test report");
         var name = state switch
@@ -248,7 +283,7 @@ internal static class HidProtocol
     {
         var offset = report.Length >= size + 2 && report[0] == 0 && report[1] == reportId ? 2
             : report.Length >= size + 2 && report[0] == reportId && report[1] == reportId
-                && (report[2] == ReportVersion || (reportId == InfoReportId && report[2] == 3)) ? 2
+                && (report[2] == ReportVersion || (reportId is InfoReportId or MscCommandReportId && report[2] == 3)) ? 2
             : report.Length >= size + 1 && report[0] == reportId ? 1
             : -1;
         Require(offset >= 0 && report.Length >= offset + size, "unexpected HID feature report length or ID");

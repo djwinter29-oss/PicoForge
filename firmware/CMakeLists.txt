@@ -21,7 +21,7 @@ else()
     set(FREERTOS_KERNEL_PATH_VALUE "${CMAKE_CURRENT_LIST_DIR}/third_party/FreeRTOS-Kernel")
 endif()
 
-project(pf_hello_world C CXX ASM)
+project(pico_forge C CXX ASM)
 
 set(PF_FIRMWARE_VERSION "0.0.0-dev" CACHE STRING "Firmware semantic version string")
 include("${CMAKE_CURRENT_LIST_DIR}/version.cmake")
@@ -100,10 +100,15 @@ add_library(pf_storage_bus STATIC
 target_include_directories(pf_storage_bus PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 
 option(PF_BUILD_NOR_SMOKE "Build standalone raw NOR target instead of the SD/USB application" OFF)
+include("${CMAKE_CURRENT_LIST_DIR}/storage_backend.cmake")
+add_compile_definitions(PF_STORAGE_BACKEND_NOR=$<STREQUAL:${PF_STORAGE_BACKEND},NOR>)
+if(PF_STORAGE_BACKEND STREQUAL "NOR")
+    add_compile_definitions(PF_NOR_REGION_OFFSET=${pf_nor_offset}u PF_NOR_REGION_SIZE=${pf_nor_size}u)
+endif()
 set(PF_NOR_TRANSPORT "SPI" CACHE STRING "Raw NOR transport: SPI or QSPI_PIO")
 set_property(CACHE PF_NOR_TRANSPORT PROPERTY STRINGS SPI QSPI_PIO)
-option(PF_BUILD_LEVELX "Build the standalone LevelX NOR port (no FatFs backend yet)" OFF)
-if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX)
+option(PF_BUILD_LEVELX "Build the LevelX NOR port and link smoke" OFF)
+if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
     add_library(pf_nor_flash STATIC
         src/drivers/nor_flash/nor.c
         src/drivers/nor_flash/nor_transport.c)
@@ -124,7 +129,7 @@ if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX)
         message(FATAL_ERROR "PF_NOR_TRANSPORT must be SPI or QSPI_PIO")
     endif()
     target_link_libraries(pf_nor_flash PUBLIC pf_storage_bus pico_stdlib hardware_gpio)
-    if(PF_BUILD_LEVELX)
+    if(PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
         add_subdirectory(src/integration/levelx)
         add_executable(pf_levelx_nor_link_smoke tests/ports/levelx_nor_link_smoke.c)
         target_link_libraries(pf_levelx_nor_link_smoke PRIVATE pf_levelx_nor)
@@ -151,6 +156,7 @@ if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 endif()
 
+if(PF_STORAGE_BACKEND STREQUAL "SD")
 add_library(pf_sd_card_protocol STATIC
     src/drivers/sd_card/sd_protocol.c
 )
@@ -176,7 +182,7 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     )
     if(PF_SD_CARD_INTERRUPT_WAIT)
         target_sources(pf_sdio_backend PRIVATE
-            src/drivers/storage/sdio_pio/ports/freertos/sdio_wait.c)
+            src/drivers/storage/sdio_pio/sdio_wait_freertos.c)
         target_link_libraries(pf_sdio_backend PRIVATE FreeRTOS-Kernel-Static hardware_irq)
     endif()
     pico_generate_pio_header(pf_sdio_backend
@@ -229,7 +235,7 @@ target_link_libraries(pf_sd_card PUBLIC
 
 if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/ports/freertos/sd_port.c
+        src/drivers/sd_card/sd_port_freertos.c
     )
     target_compile_definitions(pf_sd_card PRIVATE
         PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
@@ -237,7 +243,7 @@ if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     target_link_libraries(pf_sd_card PRIVATE FreeRTOS-Kernel-Static hardware_irq)
 else()
     target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/ports/baremetal/sd_port.c
+        src/drivers/sd_card/sd_port_baremetal.c
     )
     # The USB/storage application requires FreeRTOS; this target checks the
     # reusable driver without importing the kernel or accessing card hardware.
@@ -247,6 +253,8 @@ else()
     pico_enable_stdio_uart(pf_sd_card_baremetal_smoke 0)
     pico_add_extra_outputs(pf_sd_card_baremetal_smoke)
     return()
+endif()
+
 endif()
 
 add_library(pf_system STATIC
@@ -289,7 +297,7 @@ target_include_directories(embedded_cli PUBLIC
 )
 
 add_library(pf_cli STATIC
-    src/middleware/cli/cli.c
+    src/app/cli/cli.c
 )
 target_include_directories(pf_cli PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
@@ -297,16 +305,10 @@ target_include_directories(pf_cli PUBLIC
 target_link_libraries(pf_cli PUBLIC embedded_cli)
 
 add_library(pf_storage STATIC
+    src/middleware/storage/block_device.c
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
-    src/integration/fatfs/diskio.c
-    src/middleware/storage/storage.c
-    src/middleware/storage/commands.c
-    src/middleware/storage/self_test.c
-)
-option(PF_STORAGE_SELF_TEST_PREALLOCATE "Preallocate contiguous self-test files outside write timing" OFF)
-target_compile_definitions(pf_storage PUBLIC
-    PF_STORAGE_SELF_TEST_PREALLOCATE=$<BOOL:${PF_STORAGE_SELF_TEST_PREALLOCATE}>
+    src/middleware/storage/fatfs_disk.c
 )
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
@@ -314,10 +316,39 @@ target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
-target_link_libraries(pf_storage PUBLIC
-    pf_sd_card
-    embedded_cli
+if(PF_STORAGE_BACKEND STREQUAL "SD")
+    target_sources(pf_storage PRIVATE src/middleware/storage/sd_block_device.c)
+    target_link_libraries(pf_storage PUBLIC pf_sd_card)
+endif()
+if(PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
+    target_sources(pf_storage PRIVATE src/middleware/storage/levelx_block_device.c)
+    target_link_libraries(pf_storage PUBLIC pf_levelx_nor)
+endif()
+
+add_library(pf_app_storage STATIC
+    src/app/storage/fatfs_volume.c
+    src/app/storage/storage_commands.c
+    src/app/storage/file_benchmark.c
+    src/app/storage/storage_worker.c
 )
+option(PF_STORAGE_SELF_TEST_PREALLOCATE "Preallocate contiguous self-test files outside write timing" OFF)
+target_compile_definitions(pf_app_storage PUBLIC
+    PF_STORAGE_SELF_TEST_PREALLOCATE=$<BOOL:${PF_STORAGE_SELF_TEST_PREALLOCATE}>
+)
+target_include_directories(pf_app_storage PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/app/storage"
+)
+target_link_libraries(pf_app_storage PUBLIC
+    pf_storage
+    pf_system
+    embedded_cli
+    FreeRTOS-Kernel-Static
+)
+if(PF_STORAGE_BACKEND STREQUAL "NOR")
+    target_sources(pf_app_storage PRIVATE src/app/storage/nor_media.c)
+else()
+    target_sources(pf_app_storage PRIVATE src/app/storage/sd_media.c)
+endif()
 
 add_library(pf_board STATIC
     src/board/board.c
@@ -335,25 +366,34 @@ target_link_libraries(pf_board PUBLIC
     hardware_spi
     pico_stdio_uart
     pf_led
-    ${PF_SD_CARD_BACKEND}
 )
+if(PF_STORAGE_BACKEND STREQUAL "SD")
+    target_link_libraries(pf_board PUBLIC ${PF_SD_CARD_BACKEND})
+endif()
+if(PF_STORAGE_BACKEND STREQUAL "NOR")
+    target_sources(pf_board PRIVATE src/board/board_storage.c)
+    target_compile_definitions(pf_board PRIVATE PF_BOARD_STORAGE_QSPI=$<STREQUAL:${PF_NOR_TRANSPORT},QSPI_PIO>)
+    target_link_libraries(pf_board PUBLIC pf_nor_flash)
+endif()
+target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
 
-add_executable(pf_hello_world
+add_executable(pico_forge
     src/main.c
-    src/usb/usb_descriptors.c
-    src/usb/hid.c
-    src/usb/msc.c
-    src/usb/task.c
-    src/middleware/storage/storage_worker.c
+    src/integration/freertos/runtime_stats.c
+    src/integration/usb/dcd_guard.c
+    src/app/usb/usb_descriptors.c
+    src/app/usb/usb_hid.c
+    src/app/usb/usb_msc.c
+    src/app/usb/usb_task.c
 )
 
-target_include_directories(pf_hello_world PRIVATE
+target_include_directories(pico_forge PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/usb"
-    "${CMAKE_CURRENT_LIST_DIR}/src/usb"
+    "${CMAKE_CURRENT_LIST_DIR}/src/app/usb"
 )
 
-target_link_libraries(pf_hello_world
+target_link_libraries(pico_forge
     pico_stdlib
     FreeRTOS-Kernel-Static
     hardware_irq
@@ -363,12 +403,11 @@ target_link_libraries(pf_hello_world
     pf_temperature
     pf_logging
     pf_cli
-    pf_storage
+    pf_app_storage
     pf_board
 )
 
-target_compile_definitions(pf_hello_world PRIVATE
-    configNUMBER_OF_CORES=1
+target_compile_definitions(pico_forge PRIVATE
     PF_FIRMWARE_VERSION_MAJOR=${PF_FIRMWARE_VERSION_MAJOR}u
     PF_FIRMWARE_VERSION_MINOR=${PF_FIRMWARE_VERSION_MINOR}u
     PF_FIRMWARE_VERSION_PATCH=${PF_FIRMWARE_VERSION_PATCH}u
@@ -376,13 +415,29 @@ target_compile_definitions(pf_hello_world PRIVATE
 )
 
 # Interpose TinyUSB MSC reset processing without modifying the pinned SDK.
-target_link_options(pf_hello_world PRIVATE
+target_link_options(pico_forge PRIVATE
     "LINKER:--wrap=mscd_reset"
     "LINKER:--wrap=mscd_control_xfer_cb"
 )
 
-pico_enable_stdio_usb(pf_hello_world 0)
-pico_set_program_version(pf_hello_world "${PF_FIRMWARE_VERSION}")
-pico_enable_stdio_uart(pf_hello_world 0)
+# Keep the pinned DCD's endpoint state and fixed-core IRQ behind one cross-core gate.
+foreach(symbol IN ITEMS
+    dcd_init dcd_deinit dcd_int_enable dcd_int_disable dcd_set_address dcd_remote_wakeup
+    dcd_disconnect dcd_connect dcd_sof_enable dcd_edpt0_status_complete dcd_edpt_open
+    dcd_edpt_iso_alloc dcd_edpt_iso_activate dcd_edpt_close_all dcd_edpt_xfer
+    dcd_edpt_stall dcd_edpt_clear_stall dcd_int_handler dcd_event_handler tud_task_ext tud_task_event_ready
+    irq_add_shared_handler irq_remove_handler)
+    target_link_options(pico_forge PRIVATE "LINKER:--wrap=${symbol}")
+endforeach()
 
-pico_add_extra_outputs(pf_hello_world)
+pico_enable_stdio_usb(pico_forge 0)
+pico_set_program_name(pico_forge "PicoForge")
+pico_set_program_version(pico_forge "${PF_FIRMWARE_VERSION}")
+pico_enable_stdio_uart(pico_forge 0)
+
+include("${CMAKE_CURRENT_LIST_DIR}/artifact_name.cmake")
+set_target_properties(pico_forge PROPERTIES OUTPUT_NAME "${PF_ARTIFACT_NAME}")
+target_compile_definitions(pico_forge PRIVATE PF_IMAGE_SYS_CLK_MHZ=${pf_image_clock})
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/pico_forge_elf.txt"
+    CONTENT "$<TARGET_FILE:pico_forge>\n")
+pico_add_extra_outputs(pico_forge)

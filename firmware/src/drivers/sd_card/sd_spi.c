@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "sd_protocol.h"
-#include "../storage/serial.h"
+#include "drivers/storage/serial.h"
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u
@@ -27,6 +27,7 @@
 #define SD_CMD_STOP_TRANSMISSION 12u
 #define SD_CMD_APP 55u
 #define SD_CMD_READ_OCR 58u
+#define SD_CMD_CRC_ON_OFF 59u
 #define SD_ACMD_SD_SEND_OP_COND 41u
 
 #define SD_R1_IDLE_STATE 0x01u
@@ -396,6 +397,12 @@ static bool initialize_card(void)
         return false;
     }
 
+    /* SD spec 7.2.2: enable CRC before ACMD41; the card is still idle, so R1 must be exactly IDLE. */
+    card_init_stage = PF_SD_SPI_INIT_STAGE_CRC_ENABLE;
+    if (!send_command(SD_CMD_CRC_ON_OFF, 1u, &response, NULL, 0u) || (response != SD_R1_IDLE_STATE)) {
+        return false;
+    }
+
     card_init_stage = PF_SD_SPI_INIT_STAGE_OPERATING_CONDITION;
     start = (uint32_t)pf_storage_bus_time_us(&active_config.transport);
     do {
@@ -686,7 +693,7 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
             }
             pf_sd_profile_end(PF_SD_PROFILE_STOP, profile_start);
             stopped = deselect_card() && stopped;
-            if (!stopped) {
+            if (!stopped || (read_buffer != NULL && !success)) {
                 card_initialized = false;
             }
             return success && stopped ? PF_SD_OK : PF_SD_IO_ERROR;

@@ -10,6 +10,9 @@ Thanks for helping improve PicoForge. Contributions should keep changes focused,
 - Keep board-specific configuration under `firmware/src/board/`, reusable drivers under `firmware/src/drivers/`, FatFs/Pico SDK integration under `firmware/src/integration/`, and application-facing services under `firmware/src/middleware/`.
 - Keep simple drivers flat in `firmware/src/drivers/`; use a named subdirectory for a multi-file or substantial driver such as SDIO.
 - Preserve third-party provenance and licenses. Do not edit vendored code except for a documented, necessary patch.
+- Use include-directory-rooted paths in project-owned C headers, sources, and test fixtures, not `./` or `../`
+  traversal. Cross-module production includes use paths rooted at `firmware/src`; test fixtures use the configured
+  test-support include directories. Same-directory includes may keep the filename alone.
 
 ## Build and Test
 

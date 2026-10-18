@@ -5,12 +5,14 @@
 #include <pthread.h>
 #define PF_STORAGE_H
 #define PF_STORAGE_WORKER_H
-static bool pf_storage_is_mounted(void);
-static void pf_storage_forget_filesystem_format(void);
+bool pf_fatfs_volume_is_mounted(void);
+static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
-static bool pf_storage_worker_recover_card(void);
-#include "../../../src/usb/msc.c"
+static bool pf_storage_worker_recover_media(void);
+static bool pf_storage_worker_return_from_usb(void);
+static bool pf_storage_worker_unmount_for_usb(void);
+#include "app/usb/usb_msc.c"
 #include "drivers/sd_card/sd.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == 1
 #include "drivers/sd_card/sd_spi.h"
@@ -31,7 +33,9 @@ static bool pf_storage_worker_recover_card(void);
 #endif
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */
-#include "../../../src/integration/fatfs/diskio.c"
+#include "middleware/storage/fatfs_disk.c"
+#include "middleware/storage/block_device.c"
+#include "middleware/storage/sd_block_device.c"
 #pragma GCC diagnostic pop
 pthread_mutex_t creation_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t media[8][512];
@@ -39,11 +43,13 @@ static unsigned reads, writes, syncs, last_count;
 static uint32_t capacity = 8;
 static bool initialized, uncertain;
 static pf_sd_result_t read_error, write_error, sync_error;
-static bool pf_storage_is_mounted(void) { return false; }
-static void pf_storage_forget_filesystem_format(void) {}
+bool pf_fatfs_volume_is_mounted(void) { return false; }
+static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return false; }
 static bool pf_storage_worker_media_absent(void) { return false; }
-static bool pf_storage_worker_recover_card(void) { return false; }
+static bool pf_storage_worker_recover_media(void) { return false; }
+static bool pf_storage_worker_return_from_usb(void) { return false; }
+static bool pf_storage_worker_unmount_for_usb(void) { return false; }
 void __real_mscd_reset(uint8_t p) { (void)p; }
 bool __real_mscd_control_xfer_cb(uint8_t p,uint8_t s,const tusb_control_request_t *r)
 { (void)p; (void)s; (void)r; return false; }
@@ -59,14 +65,14 @@ void pf_sd_native_get_info(pf_sd_info_t *i) { memset(i,0,sizeof(*i)); }
 void pf_sd_native_confirm_card_removed(void) { initialized=false; }
 pf_sd_result_t pf_sd_native_read_blocks(uint32_t l,void *b,uint32_t n)
 {
- TEST_ASSERT_TRUE(pf_sd_get_owner()==PF_SD_OWNER_USB_MSC);
+ TEST_ASSERT_TRUE(pf_sd_media_get_owner()==PF_SD_MEDIA_OWNER_USB_MSC);
  TEST_ASSERT_TRUE(n && l<8 && n<=8-l && b); ++reads; last_count=n;
  if(read_error) return read_error;
  memcpy(b,media[l],n*512u); return PF_SD_OK;
 }
 pf_sd_result_t pf_sd_native_write_blocks(uint32_t l,const void *b,uint32_t n)
 {
- TEST_ASSERT_TRUE(pf_sd_get_owner()==PF_SD_OWNER_USB_MSC);
+ TEST_ASSERT_TRUE(pf_sd_media_get_owner()==PF_SD_MEDIA_OWNER_USB_MSC);
  TEST_ASSERT_TRUE(n && l<8 && n<=8-l && b); ++writes; last_count=n;
  if(write_error) { uncertain=true; return write_error; }
  memcpy(media[l],b,n*512u); return PF_SD_OK;
@@ -77,6 +83,7 @@ void pf_sd_get_profile(pf_sd_profile_t *p) { *p=(pf_sd_profile_t){0}; }
 static void msc_batch_regression(void)
 {
  pf_sd_config_t c={.transport.mode=TEST_TRANSPORT};
+ pf_fatfs_disk_bind(pf_sd_media_firmware_device());
  TEST_ASSERT_TRUE(pf_sd_init(&c)==PF_SD_OK);
  pf_usb_msc_request(true); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
  uint8_t raw[1538], out[1538]; uint8_t *data=raw+1, *readback=out+1;
@@ -123,6 +130,6 @@ static void msc_batch_regression(void)
  sync_error=PF_SD_OK; write_error=PF_SD_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,0,data,1024)==-1 && writes==w+2 && syncs==s+1);
  TEST_ASSERT_TRUE(uncertain && transfer_sense_asc==0x0c); /* no sync/replay after uncertain write */
- TEST_ASSERT_TRUE(pf_sd_msc_release()==PF_SD_OK);
+ TEST_ASSERT_TRUE(pf_sd_media_release_usb()==PF_SD_OK);
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,readback,1024)==-1 && reads==r+1);
 }

@@ -67,6 +67,45 @@ void test_nor_fifo_timeout_releases_cs_and_only_its_controller_reference(void)
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.deinit);
 }
 
+void test_bounded_fifo_pipelines_eight_bytes_preserves_order_and_avoids_per_byte_timer_reads(void)
+{
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&nor));
+    uint8_t output[32], input[32];
+    for (unsigned index = 0u; index < sizeof(output); ++index) output[index] = (uint8_t)index;
+    serial_fake.delayed_reads = 9u;
+    serial_fake.input = 0x91u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&nor, output, input, sizeof(output)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(output, serial_fake.bytes, sizeof(output));
+    TEST_ASSERT_EQUAL_UINT32(8u, serial_fake.peak_pending);
+    TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.pending);
+    TEST_ASSERT_EQUAL_UINT32(50000u, serial_fake.now);
+    for (unsigned index = 0u; index < sizeof(input); ++index) TEST_ASSERT_EQUAL_HEX8(0x91u, input[index]);
+}
+
+void test_bounded_fifo_read_only_clocks_ff_and_write_only_drains_receive_fifo(void)
+{
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&nor));
+    uint8_t input[16];
+    serial_fake.input = 0x5au;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&nor, NULL, input, sizeof(input)));
+    for (unsigned index = 0u; index < sizeof(input); ++index) {
+        TEST_ASSERT_EQUAL_HEX8(0xffu, serial_fake.bytes[index]);
+        TEST_ASSERT_EQUAL_HEX8(0x5au, input[index]);
+    }
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&nor, input, NULL, sizeof(input)));
+    TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.pending);
+    TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.now);
+}
+
+void test_bounded_fifo_reports_tx_stall_without_sending_or_replaying_bytes(void)
+{
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&nor));
+    serial_fake.fifo_full = true;
+    uint8_t byte = 0xa5u;
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_TIMEOUT, pf_spi_exchange(&nor, &byte, NULL, 1u));
+    TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.length);
+}
+
 void test_sdk_short_bulk_io_is_reported_without_replay_or_implicit_cs_boundary(void)
 {
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&sd));

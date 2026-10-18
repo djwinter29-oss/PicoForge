@@ -8,7 +8,7 @@
  * FreeRTOS: recursive, task-context only with a running scheduler.
  * Bare metal: no-op, single foreground context only; no ISR/second-core calls.
  * Pair every lock with unlock. Never hold across reply/USB waits.
- * Backends must be accessed through the facade.
+ * Application storage access must use the owner-gated sd_media service. Raw driver calls do not enforce ownership.
  */
 void pf_sd_lock(void);
 /** Attempt a reservation without waiting; unlock only on success.
@@ -28,11 +28,6 @@ typedef enum {
     PF_SD_NOT_READY,
     PF_SD_IO_ERROR,
 } pf_sd_result_t;
-
-typedef enum {
-    PF_SD_OWNER_FIRMWARE = 0,
-    PF_SD_OWNER_USB_MSC,
-} pf_sd_owner_t;
 
 typedef enum {
     PF_SD_TRANSPORT_SDIO_PIO = 0,
@@ -110,7 +105,7 @@ typedef struct {
 typedef enum {
     /* Inclusive instrumentation windows, NOT exclusive latency phases.
      * DATA includes native TX response/busy and overlapped encode/decode;
-     * STOP includes command/busy, RECOVERY includes initialization windows.
+     * STOP includes command/busy. RECOVERY is reserved/unmetered.
      * Never sum elapsed_us or compare phase values across transports directly.
      * See docs/sdcard-design.md, Profile Measurement Boundaries. ABI preserved. */
     PF_SD_PROFILE_COMMAND = 0,
@@ -118,7 +113,7 @@ typedef enum {
     PF_SD_PROFILE_CRC,
     PF_SD_PROFILE_BUSY,
     PF_SD_PROFILE_STOP,
-    PF_SD_PROFILE_RECOVERY,
+    PF_SD_PROFILE_RECOVERY, /* Reserved, unsupported on SPI and native; ABI slot retained. */
     PF_SD_PROFILE_PHASE_COUNT,
 } pf_sd_profile_phase_t;
 
@@ -126,7 +121,7 @@ typedef enum {
     PF_SD_PROFILE_CRC_FAILURE = 0,
     PF_SD_PROFILE_BATCH_FALLBACK,
     PF_SD_PROFILE_TIMEOUT,
-    PF_SD_PROFILE_RECOVERY_ATTEMPT,
+    PF_SD_PROFILE_RECOVERY_ATTEMPT, /* Reserved, unmetered on both transports. */
     PF_SD_PROFILE_EVENT_COUNT,
 } pf_sd_profile_event_t;
 
@@ -137,43 +132,13 @@ typedef struct {
     uint32_t events[PF_SD_PROFILE_EVENT_COUNT];
 } pf_sd_profile_t;
 
-typedef enum {
-    PF_SD_OPERATION_NONE = 0,
-    PF_SD_OPERATION_INIT,
-    PF_SD_OPERATION_READ,
-    PF_SD_OPERATION_WRITE,
-    PF_SD_OPERATION_SYNC,
-    PF_SD_OPERATION_MSC_ACQUIRE,
-    PF_SD_OPERATION_MSC_RELEASE,
-} pf_sd_operation_t;
-
-/** Last facade failure and the transport context captured when it occurred. */
-typedef struct {
-    uint32_t sequence;
-    pf_sd_operation_t operation;
-    pf_sd_result_t result;
-    pf_sd_owner_t owner;
-    pf_sd_transport_t transport;
-    uint32_t transport_init_stage;
-    pf_sd_profile_t profile;
-} pf_sd_diagnostics_t;
-
-/** Enable optional profiling, disabled at boot; serialize with all card access. */
+/** Enable optional profiling, disabled at boot. This and the two profile calls below take the recursive facade
+ * reservation internally, so they may be called with or without it held. */
 void pf_sd_set_profiling_enabled(bool enabled);
 /** Clear accumulated metrics without changing profiling enablement. */
 void pf_sd_reset_profile(void);
 /** Copy metrics to caller-owned storage; NULL is ignored. Requires serialized access. */
 void pf_sd_get_profile(pf_sd_profile_t *profile);
-/**
- * Snapshot the most recent facade failure.
- *
- * Operation NONE means no failure is retained. A zero sequence means no failure
- * has occurred since boot; clearing preserves the monotonic sequence.
- */
-void pf_sd_get_diagnostics(pf_sd_diagnostics_t *diagnostics);
-/** Clear the retained failure while preserving its monotonic sequence number. */
-void pf_sd_clear_diagnostics(void);
-
 /** Return whether the selected card transport has initialized successfully. */
 bool pf_sd_is_initialized(void);
 /** Serialized storage owner notification after debounced card removal. */

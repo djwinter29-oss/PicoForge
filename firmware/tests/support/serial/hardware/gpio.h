@@ -1,5 +1,5 @@
 #pragma once
-#include "../serial_fake.h"
+#include "serial_fake.h"
 #define NUM_BANK0_GPIOS 30u
 #define GPIO_OUT 1u
 #define GPIO_FUNC_SPI 1u

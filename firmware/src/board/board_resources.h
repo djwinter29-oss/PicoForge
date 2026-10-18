@@ -43,4 +43,11 @@ const pf_board_resources_t *pf_board_resources_get(void);
 /** Validate board pin/peripheral assignments without accessing hardware. */
 bool pf_board_resources_validate(const pf_board_resources_t *topology);
 
+/** @brief Validate serial storage and UART/LED conflicts without touching hardware.
+ * @param topology Board resource profile.
+ * @param quad Select QSPI pins; false selects SPI including WP/HOLD.
+ * @return Whether all selected resources are valid and nonoverlapping.
+ */
+bool pf_board_resources_validate_serial(const pf_board_resources_t *topology, bool quad);
+
 #endif

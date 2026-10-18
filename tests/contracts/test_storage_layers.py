@@ -10,6 +10,97 @@ ROOT = Path(__file__).resolve().parents[2]
 STORAGE = ROOT / "firmware/src/drivers/storage"
 
 
+def test_project_c_includes_do_not_traverse_relative_directories():
+    for directory in ("firmware/src", "firmware/tests", "host", "tools"):
+        for source in (ROOT / directory).rglob("*"):
+            if source.suffix not in (".c", ".h", ".inc") or "third_party" in source.parts:
+                continue
+            assert not re.search(
+                r'^\s*#\s*(?:include\s*|define\s+\w+\s+)[<"]\.\.?/',
+                source.read_text(), re.MULTILINE
+            ), source
+
+
+def test_storage_application_policy_stays_out_of_middleware():
+    middleware = ROOT / "firmware/src/middleware/storage"
+    application = ROOT / "firmware/src/app/storage"
+    for module in ("storage_commands", "file_benchmark", "storage_worker", "fatfs_volume"):
+        for extension in ("c", "h"):
+            assert (application / f"{module}.{extension}").is_file()
+            assert not (middleware / f"{module}.{extension}").exists()
+    for source in sorted(middleware.glob("*.c")) + sorted(middleware.glob("*.h")):
+        headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
+        assert not any(header.startswith("app/") or Path(header).name in (
+            "storage_commands.h", "file_benchmark.h", "storage_worker.h", "fatfs_volume.h", "cli.h"
+        ) for header in headers), source
+
+
+def test_fatfs_volume_does_not_depend_on_the_sd_backend():
+    application = ROOT / "firmware/src/app/storage"
+    for extension in ("c", "h"):
+        source = application / f"fatfs_volume.{extension}"
+        assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", source.read_text()), source
+        headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
+        assert not any("sd_card/" in header or Path(header).name in (
+            "sd.h", "sd_block.h", "sd_block_device.h"
+        ) for header in headers), source
+
+
+def test_product_cli_is_application_owned_and_logging_does_not_select_uart():
+    for extension in ("c", "h"):
+        assert (ROOT / f"firmware/src/app/cli/cli.{extension}").is_file()
+        assert not (ROOT / f"firmware/src/middleware/cli/cli.{extension}").exists()
+    for source in (ROOT / "firmware/src/middleware").rglob("*.[ch]"):
+        text = source.read_text()
+        headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', text, re.MULTILINE)
+        assert not any(header.startswith("app/") or Path(header).name in (
+            "cli.h", "fatfs_volume.h"
+        ) for header in headers), source
+    logging = (ROOT / "firmware/src/middleware/logging/logging.c").read_text()
+    assert "stdio_filter_driver" not in logging
+    assert "stdio_uart" not in logging
+    board = (ROOT / "firmware/src/board/board.c").read_text()
+    assert board.index("stdio_uart_init_full(") < board.index("stdio_filter_driver(&stdio_uart)")
+
+
+def test_file_benchmark_and_application_headers_do_not_expose_sd():
+    application = ROOT / "firmware/src/app/storage"
+    sources = [application / "file_benchmark.c", *(
+        source for source in application.glob("*.h") if source.name != "sd_media.h"
+    )]
+    for source in sources:
+        text = source.read_text()
+        assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", text), source
+        assert not re.search(r'#include\s*"[^"]*(?:sd_card/|sd_block\.h|sd\.h)', text), source
+
+
+def test_usb_product_behavior_lives_in_the_application():
+    application = ROOT / "firmware/src/app/usb"
+    for module in ("usb_task", "usb_hid", "usb_msc"):
+        for extension in ("c", "h"):
+            assert (application / f"{module}.{extension}").is_file()
+    assert (application / "usb_descriptors.c").is_file()
+    assert (ROOT / "firmware/src/integration/usb/tusb_config.h").is_file()
+    assert not list((ROOT / "firmware/src/usb").glob("*.[ch]"))
+
+
+def test_sd_ownership_policy_stays_above_driver_and_middleware():
+    driver = ROOT / "firmware/src/drivers/sd_card"
+    for source in (driver / "sd.c", driver / "sd.h", driver / "sd_block.h"):
+        text = source.read_text()
+        assert not re.search(r"\b(?:active_owner|reinit_after_usb_owner|pf_sd_media_\w+|PF_SD_OWNER_\w+)\b", text), source
+        assert not re.search(r'#include\s*"[^"]*(?:app/|middleware/)', text), source
+    assert not (driver / "sd_msc.h").exists()
+    for source in (ROOT / "firmware/src/app").rglob("*.[ch]"):
+        if source.name == "sd_media.c":
+            continue
+        assert not re.search(
+            r"\bpf_sd_(?:init|read_blocks|write_blocks|sync|block_device)\s*\(", source.read_text()
+        ), source
+    for source in (ROOT / "firmware/src/middleware/storage").glob("*.[ch]"):
+        assert not re.search(r'#include\s*"[^"]*app/', source.read_text()), source
+
+
 def test_physical_engines_do_not_include_device_or_filesystem_headers():
     sources = sorted(STORAGE.rglob("*.c")) + sorted(STORAGE.rglob("*.h"))
     assert sources
@@ -19,7 +110,7 @@ def test_physical_engines_do_not_include_device_or_filesystem_headers():
     )
     for source in sources:
         for header in re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE):
-            assert header in ("sd_wire.h", "../sd_wire.h") or not forbidden.search(header), (
+            assert header in ("sd_wire.h", "drivers/storage/sd_wire.h") or not forbidden.search(header), (
                 f"{source.relative_to(ROOT)} includes device policy: {header}"
             )
 

@@ -135,9 +135,9 @@ class PicoForgeHid:
         if result < 0:
             raise OSError("failed to send HID LED command")
 
-    def set_msc(self, enable: bool) -> None:
+    def set_msc(self, enable: bool, *, force: bool = False) -> None:
         self._require_open()
-        report = build_msc_command_report(enable)
+        report = build_msc_command_report(enable, force=force)
         result = self._device.send_feature_report(list(report))
         if result < 0:
             raise OSError("failed to send HID MSC command")

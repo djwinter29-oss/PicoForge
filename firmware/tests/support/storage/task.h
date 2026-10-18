@@ -8,4 +8,5 @@ TaskHandle_t xTaskCreateStatic(void (*entry)(void *), const char *name,
     StaticTask_t *control);
 void vTaskDelay(TickType_t ticks);
 TickType_t xTaskGetTickCount(void);
+uint64_t ulTaskGetIdleRunTimeCounter(void);
 #endif
