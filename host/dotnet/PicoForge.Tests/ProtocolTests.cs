@@ -275,15 +275,21 @@ public sealed class ProtocolTests
         forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.OK, forceResponse.StatusCode);
         Assert.True(monitor.ForcedReturn);
+        using var forceStatus = JsonDocument.Parse(await forceResponse.Content.ReadAsStringAsync());
+        Assert.True(forceStatus.RootElement.GetProperty("msc").GetProperty("transition_pending").GetBoolean());
         var response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 16 });
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(("start", 16u), monitor.LastCommand);
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 129 });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         monitor.Available = false;
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        Assert.Equal(HttpStatusCode.Conflict, forceResponse.StatusCode);
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         monitor.ExpectedError = new TimeoutException("HID timeout");
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, forceResponse.StatusCode);
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         await app.StopAsync();
@@ -302,6 +308,8 @@ public sealed class ProtocolTests
         public bool SetLed(bool on) => false;
         public MscStatusResponse? SetMsc(bool enabled, bool force = false)
         {
+            if (ExpectedError is not null) throw ExpectedError;
+            if (!Available) return null;
             ForcedReturn = force && !enabled;
             return new MscStatusResponse(true, true, false, true);
         }

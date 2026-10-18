@@ -163,6 +163,12 @@ void test_forced_nor_return_attempts_one_mount_and_blocks_retries_after_failure(
     now += MEDIA_MOUNT_RETRY_MS;
     service_media();
     TEST_ASSERT_EQUAL_UINT(before, mount_calls);
+    init_fails = true;
+    TEST_ASSERT_TRUE(pf_storage_worker_return_from_usb());
+    return_from_usb();
+    TEST_ASSERT_TRUE(auto_mount_blocked);
+    TEST_ASSERT_FALSE(nor_ready || mounted || busy);
+    TEST_ASSERT_EQUAL_UINT(before, mount_calls);
 }
 
 void test_nor_automount_retries_initialization_and_excludes_usb_and_active_worker(void)

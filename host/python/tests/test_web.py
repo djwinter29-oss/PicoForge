@@ -114,16 +114,16 @@ class WebTests(unittest.TestCase):
         self.assertTrue(response.json["msc"]["enabled"])
         self.assertTrue(response.json["msc"]["transition_pending"])
 
-    def test_msc_endpoint_reports_host_eject_error(self):
+    def test_msc_endpoint_reports_device_error(self):
         class BusyMonitor(FakeMonitor):
             def set_msc(self, enabled):
-                raise RuntimeError("Linux USB eject failed: filesystem busy")
+                raise RuntimeError("PicoForge HID is not connected")
 
         response = create_app(BusyMonitor()).test_client().post(
             "/api/msc", json={"enabled": False}, base_url="http://127.0.0.1"
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json["error"], "Linux USB eject failed: filesystem busy")
+        self.assertEqual(response.json["error"], "PicoForge HID is not connected")
 
     def test_force_return_requires_explicit_data_loss_confirmation(self):
         monitor = FakeMonitor()

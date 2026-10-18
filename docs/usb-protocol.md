@@ -132,16 +132,19 @@ the transition pending until it completes. Successful unmount pauses automount b
 failed unmount rejects the request and leaves firmware ownership intact. No formatting occurs.
 Both enable and disable requests are rejected while unrelated storage work or its replies are pending. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
 
-The Python dashboard coordinates host unmount/eject before HID disable on Linux; see its
-[host prerequisites and failure behavior](../host/python/README.md). This is host-side orchestration, not a
-relaxation of the firmware's ownership or safe-eject checks.
+The layout-2 safe-disable command and `POST /api/msc` with `{"enabled":false}` remain available for clients that
+manually eject first. Host apps do not invoke OS unmount/eject tools. The dashboard Disable button uses the
+confirmed Pico-side return below instead of the legacy safe-disable command.
 
 ### Confirmed force return
 
-The separate **Force return to Pico** dashboard action warns about data loss and requires explicit confirmation.
+The **Disable USB drive** dashboard action warns about data loss and requires explicit confirmation.
 Python and .NET expose `POST /api/msc/force-return` with `{"confirm_data_loss":true}`; absent, false or non-boolean
-confirmation is rejected before HID delivery. This action deliberately bypasses Linux automatic safe eject.
-It is not the normal Disable action and never synthesizes a successful SCSI eject.
+confirmation is rejected before HID delivery. WebHID sends the same `[3, 2]` command directly.
+There is no separate Force button. On Windows, Linux and macOS the host only delivers the HID command; Pico
+performs detach, ownership transfer and remount. No host OS eject/unmount command or Linux-specific permission
+is required. Older firmware without status layout `3` cannot use dashboard Disable and displays an update message.
+This command never synthesizes a successful SCSI eject.
 
 Firmware still rejects busy storage or a failed device-side sync. After a successful sync, it disconnects USB
 before releasing selected SD/NOR ownership under the shared media reservation. The sole storage worker attempts
@@ -151,9 +154,12 @@ blocked until an explicit successful `fs mount`. A pre-detach failure leaves MSC
 filesystem repair, or replay of failed writes is performed.
 
 **Device sync cannot flush writes cached in the host.** Forced return can lose data or corrupt the filesystem even
-when Pico remounts successfully. Stop host file activity first and prefer safe eject/Disable whenever possible.
+when Pico remounts successfully. Stop host file activity first and manually safely eject whenever possible before Disable.
 USB reconnection does not itself prove the remount succeeded; wait for pending to clear and inspect rejection/logs.
-This behavior has host-runnable regression coverage; live forced-detach validation requires separate authorization.
+This behavior has host-runnable regression coverage, including identical command delivery for Windows/Linux/macOS
+platform identities; physical validation on those operating systems remains outstanding.
+Live forced-detach validation requires separate authorization. WebHID also requires a browser supporting WebHID;
+OS-independent firmware behavior does not imply all browsers (for example Safari) support that API.
 
 For a card invalidated by an I/O failure, the explicit
 [CDC fault-recovery workflow](cdc-cli.md#faulted-msc-recovery) can detach faulted

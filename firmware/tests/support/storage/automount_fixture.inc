@@ -19,6 +19,7 @@ static uint32_t now;
 static bool mounted, queue_fails, queued_recovery, queued_unmount, sync_ok = true, init_fails;
 static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
 static unsigned sync_calls, disconnects, init_calls;
+static bool expect_usb_owned_disconnect, disconnect_fails;
 static pf_fatfs_volume_result_t mount_result = PF_FATFS_VOLUME_OK;
 
 bool pf_sd_port_try_lock(void)
@@ -116,7 +117,15 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
 }
 bool tud_msc_set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
 { (void)lun; (void)key; (void)asc; (void)ascq; return true; }
-bool tud_disconnect(void) { ++disconnects; return true; }
+bool tud_disconnect(void)
+{
+    if (expect_usb_owned_disconnect) {
+        TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC, active_owner);
+        expect_usb_owned_disconnect = false;
+    }
+    ++disconnects;
+    return !disconnect_fails;
+}
 bool tud_connect(void) { return true; }
 void sleep_ms(uint32_t ms) { (void)ms; }
 

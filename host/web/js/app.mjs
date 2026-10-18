@@ -2,7 +2,6 @@ import { renderStatus, renderSelfTest } from "./dashboard.mjs";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
-const mscForceReturn = document.querySelector("#msc-force-return");
 let requestInProgress = false;
 let currentSnapshot = null;
 let selfTestPendingSequence = null;
@@ -30,24 +29,22 @@ async function updateStatus() {
     ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
     mscControl.disabled = mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
       || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
-      || selfTestPendingSequence !== null;
-    mscForceReturn.disabled = mscControl.disabled || !currentSnapshot?.msc?.enabled
-      || !currentSnapshot?.msc?.force_return_supported;
+      || selfTestPendingSequence !== null
+      || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
   }
 }
 
-async function setMsc(force = false) {
+async function setMsc() {
   if (!currentSnapshot?.msc || mscRequestInProgress) return;
-  if (force && (!currentSnapshot.msc.enabled || !currentSnapshot.msc.force_return_supported
-    || !window.confirm("Force return to Pico? Cached host writes may be lost and the filesystem may be corrupted. "
+  const force = currentSnapshot.msc.enabled;
+  if (force && (!currentSnapshot.msc.force_return_supported
+    || !window.confirm("Disable USB drive and return storage to Pico? "
+      + "Cached host writes may be lost and the filesystem may be corrupted. "
       + "Stop all host file activity first. Pico will attempt to remount without formatting or repair. Continue?"))) return;
   mscRequestInProgress = true;
   mscError = null;
   mscControl.disabled = true;
-  mscForceReturn.disabled = true;
-  document.querySelector("#msc-note").textContent = force ? "Forcing USB detach and attempting Pico remount..."
-    : currentSnapshot.msc.enabled
-    ? "Releasing host storage before returning it to Pico..."
+  document.querySelector("#msc-note").textContent = force ? "Detaching USB drive on Pico and attempting remount..."
     : "Preparing storage for USB...";
   try {
     const response = await fetch(force ? "/api/msc/force-return" : "/api/msc", {
@@ -57,7 +54,9 @@ async function setMsc(force = false) {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? result.title ?? `MSC endpoint returned HTTP ${response.status}`);
-    currentSnapshot.msc = result.msc;
+    const msc = result.msc ?? result;
+    if (typeof msc.enabled !== "boolean") throw new Error("MSC endpoint returned invalid ownership status");
+    currentSnapshot.msc = msc;
     currentSnapshot.error = null;
     renderStatus(currentSnapshot);
   } catch (error) {
@@ -68,9 +67,8 @@ async function setMsc(force = false) {
     mscRequestInProgress = false;
     mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
       || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
-      || selfTestPendingSequence !== null;
-    mscForceReturn.disabled = mscControl.disabled || !currentSnapshot?.msc?.enabled
-      || !currentSnapshot?.msc?.force_return_supported;
+      || selfTestPendingSequence !== null
+      || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
   }
 }
 
@@ -118,6 +116,5 @@ document.querySelector("#self-test-cancel").addEventListener("click", () => self
 document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(currentSnapshot ?? {}));
 ledControl.addEventListener("click", setLed);
 mscControl.addEventListener("click", () => setMsc());
-mscForceReturn.addEventListener("click", () => setMsc(true));
 void updateStatus();
 window.setInterval(updateStatus, 1000);

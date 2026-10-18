@@ -48,14 +48,15 @@ export function renderStatus(snapshot) {
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Disable USB drive" : "Enable USB drive";
   mscControl.disabled = !connected || !msc || Boolean(msc.transition_pending)
-    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending);
-  document.querySelector("#msc-force-return").disabled = mscControl.disabled
-    || !msc?.enabled || !msc?.force_return_supported;
-  document.querySelector("#msc-note").textContent = msc?.request_rejected
-    ? (msc.enabled ? "Request refused. Safely eject the drive on the host before disabling."
+    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
+    || Boolean(msc?.enabled && !msc.force_return_supported);
+  document.querySelector("#msc-note").textContent = msc?.enabled && !msc.force_return_supported
+    ? "Update firmware to disable the USB drive from Pico; this firmware requires manual host eject."
+    : msc?.request_rejected
+    ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
       : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
     : msc?.transition_pending ? "Preparing storage and changing USB mode; the device will reconnect."
-      : msc?.enabled ? "Host owns the card. Safely eject before disabling or using it in firmware."
+      : msc?.enabled ? "Host owns storage. Disable USB drive returns it to Pico after data-loss confirmation."
         : "Firmware owns storage. Enable USB drive to unmount it safely and reconnect as a USB disk.";
   renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);

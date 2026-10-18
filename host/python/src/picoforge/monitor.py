@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-import sys
 import threading
 import time
 from typing import Callable
 
 from .device import PicoForgeHid
-from .linux_msc import eject_msc
 
 
 def _empty_snapshot() -> dict[str, object]:
@@ -92,10 +90,6 @@ class DeviceMonitor:
             if force and (not msc.get("force_return_supported") or not msc.get("enabled")
                           or msc.get("transition_pending")):
                 raise RuntimeError("Force return requires enabled MSC and firmware with force-return support")
-            if not enable and not force and sys.platform.startswith("linux"):
-                if (snapshot.get("msc") or {}).get("enabled"):
-                    hardware = snapshot.get("hardware") or {}
-                    eject_msc(str(hardware.get("serial_number") or ""))
             if force:
                 self._active_client.set_msc(False, force=True)
             else:
