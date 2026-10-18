@@ -34,11 +34,10 @@ static void configure(pf_qspi_pio_t *context, bool quad, bool receive, uint8_t b
     pio_sm_set_enabled(context->pio, context->sm, true);
 }
 
-/** @brief Pipeline bytes (or partial dummy symbols), bounding outstanding RX words to FIFO capacity. */
-static pf_storage_bus_result_t exchange(pf_qspi_pio_t *context, const pf_storage_serial_phase_t *phase)
+/** @brief Pipeline FIFO words, bounding outstanding RX words to FIFO capacity. */
+static pf_storage_bus_result_t exchange(pf_qspi_pio_t *context, const pf_storage_serial_phase_t *phase,
+                                       uint8_t bits)
 {
-    bool payload = phase->tx != NULL || phase->rx != NULL;
-    uint8_t bits = payload ? 8u : phase->lanes;
     size_t count = phase->bit_count / bits;
     size_t sent = 0u, received = 0u;
     uint64_t stall_start = 0u;
@@ -47,15 +46,21 @@ static pf_storage_bus_result_t exchange(pf_qspi_pio_t *context, const pf_storage
     while (received < count) {
         bool progress = false;
         if (sent < count && sent - received < 4u && !pio_sm_is_tx_fifo_full(context->pio, context->sm)) {
-            uint8_t output = phase->tx != NULL ? phase->tx[sent] : 0xffu;
+            uint32_t output = phase->tx != NULL ? phase->tx[sent] : UINT32_MAX;
             pio_sm_put(context->pio, context->sm, (uint32_t)output << (32u - bits));
             ++sent;
             progress = true;
         }
         if (received < sent && !pio_sm_is_rx_fifo_empty(context->pio, context->sm)) {
-            uint8_t input = (uint8_t)pio_sm_get(context->pio, context->sm);
+            uint32_t input = pio_sm_get(context->pio, context->sm);
             if (phase->rx != NULL) {
-                phase->rx[received] = input;
+                if (bits == 32u) {
+                    for (unsigned byte = 0u; byte < 4u; ++byte) {
+                        phase->rx[received * 4u + byte] = (uint8_t)(input >> (24u - byte * 8u));
+                    }
+                } else {
+                    phase->rx[received] = (uint8_t)input;
+                }
             }
             ++received;
             progress = true;
@@ -70,6 +75,24 @@ static pf_storage_bus_result_t exchange(pf_qspi_pio_t *context, const pf_storage
         }
     }
     return PF_STORAGE_BUS_OK;
+}
+
+/** @brief Drain quad reads in four-byte FIFO words; byte tails never clock beyond the requested payload. */
+static pf_storage_bus_result_t transfer_phase(pf_qspi_pio_t *context, const pf_storage_serial_phase_t *phase)
+{
+    if (phase->lanes == 4u && phase->rx != NULL && phase->bit_count >= 32u) {
+        pf_storage_serial_phase_t bulk = *phase;
+        bulk.bit_count &= ~(size_t)31u;
+        pf_storage_bus_result_t result = exchange(context, &bulk, 32u);
+        if (result != PF_STORAGE_BUS_OK || bulk.bit_count == phase->bit_count) {
+            return result;
+        }
+        pf_storage_serial_phase_t tail = *phase;
+        tail.rx += bulk.bit_count / 8u;
+        tail.bit_count -= bulk.bit_count;
+        return exchange(context, &tail, 8u);
+    }
+    return exchange(context, phase, phase->tx != NULL || phase->rx != NULL ? 8u : phase->lanes);
 }
 
 pf_storage_bus_result_t pf_qspi_pio_transfer(pf_qspi_pio_t *context,
@@ -88,7 +111,7 @@ pf_storage_bus_result_t pf_qspi_pio_transfer(pf_qspi_pio_t *context,
     gpio_put(context->pins.cs_gpio, false);
     busy_wait_us_32(1u);
     for (size_t phase_index = 0u; result == PF_STORAGE_BUS_OK && phase_index < count; ++phase_index) {
-        result = exchange(context, &phases[phase_index]);
+        result = transfer_phase(context, &phases[phase_index]);
     }
     pio_sm_set_enabled(context->pio, context->sm, false);
     pio_sm_set_pins_with_mask(context->pio, context->sm, 0u, 1u << context->pins.clock_gpio);

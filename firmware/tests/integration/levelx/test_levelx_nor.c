@@ -36,10 +36,10 @@ TEST_SOURCE_FILE("lx_nor_flash_partial_defragment.c")
 #include <string.h>
 
 #define BLOCKS 14u
-static uint8_t memory[BLOCKS * 4096u];
+static uint8_t memory[PF_LEVELX_NOR_MAX_BLOCKS * 4096u];
 static pf_nor_t flash;
 static pf_levelx_nor_t volume;
-static unsigned erases[BLOCKS], programs;
+static unsigned erases[PF_LEVELX_NOR_MAX_BLOCKS], programs;
 static unsigned reads;
 static bool fail_io;
 static int fail_program_after;
@@ -99,7 +99,7 @@ void setUp(void)
     memset(erases, 0, sizeof(erases));
     memset(&volume, 0, sizeof(volume));
     flash = (pf_nor_t){
-        .initialized = true, .capacity_bytes = sizeof(memory),
+        .initialized = true, .capacity_bytes = BLOCKS * 4096u,
         .page_size = 256u, .erase_size = 4096u,
     };
     fail_io = false;
@@ -180,6 +180,39 @@ void test_real_levelx_rewrites_and_reopens_with_unaligned_buffers(void)
     TEST_ASSERT_EQUAL_MEMORY(input + 1u, output + 1u, 512u);
 }
 
+void test_cached_logical_ranges_track_cross_block_header_writes_and_erase(void)
+{
+    open_volume();
+    LX_NOR_FLASH *control = &volume.control;
+    ULONG *address = control->lx_nor_flash_base_address + 4096u / sizeof(ULONG);
+    ULONG headers[3], output;
+    for (unsigned word = 0u; word < 3u; ++word) {
+        TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address + word, &headers[word], 1u));
+    }
+    unsigned before = reads;
+    for (unsigned word = 0u; word < 3u; ++word) {
+        TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address + word, &output, 1u));
+        TEST_ASSERT_EQUAL_HEX32(headers[word], output);
+    }
+    TEST_ASSERT_EQUAL_UINT32(before, reads);
+    ULONG crossing[4];
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address - 1u, crossing, 4u));
+    for (unsigned word = 1u; word < 4u; ++word) crossing[word] &= 0x7fffffffu;
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_write(control, address - 1u, crossing, 4u));
+    before = reads;
+    for (unsigned word = 0u; word < 3u; ++word) {
+        TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address + word, &output, 1u));
+        TEST_ASSERT_EQUAL_HEX32(crossing[word + 1u], output);
+    }
+    TEST_ASSERT_EQUAL_UINT32(before, reads);
+    TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_block_erase(control, 1u, 1u));
+    for (unsigned word = 0u; word < 3u; ++word) {
+        TEST_ASSERT_EQUAL(LX_SUCCESS, control->lx_nor_flash_driver_read(control, address + word, &output, 1u));
+        TEST_ASSERT_EQUAL_HEX32(UINT32_MAX, output);
+    }
+    TEST_ASSERT_EQUAL_UINT32(before + 3u, reads);
+}
+
 void test_sequential_read_retains_sector_mappings_beyond_upstream_default_cache(void)
 {
     open_volume();
@@ -193,6 +226,26 @@ void test_sequential_read_retains_sector_mappings_beyond_upstream_default_cache(
         TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_read(&volume, sector, data));
     }
     TEST_ASSERT_EQUAL_UINT32(volume.sector_count, volume.control.lx_nor_flash_sector_mapping_cache_hits - hits);
+    TEST_ASSERT_EQUAL_UINT32(misses, volume.control.lx_nor_flash_sector_mapping_cache_misses);
+}
+
+void test_four_mib_mappings_remain_cached_on_full_chip_geometry(void)
+{
+    flash.capacity_bytes = sizeof(memory);
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_open(&volume, &flash, 0u, sizeof(memory)));
+    TEST_ASSERT_EQUAL_UINT32(28658u, volume.sector_count);
+    uint8_t data[512] = {0};
+    for (uint32_t sector = 0u; sector < 8192u; ++sector) {
+        memcpy(data, &sector, sizeof(sector));
+        TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, sector, data));
+    }
+    ULONG hits = volume.control.lx_nor_flash_sector_mapping_cache_hits;
+    ULONG misses = volume.control.lx_nor_flash_sector_mapping_cache_misses;
+    for (uint32_t sector = 0u; sector < 8192u; ++sector) {
+        TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_read(&volume, sector, data));
+        TEST_ASSERT_EQUAL_MEMORY(&sector, data, sizeof(sector));
+    }
+    TEST_ASSERT_EQUAL_UINT32(8192u, volume.control.lx_nor_flash_sector_mapping_cache_hits - hits);
     TEST_ASSERT_EQUAL_UINT32(misses, volume.control.lx_nor_flash_sector_mapping_cache_misses);
 }
 
@@ -275,7 +328,7 @@ void test_media_fault_latches_and_requires_close_and_recovery(void)
 
 void test_interrupted_sector_updates_recover_without_losing_cold_sector(void)
 {
-    static uint8_t snapshot[sizeof(memory)];
+    static uint8_t snapshot[BLOCKS * 4096u];
     uint8_t old[512], newer[512], cold[512], output[512];
     memset(old, 0x33, sizeof(old));
     memset(newer, 0x55, sizeof(newer));
@@ -284,10 +337,10 @@ void test_interrupted_sector_updates_recover_without_losing_cold_sector(void)
     TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, 0u, old));
     TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, 1u, cold));
     TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_close(&volume));
-    memcpy(snapshot, memory, sizeof(memory));
+    memcpy(snapshot, memory, sizeof(snapshot));
     unsigned interrupted = 0u;
     for (int cut = 0; cut < 12; cut++) {
-        memcpy(memory, snapshot, sizeof(memory));
+        memcpy(memory, snapshot, sizeof(snapshot));
         fail_io = false;
         fail_program_after = -1;
         open_volume();

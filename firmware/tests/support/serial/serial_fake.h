@@ -15,6 +15,8 @@ typedef struct {
     bool fifo_write;
     uint32_t shift_bits; /**< PIO automatic pull/push threshold. */
     uint32_t system_hz; /**< Optional simulated system clock; zero selects the SDK default. */
+    uint32_t receive_words[16]; /**< Optional FIFO responses in arrival order. */
+    unsigned receive_count, receive_index;
 } serial_fake_t;
 extern serial_fake_t serial_fake;
 #endif

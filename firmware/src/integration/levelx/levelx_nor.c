@@ -7,6 +7,8 @@
 
 _Static_assert(sizeof(ULONG) == 4u, "LevelX NOR requires a 32-bit flash word");
 _Static_assert(LX_NOR_SECTOR_SIZE * sizeof(ULONG) == 512u, "Expected 512-byte sectors");
+_Static_assert(LX_NOR_FLASH_MIN_LOGICAL_SECTOR_OFFSET == 1u &&
+               LX_NOR_FLASH_MAX_LOGICAL_SECTOR_OFFSET == 2u, "Expected LevelX block-header layout");
 #ifdef LX_DIRECT_READ
 #error "Serial NOR must use LevelX driver callbacks, not direct memory reads"
 #endif
@@ -48,7 +50,7 @@ static bool address_valid(pf_levelx_nor_t *volume, ULONG *address, ULONG words, 
     return true;
 }
 
-/** @brief Read bounded raw words; cache only wear-count words used by every reclaim scan. */
+/** @brief Cache block-header words used by reclaim and logical-sector searches. */
 static UINT read_words(LX_NOR_FLASH *control, ULONG *address, ULONG *destination, ULONG words)
 {
     pf_levelx_nor_t *volume = volume_for(control);
@@ -59,20 +61,21 @@ static UINT read_words(LX_NOR_FLASH *control, ULONG *address, ULONG *destination
     uint32_t relative = offset - volume->offset;
     uint32_t block = relative / 4096u;
     uint32_t bit = 1u << (block % 32u);
-    bool wear_count = words == 1u && relative % 4096u == 0u;
-    if (wear_count && !volume->faulted && (volume->erase_count_valid[block / 32u] & bit) != 0u) {
-        *destination = volume->erase_counts[block];
+    uint32_t header_word = relative % 4096u / sizeof(ULONG);
+    bool header = words == 1u && header_word < PF_LEVELX_NOR_HEADER_WORDS;
+    if (header && !volume->faulted && (volume->header_valid[header_word][block / 32u] & bit) != 0u) {
+        *destination = volume->block_headers[block][header_word];
         return LX_SUCCESS;
     }
     UINT result = raw_result(volume, pf_nor_read(volume->flash, offset, destination, (size_t)words * 4u));
-    if (result == LX_SUCCESS && wear_count) {
-        volume->erase_counts[block] = *destination;
-        volume->erase_count_valid[block / 32u] |= bit;
+    if (result == LX_SUCCESS && header) {
+        volume->block_headers[block][header_word] = *destination;
+        volume->header_valid[header_word][block / 32u] |= bit;
     }
     return result;
 }
 
-/** @brief Update cached wear counts only after the raw driver has verified the program. */
+/** @brief Update cached header words only after the raw driver has verified the program. */
 static UINT write_words(LX_NOR_FLASH *control, ULONG *address, ULONG *source, ULONG words)
 {
     pf_levelx_nor_t *volume = volume_for(control);
@@ -84,14 +87,17 @@ static UINT write_words(LX_NOR_FLASH *control, ULONG *address, ULONG *source, UL
     uint32_t relative = offset - volume->offset;
     uint32_t last = (relative + words * 4u - 1u) / 4096u;
     for (uint32_t block = relative / 4096u; block <= last; ++block) {
-        if (block * 4096u < relative) {
-            continue;
-        }
         uint32_t bit = 1u << (block % 32u);
-        volume->erase_count_valid[block / 32u] &= ~bit;
-        if (result == LX_SUCCESS) {
-            volume->erase_counts[block] = source[(block * 4096u - relative) / 4u];
-            volume->erase_count_valid[block / 32u] |= bit;
+        for (uint32_t word = 0u; word < PF_LEVELX_NOR_HEADER_WORDS; ++word) {
+            uint32_t header_offset = block * 4096u + word * sizeof(ULONG);
+            if (header_offset < relative || header_offset >= relative + words * sizeof(ULONG)) {
+                continue;
+            }
+            volume->header_valid[word][block / 32u] &= ~bit;
+            if (result == LX_SUCCESS) {
+                volume->block_headers[block][word] = source[(header_offset - relative) / sizeof(ULONG)];
+                volume->header_valid[word][block / 32u] |= bit;
+            }
         }
     }
     return result;
@@ -104,7 +110,9 @@ static UINT erase_block(LX_NOR_FLASH *control, ULONG block, ULONG erase_count)
     if (block >= volume->size / 4096u) {
         return raw_result(volume, PF_NOR_INVALID_ARGUMENT);
     }
-    volume->erase_count_valid[block / 32u] &= ~(1u << (block % 32u));
+    for (unsigned word = 0u; word < PF_LEVELX_NOR_HEADER_WORDS; ++word) {
+        volume->header_valid[word][block / 32u] &= ~(1u << (block % 32u));
+    }
     return raw_result(volume, pf_nor_erase(volume->flash, volume->offset + block * 4096u));
 }
 

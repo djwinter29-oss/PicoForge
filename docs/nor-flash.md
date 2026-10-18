@@ -90,7 +90,9 @@ the actual system clock for four instructions per symbol, with two high-clock
 instructions and input sampling at the following falling edge. Synchronous data inputs bypass the PIO input
 synchronizers; deinitialization restores the previous setting for only the owned pins.
 Automatic pull/push streams complete bytes, while partial dummy phases still clock the exact requested symbols.
-Up to four bytes may be outstanding, bounding RX occupancy even when interrupted. The 100 ms timeout measures
+Quad reads use four-byte FIFO words with MSB-first unpacking and exact byte tails; single-lane phases and writes
+retain byte transfers. This reduces CPU FIFO servicing without changing flash commands or programming behavior.
+Up to four FIFO words may be outstanding, bounding RX occupancy even when interrupted. The 100 ms timeout measures
 continuous FIFO stalls, not total transaction length; timer reads are avoided while progress continues.
 CPU/FIFO pacing introduces additional low-clock gaps, so the
 requested frequency is a maximum symbol cadence, not sustained throughput.
@@ -231,9 +233,10 @@ The bitmap avoids a whole-region search for every previously unwritten sector; i
 so it changes RAM use and startup work, not the on-flash layout. Cache initialization errors fail the open.
 Obsolete-sector counts allow searches to skip fully obsolete blocks without fetching their metadata from SPI,
 especially after repeated file creation/deletion has consumed the initial erased space.
-The port separately caches each block's wear-count word (16 KiB plus a 512-byte validity bitmap for the maximum
-16 MiB chip). Reclaim scans can then compare wear counts in RAM instead of fetching every block header over SPI.
-Verified header writes update the cache, raw erase invalidates the affected entry, and reopen clears it.
+The port separately caches each block's wear count and minimum/maximum logical-sector words (48 KiB plus
+1.5 KiB of validity bitmaps for the maximum 16 MiB chip). Reclaim and logical-sector searches can then compare
+block headers in RAM instead of fetching each word over SPI. Verified writes, including writes crossing block
+boundaries, update only the covered header words; raw erase invalidates all three words, and reopen clears them.
 All callbacks remain under the media reservation; cache hits do not bypass a latched fault.
 FatFs TRIM notifications release deleted-file sectors through LevelX instead of preserving stale data during
 reclamation. Release is logical, ownership-gated and range-checked; it does not raw-erase adjacent sectors.
@@ -242,9 +245,15 @@ FatFs does not propagate hint failures; NOR media failures are explicitly logged
 and fault the volume so subsequent storage operations fail rather than claiming healthy media.
 Pre-existing freed sectors from older firmware are not retroactively released; repeated-test timing also depends
 on region history, reclaim work and the chip's program/erase latency.
-The upstream sector-mapping cache is configured for 4096 entries (48 KiB on RP2040/RP2350), rather than the
-16-entry upstream default. This retains mappings for typical 1 MiB file tests without repeated metadata searches.
+The upstream sector-mapping cache is configured for 8192 entries (96 KiB on RP2040/RP2350), rather than the
+16-entry upstream default. This retains more mappings during sequential reads up to roughly 4 MiB, avoiding
+the previous 4096-entry cache's repeated metadata searches on larger file tests. This uses 48 KiB more SRAM;
+allow room for application stacks and other buffers when enabling the NOR backend.
 It is a bounded, four-way hashed cache, not a full-region map; larger/conflicting workloads can still miss.
+Together, the mapping and header changes add 81 KiB over the previous 4096-entry/wear-count-only configuration.
+The reference RP2040 application reserves approximately 229 KiB of its 264 KiB SRAM with these caches.
+Measured file reads include mapping lookup, FAT access and pattern verification; raw QSPI throughput is not
+an end-to-end filesystem throughput guarantee. The read path still uses bounded CPU polling, not DMA.
 
 **Open is not read-only.** Upstream LevelX can initialize metadata on blank
 media and repair/reclaim existing metadata during open. The raw driver and link smoke do not automatically open media.

@@ -59,6 +59,8 @@ static inline uint32_t pio_sm_get(PIO pio, uint sm)
 {
     (void)pio; (void)sm;
     serial_fake.pending--;
+    if (serial_fake.receive_index < serial_fake.receive_count)
+        return serial_fake.receive_words[serial_fake.receive_index++];
     uint32_t result = 0u;
     for (unsigned bit = 0u; bit < serial_fake.shift_bits; bit += serial_fake.lanes)
         result = (result << serial_fake.lanes) | (serial_fake.input & ((1u << serial_fake.lanes) - 1u));
