@@ -32,6 +32,7 @@ typedef struct {
     uint32_t bus_clock_hz; /**< Effective serial symbol clock; zero before initialization. */
     uint32_t capacity_bytes; /**< Physical identified NOR capacity. */
     uint32_t sector_count; /**< LevelX logical capacity in 512-byte sectors. */
+    uint8_t unique_id[8]; /**< Factory NOR UID in device transmission order; zero before initialization. */
 } pf_nor_media_diagnostics_t;
 
 /** @brief Copy retained failure and current state under the media reservation.

@@ -55,7 +55,7 @@ void test_nor_memory_report_does_not_configure_or_advertise_sd_media(void)
     pf_hid_memory_report_t report;
     memset(&report, 0xff, sizeof(report));
     TEST_ASSERT_TRUE(pf_hid_build_memory_report(&report, 7u));
-    TEST_ASSERT_EQUAL_UINT8(3u, report.version);
+    TEST_ASSERT_EQUAL_UINT8(4u, report.version);
     TEST_ASSERT_EQUAL_UINT8(7u, report.sequence);
     TEST_ASSERT_EQUAL_UINT8(2u, report.component_type);
     TEST_ASSERT_EQUAL_UINT8(PF_HID_MEMORY_CONFIGURED, report.flags);
@@ -68,13 +68,15 @@ void test_nor_telemetry_reports_identified_chip_and_logical_capacity_without_blo
     media_info = (pf_nor_media_diagnostics_t){
         .ready = true, .bus_clock_hz = 992063u,
         .capacity_bytes = 16777216u, .sector_count = 6000u,
+        .unique_id = {0x01u, 0x23u, 0x45u, 0x67u, 0x89u, 0xabu, 0xcdu, 0xefu},
     };
     pf_hid_memory_report_t report;
     TEST_ASSERT_TRUE(pf_hid_build_memory_report(&report, 1u));
     TEST_ASSERT_EQUAL_UINT8(0x3fu, report.flags);
     TEST_ASSERT_EQUAL_UINT32(992063u, report.bus_clock_hz);
     TEST_ASSERT_EQUAL_UINT32(6000u, report.block_count);
-    const uint8_t identity[16] = {0xefu, 0x40u, 0x18u, 0u, 0u, 0u, 1u};
+    const uint8_t identity[16] = {0xefu, 0x40u, 0x18u, 0u, 0u, 0u, 1u,
+                                0x01u, 0x23u, 0x45u, 0x67u, 0x89u, 0xabu, 0xcdu, 0xefu, 0u};
     TEST_ASSERT_EQUAL_MEMORY(identity, report.cid, sizeof(identity));
     media_busy = true;
     TEST_ASSERT_FALSE(pf_hid_build_memory_report(&report, 2u));

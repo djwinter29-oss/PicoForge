@@ -29,7 +29,7 @@ public sealed record SdCardIdentity(byte ManufacturerId, string OemId, string Pr
 public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool PresenceKnown,
     bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
     uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer,
-    uint? PhysicalCapacityBytes = null, string? JedecId = null);
+    uint? PhysicalCapacityBytes = null, string? JedecId = null, string? DeviceUid = null);
 
 public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected,
     bool ForceReturnSupported = false);
@@ -145,7 +145,7 @@ internal static class HidProtocol
         Require(report[(MemoryPayloadSize + 1)..].IndexOfAnyExcept((byte)0) < 0,
             "unexpected HID memory report padding");
         var payload = report[1..];
-        var nor = payload[0] == 3 && payload[3] == 2;
+        var nor = payload[0] is 3 or 4 && payload[3] == 2;
         Require(payload[0] == ReportVersion || nor, "unsupported HID memory report version");
         var flags = payload[2];
         Require((flags & ~0x3f) == 0, "unknown HID memory flags");
@@ -172,13 +172,15 @@ internal static class HidProtocol
         SdCardIdentity? identity = null;
         uint? physicalCapacity = null;
         string? jedecId = null;
+        string? deviceUid = null;
         if (nor && initialized)
         {
             physicalCapacity = ReadUInt32LittleEndian(cid[3..]);
             Require(cid[0] == 0xef && cid[1] == 0x40 && cid[2] == 0x18
-                && cid[7..].IndexOfAnyExcept((byte)0) < 0 && physicalCapacity == 16777216
+                && cid[(payload[0] == 4 ? 15 : 7)..].IndexOfAnyExcept((byte)0) < 0 && physicalCapacity == 16777216
                 && (ulong)blockCount * 512 <= physicalCapacity, "invalid NOR identification or capacity");
             jedecId = "ef4018";
+            deviceUid = payload[0] == 4 ? Convert.ToHexStringLower(cid.Slice(7, 8)) : null;
         }
         else if (cidValid)
         {
@@ -199,7 +201,7 @@ internal static class HidProtocol
                 3 => "qspi",
                 _ => null
             }, initialized ? busClockHz : null, capacityValid ? blockCount : null,
-            capacityValid ? (ulong)blockCount * 512 : null, identity, physicalCapacity, jedecId);
+            capacityValid ? (ulong)blockCount * 512 : null, identity, physicalCapacity, jedecId, deviceUid);
     }
 
     public static string ParseFilesystemReport(ReadOnlySpan<byte> report)

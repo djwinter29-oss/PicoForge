@@ -130,22 +130,32 @@ pf_storage_bus_result_t pf_spi_exchange(pf_spi_t *context, const uint8_t *tx,
         return PF_STORAGE_BUS_OK;
     }
     if (context->timeout_us != 0u) {
-        for (size_t index = 0u; index < length; index++) {
-            uint64_t start = time_us_64();
-            while (!spi_is_writable(context->instance)) {
-                if (time_us_64() - start >= context->timeout_us) {
-                    return PF_STORAGE_BUS_TIMEOUT;
-                }
+        size_t sent = 0u, received = 0u;
+        uint64_t stalled_at = 0u;
+        bool stalled = false;
+        while (received < length) {
+            bool progress = false;
+            /* Match the SDK's eight-byte in-flight limit so an interrupt cannot overflow RX. */
+            if (sent < length && sent - received < 8u && spi_is_writable(context->instance)) {
+                spi_get_hw(context->instance)->dr = tx != NULL ? tx[sent] : 0xffu;
+                ++sent;
+                progress = true;
             }
-            spi_get_hw(context->instance)->dr = tx != NULL ? tx[index] : 0xffu;
-            while (!spi_is_readable(context->instance)) {
-                if (time_us_64() - start >= context->timeout_us) {
-                    return PF_STORAGE_BUS_TIMEOUT;
+            if (received < sent && spi_is_readable(context->instance)) {
+                uint8_t input = (uint8_t)spi_get_hw(context->instance)->dr;
+                if (rx != NULL) {
+                    rx[received] = input;
                 }
+                ++received;
+                progress = true;
             }
-            uint8_t input = (uint8_t)spi_get_hw(context->instance)->dr;
-            if (rx != NULL) {
-                rx[index] = input;
+            if (progress) {
+                stalled = false;
+            } else if (!stalled) {
+                stalled_at = time_us_64();
+                stalled = true;
+            } else if (time_us_64() - stalled_at >= context->timeout_us) {
+                return PF_STORAGE_BUS_TIMEOUT;
             }
         }
         return PF_STORAGE_BUS_OK;

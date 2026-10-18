@@ -87,6 +87,10 @@ test("NOR memory layout reports physical and logical capacity without inventing 
   assert.equal(memory.physical_capacity_bytes, 16777216);
   assert.equal(memory.manufacturer.jedec_id, "ef4018");
   assert.equal(memory.manufacturer.serial_number, null);
+  assert.equal(memory.device_uid, null);
+  bytes[0] = 4;
+  bytes.set([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef], 20);
+  assert.equal(decodeMemoryReport(3, view).device_uid, "0123456789abcdef");
   bytes[4] = 3;
   assert.equal(decodeMemoryReport(3, view).mode, "qspi");
   bytes[28] = 1;
@@ -94,6 +98,10 @@ test("NOR memory layout reports physical and logical capacity without inventing 
   bytes.fill(0);
   bytes.set([3, 0, 1, 2, 2]);
   assert.equal(decodeMemoryReport(3, view).initialized, false);
+  bytes[0] = 4;
+  assert.equal(decodeMemoryReport(3, view).device_uid, null);
+  bytes[20] = 1;
+  assert.throws(() => decodeMemoryReport(3, view), /CID/);
 });
 
 test("decode stable product, MCU, and serial identity", () => {

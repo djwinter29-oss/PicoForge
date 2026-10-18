@@ -17,6 +17,7 @@ TEST_INCLUDE_PATH("firmware/third_party/levelx/common/inc")
 
 TEST_SOURCE_FILE("lx_nor_flash_initialize.c")
 TEST_SOURCE_FILE("lx_nor_flash_open_extended.c")
+TEST_SOURCE_FILE("lx_nor_flash_extended_cache_enable.c")
 TEST_SOURCE_FILE("lx_nor_flash_close.c")
 TEST_SOURCE_FILE("lx_nor_flash_driver_read.c")
 TEST_SOURCE_FILE("lx_nor_flash_driver_write.c")
@@ -39,6 +40,7 @@ static uint8_t memory[BLOCKS * 4096u];
 static pf_nor_t flash;
 static pf_levelx_nor_t volume;
 static unsigned erases[BLOCKS], programs;
+static unsigned reads;
 static bool fail_io;
 static int fail_program_after;
 
@@ -46,6 +48,7 @@ pf_nor_result_t pf_nor_read(pf_nor_t *device, uint32_t address, void *data, size
 {
     (void)device;
     if (fail_io) return PF_NOR_IO_ERROR;
+    reads++;
     TEST_ASSERT_TRUE(address <= sizeof(memory) && length <= sizeof(memory) - address);
     memcpy(data, memory + address, length);
     return PF_NOR_OK;
@@ -102,6 +105,7 @@ void setUp(void)
     fail_io = false;
     fail_program_after = -1;
     programs = 0u;
+    reads = 0u;
 }
 
 void tearDown(void)
@@ -118,6 +122,20 @@ static void open_volume(void)
     TEST_ASSERT_EQUAL_UINT32(70u, volume.sector_count);
 }
 
+void test_unmapped_sector_lookup_uses_bitmap_without_raw_region_scan(void)
+{
+    open_volume();
+    uint8_t data[512];
+    unsigned before = reads;
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(volume.sector_count,
+        volume.control.lx_nor_flash_extended_cache_mapping_bitmap_max_logical_sector);
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_read(&volume, volume.sector_count - 1u, data));
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(8u, reads - before);
+    for (unsigned index = 0u; index < sizeof(data); index++) {
+        TEST_ASSERT_EQUAL_HEX8(0xffu, data[index]);
+    }
+}
+
 void test_real_levelx_rewrites_and_reopens_with_unaligned_buffers(void)
 {
     open_volume();
@@ -131,6 +149,22 @@ void test_real_levelx_rewrites_and_reopens_with_unaligned_buffers(void)
     open_volume();
     TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_read(&volume, 0u, output + 1u));
     TEST_ASSERT_EQUAL_MEMORY(input + 1u, output + 1u, 512u);
+}
+
+void test_sequential_read_retains_sector_mappings_beyond_upstream_default_cache(void)
+{
+    open_volume();
+    uint8_t data[512] = {0};
+    for (uint32_t sector = 0u; sector < volume.sector_count; ++sector) {
+        TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, sector, data));
+    }
+    ULONG hits = volume.control.lx_nor_flash_sector_mapping_cache_hits;
+    ULONG misses = volume.control.lx_nor_flash_sector_mapping_cache_misses;
+    for (uint32_t sector = 0u; sector < volume.sector_count; ++sector) {
+        TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_read(&volume, sector, data));
+    }
+    TEST_ASSERT_EQUAL_UINT32(volume.sector_count, volume.control.lx_nor_flash_sector_mapping_cache_hits - hits);
+    TEST_ASSERT_EQUAL_UINT32(misses, volume.control.lx_nor_flash_sector_mapping_cache_misses);
 }
 
 void test_reclaim_preserves_cold_data_and_stays_inside_region(void)

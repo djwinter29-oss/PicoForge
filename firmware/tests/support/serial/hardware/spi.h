@@ -12,14 +12,30 @@ static inline uint spi_get_baudrate(spi_inst_t *spi) { (void)spi; return serial_
 typedef struct { uint32_t dr; } spi_hw_t;
 static inline spi_hw_t *spi_get_hw(spi_inst_t *spi)
 { (void)spi; static spi_hw_t hardware; return &hardware; }
-static inline bool spi_is_writable(spi_inst_t *spi) { (void)spi; return !serial_fake.fifo_full; }
+static inline bool spi_is_writable(spi_inst_t *spi)
+{
+    (void)spi;
+    serial_fake.fifo_write = !serial_fake.fifo_full;
+    return serial_fake.fifo_write;
+}
 static inline bool spi_is_readable(spi_inst_t *spi)
 {
     spi_hw_t *hardware = spi_get_hw(spi);
-    if (serial_fake.length < sizeof(serial_fake.bytes))
-        serial_fake.bytes[serial_fake.length++] = (uint8_t)hardware->dr;
+    if (serial_fake.fifo_write) {
+        if (serial_fake.length < sizeof(serial_fake.bytes))
+            serial_fake.bytes[serial_fake.length++] = (uint8_t)hardware->dr;
+        serial_fake.fifo_write = false;
+        ++serial_fake.pending;
+        if (serial_fake.pending > serial_fake.peak_pending) serial_fake.peak_pending = serial_fake.pending;
+    }
+    if (serial_fake.short_io || serial_fake.pending == 0u) return false;
+    if (serial_fake.delayed_reads != 0u) {
+        --serial_fake.delayed_reads;
+        return false;
+    }
+    --serial_fake.pending;
     hardware->dr = serial_fake.input;
-    return !serial_fake.short_io;
+    return true;
 }
 static inline uint spi_init(spi_inst_t *spi, uint hz)
 { (void)spi; serial_fake.init++; return hz; }

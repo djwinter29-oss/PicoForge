@@ -35,7 +35,7 @@ static bool common_resources_valid(const pf_board_resources_t *topology)
 bool pf_board_resources_validate_serial(const pf_board_resources_t *topology, bool quad)
 {
     if (!common_resources_valid(topology) || topology->serial_clock_hz == 0u ||
-        topology->serial_clock_hz > 10000000u) {
+        topology->serial_clock_hz > (quad ? 10000000u : 40000000u)) {
         return false;
     }
     uint32_t pins[6];

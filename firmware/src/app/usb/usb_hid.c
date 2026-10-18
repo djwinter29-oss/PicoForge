@@ -73,7 +73,7 @@ bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
     pf_nor_media_get_diagnostics(&info);
     pf_nor_media_unlock();
     memset(report, 0, sizeof(*report));
-    report->version = 3u;
+    report->version = 4u;
     report->sequence = sequence;
     report->component_type = 2u;
 #if PF_NOR_QSPI
@@ -88,13 +88,14 @@ bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
                          PF_HID_MEMORY_CID_VALID;
         report->bus_clock_hz = info.bus_clock_hz;
         report->block_count = info.sector_count;
-        /* Successful initialization identifies only EF 40 18; no SD CID or chip serial is fabricated. */
+        /* Successful initialization identifies only EF 40 18. */
         report->cid[0] = 0xefu;
         report->cid[1] = 0x40u;
         report->cid[2] = 0x18u;
         for (unsigned i = 0u; i < 4u; ++i) {
             report->cid[3u + i] = (uint8_t)(info.capacity_bytes >> (8u * i));
         }
+        memcpy(report->cid + 7u, info.unique_id, sizeof(info.unique_id));
     }
     return true;
 #else

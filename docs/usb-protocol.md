@@ -113,16 +113,21 @@ CID and capacity retained internally for SD diagnostics after initialization or 
 Input Report 3 while the card is uninitialized. Its CID-valid and capacity-valid flags remain clear, and CID, clock,
 and capacity fields remain zero, so a card failure does not invalidate the dashboard's live status stream.
 
-### NOR memory telemetry (Input Report 3, layout 3)
+### NOR memory telemetry (Input Report 3, layouts 3 and 4)
 
-NOR uses the same 29-byte memory payload, version `3`, component type `2` and mode `2` (SPI) or `3` (QSPI).
+NOR uses the same 29-byte memory payload, version `4`, component type `2` and mode `2` (SPI) or `3` (QSPI).
 Offsets and flag meanings stay the same, except CID-valid means NOR identity-valid. Offset 9 reports
 **LevelX logical sectors**, not raw chip capacity. Identity bytes at offset 13 hold the identified JEDEC ID
-(`EF 40 18` for the supported W25Q128), followed by four little-endian physical-capacity bytes, then nine reserved
-zero bytes. The current driver accepts only that JEDEC identity; hosts must not interpret these bytes as an SD CID.
+(`EF 40 18` for the supported W25Q128), followed by four little-endian physical-capacity bytes at offset 16,
+eight factory UID bytes at offsets 20..27 (device transmission order, most significant byte first),
+then one reserved zero byte at offset 28. Legacy layout `3` has nine reserved zero bytes at offsets 20..28
+and no UID; updated hosts continue accepting it.
+The current driver accepts only that JEDEC identity; hosts must not interpret these bytes as an SD CID.
 Until the volume is ready, clock, capacity and identity remain zero and presence is unknown, not falsely absent.
 The dashboard displays logical and physical capacity separately; manufacturer/product derive from the validated
-JEDEC ID. Chip serial, manufacturing date and revision are not read and are not invented.
+JEDEC ID. `device_uid` is a fixed-width 16-digit lowercase hex string, preserving leading zeros and all 64 bits;
+it is null before initialization and for layout 3. The dashboards use this factory UID as the NOR device serial,
+distinct from the Pico USB serial. Manufacturing date and revision are not read and are not invented.
 Update firmware and host software together; SD continues using layout 2 unchanged.
 
 ## Feature Report 4

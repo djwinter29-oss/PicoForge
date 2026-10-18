@@ -12,7 +12,7 @@ typedef struct {
     spi_inst_t *instance; /**< SDK controller. */
     pf_storage_spi_pins_t pins; /**< Fixed physical signal allocation. */
     uint32_t clock_hz;    /**< Requested device clock, updated by set_clock. */
-    uint32_t timeout_us;  /**< Per-byte FIFO deadline; zero uses SDK blocking bulk I/O. */
+    uint32_t timeout_us;  /**< Maximum stalled FIFO interval; zero uses SDK blocking bulk I/O. */
     bool initialized;    /**< This device holds a controller reference. */
 } pf_spi_t;
 

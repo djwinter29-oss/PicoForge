@@ -1,3 +1,6 @@
+/** @file
+ * @brief Bounded serial-NOR LevelX callbacks and caller-owned cache lifecycle.
+ */
 #include "levelx_nor.h"
 
 #include <string.h>
@@ -143,6 +146,10 @@ UINT pf_levelx_nor_open(pf_levelx_nor_t *volume, pf_nor_t *flash,
         volume->opened = true;
         volume->sector_count = (size / 4096u - 2u) *
                               volume->control.lx_nor_flash_physical_sectors_per_block;
+        result = lx_nor_flash_extended_cache_enable(&volume->control, volume->cache, sizeof(volume->cache));
+        if (result != LX_SUCCESS) {
+            volume->faulted = true;
+        }
     }
     return result;
 }

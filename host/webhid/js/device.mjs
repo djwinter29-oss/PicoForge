@@ -142,7 +142,7 @@ export function decodeMemoryReport(reportId, report) {
   const mode = view.getUint8(4);
   const busClockHz = view.getUint32(5, true);
   const blockCount = view.getUint32(9, true);
-  const nor = version === 3 && componentType === 2;
+  const nor = [3, 4].includes(version) && componentType === 2;
   if (version !== 2 && !nor) throw new Error(`Unsupported HID memory report version ${version}`);
   if ((flags & ~0x3f) !== 0) throw new Error("Unknown HID memory flags");
   if (nor ? ![2, 3].includes(mode) : componentType > 1 || mode > 2) {
@@ -167,7 +167,7 @@ export function decodeMemoryReport(reportId, report) {
   let manufacturer = null;
   if (nor && initialized) {
     if (cid[0] !== 0xef || cid[1] !== 0x40 || cid[2] !== 0x18
-      || cid.subarray(7).some(byte => byte !== 0)
+      || cid.subarray(version === 4 ? 15 : 7).some(byte => byte !== 0)
       || view.getUint32(16, true) !== 16777216 || blockCount * 512 > 16777216) {
       throw new Error("Invalid NOR identification or capacity");
     }
@@ -203,7 +203,9 @@ export function decodeMemoryReport(reportId, report) {
     block_count: capacityValid ? blockCount : null,
     capacity_bytes: capacityValid ? blockCount * 512 : null,
     manufacturer,
-    ...(nor ? { physical_capacity_bytes: initialized ? view.getUint32(16, true) : null } : {}),
+    ...(nor ? { physical_capacity_bytes: initialized ? view.getUint32(16, true) : null,
+      device_uid: initialized && version === 4
+        ? Array.from(cid.subarray(7, 15), byte => byte.toString(16).padStart(2, "0")).join("") : null } : {}),
   };
 }
 

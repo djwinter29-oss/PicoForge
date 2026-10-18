@@ -39,6 +39,8 @@ static pf_nor_result_t initialize(pf_nor_t *flash, const pf_nor_transport_t *tra
     (void)count;
     ++init_calls;
     flash->initialized = init_result == PF_NOR_OK;
+    const uint8_t unique_id[8] = {0x01u, 0x23u, 0x45u, 0x67u, 0x89u, 0xabu, 0xcdu, 0xefu};
+    memcpy(flash->unique_id, unique_id, sizeof(unique_id));
     return init_result;
 }
 
@@ -122,6 +124,10 @@ void test_only_the_configured_region_is_opened_and_live_media_is_not_reinitializ
     TEST_ASSERT_EQUAL_UINT(1u, open_calls);
     TEST_ASSERT_TRUE(pf_nor_media_ready());
     TEST_ASSERT_EQUAL_UINT(42u, pf_nor_media_sector_count());
+    pf_nor_media_diagnostics_t diagnostics;
+    pf_nor_media_get_diagnostics(&diagnostics);
+    const uint8_t unique_id[8] = {0x01u, 0x23u, 0x45u, 0x67u, 0x89u, 0xabu, 0xcdu, 0xefu};
+    TEST_ASSERT_EQUAL_MEMORY(unique_id, diagnostics.unique_id, sizeof(unique_id));
     TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_initialize());
     TEST_ASSERT_EQUAL_UINT(1u, init_calls);
     mounted = true;

@@ -73,7 +73,7 @@ void test_serial_validation_checks_selected_controller_timing_and_quad_lane_orde
     value = profile();
     value.serial_clock_hz = 0u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&value));
-    value.serial_clock_hz = 10000001u;
+    value.serial_clock_hz = 40000001u;
     TEST_ASSERT_FALSE(pf_board_resources_validate(&value));
     value = profile();
     value.pio_index = 2u;
@@ -81,6 +81,23 @@ void test_serial_validation_checks_selected_controller_timing_and_quad_lane_orde
     value = profile();
     value.qspi_pins.data_gpio[1] = 8u;
     TEST_ASSERT_FALSE(pf_board_resources_validate_serial(&value, true));
+}
+
+void test_spi_accepts_25_through_40mhz_without_raising_quad_limit(void)
+{
+    pf_board_resources_t value = profile();
+    value.serial_clock_hz = 10000000u;
+    TEST_ASSERT_TRUE(pf_board_resources_validate_serial(&value, true));
+    value.serial_clock_hz++;
+    TEST_ASSERT_FALSE(pf_board_resources_validate_serial(&value, true));
+    const uint32_t clocks[] = {25000000u, 31250000u, 40000000u};
+    for (unsigned index = 0u; index < sizeof(clocks) / sizeof(clocks[0]); index++) {
+        value.serial_clock_hz = clocks[index];
+        TEST_ASSERT_TRUE(pf_board_resources_validate_serial(&value, false));
+        TEST_ASSERT_FALSE(pf_board_resources_validate_serial(&value, true));
+    }
+    value.serial_clock_hz = 40000001u;
+    TEST_ASSERT_FALSE(pf_board_resources_validate_serial(&value, false));
 }
 
 void test_sdk_gpio_range_is_respected_without_applying_pio_limits_to_spi_or_chip_select(void)

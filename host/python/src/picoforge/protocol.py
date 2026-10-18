@@ -130,7 +130,7 @@ def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, obje
 
 
 def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
-    """Decode dynamic SD-card state, negotiated link, capacity, and CID."""
+    """Decode memory state, bus settings, capacity and SD CID or NOR factory UID."""
     data = bytes(report)
     if len(data) < MEMORY_INPUT_SIZE or data[0] != MEMORY_REPORT_ID:
         raise ValueError("unexpected HID memory report length or ID")
@@ -141,7 +141,7 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "<BBBBBII", payload[:13]
     )
     cid = payload[13:29]
-    nor = version == 3 and component_type == 2
+    nor = version in (3, 4) and component_type == 2
     if version != REPORT_VERSION and not nor:
         raise ValueError(f"unsupported HID memory report version {version}")
     if flags & ~0x3f:
@@ -162,7 +162,7 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         raise ValueError("invalid memory metadata values")
     manufacturer = None
     if nor and initialized:
-        if (cid[:3] != bytes.fromhex("ef4018") or any(cid[7:])
+        if (cid[:3] != bytes.fromhex("ef4018") or any(cid[15:] if version == 4 else cid[7:])
             or int.from_bytes(cid[3:7], "little") != 16777216 or blocks * 512 > 16777216):
             raise ValueError("invalid NOR identification or capacity")
         manufacturer = {"id": cid[0], "product_name": "W25Q128", "jedec_id": "ef4018",
@@ -197,7 +197,8 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "block_count": blocks if capacity_valid else None,
         "capacity_bytes": blocks * 512 if capacity_valid else None,
         "manufacturer": manufacturer,
-        **({"physical_capacity_bytes": int.from_bytes(cid[3:7], "little") if initialized else None} if nor else {}),
+        **({"physical_capacity_bytes": int.from_bytes(cid[3:7], "little") if initialized else None,
+            "device_uid": cid[7:15].hex() if initialized and version == 4 else None} if nor else {}),
     }
 
 

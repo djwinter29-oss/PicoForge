@@ -94,6 +94,10 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
       assert.match(element("#memory-size").textContent, /usable.*16.00 MiB physical/);
       assert.equal(element("#memory-serial").textContent, "Not reported");
       assert.equal(element("#self-test-start").disabled, false);
+      render({ connected: true, memory: { configured: true, initialized: true,
+        component_type: "nor-flash", device_uid: "0123456789abcdef",
+        jedec_id: "ef4018" } });
+      assert.equal(element("#memory-serial").textContent, "0x0123456789abcdef");
     } finally { globalThis.document = previous; }
   });
 

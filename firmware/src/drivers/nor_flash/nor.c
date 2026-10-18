@@ -1,3 +1,6 @@
+/** @file
+ * @brief W25Q128 identification, factory UID and verified raw storage operations.
+ */
 #include "nor.h"
 
 #include <string.h>
@@ -97,6 +100,10 @@ pf_nor_result_t pf_nor_init(pf_nor_t *flash, const pf_nor_transport_t *transport
     }
     if (id[0] != 0xefu || id[1] != 0x40u || id[2] != 0x18u) {
         return PF_NOR_UNSUPPORTED;
+    }
+    result = execute(flash, 0x4bu, 0u, 0u, NULL, flash->unique_id, sizeof(flash->unique_id), 1u, 32u);
+    if (result != PF_NOR_OK) {
+        return result;
     }
     flash->capacity_bytes = 16u * 1024u * 1024u;
     flash->page_size = 256u;

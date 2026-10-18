@@ -5,7 +5,9 @@
 The initial raw driver supports the W25Q128 JEDEC ID `EF 40 18`, 16 MiB
 capacity, 256-byte program pages and 4 KiB erase sectors. It provides
 identification, reads, page-split programming, aligned sector erase, readiness
-polling and readback verification of program/erase operations.
+polling and readback verification of program/erase operations. Initialization also reads the factory-programmed
+64-bit Unique ID using `4Bh`, 32 dummy clocks and eight single-lane data bytes. This read does not program or erase
+flash. UID transport failures fail initialization explicitly; the UID is not an authentication credential.
 
 Quad enable uses the W25Q128JV-compatible `35h` / volatile-status-enable `50h` /
 status-register-2-write `31h` sequence. Verify the actual part marking and
@@ -72,9 +74,14 @@ board-specific idle pins without initializing the bus or referencing NOR. The st
 `PF_BOARD_STORAGE_QSPI` selects the serial board profile for the standalone target; CMake derives it from
 `PF_NOR_TRANSPORT`. The SD application retains its existing profile and does not prepare the alternative serial device.
 
-The board configuration starts at 1 MHz and configures SPI with a 100 ms per-byte FIFO deadline. QSPI-PIO rejects
-requested clocks above 10 MHz; generic SPI also serves SD and has no NOR-specific clock ceiling. Custom NOR SPI
-callers must retain the previous at-most-10 MHz policy and configure bounded polling; higher clocks are not qualified.
+The board requests 40 MHz for NOR SPI and configures a 100 ms stalled-FIFO deadline. The Pico SDK chooses
+a realizable baud rate no higher than requested: at the reference 125 MHz system clock this is 31.25 MHz,
+not 40 MHz. HID telemetry reports the actual baud rate. The NOR board policy accepts SPI requests up to 40 MHz;
+generic SPI also serves SD and has no NOR-specific clock ceiling.
+QSPI-PIO still starts at 1 MHz and rejects requested clocks above 10 MHz.
+Signal integrity at higher SPI clocks depends on the board, breakout and wiring; qualify with write/read verification,
+not just successful identification. The bus clock is not the file throughput: polling, NOR program/erase verification,
+LevelX and FAT all add overhead.
 PIO divides
 the actual system clock for four instructions per symbol, with one high-clock
 instruction. CPU/FIFO pacing introduces additional low-clock gaps, so the
@@ -82,6 +89,11 @@ requested frequency is a maximum symbol cadence, not sustained throughput.
 Both implementations use bounded polling rather than DMA. The QSPI transport
 claims one state machine and eight instructions on PIO0 or PIO1, and restricts
 its clock/data pins to GPIO0..31 on both MCU families.
+
+Bounded SPI polling pipelines up to eight bytes, matching the hardware receive FIFO depth so interrupted transfers
+cannot overflow RX. Timer reads occur only while neither FIFO makes progress, not once per payload byte.
+The deadline is a maximum continuous stall interval; successful transfers still drain every transmitted byte.
+SD-SPI's zero-timeout SDK bulk path is unchanged. NOR program/erase readback verification remains enabled.
 
 Keep external CS/WP/HOLD pull-ups as documented. IO2/IO3 are inputs in the PIO
 single-lane phase and data signals in quad mode. SPI holds WP/HOLD high.
@@ -199,6 +211,12 @@ owner, including the first open/global initialization. The config fixes the
 on-flash `ULONG` ABI at 32 bits on RP2040, RP2350 and 64-bit hosts. Context size
 is `sizeof(pf_levelx_nor_t)` for the selected build; allow additional task stack
 space for a 512-byte staging sector and upstream reclaim calls.
+Each volume also owns an 8 KiB upstream cache, including the logical-sector mapping bitmap.
+The bitmap avoids a whole-region search for every previously unwritten sector; it is rebuilt on open,
+so it changes RAM use and startup work, not the on-flash layout. Cache initialization errors fail the open.
+The upstream sector-mapping cache is configured for 4096 entries (48 KiB on RP2040/RP2350), rather than the
+16-entry upstream default. This retains mappings for typical 1 MiB file tests without repeated metadata searches.
+It is a bounded, four-way hashed cache, not a full-region map; larger/conflicting workloads can still miss.
 
 **Open is not read-only.** Upstream LevelX can initialize metadata on blank
 media and repair/reclaim existing metadata during open. The raw driver and link smoke do not automatically open media.
@@ -264,6 +282,21 @@ This command requires Pico ownership and an unmounted volume (`fs unmount` first
 existing logical files but does not raw-erase the chip or access outside the configured LevelX region.
 Formatting failure is reported and can leave partially changed filesystem contents.
 Logical capacity excludes LevelX metadata/reserve space; USB reports that logical capacity.
+Filesystem capacity is smaller again after FAT overhead. Reserve a sufficiently large region for file tests:
+a 64 KiB region cannot hold a 1 MiB test; a 4 MiB region provides about 3.5 MiB of logical capacity.
+Changing region geometry is not a filesystem resize. Previously unrelated contents in newly included blocks can
+prevent LevelX open (`LX_SYSTEM_INVALID_BLOCK`); FAT formatting cannot repair invalid LevelX metadata.
+Any raw re-provisioning must be separately authorized for the exact disposable region; the format CLI never
+automatically erases raw contents.
+
+The dashboards report NOR type, readiness, SPI/QSPI mode, effective bus clock, logical and physical capacity,
+and JEDEC-derived Winbond/W25Q128 identity using
+[NOR memory telemetry](usb-protocol.md#nor-memory-telemetry-input-report-3-layouts-3-and-4).
+The NOR device serial displays the chip's factory 64-bit UID as 16 hexadecimal digits, not the Pico USB serial.
+Revision and manufacturing date are unavailable and are not fabricated.
+The same [file write/verify test](sd-self-test.md) supports NOR when mounted and Pico-owned, subject to free space.
+Use a 1 MiB size for the 4 MiB region; the default 32 MiB test does not fit.
+
 Only `LX_SECTOR_NOT_FOUND` reads map to erased `0xff` sectors; other failures remain errors. The lower-level LevelX API
 continues to report its native statuses unchanged.
 

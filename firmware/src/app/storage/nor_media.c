@@ -9,6 +9,7 @@
 #include "middleware/logging/logging.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include <string.h>
 
 static StaticSemaphore_t mutex_storage; /**< Application-lifetime recursive reservation storage. */
 static SemaphoreHandle_t mutex; /**< Created before task startup. */
@@ -45,6 +46,9 @@ void pf_nor_media_get_diagnostics(pf_nor_media_diagnostics_t *diagnostics)
     diagnostics->bus_clock_hz = diagnostics->ready ? pf_board_storage_clock_hz() : 0u;
     diagnostics->capacity_bytes = flash.initialized ? flash.capacity_bytes : 0u;
     diagnostics->sector_count = diagnostics->ready ? volume.sector_count : 0u;
+    if (flash.initialized) {
+        memcpy(diagnostics->unique_id, flash.unique_id, sizeof(diagnostics->unique_id));
+    }
     pf_nor_media_unlock();
 }
 

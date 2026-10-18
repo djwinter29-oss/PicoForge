@@ -10,16 +10,17 @@
  * The raw flash and transport must outlive the volume. Do not copy an open volume.
  */
 typedef struct {
-    LX_NOR_FLASH control;
-    pf_nor_t *flash;
-    ULONG buffer[LX_NOR_SECTOR_SIZE];
-    uint32_t offset;
-    uint32_t size;
-    uint32_t sector_count;
-    pf_nor_result_t last_raw_result;
-    UINT last_system_error;
-    bool opened;
-    bool faulted;
+    LX_NOR_FLASH control; /**< Upstream control state owned by this volume. */
+    pf_nor_t *flash; /**< Borrowed initialized raw flash. */
+    ULONG buffer[LX_NOR_SECTOR_SIZE]; /**< Upstream sector staging. */
+    ULONG cache[2048]; /**< 8 KiB for the mapping bitmap and upstream read cache, covering a 16 MiB chip. */
+    uint32_t offset; /**< Authorized raw-region start in bytes. */
+    uint32_t size; /**< Authorized raw-region size in bytes. */
+    uint32_t sector_count; /**< Exported 512-byte logical sectors. */
+    pf_nor_result_t last_raw_result; /**< Retained raw I/O result. */
+    UINT last_system_error; /**< Retained upstream system-error code. */
+    bool opened; /**< Upstream state requires close before reopening. */
+    bool faulted; /**< I/O prohibited until close and recovery. */
 } pf_levelx_nor_t;
 
 /** Open/recover an initialized NOR region, aligned to 4KiB and at least 4 blocks.

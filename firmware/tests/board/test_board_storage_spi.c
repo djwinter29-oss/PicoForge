@@ -39,8 +39,8 @@ void test_effective_spi_clock_is_zero_until_initialized(void)
     TEST_ASSERT_EQUAL_UINT32(0u, pf_board_storage_clock_hz());
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_board_storage_prepare(&bus));
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&bus));
-    serial_fake.hz = 992063u;
-    TEST_ASSERT_EQUAL_UINT32(992063u, pf_board_storage_clock_hz());
+    serial_fake.hz = 31250000u;
+    TEST_ASSERT_EQUAL_UINT32(31250000u, pf_board_storage_clock_hz());
 }
 
 void test_spi_board_owns_wp_hold_and_rejects_duplicate_init_without_changing_transport(void)
@@ -56,7 +56,7 @@ void test_spi_board_owns_wp_hold_and_rejects_duplicate_init_without_changing_tra
     TEST_ASSERT_BITS_HIGH((1u << 5) | (1u << 6), serial_fake.output_pins);
     TEST_ASSERT_TRUE(serial_pins_prepared);
     TEST_ASSERT_EQUAL_UINT32(100000, serial_storage.timeout_us);
-    TEST_ASSERT_EQUAL_UINT32(1000000, serial_storage.clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(40000000, serial_storage.clock_hz);
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_NOT_READY, pf_board_storage_prepare(&bus));
     TEST_ASSERT_EQUAL_UINT(1, serial_fake.init);
     pf_storage_bus_deinit(&bus);
