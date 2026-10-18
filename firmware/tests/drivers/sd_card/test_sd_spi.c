@@ -794,3 +794,75 @@ void test_spi_single_block_command_failure_and_rejection_have_distinct_recovery(
     TEST_ASSERT_EQUAL(PF_SD_NOT_READY, transfer_block(5, data, NULL));
     TEST_ASSERT_FALSE(card_initialized);
 }
+
+void test_spi_crc_mismatch_invalidates_single_and_multiblock_reads_after_successful_stop(void)
+{
+    uint8_t data[1536];
+    for (unsigned count = 1; count <= 3; count += 2) {
+        reset(0);
+        const uint8_t wire[] = {0xff, 0, 0xfe, 0, 1, 0xff, 0, 0xff, 0xff};
+        length = sizeof(wire); memcpy(queue, wire, length);
+        TEST_ASSERT_EQUAL_HEX16(0, pf_sd_crc16(payload, sizeof(payload)));
+        pf_sd_set_profiling_enabled(true);
+        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(5, data, count));
+        TEST_ASSERT_EQUAL_UINT(count > 1 ? sizeof(wire) : 6, position);
+        TEST_ASSERT_EQUAL_UINT(count > 1 ? 2 : 1, command_count);
+        if (count > 1) TEST_ASSERT_EQUAL_UINT(12, commands[1]);
+        TEST_ASSERT_EQUAL_UINT(1, reads);
+        TEST_ASSERT_FALSE(selected);
+        pf_sd_profile_t metrics;
+        pf_sd_get_profile(&metrics);
+        TEST_ASSERT_EQUAL_UINT(1, metrics.events[PF_SD_PROFILE_CRC_FAILURE]);
+        TEST_ASSERT_FALSE(card_initialized);
+        unsigned accesses = selects + deselects + exchanges + writes + reads;
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(5, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_write_blocks(5, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_sync());
+        TEST_ASSERT_EQUAL_UINT(accesses, selects + deselects + exchanges + writes + reads);
+    }
+}
+
+void test_spi_multiblock_read_error_boundaries_invalidate_without_replay(void)
+{
+    uint8_t data[1536];
+    for (unsigned failure = 0; failure < 3; ++failure) {
+        prepare_multiblock_read();
+        if (failure == 0) fail_payload = 1;
+        if (failure == 1) queue[12] = 1;
+        if (failure == 2) {
+            active_config.transport.present = test_present;
+            spi_test_present = false;
+        }
+        TEST_ASSERT_EQUAL(failure == 2 ? PF_SD_NOT_READY : PF_SD_IO_ERROR,
+                          pf_sd_spi_read_blocks(5, data, 3));
+        TEST_ASSERT_FALSE(card_initialized || selected);
+        TEST_ASSERT_EQUAL_UINT(failure == 2 ? 0 : 2, command_count);
+        unsigned accesses = selects + deselects + exchanges + writes + reads;
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(5, data, 3));
+        TEST_ASSERT_EQUAL_UINT(accesses, selects + deselects + exchanges + writes + reads);
+    }
+}
+
+static bool present_until_first_payload(const void *context)
+{
+    (void)context;
+    return reads == 0;
+}
+
+void test_spi_removal_between_read_blocks_stops_and_blocks_later_bus_access(void)
+{
+    uint8_t data[1536];
+    prepare_multiblock_read();
+    /* After the first block, CMD12 consumes stuff/R1, ready, trailing clock. */
+    queue[5] = 0xff; queue[6] = 0; queue[7] = queue[8] = 0xff;
+    active_config.transport.present = present_until_first_payload;
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(5, data, 3));
+    TEST_ASSERT_EQUAL_UINT(1, reads);
+    TEST_ASSERT_EQUAL_UINT(2, command_count);
+    TEST_ASSERT_EQUAL_UINT(12, commands[1]);
+    TEST_ASSERT_EQUAL_UINT(9, position);
+    TEST_ASSERT_FALSE(card_initialized || selected);
+    unsigned accesses = selects + deselects + exchanges + writes + reads;
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(5, data, 3));
+    TEST_ASSERT_EQUAL_UINT(accesses, selects + deselects + exchanges + writes + reads);
+}

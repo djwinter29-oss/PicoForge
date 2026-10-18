@@ -643,8 +643,9 @@ this active-transport table.
 
 Profiling is disabled at boot. The storage-owner CLI supports `sd profile on`,
 `off`, `reset`, and `status` (or just `sd profile`). Snapshots report cumulative
-microseconds/calls for command, data, CRC/copy, busy, stop, and recovery work,
-plus CRC failures, batch fallbacks, timeouts, and recovery attempts. Changes
+microseconds/calls for command, data, CRC/copy, busy and stop work,
+plus CRC failures, batch fallbacks and timeouts. Recovery timing/attempt slots
+are reserved and unmetered on both SPI and native. Changes
 require firmware ownership. Profiling adds measurement overhead; phases overlap
 and must not be summed to infer total latency. Native write data timing includes
 overlapped next-block encoding and the PIO's response/busy completion; it does
@@ -659,13 +660,15 @@ the driver-internal `pf_sd_profile_*` hot-path helpers are lock-free because the
 
 The existing enum order, `elapsed_us`/`calls` arrays and CLI labels
 `command`, `data`, `crc_copy`, `busy`, `stop`, `recovery` are retained for ABI
-and historical log compatibility. They are **inclusive instrumentation windows**,
+and historical log identification. Recovery now prints `recovery_us=reserved calls=reserved`
+and `recoveries=reserved` in profile/diagnostics output instead of misleading numeric zeros;
+field names/order and C API array sizes/enum values remain unchanged. The measured phases are **inclusive instrumentation windows**,
 not mutually exclusive stages. Reinterpreting them as exclusive phases would
 silently change existing results; no such reinterpretation is made.
 
 | Window | Current boundary and overlap |
 | --- | --- |
-| COMMAND | Command request/response helper; also counted inside STOP and recovery initialization |
+| COMMAND | Command request/response helper; also counted inside STOP and initialization |
 | SDIO CMD24 DATA | After TX starts, until both DMA and PIO completion (or timeout); PIO completion includes response token and DAT0 busy release; no separate BUSY measurement for that program |
 | SDIO CMD25 DATA | Per-block interval after TX starts through both completions; includes next-block CPU encoding, measured again under CRC/copy; also includes response and card busy |
 | SDIO RX DATA | CMD18 response accepted through DMA + PIO completion/timeout; completed-block decode/CRC/copy inside the wait is counted again as CRC/copy; final decode after completion lies outside DATA |
@@ -673,7 +676,7 @@ silently change existing results; no such reinterpretation is made.
 | CRC/copy | CPU encode/decode/CRC validation windows; may run while DMA/PIO is transferring; includes copy only for the native variants that perform it |
 | BUSY | Explicit ready wait; native TX PIO busy is already in DATA; explicit stop waits are also inside STOP |
 | STOP | Entire multiblock stop helper including command/response and busy, at unchanged clock |
-| RECOVERY | Native reinitialization attempt, including its command/data/CRC/busy windows; not all cleanup or retry time |
+| RECOVERY | Reserved/unmetered on SPI and native; no production instrumentation call records this slot |
 
 Do not sum these values to obtain latency, subtract CRC/copy to infer physical
 wire time, or compare individual windows across transports. The CMD25 host
@@ -744,7 +747,7 @@ preallocated files), and card busy time before choosing further optimizations.
 
 | Review improvement | Current status |
 | --- | --- |
-| Phase profiling and recovery diagnostics | Implemented, disabled by default; CLI and C API available |
+| Phase profiling and failure diagnostics | Implemented, profiling disabled by default; recovery timing/attempt slots reserved/unmetered |
 | Preserve batching after transient faults | Not implemented: a runtime failure invalidates the card, aborts the host, and refuses replay; later explicit or worker initialization resolves open streams only after a successful stop |
 | Remove initialization-only payload storage | Implemented for payload storage; initialization keeps its single-sector LBA 0 validation, and transfer CRC checks are retained |
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |

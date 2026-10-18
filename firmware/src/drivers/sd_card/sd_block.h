@@ -110,7 +110,7 @@ typedef struct {
 typedef enum {
     /* Inclusive instrumentation windows, NOT exclusive latency phases.
      * DATA includes native TX response/busy and overlapped encode/decode;
-     * STOP includes command/busy, RECOVERY includes initialization windows.
+     * STOP includes command/busy. RECOVERY is reserved/unmetered.
      * Never sum elapsed_us or compare phase values across transports directly.
      * See docs/sdcard-design.md, Profile Measurement Boundaries. ABI preserved. */
     PF_SD_PROFILE_COMMAND = 0,
@@ -118,7 +118,7 @@ typedef enum {
     PF_SD_PROFILE_CRC,
     PF_SD_PROFILE_BUSY,
     PF_SD_PROFILE_STOP,
-    PF_SD_PROFILE_RECOVERY,
+    PF_SD_PROFILE_RECOVERY, /* Reserved, unsupported on SPI and native; ABI slot retained. */
     PF_SD_PROFILE_PHASE_COUNT,
 } pf_sd_profile_phase_t;
 
@@ -126,7 +126,7 @@ typedef enum {
     PF_SD_PROFILE_CRC_FAILURE = 0,
     PF_SD_PROFILE_BATCH_FALLBACK,
     PF_SD_PROFILE_TIMEOUT,
-    PF_SD_PROFILE_RECOVERY_ATTEMPT,
+    PF_SD_PROFILE_RECOVERY_ATTEMPT, /* Reserved, unmetered on both transports. */
     PF_SD_PROFILE_EVENT_COUNT,
 } pf_sd_profile_event_t;
 

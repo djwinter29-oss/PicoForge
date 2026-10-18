@@ -363,6 +363,8 @@ void test_profile_enable_and_snapshot_are_serialized_commands(void)
     pf_sd_get_profile_ExpectAnyArgs();
     pf_sd_get_profile_ReturnThruPtr_profile(&metrics);
     pf_storage_command_execute(NULL, false, "sd", "profile on", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "recovery_us=reserved calls=reserved"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
     TEST_ASSERT_NOT_NULL(strstr(output, "crc_copy_us=1234 calls=8"));
     TEST_ASSERT_NOT_NULL(strstr(output, "timeouts=2"));
 }
@@ -395,6 +397,7 @@ void test_diagnostics_reports_last_failure(void)
     pf_sd_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
 
     pf_storage_command_execute(NULL, true, "sd", "diagnostics", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
 
     TEST_ASSERT_NOT_NULL(strstr(
         output, "sequence=7 operation=write result=io_error owner=USB transport=spi init_stage=9"));
@@ -416,6 +419,7 @@ void test_diagnostics_clear_resets_then_reports(void)
     pf_sd_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
 
     pf_storage_command_execute(NULL, false, "sd", "diagnostics clear", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
 
     TEST_ASSERT_NOT_NULL(strstr(output, "sequence=0 operation=none result=ok"));
 }

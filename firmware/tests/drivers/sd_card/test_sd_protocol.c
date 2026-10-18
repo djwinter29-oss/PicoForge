@@ -332,3 +332,23 @@ void test_rejects_invalid_v1_block_length_and_zero_capacity(void)
     TEST_ASSERT_FALSE(pf_sd_csd_sector_count(csd, &sectors));
     TEST_ASSERT_EQUAL_UINT32(17u, sectors);
 }
+
+void test_reserved_profile_slots_keep_abi_and_zero_snapshots_across_reset(void)
+{
+    TEST_ASSERT_EQUAL_UINT(5, PF_SD_PROFILE_RECOVERY);
+    TEST_ASSERT_EQUAL_UINT(6, PF_SD_PROFILE_PHASE_COUNT);
+    TEST_ASSERT_EQUAL_UINT(3, PF_SD_PROFILE_RECOVERY_ATTEMPT);
+    TEST_ASSERT_EQUAL_UINT(4, PF_SD_PROFILE_EVENT_COUNT);
+    pf_sd_set_profiling_enabled(true);
+    pf_sd_profile_set_clock(profile_clock);
+    pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
+    for (unsigned snapshot = 0; snapshot < 2; ++snapshot) {
+        pf_sd_profile_t metrics;
+        pf_sd_get_profile(&metrics);
+        TEST_ASSERT_EQUAL_UINT64(0, metrics.elapsed_us[PF_SD_PROFILE_RECOVERY]);
+        TEST_ASSERT_EQUAL_UINT(0, metrics.calls[PF_SD_PROFILE_RECOVERY]);
+        TEST_ASSERT_EQUAL_UINT(0, metrics.events[PF_SD_PROFILE_RECOVERY_ATTEMPT]);
+        TEST_ASSERT_EQUAL_UINT(snapshot == 0, metrics.events[PF_SD_PROFILE_TIMEOUT]);
+        pf_sd_reset_profile();
+    }
+}

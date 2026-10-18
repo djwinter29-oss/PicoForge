@@ -40,8 +40,8 @@ CR, LF, and CRLF are accepted.
 | `echo <text>` | Echo text for non-destructive transport checks. |
 | `sd status` | Show card presence, initialization, transport, capacity, clock, mounted state, and Pico/USB ownership. |
 | `sd info` | Read-only diagnostic snapshot: CID identity, OCR/CCS, RCA, CSD/capacity, SCR/version/widths, requested/actual initialization and transfer clocks, timing, detailed error/phase, init attempts/retries, bounded High-Speed fallbacks and persistent CRC/timeout/PIO stall counters. Native details remain available after failure; SPI reports native details unavailable. |
-| `sd profile [status, on, off, reset]` | Show or control optional SD-card phase profiling; changes require Pico ownership. Counters are cumulative and not a total-latency breakdown. |
-| `sd diagnostics [status, clear]` | Show the retained last facade failure, transport initialization stage, owner, and event-counter snapshot. Clearing requires Pico ownership. |
+| `sd profile [status, on, off, reset]` | Show or control optional SD-card phase profiling; changes require Pico ownership. Counters are cumulative and not a total-latency breakdown. Recovery timing/calls and attempts display `reserved` (unmetered for SPI/native); labels and field order are retained. |
+| `sd diagnostics [status, clear]` | Show the retained last facade failure, transport initialization stage, owner, and event-counter snapshot. Recovery attempts display `recoveries=reserved`, not a measured zero. Clearing requires Pico ownership. |
 | `sd recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |

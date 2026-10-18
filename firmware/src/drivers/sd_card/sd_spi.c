@@ -693,7 +693,7 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
             }
             pf_sd_profile_end(PF_SD_PROFILE_STOP, profile_start);
             stopped = deselect_card() && stopped;
-            if (!stopped) {
+            if (!stopped || (read_buffer != NULL && !success)) {
                 card_initialized = false;
             }
             return success && stopped ? PF_SD_OK : PF_SD_IO_ERROR;

@@ -181,18 +181,21 @@ static void profile_command(const char *action, bool host_owned,
     pf_sd_get_profile(&metrics);
     char line[PF_STORAGE_REPLY_SIZE];
     for (unsigned phase = 0u; phase < PF_SD_PROFILE_PHASE_COUNT; ++phase) {
-        (void)snprintf(line, sizeof(line), "%s_us=%llu calls=%lu",
-                       phase_names[phase], (unsigned long long)metrics.elapsed_us[phase],
-                       (unsigned long)metrics.calls[phase]);
+        if (phase == PF_SD_PROFILE_RECOVERY) {
+            (void)snprintf(line, sizeof(line), "recovery_us=reserved calls=reserved");
+        } else {
+            (void)snprintf(line, sizeof(line), "%s_us=%llu calls=%lu",
+                           phase_names[phase], (unsigned long long)metrics.elapsed_us[phase],
+                           (unsigned long)metrics.calls[phase]);
+        }
         if (!reply(line, context)) {
             return;
         }
     }
-    (void)snprintf(line, sizeof(line), "crc_failures=%lu batch_fallbacks=%lu timeouts=%lu recoveries=%lu",
+    (void)snprintf(line, sizeof(line), "crc_failures=%lu batch_fallbacks=%lu timeouts=%lu recoveries=reserved",
                    (unsigned long)metrics.events[PF_SD_PROFILE_CRC_FAILURE],
                    (unsigned long)metrics.events[PF_SD_PROFILE_BATCH_FALLBACK],
-                   (unsigned long)metrics.events[PF_SD_PROFILE_TIMEOUT],
-                   (unsigned long)metrics.events[PF_SD_PROFILE_RECOVERY_ATTEMPT]);
+                   (unsigned long)metrics.events[PF_SD_PROFILE_TIMEOUT]);
     (void)reply(line, context);
 }
 
@@ -239,11 +242,10 @@ static void diagnostics_command(const char *action, bool host_owned,
     }
     (void)snprintf(
         line, sizeof(line),
-        "crc_failures=%lu batch_fallbacks=%lu timeouts=%lu recoveries=%lu",
+        "crc_failures=%lu batch_fallbacks=%lu timeouts=%lu recoveries=reserved",
         (unsigned long)diagnostics.profile.events[PF_SD_PROFILE_CRC_FAILURE],
         (unsigned long)diagnostics.profile.events[PF_SD_PROFILE_BATCH_FALLBACK],
-        (unsigned long)diagnostics.profile.events[PF_SD_PROFILE_TIMEOUT],
-        (unsigned long)diagnostics.profile.events[PF_SD_PROFILE_RECOVERY_ATTEMPT]);
+        (unsigned long)diagnostics.profile.events[PF_SD_PROFILE_TIMEOUT]);
     (void)reply(line, context);
 }
 
