@@ -4,9 +4,9 @@ namespace PicoForge;
 
 internal static class StatusEndpoints
 {
-    public sealed record SetLedRequest(bool On);
+    public sealed record SetLedRequest(bool? On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
-    public sealed record SetMscRequest(bool Enabled);
+    public sealed record SetMscRequest(bool? Enabled);
     /// <summary>Explicit acknowledgement that forced detach may lose data and corrupt the filesystem.</summary>
     public sealed record ForceReturnMscRequest(bool ConfirmDataLoss);
     /// <summary>MSC ownership and asynchronous transition status after command delivery.</summary>
@@ -27,12 +27,16 @@ internal static class StatusEndpoints
             .WithName("SetBoardLed")
             .WithSummary("Set the onboard board LED")
             .Produces<SetLedResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapPost("/api/msc", SetMsc)
             .WithName("SetMscMode")
             .WithSummary("Request USB mass-storage mode")
             .Produces<MscStatusResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapPost("/api/self-test", SetSelfTest)
             .WithName("RequestSdSelfTest")
             .WithSummary("Start or cancel an SD-card file benchmark")
@@ -60,19 +64,35 @@ internal static class StatusEndpoints
 
     private static IResult SetLed(SetLedRequest request, IDeviceMonitor monitor)
     {
-        if (!monitor.SetLed(request.On))
+        if (request.On is not bool on)
+            return Results.Problem(statusCode: 400, title: "Expected JSON with a boolean 'on' field");
+        try
         {
-            return Results.Conflict(new { error = "PicoForge HID is disconnected or the board LED is unavailable" });
+            if (!monitor.SetLed(on))
+                return Results.Conflict(new { error = "PicoForge HID is disconnected or the board LED is unavailable" });
+            return Results.Ok(new SetLedResponse(monitor.Snapshot.BoardStatus));
         }
-        return Results.Ok(new SetLedResponse(monitor.Snapshot.BoardStatus));
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
     }
 
     private static IResult SetMsc(SetMscRequest request, IDeviceMonitor monitor)
     {
-        var status = monitor.SetMsc(request.Enabled);
-        return status is null
-            ? Results.Conflict(new { error = "PicoForge HID is disconnected" })
-            : Results.Ok(status);
+        if (request.Enabled is not bool enabled)
+            return Results.Problem(statusCode: 400, title: "Expected JSON with a boolean 'enabled' field");
+        try
+        {
+            var status = monitor.SetMsc(enabled);
+            return status is null
+                ? Results.Conflict(new { error = "PicoForge HID is disconnected" })
+                : Results.Ok(status);
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
     }
 
     private static Results<Ok<SetMscResponse>, ProblemHttpResult> ForceReturnMsc(

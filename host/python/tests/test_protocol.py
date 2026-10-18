@@ -160,6 +160,15 @@ class ProtocolTests(unittest.TestCase):
             },
         )
 
+    def test_rejects_non_printable_ascii_cid_text(self):
+        for offset in (1, 2, 3, 7):
+            for value in (0x00, 0x1f, 0x7f, 0x80):
+                cid = bytearray(bytes([0x1b]) + b"SD" + b"CARD1" + bytes([0x21]) + bytes(7))
+                cid[offset] = value
+                payload = struct.pack("<BBBBBII", 2, 7, 0x3f, 1, 2, 25_000_000, 4096) + bytes(cid)
+                with self.subTest(offset=offset, value=value), self.assertRaisesRegex(ValueError, "SD CID"):
+                    parse_memory_report(bytes([3]) + payload)
+
     def test_distinguishes_unknown_presence_before_initialization(self):
         payload = struct.pack("<BBBBBII", 2, 0, 0x01, 1, 1, 0, 0) + bytes(16)
         status = parse_memory_report(bytes([3]) + payload)

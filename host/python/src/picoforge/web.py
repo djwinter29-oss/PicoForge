@@ -14,7 +14,8 @@ from .protocol import build_self_test_command_report
 
 def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flask:
     """Create a testable status app; hardware monitoring starts only by default."""
-    root = web_root or Path(__file__).resolve().parents[3] / "web"
+    installed = Path(__file__).with_name("web")  # packaged from host/web; source checkouts use host/web directly
+    root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[3] / "web")
     dashboard = monitor or DeviceMonitor()
     app = Flask(__name__, static_folder=None)
     app.config.update(

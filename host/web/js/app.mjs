@@ -57,13 +57,17 @@ async function setMsc() {
     if (!response.ok) throw new Error(result.error ?? result.title ?? `MSC endpoint returned HTTP ${response.status}`);
     const msc = result.msc ?? result;
     if (typeof msc.enabled !== "boolean") throw new Error("MSC endpoint returned invalid ownership status");
-    currentSnapshot.msc = msc;
-    currentSnapshot.error = null;
-    renderStatus(currentSnapshot);
+    if (currentSnapshot) {
+      currentSnapshot.msc = msc;
+      currentSnapshot.error = null;
+      renderStatus(currentSnapshot);
+    }
   } catch (error) {
     mscError = error.message;
-    currentSnapshot.error = mscError;
-    renderStatus(currentSnapshot);
+    if (currentSnapshot) {
+      currentSnapshot.error = mscError;
+      renderStatus(currentSnapshot);
+    }
   } finally {
     mscRequestInProgress = false;
     mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
@@ -84,11 +88,15 @@ async function setLed() {
     });
     if (!response.ok) throw new Error(`LED endpoint returned HTTP ${response.status}`);
     const result = await response.json();
-    currentSnapshot.board_status = result.board_status;
-    renderStatus(currentSnapshot);
+    if (currentSnapshot) {
+      currentSnapshot.board_status = result.board_status;
+      renderStatus(currentSnapshot);
+    }
   } catch (error) {
-    currentSnapshot.error = error.message;
-    renderStatus(currentSnapshot);
+    if (currentSnapshot) {
+      currentSnapshot.error = error.message;
+      renderStatus(currentSnapshot);
+    }
   } finally {
     ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
   }
@@ -107,9 +115,11 @@ async function selfTest(action) {
     if (!response.ok) throw new Error(`Self-test endpoint returned HTTP ${response.status}`);
   } catch (error) {
     selfTestPendingSequence = null;
-    currentSnapshot.self_test_command_pending = false;
-    currentSnapshot.error = error.message;
-    renderStatus(currentSnapshot);
+    if (currentSnapshot) {
+      currentSnapshot.self_test_command_pending = false;
+      currentSnapshot.error = error.message;
+      renderStatus(currentSnapshot);
+    }
   }
 }
 document.querySelector("#self-test-start").addEventListener("click", () => selfTest("start"));

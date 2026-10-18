@@ -111,17 +111,7 @@ class DeviceMonitor:
                 with self._device_lock:
                     self._active_client = client
                 with self._lock:
-                    self._snapshot = {
-                        "connected": True,
-                        "error": None,
-                        "hardware": hardware,
-                        "runtime": None,
-                        "board_status": None,
-                        "memory": None,
-                        "msc": None,
-                        "self_test": None,
-                        "updated_at": None,
-                    }
+                    self._snapshot = {**_empty_snapshot(), "connected": True, "hardware": hardware}
                 while not self._stop.is_set():
                     with self._device_lock:
                         item = client.read_input_report(timeout_ms=250)

@@ -13,10 +13,8 @@ dependencies = ["Flask==3.1.2", "hidapi==0.15.0"]
 picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
+packages = ["picoforge", "picoforge.web"]
 
 [tool.setuptools.package-data]
-picoforge = ["web/index.html", "web/*.css", "web/*.js"]
+"picoforge.web" = ["index.html", "favicon.svg", "css/*.css", "js/*.mjs"]

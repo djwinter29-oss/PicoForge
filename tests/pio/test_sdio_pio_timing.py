@@ -11,6 +11,7 @@ import glob
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -25,7 +26,7 @@ def assemble(program="data_tx"):
     candidates = sorted(glob.glob(str(ROOT / "build/*/pioasm/pioasm")))
     assembler = os.environ.get("PIOASM") or (candidates[0] if candidates else None)
     assert assembler, "Build firmware first or set PIOASM"
-    with tempfile.TemporaryDirectory(dir=ROOT / "build") as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "program.h"
         subprocess.run([assembler, "-o", "c-sdk", str(PIO), str(out)], check=True)
         text = out.read_text()
@@ -420,3 +421,12 @@ def test_tx_completion_does_not_pull_empty_fifo_before_cpu_disables_sm(programs,
         pc = (pc + 1) % len(ops)
     assert irq
     assert not tx_stall, "Completed TX wrapped to an empty PULL and falsely reported starvation"
+
+
+def test_assemble_does_not_require_build_directory(tmp_path, monkeypatch):
+    fake = tmp_path / "pioasm"
+    fake.write_text('#!/bin/sh\nprintf "pf_sdio_pio_data_tx_program_instructions[] = {\\n0xe000,\\n};\\n" > "$4"\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("PIOASM", str(fake))
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path / "no-build")
+    assert assemble() == [0xe000]

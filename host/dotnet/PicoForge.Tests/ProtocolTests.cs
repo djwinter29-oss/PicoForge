@@ -323,6 +323,44 @@ public sealed class ProtocolTests
         await app.StopAsync();
     }
 
+    [Fact]
+    public async Task LedAndMscEndpointsRequireExplicitBooleansAndMapDeliveryFailures()
+    {
+        var monitor = new SelfTestMonitor();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+        builder.Services.AddSingleton<IDeviceMonitor>(monitor);
+        await using var app = builder.Build();
+        app.MapDeviceStatus();
+        await app.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        foreach (var (path, field) in new[] { ("/api/led", "on"), ("/api/msc", "enabled") })
+        {
+            foreach (var body in new[] { "{}", $"{{\"{field}\":null}}", $"{{\"{field}\":\"true\"}}", $"{{\"{field}\":1}}" })
+            {
+                using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                var bad = await client.PostAsync(path, content);
+                Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+            }
+        }
+        Assert.Null(monitor.LastLed);
+        var response = await client.PostAsJsonAsync("/api/led", new { on = false });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(monitor.LastLed);
+        response = await client.PostAsJsonAsync("/api/msc", new { enabled = false });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        foreach (Exception error in new Exception[] { new IOException(), new TimeoutException(), new UnauthorizedAccessException() })
+        {
+            monitor.ExpectedError = error;
+            response = await client.PostAsJsonAsync("/api/led", new { on = true });
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            response = await client.PostAsJsonAsync("/api/msc", new { enabled = true });
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        }
+        await app.StopAsync();
+    }
+
     private sealed class SelfTestMonitor : IDeviceMonitor
     {
         public bool Available { get; set; } = true;
@@ -333,7 +371,13 @@ public sealed class ProtocolTests
             new RuntimeStatusResponse(0, 42, 250_000_000, true, false,
                 false, null, false, false, 1234, 65536, 532480),
             null, null, null, null);
-        public bool SetLed(bool on) => false;
+        public bool? LastLed { get; private set; }
+        public bool SetLed(bool on)
+        {
+            if (ExpectedError is not null) throw ExpectedError;
+            LastLed = on;
+            return Available;
+        }
         public MscStatusResponse? SetMsc(bool enabled, bool force = false)
         {
             if (ExpectedError is not null) throw ExpectedError;

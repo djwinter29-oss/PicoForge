@@ -439,3 +439,36 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   await client.setSelfTest("cancel");
   assert.deepEqual(firmwareOwnedDevice.lastFeature, { reportId: 6, payload: [2, 0, 0, 0, 0, 0] });
 });
+
+test("every true disconnect clears stale telemetry including self-test state", async () => {
+  const stale = {
+    hardware: {}, runtime: {}, board_status: {}, memory: {}, filesystem_format: "fat32", msc: {},
+    self_test: { active: true }, self_test_command_pending: true, updated_at: "now",
+  };
+  const cleared = Object.fromEntries(Object.keys(stale).map(key => [key, key === "self_test_command_pending" ? false : null]));
+  const newClient = (hid = new EventTarget()) => {
+    const client = new PicoForgeWebHid(hid);
+    client.update(stale);
+    return client;
+  };
+  const device = { opened: true, removeEventListener() {}, addEventListener() {}, async close() {} };
+  const expectCleared = client => assert.deepEqual(
+    Object.fromEntries(Object.keys(stale).map(key => [key, client.state[key]])), cleared);
+
+  let client = newClient();
+  client.device = device;
+  client.onDisconnect({ device });
+  expectCleared(client);
+
+  client = newClient();
+  client.device = device;
+  client.reconnectSerial = "0123456789abcdef";
+  await client.disconnect();
+  expectCleared(client);
+
+  const hid = new EventTarget();
+  hid.getDevices = async () => { throw new Error("denied"); };
+  client = newClient(hid);
+  await client.connect();
+  expectCleared(client);
+});

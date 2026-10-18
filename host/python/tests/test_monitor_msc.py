@@ -3,7 +3,7 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from picoforge.monitor import DeviceMonitor
+from picoforge.monitor import DeviceMonitor, _empty_snapshot
 
 
 class MonitorMscTests(unittest.TestCase):
@@ -42,3 +42,23 @@ class MonitorMscTests(unittest.TestCase):
     def test_enable_keeps_existing_command(self):
         self.monitor.set_msc(True)
         self.monitor._active_client.set_msc.assert_called_once_with(True)
+
+
+class MonitorReconnectTests(unittest.TestCase):
+    def test_reconnect_snapshot_keeps_stable_api_shape(self):
+        monitor = DeviceMonitor.__new__(DeviceMonitor)
+        monitor._device_lock = threading.RLock()
+        monitor._lock = threading.RLock()
+        monitor._active_client = None
+        monitor._stop = threading.Event()
+        client = Mock()
+        client.read_info.return_value = {"product_name": "PicoForge"}
+        client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
+        monitor._client_factory = lambda: client
+        monitor._snapshot = {}
+        monitor._run()
+        snapshot = monitor.snapshot()
+        self.assertTrue(snapshot["connected"])
+        self.assertIn("filesystem_format", snapshot)
+        self.assertIsNone(snapshot["filesystem_format"])
+        self.assertEqual(set(snapshot), set(_empty_snapshot()))

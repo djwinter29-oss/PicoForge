@@ -204,7 +204,7 @@ Ceedling is configured by the repository-root `project.yml`. Host unit tests bel
 host-testable application, board, driver, integration and middleware modules. The configuration excludes `main.c`;
 board tests use scoped SDK fakes.
 
-`host/python/tests/`, `host/dotnet/tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
+`host/python/tests/`, `host/dotnet/PicoForge.Tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 
 Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow.
 The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support constructs the

@@ -55,7 +55,7 @@ Usage: tools/firmware/build.sh [options]
 
 Options:
   --board NAME       Pico SDK board (default: pico)
-  --build-dir PATH   Build directory (default: build/firmware-NAME)
+  --build-dir PATH   Build directory (default: build/firmware-NAME, -baremetal suffix for BAREMETAL)
     --generator NAME  CMake generator (default: Ninja when available)
   --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel

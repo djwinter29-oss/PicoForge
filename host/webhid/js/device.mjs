@@ -286,6 +286,11 @@ export function matchesPicoForge(device) {
       && collection.usage === DEVICE_FILTER.usage);
 }
 
+const NO_TELEMETRY = {
+  hardware: null, runtime: null, board_status: null, memory: null, filesystem_format: null, msc: null,
+  self_test: null, self_test_command_pending: false, updated_at: null,
+};
+
 export class PicoForgeWebHid {
   constructor(hid, onChange = () => {}) {
     this.hid = hid;
@@ -339,11 +344,10 @@ export class PicoForgeWebHid {
       event.device.removeEventListener("inputreport", this.onInputReport);
       this.device = null;
       if (this.reconnectSerial) {
-        this.update({ connected: false, reconnecting: true, busy: false,
-          filesystem_format: null, error: null });
+        this.update({ connected: false, reconnecting: true, busy: false, filesystem_format: null,
+          self_test: null, self_test_command_pending: false, error: null });
       } else {
-        this.update({ connected: false, reconnecting: false, hardware: null, runtime: null,
-          board_status: null, memory: null, filesystem_format: null, updated_at: null, msc: null, busy: false,
+        this.update({ connected: false, reconnecting: false, busy: false, ...NO_TELEMETRY,
           error: "Device disconnected" });
       }
     };
@@ -382,8 +386,7 @@ export class PicoForgeWebHid {
       }
       await this.attachDevice(selected);
     } catch (error) {
-      this.update({ connected: false, busy: false, reconnecting: false, error: error.message,
-        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
+      this.update({ connected: false, busy: false, reconnecting: false, error: error.message, ...NO_TELEMETRY });
     }
   }
 
@@ -404,7 +407,7 @@ export class PicoForgeWebHid {
         try { await selected.close(); } catch { }
       }
       if (this.device === selected) this.device = null;
-      this.update({ connected: false, busy: false, reconnecting: false, error: error.message });
+      this.update({ connected: false, busy: false, reconnecting: false, error: error.message, ...NO_TELEMETRY });
     }
   }
 
@@ -449,8 +452,7 @@ export class PicoForgeWebHid {
       if (device.opened) await device.close();
       this.device = null;
       this.reconnectSerial = null;
-      this.update({ connected: false, busy: false, reconnecting: false, error: null,
-        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
+      this.update({ connected: false, busy: false, reconnecting: false, error: null, ...NO_TELEMETRY });
     } catch (error) {
       this.reconnectSerial = reconnectSerial;
       device.addEventListener("inputreport", this.onInputReport);

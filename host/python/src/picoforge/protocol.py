@@ -160,11 +160,11 @@ def parse_memory_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         raise ValueError("invalid memory metadata values")
     manufacturer = None
     if cid_valid:
-        try:
-            oem = cid[1:3].decode("ascii")
-            product = cid[3:8].decode("ascii")
-        except UnicodeDecodeError as error:
-            raise ValueError("invalid text in SD CID") from error
+        text = cid[1:8]
+        if any(not 0x20 <= byte <= 0x7e for byte in text):
+            raise ValueError("invalid text in SD CID")
+        oem = text[:2].decode("ascii")
+        product = text[2:].decode("ascii")
         revision = cid[8]
         manufacturing_date = ((cid[13] & 0x0f) << 8) | cid[14]
         manufacturer = {
