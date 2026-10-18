@@ -244,8 +244,8 @@ def build_self_test_command_report(action: str, size_mib: int = 32) -> bytes:
         raise ValueError("Self-test action must be start or cancel")
     if action == "cancel":
         size_mib = 0
-    elif not isinstance(size_mib, int) or isinstance(size_mib, bool) or not 1 <= size_mib <= 128:
-        raise ValueError("Self-test size must be an integer from 1 to 128 MiB")
+    elif not isinstance(size_mib, int) or isinstance(size_mib, bool) or not 1 <= size_mib <= 1024:
+        raise ValueError("Self-test size must be an integer from 1 to 1024 MiB")
     return bytes((SELF_TEST_REPORT_ID, REPORT_VERSION, int(action == "start"))) + struct.pack("<I", size_mib)
 
 
@@ -256,7 +256,7 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> dict[str, o
     )
     if (version != REPORT_VERSION or state > 8 or flags & ~3 or reserved
         or error > 11 or request_error > 11 or fs_result > 19
-        or target > 128 * 1024 * 1024 or written > target or read > written
+        or target > 1024 * 1024 * 1024 or written > target or read > written
         or (state == 6 and (not target or written != target or read != target or mismatches or error or flags & 1))):
         raise ValueError("Invalid HID self-test report")
     names = ("idle", "queued", "mounting", "writing", "reading", "cleanup", "passed", "failed", "cancelled")

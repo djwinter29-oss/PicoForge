@@ -117,7 +117,7 @@ typedef struct __attribute__((packed)) {
     uint8_t request_rejected; /**< Request or forced remount failed; inspect enabled and logs. */
 } pf_hid_msc_status_report_t;
 
-/** Start (action=1, size_mib=1..128) or cancel (action=0, size_mib=0). */
+/** Start (action=1, size_mib=1..1024) or cancel (action=0, size_mib=0). */
 typedef struct __attribute__((packed)) {
     uint8_t version;
     uint8_t action;

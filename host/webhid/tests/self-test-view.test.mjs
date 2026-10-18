@@ -20,7 +20,10 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
     try {
       render(snapshot);
       assert.equal(element("#self-test-start").disabled, false);
-      for (const invalid of [0, 129, 1.5, NaN]) {
+      element("#self-test-size").valueAsNumber = 1024;
+      render(snapshot);
+      assert.equal(element("#self-test-start").disabled, false);
+      for (const invalid of [0, 1025, 1.5, NaN]) {
         element("#self-test-size").valueAsNumber = invalid;
         render(snapshot);
         assert.equal(element("#self-test-start").disabled, true);

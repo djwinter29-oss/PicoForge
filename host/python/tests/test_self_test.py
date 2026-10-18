@@ -8,9 +8,22 @@ class SelfTestProtocolTests(unittest.TestCase):
     def test_encodes_start_and_cancel(self):
         self.assertEqual(build_self_test_command_report("start", 32), bytes([6, 2, 1, 32, 0, 0, 0]))
         self.assertEqual(build_self_test_command_report("cancel"), bytes([6, 2, 0, 0, 0, 0, 0]))
-        for size in (0, 129, True, 32.5):
+        self.assertEqual(build_self_test_command_report("start", 1024), bytes([6, 2, 1, 0, 4, 0, 0]))
+        for size in (0, 1025, True, 32.5):
             with self.assertRaises(ValueError):
                 build_self_test_command_report("start", size)
+
+    def test_one_gib_completion_decodes_without_overflow_and_larger_target_is_rejected(self):
+        size = 1024 * 1024 * 1024
+        report = bytes([6]) + struct.pack("<BBBBIIIIIIBBBB", 2, 7, 6, 2,
+            size, size, size, 16000, 8000, 0, 0, 0, 0, 0)
+        status = parse_self_test_report(report)
+        self.assertEqual(status["target_bytes"], 1073741824)
+        self.assertEqual(status["progress_percent"], 100)
+        invalid = bytearray(report)
+        struct.pack_into("<I", invalid, 5, size + 1)
+        with self.assertRaises(ValueError):
+            parse_self_test_report(invalid)
 
     def test_decodes_progress_and_average_speeds(self):
         report = bytes([6]) + struct.pack("<BBBBIIIIIIBBBB", 2, 7, 6, 2,

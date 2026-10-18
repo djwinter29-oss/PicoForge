@@ -144,7 +144,7 @@ export function renderSelfTest(snapshot) {
   const mounted = ["fat12", "fat16", "fat32", "exfat"].includes(snapshot.filesystem_format);
   const ready = snapshot.connected && snapshot.memory?.initialized && mounted && status && !snapshot.msc?.enabled;
   const size = document.querySelector("#self-test-size");
-  const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 128;
+  const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 1024;
   document.querySelector("#self-test-start").disabled = !ready || status.active || pending || Boolean(snapshot.busy)
     || !validSize || Boolean(snapshot.msc?.transition_pending);
   document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup" || pending || Boolean(snapshot.busy);

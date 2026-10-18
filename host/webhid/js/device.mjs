@@ -220,8 +220,8 @@ export function boardStatusFromRuntime(runtime) {
 export function buildSelfTestCommand(action, sizeMiB = 32) {
   if (action !== "start" && action !== "cancel") throw new Error("Self-test action must be start or cancel");
   if (action === "cancel") sizeMiB = 0;
-  else if (!Number.isInteger(sizeMiB) || sizeMiB < 1 || sizeMiB > 128) {
-    throw new Error("Self-test size must be an integer from 1 to 128 MiB");
+  else if (!Number.isInteger(sizeMiB) || sizeMiB < 1 || sizeMiB > 1024) {
+    throw new Error("Self-test size must be an integer from 1 to 1024 MiB");
   }
   const command = new Uint8Array(6);
   command[0] = 2;
@@ -245,7 +245,7 @@ export function decodeSelfTestReport(report) {
   const mismatches = payload.getUint32(24, true);
   if (payload.getUint8(0) !== 2 || state > 8 || flags & ~3 || payload.getUint8(31)
     || error > 11 || requestError > 11 || filesystemResult > 19
-    || target > 128 * 1024 * 1024 || written > target || read > written
+    || target > 1024 * 1024 * 1024 || written > target || read > written
     || (state === 6 && (!target || written !== target || read !== target || mismatches || error || flags & 1))) {
     throw new Error("Invalid HID self-test report");
   }

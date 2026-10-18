@@ -220,7 +220,8 @@ public sealed class ProtocolTests
     {
         Assert.Equal(new byte[] { 6, 2, 1, 32, 0, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("start", 32));
         Assert.Equal(new byte[] { 6, 2, 0, 0, 0, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("cancel"));
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.BuildSelfTestCommandReport("start", 129));
+        Assert.Equal(new byte[] { 6, 2, 1, 0, 4, 0, 0 }, HidProtocol.BuildSelfTestCommandReport("start", 1024));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.BuildSelfTestCommandReport("start", 1025));
         var report = new byte[33];
         report[0] = 6;
         report[1] = 2;
@@ -235,6 +236,13 @@ public sealed class ProtocolTests
         Assert.Equal(2097152d, status.WriteBytesPerSecond!.Value);
         Assert.Equal(4194304d, status.ReadBytesPerSecond!.Value);
         Assert.True(status.VolumeMounted);
+        foreach (var offset in new[] { 5, 9, 13 })
+            BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(offset), 1073741824);
+        Assert.Equal(1073741824u, HidProtocol.ParseSelfTestReport(report).TargetBytes);
+        Assert.Equal(100d, HidProtocol.ParseSelfTestReport(report).ProgressPercent);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(5), 1073741825);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(5), 1073741824);
         report[4] = 3;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
         report[4] = 2;
@@ -280,7 +288,10 @@ public sealed class ProtocolTests
         var response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 16 });
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(("start", 16u), monitor.LastCommand);
-        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 129 });
+        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 1024 });
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(("start", 1024u), monitor.LastCommand);
+        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 1025 });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         monitor.Available = false;
         forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });

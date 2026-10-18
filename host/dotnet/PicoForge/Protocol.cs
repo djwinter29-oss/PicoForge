@@ -230,7 +230,7 @@ internal static class HidProtocol
     {
         Require(action is "start" or "cancel", "self-test action must be start or cancel");
         if (action == "cancel") sizeMib = 0;
-        else Require(sizeMib is >= 1 and <= 128, "self-test size must be 1..128 MiB");
+        else Require(sizeMib is >= 1 and <= 1024, "self-test size must be 1..1024 MiB");
         var command = new byte[7];
         command[0] = SelfTestReportId;
         command[1] = ReportVersion;
@@ -250,7 +250,7 @@ internal static class HidProtocol
         var mismatches = ReadUInt32LittleEndian(payload[24..]);
         Require(payload[0] == ReportVersion && state <= 8 && (flags & ~3) == 0 && payload[31] == 0
                 && payload[28] <= 11 && payload[29] <= 19 && payload[30] <= 11
-                && target <= 128u * 1024u * 1024u && written <= target && read <= written
+                && target <= 1024u * 1024u * 1024u && written <= target && read <= written
                 && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0 && (flags & 1) == 0 && payload[28] == 0)),
             "invalid HID self-test report");
         var name = state switch

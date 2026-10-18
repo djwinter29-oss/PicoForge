@@ -11,7 +11,7 @@ internal static class StatusEndpoints
     public sealed record ForceReturnMscRequest(bool ConfirmDataLoss);
     /// <summary>MSC ownership and asynchronous transition status after command delivery.</summary>
     public sealed record SetMscResponse(MscStatusResponse Msc);
-    /// <summary>Start a 1..128 MiB temporary-file test or request cancellation.</summary>
+    /// <summary>Start a 1..1024 MiB temporary-file test or request cancellation.</summary>
     public sealed record SetSelfTestRequest(string Action, uint SizeMib = 32);
     /// <summary>Command delivery acknowledgement; completion comes from HID telemetry.</summary>
     public sealed record SelfTestAcceptedResponse(bool Accepted);
@@ -99,8 +99,8 @@ internal static class StatusEndpoints
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (request.Action is not ("start" or "cancel") ||
-            (request.Action == "start" && request.SizeMib is not (>= 1 and <= 128)))
-            return TypedResults.Problem(statusCode: 400, title: "Expected start/cancel and a size from 1 to 128 MiB");
+            (request.Action == "start" && request.SizeMib is not (>= 1 and <= 1024)))
+            return TypedResults.Problem(statusCode: 400, title: "Expected start/cancel and a size from 1 to 1024 MiB");
         try
         {
             if (!monitor.SetSelfTest(request.Action, request.SizeMib))

@@ -17,7 +17,10 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
 2. Ensure the filesystem is mounted; use `fs mount` if it is not already mounted.
 3. Open one dashboard and connect to its vendor HID interface.
-4. Choose an integer file size from 1 to 128 MiB; the default is 32 MiB.
+4. Choose an integer file size from 1 to 1024 MiB; the default is 32 MiB.
+   The test streams through its fixed buffer, not a file-sized RAM allocation. Larger tests take longer and
+   write more data; sufficient free space and (when enabled) contiguous preallocation are still required.
+   Update firmware and host software together to use sizes above the previous 128 MiB limit.
 5. Select **Start self-test**. This authorizes writes and replacement of `/PFTEST.BIN`; no checkbox is required.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and
    does not make ownership available until the worker finishes.

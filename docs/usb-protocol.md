@@ -177,7 +177,7 @@ status fields; normal HID enable/disable semantics are unchanged.
 
 Feature Report 6 starts or cancels the [SD file self-test](sd-self-test.md).
 Its payload is exactly 6 bytes: version `2` (byte 0), action (byte 1: `1` start,
-`0` cancel), and little-endian size in MiB (bytes 2..5). Start accepts 1..128;
+`0` cancel), and little-endian size in MiB (bytes 2..5). Start accepts 1..1024;
 Cancel requires size zero. Firmware rejects an unavailable card, USB ownership,
 an unmounted filesystem, invalid size, pending storage work, or an unavailable
 card reservation. An existing mounted filesystem is required.

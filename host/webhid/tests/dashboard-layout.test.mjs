@@ -40,6 +40,7 @@ for (const name of ["web", "webhid"]) {
     assert.match(selfTest, /id="msc-note" role="status" hidden><\/p>/);
     assert.match(selfTest, /Writes and verifies \/PFTEST.BIN, replacing any existing file at that path/);
     assert.match(selfTest, /id="self-test-start"/);
+    assert.match(selfTest, /id="self-test-size"[^>]*max="1024"/);
     if (name === "webhid") {
       assert.match(html, /id="connect"/);
       assert.match(html, /id="disconnect"/);

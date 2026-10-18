@@ -10,7 +10,7 @@
 /** Reserved file replaced by each accepted benchmark. */
 #define PF_FILE_BENCHMARK_PATH "0:/PFTEST.BIN"
 /** Maximum requested benchmark size in MiB. */
-#define PF_FILE_BENCHMARK_MAX_MIB 128u
+#define PF_FILE_BENCHMARK_MAX_MIB 1024u
 /** Static aligned transfer buffer size in bytes. */
 #define PF_FILE_BENCHMARK_BUFFER_SIZE 32768u
 
@@ -82,7 +82,7 @@ typedef uint32_t (*pf_file_benchmark_clock_t)(void *context);
  */
 typedef bool (*pf_file_benchmark_update_t)(const pf_file_benchmark_status_t *status, void *context);
 
-/** Write and verify a 1..128 MiB dedicated file from the sole storage task.
+/** Write and verify a 1..1024 MiB dedicated file from the sole storage task.
  * Requires a mounted volume and firmware ownership (enforced by caller).
  * Deletes an existing PFTEST.BIN before checking space and creating a fresh file.
  * Refuses directories and stops on inspection/deletion errors. Owns one static 32 KiB

@@ -18,7 +18,22 @@ import {
 test("self-test start/cancel commands validate size and encode HID payloads", () => {
   assert.deepEqual([...buildSelfTestCommand("start", 32)], [2, 1, 32, 0, 0, 0]);
   assert.deepEqual([...buildSelfTestCommand("cancel")], [2, 0, 0, 0, 0, 0]);
-  for (const size of [0, 129, 1.5, NaN]) assert.throws(() => buildSelfTestCommand("start", size));
+  assert.deepEqual([...buildSelfTestCommand("start", 1024)], [2, 1, 0, 4, 0, 0]);
+  for (const size of [0, 1025, 1.5, NaN]) assert.throws(() => buildSelfTestCommand("start", size));
+});
+
+test("one GiB self-test completion decodes exactly and rejects oversized telemetry", () => {
+  const report = new Uint8Array(32);
+  const view = new DataView(report.buffer);
+  report[0] = 2;
+  report[2] = 6;
+  report[3] = 2;
+  for (const offset of [4, 8, 12]) view.setUint32(offset, 1073741824, true);
+  const status = decodeSelfTestReport(view);
+  assert.equal(status.target_bytes, 1073741824);
+  assert.equal(status.progress_percent, 100);
+  view.setUint32(4, 1073741825, true);
+  assert.throws(() => decodeSelfTestReport(view), /Invalid/);
 });
 
 test("self-test telemetry decodes progress, speeds, and cleanup flags", () => {

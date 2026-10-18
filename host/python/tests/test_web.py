@@ -145,7 +145,11 @@ class WebTests(unittest.TestCase):
         response = client.post("/api/self-test", json={"action": "start", "size_mib": 32}, base_url="http://127.0.0.1")
         self.assertEqual(response.status_code, 202)
         self.assertEqual(monitor.last_self_test, ("start", 32))
-        for payload in ({"action": "start", "size_mib": True}, {"action": "start", "size_mib": 129}, {"action": "invalid"}):
+        response = client.post("/api/self-test", json={"action": "start", "size_mib": 1024},
+                               base_url="http://127.0.0.1")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(monitor.last_self_test, ("start", 1024))
+        for payload in ({"action": "start", "size_mib": True}, {"action": "start", "size_mib": 1025}, {"action": "invalid"}):
             response = client.post("/api/self-test", json=payload, base_url="http://127.0.0.1")
             self.assertEqual(response.status_code, 400)
 

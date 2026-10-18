@@ -248,6 +248,33 @@ void test_file_benchmark_rejects_invalid_size(void)
 {
     pf_file_benchmark_run(0u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SIZE, final_status.error);
+    pf_file_benchmark_run(1025u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SIZE, final_status.error);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.target_bytes);
+}
+
+void test_one_gib_target_is_exact_and_cancel_still_syncs_closes_and_cleans_up(void)
+{
+    available_clusters = 300000u;
+    prepare();
+    cancel_write = true;
+    pf_file_benchmark_run(1024u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_CANCELLED, final_status.state);
+    TEST_ASSERT_EQUAL_UINT32(1073741824u, final_status.target_bytes);
+    TEST_ASSERT_EQUAL_UINT32(PF_FILE_BENCHMARK_BUFFER_SIZE, final_status.written_bytes);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.read_bytes);
+    TEST_ASSERT_EQUAL_UINT(1u, close_calls);
+    TEST_ASSERT_EQUAL_UINT(1u, unlink_calls);
+}
+
+void test_one_gib_target_still_requires_sufficient_free_space(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_getfree_StubWithCallback(get_free);
+    pf_file_benchmark_run(1024u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SPACE, final_status.error);
+    TEST_ASSERT_EQUAL_UINT32(1073741824u, final_status.target_bytes);
+    TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
 }
 
 void test_file_benchmark_reuses_existing_mount_and_leaves_it_mounted(void)
