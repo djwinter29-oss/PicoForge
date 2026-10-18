@@ -130,7 +130,14 @@ MSC is disabled at boot. Enabling requires initialized selected SD or NOR media 
 or replies. If firmware has mounted the filesystem, enabling queues an unmount on the sole storage worker and keeps
 the transition pending until it completes. Successful unmount pauses automount before USB ownership acquisition;
 failed unmount rejects the request and leaves firmware ownership intact. No formatting occurs.
-Both enable and disable requests are rejected while unrelated storage work or its replies are pending. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
+Both enable and disable requests are rejected while unrelated storage work or its replies are pending.
+The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string,
+and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects
+the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration.
+While the host owns the card, firmware block I/O returns not-ready. The legacy layout-2 disable request requires
+host eject and permission to remove media. The confirmed dashboard Disable flow below does not require host eject.
+The device re-enumerates without MSC and firmware regains storage ownership. Do not unplug the card or reset
+the device while the host is writing.
 
 The layout-2 safe-disable command and `POST /api/msc` with `{"enabled":false}` remain available for clients that
 manually eject first. Host apps do not invoke OS unmount/eject tools. The dashboard Disable button uses the
