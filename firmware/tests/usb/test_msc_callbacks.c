@@ -10,7 +10,7 @@ static bool pf_fatfs_volume_is_mounted(void);
 static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
-static bool pf_storage_worker_recover_card(void);
+static bool pf_storage_worker_recover_media(void);
 #include "../../src/usb/msc.c"
 static bool initialized=true, worker_busy, mounted;
 static unsigned locks, syncs, sense, asc;
@@ -21,7 +21,7 @@ static bool pf_fatfs_volume_is_mounted(void) { return mounted; }
 static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
 static bool pf_storage_worker_media_absent(void) { return false; }
-static bool pf_storage_worker_recover_card(void) { return false; }
+static bool pf_storage_worker_recover_media(void) { return false; }
 bool pf_sd_try_lock(void) { ++locks; return true; }
 void pf_sd_lock(void) { ++locks; }
 void pf_sd_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }

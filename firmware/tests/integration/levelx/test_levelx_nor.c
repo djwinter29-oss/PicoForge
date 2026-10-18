@@ -4,6 +4,16 @@ TEST_INCLUDE_PATH("firmware/src/integration/levelx")
 TEST_INCLUDE_PATH("firmware/third_party/levelx/common/inc")
 
 #include "levelx_nor.h"
+#include "middleware/storage/levelx_block_device.h"
+#include "middleware/storage/block_device.h"
+#include "middleware/storage/fatfs_disk.h"
+#include "ff.h"
+
+/* Scope the real filesystem engine to this integration test, not all tests including ff.h. */
+#define FATFS_SOURCE "../../../third_party/fatfs/source/ff.c"
+#define FATFS_UNICODE_SOURCE "../../../third_party/fatfs/source/ffunicode.c"
+#include FATFS_SOURCE
+#include FATFS_UNICODE_SOURCE
 
 TEST_SOURCE_FILE("lx_nor_flash_initialize.c")
 TEST_SOURCE_FILE("lx_nor_flash_open_extended.c")
@@ -24,7 +34,7 @@ TEST_SOURCE_FILE("lx_nor_flash_partial_defragment.c")
 
 #include <string.h>
 
-#define BLOCKS 12u
+#define BLOCKS 14u
 static uint8_t memory[BLOCKS * 4096u];
 static pf_nor_t flash;
 static pf_levelx_nor_t volume;
@@ -105,7 +115,7 @@ void tearDown(void)
 static void open_volume(void)
 {
     TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_open(&volume, &flash, 4096u, (BLOCKS - 2u) * 4096u));
-    TEST_ASSERT_EQUAL_UINT32(56u, volume.sector_count);
+    TEST_ASSERT_EQUAL_UINT32(70u, volume.sector_count);
 }
 
 void test_real_levelx_rewrites_and_reopens_with_unaligned_buffers(void)
@@ -215,4 +225,53 @@ void test_interrupted_sector_updates_recover_without_losing_cold_sector(void)
         TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_close(&volume));
     }
     TEST_ASSERT_GREATER_THAN_UINT32(0u, interrupted);
+}
+
+void test_real_fatfs_creates_syncs_and_reopens_a_file_over_levelx(void)
+{
+    open_volume();
+    /* Tiny FAT12 superfloppy exists only in this simulated, bounds-checked flash. */
+    uint8_t sector[512] = {0};
+    sector[0] = 0xebu; sector[1] = 0x3cu; sector[2] = 0x90u;
+    memcpy(sector + 3u, "MSDOS5.0", 8u);
+    sector[11] = 0u; sector[12] = 2u;
+    sector[13] = 1u; sector[14] = 1u; sector[16] = 1u; sector[17] = 16u;
+    sector[19] = (uint8_t)volume.sector_count; sector[21] = 0xf8u; sector[22] = 1u;
+    memcpy(sector + 54u, "FAT12   ", 8u);
+    sector[510] = 0x55u; sector[511] = 0xaau;
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, 0u, sector));
+    memset(sector, 0, sizeof(sector));
+    sector[0] = 0xf8u; sector[1] = sector[2] = 0xffu;
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, 1u, sector));
+    memset(sector, 0, sizeof(sector));
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_write(&volume, 2u, sector));
+
+    pf_block_device_t device = pf_levelx_block_device(&volume);
+    pf_fatfs_disk_bind(&device);
+    FATFS filesystem;
+    FIL file;
+    UINT transferred;
+    uint8_t input[700], output[700];
+    memset(input, 0x5a, sizeof(input));
+    TEST_ASSERT_EQUAL(FR_OK, f_mount(&filesystem, "0:", 1u));
+    TEST_ASSERT_EQUAL(FS_FAT12, filesystem.fs_type);
+    TEST_ASSERT_EQUAL(FR_OK, f_open(&file, "0:/NOR.BIN", FA_CREATE_NEW | FA_WRITE));
+    TEST_ASSERT_EQUAL(FR_OK, f_write(&file, input, sizeof(input), &transferred));
+    TEST_ASSERT_EQUAL_UINT(sizeof(input), transferred);
+    TEST_ASSERT_EQUAL(FR_OK, f_sync(&file));
+    TEST_ASSERT_EQUAL(FR_OK, f_close(&file));
+    TEST_ASSERT_EQUAL(FR_OK, f_mount(NULL, "0:", 0u));
+    pf_fatfs_disk_bind(NULL);
+    TEST_ASSERT_EQUAL(LX_SUCCESS, pf_levelx_nor_close(&volume));
+    open_volume();
+    pf_fatfs_disk_bind(&device);
+    TEST_ASSERT_EQUAL(FR_OK, f_mount(&filesystem, "0:", 1u));
+    TEST_ASSERT_EQUAL(FR_OK, f_open(&file, "0:/NOR.BIN", FA_READ));
+    TEST_ASSERT_EQUAL(FR_OK, f_read(&file, output, sizeof(output), &transferred));
+    TEST_ASSERT_EQUAL_UINT(sizeof(output), transferred);
+    TEST_ASSERT_EQUAL_MEMORY(input, output, sizeof(input));
+    TEST_ASSERT_EQUAL(FR_OK, f_close(&file));
+    TEST_ASSERT_EQUAL(FR_OK, f_unlink("0:/NOR.BIN"));
+    TEST_ASSERT_EQUAL(FR_OK, f_mount(NULL, "0:", 0u));
+    pf_fatfs_disk_bind(NULL);
 }

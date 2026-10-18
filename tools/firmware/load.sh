@@ -12,6 +12,10 @@ GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
+STORAGE_BACKEND="${PF_STORAGE_BACKEND:-SD}"
+NOR_TRANSPORT="${PF_NOR_TRANSPORT:-SPI}"
+NOR_REGION_OFFSET="${PF_NOR_REGION_OFFSET:-}"
+NOR_REGION_SIZE="${PF_NOR_REGION_SIZE:-}"
 SKIP_BUILD=0
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
@@ -33,6 +37,10 @@ Options:
 --pico-sdk-path PATH         Override Pico SDK path
 --freertos-kernel-path PATH  Override FreeRTOS-Kernel path
 --sd-card-transport NAME     SDIO_PIO or SPI (default: SDIO_PIO)
+--storage-backend NAME       SD (default) or NOR application
+--nor-transport NAME         NOR application transport: SPI or QSPI_PIO
+--nor-region-offset BYTES    Reserved external LevelX offset; required when building NOR
+--nor-region-size BYTES      Reserved external LevelX size; required when building NOR
 --skip-build                 Flash an existing ELF without building
 --firmware-version VERSION   Firmware version for builds (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
 --help                       Show this help
@@ -85,6 +93,22 @@ while [ "$#" -gt 0 ]; do
             SD_CARD_TRANSPORT="$2"
             shift 2
             ;;
+        --storage-backend)
+            STORAGE_BACKEND="$2"
+            shift 2
+            ;;
+        --nor-transport)
+            NOR_TRANSPORT="$2"
+            shift 2
+            ;;
+        --nor-region-offset)
+            NOR_REGION_OFFSET="$2"
+            shift 2
+            ;;
+        --nor-region-size)
+            NOR_REGION_SIZE="$2"
+            shift 2
+            ;;
         --skip-build)
             SKIP_BUILD=1
             shift
@@ -105,18 +129,34 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+case "$STORAGE_BACKEND" in
+    SD|NOR) ;;
+    *) echo "--storage-backend must be SD or NOR" >&2; exit 2 ;;
+esac
+case "$NOR_TRANSPORT" in
+    SPI|QSPI_PIO) ;;
+    *) echo "--nor-transport must be SPI or QSPI_PIO" >&2; exit 2 ;;
+esac
+
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 if [ -z "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD"
+    if [ "$STORAGE_BACKEND" = NOR ]; then
+        BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-NOR-$NOR_TRANSPORT"
+    fi
 elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     set -- "$SCRIPT_DIR/build.sh" --board "$BOARD" --build-dir "$BUILD_DIR" \
-        --firmware-version "$FIRMWARE_VERSION"
+        --firmware-version "$FIRMWARE_VERSION" --storage-backend "$STORAGE_BACKEND"
+    if [ "$STORAGE_BACKEND" = NOR ]; then
+        set -- "$@" --nor-transport "$NOR_TRANSPORT" \
+            --nor-region-offset "$NOR_REGION_OFFSET" --nor-region-size "$NOR_REGION_SIZE"
+    fi
     if [ -n "$GENERATOR" ]; then
         set -- "$@" --generator "$GENERATOR"
     fi
@@ -131,6 +171,12 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 if [ -z "$ELF_PATH" ]; then
+    if [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
+       grep -q '^PF_STORAGE_BACKEND:STRING=' "$BUILD_DIR/CMakeCache.txt" &&
+       ! grep -q "^PF_STORAGE_BACKEND:STRING=$STORAGE_BACKEND\$" "$BUILD_DIR/CMakeCache.txt"; then
+        echo "The selected build uses a different storage backend; pass the matching --storage-backend." >&2
+        exit 1
+    fi
     if [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
        grep -q '^PF_SD_CARD_PORT:STRING=BAREMETAL$' "$BUILD_DIR/CMakeCache.txt"; then
         echo "The selected build uses the bare-metal driver smoke target, not pf_hello_world." >&2

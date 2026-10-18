@@ -1,10 +1,14 @@
+/** @file
+ * @brief Application storage command execution; mounting selects the configured media backend.
+ */
 #ifndef PF_STORAGE_COMMANDS_H
 #define PF_STORAGE_COMMANDS_H
 
-#include "middleware/storage/fatfs_volume.h"
-#include "drivers/sd_card/sd.h"
+#include <stdbool.h>
 
+/** Maximum command argument storage, including tokenizer terminators. */
 #define PF_STORAGE_COMMAND_ARGS_SIZE 128u
+/** Maximum reply storage, including the terminator. */
 #define PF_STORAGE_REPLY_SIZE 256u
 
 /** Emit a line synchronously. Return false to cancel further read-only output. */
@@ -16,8 +20,7 @@ typedef bool (*pf_storage_reply_t)(const char *line, void *context);
  * their files even if the output callback stops accepting replies. No format
  * or overwrite operation is provided. Paths must be absolute on volume 0.
  */
-void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
-                                const char *family, const char *arguments,
-                                pf_storage_reply_t reply, void *context);
+void pf_storage_command_execute(bool host_owned, const char *family, const char *arguments,
+                               pf_storage_reply_t reply, void *context);
 
 #endif

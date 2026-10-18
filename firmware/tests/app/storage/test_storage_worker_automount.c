@@ -1,9 +1,11 @@
 #include "unity.h"
+#include "Mocklogging.h"
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
 #include "../../support/storage/automount_fixture.inc"
 
 void setUp(void)
 {
+    pf_log_write_Ignore();
     config_available = transport_selected = true;
     requests = (void *)1;
     card_config.transport.mode = PF_STORAGE_BUS_NATIVE_SD;
@@ -89,10 +91,10 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     auto_mount_pending = mount_retry_waiting = true;
     last_mount_attempt_ms = UINT32_MAX - 1000u;
     now = 999u;
-    service_card_presence();
+    service_media();
     TEST_ASSERT_EQUAL_UINT(5, mount_calls);
     now = 4000u;
-    service_card_presence();
+    service_media();
     TEST_ASSERT_TRUE(mount_calls == 6 && mounted);
 
     mounted = false;
@@ -102,14 +104,14 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     media = (pf_sd_info_t){0};
     unsigned previous_mounts = mount_calls;
     now = 0u;
-    service_card_presence();
+    service_media();
     TEST_ASSERT_TRUE(mount_calls == previous_mounts + 1u && mount_retry_waiting);
-    now = CARD_MOUNT_RETRY_MS - 1u;
-    service_card_presence();
+    now = MEDIA_MOUNT_RETRY_MS - 1u;
+    service_media();
     TEST_ASSERT_EQUAL_UINT(previous_mounts + 1u, mount_calls);
-    now = CARD_MOUNT_RETRY_MS;
+    now = MEDIA_MOUNT_RETRY_MS;
     mount_result = PF_FATFS_VOLUME_OK;
-    service_card_presence();
+    service_media();
     TEST_ASSERT_TRUE(mount_calls == previous_mounts + 2u && mounted);
 
     TEST_ASSERT_TRUE(mounted && media.initialized && !auto_mount_pending);
@@ -143,7 +145,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     auto_mount_pending = mount_retry_waiting = false;
     previous_mounts = mount_calls;
     unsigned previous_unmounts = unmount_calls;
-    service_card_presence();
+    service_media();
     TEST_ASSERT_EQUAL_UINT(previous_unmounts + 1u, unmount_calls);
     TEST_ASSERT_TRUE(mount_calls == previous_mounts + 1u && mounted && media.initialized);
 
@@ -237,7 +239,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
                      disconnects == before_disconnects + 1u);
     TEST_ASSERT_EQUAL_UINT(before_syncs, sync_calls);
     queued_recovery = false;
-    recover_card();
+    recover_media();
     TEST_ASSERT_TRUE(init_calls == 1 && !busy && media.initialized && !mounted && auto_mount_blocked);
     previous_mounts = mount_calls;
     poll(100);
@@ -257,7 +259,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     TEST_ASSERT_TRUE(!mounted && mount_calls == previous_mounts && init_calls == 1);
     init_fails = true;
     busy = true;
-    recover_card();
+    recover_media();
     poll(100);
     TEST_ASSERT_TRUE(!busy && !media.initialized && !mounted && init_calls == 2);
     TEST_ASSERT_EQUAL_UINT(previous_mounts, mount_calls);
@@ -265,19 +267,19 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
 
 void test_command_cancellation_keeps_reservation_until_completion(void)
 {
- busy=true; active_session=42; cancelled=false; self_test_active=false;
+ busy=true; active_session=42; cancelled=false; benchmark_active=false;
  pf_storage_worker_cancel(41);
  TEST_ASSERT_FALSE(cancelled);
  pf_storage_worker_cancel(42);
  TEST_ASSERT_TRUE(cancelled);
  TEST_ASSERT_TRUE(pf_storage_worker_busy());
- cancelled=false; self_test_active=true;
+ cancelled=false; benchmark_active=true;
  pf_storage_worker_cancel(42);
  TEST_ASSERT_FALSE(cancelled);
- self_test_finished=true;
+ benchmark_finished=true;
  TEST_ASSERT_FALSE(pf_storage_worker_busy());
- TEST_ASSERT_FALSE(self_test_active);
- TEST_ASSERT_FALSE(self_test_finished);
+ TEST_ASSERT_FALSE(benchmark_active);
+ TEST_ASSERT_FALSE(benchmark_finished);
  pf_storage_worker_cancel(42);
  TEST_ASSERT_FALSE(cancelled);
 }

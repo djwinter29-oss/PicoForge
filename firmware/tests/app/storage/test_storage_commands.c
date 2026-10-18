@@ -1,11 +1,12 @@
 #include "unity.h"
-#include "app/storage/commands.h"
+#include "app/storage/storage_commands.h"
 #include "embedded_cli.h"
 #include "Mockff.h"
 #include "Mockfatfs_volume.h"
 #include "Mocksd_block.h"
 #include "Mocksd.h"
 #include "Mocksd_block_device.h"
+#include "Mockboard.h"
 
 #include <string.h>
 
@@ -15,7 +16,6 @@ static BYTE expected_mode;
 static UINT written_size;
 static FRESULT write_result;
 static bool directory_entry;
-static pf_sd_config_t config;
 static const pf_block_device_t device = {0};
 
 static FRESULT open_file(FIL *file, const TCHAR *path, BYTE mode, int calls)
@@ -90,7 +90,7 @@ static bool reply(const char *line, void *context)
 
 static void run(const char *arguments)
 {
-    pf_storage_command_execute(NULL, false, "fs", arguments, reply, NULL);
+    pf_storage_command_execute(false, "fs", arguments, reply, NULL);
 }
 
 static FRESULT mkdir_denied(const TCHAR *path, int calls)
@@ -113,8 +113,8 @@ void tearDown(void) {}
 
 void test_refuses_filesystem_access_while_usb_owns_card(void)
 {
-    pf_storage_command_execute(NULL, true, "fs", "write /a text", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "Card owned by USB"));
+    pf_storage_command_execute(true, "fs", "write /a text", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Media owned by USB"));
 }
 
 void test_requires_mount_before_file_operations(void)
@@ -160,10 +160,11 @@ void test_creates_directory_and_reports_fatfs_errors(void)
 void test_mount_and_unmount_report_success(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_init_ExpectAndReturn(&config, PF_SD_OK);
+    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
+    pf_sd_init_ExpectAnyArgsAndReturn(PF_SD_OK);
     pf_sd_block_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
-    pf_storage_command_execute(&config, false, "fs", "mount", reply, NULL);
+    pf_storage_command_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     pf_fatfs_volume_unmount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
@@ -175,11 +176,12 @@ void test_mount_reports_fatfs_failure(void)
 {
     FRESULT result = FR_NO_FILESYSTEM;
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_init_ExpectAndReturn(&config, PF_SD_OK);
+    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
+    pf_sd_init_ExpectAnyArgsAndReturn(PF_SD_OK);
     pf_sd_block_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
     pf_fatfs_volume_mount_ReturnThruPtr_filesystem_result(&result);
-    pf_storage_command_execute(&config, false, "fs", "mount", reply, NULL);
+    pf_storage_command_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "NO_FILESYSTEM"));
 }
 
@@ -193,6 +195,7 @@ void test_mount_does_not_initialize_an_already_mounted_device(void)
 void test_mount_rejects_missing_configuration_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(false);
     run("mount");
     TEST_ASSERT_NOT_NULL(strstr(output, "configuration unavailable"));
 }
@@ -200,8 +203,9 @@ void test_mount_rejects_missing_configuration_without_binding(void)
 void test_mount_reports_card_initialization_failure_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_init_ExpectAndReturn(&config, PF_SD_INIT_FAILED);
-    pf_storage_command_execute(&config, false, "fs", "mount", reply, NULL);
+    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
+    pf_sd_init_ExpectAnyArgsAndReturn(PF_SD_INIT_FAILED);
+    pf_storage_command_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "SD initialization"));
 }
 
@@ -341,7 +345,7 @@ void test_status_is_available_during_host_ownership(void)
     pf_sd_get_info_ReturnThruPtr_info(&info);
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
     pf_sd_transport_name_ExpectAndReturn("sdio");
-    pf_storage_command_execute(NULL, true, "sd", "status", reply, NULL);
+    pf_storage_command_execute(true, "sd", "status", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "owner=USB"));
     TEST_ASSERT_NOT_NULL(strstr(output, "bytes=15808331776"));
 }
@@ -365,7 +369,7 @@ void test_info_reports_native_identity_registers_clocks_and_persistent_errors(vo
     info.cid[14] = 0x41u;
     pf_sd_get_info_ExpectAnyArgs();
     pf_sd_get_info_ReturnThruPtr_info(&info);
-    pf_storage_command_execute(NULL, true, "sd", "info", reply, NULL);
+    pf_storage_command_execute(true, "sd", "info", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "product=SB128 revision=8.0"));
     TEST_ASSERT_NOT_NULL(strstr(output, "date=2020-01"));
     TEST_ASSERT_NOT_NULL(strstr(output, "capacity=127865454592"));
@@ -381,7 +385,7 @@ void test_info_explicitly_reports_unavailable_native_details(void)
     pf_sd_info_t info = {0};
     pf_sd_get_info_ExpectAnyArgs();
     pf_sd_get_info_ReturnThruPtr_info(&info);
-    pf_storage_command_execute(NULL, false, "sd", "info", reply, NULL);
+    pf_storage_command_execute(false, "sd", "info", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Native startup details unavailable"));
 }
 
@@ -394,7 +398,7 @@ void test_profile_enable_and_snapshot_are_serialized_commands(void)
     pf_sd_set_profiling_enabled_Expect(true);
     pf_sd_get_profile_ExpectAnyArgs();
     pf_sd_get_profile_ReturnThruPtr_profile(&metrics);
-    pf_storage_command_execute(NULL, false, "sd", "profile on", reply, NULL);
+    pf_storage_command_execute(false, "sd", "profile on", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "recovery_us=reserved calls=reserved"));
     TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
     TEST_ASSERT_NOT_NULL(strstr(output, "crc_copy_us=1234 calls=8"));
@@ -403,13 +407,13 @@ void test_profile_enable_and_snapshot_are_serialized_commands(void)
 
 void test_profile_changes_are_rejected_during_usb_ownership(void)
 {
-    pf_storage_command_execute(NULL, true, "sd", "profile reset", reply, NULL);
+    pf_storage_command_execute(true, "sd", "profile reset", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "firmware card ownership"));
 }
 
 void test_profile_rejects_unknown_actions(void)
 {
-    pf_storage_command_execute(NULL, false, "sd", "profile invalid", reply, NULL);
+    pf_storage_command_execute(false, "sd", "profile invalid", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Usage: sd profile"));
 }
 
@@ -428,7 +432,7 @@ void test_diagnostics_reports_last_failure(void)
     pf_sd_get_diagnostics_ExpectAnyArgs();
     pf_sd_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
 
-    pf_storage_command_execute(NULL, true, "sd", "diagnostics", reply, NULL);
+    pf_storage_command_execute(true, "sd", "diagnostics", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
 
     TEST_ASSERT_NOT_NULL(strstr(
@@ -439,7 +443,7 @@ void test_diagnostics_reports_last_failure(void)
 
 void test_diagnostics_clear_requires_firmware_ownership(void)
 {
-    pf_storage_command_execute(NULL, true, "sd", "diagnostics clear", reply, NULL);
+    pf_storage_command_execute(true, "sd", "diagnostics clear", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "requires firmware card ownership"));
 }
 
@@ -450,7 +454,7 @@ void test_diagnostics_clear_resets_then_reports(void)
     pf_sd_get_diagnostics_ExpectAnyArgs();
     pf_sd_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
 
-    pf_storage_command_execute(NULL, false, "sd", "diagnostics clear", reply, NULL);
+    pf_storage_command_execute(false, "sd", "diagnostics clear", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
 
     TEST_ASSERT_NOT_NULL(strstr(output, "sequence=0 operation=none result=ok"));
@@ -469,7 +473,7 @@ void test_cancelled_listing_still_closes_directory(void)
     f_opendir_ExpectAnyArgsAndReturn(FR_OK);
     f_readdir_StubWithCallback(read_directory);
     f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    pf_storage_command_execute(NULL, false, "fs", "ls", disconnected_reply, NULL);
+    pf_storage_command_execute(false, "fs", "ls", disconnected_reply, NULL);
 }
 
 void test_disconnected_output_does_not_skip_write_sync_or_close(void)
@@ -480,7 +484,7 @@ void test_disconnected_output_does_not_skip_write_sync_or_close(void)
     f_write_StubWithCallback(write_file);
     f_sync_ExpectAnyArgsAndReturn(FR_OK);
     f_close_ExpectAnyArgsAndReturn(FR_OK);
-    pf_storage_command_execute(NULL, false, "fs", "write /a \"hello world\"", disconnected_reply, NULL);
+    pf_storage_command_execute(false, "fs", "write /a \"hello world\"", disconnected_reply, NULL);
 }
 
 void test_rejects_long_arguments_without_truncation(void)

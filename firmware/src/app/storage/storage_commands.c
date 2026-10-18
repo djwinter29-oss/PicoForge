@@ -1,8 +1,13 @@
 /** @file Application SD/filesystem command execution and replies. */
-#include "commands.h"
-#include "sd_block.h"
-#include "sd.h"
+#include "storage_commands.h"
+#include "middleware/storage/fatfs_volume.h"
+#if PF_STORAGE_BACKEND_NOR
+#include "nor_media.h"
+#else
+#include "board/board.h"
+#include "drivers/sd_card/sd.h"
 #include "middleware/storage/sd_block_device.h"
+#endif
 #include "embedded_cli.h"
 
 #include <stdio.h>
@@ -58,6 +63,7 @@ static void volume_path(const char *path, char target[104])
     (void)snprintf(target, 104u, "%s%s", PF_FATFS_VOLUME_PATH, path);
 }
 
+#if !PF_STORAGE_BACKEND_NOR
 static void status_command(bool host_owned, pf_storage_reply_t reply, void *context)
 {
     pf_sd_info_t info;
@@ -252,6 +258,8 @@ static void diagnostics_command(const char *action, bool host_owned,
     (void)reply(line, context);
 }
 
+#endif
+
 static void list_command(const char *path, pf_storage_reply_t reply, void *context)
 {
     DIR directory;
@@ -373,9 +381,8 @@ static void write_command(const char *path, const char *text, bool append,
     report_result(result, reply, context);
 }
 
-void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
-                                const char *family, const char *arguments,
-                                pf_storage_reply_t reply, void *context)
+void pf_storage_command_execute(bool host_owned, const char *family, const char *arguments,
+                               pf_storage_reply_t reply, void *context)
 {
     char tokens[PF_STORAGE_COMMAND_ARGS_SIZE] = { 0 };
     char path[104];
@@ -399,6 +406,12 @@ void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
     operation = embeddedCliGetToken(tokens, 1u);
     first = embeddedCliGetToken(tokens, 2u);
     second = embeddedCliGetToken(tokens, 3u);
+#if PF_STORAGE_BACKEND_NOR
+    if (strcmp(family, "sd") == 0) {
+        (void)reply("SD diagnostics unavailable: this build uses external LevelX NOR.", context);
+        return;
+    }
+#else
     if ((strcmp(family, "sd") == 0) && (count == 1u) && (strcmp(operation, "status") == 0)) {
         status_command(host_owned, reply, context);
         return;
@@ -417,12 +430,13 @@ void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
         diagnostics_command(count == 2u ? first : NULL, host_owned, reply, context);
         return;
     }
+#endif
     if ((strcmp(family, "fs") != 0) || (count == 0u)) {
         (void)reply("Usage: sd <status|info|profile|diagnostics> | fs <mount|unmount|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
         return;
     }
     if (host_owned) {
-        (void)reply("Card owned by USB. Safely eject and disable MSC first.", context);
+        (void)reply("Media owned by USB. Safely eject and disable MSC first.", context);
         return;
     }
     if ((count == 1u) && (strcmp(operation, "mount") == 0)) {
@@ -430,12 +444,22 @@ void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
             (void)reply("Filesystem already mounted.", context);
             return;
         }
-        if (config == NULL || pf_sd_init(config) != PF_SD_OK) {
+#if PF_STORAGE_BACKEND_NOR
+        if (pf_nor_media_initialize() != PF_BLOCK_OK) {
+            (void)reply("Mount failed: external NOR initialization or LevelX recovery failed.", context);
+            return;
+        }
+        const pf_block_device_t *device = pf_nor_media_firmware_device();
+#else
+        pf_sd_config_t config;
+        if (!pf_board_get_sd_card_config(&config) || pf_sd_init(&config) != PF_SD_OK) {
             (void)reply("Mount failed: SD initialization or board configuration unavailable.", context);
             return;
         }
+        const pf_block_device_t *device = pf_sd_block_device();
+#endif
         FRESULT result;
-        pf_fatfs_volume_result_t storage_result = pf_fatfs_volume_mount(pf_sd_block_device(), &result);
+        pf_fatfs_volume_result_t storage_result = pf_fatfs_volume_mount(device, &result);
         if (storage_result == PF_FATFS_VOLUME_OK) {
             (void)reply("Filesystem mounted.", context);
         } else if (storage_result == PF_FATFS_VOLUME_ALREADY_MOUNTED) {
@@ -467,8 +491,8 @@ void pf_storage_command_execute(const pf_sd_config_t *config, bool host_owned,
         if (result == FR_OK) {
             char line[PF_STORAGE_REPLY_SIZE];
             (void)snprintf(line, sizeof(line), "total=%llu bytes free=%llu bytes",
-                           (unsigned long long)(filesystem->n_fatent - 2u) * filesystem->csize * PF_SD_BLOCK_SIZE,
-                           (unsigned long long)free_clusters * filesystem->csize * PF_SD_BLOCK_SIZE);
+                           (unsigned long long)(filesystem->n_fatent - 2u) * filesystem->csize * FF_MAX_SS,
+                           (unsigned long long)free_clusters * filesystem->csize * FF_MAX_SS);
             (void)reply(line, context);
         } else {
             report_result(result, reply, context);

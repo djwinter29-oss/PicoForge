@@ -13,10 +13,9 @@ datasheet before using quad mode: a JEDEC ID alone does not identify every
 revision's status-register command behavior. Other NOR parts, QPI mode,
 four-byte addressing and SFDP discovery are not supported.
 
-This is not yet a FatFs backend. An optional LevelX NOR port provides logical
-sectors and upstream reclamation/wear management, but filesystem mounting and
-USB MSC export remain unimplemented. Raw programming requires previously
-erased bits; it never erases implicitly. A failed write can leave partial changes.
+An optional LevelX NOR port provides logical sectors and upstream reclamation/wear management.
+The application can select these sectors for FatFs and USB MSC at build time; SD remains the default.
+Raw programming requires previously erased bits; it never erases implicitly. A failed write can leave partial changes.
 
 ## Layers and Wiring
 
@@ -202,8 +201,9 @@ is `sizeof(pf_levelx_nor_t)` for the selected build; allow additional task stack
 space for a 512-byte staging sector and upstream reclaim calls.
 
 **Open is not read-only.** Upstream LevelX can initialize metadata on blank
-media and repair/reclaim existing metadata during open. There is intentionally
-no automatic open in board startup and no destructive erase-all/format wrapper.
+media and repair/reclaim existing metadata during open. The raw driver and link smoke do not automatically open media.
+The NOR filesystem application does open its explicitly configured region in the storage worker; there is no
+destructive erase-all or filesystem-format wrapper.
 Only supply an explicitly designated LevelX region, never an SD filesystem,
 boot flash, or unrelated raw data. LevelX's on-flash layout is not FAT.
 
@@ -221,6 +221,69 @@ errors and partial program interruption. These bounded fault cases are not an
 exhaustive proof of power-fail safety or endurance. Physical erase interruption,
 real device timing and wear distribution still require dedicated qualification.
 
-The next storage step is adapting these logical sectors to FatFs and its
-storage-owner lifecycle without changing SD behavior. The default SD/FatFs
-application is unchanged by this port.
+## Build-Selected FatFs and USB MSC
+
+`PF_STORAGE_BACKEND=SD|NOR` selects the application filesystem and MSC backend; the default is `SD`.
+NOR automatically builds the pinned LevelX port and
+[logical adapter](../firmware/src/middleware/storage/levelx_block_device.h). `PF_BUILD_LEVELX=ON` also makes the
+adapter available to SD application builds without selecting NOR or opening flash.
+The [application NOR service](../firmware/src/app/storage/nor_media.h) owns initialization, a recursive FreeRTOS
+reservation, and separate owner-gated firmware/USB descriptors. Raw NOR is never exposed directly as rewritable sectors.
+
+NOR configuration requires **both** `PF_NOR_REGION_OFFSET` and `PF_NOR_REGION_SIZE`; neither has a default.
+Values accept decimal or hexadecimal bytes, must be 4 KiB aligned, and must fit within the supported external
+16 MiB W25Q128. The application requires at least 48 KiB: after LevelX's two reserved blocks this provides at least
+FatFs's minimum 64 logical sectors. The region must be explicitly reserved for LevelX; do not use Pico boot flash
+or a region containing unrelated raw data. Runtime initialization validates the detected part and region again.
+
+After independently approving the external region, set its offset and size in your shell and build:
+
+```sh
+: "${PF_NOR_REGION_OFFSET:?Set the approved external region offset in bytes}"
+: "${PF_NOR_REGION_SIZE:?Set the approved external region size in bytes}"
+tools/firmware/build.sh --board pico2 --storage-backend NOR --nor-transport QSPI_PIO \
+    --nor-region-offset "$PF_NOR_REGION_OFFSET" --nor-region-size "$PF_NOR_REGION_SIZE"
+```
+
+This produces `pf_hello_world.uf2` under `build/firmware-pico2-NOR-QSPI_PIO`, not a raw smoke.
+Use `SPI` for the supported single-lane transport, or `--storage-backend SD` for the existing SD workflow.
+Without `--storage-backend NOR`, the existing `--nor-transport` option still selects the standalone raw smoke.
+For direct CMake, pass the same `PF_STORAGE_BACKEND`, `PF_NOR_TRANSPORT`, and `PF_NOR_REGION_*` values.
+The NOR filesystem/MSC application requires the FreeRTOS configuration.
+When intentionally flashing later, `tools/firmware/load.sh` accepts the same backend, transport and region options.
+It preserves NOR selection when invoking the build wrapper and rejects a known cached-backend mismatch before
+flashing an implicitly selected ELF. `--skip-build` avoids rebuilding; an explicit `--elf` remains the caller's choice.
+
+The worker opens LevelX and attempts to mount an **existing** FAT/exFAT volume. It never calls `f_mkfs`.
+For an unformatted logical volume, mounting reports a FatFs error; use `fs mount` to see the result.
+After initialization, USB MSC can expose that unmounted logical volume for intentional host-side provisioning.
+Host formatting is destructive to the logical region and must be explicitly authorized.
+Logical capacity excludes LevelX metadata/reserve space; USB reports that logical capacity.
+Only `LX_SECTOR_NOT_FOUND` reads map to erased `0xff` sectors; other failures remain errors. The lower-level LevelX API
+continues to report its native statuses unchanged.
+
+MSC enable rejects mounted or busy firmware access. Host reads/writes use only the USB descriptor; firmware operations
+remain rejected while USB owns media. Eject and release check sync results; uncertain writes are never replayed.
+Release publishes a worker remount request. Explicit recovery of faulted USB-owned media detaches USB and hands the
+reservation to the worker before closing/reinitializing/reopening LevelX; this is not reported as a clean eject or
+successful flush. Recovery leaves automount blocked until a successful explicit `fs mount`.
+
+The application exposes named firmware/USB descriptor getters and explicit USB acquire/release operations.
+MSC holds the media reservation across its worker-idle check and ownership transition; the NOR service checks
+readiness and mounted state on acquisition, not worker admission. Normal release requires caller-checked eject/sync.
+The separate recovery release rejects healthy media and does not sync or claim durability.
+
+`sd` diagnostics and the SD-specific HID memory report do not describe NOR: NOR builds reject those CLI diagnostics
+and return an unconfigured memory report, rather than initializing SD pins or advertising NOR as an SD card.
+Filesystem, MSC and file-self-test reports remain available. No new NOR identity/HID protocol is implemented.
+
+```sh
+ceedling test:test_levelx_block_device test:test_nor_media test:test_storage_worker_nor test:test_storage_commands_nor
+ceedling test:test_msc_nor test:test_levelx_nor
+python3 -m pytest -q tests/contracts/test_storage_backend.py
+```
+
+The tests include real FatFs file create/write/sync/reopen/read/delete through the adapter and pinned LevelX engine
+over simulated NOR, plus owner exclusion, batch/partial MSC transfers, failed-write non-replay, retry and recovery.
+They are not physical NOR, USB BOT, endurance or power-loss qualification. No NOR filesystem hardware qualification
+is claimed.

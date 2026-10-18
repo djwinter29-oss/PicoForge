@@ -165,9 +165,10 @@ logical device, not a device registry or multi-volume manager. The current appli
 provide valid logical sectors and perform their own initialization before mounting.
 
 SD telemetry, board configuration, media initialization, filesystem mounting/formatting, and USB ownership transitions
-remain outside the generic contract. MSC still uses its owner-specific SD API; it must not use the firmware-owned
-descriptor to bypass those transitions. Raw NOR cannot implement rewritable logical sectors directly: a future
-NOR filesystem backend needs an appropriate translation layer such as LevelX. No NOR block adapter is implemented.
+remain outside the generic contract. SD MSC still uses its owner-specific SD API; it must not use the firmware-owned
+descriptor to bypass those transitions. Build-selected NOR uses a LevelX logical adapter and separate owner-gated
+descriptors, never raw flash. See [NOR filesystem and MSC selection](nor-flash.md#build-selected-fatfs-and-usb-msc)
+for region safety, configuration, initialization and qualification boundaries.
 
 The build selects one backend; both modes use the consolidated protocol library. Native wire helpers retain their
 `pf_sd_native_*` names; SPI also reuses its transport-independent CMD6 arguments and switch-status decoders.

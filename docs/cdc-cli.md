@@ -186,7 +186,7 @@ be serviced by the same task.
 
 [The static storage worker](../firmware/src/app/storage/storage_worker.c)
 is the sole FatFs caller for CLI operations. It uses an 8 KiB stack, a one-request
-queue, and eight 256-byte reply slots. [The command dispatcher](../firmware/src/app/storage/commands.c)
+queue, and eight 256-byte reply slots. [The command dispatcher](../firmware/src/app/storage/storage_commands.c)
 has no RTOS or USB dependency. The worker sends bounded lines through the queue;
 only the USB task calls CLI print APIs. Replies carry a session ID so old output
 does not leak into a newly opened terminal. Backpressure suspends the worker,
@@ -201,7 +201,7 @@ Run the hardware-independent middleware tests:
 
 ```sh
 tools/validation/setup-ceedling-testing.sh test:test_cli
-tools/validation/setup-ceedling-testing.sh test:test_commands
+tools/validation/setup-ceedling-testing.sh test:test_storage_commands test:test_storage_commands_nor
 ```
 
 They cover prompt/help, commands, invalid arguments, unknown commands, session

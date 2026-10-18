@@ -1,11 +1,11 @@
 #include "unity.h"
-#include "app/storage/self_test.h"
+#include "app/storage/file_benchmark.h"
 #include "Mockff.h"
 #include "Mockfatfs_volume.h"
 
 #include <string.h>
 
-static pf_self_test_status_t final_status;
+static pf_file_benchmark_status_t final_status;
 static uint32_t timer;
 static uint32_t write_offset;
 static uint32_t read_offset;
@@ -28,11 +28,11 @@ static uint32_t clock_ms(void *context)
     return timer;
 }
 
-static bool update(const pf_self_test_status_t *status, void *context)
+static bool update(const pf_file_benchmark_status_t *status, void *context)
 {
     (void)context;
     final_status = *status;
-    return !(cancel_write && (status->state == PF_SELF_TEST_WRITING) && (status->written_bytes > 0u));
+    return !(cancel_write && (status->state == PF_FILE_BENCHMARK_WRITING) && (status->written_bytes > 0u));
 }
 
 static FRESULT get_free(const TCHAR *path, DWORD *count, FATFS **volume, int calls)
@@ -47,7 +47,7 @@ static FRESULT get_free(const TCHAR *path, DWORD *count, FATFS **volume, int cal
 static FRESULT open_file(FIL *file, const TCHAR *path, BYTE mode, int calls)
 {
     (void)file;
-    TEST_ASSERT_EQUAL_STRING(PF_STORAGE_SELF_TEST_PATH, path);
+    TEST_ASSERT_EQUAL_STRING(PF_FILE_BENCHMARK_PATH, path);
     TEST_ASSERT_EQUAL_UINT8(calls == 0 ? FA_WRITE | FA_CREATE_NEW : FA_READ, mode);
     return FR_OK;
 }
@@ -63,7 +63,7 @@ static FRESULT stat_missing(const TCHAR *path, FILINFO *info, int calls)
 {
     (void)info;
     (void)calls;
-    TEST_ASSERT_EQUAL_STRING(PF_STORAGE_SELF_TEST_PATH, path);
+    TEST_ASSERT_EQUAL_STRING(PF_FILE_BENCHMARK_PATH, path);
     return FR_NO_FILE;
 }
 
@@ -81,14 +81,14 @@ static FRESULT stat_directory(const TCHAR *path, FILINFO *info, int calls)
 
 static FRESULT remove_existing(const TCHAR *path, int calls)
 {
-    TEST_ASSERT_EQUAL_STRING(PF_STORAGE_SELF_TEST_PATH, path);
+    TEST_ASSERT_EQUAL_STRING(PF_FILE_BENCHMARK_PATH, path);
     ++unlink_calls;
     if (calls == 0) {
-        TEST_ASSERT_EQUAL(PF_SELF_TEST_MOUNTING, final_status.state);
+        TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PREPARING, final_status.state);
         TEST_ASSERT_EQUAL_UINT32(0u, write_offset);
         return FR_OK;
     }
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_CLEANUP, final_status.state);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_CLEANUP, final_status.state);
     return FR_OK;
 }
 
@@ -103,7 +103,7 @@ static FRESULT write_file(FIL *file, const void *data, UINT size, UINT *written,
     (void)file;
     (void)calls;
     const uint8_t *bytes = data;
-    TEST_ASSERT_EQUAL_UINT(PF_STORAGE_SELF_TEST_BUFFER_SIZE, size);
+    TEST_ASSERT_EQUAL_UINT(PF_FILE_BENCHMARK_BUFFER_SIZE, size);
     for (UINT index = 0u; index < size; ++index) {
         TEST_ASSERT_EQUAL_UINT8(pattern(write_offset + index), bytes[index]);
     }
@@ -138,10 +138,10 @@ static FRESULT close_file(FIL *file, int calls)
 
 static FRESULT unlink_file(const TCHAR *path, int calls)
 {
-    TEST_ASSERT_EQUAL_STRING(PF_STORAGE_SELF_TEST_PATH, path);
+    TEST_ASSERT_EQUAL_STRING(PF_FILE_BENCHMARK_PATH, path);
     TEST_ASSERT_EQUAL_INT(0, calls);
     ++unlink_calls;
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_CLEANUP, final_status.state);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_CLEANUP, final_status.state);
     TEST_ASSERT_GREATER_THAN_UINT(0u, close_calls);
     return unlink_result;
 }
@@ -165,7 +165,7 @@ static void prepare(void)
 
 void setUp(void)
 {
-    pf_storage_self_test_set_preallocation_enabled(false);
+    pf_file_benchmark_set_preallocation_enabled(false);
     memset(&final_status, 0, sizeof(final_status));
     memset(&filesystem, 0, sizeof(filesystem));
     filesystem.csize = 8u;
@@ -179,11 +179,11 @@ void setUp(void)
 }
 void tearDown(void) {}
 
-void test_self_test_writes_and_verifies_every_byte_then_cleans_up(void)
+void test_file_benchmark_writes_and_verifies_every_byte_then_cleans_up(void)
 {
     prepare();
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, final_status.state);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.mismatch_count);
@@ -195,11 +195,11 @@ void test_self_test_writes_and_verifies_every_byte_then_cleans_up(void)
 
 void test_preallocated_self_test_keeps_full_verification_and_cleanup(void)
 {
-    pf_storage_self_test_set_preallocation_enabled(true);
+    pf_file_benchmark_set_preallocation_enabled(true);
     expect_preallocation = true;
     prepare();
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, final_status.state);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT(2u, close_calls);
@@ -208,197 +208,197 @@ void test_preallocated_self_test_keeps_full_verification_and_cleanup(void)
 
 void test_preallocation_failure_closes_and_removes_only_the_new_file(void)
 {
-    pf_storage_self_test_set_preallocation_enabled(true);
+    pf_file_benchmark_set_preallocation_enabled(true);
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
     f_expand_ExpectAnyArgsAndReturn(FR_DENIED);
     f_close_StubWithCallback(close_file);
     f_unlink_ExpectAnyArgsAndReturn(FR_OK);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
     TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.write_elapsed_ms);
     TEST_ASSERT_EQUAL_UINT(1u, close_calls);
 }
 
-void test_self_test_detects_corrupt_readback(void)
+void test_file_benchmark_detects_corrupt_readback(void)
 {
     prepare();
     corrupt = true;
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_VERIFY, final_status.error);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_VERIFY, final_status.error);
     TEST_ASSERT_EQUAL_UINT32(1u, final_status.mismatch_count);
 }
 
-void test_self_test_cancel_finishes_sync_close_and_cleanup(void)
+void test_file_benchmark_cancel_finishes_sync_close_and_cleanup(void)
 {
     prepare();
     cancel_write = true;
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_CANCELLED, final_status.state);
-    TEST_ASSERT_EQUAL_UINT32(PF_STORAGE_SELF_TEST_BUFFER_SIZE, final_status.written_bytes);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_CANCELLED, final_status.state);
+    TEST_ASSERT_EQUAL_UINT32(PF_FILE_BENCHMARK_BUFFER_SIZE, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT(1u, close_calls);
 }
 
-void test_self_test_rejects_invalid_size(void)
+void test_file_benchmark_rejects_invalid_size(void)
 {
-    pf_storage_self_test_run(0u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_SIZE, final_status.error);
+    pf_file_benchmark_run(0u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SIZE, final_status.error);
 }
 
-void test_self_test_reuses_existing_mount_and_leaves_it_mounted(void)
+void test_file_benchmark_reuses_existing_mount_and_leaves_it_mounted(void)
 {
     prepare();
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, final_status.state);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 
-void test_self_test_preserves_existing_mount_after_verification_failure(void)
+void test_file_benchmark_preserves_existing_mount_after_verification_failure(void)
 {
     prepare();
     corrupt = true;
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_VERIFY, final_status.error);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_VERIFY, final_status.error);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 
-void test_self_test_preserves_existing_mount_after_cancellation(void)
+void test_file_benchmark_preserves_existing_mount_after_cancellation(void)
 {
     prepare();
     cancel_write = true;
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_CANCELLED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_CANCELLED, final_status.state);
     TEST_ASSERT_EQUAL_UINT(1u, close_calls);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 
-void test_self_test_rejects_unmounted_volume_without_mounting_or_file_io(void)
+void test_file_benchmark_rejects_unmounted_volume_without_mounting_or_file_io(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_NOT_MOUNTED, final_status.error);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED, final_status.error);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT8(0u, final_status.flags);
 }
 
-void test_self_test_short_write_is_not_a_pass(void)
+void test_file_benchmark_short_write_is_not_a_pass(void)
 {
     prepare();
     short_write = true;
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
     TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
 }
 
-void test_self_test_removes_existing_file_and_runs_full_verification(void)
+void test_file_benchmark_removes_existing_file_and_runs_full_verification(void)
 {
     prepare();
     f_stat_StubWithCallback(stat_existing);
     f_unlink_StubWithCallback(remove_existing);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_PASSED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, final_status.state);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT32(2u, unlink_calls);
 }
 
-void test_self_test_deletion_failure_stops_before_space_check_or_creation(void)
+void test_file_benchmark_deletion_failure_stops_before_space_check_or_creation(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(stat_existing);
     f_unlink_ExpectAnyArgsAndReturn(FR_DENIED);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
     TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
-    TEST_ASSERT_EQUAL_UINT8(PF_SELF_TEST_VOLUME_MOUNTED | PF_SELF_TEST_FILE_REMAINS, final_status.flags);
+    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_VOLUME_MOUNTED | PF_FILE_BENCHMARK_FILE_REMAINS, final_status.flags);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
 }
 
-void test_self_test_refuses_directory_without_unlink(void)
+void test_file_benchmark_refuses_directory_without_unlink(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(stat_directory);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
     TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
 }
 
-void test_self_test_inspection_error_stops_without_deletion(void)
+void test_file_benchmark_inspection_error_stops_without_deletion(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(NULL);
     f_stat_ExpectAnyArgsAndReturn(FR_DISK_ERR);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_FILESYSTEM, final_status.error);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_FILESYSTEM, final_status.error);
     TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.write_elapsed_ms);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.read_elapsed_ms);
-    TEST_ASSERT_EQUAL_UINT8(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 
-void test_self_test_open_failure_does_not_unlink_a_file(void)
+void test_file_benchmark_open_failure_does_not_unlink_a_file(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_ExpectAnyArgsAndReturn(FR_DENIED);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_FILESYSTEM, final_status.error);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_FILESYSTEM, final_status.error);
     TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
-    TEST_ASSERT_EQUAL_UINT8(PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 
-void test_self_test_insufficient_space_does_not_create_a_file(void)
+void test_file_benchmark_insufficient_space_does_not_create_a_file(void)
 {
     available_clusters = 0u;
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
-    pf_storage_self_test_run(32u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_SPACE, final_status.error);
+    pf_file_benchmark_run(32u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SPACE, final_status.error);
 }
 
-void test_self_test_sync_failure_is_not_a_pass(void)
+void test_file_benchmark_sync_failure_is_not_a_pass(void)
 {
     sync_result = FR_DISK_ERR;
     prepare();
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
     TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
     TEST_ASSERT_EQUAL_UINT(1u, close_calls);
 }
 
-void test_self_test_close_failure_preserves_file_for_recovery(void)
+void test_file_benchmark_close_failure_preserves_file_for_recovery(void)
 {
     close_result = FR_DISK_ERR;
     prepare();
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FILE_REMAINS | PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 
-void test_self_test_reports_unlink_cleanup_failure(void)
+void test_file_benchmark_reports_unlink_cleanup_failure(void)
 {
     unlink_result = FR_DENIED;
     prepare();
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_ERROR_CLEANUP, final_status.error);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_CLEANUP, final_status.error);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FILE_REMAINS | PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 void test_preallocation_and_close_failure_preserves_new_file(void)
 {
-    pf_storage_self_test_set_preallocation_enabled(true);
+    pf_file_benchmark_set_preallocation_enabled(true);
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_getfree_StubWithCallback(get_free);
     f_open_StubWithCallback(open_file);
@@ -406,10 +406,10 @@ void test_preallocation_and_close_failure_preserves_new_file(void)
     close_result = FR_DISK_ERR;
     f_close_StubWithCallback(close_file);
     /* No unlink is permitted when FatFs could still hold the file open. */
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
     TEST_ASSERT_EQUAL_UINT(1u, close_calls);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FILE_REMAINS | PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }
 
 static FRESULT close_read_failure(FIL *file, int calls)
@@ -423,10 +423,10 @@ void test_read_close_failure_preserves_verified_file(void)
 {
     prepare();
     f_close_StubWithCallback(close_read_failure);
-    pf_storage_self_test_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FAILED, final_status.state);
+    pf_file_benchmark_run(1u, clock_ms, update, NULL);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
     TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
     TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
     TEST_ASSERT_EQUAL_UINT(0u, unlink_calls);
-    TEST_ASSERT_EQUAL(PF_SELF_TEST_FILE_REMAINS | PF_SELF_TEST_VOLUME_MOUNTED, final_status.flags);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FILE_REMAINS | PF_FILE_BENCHMARK_VOLUME_MOUNTED, final_status.flags);
 }

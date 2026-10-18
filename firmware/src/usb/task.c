@@ -8,8 +8,6 @@
 #include "usb_task.h"
 #include "middleware/cli/cli.h"
 #include "app/storage/storage_worker.h"
-#include "board/board.h"
-#include "drivers/sd_card/sd_port.h"
 
 #include <string.h>
 
@@ -221,12 +219,7 @@ static void usb_task(void *context)
 
 void pf_usb_start(void)
 {
-    pf_sd_config_t config;
-    bool configured = pf_board_get_sd_card_config(&config);
-    if (configured && !pf_sd_port_init(&config)) {
-        panic("Failed to initialize SD transport waits");
-    }
-    if (!pf_storage_worker_init(configured ? &config : NULL)) {
+    if (!pf_storage_worker_init()) {
         panic("Failed to create storage worker");
     }
     if (!tusb_init()) {

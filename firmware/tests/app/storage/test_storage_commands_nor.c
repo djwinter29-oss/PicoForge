@@ -1,0 +1,72 @@
+#include "unity.h"
+#include "storage_commands.h"
+#include "embedded_cli.h"
+#include "Mockff.h"
+#include "Mockfatfs_volume.h"
+#include "Mocknor_media.h"
+
+#include <string.h>
+
+static char output[512];
+static const pf_block_device_t device = {0};
+
+static bool reply(const char *line, void *context)
+{
+    (void)context;
+    TEST_ASSERT_LESS_THAN(sizeof(output), strlen(output) + strlen(line) + 2u);
+    strcat(output, line);
+    strcat(output, "\n");
+    return true;
+}
+
+static void run(const char *arguments)
+{
+    pf_storage_command_execute(false, "fs", arguments, reply, NULL);
+}
+
+void setUp(void) { output[0] = '\0'; }
+void tearDown(void) {}
+
+void test_nor_mount_initializes_and_binds_firmware_descriptor(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_nor_media_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_nor_media_firmware_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_mount_ExpectAndReturn(&device, NULL, PF_FATFS_VOLUME_OK);
+    pf_fatfs_volume_mount_IgnoreArg_filesystem_result();
+    run("mount");
+    TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted."));
+}
+
+void test_nor_mount_initialization_failure_does_not_bind(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_nor_media_initialize_ExpectAndReturn(PF_BLOCK_IO_ERROR);
+    run("mount");
+    TEST_ASSERT_NOT_NULL(strstr(output, "LevelX recovery failed"));
+}
+
+void test_nor_mount_preserves_filesystem_failure_reason(void)
+{
+    FRESULT reason = FR_NO_FILESYSTEM;
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_nor_media_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_nor_media_firmware_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
+    pf_fatfs_volume_mount_ReturnThruPtr_filesystem_result(&reason);
+    run("mount");
+    TEST_ASSERT_NOT_NULL(strstr(output, "NO_FILESYSTEM"));
+}
+
+void test_nor_already_mounted_does_not_reinitialize(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    run("mount");
+    TEST_ASSERT_NOT_NULL(strstr(output, "already mounted"));
+}
+
+void test_nor_sd_diagnostics_are_rejected_without_sd_dependencies(void)
+{
+    pf_storage_command_execute(false, "sd", "info", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "SD diagnostics unavailable"));
+}

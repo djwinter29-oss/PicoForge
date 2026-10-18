@@ -56,6 +56,13 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
 
 bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence)
 {
+#if PF_STORAGE_BACKEND_NOR
+    /* The current HID memory report is SD-specific; never advertise NOR as an SD card. */
+    memset(report, 0, sizeof(*report));
+    report->version = PF_HID_REPORT_VERSION;
+    report->sequence = sequence;
+    return true;
+#else
     pf_sd_config_t config;
     pf_sd_info_t info;
 
@@ -90,6 +97,7 @@ bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
         memcpy(report->cid, info.cid, sizeof(report->cid));
     }
     return true;
+#endif
 }
 
 void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t sequence)
@@ -117,8 +125,8 @@ void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report)
 
 void pf_hid_build_self_test_report(pf_hid_self_test_status_t *report, uint8_t sequence)
 {
-    pf_self_test_status_t status;
-    pf_storage_worker_self_test_status(&status);
+    pf_file_benchmark_status_t status;
+    pf_storage_worker_benchmark_status(&status);
     memset(report, 0, sizeof(*report));
     report->version = PF_HID_REPORT_VERSION;
     report->sequence = sequence;
@@ -212,9 +220,9 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         uint32_t size_mib = (uint32_t)buffer[2] | ((uint32_t)buffer[3] << 8u) |
                            ((uint32_t)buffer[4] << 16u) | ((uint32_t)buffer[5] << 24u);
         if (buffer[1] == 1u) {
-            (void)pf_storage_worker_self_test_start(size_mib, pf_usb_msc_is_enabled());
+            (void)pf_storage_worker_benchmark_start(size_mib, pf_usb_msc_is_enabled());
         } else if (size_mib == 0u) {
-            (void)pf_storage_worker_self_test_cancel();
+            (void)pf_storage_worker_benchmark_cancel();
         }
     }
 }

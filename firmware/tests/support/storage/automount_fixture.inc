@@ -77,7 +77,9 @@ pf_fatfs_volume_result_t pf_fatfs_volume_mount(const pf_block_device_t *device, 
 {
     TEST_ASSERT_EQUAL_PTR(&block_device, device);
     TEST_ASSERT_TRUE(media.initialized);
-    (void)result;
+    if (result != NULL) {
+        *result = mount_result == PF_FATFS_VOLUME_OK ? FR_OK : FR_NO_FILESYSTEM;
+    }
     ++mount_calls;
     if (mount_result == PF_FATFS_VOLUME_OK) mounted = true;
     return mount_result;
@@ -87,7 +89,7 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
 {
     const storage_request_t *request = item;
     TEST_ASSERT_EQUAL_PTR(requests, queue);
-    TEST_ASSERT_TRUE(request->recover_card);
+    TEST_ASSERT_TRUE(request->recover_media);
     TEST_ASSERT_EQUAL_UINT32(0, timeout);
     if (queue_fails) return 0;
     queued_recovery = true;
@@ -102,9 +104,9 @@ void sleep_ms(uint32_t ms) { (void)ms; }
 static void poll(unsigned count)
 {
     while (count-- != 0u) {
-        now += CARD_PRESENCE_POLL_MS;
-        service_card_presence();
-        TEST_ASSERT_FALSE(card_service_busy);
+        now += MEDIA_SERVICE_POLL_MS;
+        service_media();
+        TEST_ASSERT_FALSE(media_service_busy);
         TEST_ASSERT_EQUAL_UINT(0, reservation_depth);
     }
 }

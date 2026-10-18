@@ -9,7 +9,7 @@ static bool pf_fatfs_volume_is_mounted(void);
 static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
-static bool pf_storage_worker_recover_card(void);
+static bool pf_storage_worker_recover_media(void);
 #include "../../../src/usb/msc.c"
 #include "drivers/sd_card/sd.h"
 #if PF_CONFIG_SD_CARD_TRANSPORT == 1
@@ -45,7 +45,7 @@ static bool pf_fatfs_volume_is_mounted(void) { return false; }
 static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return false; }
 static bool pf_storage_worker_media_absent(void) { return false; }
-static bool pf_storage_worker_recover_card(void) { return false; }
+static bool pf_storage_worker_recover_media(void) { return false; }
 void __real_mscd_reset(uint8_t p) { (void)p; }
 bool __real_mscd_control_xfer_cb(uint8_t p,uint8_t s,const tusb_control_request_t *r)
 { (void)p; (void)s; (void)r; return false; }

@@ -57,7 +57,10 @@ Own product behavior, startup, and composition of the services needed by a firmw
 
 ### Middleware
 
-Provide reusable application-facing services. Storage middleware mounts FatFs over the SD block-device API; application code remains responsible for supplying board-approved pins and choosing when to mount. The firmware currently uses the USB device role; a USB host role is not selected.
+Provide reusable application-facing services. Storage middleware mounts FatFs over the logical block-device API;
+the application selects SD or translated external NOR and remains responsible for board-approved configuration and
+mounting policy. See [build-selected NOR storage](nor-flash.md#build-selected-fatfs-and-usb-msc).
+The firmware currently uses the USB device role; a USB host role is not selected.
 
 ### Drivers
 
@@ -87,13 +90,21 @@ Embedded CLI is also pinned as a Git submodule. Its middleware is independent
 of the USB transport and RTOS; see [CDC CLI](cdc-cli.md) for the dependency pin,
 session lifecycle, command-extension rules, memory budget, and validation plan.
 
-The application storage-owner task initializes SD and mounts its existing FAT/exFAT volume through the
+The application storage-owner task initializes the selected SD or LevelX NOR backend and mounts its existing volume through the
 device-independent `pf_fatfs_volume_mount()` service; mounting never formats media. FatFs uses a logical block device,
-with SD supplied by the current application. The SD API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes
+selected by the application. The SD API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes
 to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. Mount, unmount, and file
 operations require caller serialization because FatFs is configured without cross-task locking. See the
 [filesystem block-device boundary](sdcard-design.md#filesystem-block-device-boundary) for authoritative layering,
 binding lifetimes, and ownership contracts.
+
+Application storage policy stays in `app/storage`: `storage_commands.c/.h` executes CDC storage commands,
+`file_benchmark.c/.h` verifies and times a dedicated file, `storage_worker.c/.h` serializes requests and owns
+automount/recovery policy, and `nor_media.c/.h` owns external NOR lifecycle and owner-gated descriptors.
+The worker obtains SD configuration and initializes its execution port through board/driver support before task startup;
+the USB task no longer configures SD. Backend-independent command and worker headers do not expose SD configuration.
+Automatic mount failures retain backend, volume and FatFs result codes and log the first or changed failure;
+identical retries remain paced and do not repeat that worker warning. Successful mounting resets warning suppression.
 
 ## Testing and Validation
 
@@ -101,4 +112,7 @@ Ceedling is configured by the repository-root `project.yml`. Host unit tests bel
 
 `host/python/tests/`, `host/dotnet/tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 
-Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow. The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support can construct either transport configuration; SDIO-PIO and SPI card initialization and physical I/O still require board validation. External QSPI flash is not currently supported.
+Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow.
+The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support constructs the
+selected transport configuration. External NOR SPI/QSPI-PIO support is implemented; its physical timing, USB interoperability,
+and power-loss qualification remain outstanding. See [NOR flash](nor-flash.md) for supported parts and region safety.

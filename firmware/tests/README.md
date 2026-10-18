@@ -117,6 +117,9 @@ upstream NOR engine on a simulated flash using `ceedling test:test_levelx_nor`.
 Initialize `firmware/third_party/levelx` first. See
 [the LevelX port guidance](../../docs/nor-flash.md#levelx-nor-port) for configuration,
 region ownership, failure recovery and the limits of host fault-injection tests.
+Build-selected NOR filesystem and MSC tests are described in the
+[NOR backend test commands](../../docs/nor-flash.md#build-selected-fatfs-and-usb-msc), including real FatFs/LevelX
+file persistence over simulated flash and owner-gated USB handoff tests.
 
 CLI middleware tests compile the pinned Embedded CLI submodule, so initialize
 submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/cdc-cli.md#validation)

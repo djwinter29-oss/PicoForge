@@ -13,14 +13,14 @@ STORAGE = ROOT / "firmware/src/drivers/storage"
 def test_storage_application_policy_stays_out_of_middleware():
     middleware = ROOT / "firmware/src/middleware/storage"
     application = ROOT / "firmware/src/app/storage"
-    for module in ("commands", "self_test", "storage_worker"):
+    for module in ("storage_commands", "file_benchmark", "storage_worker"):
         for extension in ("c", "h"):
             assert (application / f"{module}.{extension}").is_file()
             assert not (middleware / f"{module}.{extension}").exists()
     for source in sorted(middleware.glob("*.c")) + sorted(middleware.glob("*.h")):
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
         assert not any(header.startswith("app/") or Path(header).name in (
-            "commands.h", "self_test.h", "storage_worker.h"
+            "storage_commands.h", "file_benchmark.h", "storage_worker.h"
         ) for header in headers), source
 
 
@@ -33,6 +33,15 @@ def test_fatfs_volume_does_not_depend_on_the_sd_backend():
         assert not any("sd_card/" in header or Path(header).name in (
             "sd.h", "sd_block.h", "sd_block_device.h"
         ) for header in headers), source
+
+
+def test_file_benchmark_and_application_headers_do_not_expose_sd():
+    application = ROOT / "firmware/src/app/storage"
+    sources = [application / "file_benchmark.c", *application.glob("*.h")]
+    for source in sources:
+        text = source.read_text()
+        assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", text), source
+        assert not re.search(r'#include\s*"[^"]*(?:sd_card/|sd_block\.h|sd\.h)', text), source
 
 
 def test_physical_engines_do_not_include_device_or_filesystem_headers():

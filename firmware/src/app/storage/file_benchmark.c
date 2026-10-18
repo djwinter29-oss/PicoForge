@@ -1,13 +1,12 @@
 /** @file Application file-verification benchmark and cleanup. */
-#include "self_test.h"
-#include "sd_block.h"
+#include "file_benchmark.h"
 
 #include <string.h>
 
-static uint32_t test_buffer[PF_STORAGE_SELF_TEST_BUFFER_SIZE / sizeof(uint32_t)];
+static uint32_t test_buffer[PF_FILE_BENCHMARK_BUFFER_SIZE / sizeof(uint32_t)];
 static bool preallocate = PF_STORAGE_SELF_TEST_PREALLOCATE != 0;
 
-void pf_storage_self_test_set_preallocation_enabled(bool enabled)
+void pf_file_benchmark_set_preallocation_enabled(bool enabled)
 {
     preallocate = enabled;
 }
@@ -17,7 +16,7 @@ static uint32_t pattern_word(uint32_t offset)
     return (offset / 4u) ^ 0xa5c391f7u;
 }
 
-/* Offsets and sizes are word multiples; the little-endian bytes of each word are the on-card pattern. */
+/** @brief Fill word-aligned file chunks; little-endian word bytes define the persisted pattern. */
 static void fill_pattern(uint32_t *words, uint32_t offset, uint32_t size)
 {
     for (uint32_t index = 0u; index < size / 4u; ++index) {
@@ -25,6 +24,7 @@ static void fill_pattern(uint32_t *words, uint32_t offset, uint32_t size)
     }
 }
 
+/** @brief Count differing bytes in one complete word-aligned verification chunk. */
 static uint32_t count_mismatched_bytes(const uint32_t *words, uint32_t offset, uint32_t size)
 {
     uint32_t count = 0u;
@@ -38,17 +38,17 @@ static uint32_t count_mismatched_bytes(const uint32_t *words, uint32_t offset, u
     return count;
 }
 
-static void filesystem_error(pf_self_test_status_t *status, FRESULT result)
+static void filesystem_error(pf_file_benchmark_status_t *status, FRESULT result)
 {
-    status->error = result == FR_EXIST ? PF_SELF_TEST_ERROR_EXISTS : PF_SELF_TEST_ERROR_FILESYSTEM;
+    status->error = result == FR_EXIST ? PF_FILE_BENCHMARK_ERROR_EXISTS : PF_FILE_BENCHMARK_ERROR_FILESYSTEM;
     status->filesystem_result = result;
 }
 
-void pf_storage_self_test_run(uint32_t size_mib,
-                              pf_self_test_clock_t clock_ms, pf_self_test_update_t update,
-                              void *context)
+void pf_file_benchmark_run(uint32_t size_mib,
+                           pf_file_benchmark_clock_t clock_ms, pf_file_benchmark_update_t update,
+                           void *context)
 {
-    pf_self_test_status_t status = { .state = PF_SELF_TEST_MOUNTING };
+    pf_file_benchmark_status_t status = { .state = PF_FILE_BENCHMARK_PREPARING };
     FIL file;
     bool file_created = false;
     bool file_open = false;
@@ -61,30 +61,30 @@ void pf_storage_self_test_run(uint32_t size_mib,
     if ((clock_ms == NULL) || (update == NULL)) {
         return;
     }
-    if ((size_mib == 0u) || (size_mib > PF_STORAGE_SELF_TEST_MAX_MIB)) {
-        status.error = PF_SELF_TEST_ERROR_SIZE;
+    if ((size_mib == 0u) || (size_mib > PF_FILE_BENCHMARK_MAX_MIB)) {
+        status.error = PF_FILE_BENCHMARK_ERROR_SIZE;
         goto finish;
     }
     status.target_bytes = size_mib * 1024u * 1024u;
     if (!pf_fatfs_volume_is_mounted()) {
-        status.error = PF_SELF_TEST_ERROR_NOT_MOUNTED;
+        status.error = PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED;
         goto finish;
     }
-    status.flags |= PF_SELF_TEST_VOLUME_MOUNTED;
+    status.flags |= PF_FILE_BENCHMARK_VOLUME_MOUNTED;
     if (!update(&status, context)) {
         cancelled = true;
         goto finish;
     }
     FILINFO existing;
-    result = f_stat(PF_STORAGE_SELF_TEST_PATH, &existing);
+    result = f_stat(PF_FILE_BENCHMARK_PATH, &existing);
     if (result == FR_OK) {
         if ((existing.fattrib & AM_DIR) != 0u) {
             filesystem_error(&status, FR_DENIED);
             goto finish;
         }
-        result = f_unlink(PF_STORAGE_SELF_TEST_PATH);
+        result = f_unlink(PF_FILE_BENCHMARK_PATH);
         if (result != FR_OK) {
-            status.flags |= PF_SELF_TEST_FILE_REMAINS;
+            status.flags |= PF_FILE_BENCHMARK_FILE_REMAINS;
             filesystem_error(&status, result);
             goto finish;
         }
@@ -99,16 +99,16 @@ void pf_storage_self_test_run(uint32_t size_mib,
         filesystem_error(&status, result);
         goto cleanup;
     }
-    uint64_t free_bytes = (uint64_t)free_clusters * filesystem->csize * PF_SD_BLOCK_SIZE;
-    if (free_bytes < (uint64_t)status.target_bytes + PF_STORAGE_SELF_TEST_BUFFER_SIZE) {
-        status.error = PF_SELF_TEST_ERROR_SPACE;
+    uint64_t free_bytes = (uint64_t)free_clusters * filesystem->csize * FF_MAX_SS;
+    if (free_bytes < (uint64_t)status.target_bytes + PF_FILE_BENCHMARK_BUFFER_SIZE) {
+        status.error = PF_FILE_BENCHMARK_ERROR_SPACE;
         goto cleanup;
     }
     if (!update(&status, context)) {
         cancelled = true;
         goto cleanup;
     }
-    result = f_open(&file, PF_STORAGE_SELF_TEST_PATH, FA_WRITE | FA_CREATE_NEW);
+    result = f_open(&file, PF_FILE_BENCHMARK_PATH, FA_WRITE | FA_CREATE_NEW);
     if (result != FR_OK) {
         filesystem_error(&status, result);
         goto cleanup;
@@ -121,14 +121,14 @@ void pf_storage_self_test_run(uint32_t size_mib,
             goto cleanup;
         }
     }
-    status.state = PF_SELF_TEST_WRITING;
+    status.state = PF_FILE_BENCHMARK_WRITING;
     phase_start = clock_ms(context);
     while (status.written_bytes < status.target_bytes) {
         if (!update(&status, context)) {
             cancelled = true;
             break;
         }
-        fill_pattern(test_buffer, status.written_bytes, PF_STORAGE_SELF_TEST_BUFFER_SIZE);
+        fill_pattern(test_buffer, status.written_bytes, PF_FILE_BENCHMARK_BUFFER_SIZE);
         UINT written = 0u;
         result = f_write(&file, buffer, sizeof(test_buffer), &written);
         status.written_bytes += written;
@@ -139,26 +139,26 @@ void pf_storage_self_test_run(uint32_t size_mib,
         }
     }
     result = f_sync(&file);
-    if ((result != FR_OK) && (status.error == PF_SELF_TEST_ERROR_NONE)) {
+    if ((result != FR_OK) && (status.error == PF_FILE_BENCHMARK_ERROR_NONE)) {
         filesystem_error(&status, result);
     }
     result = f_close(&file);
     file_open = false;
     close_failed = result != FR_OK;
     status.write_elapsed_ms = clock_ms(context) - phase_start;
-    if (close_failed && (status.error == PF_SELF_TEST_ERROR_NONE)) {
+    if (close_failed && (status.error == PF_FILE_BENCHMARK_ERROR_NONE)) {
         filesystem_error(&status, result);
     }
-    if (cancelled || (status.error != PF_SELF_TEST_ERROR_NONE)) {
+    if (cancelled || (status.error != PF_FILE_BENCHMARK_ERROR_NONE)) {
         goto cleanup;
     }
-    result = f_open(&file, PF_STORAGE_SELF_TEST_PATH, FA_READ);
+    result = f_open(&file, PF_FILE_BENCHMARK_PATH, FA_READ);
     if (result != FR_OK) {
         filesystem_error(&status, result);
         goto cleanup;
     }
     file_open = true;
-    status.state = PF_SELF_TEST_READING;
+    status.state = PF_FILE_BENCHMARK_READING;
     phase_start = clock_ms(context);
     while (status.read_bytes < status.target_bytes) {
         if (!update(&status, context)) {
@@ -175,7 +175,7 @@ void pf_storage_self_test_run(uint32_t size_mib,
         status.read_bytes += received;
         status.read_elapsed_ms = clock_ms(context) - phase_start;
         if (status.mismatch_count != 0u) {
-            status.error = PF_SELF_TEST_ERROR_VERIFY;
+            status.error = PF_FILE_BENCHMARK_ERROR_VERIFY;
             break;
         }
     }
@@ -183,29 +183,29 @@ void pf_storage_self_test_run(uint32_t size_mib,
     file_open = false;
     close_failed = result != FR_OK;
     status.read_elapsed_ms = clock_ms(context) - phase_start;
-    if (close_failed && (status.error == PF_SELF_TEST_ERROR_NONE)) {
+    if (close_failed && (status.error == PF_FILE_BENCHMARK_ERROR_NONE)) {
         filesystem_error(&status, result);
     }
 
 cleanup:
-    status.state = PF_SELF_TEST_CLEANUP;
+    status.state = PF_FILE_BENCHMARK_CLEANUP;
     (void)update(&status, context);
     if (file_open) {
         result = f_close(&file);
         close_failed = result != FR_OK;
     }
     if (file_created) {
-        result = close_failed ? FR_LOCKED : f_unlink(PF_STORAGE_SELF_TEST_PATH);
+        result = close_failed ? FR_LOCKED : f_unlink(PF_FILE_BENCHMARK_PATH);
         if (result != FR_OK) {
-            status.flags |= PF_SELF_TEST_FILE_REMAINS;
-            if (status.error == PF_SELF_TEST_ERROR_NONE) {
-                status.error = PF_SELF_TEST_ERROR_CLEANUP;
+            status.flags |= PF_FILE_BENCHMARK_FILE_REMAINS;
+            if (status.error == PF_FILE_BENCHMARK_ERROR_NONE) {
+                status.error = PF_FILE_BENCHMARK_ERROR_CLEANUP;
                 status.filesystem_result = result;
             }
         }
     }
 finish:
-    status.state = status.error != PF_SELF_TEST_ERROR_NONE ? PF_SELF_TEST_FAILED
-        : cancelled ? PF_SELF_TEST_CANCELLED : PF_SELF_TEST_PASSED;
+    status.state = status.error != PF_FILE_BENCHMARK_ERROR_NONE ? PF_FILE_BENCHMARK_FAILED
+        : cancelled ? PF_FILE_BENCHMARK_CANCELLED : PF_FILE_BENCHMARK_PASSED;
     (void)update(&status, context);
 }
