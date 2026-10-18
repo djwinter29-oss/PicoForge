@@ -28,7 +28,8 @@ public sealed record SdCardIdentity(byte ManufacturerId, string OemId, string Pr
 /// <summary>Presence, transport, negotiated bus, capacity, and card identity.</summary>
 public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool PresenceKnown,
     bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
-    uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer);
+    uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer,
+    uint? PhysicalCapacityBytes = null, string? JedecId = null);
 
 public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected,
     bool ForceReturnSupported = false);
@@ -144,12 +145,13 @@ internal static class HidProtocol
         Require(report[(MemoryPayloadSize + 1)..].IndexOfAnyExcept((byte)0) < 0,
             "unexpected HID memory report padding");
         var payload = report[1..];
-        Require(payload[0] == ReportVersion, "unsupported HID memory report version");
+        var nor = payload[0] == 3 && payload[3] == 2;
+        Require(payload[0] == ReportVersion || nor, "unsupported HID memory report version");
         var flags = payload[2];
         Require((flags & ~0x3f) == 0, "unknown HID memory flags");
         var component = payload[3];
         var mode = payload[4];
-        Require(component <= 1 && mode <= 2, "unknown HID memory type or mode");
+        Require(nor ? mode is 2 or 3 : component <= 1 && mode <= 2, "unknown HID memory type or mode");
         var configured = (flags & 0x01) != 0;
         var presenceKnown = (flags & 0x02) != 0;
         var present = (flags & 0x04) != 0;
@@ -168,7 +170,17 @@ internal static class HidProtocol
                 (initialized || cid.IndexOfAnyExcept((byte)0) < 0),
             "invalid memory metadata values");
         SdCardIdentity? identity = null;
-        if (cidValid)
+        uint? physicalCapacity = null;
+        string? jedecId = null;
+        if (nor && initialized)
+        {
+            physicalCapacity = ReadUInt32LittleEndian(cid[3..]);
+            Require(cid[0] == 0xef && cid[1] == 0x40 && cid[2] == 0x18
+                && cid[7..].IndexOfAnyExcept((byte)0) < 0 && physicalCapacity == 16777216
+                && (ulong)blockCount * 512 <= physicalCapacity, "invalid NOR identification or capacity");
+            jedecId = "ef4018";
+        }
+        else if (cidValid)
         {
             var oem = Encoding.ASCII.GetString(cid.Slice(1, 2));
             var product = Encoding.ASCII.GetString(cid.Slice(3, 5));
@@ -180,13 +192,14 @@ internal static class HidProtocol
                 BinaryPrimitives.ReadUInt32BigEndian(cid[9..]), 2000 + (date >> 4), date & 0x0f);
         }
         return new(payload[1], configured, presenceKnown, presenceKnown ? present : null,
-            initialized, component == 1 ? "sd-card" : null, mode switch
+            initialized, nor ? "nor-flash" : component == 1 ? "sd-card" : null, mode switch
             {
                 1 => "sdio",
                 2 => "spi",
+                3 => "qspi",
                 _ => null
             }, initialized ? busClockHz : null, capacityValid ? blockCount : null,
-            capacityValid ? (ulong)blockCount * 512 : null, identity);
+            capacityValid ? (ulong)blockCount * 512 : null, identity, physicalCapacity, jedecId);
     }
 
     public static string ParseFilesystemReport(ReadOnlySpan<byte> report)

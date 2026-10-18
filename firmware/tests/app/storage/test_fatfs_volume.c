@@ -76,6 +76,23 @@ void test_mount_binds_supplied_device_and_unmount_releases_binding(void)
     TEST_ASSERT_EQUAL(PF_FATFS_VOLUME_FILESYSTEM_UNKNOWN, pf_fatfs_volume_filesystem_format());
 }
 
+void test_format_binds_and_releases_device_even_on_failure(void)
+{
+    pf_fatfs_disk_bind_Expect(&device);
+    f_mkfs_ExpectAnyArgsAndReturn(FR_DISK_ERR);
+    pf_fatfs_disk_bind_Expect(NULL);
+    TEST_ASSERT_EQUAL(FR_DISK_ERR, pf_fatfs_volume_format(&device));
+    TEST_ASSERT_FALSE(pf_fatfs_volume_is_mounted());
+    TEST_ASSERT_EQUAL(FR_INVALID_PARAMETER, pf_fatfs_volume_format(NULL));
+}
+
+void test_format_rejects_mounted_volume_without_writes(void)
+{
+    pf_fatfs_disk_bind_Expect(&device);
+    TEST_ASSERT_EQUAL(PF_FATFS_VOLUME_OK, pf_fatfs_volume_mount(&device, NULL));
+    TEST_ASSERT_EQUAL(FR_LOCKED, pf_fatfs_volume_format(&device));
+}
+
 void test_failed_mount_unbinds_device_and_reports_filesystem_error(void)
 {
     pf_fatfs_disk_bind_Expect(&device);

@@ -203,7 +203,7 @@ space for a 512-byte staging sector and upstream reclaim calls.
 **Open is not read-only.** Upstream LevelX can initialize metadata on blank
 media and repair/reclaim existing metadata during open. The raw driver and link smoke do not automatically open media.
 The NOR filesystem application does open its explicitly configured region in the storage worker; there is no
-destructive erase-all or filesystem-format wrapper.
+destructive raw erase-all wrapper.
 Only supply an explicitly designated LevelX region, never an SD filesystem,
 boot flash, or unrelated raw data. LevelX's on-flash layout is not FAT.
 
@@ -255,10 +255,14 @@ When intentionally flashing later, `tools/firmware/load.sh` accepts the same bac
 It preserves NOR selection when invoking the build wrapper and rejects a known cached-backend mismatch before
 flashing an implicitly selected ELF. `--skip-build` avoids rebuilding; an explicit `--elf` remains the caller's choice.
 
-The worker opens LevelX and attempts to mount an **existing** FAT/exFAT volume. It never calls `f_mkfs`.
+The worker normally opens LevelX and attempts to mount an **existing** FAT/exFAT volume.
 For an unformatted logical volume, mounting reports a FatFs error; use `fs mount` to see the result.
 After initialization, USB MSC can expose that unmounted logical volume for intentional host-side provisioning.
 Host formatting is destructive to the logical region and must be explicitly authorized.
+Alternatively, `fs format --confirm` creates FAT on the selected LevelX logical volume and mounts it.
+This command requires Pico ownership and an unmounted volume (`fs unmount` first if necessary); it destroys
+existing logical files but does not raw-erase the chip or access outside the configured LevelX region.
+Formatting failure is reported and can leave partially changed filesystem contents.
 Logical capacity excludes LevelX metadata/reserve space; USB reports that logical capacity.
 Only `LX_SECTOR_NOT_FOUND` reads map to erased `0xff` sectors; other failures remain errors. The lower-level LevelX API
 continues to report its native statuses unchanged.

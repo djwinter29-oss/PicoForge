@@ -56,6 +56,23 @@ pf_fatfs_volume_result_t pf_fatfs_volume_mount(
     return PF_FATFS_VOLUME_OK;
 }
 
+FRESULT pf_fatfs_volume_format(const pf_block_device_t *device)
+{
+    static BYTE work[FF_MAX_SS]; /**< Sole-worker scratch space, kept off the task stack. */
+    const MKFS_PARM options = { .fmt = FM_FAT | FM_SFD, .n_fat = 1u, .n_root = 64u };
+    if (device == NULL) {
+        return FR_INVALID_PARAMETER;
+    }
+    if (atomic_load(&storage_mounted)) {
+        return FR_LOCKED;
+    }
+    atomic_store(&storage_format, PF_FATFS_VOLUME_FILESYSTEM_UNKNOWN);
+    pf_fatfs_disk_bind(device);
+    FRESULT result = f_mkfs(PF_FATFS_VOLUME_PATH, &options, work, sizeof(work));
+    pf_fatfs_disk_bind(NULL);
+    return result;
+}
+
 pf_fatfs_volume_result_t pf_fatfs_volume_unmount(FRESULT *filesystem_result)
 {
     FRESULT unmount_result;

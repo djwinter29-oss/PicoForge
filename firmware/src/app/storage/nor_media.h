@@ -29,6 +29,9 @@ typedef struct {
     uint32_t system_error; /**< LevelX system-error callback code. */
     bool ready; /**< Current initialized, open and nonfaulted state. */
     bool usb_owned; /**< Current exclusive owner is USB. */
+    uint32_t bus_clock_hz; /**< Effective serial symbol clock; zero before initialization. */
+    uint32_t capacity_bytes; /**< Physical identified NOR capacity. */
+    uint32_t sector_count; /**< LevelX logical capacity in 512-byte sectors. */
 } pf_nor_media_diagnostics_t;
 
 /** @brief Copy retained failure and current state under the media reservation.

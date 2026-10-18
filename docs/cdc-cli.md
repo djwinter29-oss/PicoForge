@@ -45,6 +45,7 @@ CR, LF, and CRLF are accepted.
 | `sd recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
+| `fs format --confirm` | Destroy files on the selected logical device, create FAT without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
 | `fs stat <path>` | Show size, attributes, and filesystem timestamps. |
 | `fs cat <path> [limit]` | Read at most 1024 bytes by default; limit accepts 1..4096 bytes. |
@@ -62,8 +63,8 @@ limitations. Recovery completion or failure is reported through the UART logger;
 Storage commands require absolute ASCII paths on volume 0, with no drive
 prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
 bytes and must fit the CLI's command buffer. Double-quote paths or text containing
-spaces. There is no current-directory state, recursive deletion, overwrite, or
-format command. File content is displayed in chunks of up to 48 bytes, with
+spaces. There is no current-directory state, recursive deletion, or file overwrite.
+File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
 

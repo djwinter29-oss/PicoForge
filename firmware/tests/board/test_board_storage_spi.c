@@ -34,6 +34,15 @@ void tearDown(void)
     pf_board_storage_release_pins();
 }
 
+void test_effective_spi_clock_is_zero_until_initialized(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(0u, pf_board_storage_clock_hz());
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_board_storage_prepare(&bus));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&bus));
+    serial_fake.hz = 992063u;
+    TEST_ASSERT_EQUAL_UINT32(992063u, pf_board_storage_clock_hz());
+}
+
 void test_spi_board_owns_wp_hold_and_rejects_duplicate_init_without_changing_transport(void)
 {
     pf_nor_transport_t transport;

@@ -113,6 +113,18 @@ CID and capacity retained internally for SD diagnostics after initialization or 
 Input Report 3 while the card is uninitialized. Its CID-valid and capacity-valid flags remain clear, and CID, clock,
 and capacity fields remain zero, so a card failure does not invalidate the dashboard's live status stream.
 
+### NOR memory telemetry (Input Report 3, layout 3)
+
+NOR uses the same 29-byte memory payload, version `3`, component type `2` and mode `2` (SPI) or `3` (QSPI).
+Offsets and flag meanings stay the same, except CID-valid means NOR identity-valid. Offset 9 reports
+**LevelX logical sectors**, not raw chip capacity. Identity bytes at offset 13 hold the identified JEDEC ID
+(`EF 40 18` for the supported W25Q128), followed by four little-endian physical-capacity bytes, then nine reserved
+zero bytes. The current driver accepts only that JEDEC identity; hosts must not interpret these bytes as an SD CID.
+Until the volume is ready, clock, capacity and identity remain zero and presence is unknown, not falsely absent.
+The dashboard displays logical and physical capacity separately; manufacturer/product derive from the validated
+JEDEC ID. Chip serial, manufacturing date and revision are not read and are not invented.
+Update firmware and host software together; SD continues using layout 2 unchanged.
+
 ## Feature Report 4
 
 Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED state (`0` off or `1` on). Setting a state is idempotent; the command is ignored if malformed or if the selected board has no controllable LED. The resulting state is reported in subsequent Input Report 2 telemetry.

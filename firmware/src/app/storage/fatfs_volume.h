@@ -45,6 +45,13 @@ typedef enum {
 pf_fatfs_volume_result_t pf_fatfs_volume_mount(
     const pf_block_device_t *device, FRESULT *filesystem_result);
 
+/** @brief Destructively create FAT on an initialized, unmounted logical device.
+ * Caller must confirm destruction, exclude USB ownership and serialize on the storage worker.
+ * @param device Borrowed logical device, never raw NOR or Pico boot flash.
+ * @return FatFs outcome; device binding is released on success and failure.
+ */
+FRESULT pf_fatfs_volume_format(const pf_block_device_t *device);
+
 /** @brief Unregister the volume after all open FatFs objects have been closed.
  * This is not a flush: callers must check f_sync/f_close before unmount and
  * ownership handoff. Removal/fault cleanup may unregister invalid media without

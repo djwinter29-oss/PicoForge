@@ -142,9 +142,12 @@ export function decodeMemoryReport(reportId, report) {
   const mode = view.getUint8(4);
   const busClockHz = view.getUint32(5, true);
   const blockCount = view.getUint32(9, true);
-  if (version !== 2) throw new Error(`Unsupported HID memory report version ${version}`);
+  const nor = version === 3 && componentType === 2;
+  if (version !== 2 && !nor) throw new Error(`Unsupported HID memory report version ${version}`);
   if ((flags & ~0x3f) !== 0) throw new Error("Unknown HID memory flags");
-  if (componentType > 1 || mode > 2) throw new Error("Unknown HID memory type or mode");
+  if (nor ? ![2, 3].includes(mode) : componentType > 1 || mode > 2) {
+    throw new Error("Unknown HID memory type or mode");
+  }
   const configured = Boolean(flags & 0x01);
   const presenceKnown = Boolean(flags & 0x02);
   const present = Boolean(flags & 0x04);
@@ -162,7 +165,15 @@ export function decodeMemoryReport(reportId, report) {
   const cid = new Uint8Array(view.buffer, view.byteOffset + 13, 16);
   if (!initialized && cid.some(byte => byte !== 0)) throw new Error("Unexpected CID without initialized card");
   let manufacturer = null;
-  if (cidValid) {
+  if (nor && initialized) {
+    if (cid[0] !== 0xef || cid[1] !== 0x40 || cid[2] !== 0x18
+      || cid.subarray(7).some(byte => byte !== 0)
+      || view.getUint32(16, true) !== 16777216 || blockCount * 512 > 16777216) {
+      throw new Error("Invalid NOR identification or capacity");
+    }
+    manufacturer = { id: cid[0], product_name: "W25Q128", jedec_id: "ef4018",
+      serial_number: null };
+  } else if (cidValid) {
     const oemId = new TextDecoder("ascii").decode(cid.subarray(1, 3));
     const productName = new TextDecoder("ascii").decode(cid.subarray(3, 8));
     if (!/^[\x20-\x7e]{2}$/.test(oemId) || !/^[\x20-\x7e]{5}$/.test(productName)) {
@@ -186,12 +197,13 @@ export function decodeMemoryReport(reportId, report) {
     presence_known: presenceKnown,
     present: presenceKnown ? present : null,
     initialized,
-    component_type: componentType === 1 ? "sd-card" : null,
-    mode: ({ 1: "sdio", 2: "spi" })[mode] ?? null,
+    component_type: nor ? "nor-flash" : componentType === 1 ? "sd-card" : null,
+    mode: ({ 1: "sdio", 2: "spi", 3: "qspi" })[mode] ?? null,
     bus_clock_hz: initialized ? busClockHz : null,
     block_count: capacityValid ? blockCount : null,
     capacity_bytes: capacityValid ? blockCount * 512 : null,
     manufacturer,
+    ...(nor ? { physical_capacity_bytes: initialized ? view.getUint32(16, true) : null } : {}),
   };
 }
 

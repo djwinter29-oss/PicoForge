@@ -32,6 +32,16 @@ void tearDown(void)
     pf_board_storage_release_pins();
 }
 
+void test_effective_pio_clock_reads_integer_and_fractional_divider(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(0u, pf_board_storage_clock_hz());
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_board_storage_prepare(&bus));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&bus));
+    serial_storage.sm = 0u;
+    serial_storage.pio->sm[0].clkdiv = (31u << 16u) | (64u << 8u);
+    TEST_ASSERT_EQUAL_UINT32(1000000u, pf_board_storage_clock_hz());
+}
+
 void test_quad_profile_prepares_only_a_descriptor_before_device_initialization(void)
 {
     pf_nor_transport_t transport;

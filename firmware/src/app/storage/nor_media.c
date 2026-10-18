@@ -42,6 +42,9 @@ void pf_nor_media_get_diagnostics(pf_nor_media_diagnostics_t *diagnostics)
     *diagnostics = last_failure;
     diagnostics->ready = pf_nor_media_ready();
     diagnostics->usb_owned = usb_owner;
+    diagnostics->bus_clock_hz = diagnostics->ready ? pf_board_storage_clock_hz() : 0u;
+    diagnostics->capacity_bytes = flash.initialized ? flash.capacity_bytes : 0u;
+    diagnostics->sector_count = diagnostics->ready ? volume.sector_count : 0u;
     pf_nor_media_unlock();
 }
 

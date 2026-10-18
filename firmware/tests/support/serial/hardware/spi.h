@@ -8,6 +8,7 @@ extern spi_inst_t serial_spi[2];
 #define SPI_CPHA_0 0
 #define SPI_MSB_FIRST 0
 static inline uint spi_get_index(spi_inst_t *spi) { return spi->index; }
+static inline uint spi_get_baudrate(spi_inst_t *spi) { (void)spi; return serial_fake.hz; }
 typedef struct { uint32_t dr; } spi_hw_t;
 static inline spi_hw_t *spi_get_hw(spi_inst_t *spi)
 { (void)spi; static spi_hw_t hardware; return &hardware; }

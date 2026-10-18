@@ -20,6 +20,22 @@ def info_report(mcu=2, name="PicoForge", serial="0123456789abcdef"):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_nor_memory_layout(self):
+        report = bytearray(30)
+        report[:6] = bytes([3, 3, 1, 0x3f, 2, 2])
+        struct.pack_into("<II", report, 6, 992063, 6000)
+        report[14:17] = bytes.fromhex("ef4018")
+        struct.pack_into("<I", report, 17, 16777216)
+        memory = parse_memory_report(report)
+        self.assertEqual(memory["component_type"], "nor-flash")
+        self.assertEqual(memory["capacity_bytes"], 6000 * 512)
+        self.assertEqual(memory["physical_capacity_bytes"], 16777216)
+        self.assertEqual(memory["manufacturer"]["jedec_id"], "ef4018")
+        self.assertIsNone(memory["manufacturer"]["serial_number"])
+        report[29] = 1
+        with self.assertRaisesRegex(ValueError, "NOR"):
+            parse_memory_report(report)
+
     def test_decodes_info_and_product_name(self):
         self.assertEqual(
             parse_info_report(info_report()),

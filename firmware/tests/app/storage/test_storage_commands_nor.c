@@ -27,6 +27,45 @@ static void run(const char *arguments)
 void setUp(void) { output[0] = '\0'; }
 void tearDown(void) {}
 
+void test_format_requires_exact_confirmation_and_firmware_ownership(void)
+{
+    run("format");
+    TEST_ASSERT_NOT_NULL(strstr(output, "Usage: fs format --confirm"));
+    run("format --confirm extra");
+    pf_storage_command_execute(true, "fs", "format --confirm", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Media owned by USB"));
+}
+
+void test_format_refuses_mounted_volume(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    run("format --confirm");
+    TEST_ASSERT_NOT_NULL(strstr(output, "format refused"));
+}
+
+void test_format_uses_logical_nor_device_then_mounts(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_nor_media_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_nor_media_firmware_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_format_ExpectAndReturn(&device, FR_OK);
+    pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
+    run("format --confirm");
+    TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem formatted"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
+}
+
+void test_failed_format_reports_error_without_mounting(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_nor_media_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_nor_media_firmware_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_format_ExpectAndReturn(&device, FR_DISK_ERR);
+    run("format --confirm");
+    TEST_ASSERT_NOT_NULL(strstr(output, "partially changed"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "DISK_ERR"));
+}
+
 void test_nor_mount_initializes_and_binds_firmware_descriptor(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);

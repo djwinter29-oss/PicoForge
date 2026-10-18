@@ -111,7 +111,7 @@ static void cdc_cli_task(void)
                 "sd", "sd status | sd info | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
                 "sd", storage_command
             }) || !pf_cli_add_binding((CliCommandBinding){
-                "fs", "fs mount|unmount|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
+                "fs", "fs mount|unmount|format --confirm|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
                       "fs mkdir <path>|write <path> <text>|append <path> <text>\r\n"
                       "fs mv <source> <destination>|rm <path> --confirm", false,
                 "fs", storage_command

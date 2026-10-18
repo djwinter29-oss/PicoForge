@@ -85,16 +85,16 @@ typedef struct __attribute__((packed)) {
     uint32_t ram_total_bytes; /**< SDK-selected on-chip SRAM capacity. */
 } pf_hid_status_report_t;
 
-/** Dynamic SD-card state, bus settings, capacity, and raw SD CID bytes. */
+/** Dynamic memory state: layout 2 SD CID or layout 3 NOR JEDEC/physical capacity. */
 typedef struct __attribute__((packed)) {
-    uint8_t version;
-    uint8_t sequence;
-    uint8_t flags;
-    uint8_t component_type;
-    uint8_t mode;
-    uint32_t bus_clock_hz;
-    uint32_t block_count;
-    uint8_t cid[16];
+    uint8_t version; /**< 2 for SD, 3 for NOR. */
+    uint8_t sequence; /**< Periodic sample sequence. */
+    uint8_t flags; /**< Presence, initialization, identity and capacity validity. */
+    uint8_t component_type; /**< 0 unavailable, 1 SD card, 2 NOR flash. */
+    uint8_t mode; /**< 0 unknown, 1 SDIO, 2 SPI, 3 QSPI. */
+    uint32_t bus_clock_hz; /**< Effective physical symbol clock. */
+    uint32_t block_count; /**< Usable logical capacity in 512-byte sectors. */
+    uint8_t cid[16]; /**< SD CID, or NOR JEDEC[3], physical bytes[4] LE, reserved[9]. */
 } pf_hid_memory_report_t;
 
 /** LED set-state command sent through HID Feature report 4. */

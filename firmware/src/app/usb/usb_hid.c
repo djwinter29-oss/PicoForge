@@ -12,6 +12,9 @@
 #include "app/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
 #include "integration/freertos/runtime_stats.h"
+#if PF_STORAGE_BACKEND_NOR
+#include "app/storage/nor_media.h"
+#endif
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {
@@ -63,10 +66,36 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
 bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence)
 {
 #if PF_STORAGE_BACKEND_NOR
-    /* The current HID memory report is SD-specific; never advertise NOR as an SD card. */
+    if (!pf_nor_media_try_lock()) {
+        return false;
+    }
+    pf_nor_media_diagnostics_t info;
+    pf_nor_media_get_diagnostics(&info);
+    pf_nor_media_unlock();
     memset(report, 0, sizeof(*report));
-    report->version = PF_HID_REPORT_VERSION;
+    report->version = 3u;
     report->sequence = sequence;
+    report->component_type = 2u;
+#if PF_NOR_QSPI
+    report->mode = 3u;
+#else
+    report->mode = PF_HID_MEMORY_MODE_SPI;
+#endif
+    report->flags = PF_HID_MEMORY_CONFIGURED;
+    if (info.ready) {
+        report->flags |= PF_HID_MEMORY_PRESENCE_KNOWN | PF_HID_MEMORY_PRESENT |
+                         PF_HID_MEMORY_INITIALIZED | PF_HID_MEMORY_CAPACITY_VALID |
+                         PF_HID_MEMORY_CID_VALID;
+        report->bus_clock_hz = info.bus_clock_hz;
+        report->block_count = info.sector_count;
+        /* Successful initialization identifies only EF 40 18; no SD CID or chip serial is fabricated. */
+        report->cid[0] = 0xefu;
+        report->cid[1] = 0x40u;
+        report->cid[2] = 0x18u;
+        for (unsigned i = 0u; i < 4u; ++i) {
+            report->cid[3u + i] = (uint8_t)(info.capacity_bytes >> (8u * i));
+        }
+    }
     return true;
 #else
     pf_sd_config_t config;

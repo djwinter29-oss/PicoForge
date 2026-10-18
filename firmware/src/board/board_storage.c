@@ -4,6 +4,7 @@
 #include "board_storage.h"
 #include "board_resources.h"
 #include "hardware/gpio.h"
+#include "hardware/clocks.h"
 
 #if PF_BOARD_STORAGE_QSPI
 #include "drivers/storage/qspi_pio/qspi_pio.h"
@@ -13,6 +14,21 @@ static pf_qspi_pio_t serial_storage;
 static pf_spi_t serial_storage;
 #endif
 static bool serial_pins_prepared;
+
+uint32_t pf_board_storage_clock_hz(void)
+{
+    if (!serial_storage.initialized) {
+        return 0u;
+    }
+#if PF_BOARD_STORAGE_QSPI
+    uint32_t divider = serial_storage.pio->sm[serial_storage.sm].clkdiv;
+    uint32_t fixed = divider >> 8u;
+    uint64_t divisor = fixed != 0u ? fixed : 65536ull * 256u;
+    return (uint32_t)((uint64_t)clock_get_hz(clk_sys) * 256u / (4u * divisor));
+#else
+    return spi_get_baudrate(serial_storage.instance);
+#endif
+}
 
 pf_storage_bus_result_t pf_board_storage_prepare(pf_storage_bus_t *bus)
 {

@@ -75,6 +75,7 @@ void setUp(void)
     close_status = LX_SUCCESS;
     init_calls = open_calls = 0u;
     pf_storage_bus_deinit_Ignore();
+    pf_board_storage_clock_hz_IgnoreAndReturn(1000000u);
     pf_board_storage_prepare_Stub(prepare);
     pf_nor_transport_init_IgnoreAndReturn(PF_NOR_OK);
     pf_nor_init_Stub(initialize);

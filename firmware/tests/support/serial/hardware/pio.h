@@ -1,7 +1,7 @@
 #pragma once
 #include "../serial_fake.h"
 #define NUM_BANK0_GPIOS 30u
-typedef struct { unsigned index; } serial_pio_t;
+typedef struct { unsigned index; struct { uint32_t clkdiv; } sm[4]; } serial_pio_t;
 typedef serial_pio_t *PIO;
 extern serial_pio_t serial_pio[2];
 #define pio0 (&serial_pio[0])

@@ -68,7 +68,9 @@ function renderMemory(memory, filesystemFormat) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const manufacturer = memory?.manufacturer;
   set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
-  set("#memory-note", !memory?.configured ? "No SD-card transport configured"
+  const nor = memory?.component_type === "nor-flash";
+  set("#memory-note", nor ? "External NOR: capacity shown as usable logical storage / physical chip."
+    : !memory?.configured ? "No SD-card transport configured"
     : memory.presence_known && !memory.present
       ? "No card detected. Check card insertion and the active-high DET connection on GP8."
       : memory.present && !memory.initialized
@@ -79,27 +81,30 @@ function renderMemory(memory, filesystemFormat) {
   set("#memory-speed", memory?.bus_clock_hz
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
-  set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
+  set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) +
+    (nor ? ` usable / ${formatBytes(memory.physical_capacity_bytes)} physical` : "") : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
   set("#memory-filesystem", filesystemLabels[filesystemFormat] ?? "Unknown");
   set("#memory-manufacturer", formatManufacturer(manufacturer));
-  set("#memory-product", manufacturer
+  set("#memory-product", nor ? (manufacturer ? `${manufacturer.product_name} · JEDEC ${manufacturer.jedec_id}` : "--") : manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
-  set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
+  set("#memory-serial", nor ? "Not reported" :
+    manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
 }
 
 function formatManufacturer(manufacturer) {
   if (!manufacturer) return "--";
   const id = manufacturer.id;
   if (!Number.isInteger(id) || id < 0 || id > 0xff) return "Unknown manufacturer";
-  const names = { 0x03: "SanDisk", 0x41: "Kingston" };
+  const names = { 0x03: "SanDisk", 0x41: "Kingston", 0xef: "Winbond" };
   return `${names[id] ?? "Unknown manufacturer"} (0x${id.toString(16).padStart(2, "0")})`;
 }
 
 function formatBytes(bytes) {
   const gibibytes = bytes / (1024 ** 3);
-  return gibibytes >= 1 ? `${gibibytes.toFixed(2)} GiB` : `${(bytes / (1024 ** 2)).toFixed(0)} MiB`;
+  return gibibytes >= 1 ? `${gibibytes.toFixed(2)} GiB`
+    : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 ** 2)).toFixed(2)} MiB`;
 }
 
 export function renderSelfTest(snapshot) {

@@ -22,7 +22,7 @@ for (const name of ["web", "webhid"]) {
     assert.doesNotMatch(liveReport, /System clock|runtime-clock/);
     assert.doesNotMatch(html, /Report sequence|id="sequence"/);
     assert.equal((html.match(/<span>System clock<\/span>/g) ?? []).length, 1);
-    assert.match(liveReport, /SD card presence/);
+    assert.match(liveReport, /Memory presence/);
     assert.match(liveReport, /id="card-presence"/);
     assert.match(liveReport, /<dt>Memory type<\/dt><dd id="memory-type">/);
     assert.doesNotMatch(liveReport, /USB device|id="usb-state"/);

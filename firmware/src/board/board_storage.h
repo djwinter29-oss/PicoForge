@@ -18,4 +18,7 @@ pf_storage_bus_result_t pf_board_storage_prepare(pf_storage_bus_t *bus);
  */
 void pf_board_storage_release_pins(void);
 
+/** @brief Read the configured physical serial clock, or zero when not initialized. */
+uint32_t pf_board_storage_clock_hz(void);
+
 #endif

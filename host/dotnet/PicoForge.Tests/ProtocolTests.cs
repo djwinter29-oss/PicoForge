@@ -13,6 +13,26 @@ namespace PicoForge.Tests;
 public sealed class ProtocolTests
 {
     [Fact]
+    public void ParsesNorMemoryLayoutAndRejectsNonzeroReservedBytes()
+    {
+        var report = new byte[30];
+        new byte[] { 3, 3, 1, 0x3f, 2, 2 }.CopyTo(report, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(6), 992063);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(10), 6000);
+        new byte[] { 0xef, 0x40, 0x18 }.CopyTo(report, 14);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(17), 16777216);
+        var memory = HidProtocol.ParseMemoryReport(report);
+        Assert.Equal("nor-flash", memory.ComponentType);
+        Assert.Equal("spi", memory.Mode);
+        Assert.Equal(6000ul * 512, memory.CapacityBytes);
+        Assert.Equal(16777216u, memory.PhysicalCapacityBytes);
+        Assert.Equal("ef4018", memory.JedecId);
+        Assert.Null(memory.Manufacturer);
+        report[29] = 1;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseMemoryReport(report));
+    }
+
+    [Fact]
     public void ParsesProductMcuAndSerialIdentity()
     {
         var report = CreateInfoReport();

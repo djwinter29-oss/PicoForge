@@ -449,16 +449,22 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
     }
 #endif
     if ((strcmp(family, "fs") != 0) || (count == 0u)) {
-        (void)reply("Usage: sd <status|info|profile|diagnostics> | fs <mount|unmount|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
+        (void)reply("Usage: sd <status|info|profile|diagnostics> | fs <mount|unmount|format|ls|stat|cat|df|mkdir|write|append|mv|rm>", context);
         return;
     }
     if (host_owned) {
         (void)reply("Media owned by USB. Safely eject and disable MSC first.", context);
         return;
     }
-    if ((count == 1u) && (strcmp(operation, "mount") == 0)) {
+    bool formatting = strcmp(operation, "format") == 0;
+    if (formatting && (count != 2u || strcmp(first, "--confirm") != 0)) {
+        (void)reply("Usage: fs format --confirm (destroys all files on selected logical volume)", context);
+        return;
+    }
+    if (formatting || ((count == 1u) && (strcmp(operation, "mount") == 0))) {
         if (pf_fatfs_volume_is_mounted()) {
-            (void)reply("Filesystem already mounted.", context);
+            (void)reply(formatting ? "Unmount first with fs unmount; format refused." :
+                       "Filesystem already mounted.", context);
             return;
         }
 #if PF_STORAGE_BACKEND_NOR
@@ -475,6 +481,15 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
         const pf_block_device_t *device = pf_sd_media_firmware_device();
 #endif
         FRESULT result;
+        if (formatting) {
+            result = pf_fatfs_volume_format(device);
+            if (result != FR_OK) {
+                (void)reply("Format failed; volume contents may be partially changed.", context);
+                report_result(result, reply, context);
+                return;
+            }
+            (void)reply("Filesystem formatted; mounting.", context);
+        }
         pf_fatfs_volume_result_t storage_result = pf_fatfs_volume_mount(device, &result);
         if (storage_result == PF_FATFS_VOLUME_OK) {
             (void)reply("Filesystem mounted.", context);
