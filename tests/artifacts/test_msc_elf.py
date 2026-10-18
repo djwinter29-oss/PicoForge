@@ -5,6 +5,7 @@ Requires unstripped ELF with DWARF and arm-none-eabi nm/readelf. No builds run.
 Paths and SHA-256 identify artifacts, not their transport provenance.
 """
 import hashlib
+import json
 import re
 import shutil
 import struct
@@ -141,3 +142,21 @@ def test_msc_callback_pointers(msc_elf_paths):
     if not msc_elf_paths:
         pytest.fail("MSC artifact tests require --elf PATH (build application firmware first)")
     check_artifacts(msc_elf_paths)
+
+
+def test_selected_storage_build_dependencies(msc_elf_paths):
+    if not msc_elf_paths:
+        pytest.fail("Storage dependency checks require --elf PATH and its CMake build manifest")
+    for path in msc_elf_paths:
+        directory = path.resolve().parent
+        cache = (directory / 'CMakeCache.txt').read_text()
+        selected = re.search(r'^PF_STORAGE_BACKEND:STRING=(SD|NOR)$', cache, re.MULTILINE)
+        assert selected, f"Missing selected storage backend: {directory}"
+        commands = json.loads((directory / 'compile_commands.json').read_text())
+        sources = [Path(command['file']).as_posix() for command in commands]
+        sd_sources = [source for source in sources if '/src/drivers/sd_card/' in source]
+        adapter = any(source.endswith('/middleware/storage/sd_block_device.c') for source in sources)
+        if selected[1] == 'NOR':
+            assert not sd_sources and not adapter, f"NOR build includes SD dependencies: {sd_sources}"
+        else:
+            assert sd_sources and adapter, f"SD build is missing its protocol or adapter: {directory}"

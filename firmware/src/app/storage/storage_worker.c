@@ -126,10 +126,12 @@ static void attempt_auto_mount(void)
     } else {
 #if PF_STORAGE_BACKEND_NOR
         media_result = pf_nor_media_initialize();
+        bool media_ready = media_result == PF_BLOCK_OK;
 #else
         media_result = (unsigned)pf_sd_media_initialize();
+        bool media_ready = media_result == PF_SD_OK;
 #endif
-        if (media_result != PF_BLOCK_OK) {
+        if (!media_ready) {
             auto_mount_pending = true;
         } else {
 #if PF_STORAGE_BACKEND_NOR
@@ -286,14 +288,20 @@ static void recover_media(void)
     auto_mount_blocked = true;
     auto_mount_pending = false;
 #if PF_STORAGE_BACKEND_NOR
-    (void)pf_nor_media_initialize();
+    pf_block_result_t result = pf_nor_media_initialize();
+    bool recovered = result == PF_BLOCK_OK;
 #else
     pf_sd_lock();
     (void)pf_sd_media_take_reinit_request();
-    /* Failure remains in facade diagnostics. Never mount or replay. */
-    (void)pf_sd_media_initialize();
+    pf_sd_result_t result = pf_sd_media_initialize();
+    bool recovered = result == PF_SD_OK;
     pf_sd_unlock();
 #endif
+    if (recovered) {
+        PF_LOG_INFO("storage", "Media recovery completed; volume remains unmounted pending explicit fs mount");
+    } else {
+        PF_LOG_ERROR("storage", "Media recovery failed: result=%u; volume remains unmounted", (unsigned)result);
+    }
     taskENTER_CRITICAL();
     busy = false;
     taskEXIT_CRITICAL();

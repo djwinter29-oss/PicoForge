@@ -406,6 +406,21 @@ void pf_storage_command_execute(bool host_owned, const char *family, const char 
     second = embeddedCliGetToken(tokens, 3u);
 #if PF_STORAGE_BACKEND_NOR
     if (strcmp(family, "sd") == 0) {
+        bool diagnostic_status = count >= 1u && strcmp(operation, "diagnostics") == 0 &&
+            (count == 1u || (count == 2u && strcmp(first, "status") == 0));
+        if ((count == 1u && strcmp(operation, "status") == 0) || diagnostic_status) {
+            pf_nor_media_diagnostics_t diagnostics;
+            pf_nor_media_get_diagnostics(&diagnostics);
+            char line[PF_STORAGE_REPLY_SIZE];
+            (void)snprintf(line, sizeof(line),
+                "backend=nor owner=%s initialized=%u sequence=%lu result=%u raw=%lu LevelX=%lu system=%lu",
+                diagnostics.usb_owned ? "USB" : "Pico", (unsigned)diagnostics.ready,
+                (unsigned long)diagnostics.sequence, (unsigned)diagnostics.result,
+                (unsigned long)diagnostics.raw_result, (unsigned long)diagnostics.levelx_result,
+                (unsigned long)diagnostics.system_error);
+            (void)reply(line, context);
+            return;
+        }
         (void)reply("SD diagnostics unavailable: this build uses external LevelX NOR.", context);
         return;
     }

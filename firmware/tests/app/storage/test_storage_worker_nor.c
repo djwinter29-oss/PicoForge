@@ -38,6 +38,10 @@ const pf_block_device_t *pf_nor_media_firmware_device(void)
 {
     return &device;
 }
+void pf_nor_media_get_diagnostics(pf_nor_media_diagnostics_t *diagnostics)
+{
+    *diagnostics = (pf_nor_media_diagnostics_t){.ready = nor_ready, .usb_owned = usb_owned};
+}
 bool pf_fatfs_volume_is_mounted(void) { return mounted; }
 pf_fatfs_volume_result_t pf_fatfs_volume_mount(const pf_block_device_t *value, FRESULT *result)
 {
@@ -219,4 +223,28 @@ void test_explicit_mount_after_recovery_restores_background_policy(void)
     nor_ready = false;
     service_media();
     TEST_ASSERT_TRUE(mounted && nor_ready);
+}
+
+void test_recovery_reports_failure_or_completion_and_never_mounts_or_retries(void)
+{
+    pf_log_write_StopIgnore();
+    busy = true;
+    init_fails = true;
+    pf_log_write_Expect(PF_LOG_LEVEL_ERROR, "storage",
+        "Media recovery failed: result=%u; volume remains unmounted");
+    recover_media();
+    TEST_ASSERT_EQUAL_UINT(1u, init_calls);
+    TEST_ASSERT_FALSE(nor_ready || mounted || busy);
+    TEST_ASSERT_TRUE(auto_mount_blocked);
+    service_media();
+    TEST_ASSERT_EQUAL_UINT(1u, init_calls);
+    busy = true;
+    init_fails = false;
+    pf_log_write_Expect(PF_LOG_LEVEL_INFO, "storage",
+        "Media recovery completed; volume remains unmounted pending explicit fs mount");
+    recover_media();
+    TEST_ASSERT_EQUAL_UINT(2u, init_calls);
+    TEST_ASSERT_TRUE(nor_ready && auto_mount_blocked);
+    TEST_ASSERT_FALSE(mounted || busy);
+    TEST_ASSERT_EQUAL_UINT(0u, mount_calls);
 }

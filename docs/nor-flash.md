@@ -273,8 +273,14 @@ MSC holds the media reservation across its worker-idle check and ownership trans
 readiness and mounted state on acquisition, not worker admission. Normal release requires caller-checked eject/sync.
 The separate recovery release rejects healthy media and does not sync or claim durability.
 
-`sd` diagnostics and the SD-specific HID memory report do not describe NOR: NOR builds reject those CLI diagnostics
-and return an unconfigured memory report, rather than initializing SD pins or advertising NOR as an SD card.
+For compatibility, `sd status` and `sd diagnostics` report the selected NOR media with `backend=nor`, current
+ownership/readiness and a retained failure sequence, block result, raw NOR result, LevelX result and system error.
+Successful recovery does not clear the retained failure. Adapter I/O failures report `LX_ERROR`; initialization
+and close failures retain the returned LevelX status. `sd info`, `sd profile`, and diagnostic clearing remain
+SD-only. Recovery completion or failure is logged on UART, and leaves the volume unmounted in either case.
+NOR builds omit SD protocol/execution-port targets and the middleware SD adapter, and board SD configuration
+returns unavailable without preparing SD hardware.
+The SD-specific HID memory report remains unconfigured rather than advertising NOR as an SD card.
 Filesystem, MSC and file-self-test reports remain available. No new NOR identity/HID protocol is implemented.
 
 ```sh

@@ -6,6 +6,22 @@
 
 #include "middleware/storage/block_device.h"
 
+/** Retained NOR failure plus current access state; vendor codes remain numeric diagnostics. */
+typedef struct {
+    uint32_t sequence; /**< Failure counter; successful recovery does not clear it. */
+    pf_block_result_t result; /**< Last failed application operation result. */
+    uint32_t raw_result; /**< Raw NOR failure code. */
+    uint32_t levelx_result; /**< LevelX operation failure code. */
+    uint32_t system_error; /**< LevelX system-error callback code. */
+    bool ready; /**< Current initialized, open and nonfaulted state. */
+    bool usb_owned; /**< Current exclusive owner is USB. */
+} pf_nor_media_diagnostics_t;
+
+/** @brief Copy retained failure and current state under the media reservation.
+ * @param diagnostics Non-NULL destination owned by the caller.
+ */
+void pf_nor_media_get_diagnostics(pf_nor_media_diagnostics_t *diagnostics);
+
 /** @brief Initialize the reservation before starting the application tasks. */
 bool pf_nor_media_setup(void);
 /** @brief Reserve the selected NOR volume; recursive for nested synchronous block calls. */

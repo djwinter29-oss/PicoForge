@@ -56,7 +56,7 @@ These project-level tests assert properties of supplied cross-build artifacts:
 
 | Test | Purpose |
 | --- | --- |
-| [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers in final ARM ELF artifacts |
+| [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers and selected SD/NOR build dependencies |
 | [artifacts/test_sd_ports.py](artifacts/test_sd_ports.py) | Verify bare-metal compilation manifests and linked symbols |
 
 For existing Pico 2 validation builds, run from the repository root:
@@ -70,7 +70,8 @@ python3 -m pytest tests -m artifacts \
 `validate.sh` invokes these tests after the corresponding firmware builds.
 Bare-metal smoke targets have no USB interface and are not MSC checker inputs.
 The MSC checker requires an unstripped ELF with DWARF and Arm GNU `nm`/`readelf`;
-the port checker requires `compile_commands.json` and Arm GNU `nm`.
+the storage dependency and port checks require `compile_commands.json` and `CMakeCache.txt`.
+The port checker also requires Arm GNU `nm`.
 Neither test builds or flashes firmware.
 Repeat either option to check multiple inputs. Selecting artifact tests without
 the corresponding input fails explicitly; missing files are never silently skipped.

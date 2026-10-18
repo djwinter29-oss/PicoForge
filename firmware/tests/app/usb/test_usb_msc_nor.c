@@ -23,6 +23,8 @@ bool pf_nor_media_ready(void) { return ready; }
 uint32_t pf_nor_media_sector_count(void) { return ready ? 4u : 0u; }
 pf_block_result_t pf_nor_media_acquire_usb(void)
 {
+    TEST_ASSERT_GREATER_THAN_UINT(0u, depth);
+    TEST_ASSERT_FALSE(worker_busy);
     if (!ready || mounted) {
         return PF_BLOCK_NOT_READY;
     }
@@ -31,6 +33,7 @@ pf_block_result_t pf_nor_media_acquire_usb(void)
 }
 pf_block_result_t pf_nor_media_release_usb(void)
 {
+    TEST_ASSERT_GREATER_THAN_UINT(0u, depth);
     usb_owner = false;
     ++releases;
     return PF_BLOCK_OK;
@@ -86,7 +89,13 @@ static bool pf_fatfs_volume_is_mounted(void) { return mounted; }
 static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
 static bool pf_storage_worker_media_absent(void) { return false; }
-static bool pf_storage_worker_recover_media(void) { recovery_queued = true; return true; }
+static bool pf_storage_worker_recover_media(void)
+{
+    TEST_ASSERT_GREATER_THAN_UINT(0u, depth);
+    TEST_ASSERT_TRUE(usb_owner);
+    recovery_queued = true;
+    return true;
+}
 void __real_mscd_reset(uint8_t port) { (void)port; }
 bool __real_mscd_control_xfer_cb(uint8_t port, uint8_t stage, tusb_control_request_t const *request)
 { (void)port; (void)stage; (void)request; return false; }
@@ -174,4 +183,20 @@ void test_nor_msc_preserves_partial_and_batch_bytes_bounds_and_failed_write_no_r
     pf_usb_msc_request_recovery();
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(recovery_queued && !usb_owner && !msc_enabled);
+}
+
+void test_recovery_rejects_healthy_busy_mounted_or_prevented_media_without_release_or_io(void)
+{
+    enable();
+    for (unsigned scenario = 0u; scenario < 4u; ++scenario) {
+        ready = scenario == 0u;
+        worker_busy = scenario == 1u;
+        mounted = scenario == 2u;
+        removal_prevented = scenario == 3u;
+        pf_usb_msc_request_recovery();
+        pf_usb_msc_task();
+        TEST_ASSERT_TRUE(request_rejected && usb_owner && msc_enabled);
+        TEST_ASSERT_FALSE(recovery_queued);
+        TEST_ASSERT_EQUAL_UINT(0u, reads + writes + syncs + releases);
+    }
 }

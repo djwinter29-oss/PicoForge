@@ -70,3 +70,30 @@ void test_nor_sd_diagnostics_are_rejected_without_sd_dependencies(void)
     pf_storage_command_execute(false, "sd", "info", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "SD diagnostics unavailable"));
 }
+
+void test_nor_empty_sd_command_and_unsupported_diagnostic_actions_are_rejected(void)
+{
+    const char *commands[] = {"", "diagnostics clear", "profile"};
+    for (unsigned index = 0u; index < 3u; ++index) {
+        output[0] = '\0';
+        pf_storage_command_execute(false, "sd", commands[index], reply, NULL);
+        TEST_ASSERT_NOT_NULL(strstr(output, "SD diagnostics unavailable"));
+    }
+}
+
+void test_nor_status_and_diagnostics_expose_retained_failure_and_current_state(void)
+{
+    pf_nor_media_diagnostics_t diagnostics = {
+        .sequence = 7u, .result = PF_BLOCK_IO_ERROR, .raw_result = 3u,
+        .levelx_result = 1u, .system_error = 9u, .ready = true, .usb_owned = false,
+    };
+    const char *commands[] = {"status", "diagnostics", "diagnostics status"};
+    for (unsigned index = 0u; index < 3u; ++index) {
+        output[0] = '\0';
+        pf_nor_media_get_diagnostics_ExpectAnyArgs();
+        pf_nor_media_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
+        pf_storage_command_execute(false, "sd", commands[index], reply, NULL);
+        TEST_ASSERT_NOT_NULL(strstr(output, "backend=nor owner=Pico initialized=1 sequence=7"));
+        TEST_ASSERT_NOT_NULL(strstr(output, "raw=3 LevelX=1 system=9"));
+    }
+}

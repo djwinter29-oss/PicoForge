@@ -55,6 +55,10 @@ CR, LF, and CRLF are accepted.
 | `fs mv <source> <destination>` | Rename a file/directory without overwriting an existing destination. |
 | `fs rm <path> --confirm` | Delete one file with explicit confirmation; directories are refused. |
 
+In NOR builds, the compatibility commands `sd status` and `sd diagnostics` describe the selected NOR media rather
+than an SD card. See [NOR diagnostics and recovery](nor-flash.md#build-selected-fatfs-and-usb-msc) for fields and
+limitations. Recovery completion or failure is reported through the UART logger; neither outcome mounts a volume.
+
 Storage commands require absolute ASCII paths on volume 0, with no drive
 prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
 bytes and must fit the CLI's command buffer. Double-quote paths or text containing

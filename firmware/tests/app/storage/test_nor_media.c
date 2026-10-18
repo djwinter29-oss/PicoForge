@@ -130,11 +130,20 @@ void test_initialization_and_open_errors_are_explicit_and_fault_recovery_reopens
     init_result = PF_NOR_IO_ERROR;
     pf_log_write_ExpectAnyArgs();
     TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, pf_nor_media_initialize());
+    pf_nor_media_diagnostics_t diagnostics;
+    pf_nor_media_get_diagnostics(&diagnostics);
+    uint32_t failed_sequence = diagnostics.sequence;
+    TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, diagnostics.result);
+    TEST_ASSERT_EQUAL_UINT(PF_NOR_IO_ERROR, diagnostics.raw_result);
+    TEST_ASSERT_FALSE(diagnostics.ready);
     TEST_ASSERT_EQUAL_UINT(0u, open_calls);
     init_result = PF_NOR_OK;
     open_result = LX_ERROR;
     pf_log_write_ExpectAnyArgs();
     TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, pf_nor_media_initialize());
+    pf_nor_media_get_diagnostics(&diagnostics);
+    TEST_ASSERT_EQUAL_UINT32(failed_sequence + 1u, diagnostics.sequence);
+    TEST_ASSERT_EQUAL_UINT(LX_ERROR, diagnostics.levelx_result);
     TEST_ASSERT_FALSE(pf_nor_media_ready());
     open_result = LX_SUCCESS;
     TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_initialize());
@@ -144,6 +153,10 @@ void test_initialization_and_open_errors_are_explicit_and_fault_recovery_reopens
     TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_initialize());
     TEST_ASSERT_TRUE(pf_nor_media_ready());
     TEST_ASSERT_EQUAL_UINT(3u, open_calls);
+    pf_nor_media_get_diagnostics(&diagnostics);
+    TEST_ASSERT_EQUAL_UINT32(failed_sequence + 1u, diagnostics.sequence);
+    TEST_ASSERT_EQUAL_UINT(LX_ERROR, diagnostics.levelx_result);
+    TEST_ASSERT_TRUE(diagnostics.ready);
 }
 
 void test_recovery_release_requires_faulted_usb_media_and_never_syncs(void)
@@ -157,4 +170,30 @@ void test_recovery_release_requires_faulted_usb_media_and_never_syncs(void)
     TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_release_usb_for_recovery());
     TEST_ASSERT_FALSE(pf_nor_media_usb_owned());
     TEST_ASSERT_TRUE(pf_nor_media_take_remount_request());
+}
+
+void test_failed_write_is_reported_once_and_retained_after_successful_recovery(void)
+{
+    uint8_t sector[512] = {0};
+    TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_initialize());
+    pf_nor_media_diagnostics_t diagnostics;
+    pf_nor_media_get_diagnostics(&diagnostics);
+    uint32_t before = diagnostics.sequence;
+    opened->last_raw_result = PF_NOR_IO_ERROR;
+    opened->last_system_error = 17u;
+    pf_levelx_nor_write_ExpectAndReturn(opened, 0u, sector, LX_ERROR);
+    TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR,
+        pf_block_write(pf_nor_media_firmware_device(), 0u, sector, 1u));
+    pf_nor_media_get_diagnostics(&diagnostics);
+    TEST_ASSERT_EQUAL_UINT32(before + 1u, diagnostics.sequence);
+    TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, diagnostics.result);
+    TEST_ASSERT_EQUAL_UINT(PF_NOR_IO_ERROR, diagnostics.raw_result);
+    TEST_ASSERT_EQUAL_UINT(LX_ERROR, diagnostics.levelx_result);
+    TEST_ASSERT_EQUAL_UINT32(17u, diagnostics.system_error);
+    opened->faulted = true;
+    TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_initialize());
+    pf_nor_media_get_diagnostics(&diagnostics);
+    TEST_ASSERT_TRUE(diagnostics.ready);
+    TEST_ASSERT_EQUAL_UINT32(before + 1u, diagnostics.sequence);
+    TEST_ASSERT_EQUAL_UINT32(17u, diagnostics.system_error);
 }

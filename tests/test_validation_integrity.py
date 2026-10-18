@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validation regressions using copied sources and real ARM ELF binutils."""
 import hashlib
+import json
 import os
 import runpy
 import shlex
@@ -125,6 +126,27 @@ def test_source_contract_rejects_changed_ordering(tmp_path, monkeypatch):
         'set_sense_medium_not_present(p_cbw->lun);', '/* missing failure sense */'))
     with pytest.raises(ValueError):
         contract['check_contract'](tmp_path)
+
+
+@pytest.mark.parametrize("backend,sources,valid", [
+    ("NOR", [], True),
+    ("NOR", ["drivers/sd_card/sd.c"], False),
+    ("NOR", ["middleware/storage/sd_block_device.c"], False),
+    ("SD", ["drivers/sd_card/sd.c", "middleware/storage/sd_block_device.c"], True),
+    ("SD", ["drivers/sd_card/sd.c"], False),
+])
+def test_storage_manifest_rejects_wrong_backend_dependencies(tmp_path, backend, sources, valid):
+    checker = runpy.run_path(str(ARTIFACT_TESTS / 'test_msc_elf.py'))
+    (tmp_path / 'CMakeCache.txt').write_text(f'PF_STORAGE_BACKEND:STRING={backend}\n')
+    (tmp_path / 'compile_commands.json').write_text(json.dumps([
+        {'file': str(tmp_path / 'firmware/src' / source)} for source in sources
+    ]))
+    paths = [tmp_path / 'pf_hello_world.elf']
+    if valid:
+        checker['test_selected_storage_build_dependencies'](paths)
+    else:
+        with pytest.raises(AssertionError):
+            checker['test_selected_storage_build_dependencies'](paths)
 
 
 def test_elf_identity(checker, tmp_path, capsys):

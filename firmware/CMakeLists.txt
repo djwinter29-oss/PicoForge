@@ -156,6 +156,7 @@ if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 endif()
 
+if(PF_STORAGE_BACKEND STREQUAL "SD")
 add_library(pf_sd_card_protocol STATIC
     src/drivers/sd_card/sd_protocol.c
 )
@@ -254,6 +255,8 @@ else()
     return()
 endif()
 
+endif()
+
 add_library(pf_system STATIC
     src/drivers/system.c
 )
@@ -303,7 +306,6 @@ target_link_libraries(pf_cli PUBLIC embedded_cli)
 
 add_library(pf_storage STATIC
     src/middleware/storage/block_device.c
-    src/middleware/storage/sd_block_device.c
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
     src/middleware/storage/fatfs_disk.c
@@ -315,9 +317,10 @@ target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
-target_link_libraries(pf_storage PUBLIC
-    pf_sd_card
-)
+if(PF_STORAGE_BACKEND STREQUAL "SD")
+    target_sources(pf_storage PRIVATE src/middleware/storage/sd_block_device.c)
+    target_link_libraries(pf_storage PUBLIC pf_sd_card)
+endif()
 if(PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
     target_sources(pf_storage PRIVATE src/middleware/storage/levelx_block_device.c)
     target_link_libraries(pf_storage PUBLIC pf_levelx_nor)
@@ -363,8 +366,10 @@ target_link_libraries(pf_board PUBLIC
     hardware_spi
     pico_stdio_uart
     pf_led
-    ${PF_SD_CARD_BACKEND}
 )
+if(PF_STORAGE_BACKEND STREQUAL "SD")
+    target_link_libraries(pf_board PUBLIC ${PF_SD_CARD_BACKEND})
+endif()
 if(PF_STORAGE_BACKEND STREQUAL "NOR")
     target_sources(pf_board PRIVATE src/board/board_storage.c)
     target_compile_definitions(pf_board PRIVATE PF_BOARD_STORAGE_QSPI=$<STREQUAL:${PF_NOR_TRANSPORT},QSPI_PIO>)

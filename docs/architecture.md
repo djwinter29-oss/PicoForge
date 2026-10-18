@@ -106,6 +106,8 @@ retained ownership/operation diagnostics belong to `sd_media`. Its static firmwa
 while the middleware SD adapter is explicitly raw and has no application ownership policy.
 The worker asks `sd_media` to obtain SD configuration and initialize its execution port before task startup;
 the USB task no longer configures SD. Backend-independent command and worker headers do not expose SD configuration.
+NOR builds omit SD protocol/port targets and the SD block adapter; board SD configuration is unavailable without
+touching SD pins. Common FatFs/logical-block middleware links only the selected adapter's device dependencies.
 Automatic mount failures retain backend, volume and FatFs result codes and log the first or changed failure;
 identical retries remain paced and do not repeat that worker warning. Successful mounting resets warning suppression.
 
@@ -115,9 +117,23 @@ coordination; `msc_storage.h` selects the application media service. `usb_descri
 TinyUSB configuration remains under `integration/usb`; the pinned TinyUSB stack supplies reusable USB machinery.
 No extra middleware forwarding layer or runtime backend registry is introduced.
 
+### Storage Handoff Invariants
+
+- Only the storage worker executes firmware FatFs operations; per-block reservations do not serialize file transactions.
+- MSC acquisition reserves media across the worker-idle and unmounted checks and ownership transition.
+  Worker admission and transition coordination run on the USB task; these APIs are not arbitrary multi-task entry points.
+- Owner-gated I/O holds the same recursive reservation through backend completion; USB partial-sector
+  read-modify-write also holds it across the full operation.
+- Normal release requires checked eject/sync. Fault release requires detached, unavailable USB-owned media and queues
+  worker recovery without claiming a clean eject. Recovery logs its result and never mounts automatically.
+- Uncertain failed writes are not replayed. Host tests cover exclusion, failed sync retention, no-replay and recovery
+  rejection/completion; they do not establish physical USB BOT or power-loss qualification.
+
 ## Testing and Validation
 
-Ceedling is configured by the repository-root `project.yml`. Host unit tests belong under `firmware/tests/` and should mirror hardware-independent source modules in platform, drivers, and middleware. The configuration intentionally excludes `main.c` and board support from host builds.
+Ceedling is configured by the repository-root `project.yml`. Host unit tests belong under `firmware/tests/` and mirror
+host-testable application, board, driver, integration and middleware modules. The configuration excludes `main.c`;
+board tests use scoped SDK fakes.
 
 `host/python/tests/`, `host/dotnet/tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 
