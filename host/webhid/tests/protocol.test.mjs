@@ -210,12 +210,30 @@ test("distinguish unknown presence before card initialization", () => {
 
 test("decode MSC enable transition status", () => {
   assert.deepEqual(decodeMscStatus(Uint8Array.from([5, 2, 1, 0, 0])), {
-    enabled: true, transition_pending: false, request_rejected: false,
+    enabled: true, transition_pending: false, request_rejected: false, force_return_supported: false,
   });
   assert.deepEqual(decodeMscStatus(Uint8Array.from([2, 0, 1, 0])), {
-    enabled: false, transition_pending: true, request_rejected: false,
+    enabled: false, transition_pending: true, request_rejected: false, force_return_supported: false,
   });
+  assert.equal(decodeMscStatus(Uint8Array.from([5, 3, 1, 0, 0])).force_return_supported, true);
   assert.throws(() => decodeMscStatus(Uint8Array.from([2, 2, 0, 0])), /Invalid/);
+});
+
+test("force return requires capability and sends a distinct command without weakening safe disable", async () => {
+  const client = new PicoForgeWebHid(undefined);
+  const sent = [];
+  client.device = { sendFeatureReport: async (id, payload) => sent.push([id, ...payload]) };
+  client.state.msc = { enabled: true, transition_pending: false };
+  await assert.rejects(client.setMsc(false, true), /force-return support/);
+  assert.equal(sent.length, 0);
+  client.state.msc.force_return_supported = true;
+  await client.setMsc(false, true);
+  assert.deepEqual(sent, [[5, 3, 2]]);
+  assert.equal(client.state.msc.transition_pending, true);
+  await assert.rejects(client.setMsc(true, true), /disabling/);
+  client.state.msc.transition_pending = false;
+  await client.setMsc(false);
+  assert.deepEqual(sent[1], [5, 2, 0]);
 });
 
 test("reject an LED-on dynamic status when no LED is available", () => {

@@ -25,7 +25,8 @@ The complete string is embedded in Pico SDK program metadata. HID reports the th
 so `1.2.3-rc1` appears as `1.2.3` in the dashboard, matching PicoUart.
 USB `bcdDevice` encodes major/minor as BCD (`1.2.3` becomes `0x0102`); major/minor above 99 produce a
 configuration warning and `0x0000`, while HID retains the numeric version.
-It is separate from the HID layout version. Runtime report 2 uses layout `3`; other reports retain layout `2`.
+It is separate from the HID layout version. Runtime report 2 and MSC status report 5 use layout `3`;
+other reports retain layout `2`.
 Updated hosts also accept identity layout `2` with four zero reserved bytes and show
 firmware version as `Unknown`. Older hosts reject layout `3`: restart Python/.NET hosts with the updated
 code and reload browser pages when upgrading firmware.
@@ -63,8 +64,10 @@ Older hosts reject layout `3`; restart updated Python/.NET services and reload b
 
 The sequence byte wraps modulo 256. Temperature comes from the MCU's internal sensor and is an estimate, not a calibrated ambient measurement. If bit 4 is set, bit 3 must also be set. The input report supports `GET_REPORT`, returning current telemetry. The current system clock is sampled for each report, so hosts should treat it as dynamic.
 
-CPU usage is the single-core non-idle fraction over the latest interval of at least 250 ms, calculated from
-FreeRTOS's cumulative idle-task runtime and the SDK's 64-bit microsecond clock. The first sample establishes a
+CPU usage is the mean non-idle fraction across both scheduler cores over the latest interval of at least 250 ms,
+calculated as one minus FreeRTOS's aggregate idle-task runtime divided by twice the elapsed SDK 64-bit microsecond time.
+One fully busy core and one idle core reports 50%; both busy reports 100%, and both idle reports 0%.
+Adjacent wall-clock/idle sampling skew is saturated at 0% rather than wrapping. The first sample establishes a
 baseline and reports unavailable; shorter requests reuse the previous result rather than resetting the interval.
 Interrupt time is attributed to the interrupted task by FreeRTOS, so this is task-load telemetry, not separate ISR
 accounting. Waiting or sleeping tasks are idle time only when the idle task actually runs; polling loops count as busy.
@@ -116,9 +119,41 @@ Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED
 
 ## Report ID 5
 
-Feature report 5 controls USB Mass Storage Class (MSC) ownership. Its SET payload is 2 bytes: version `2`, then desired state (`0` disabled or `1` enabled). Input report 5 carries a 4-byte status payload every 500 ms: version `2`, enabled, transition-pending, and request-rejected; the last three fields are booleans.
+Feature report 5 controls USB Mass Storage Class (MSC) ownership. Its safe-toggle SET payload remains 2 bytes:
+version `2`, then desired state (`0` disabled or `1` enabled). The distinct confirmed force-return command is exactly
+`[3, 2]`, excluding the report ID; layout `2` never interprets action `2` as force.
+Input report 5 carries a 4-byte status payload every 500 ms: version `3`, enabled, transition-pending, and
+request-rejected; the last three fields are booleans. Updated hosts accept legacy status layout `2` but only enable
+force return after observing layout `3`. Older host software must be updated before using this firmware.
 
-MSC is disabled at boot. Enabling requires an initialized card, an unmounted firmware filesystem, and no outstanding CLI storage command. Both enable and disable requests are rejected while storage work or its replies are pending. Use the [CDC CLI](cdc-cli.md) to explicitly unmount before handoff. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
+MSC is disabled at boot. Enabling requires initialized selected SD or NOR media and no outstanding storage command
+or replies. If firmware has mounted the filesystem, enabling queues an unmount on the sole storage worker and keeps
+the transition pending until it completes. Successful unmount pauses automount before USB ownership acquisition;
+failed unmount rejects the request and leaves firmware ownership intact. No formatting occurs.
+Both enable and disable requests are rejected while unrelated storage work or its replies are pending. The device briefly disconnects and re-enumerates with a CDC/HID/MSC configuration; its VID/PID, product string, and HID interface number remain unchanged. HID is unavailable during that short USB transition. WebHID reconnects the same authorized board automatically; other HID hosts should reopen the same device after re-enumeration. While the host owns the card, firmware block I/O returns not-ready. To return ownership, safely eject the drive on the host, then disable MSC over HID; a disable request is rejected until the host ejects it and allows removal. The device re-enumerates without MSC and firmware regains card ownership. Do not unplug the card or reset the device while the host is writing.
+
+The Python dashboard coordinates host unmount/eject before HID disable on Linux; see its
+[host prerequisites and failure behavior](../host/python/README.md). This is host-side orchestration, not a
+relaxation of the firmware's ownership or safe-eject checks.
+
+### Confirmed force return
+
+The separate **Force return to Pico** dashboard action warns about data loss and requires explicit confirmation.
+Python and .NET expose `POST /api/msc/force-return` with `{"confirm_data_loss":true}`; absent, false or non-boolean
+confirmation is rejected before HID delivery. This action deliberately bypasses Linux automatic safe eject.
+It is not the normal Disable action and never synthesizes a successful SCSI eject.
+
+Firmware still rejects busy storage or a failed device-side sync. After a successful sync, it disconnects USB
+before releasing selected SD/NOR ownership under the shared media reservation. The sole storage worker attempts
+initialization and mounting once. Pending remains set until that attempt completes. A failed initialization/mount
+sets request-rejected with enabled false, logs the failure, and leaves storage unmounted with automatic retries
+blocked until an explicit successful `fs mount`. A pre-detach failure leaves MSC enabled. No automatic formatting,
+filesystem repair, or replay of failed writes is performed.
+
+**Device sync cannot flush writes cached in the host.** Forced return can lose data or corrupt the filesystem even
+when Pico remounts successfully. Stop host file activity first and prefer safe eject/Disable whenever possible.
+USB reconnection does not itself prove the remount succeeded; wait for pending to clear and inspect rejection/logs.
+This behavior has host-runnable regression coverage; live forced-detach validation requires separate authorization.
 
 For a card invalidated by an I/O failure, the explicit
 [CDC fault-recovery workflow](cdc-cli.md#faulted-msc-recovery) can detach faulted

@@ -8,7 +8,7 @@
 #include "hardware/pio.h"
 
 static PIO wait_pio;
-static TaskHandle_t volatile waiting_task;
+static TaskHandle_t waiting_task; /**< Waiter lifetime protected by task/ISR kernel critical sections. */
 static uint32_t waiting_flag;
 static bool handler_installed;
 
@@ -19,12 +19,15 @@ static pio_interrupt_source_t completion_source(uint32_t flag)
 
 static void completion_irq(void)
 {
+    BaseType_t awakened = pdFALSE;
+    UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
     if (waiting_task != NULL && pio_interrupt_get(wait_pio, waiting_flag)) {
         pio_set_irq0_source_enabled(wait_pio, completion_source(waiting_flag), false);
-        BaseType_t awakened = pdFALSE;
         vTaskNotifyGiveIndexedFromISR(waiting_task, 1u, &awakened);
-        portYIELD_FROM_ISR(awakened);
+        waiting_task = NULL;
     }
+    taskEXIT_CRITICAL_FROM_ISR(saved);
+    portYIELD_FROM_ISR(awakened);
 }
 
 static void wait_completion(PIO pio, uint32_t flag)
@@ -36,6 +39,7 @@ static void wait_completion(PIO pio, uint32_t flag)
     }
     (void)ulTaskNotifyTakeIndexed(1u, pdTRUE, 0u);
     taskENTER_CRITICAL();
+    configASSERT(waiting_task == NULL);
     waiting_task = xTaskGetCurrentTaskHandle();
     waiting_flag = flag;
     pio_set_irq0_source_enabled(pio, completion_source(flag), true);

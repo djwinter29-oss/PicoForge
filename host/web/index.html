@@ -87,6 +87,11 @@
         <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
       <p class="sample-time storage-note" id="msc-note" role="status">USB drive off; safely eject before disabling.</p>
+      <button class="button button-secondary" id="msc-force-return" type="button" disabled
+        aria-describedby="msc-force-warning">Force return to Pico</button>
+      <p class="sample-time storage-note" id="msc-force-warning">
+        Unsafe: forced return can lose cached host writes and corrupt the filesystem. Safely eject whenever possible.
+      </p>
       <p class="sample-time">Writes and verifies /PFTEST.BIN, replacing any existing file at that path.</p>
       <div class="self-test-controls">
         <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="128" step="1" value="32"></label>

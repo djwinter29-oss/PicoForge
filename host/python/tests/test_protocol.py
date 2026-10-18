@@ -162,11 +162,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(build_msc_command_report(True), bytes([MSC_COMMAND_REPORT_ID, 2, 1]))
         self.assertEqual(build_msc_command_report(False), bytes([MSC_COMMAND_REPORT_ID, 2, 0]))
         self.assertEqual(parse_msc_status_report(bytes([5, 2, 1, 0, 0])),
-                         {"enabled": True, "transition_pending": False, "request_rejected": False})
+                         {"enabled": True, "transition_pending": False, "request_rejected": False,
+                          "force_return_supported": False})
         self.assertEqual(parse_msc_status_report(bytes([2, 0, 1, 1])),
-                         {"enabled": False, "transition_pending": True, "request_rejected": True})
+                         {"enabled": False, "transition_pending": True, "request_rejected": True,
+                          "force_return_supported": False})
         with self.assertRaises(ValueError):
             build_msc_command_report(1)
+        self.assertEqual(build_msc_command_report(False, force=True), bytes([5, 3, 2]))
+        self.assertTrue(parse_msc_status_report(bytes([5, 3, 1, 0, 0]))["force_return_supported"])
+        with self.assertRaises(ValueError):
+            build_msc_command_report(True, force=True)
 
 
 if __name__ == "__main__":

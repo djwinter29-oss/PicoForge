@@ -116,6 +116,22 @@ traffic. Electrical timing, sustained card transfers, real interrupt behavior,
 and board/probe interactions still require hardware validation. Passing the
 host suite does not qualify a card at 50 MHz.
 
+The [USB DCD guard tests](integration/usb/test_dcd_guard.c) exercise fixed-core IRQ forwarding, task-side calls on
+either core, nesting, return-value forwarding and concurrent host threads using a simulated hardware lock.
+They also check copied FIFO event delivery in task context, full-capacity batches, SOF coalescing and bounded
+dispatch when new events arrive during callbacks.
+The pinned TinyUSB surface/queue contract lives in
+[`test_tinyusb_dcd_contract.py`](../../tests/contracts/test_tinyusb_dcd_contract.py); it detects missing wrappers
+when the upstream DCD entry surface changes. SDIO wait tests also force a completion IRQ to contend with timeout
+cleanup on a second host thread. Run the focused synchronization checks with:
+
+```bash
+ceedling 'test:pattern[(dcd_guard|sdio_wait_freertos|fatfs_volume)]'
+python3 -m pytest tests/contracts/test_tinyusb_dcd_contract.py -q
+```
+
+These checks validate integration synchronization, not the real controller or an SMP-enabled firmware image.
+
 Raw NOR protocol tests live under [drivers/nor_flash](drivers/nor_flash).
 See [external NOR support](../../docs/nor-flash.md#tests-and-remaining-qualification)
 for the standalone SPI/QSPI smoke builds, PIO model and hardware-test boundaries.

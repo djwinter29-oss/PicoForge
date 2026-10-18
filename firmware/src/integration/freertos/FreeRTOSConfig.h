@@ -25,7 +25,11 @@ uint64_t time_us_64(void);
 #define configIDLE_SHOULD_YIELD 1
 #define configUSE_TIME_SLICING 1
 
-#define configNUMBER_OF_CORES 1
+#define configNUMBER_OF_CORES 2
+/* SDK flash-safe execution needs affinity support; application tasks keep the all-core default. */
+#define configUSE_CORE_AFFINITY 1
+#define configRUN_MULTIPLE_PRIORITIES 1
+#define configUSE_PASSIVE_IDLE_HOOK 0
 
 #define configUSE_MUTEXES 1
 #define configUSE_RECURSIVE_MUTEXES 1
@@ -61,6 +65,8 @@ uint64_t time_us_64(void);
 #define configASSERT(condition) assert(condition)
 
 #define INCLUDE_vTaskDelay 1
+#define INCLUDE_vTaskDelete 1
+#define INCLUDE_vTaskPrioritySet 1
 #define INCLUDE_vTaskDelayUntil 1
 #define INCLUDE_xTaskGetSchedulerState 1
 #define INCLUDE_xTaskGetIdleTaskHandle 1

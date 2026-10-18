@@ -11,6 +11,8 @@ static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_media(void);
+static bool pf_storage_worker_return_from_usb(void);
+static bool pf_storage_worker_unmount_for_usb(void);
 #include "../../../src/app/usb/usb_msc.c"
 static bool initialized=true, worker_busy, mounted;
 static unsigned locks, syncs, sense, asc;
@@ -22,6 +24,8 @@ static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
 static bool pf_storage_worker_media_absent(void) { return false; }
 static bool pf_storage_worker_recover_media(void) { return false; }
+static bool pf_storage_worker_return_from_usb(void) { worker_busy = true; return true; }
+static bool pf_storage_worker_unmount_for_usb(void) { worker_busy = true; return true; }
 bool pf_sd_try_lock(void) { ++locks; return true; }
 void pf_sd_lock(void) { ++locks; }
 void pf_sd_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }
@@ -189,6 +193,7 @@ void setUp(void)
  msc_ejected=removal_prevented=request_pending=requested_enabled=false;
  transition_pending=request_rejected=recovery_requested=false;
  transfer_sense_pending=false;
+ unmount_pending = force_return_requested = remount_pending = false;
  transfer_sense_key=transfer_sense_asc=0;
  extern void model_queue_reset(void);
  model_queue_reset();
@@ -259,6 +264,85 @@ void test_sync_eject_removal_prevention_and_owner_handoff(void)
  pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(!msc_enabled && owner==PF_SD_MEDIA_OWNER_FIRMWARE && !transfer_sense_pending);
  before=syncs; tud_msc_write10_complete_cb(0); TEST_ASSERT_TRUE(syncs==before);
  TEST_ASSERT_TRUE(locks==0 && !mounted);
+}
+
+void test_enable_queues_unmount_and_waits_before_sd_ownership_handoff(void)
+{
+ msc_enabled=false;
+ owner=PF_SD_MEDIA_OWNER_FIRMWARE;
+ mounted=true;
+ pf_usb_msc_request(true);
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(unmount_pending && worker_busy && transition_pending && !request_rejected);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled);
+ mounted=false;
+ worker_busy=false;
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && !transition_pending && !request_rejected);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC,owner);
+}
+
+void test_force_return_bypasses_only_host_eject_and_waits_for_worker_mount(void)
+{
+ removal_prevented=true;
+ pf_usb_msc_request(false);
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && request_rejected);
+ pf_usb_msc_request_force_return();
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled || msc_ejected || request_rejected);
+ TEST_ASSERT_TRUE(remount_pending && transition_pending && worker_busy);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL_UINT(1u,syncs);
+ pf_usb_msc_request(true);
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled);
+ mounted=true;
+ worker_busy=false;
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(remount_pending || transition_pending || request_rejected);
+}
+
+void test_force_return_rejects_busy_or_failed_device_sync_without_releasing_sd(void)
+{
+ worker_busy=true;
+ pf_usb_msc_request_force_return();
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && request_rejected);
+ TEST_ASSERT_EQUAL_UINT(0u,syncs);
+ worker_busy=false;
+ sync_result=PF_SD_IO_ERROR;
+ pf_usb_msc_request_force_return();
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && request_rejected);
+ TEST_ASSERT_FALSE(transition_pending || remount_pending);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC,owner);
+}
+
+void test_force_return_reports_failed_mount_without_reexposing_sd(void)
+{
+ pf_usb_msc_request_force_return();
+ pf_usb_msc_task();
+ worker_busy=false;
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(request_rejected);
+ TEST_ASSERT_FALSE(msc_enabled || msc_ejected || transition_pending);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+}
+
+void test_failed_sd_unmount_rejects_enable_without_acquiring_usb(void)
+{
+ msc_enabled=false;
+ owner=PF_SD_MEDIA_OWNER_FIRMWARE;
+ mounted=true;
+ pf_usb_msc_request(true);
+ pf_usb_msc_task();
+ worker_busy=false;
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(request_rejected && mounted && !msc_enabled && !transition_pending);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
 }
 
 void test_start_stop_invalid_lun_and_disabled_media_report_fresh_sense(void)

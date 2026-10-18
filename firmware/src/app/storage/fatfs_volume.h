@@ -35,7 +35,7 @@ typedef enum {
  *
  * This never formats media. Serialize this call and all FatFs operations from
  * one storage-owner task because FatFs is configured without cross-task locking.
- * Serialize mount-state queries with lifecycle changes too. This service adds no lock.
+ * Mount-state telemetry is atomic, but does not serialize lifecycle or filesystem operations.
  * Device initialization and ownership transitions remain external. The borrowed descriptor, operations, and context
  * must outlive the mount and remain valid until successful unmount or failed-mount cleanup.
  * @param device Logical block device; this call does not initialize its backing media.
@@ -49,14 +49,15 @@ pf_fatfs_volume_result_t pf_fatfs_volume_mount(
  * This is not a flush: callers must check f_sync/f_close before unmount and
  * ownership handoff. Removal/fault cleanup may unregister invalid media without
  * syncing; that path must never be reported as a successful flush.
- * Serialize with mount, mount-state queries, and all FatFs operations.
+ * Serialize with mount and all FatFs operations.
  * @param filesystem_result Optional FatFs unregister result; FR_OK if not mounted.
  * @return Volume lifecycle outcome; failed unregister retains the binding and mounted state.
  */
 pf_fatfs_volume_result_t pf_fatfs_volume_unmount(FRESULT *filesystem_result);
 
 /** @brief Query registration state, not physical media presence or current I/O access.
- * @return Whether mounted. Caller must serialize with mount/unmount; this is not an atomic snapshot.
+ * @return Atomic snapshot of the last completed mount/unmount transition.
+ * This grants no filesystem access; check-and-act operations still require external serialization.
  */
 bool pf_fatfs_volume_is_mounted(void);
 

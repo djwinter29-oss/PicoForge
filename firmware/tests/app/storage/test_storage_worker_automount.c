@@ -116,8 +116,14 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     TEST_ASSERT_TRUE(mount_calls == previous_mounts + 2u && mounted);
 
     TEST_ASSERT_TRUE(mounted && media.initialized && !auto_mount_pending);
-    mounted = false;
     pf_usb_msc_request(true);
+    pf_usb_msc_task();
+    TEST_ASSERT_TRUE(queued_unmount && busy && mounted && transition_pending);
+    TEST_ASSERT_FALSE(msc_enabled);
+    unmount_for_usb();
+    TEST_ASSERT_FALSE(busy || mounted || auto_mount_pending);
+    poll(3);
+    TEST_ASSERT_FALSE(mounted);
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(msc_enabled && active_owner == PF_SD_MEDIA_OWNER_USB_MSC);
     poll(3);
@@ -283,4 +289,43 @@ void test_command_cancellation_keeps_reservation_until_completion(void)
  TEST_ASSERT_FALSE(benchmark_finished);
  pf_storage_worker_cancel(42);
  TEST_ASSERT_FALSE(cancelled);
+}
+
+void test_forced_sd_return_detaches_before_release_and_attempts_mount_once(void)
+{
+ busy=media_service_busy=benchmark_active=benchmark_finished=false;
+ mounted=false;
+ media=(pf_sd_info_t){.present=true,.presence_known=true,.initialized=true};
+ active_owner=PF_SD_MEDIA_OWNER_USB_MSC;
+ msc_enabled=true;
+ msc_ejected=transition_pending=request_pending=unmount_pending=remount_pending=false;
+ recovery_requested=force_return_requested=false;
+ removal_prevented=true;
+ sync_ok=true;
+ init_fails=queue_fails=false;
+ mount_result=PF_FATFS_VOLUME_OK;
+ unsigned before_disconnects=disconnects;
+ pf_usb_msc_request_force_return();
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(busy && remount_pending && transition_pending && !msc_enabled);
+ TEST_ASSERT_EQUAL_UINT(before_disconnects+1u,disconnects);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,active_owner);
+ return_from_usb();
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(mounted && !request_rejected && !transition_pending);
+ TEST_ASSERT_FALSE(auto_mount_blocked || reinit_after_usb_owner);
+
+ mounted=false;
+ active_owner=PF_SD_MEDIA_OWNER_USB_MSC;
+ msc_enabled=true;
+ mount_result=PF_FATFS_VOLUME_FILESYSTEM_ERROR;
+ pf_usb_msc_request_force_return();
+ pf_usb_msc_task();
+ return_from_usb();
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(request_rejected && auto_mount_blocked);
+ TEST_ASSERT_FALSE(msc_enabled || mounted || transition_pending || auto_mount_pending);
+ unsigned before_mounts=mount_calls;
+ poll(100);
+ TEST_ASSERT_EQUAL_UINT(before_mounts,mount_calls);
 }

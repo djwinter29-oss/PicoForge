@@ -4,7 +4,7 @@ internal interface IDeviceMonitor
 {
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
-    MscStatusResponse? SetMsc(bool enabled);
+    MscStatusResponse? SetMsc(bool enabled, bool force = false);
     bool SetSelfTest(string action, uint sizeMib);
 }
 
@@ -30,15 +30,18 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         }
     }
 
-    public MscStatusResponse? SetMsc(bool enabled)
+    public MscStatusResponse? SetMsc(bool enabled, bool force = false)
     {
         lock (gate)
         {
             if (activeClient is null) return null;
-            activeClient.SetMsc(enabled);
+            if (force && (enabled || snapshot.Msc is not
+                { Enabled: true, TransitionPending: false, ForceReturnSupported: true })) return null;
+            activeClient.SetMsc(enabled, force);
             snapshot = snapshot with
             {
-                Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false)
+                Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false,
+                    snapshot.Msc?.ForceReturnSupported ?? false)
             };
             return snapshot.Msc;
         }

@@ -123,7 +123,7 @@ void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t 
 void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report)
 {
     memset(report, 0, sizeof(*report));
-    report->version = PF_HID_REPORT_VERSION;
+    report->version = PF_HID_MSC_REPORT_VERSION;
     report->enabled = pf_usb_msc_is_enabled();
     report->transition_pending = pf_usb_msc_transition_pending();
     report->request_rejected = pf_usb_msc_request_rejected();
@@ -220,6 +220,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                (bufsize >= sizeof(pf_hid_msc_command_report_t)) &&
                (buffer[0] == PF_HID_REPORT_VERSION) && (buffer[1] <= 1u)) {
         pf_usb_msc_request(buffer[1] != 0u);
+    } else if ((report_id == PF_HID_MSC_COMMAND_REPORT_ID) &&
+               (bufsize == sizeof(pf_hid_msc_command_report_t)) &&
+               (buffer[0] == PF_HID_MSC_REPORT_VERSION) && (buffer[1] == 2u)) {
+        pf_usb_msc_request_force_return();
     } else if ((report_id == PF_HID_SELF_TEST_REPORT_ID) &&
                (bufsize == sizeof(pf_hid_self_test_command_t)) &&
                (buffer[0] == PF_HID_REPORT_VERSION) && (buffer[1] <= 1u)) {

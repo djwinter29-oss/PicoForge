@@ -42,6 +42,20 @@ bool pf_storage_worker_media_absent(void);
  */
 bool pf_storage_worker_recover_media(void);
 
+/** @brief Queue one reinitialization/mount attempt after a confirmed forced USB detach.
+ * Caller holds the media reservation until MSC disconnects and firmware ownership is restored.
+ * Poll busy then the mounted snapshot for completion. Failure blocks automatic retries and is logged;
+ * no formatting or repair is performed.
+ */
+bool pf_storage_worker_return_from_usb(void);
+
+/** @brief Queue a USB-task request to unregister FatFs on its sole executor.
+ * Requires idle admission; false means busy or unavailable. Completion clears busy without a CLI reply.
+ * Success leaves automount paused for USB acquisition; failure logs FatFs details and retains the mount.
+ * Poll busy and then the atomic mount snapshot before changing ownership. No formatting is performed.
+ */
+bool pf_storage_worker_unmount_for_usb(void);
+
 /** Poll one reply without blocking from the USB task; completion releases busy. */
 bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply);
 

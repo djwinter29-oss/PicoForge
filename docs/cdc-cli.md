@@ -75,7 +75,8 @@ Every `fs` command is refused
 until the host safely ejects and disables MSC. The storage worker automatically
 attempts to mount detected cards at boot, after insertion, and after MSC returns
 ownership. Failed attempts are retried five seconds after each attempt finishes.
-Run `fs unmount` before enabling MSC; a successful explicit unmount pauses
+Enabling MSC from the dashboard automatically queues `fs` volume unregistration on the sole storage worker;
+manual `fs unmount` is optional. A successful unmount pauses
 automatic mounting until the next insertion or return from MSC. `fs mount`
 remains available for a manual retry.
 

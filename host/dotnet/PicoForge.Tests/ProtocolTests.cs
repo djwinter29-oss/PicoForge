@@ -187,6 +187,9 @@ public sealed class ProtocolTests
             HidProtocol.BuildMscCommandReport(true));
         Assert.Equal(new byte[] { HidProtocol.MscCommandReportId, 2, 0 },
             HidProtocol.BuildMscCommandReport(false));
+        Assert.Equal(new byte[] { 5, 3, 2 }, HidProtocol.BuildMscCommandReport(false, force: true));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.BuildMscCommandReport(true, force: true));
+        Assert.True(HidProtocol.ParseMscStatusReport([5, 3, 1, 0, 0]).ForceReturnSupported);
     }
 
     [Fact]
@@ -265,6 +268,13 @@ public sealed class ProtocolTests
         Assert.Equal(532480, runtime.GetProperty("ram_total_bytes").GetInt32());
         var openApi = await client.GetStringAsync("/openapi/v1.json");
         Assert.Contains("/api/self-test", openApi);
+        Assert.Contains("/api/msc/force-return", openApi);
+        var forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = false });
+        Assert.Equal(HttpStatusCode.BadRequest, forceResponse.StatusCode);
+        Assert.False(monitor.ForcedReturn);
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        Assert.Equal(HttpStatusCode.OK, forceResponse.StatusCode);
+        Assert.True(monitor.ForcedReturn);
         var response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 16 });
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(("start", 16u), monitor.LastCommand);
@@ -284,12 +294,17 @@ public sealed class ProtocolTests
         public bool Available { get; set; } = true;
         public (string Action, uint Size) LastCommand { get; private set; }
         public Exception? ExpectedError { get; set; }
+        public bool ForcedReturn { get; private set; }
         public StatusResponse Snapshot => new(true, null, null,
             new RuntimeStatusResponse(0, 42, 250_000_000, true, false,
                 false, null, false, false, 1234, 65536, 532480),
             null, null, null, null);
         public bool SetLed(bool on) => false;
-        public MscStatusResponse? SetMsc(bool enabled) => null;
+        public MscStatusResponse? SetMsc(bool enabled, bool force = false)
+        {
+            ForcedReturn = force && !enabled;
+            return new MscStatusResponse(true, true, false, true);
+        }
         public bool SetSelfTest(string action, uint sizeMib)
         {
             if (ExpectedError is not null) throw ExpectedError;

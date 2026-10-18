@@ -8,7 +8,7 @@
 #include <stddef.h>
 
 static FATFS storage_filesystem; /**< FatFs state owned by the serialized volume service. */
-static bool storage_mounted; /**< Registration state; caller serialization is required. */
+static atomic_bool storage_mounted; /**< Last completed registration transition; grants no filesystem access. */
 static atomic_int storage_format = ATOMIC_VAR_INIT(PF_FATFS_VOLUME_FILESYSTEM_UNKNOWN); /**< Atomic telemetry cache. */
 
 /** @brief Translate FatFs format metadata into the public telemetry values. */
@@ -34,7 +34,7 @@ pf_fatfs_volume_result_t pf_fatfs_volume_mount(
     if (device == NULL) {
         return PF_FATFS_VOLUME_INVALID_ARGUMENT;
     }
-    if (storage_mounted) {
+    if (atomic_load(&storage_mounted)) {
         return PF_FATFS_VOLUME_ALREADY_MOUNTED;
     }
 
@@ -51,8 +51,8 @@ pf_fatfs_volume_result_t pf_fatfs_volume_mount(
         return PF_FATFS_VOLUME_FILESYSTEM_ERROR;
     }
 
-    storage_mounted = true;
     atomic_store(&storage_format, storage_format_from_fatfs(storage_filesystem.fs_type));
+    atomic_store(&storage_mounted, true);
     return PF_FATFS_VOLUME_OK;
 }
 
@@ -63,7 +63,7 @@ pf_fatfs_volume_result_t pf_fatfs_volume_unmount(FRESULT *filesystem_result)
     if (filesystem_result != NULL) {
         *filesystem_result = FR_OK;
     }
-    if (!storage_mounted) {
+    if (!atomic_load(&storage_mounted)) {
         return PF_FATFS_VOLUME_NOT_MOUNTED;
     }
 
@@ -75,15 +75,15 @@ pf_fatfs_volume_result_t pf_fatfs_volume_unmount(FRESULT *filesystem_result)
         return PF_FATFS_VOLUME_FILESYSTEM_ERROR;
     }
 
-    storage_mounted = false;
     pf_fatfs_disk_bind(NULL);
     atomic_store(&storage_format, PF_FATFS_VOLUME_FILESYSTEM_UNKNOWN);
+    atomic_store(&storage_mounted, false);
     return PF_FATFS_VOLUME_OK;
 }
 
 bool pf_fatfs_volume_is_mounted(void)
 {
-    return storage_mounted;
+    return atomic_load(&storage_mounted);
 }
 
 pf_fatfs_volume_filesystem_format_t pf_fatfs_volume_filesystem_format(void)

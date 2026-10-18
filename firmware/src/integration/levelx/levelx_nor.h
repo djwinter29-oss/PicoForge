@@ -6,7 +6,7 @@
 
 /** Caller-owned LevelX volume. Zero initialize before first use and serialize
  * all LevelX operations with the same external reservation. The application worker
- * and USB task may access it serially; ISR and second-core access are unsupported.
+ * and USB task may access it serially on either core under that reservation; ISR access is unsupported.
  * The raw flash and transport must outlive the volume. Do not copy an open volume.
  */
 typedef struct {

@@ -16,7 +16,7 @@ static unsigned reservation_depth, try_lock_calls;
 static bool lock_unavailable;
 static pf_sd_info_t media = { .presence_known = true, .present = true };
 static uint32_t now;
-static bool mounted, queue_fails, queued_recovery, sync_ok = true, init_fails;
+static bool mounted, queue_fails, queued_recovery, queued_unmount, sync_ok = true, init_fails;
 static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
 static unsigned sync_calls, disconnects, init_calls;
 static pf_fatfs_volume_result_t mount_result = PF_FATFS_VOLUME_OK;
@@ -107,10 +107,11 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
 {
     const storage_request_t *request = item;
     TEST_ASSERT_EQUAL_PTR(requests, queue);
-    TEST_ASSERT_TRUE(request->recover_media);
+    TEST_ASSERT_TRUE(request->recover_media || request->unmount_for_usb);
     TEST_ASSERT_EQUAL_UINT32(0, timeout);
     if (queue_fails) return 0;
-    queued_recovery = true;
+    queued_recovery = request->recover_media;
+    queued_unmount = request->unmount_for_usb;
     return pdPASS;
 }
 bool tud_msc_set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)

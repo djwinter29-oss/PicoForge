@@ -30,7 +30,8 @@ public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool P
     bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
     uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer);
 
-public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected);
+public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected,
+    bool ForceReturnSupported = false);
 
 /// <summary>Verified SD-card file benchmark progress, elapsed times, and cleanup state.</summary>
 public sealed record SelfTestStatusResponse(byte Sequence, string State, uint TargetBytes,
@@ -210,13 +211,17 @@ internal static class HidProtocol
     public static MscStatusResponse ParseMscStatusReport(ReadOnlySpan<byte> report)
     {
         var payload = FeaturePayload(report, MscCommandReportId, MscStatusPayloadSize);
-        Require(payload[0] == ReportVersion && payload[1] <= 1 && payload[2] <= 1 && payload[3] <= 1,
+        Require(payload[0] is 2 or 3 && payload[1] <= 1 && payload[2] <= 1 && payload[3] <= 1,
             "invalid HID MSC status report");
-        return new(payload[1] != 0, payload[2] != 0, payload[3] != 0);
+        return new(payload[1] != 0, payload[2] != 0, payload[3] != 0, payload[0] == 3);
     }
 
-    public static byte[] BuildMscCommandReport(bool enabled) =>
-        [MscCommandReportId, ReportVersion, enabled ? (byte)1 : (byte)0];
+    public static byte[] BuildMscCommandReport(bool enabled, bool force = false)
+    {
+        Require(!force || !enabled, "Force return requires disabling MSC");
+        return force ? [MscCommandReportId, 3, 2]
+            : [MscCommandReportId, ReportVersion, enabled ? (byte)1 : (byte)0];
+    }
 
     public static byte[] BuildLedCommandReport(bool on) =>
         [LedCommandReportId, ReportVersion, on ? (byte)1 : (byte)0];
@@ -263,7 +268,7 @@ internal static class HidProtocol
     {
         var offset = report.Length >= size + 2 && report[0] == 0 && report[1] == reportId ? 2
             : report.Length >= size + 2 && report[0] == reportId && report[1] == reportId
-                && (report[2] == ReportVersion || (reportId == InfoReportId && report[2] == 3)) ? 2
+                && (report[2] == ReportVersion || (reportId is InfoReportId or MscCommandReportId && report[2] == 3)) ? 2
             : report.Length >= size + 1 && report[0] == reportId ? 1
             : -1;
         Require(offset >= 0 && report.Length >= offset + size, "unexpected HID feature report length or ID");

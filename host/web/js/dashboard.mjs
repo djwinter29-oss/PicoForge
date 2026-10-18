@@ -49,11 +49,14 @@ export function renderStatus(snapshot) {
   mscControl.textContent = msc?.enabled ? "Disable USB drive" : "Enable USB drive";
   mscControl.disabled = !connected || !msc || Boolean(msc.transition_pending)
     || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending);
+  document.querySelector("#msc-force-return").disabled = mscControl.disabled
+    || !msc?.enabled || !msc?.force_return_supported;
   document.querySelector("#msc-note").textContent = msc?.request_rejected
-    ? "Request refused. Safely eject the drive on the host before disabling."
-    : msc?.transition_pending ? "USB mode changing; the device will reconnect."
+    ? (msc.enabled ? "Request refused. Safely eject the drive on the host before disabling."
+      : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
+    : msc?.transition_pending ? "Preparing storage and changing USB mode; the device will reconnect."
       : msc?.enabled ? "Host owns the card. Safely eject before disabling or using it in firmware."
-        : "Firmware owns the card. Unmount firmware storage before enabling; the device then reconnects.";
+        : "Firmware owns storage. Enable USB drive to unmount it safely and reconnect as a USB disk.";
   renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
 

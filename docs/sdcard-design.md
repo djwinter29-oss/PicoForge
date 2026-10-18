@@ -162,10 +162,11 @@ Geometry success indicates available metadata, not permission to perform I/O. Fa
 before generic transfer validation queries geometry again; this deliberate duplication is retained rather than
 weakening either boundary without evidence of a performance problem.
 
-Volume lifecycle calls, mount-state queries, and FatFs operations require caller serialization through the existing
-storage-owner task/reservation. `pf_fatfs_volume_is_mounted()` reports registration state, not physical presence or an
-independently thread-safe snapshot. Only the filesystem-format telemetry cache uses atomic access; reading it neither
-grants media access nor synchronizes a filesystem transaction. The service manages one volume over a caller-selected
+Volume lifecycle calls and FatFs operations require caller serialization through the existing
+storage-owner task/reservation. `pf_fatfs_volume_is_mounted()` is an atomic snapshot of the last completed registration
+transition, not physical presence. Registration and filesystem-format telemetry are independent atomic snapshots;
+reading either grants no media access and does not serialize check-and-act operations or a filesystem transaction.
+The service manages one volume over a caller-selected
 logical device, not a device registry or multi-volume manager. The build selects SD or LevelX NOR; other backends must
 provide valid logical sectors and perform their own initialization before mounting.
 
@@ -826,8 +827,12 @@ task-notification slot 1 (slot 0 remains available), enables only the active dat
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.
 The host still requires both PIO completion and DMA completion. Boot without a
-running scheduler retains polling. This adapter supports the current serialized,
-single-core runtime, not concurrent card callers or a second-core owner.
+running scheduler retains polling. Waiter registration, notification and timeout cleanup use paired task/ISR
+kernel critical sections, including the SMP kernel lock when enabled. The ISR notifies and clears the waiter
+before releasing its critical section, so cleanup cannot race a notification to an expired waiter.
+Initialization and IRQ ownership remain on the startup core; the serialized waiting task need not own that core.
+Host tests cover cross-core timeout exclusion and duplicate/early completion; target SMP scheduling remains
+unqualified. Concurrent card operations are still unsupported without the execution-port reservation.
 
 `PF_SDIO_PIO_FUSED_COPY` and `PF_SD_CARD_INTERRUPT_WAIT` are independent
 compile-time axes: the former fuses CRC/payload copying in the protocol data

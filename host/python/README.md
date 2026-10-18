@@ -8,7 +8,24 @@ The shared Python/.NET page refreshes automatically. Its first summary row inclu
 (`Unknown` for legacy firmware). LED control is in Live Report; USB-drive control is beside the SD-card self-test.
 Selecting Start authorizes self-test writes and replacement of the reserved test file without a separate checkbox.
 
-Use **Enable USB drive** to hand the SD card to the host; USB briefly re-enumerates with an added MSC interface while keeping the HID identity and interface stable. Safely eject it in the host operating system before disabling MSC; the Pico then regains card ownership. Firmware storage must be unmounted before enabling host ownership.
+Use **Enable USB drive** to hand selected SD/NOR storage to the host. Firmware unmounts its filesystem before USB
+briefly re-enumerates with an added MSC interface, keeping the HID identity and interface stable.
+
+On Linux, **Disable USB drive** automatically unmounts the matching Pico's filesystems through UDisks2, requests
+safe SCSI eject, then sends HID disable to return storage to Pico firmware. Disk selection checks the physical USB
+VID/PID and the connected board's serial number; unrelated disks are never selected. This requires `lsblk`,
+`udisksctl`, `gdbus`, a running UDisks2 service, and permission to unmount/eject that drive. The server never uses
+sudo, force-unmount, or drive power-off. A busy filesystem or authorization failure stops the handoff and appears
+on the page; close open files or safely eject using the host's disk manager and retry. Some partitions may already
+be unmounted if a later unmount/eject fails, but HID disable is not sent on failure.
+
+On other operating systems, and with the .NET or browser-only WebHID hosts, safely eject in the operating system
+before disabling. Browsers cannot unmount OS filesystems. The firmware's safe-eject requirement is unchanged.
+
+The separate **Force return to Pico** action requires data-loss confirmation and bypasses host eject, not
+device sync. It is available only with supporting firmware. See the authoritative
+[force-return contract and risks](../../docs/usb-protocol.md#confirmed-force-return); a successful remount
+does not establish filesystem integrity.
 
 The dashboard also controls the [SD-card self-test](../../docs/sd-self-test.md)
 over HID and displays progress, verified byte counts, and average MiB/s. Its

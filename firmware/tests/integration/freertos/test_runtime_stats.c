@@ -10,6 +10,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/storage")
 #define __StackBottom test_stack
 #define __StackOneTop test_stack
 #define __StackOneBottom test_stack
+#define configNUMBER_OF_CORES 2
 #define RUNTIME_SOURCE "../../../src/integration/freertos/runtime_stats.c"
 #include RUNTIME_SOURCE
 
@@ -35,7 +36,7 @@ void test_first_and_short_samples_are_unavailable_then_cache_the_interval_result
     TEST_ASSERT_EQUAL_UINT32(512u, stats.ram_used_bytes);
     TEST_ASSERT_EQUAL_UINT32(1024u, stats.ram_total_bytes);
     clock_us = 249999u;
-    idle_us = 200000u;
+    idle_us = 400000u;
     pf_runtime_stats_read(&stats);
     TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, stats.cpu_usage_basis_points);
     clock_us = 250000u;
@@ -50,7 +51,8 @@ void test_idle_and_fully_busy_intervals_are_zero_and_one_hundred_percent(void)
 {
     pf_runtime_stats_t stats;
     pf_runtime_stats_read(&stats);
-    clock_us = idle_us = 250000u;
+    clock_us = 250000u;
+    idle_us = 500000u;
     pf_runtime_stats_read(&stats);
     TEST_ASSERT_EQUAL_UINT16(0u, stats.cpu_usage_basis_points);
     clock_us += 250000u;
@@ -65,10 +67,29 @@ void test_long_uptime_and_new_intervals_use_64_bit_deltas_not_boot_averages(void
     idle_us = clock_us / 2u;
     pf_runtime_stats_read(&stats);
     clock_us += 1000000u;
-    idle_us += 750000u;
+    idle_us += 1500000u;
     pf_runtime_stats_read(&stats);
     TEST_ASSERT_EQUAL_UINT16(2500u, stats.cpu_usage_basis_points);
     clock_us += 250000u;
     pf_runtime_stats_read(&stats);
     TEST_ASSERT_EQUAL_UINT16(10000u, stats.cpu_usage_basis_points);
+}
+
+void test_one_busy_core_and_one_idle_core_reports_fifty_percent(void)
+{
+    pf_runtime_stats_t stats;
+    pf_runtime_stats_read(&stats);
+    clock_us = idle_us = 250000u;
+    pf_runtime_stats_read(&stats);
+    TEST_ASSERT_EQUAL_UINT16(5000u, stats.cpu_usage_basis_points);
+}
+
+void test_adjacent_clock_sampling_skew_saturates_at_zero_usage(void)
+{
+    pf_runtime_stats_t stats;
+    pf_runtime_stats_read(&stats);
+    clock_us = 250000u;
+    idle_us = 500002u;
+    pf_runtime_stats_read(&stats);
+    TEST_ASSERT_EQUAL_UINT16(0u, stats.cpu_usage_basis_points);
 }

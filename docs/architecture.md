@@ -1,19 +1,19 @@
 # PicoForge Architecture
 
-> **Status:** The firmware builds for RP2040 and RP2350 and runs single-core FreeRTOS tasks. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](cdc-cli.md). With card detect enabled it debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive and requires host safe-eject before firmware regains the card. See [the hardware validation record](../firmware/src/drivers/storage/README.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
+> **Status:** The firmware configures two-core FreeRTOS SMP for RP2040 and RP2350. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](cdc-cli.md). With card detect enabled it debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive and requires host safe-eject before firmware regains the card. See [the hardware validation record](../firmware/src/drivers/storage/README.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
 
 ## Current Firmware
 
 `firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `pf_hello_world` for the selected `PICO_BOARD`. The TinyUSB configuration lives under `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger; USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides serialized severity-tagged lines. The USB task services the [CDC CLI](cdc-cli.md) and publishes a versioned HID status report every 250 ms. HID Feature report 1 carries stable product, MCU, and USB serial identity; Input report 2 carries dynamic uptime, system clock, USB/CDC state, internal temperature, and LED state; Feature report 4 accepts LED set-state commands. Hosts read identity once per connection and receive changing values through the periodic input report. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4. The onboard LED uses the selected SDK board's `PICO_DEFAULT_LED_PIN` (GPIO 25 for the current `pico` and `pico2` targets). Simple system, temperature, and LED drivers live flat under `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines in `drivers/storage/`. The shared protocol is documented in [usb-protocol.md](usb-protocol.md). The development VID/PID is `0xCAFE:0x4011` and is not for product release. `firmware/src/main.c` initializes board UART and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature, and LED behavior still require board validation.
 
-Input Report 3 publishes SD-card detection/initialization state, selected bus mode, effective bus speed, CSD-derived capacity, and CID identity every second. Input Report 5 reports MSC ownership transitions, while Feature Report 5 requests enable/disable. In MSC mode the USB descriptor appends MSC after CDC and HID, preserving the PID and HID interface number; see [usb-protocol.md](usb-protocol.md). The owner gate rejects firmware block calls while the host owns the card. Enabling is rejected if FatFs is mounted or CLI storage work is pending; disabling is rejected until storage work is complete and the host ejects and allows removal. The Python, .NET, and WebHID dashboards expose the toggle and decode both reports.
+Input Report 3 publishes SD-card detection/initialization state, selected bus mode, effective bus speed, CSD-derived capacity, and CID identity every second. Input Report 5 reports MSC ownership transitions, while Feature Report 5 requests enable/disable. In MSC mode the USB descriptor appends MSC after CDC and HID, preserving the PID and HID interface number; see [usb-protocol.md](usb-protocol.md). The owner gate rejects firmware block calls while the host owns the card. Enabling queues a worker-owned FatFs unmount before acquisition and is rejected if CLI storage work is pending; normal disabling is rejected until storage work is complete and the host ejects and allows removal. The Python, .NET, and WebHID dashboards also provide a separately confirmed [unsafe force return](usb-protocol.md#confirmed-force-return), with one worker mount attempt and explicit failure reporting.
 
 CDC storage commands are queued to a statically allocated FreeRTOS storage worker,
 which is the sole FatFs caller for this workflow. USB/CLI and storage communicate
 through bounded request/reply queues; filesystem calls do not execute in the USB
 task. MSC transitions are rejected while a storage command is outstanding. Files
-are closed before command completion, and enabling MSC still requires explicit
-filesystem unmount. See [the CDC CLI guide](cdc-cli.md) for commands, safeguards,
+are closed before command completion, and enabling MSC automatically queues filesystem
+unmount on the worker before acquiring USB ownership. See [the CDC CLI guide](cdc-cli.md) for commands, safeguards,
 resource budgets, and validation limits.
 
 This is a buildable starting point, not yet the complete application framework. The example currently uses Pico SDK and FreeRTOS APIs directly; future modules should establish the boundaries below before more hardware and application behavior is added.
@@ -30,9 +30,39 @@ exclusive ownership and create-new/cleanup safeguards. Browser, Python, and
 Input Report 2. See [runtime telemetry](usb-protocol.md#input-report-2) for metric definitions, sampling limits
 and host compatibility. Both dashboards show these metrics in Runtime status.
 
-The initial runtime uses FreeRTOS-Kernel 11.3.1 with `configNUMBER_OF_CORES=1`. PicoForge starts its scheduler on core 0 and does not launch framework work on core 1. Core 1 is left unused by this baseline and may be assigned by a product application in a future, explicitly designed mode.
+FreeRTOS-Kernel 11.3.1 runs with `configNUMBER_OF_CORES=2`. The Pico port launches core 1 when the scheduler
+starts on core 0; applications must not launch a second independent core entry point. USB, storage, timer and
+idle tasks use the kernel's all-core affinity default and may migrate. Different priorities may execute
+simultaneously. Affinity capability remains enabled for SDK flash-safe execution, which temporarily uses a
+core-specific lockout task; application tasks are not pinned. Task/ISR kernel critical sections exclude both cores,
+while existing media reservations serialize physical engines and LevelX. FatFs retains one executor.
+SMP schedules tasks, not arbitrary hardware resources: board setup and IRQ installation still occur before scheduler
+startup, and IRQ routing stays on its initialization core. Peripheral ownership remains explicit rather than being
+inferred from the executing core. Two-core scheduling is not a hard real-time guarantee.
 
-The FreeRTOS port itself is SMP-capable, but that does not mean this build runs SMP: the configured scheduler core count is one. Do not treat this as a hard real-time guarantee. Any core-1 application mode will need defined startup ownership, peripheral/IRQ affinity, cross-core synchronization, and measured timing.
+The project-owned [DCD guard](../firmware/src/integration/usb/dcd_guard.c) interposes the pinned TinyUSB RP2040/RP2350
+driver entry points and its shared USB IRQ handler. A dedicated SDK spinlock and local interrupt masking exclude
+endpoint/reset/setup/SOF mutations across cores; same-core nested driver calls retain the outer reservation.
+Only low-level DCD operations hold this lock, never USB application callbacks or synchronous MSC media I/O.
+TinyUSB must retain the Pico OS adapter, whose event queue has its own cross-core critical section.
+The IRQ copies controller events into a static 16-entry queue under the same gate. The `tud_task_ext` interposition
+drains the upstream queue, forwards one bounded controller batch without holding the gate, then runs TinyUSB task
+dispatch. Thus the upstream queued-SETUP counter and device flags are only mutated on the USB task, not concurrently
+by the IRQ. Event order is retained; consecutive SOFs are coalesced to the newest frame so idle frame traffic cannot
+fill the queue while MSC blocks. Queue overflow asserts explicitly rather than losing controller events silently.
+The task-readiness query includes both queues; deinitialization discards pending controller events before reuse.
+There is no new heap allocation; the queue adds `16 * sizeof(dcd_event_t)` bytes plus indices to linked SRAM.
+Event/SOF hooks now run in task context; PicoForge defines no ISR event hooks or per-frame SOF consumer.
+Adding such hooks or USB classes requires revisiting the batching and coalescing contract.
+Initialization runs before the scheduler on core 0. NVIC enable/disable, deinitialization and reinitialization must
+remain on that IRQ-owning core; wrong-core lifecycle calls assert rather than silently mask another core's NVIC.
+Normal USB task processing does not change IRQ ownership or require task affinity. These safeguards have host
+concurrency tests; sustained concurrent USB/media workloads still require target qualification.
+Dependency upgrades must pass the pinned-driver surface contract before the guard can be considered compatible.
+On the connected Pico2 at 250 MHz CPU / 50 MHz SDIO, probe inspection confirmed the active and passive idle tasks
+executing on separate cores. The dashboard enable command completed worker-owned unmount and re-enumerated the
+SD card as a 119.1 GiB USB block device with its existing partition. NOR SMP builds and host handoff tests pass,
+but NOR hardware handoff and sustained dual-core stress remain unqualified.
 
 The example uses static allocation for its application task and the port-provided idle-task memory. Software timers are enabled because the Pico port uses the timer-pend API for SDK synchronization interoperation. Additional tasks should document their stack, priority, ownership, and whether allocation is static or dynamic. The current firmware disables dynamic task allocation.
 
@@ -116,6 +146,9 @@ NOR builds omit SD protocol/port targets and the SD block adapter; board SD conf
 touching SD pins. Common FatFs/logical-block middleware links only the selected adapter's device dependencies.
 Automatic mount failures retain backend, volume and FatFs result codes and log the first or changed failure;
 identical retries remain paced and do not repeat that worker warning. Successful mounting resets warning suppression.
+Mount registration and format are independent atomic telemetry snapshots; neither grants filesystem access.
+Worker presence fields remain worker-owned: readers inspect them only while the kernel-protected
+`media_service_busy` gate is clear, and the worker publishes changes before releasing that gate.
 
 Product-specific USB behavior lives under `app/usb`: `usb_task.c/.h` owns task startup, CDC command sessions and report
 scheduling; `usb_hid.c/.h` owns the product HID protocol; `usb_msc.c/.h` owns SCSI callbacks and application handoff

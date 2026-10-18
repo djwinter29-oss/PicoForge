@@ -25,10 +25,11 @@ void pf_runtime_stats_read(pf_runtime_stats_t *stats)
     uint64_t now = time_us_64();
     uint64_t idle = ulTaskGetIdleRunTimeCounter();
     if (sampled && now - previous_time >= 250000u) {
-        uint64_t elapsed = now - previous_time;
+        uint64_t capacity = (now - previous_time) * configNUMBER_OF_CORES;
         uint64_t idle_elapsed = idle - previous_idle;
-        configASSERT(idle_elapsed <= elapsed);
-        cpu_usage = (uint16_t)(((elapsed - idle_elapsed) * 10000u) / elapsed);
+        /* Wall and kernel idle timestamps are adjacent, not simultaneous; saturate sampling skew at idle. */
+        cpu_usage = idle_elapsed >= capacity ? 0u :
+            (uint16_t)(((capacity - idle_elapsed) * 10000u) / capacity);
     }
     if (!sampled || now - previous_time >= 250000u) {
         previous_time = now;

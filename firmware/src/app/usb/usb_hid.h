@@ -28,6 +28,8 @@
 #define PF_HID_LED_COMMAND_PAYLOAD_SIZE 2u
 #define PF_HID_MSC_COMMAND_PAYLOAD_SIZE 2u
 #define PF_HID_MSC_STATUS_PAYLOAD_SIZE 4u
+/** @brief MSC status layout advertises confirmed force-return command support. */
+#define PF_HID_MSC_REPORT_VERSION 3u
 #define PF_HID_SELF_TEST_COMMAND_PAYLOAD_SIZE 6u
 #define PF_HID_SELF_TEST_STATUS_PAYLOAD_SIZE 32u
 #define PF_HID_FILESYSTEM_PAYLOAD_SIZE 3u
@@ -101,16 +103,18 @@ typedef struct __attribute__((packed)) {
     uint8_t on;
 } pf_hid_led_command_report_t;
 
+/** @brief MSC command; layout 2 keeps safe toggles, layout 3 action 2 explicitly forces return. */
 typedef struct __attribute__((packed)) {
-    uint8_t version;
-    uint8_t enable;
+    uint8_t version; /**< Command layout: 2 for safe toggles, 3 for force return. */
+    uint8_t enable; /**< 0 disables safely, 1 enables, 2 forces return only with layout 3. */
 } pf_hid_msc_command_report_t;
 
+/** @brief Ownership transition status; layout 3 advertises force-return support. */
 typedef struct __attribute__((packed)) {
-    uint8_t version;
-    uint8_t enabled;
-    uint8_t transition_pending;
-    uint8_t request_rejected;
+    uint8_t version; /**< MSC status layout version. */
+    uint8_t enabled; /**< MSC is exposed and owns storage. */
+    uint8_t transition_pending; /**< Includes the forced-return remount attempt. */
+    uint8_t request_rejected; /**< Request or forced remount failed; inspect enabled and logs. */
 } pf_hid_msc_status_report_t;
 
 /** Start (action=1, size_mib=1..128) or cancel (action=0, size_mib=0). */

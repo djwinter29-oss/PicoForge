@@ -223,15 +223,19 @@ def parse_msc_status_report(report: bytes | bytearray | list[int]) -> dict[str, 
     if len(payload) != 4 or any(data[offset + 4 :]):
         raise ValueError("unexpected HID MSC status report length or padding")
     version, enabled, pending, rejected = payload
-    if version != REPORT_VERSION or any(value > 1 for value in (enabled, pending, rejected)):
+    if version not in (REPORT_VERSION, 3) or any(value > 1 for value in (enabled, pending, rejected)):
         raise ValueError("invalid HID MSC status report")
     return {"enabled": bool(enabled), "transition_pending": bool(pending),
-            "request_rejected": bool(rejected)}
+            "request_rejected": bool(rejected), "force_return_supported": version == 3}
 
 
-def build_msc_command_report(enable: bool) -> bytes:
+def build_msc_command_report(enable: bool, *, force: bool = False) -> bytes:
     if not isinstance(enable, bool):
         raise ValueError("MSC enable state must be boolean")
+    if not isinstance(force, bool) or (force and enable):
+        raise ValueError("Force return requires disabling MSC")
+    if force:
+        return bytes((MSC_COMMAND_REPORT_ID, 3, 2))
     return bytes((MSC_COMMAND_REPORT_ID, REPORT_VERSION, int(enable)))
 
 

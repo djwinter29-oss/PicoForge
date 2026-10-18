@@ -273,6 +273,10 @@ MSC holds the media reservation across its worker-idle check and ownership trans
 readiness and mounted state on acquisition, not worker admission. Normal release requires caller-checked eject/sync.
 The separate recovery release rejects healthy media and does not sync or claim durability.
 
+The separately confirmed [force-return action](usb-protocol.md#confirmed-force-return) supports healthy NOR as well
+as SD without weakening normal Disable or fault-recovery checks. It disconnects before releasing ownership and
+attempts one worker mount; host-cached writes can still be lost and the filesystem can be corrupted.
+
 For compatibility, `sd status` and `sd diagnostics` report the selected NOR media with `backend=nor`, current
 ownership/readiness and a retained failure sequence, block result, raw NOR result, LevelX result and system error.
 An additional line reports `failure_operation` and `failure_owner`, independently of current ownership. Operation

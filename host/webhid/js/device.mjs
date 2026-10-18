@@ -201,10 +201,11 @@ export function decodeMscStatus(report) {
   const enabled = payload.getUint8(1);
   const pending = payload.getUint8(2);
   const rejected = payload.getUint8(3);
-  if (version !== 2 || enabled > 1 || pending > 1 || rejected > 1) {
+  if (![2, 3].includes(version) || enabled > 1 || pending > 1 || rejected > 1) {
     throw new Error("Invalid HID MSC status report");
   }
-  return { enabled: Boolean(enabled), transition_pending: Boolean(pending), request_rejected: Boolean(rejected) };
+  return { enabled: Boolean(enabled), transition_pending: Boolean(pending), request_rejected: Boolean(rejected),
+    force_return_supported: version === 3 };
 }
 
 export function boardStatusFromRuntime(runtime) {
@@ -400,12 +401,16 @@ export class PicoForgeWebHid {
     }
   }
 
-  async setMsc(enable) {
+  async setMsc(enable, force = false) {
     if (typeof enable !== "boolean") throw new Error("MSC state must be boolean");
+    if (typeof force !== "boolean" || (force && enable)) throw new Error("Force return requires disabling MSC");
+    if (force && (!this.state.msc?.enabled || !this.state.msc?.force_return_supported
+      || this.state.msc?.transition_pending)) throw new Error("Enabled MSC with force-return support is unavailable");
     if (!this.device || this.state.busy) return;
     this.update({ busy: true, error: null });
     try {
-      await this.device.sendFeatureReport(MSC_COMMAND_REPORT_ID, Uint8Array.from([2, enable ? 1 : 0]));
+      await this.device.sendFeatureReport(MSC_COMMAND_REPORT_ID,
+        Uint8Array.from(force ? [3, 2] : [2, enable ? 1 : 0]));
       const msc = { ...(this.state.msc ?? {}), transition_pending: true, request_rejected: false };
       this.update({ msc, busy: false });
     } catch (error) {

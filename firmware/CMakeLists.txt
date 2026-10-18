@@ -380,6 +380,7 @@ target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
 add_executable(pf_hello_world
     src/main.c
     src/integration/freertos/runtime_stats.c
+    src/integration/usb/dcd_guard.c
     src/app/usb/usb_descriptors.c
     src/app/usb/usb_hid.c
     src/app/usb/usb_msc.c
@@ -407,7 +408,6 @@ target_link_libraries(pf_hello_world
 )
 
 target_compile_definitions(pf_hello_world PRIVATE
-    configNUMBER_OF_CORES=1
     PF_FIRMWARE_VERSION_MAJOR=${PF_FIRMWARE_VERSION_MAJOR}u
     PF_FIRMWARE_VERSION_MINOR=${PF_FIRMWARE_VERSION_MINOR}u
     PF_FIRMWARE_VERSION_PATCH=${PF_FIRMWARE_VERSION_PATCH}u
@@ -419,6 +419,16 @@ target_link_options(pf_hello_world PRIVATE
     "LINKER:--wrap=mscd_reset"
     "LINKER:--wrap=mscd_control_xfer_cb"
 )
+
+# Keep the pinned DCD's endpoint state and fixed-core IRQ behind one cross-core gate.
+foreach(symbol IN ITEMS
+    dcd_init dcd_deinit dcd_int_enable dcd_int_disable dcd_set_address dcd_remote_wakeup
+    dcd_disconnect dcd_connect dcd_sof_enable dcd_edpt0_status_complete dcd_edpt_open
+    dcd_edpt_iso_alloc dcd_edpt_iso_activate dcd_edpt_close_all dcd_edpt_xfer
+    dcd_edpt_stall dcd_edpt_clear_stall dcd_int_handler dcd_event_handler tud_task_ext tud_task_event_ready
+    irq_add_shared_handler irq_remove_handler)
+    target_link_options(pf_hello_world PRIVATE "LINKER:--wrap=${symbol}")
+endforeach()
 
 pico_enable_stdio_usb(pf_hello_world 0)
 pico_set_program_version(pf_hello_world "${PF_FIRMWARE_VERSION}")

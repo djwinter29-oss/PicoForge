@@ -75,7 +75,8 @@ internal sealed class PicoForgeHid : IDisposable
         stream.SetFeature(HidProtocol.BuildLedCommandReport(on));
     }
 
-    public void SetMsc(bool enabled) => stream.SetFeature(HidProtocol.BuildMscCommandReport(enabled));
+    public void SetMsc(bool enabled, bool force = false) =>
+        stream.SetFeature(HidProtocol.BuildMscCommandReport(enabled, force));
     public void SetSelfTest(string action, uint sizeMib) => stream.SetFeature(HidProtocol.BuildSelfTestCommandReport(action, sizeMib));
 
     public void Dispose() => stream.Dispose();

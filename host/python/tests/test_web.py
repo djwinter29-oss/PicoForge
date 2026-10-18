@@ -43,7 +43,8 @@ class FakeMonitor:
         return {"temperature_valid": True, "temperature_centidegrees": 2345,
                 "led_available": True, "led_on": on}
 
-    def set_msc(self, enabled):
+    def set_msc(self, enabled, *, force=False):
+        self.last_msc = (enabled, force)
         return {"enabled": enabled, "transition_pending": True, "request_rejected": False}
 
     def set_self_test(self, action, size_mib):
@@ -111,6 +112,31 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["msc"]["enabled"])
+        self.assertTrue(response.json["msc"]["transition_pending"])
+
+    def test_msc_endpoint_reports_host_eject_error(self):
+        class BusyMonitor(FakeMonitor):
+            def set_msc(self, enabled):
+                raise RuntimeError("Linux USB eject failed: filesystem busy")
+
+        response = create_app(BusyMonitor()).test_client().post(
+            "/api/msc", json={"enabled": False}, base_url="http://127.0.0.1"
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json["error"], "Linux USB eject failed: filesystem busy")
+
+    def test_force_return_requires_explicit_data_loss_confirmation(self):
+        monitor = FakeMonitor()
+        client = create_app(monitor).test_client()
+        for payload in ({}, {"confirm_data_loss": False}, {"confirm_data_loss": 1},
+                        {"confirm_data_loss": "true"}):
+            response = client.post("/api/msc/force-return", json=payload, base_url="http://127.0.0.1")
+            self.assertEqual(response.status_code, 400)
+            self.assertFalse(hasattr(monitor, "last_msc"))
+        response = client.post("/api/msc/force-return", json={"confirm_data_loss": True},
+                               base_url="http://127.0.0.1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(monitor.last_msc, (False, True))
         self.assertTrue(response.json["msc"]["transition_pending"])
 
     def test_self_test_endpoint_delivers_validated_async_commands(self):

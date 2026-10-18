@@ -7,6 +7,8 @@ static void pf_fatfs_volume_forget_filesystem_format(void);
 static bool pf_storage_worker_busy(void);
 static bool pf_storage_worker_media_absent(void);
 static bool pf_storage_worker_recover_media(void);
+static bool pf_storage_worker_return_from_usb(void);
+static bool pf_storage_worker_unmount_for_usb(void);
 #include "../../../src/app/usb/usb_msc.c"
 #include "block_device.h"
 
@@ -89,11 +91,24 @@ static bool pf_fatfs_volume_is_mounted(void) { return mounted; }
 static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
 static bool pf_storage_worker_media_absent(void) { return false; }
+static bool pf_storage_worker_unmount_for_usb(void)
+{
+    TEST_ASSERT_GREATER_THAN_UINT(0u, depth);
+    TEST_ASSERT_FALSE(usb_owner || worker_busy);
+    worker_busy = true;
+    return true;
+}
 static bool pf_storage_worker_recover_media(void)
 {
     TEST_ASSERT_GREATER_THAN_UINT(0u, depth);
     TEST_ASSERT_TRUE(usb_owner);
     recovery_queued = true;
+    return true;
+}
+static bool pf_storage_worker_return_from_usb(void)
+{
+    TEST_ASSERT_TRUE(usb_owner);
+    worker_busy = true;
     return true;
 }
 void __real_mscd_reset(uint8_t port) { (void)port; }
@@ -109,6 +124,7 @@ void setUp(void)
     usb_owner = mounted = worker_busy = sync_fails = write_fails = recovery_queued = false;
     msc_enabled = msc_ejected = removal_prevented = request_pending = transition_pending = false;
     transfer_sense_pending = recovery_requested = request_rejected = false;
+    unmount_pending = force_return_requested = remount_pending = false;
     depth = reads = writes = syncs = releases = 0u;
 }
 void tearDown(void) { TEST_ASSERT_EQUAL_UINT(0u, depth); }
@@ -120,13 +136,52 @@ static void enable(void)
     TEST_ASSERT_TRUE(msc_enabled && usb_owner && !request_rejected);
 }
 
-void test_nor_handoff_requires_unmounted_idle_media_and_checked_eject(void)
+void test_force_return_nor_keeps_safe_disable_strict_and_awaits_mount(void)
+{
+    enable();
+    removal_prevented = true;
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    TEST_ASSERT_TRUE(msc_enabled && request_rejected);
+    pf_usb_msc_request_force_return();
+    pf_usb_msc_task();
+    TEST_ASSERT_FALSE(msc_enabled || usb_owner || msc_ejected || request_rejected);
+    TEST_ASSERT_TRUE(transition_pending && worker_busy);
+    TEST_ASSERT_EQUAL_UINT(1u, releases);
+    mounted = true;
+    worker_busy = false;
+    pf_usb_msc_task();
+    TEST_ASSERT_FALSE(transition_pending || request_rejected);
+}
+
+void test_force_return_nor_sync_failure_keeps_usb_ownership(void)
+{
+    enable();
+    sync_fails = true;
+    pf_usb_msc_request_force_return();
+    pf_usb_msc_task();
+    TEST_ASSERT_TRUE(msc_enabled && usb_owner && request_rejected);
+    TEST_ASSERT_FALSE(transition_pending || worker_busy);
+    TEST_ASSERT_EQUAL_UINT(0u, releases);
+}
+
+void test_nor_handoff_unmounts_idle_media_and_requires_checked_eject(void)
 {
     mounted = true;
     pf_usb_msc_request(true);
     pf_usb_msc_task();
-    TEST_ASSERT_TRUE(request_rejected && !usb_owner);
+    TEST_ASSERT_TRUE(unmount_pending && transition_pending && worker_busy && !usb_owner);
+    pf_usb_msc_task();
+    TEST_ASSERT_FALSE(usb_owner);
+    worker_busy = false;
     mounted = false;
+    pf_usb_msc_task();
+    TEST_ASSERT_TRUE(msc_enabled && usb_owner && !request_rejected);
+    TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0u, 0u, false, true));
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    TEST_ASSERT_FALSE(msc_enabled || usb_owner);
+    releases = 0u;
     worker_busy = true;
     pf_usb_msc_request(true);
     pf_usb_msc_task();
@@ -153,6 +208,31 @@ void test_nor_handoff_requires_unmounted_idle_media_and_checked_eject(void)
     pf_usb_msc_task();
     TEST_ASSERT_FALSE(msc_enabled || usb_owner);
     TEST_ASSERT_EQUAL_UINT(1u, releases);
+}
+
+void test_failed_nor_unmount_retains_firmware_ownership_and_mounted_volume(void)
+{
+    mounted = true;
+    pf_usb_msc_request(true);
+    pf_usb_msc_task();
+    worker_busy = false;
+    pf_usb_msc_task();
+    TEST_ASSERT_TRUE(request_rejected && mounted && !usb_owner && !msc_enabled);
+    TEST_ASSERT_FALSE(transition_pending || request_pending);
+}
+
+void test_disable_during_nor_unmount_waits_for_completion_without_exposing_media(void)
+{
+    mounted = true;
+    pf_usb_msc_request(true);
+    pf_usb_msc_task();
+    pf_usb_msc_request(false);
+    pf_usb_msc_task();
+    TEST_ASSERT_FALSE(msc_enabled || usb_owner);
+    mounted = false;
+    worker_busy = false;
+    pf_usb_msc_task();
+    TEST_ASSERT_FALSE(msc_enabled || usb_owner || request_rejected || request_pending);
 }
 
 void test_nor_msc_preserves_partial_and_batch_bytes_bounds_and_failed_write_no_replay(void)

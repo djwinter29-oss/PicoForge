@@ -8,7 +8,7 @@
 
 /** CPU interval estimate and static SRAM reservation; no live heap or stack occupancy. */
 typedef struct {
-    uint16_t cpu_usage_basis_points; /**< Non-idle time, 0..10000; UINT16_MAX before the first interval. */
+    uint16_t cpu_usage_basis_points; /**< Mean non-idle fraction across cores, 0..10000; UINT16_MAX initially. */
     uint32_t ram_used_bytes; /**< Linked main/scratch data plus reserved core stacks; task stacks are in data. */
     uint32_t ram_total_bytes; /**< SDK-selected on-chip SRAM capacity, excluding external RAM. */
 } pf_runtime_stats_t;

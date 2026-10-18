@@ -17,6 +17,9 @@ static bool requested_enabled;
 static bool transition_pending;
 static bool request_rejected;
 static bool recovery_requested;
+static bool unmount_pending; /**< Worker handoff preparation must finish before ownership changes. */
+static bool force_return_requested; /**< Explicit unsafe command; never inferred from normal disable. */
+static bool remount_pending; /**< Forced return awaits the sole worker's mount result. */
 /* TinyUSB 0.18.0 overwrites READ10/WRITE10 error sense after our callback.
  * Keep only that transfer's sense until REQUEST SENSE. It is dropped when any
  * later command callback runs, on unmount, and on handled BOT/bus reset.
@@ -131,6 +134,10 @@ bool pf_usb_msc_request_rejected(void)
 
 void pf_usb_msc_request(bool enabled)
 {
+    if (remount_pending) {
+        return;
+    }
+    force_return_requested = false;
     recovery_requested = false;
     requested_enabled = enabled;
     request_pending = true;
@@ -140,10 +147,22 @@ void pf_usb_msc_request(bool enabled)
 
 void pf_usb_msc_request_recovery(void)
 {
+    if (remount_pending) {
+        return;
+    }
+    force_return_requested = false;
     recovery_requested = true;
     request_pending = true;
     transition_pending = true;
     request_rejected = false;
+}
+
+void pf_usb_msc_request_force_return(void)
+{
+    pf_usb_msc_request(false);
+    if (!remount_pending) {
+        force_return_requested = true;
+    }
 }
 
 static void apply_msc_request(void)
@@ -152,6 +171,18 @@ static void apply_msc_request(void)
 
     if (!request_pending) {
         return;
+    }
+    if (unmount_pending) {
+        if (pf_storage_worker_busy()) {
+            return;
+        }
+        unmount_pending = false;
+        if (requested_enabled && !recovery_requested && pf_fatfs_volume_is_mounted()) {
+            request_pending = false;
+            transition_pending = false;
+            request_rejected = true;
+            return;
+        }
     }
     request_pending = false;
     if (recovery_requested) {
@@ -195,6 +226,38 @@ static void apply_msc_request(void)
         return;
     }
 
+    if (force_return_requested) {
+        force_return_requested = false;
+        /* Device sync cannot flush writes still cached by the host. A device-side
+         * failure keeps USB ownership; only the explicit command bypasses host eject. */
+        if (pf_fatfs_volume_is_mounted() || pf_msc_storage_sync() != PF_BLOCK_OK) {
+            transition_pending = false;
+            request_rejected = true;
+            return;
+        }
+        if (!tud_disconnect()) {
+            transition_pending = false;
+            request_rejected = true;
+            return;
+        }
+        if (!pf_storage_worker_return_from_usb()) {
+            transition_pending = false;
+            request_rejected = true;
+            (void)tud_connect();
+            return;
+        }
+        result = pf_msc_storage_release();
+        if (result != PF_BLOCK_OK) {
+            transition_pending = false;
+            request_rejected = true;
+            (void)tud_connect();
+            return;
+        }
+        msc_enabled = false;
+        remount_pending = true;
+        return;
+    }
+
     if (requested_enabled) {
         if (!pf_msc_storage_ready()) {
             transition_pending = false;
@@ -202,8 +265,13 @@ static void apply_msc_request(void)
             return;
         }
         if (pf_fatfs_volume_is_mounted()) {
-            transition_pending = false;
-            request_rejected = true;
+            if (!pf_storage_worker_unmount_for_usb()) {
+                transition_pending = false;
+                request_rejected = true;
+                return;
+            }
+            unmount_pending = true;
+            request_pending = true;
             return;
         }
         result = pf_msc_storage_acquire();
@@ -247,6 +315,14 @@ static void apply_msc_request(void)
 
 void pf_usb_msc_task(void)
 {
+    if (remount_pending) {
+        if (!pf_storage_worker_busy()) {
+            remount_pending = false;
+            transition_pending = false;
+            request_rejected = !pf_fatfs_volume_is_mounted();
+        }
+        return;
+    }
     if (!request_pending) {
         return;
     }
@@ -254,12 +330,12 @@ void pf_usb_msc_task(void)
         return;
     }
     bool was_enabled = msc_enabled;
-    bool recovering = recovery_requested;
+    bool detached_first = recovery_requested || force_return_requested;
     apply_msc_request();
     pf_msc_storage_unlock();
     if (was_enabled != msc_enabled) {
         transfer_sense_pending = false;
-        if (!recovering) {
+        if (!detached_first) {
             (void)tud_disconnect();
         }
         sleep_ms(250u);

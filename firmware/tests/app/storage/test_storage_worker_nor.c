@@ -13,6 +13,7 @@ static uint32_t now;
 static const pf_block_device_t device = {0};
 static pf_fatfs_volume_result_t mount_result;
 static FRESULT mount_reason;
+static pf_fatfs_volume_result_t unmount_result;
 static storage_request_t queued_request;
 static pf_storage_worker_reply_t queued_replies[8];
 static unsigned reply_count, reply_index;
@@ -56,10 +57,14 @@ pf_fatfs_volume_result_t pf_fatfs_volume_mount(const pf_block_device_t *value, F
 }
 pf_fatfs_volume_result_t pf_fatfs_volume_unmount(FRESULT *result)
 {
-    (void)result;
     ++unmount_calls;
-    mounted = false;
-    return PF_FATFS_VOLUME_OK;
+    if (result != NULL) {
+        *result = unmount_result == PF_FATFS_VOLUME_OK ? FR_OK : FR_DISK_ERR;
+    }
+    if (unmount_result == PF_FATFS_VOLUME_OK) {
+        mounted = false;
+    }
+    return unmount_result;
 }
 uint32_t pf_system_uptime_ms(void) { return now; }
 
@@ -95,6 +100,7 @@ void setUp(void)
     auto_mount_pending = true;
     mount_failure_reported = false;
     mount_result = PF_FATFS_VOLUME_OK;
+    unmount_result = PF_FATFS_VOLUME_OK;
     mount_reason = FR_OK;
     requests = (void *)1;
     replies = (void *)2;
@@ -107,6 +113,56 @@ void tearDown(void)
 {
     TEST_ASSERT_EQUAL_UINT(0u, depth);
     TEST_ASSERT_FALSE(media_service_busy);
+}
+
+void test_usb_preparation_unmounts_on_worker_and_pauses_automount_until_ownership_return(void)
+{
+    mounted = nor_ready = true;
+    TEST_ASSERT_TRUE(pf_storage_worker_unmount_for_usb());
+    TEST_ASSERT_TRUE(busy && queued_request.unmount_for_usb);
+    TEST_ASSERT_FALSE(pf_storage_worker_unmount_for_usb());
+    TEST_ASSERT_TRUE(mounted);
+    unmount_for_usb();
+    TEST_ASSERT_FALSE(mounted || busy || auto_mount_pending);
+    service_media();
+    TEST_ASSERT_FALSE(mounted);
+    TEST_ASSERT_EQUAL_UINT(0u, mount_calls);
+    remount = true;
+    service_media();
+    TEST_ASSERT_TRUE(mounted);
+}
+
+void test_usb_preparation_reports_failed_unmount_without_claiming_idle_unmounted_volume(void)
+{
+    mounted = nor_ready = true;
+    unmount_result = PF_FATFS_VOLUME_FILESYSTEM_ERROR;
+    TEST_ASSERT_TRUE(pf_storage_worker_unmount_for_usb());
+    unmount_for_usb();
+    TEST_ASSERT_TRUE(mounted);
+    TEST_ASSERT_FALSE(busy);
+    TEST_ASSERT_TRUE(auto_mount_pending);
+}
+
+void test_forced_nor_return_attempts_one_mount_and_blocks_retries_after_failure(void)
+{
+    config_available = true;
+    TEST_ASSERT_TRUE(pf_storage_worker_return_from_usb());
+    TEST_ASSERT_TRUE(busy && queued_request.recover_media && queued_request.return_from_usb);
+    remount = true;
+    return_from_usb();
+    TEST_ASSERT_TRUE(mounted);
+    TEST_ASSERT_FALSE(busy || remount || auto_mount_blocked);
+    mounted = false;
+    mount_result = PF_FATFS_VOLUME_FILESYSTEM_ERROR;
+    mount_reason = FR_NO_FILESYSTEM;
+    TEST_ASSERT_TRUE(pf_storage_worker_return_from_usb());
+    return_from_usb();
+    TEST_ASSERT_TRUE(auto_mount_blocked);
+    TEST_ASSERT_FALSE(mounted || busy || auto_mount_pending);
+    unsigned before = mount_calls;
+    now += MEDIA_MOUNT_RETRY_MS;
+    service_media();
+    TEST_ASSERT_EQUAL_UINT(before, mount_calls);
 }
 
 void test_nor_automount_retries_initialization_and_excludes_usb_and_active_worker(void)

@@ -4,6 +4,9 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "sdio_wait_fixture.h"
 
 #include <stdint.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 
 #include "../../../../src/drivers/storage/sdio_pio/sdio_wait_freertos.c"
 
@@ -20,9 +23,21 @@ static unsigned notifications;
 static unsigned blocked;
 static unsigned notified;
 static unsigned critical_depth;
+static unsigned isr_critical_depth;
 static bool early_irq;
 static bool late_irq;
+static bool timeout_irq;
+static pthread_t timeout_thread;
+static pthread_mutex_t kernel_lock = PTHREAD_MUTEX_INITIALIZER;
+static atomic_bool irq_attempting;
 PIO pio0, pio1;
+
+static void *concurrent_irq(void *context)
+{
+    (void)context;
+    installed_handler();
+    return NULL;
+}
 
 bool pio_interrupt_get(PIO pio, uint32_t flag)
 {
@@ -44,26 +59,56 @@ void setUp(void)
     wait_hook = NULL;
     active_pio = NULL;
     scheduler_state = 0u;
-    notifications = blocked = notified = critical_depth = 0u;
+    notifications = blocked = notified = critical_depth = isr_critical_depth = 0u;
     early_irq = late_irq = false;
+    timeout_irq = false;
+    atomic_store(&irq_attempting, false);
 }
 
 void tearDown(void) {}
 
 void pf_test_sdio_enter_critical(void)
 {
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_lock(&kernel_lock));
     ++critical_depth;
+    if (timeout_irq && waiting_task != NULL) {
+        timeout_irq = false;
+        ((pf_test_sdio_irq_pio_t *)active_pio)->flag[waiting_flag] = true;
+        TEST_ASSERT_EQUAL_INT(0, pthread_create(&timeout_thread, NULL, concurrent_irq, NULL));
+        while (!atomic_load(&irq_attempting)) {
+            sched_yield();
+        }
+    }
 }
 
 void pf_test_sdio_exit_critical(void)
 {
     TEST_ASSERT_EQUAL_UINT(1u, critical_depth);
     --critical_depth;
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_unlock(&kernel_lock));
     if (early_irq) {
         early_irq = false;
         ((pf_test_sdio_irq_pio_t *)active_pio)->flag[1] = true;
         installed_handler();
     }
+}
+
+UBaseType_t pf_test_sdio_enter_critical_from_isr(void)
+{
+    atomic_store(&irq_attempting, true);
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_lock(&kernel_lock));
+    TEST_ASSERT_EQUAL_UINT(0u, critical_depth);
+    TEST_ASSERT_EQUAL_UINT(0u, isr_critical_depth);
+    ++isr_critical_depth;
+    return 17u;
+}
+
+void pf_test_sdio_exit_critical_from_isr(UBaseType_t saved)
+{
+    TEST_ASSERT_EQUAL_UINT(17u, saved);
+    TEST_ASSERT_EQUAL_UINT(1u, isr_critical_depth);
+    --isr_critical_depth;
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_unlock(&kernel_lock));
 }
 
 unsigned xTaskGetSchedulerState(void)
@@ -81,6 +126,7 @@ void vTaskNotifyGiveIndexedFromISR(TaskHandle_t task, unsigned index, BaseType_t
     TEST_ASSERT_EQUAL_PTR((void *)(uintptr_t)1u, task);
     TEST_ASSERT_EQUAL_UINT(1u, index);
     TEST_ASSERT_EQUAL_UINT(0u, critical_depth);
+    TEST_ASSERT_EQUAL_UINT(1u, isr_critical_depth);
     ++notifications;
     ++notified;
     *awakened = pdTRUE;
@@ -161,6 +207,8 @@ void test_wait_hook_filters_invalid_requests_and_handles_both_irq_races(void)
     TEST_ASSERT_EQUAL_UINT(1u, blocked);
     TEST_ASSERT_EQUAL_UINT(0u, notifications);
     TEST_ASSERT_NULL(waiting_task);
+    installed_handler();
+    TEST_ASSERT_EQUAL_UINT(0u, notified);
     TEST_ASSERT_FALSE(pio.source[1]);
     TEST_ASSERT_FALSE(pio.flag[1]);
 
@@ -170,6 +218,8 @@ void test_wait_hook_filters_invalid_requests_and_handles_both_irq_races(void)
     TEST_ASSERT_TRUE(pio.flag[1]);
     TEST_ASSERT_FALSE(pio.source[1]);
     TEST_ASSERT_NULL(waiting_task);
+    installed_handler();
+    TEST_ASSERT_EQUAL_UINT(1u, notified);
     unsigned previous_blocked = blocked;
     wait_hook((PIO)&pio, 1u);
     TEST_ASSERT_EQUAL_UINT(previous_blocked, blocked);
@@ -180,4 +230,22 @@ void test_wait_hook_filters_invalid_requests_and_handles_both_irq_races(void)
     TEST_ASSERT_TRUE(pio.flag[2]);
     TEST_ASSERT_FALSE(pio.source[2]);
     TEST_ASSERT_NULL(waiting_task);
+}
+
+void test_irq_on_other_core_cannot_notify_after_timeout_cleanup(void)
+{
+    pf_test_sdio_irq_pio_t pio = {0};
+    pio0 = (PIO)&pio;
+    pf_sdio_pio_t transport = { .config.pio = pio0 };
+    TEST_ASSERT_TRUE(pf_sdio_pio_enable_wait(&transport));
+    scheduler_state = taskSCHEDULER_RUNNING;
+    timeout_irq = true;
+    transport.wait_hook(pio0, 1u);
+    TEST_ASSERT_FALSE(timeout_irq);
+    TEST_ASSERT_EQUAL_INT(0, pthread_join(timeout_thread, NULL));
+    TEST_ASSERT_EQUAL_UINT(0u, notified);
+    TEST_ASSERT_NULL(waiting_task);
+    TEST_ASSERT_FALSE(pio.source[1]);
+    TEST_ASSERT_EQUAL_UINT(0u, critical_depth);
+    TEST_ASSERT_EQUAL_UINT(0u, isr_critical_depth);
 }

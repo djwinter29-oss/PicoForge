@@ -28,6 +28,8 @@ typedef struct {
     uint32_t test_size_mib; /**< Nonzero selects a file benchmark. */
     bool host_owned; /**< Ownership snapshot protected by the admission gate. */
     bool recover_media; /**< Selects explicit recovery instead of a command. */
+    bool return_from_usb; /**< Attempt one mount after a confirmed forced USB detach. */
+    bool unmount_for_usb; /**< Unregister FatFs for the pending USB ownership transition. */
     char family[3]; /**< Command family: sd or fs. */
     char arguments[PF_STORAGE_COMMAND_ARGS_SIZE]; /**< Copied command arguments. */
 } storage_request_t;
@@ -146,9 +148,9 @@ static void attempt_auto_mount(void)
     if (auto_mount_pending) {
         if (!mount_failure_reported || media_result != last_media_result ||
             volume_result != last_volume_result || filesystem_result != last_filesystem_result) {
-            PF_LOG_WARNING("storage", "Automount failed: media=%u volume=%u FatFs=%u; retry in %u ms",
+            PF_LOG_WARNING("storage", "Mount failed: media=%u volume=%u FatFs=%u",
                            (unsigned)media_result, (unsigned)volume_result,
-                           (unsigned)filesystem_result, MEDIA_MOUNT_RETRY_MS);
+                           (unsigned)filesystem_result);
         }
         mount_failure_reported = true;
         last_media_result = media_result;
@@ -307,6 +309,34 @@ static void recover_media(void)
     taskEXIT_CRITICAL();
 }
 
+/** @brief Hold admission and the media reservation through the single forced-return mount attempt. */
+static void return_from_usb(void)
+{
+#if PF_STORAGE_BACKEND_NOR
+    pf_nor_media_lock();
+    (void)pf_nor_media_take_remount_request();
+#else
+    pf_sd_lock();
+    (void)pf_sd_media_take_reinit_request();
+#endif
+    attempt_auto_mount();
+    auto_mount_blocked = auto_mount_pending;
+    auto_mount_pending = false;
+    if (auto_mount_blocked) {
+        PF_LOG_ERROR("storage", "Forced USB return failed; volume remains unmounted; inspect before fs mount");
+    } else {
+        PF_LOG_WARNING("storage", "Forced USB return mounted; host cache was not flushed; filesystem may be damaged");
+    }
+#if PF_STORAGE_BACKEND_NOR
+    pf_nor_media_unlock();
+#else
+    pf_sd_unlock();
+#endif
+    taskENTER_CRITICAL();
+    busy = false;
+    taskEXIT_CRITICAL();
+}
+
 /** @brief Execute a command and publish completion before the USB task releases admission. */
 static void execute_command(storage_request_t *request)
 {
@@ -324,6 +354,22 @@ static void execute_command(storage_request_t *request)
     (void)xQueueSend(replies, &reply, portMAX_DELAY);
 }
 
+/** @brief Finish USB handoff preparation on the sole FatFs executor before publishing idle. */
+static void unmount_for_usb(void)
+{
+    FRESULT filesystem_result = FR_OK;
+    pf_fatfs_volume_result_t result = pf_fatfs_volume_unmount(&filesystem_result);
+    if (result == PF_FATFS_VOLUME_OK || result == PF_FATFS_VOLUME_NOT_MOUNTED) {
+        auto_mount_pending = false;
+    } else {
+        PF_LOG_ERROR("storage", "USB handoff unmount failed: volume=%u FatFs=%u",
+                     (unsigned)result, (unsigned)filesystem_result);
+    }
+    taskENTER_CRITICAL();
+    busy = false;
+    taskEXIT_CRITICAL();
+}
+
 static void storage_task(void *context)
 {
     (void)context;
@@ -335,6 +381,10 @@ static void storage_task(void *context)
             service_media();
             continue;
         }
+        if (request.unmount_for_usb) {
+            unmount_for_usb();
+            continue;
+        }
         if (request.test_size_mib != 0u) {
             pf_file_benchmark_run(request.test_size_mib,
                                   benchmark_clock, benchmark_update, NULL);
@@ -344,7 +394,11 @@ static void storage_task(void *context)
             continue;
         }
         if (request.recover_media) {
-            recover_media();
+            if (request.return_from_usb) {
+                return_from_usb();
+            } else {
+                recover_media();
+            }
             continue;
         }
         execute_command(&request);
@@ -416,12 +470,43 @@ bool pf_storage_worker_busy(void)
     return is_busy;
 }
 
-bool pf_storage_worker_recover_media(void)
+/** @brief Reserve sole-worker admission before publishing either USB return policy. */
+static bool queue_media_recovery(bool mount)
 {
-    storage_request_t request = { .recover_media = true };
+    storage_request_t request = { .recover_media = true, .return_from_usb = mount };
     refresh_benchmark_completion();
     taskENTER_CRITICAL();
     if (busy || media_service_busy || !config_available || requests == NULL) {
+        taskEXIT_CRITICAL();
+        return false;
+    }
+    busy = true;
+    taskEXIT_CRITICAL();
+    if (xQueueSend(requests, &request, 0u) != pdPASS) {
+        taskENTER_CRITICAL();
+        busy = false;
+        taskEXIT_CRITICAL();
+        return false;
+    }
+    return true;
+}
+
+bool pf_storage_worker_recover_media(void)
+{
+    return queue_media_recovery(false);
+}
+
+bool pf_storage_worker_return_from_usb(void)
+{
+    return queue_media_recovery(true);
+}
+
+bool pf_storage_worker_unmount_for_usb(void)
+{
+    storage_request_t request = { .unmount_for_usb = true };
+    refresh_benchmark_completion();
+    taskENTER_CRITICAL();
+    if (busy || media_service_busy || requests == NULL) {
         taskEXIT_CRITICAL();
         return false;
     }
