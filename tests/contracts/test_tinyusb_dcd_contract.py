@@ -8,6 +8,15 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.contracts
 
 
+def test_usb_startup_detach_delay_does_not_require_scheduler_or_alarm_wakeup():
+    source = (ROOT / "firmware/src/app/usb/usb_task.c").read_text()
+    startup = source.split("void pf_usb_start(void)", 1)[1]
+    assert startup.index("tud_disconnect();") < startup.index("busy_wait_ms(USB_RECONNECT_DETACH_MS);")
+    assert startup.index("busy_wait_ms(USB_RECONNECT_DETACH_MS);") < startup.index("tud_connect();")
+    assert "sleep_ms(" not in startup
+    assert "vTaskDelay(" not in startup
+
+
 def test_dcd_gate_covers_every_pinned_driver_entry_and_shared_irq():
     source = ROOT / "firmware/third_party/pico-sdk/lib/tinyusb/src"
     driver = (source / "portable/raspberrypi/rp2040/dcd_rp2040.c").read_text()

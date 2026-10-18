@@ -26,6 +26,9 @@ exclusive ownership and create-new/cleanup safeguards. Browser, Python, and
 
 ## Core and Runtime Policy
 
+Before starting the scheduler, USB startup disconnects for 250 ms using the SDK busy wait, then reconnects.
+This boot-only delay must not depend on alarm or RTOS wakeups; an alarm-backed sleep stalled RP2040 startup.
+
 `integration/freertos/runtime_stats.c` samples FreeRTOS idle runtime and SDK-linked SRAM reservations for HID
 Input Report 2. See [runtime telemetry](usb-protocol.md#input-report-2) for metric definitions, sampling limits
 and host compatibility. Both dashboards show these metrics in Runtime status.

@@ -16,3 +16,7 @@ Runtime status shows interval CPU usage and static RAM reservations over HID; sy
 summary row. See [runtime telemetry definitions and compatibility](../../docs/usb-protocol.md#input-report-2).
 LED control is in Live Report; USB-drive control is beside the self-test. Do not
 run a competing Python/.NET HID monitor for the same board at the same time.
+
+Windows may deliver Input reports in buffers padded to the collection's maximum Input payload (32 bytes).
+The WebHID event handler decodes only each report's defined payload; transport-tail bytes are ignored.
+Payload fields, including reserved bytes, remain validated. Feature-report framing is handled separately.

@@ -24,6 +24,22 @@ function asView(report) {
   throw new Error("Invalid HID report data");
 }
 
+function inputPayload(reportId, report) {
+  const view = asView(report);
+  const size = ({
+    [STATUS_REPORT_ID]: view.byteLength && view.getUint8(0) === 2 ? 13 : STATUS_PAYLOAD_SIZE,
+    [MEMORY_REPORT_ID]: MEMORY_PAYLOAD_SIZE,
+    [MSC_COMMAND_REPORT_ID]: MSC_STATUS_SIZE,
+    [SELF_TEST_REPORT_ID]: 32,
+    [FILESYSTEM_REPORT_ID]: FILESYSTEM_PAYLOAD_SIZE,
+  })[reportId];
+  // Windows uses the collection's maximum Input length; bytes beyond this report are not protocol fields.
+  if (size === undefined || view.byteLength < size || view.byteLength > 32) {
+    throw new Error(`Unexpected HID input report ${reportId} size`);
+  }
+  return new DataView(view.buffer, view.byteOffset, size);
+}
+
 function featurePayload(report, reportId, payloadSize) {
   const view = asView(report);
   let offset;
@@ -291,21 +307,24 @@ export class PicoForgeWebHid {
     this.onInputReport = event => {
       if (event.device !== this.device) return;
       try {
+        if (![STATUS_REPORT_ID, MEMORY_REPORT_ID, FILESYSTEM_REPORT_ID,
+          MSC_COMMAND_REPORT_ID, SELF_TEST_REPORT_ID].includes(event.reportId)) return;
+        const payload = inputPayload(event.reportId, event.data);
         if (event.reportId === STATUS_REPORT_ID) {
-          const runtime = decodeStatusReport(event.reportId, event.data);
+          const runtime = decodeStatusReport(event.reportId, payload);
           this.update({ runtime, board_status: boardStatusFromRuntime(runtime),
             updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === MEMORY_REPORT_ID) {
-          const memory = decodeMemoryReport(event.reportId, event.data);
+          const memory = decodeMemoryReport(event.reportId, payload);
           this.update({ memory, updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === FILESYSTEM_REPORT_ID) {
-          const filesystem = decodeFilesystemReport(event.reportId, event.data);
+          const filesystem = decodeFilesystemReport(event.reportId, payload);
           this.update({ filesystem_format: filesystem.format, updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === MSC_COMMAND_REPORT_ID) {
-          const msc = decodeMscStatus(event.data);
+          const msc = decodeMscStatus(payload);
           this.update({ msc, updated_at: new Date().toISOString(), error: null });
         } else if (event.reportId === SELF_TEST_REPORT_ID) {
-          const selfTest = decodeSelfTestReport(event.data);
+          const selfTest = decodeSelfTestReport(payload);
           this.update({ self_test: selfTest, self_test_command_pending: false,
             updated_at: new Date().toISOString(), error: null });
         }

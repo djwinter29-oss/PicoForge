@@ -227,7 +227,8 @@ void pf_usb_start(void)
     }
     /* A debugger or watchdog reset leaves the host on the old address; a visible detach forces re-enumeration. */
     tud_disconnect();
-    sleep_ms(USB_RECONNECT_DETACH_MS);
+    /* The scheduler is not running yet; do not depend on alarm/RTOS wakeups here. */
+    busy_wait_ms(USB_RECONNECT_DETACH_MS);
     tud_connect();
 
     if (xTaskCreateStatic(usb_task,

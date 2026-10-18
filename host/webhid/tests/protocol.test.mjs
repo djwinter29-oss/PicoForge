@@ -270,7 +270,7 @@ test("reject wrong versions, clocks, padding, and device identities", () => {
     collections: [{ usagePage: 0xff00, usage: 1 }] }), true);
 });
 
-test("reconnect the authorized HID device after the MSC USB re-enumeration", async () => {
+test("Windows padded inputs permit MSC enable and reconnect after USB re-enumeration", async () => {
   class MockHidDevice extends EventTarget {
     constructor() {
       super();
@@ -315,7 +315,39 @@ test("reconnect the authorized HID device after the MSC USB re-enumeration", asy
 
   await client.connect();
   assert.equal(client.state.connected, true, client.state.error);
+  function emitPaddedInput(reportId, bytes) {
+    const buffer = new Uint8Array(36).fill(0xa5);
+    buffer.set(bytes, 4);
+    const event = new Event("inputreport");
+    Object.defineProperties(event, {
+      device: { value: firstDevice }, reportId: { value: reportId },
+      data: { value: new DataView(buffer.buffer, 4, 32) },
+    });
+    firstDevice.dispatchEvent(event);
+  }
+  const runtime = new Uint8Array(23);
+  const runtimeView = new DataView(runtime.buffer);
+  runtime[0] = 3;
+  runtimeView.setUint32(6, 250000000, true);
+  runtimeView.setUint32(19, 532480, true);
+  emitPaddedInput(2, runtime);
+  assert.equal(client.state.error, null);
+  assert.equal(client.state.runtime.system_clock_hz, 250000000);
+  emitPaddedInput(5, [3, 0, 0, 0]);
+  assert.equal(client.state.error, null);
+  assert.equal(client.state.msc.enabled, false);
+  assert.equal(client.state.msc.force_return_supported, true);
+  emitPaddedInput(7, [2, 0, 4]);
+  assert.equal(client.state.error, null);
+  const memory = new Uint8Array(29);
+  memory[0] = 2;
+  emitPaddedInput(3, memory);
+  assert.equal(client.state.error, null);
+  emitPaddedInput(5, [3, 2, 0, 0]);
+  assert.match(client.state.error, /Invalid HID MSC/);
+  emitPaddedInput(5, [3, 0, 0, 0]);
   await client.setMsc(true);
+  assert.deepEqual(firstDevice.lastFeature, { reportId: 5, payload: [2, 1] });
   assert.equal(client.state.msc.transition_pending, true);
 
   hid.emit("disconnect", firstDevice);
