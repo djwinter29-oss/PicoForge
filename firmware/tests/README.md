@@ -16,8 +16,8 @@ directory to `PATH` and run it from the root. Name test files `test_<source_base
 source subtree. For example, [sd_protocol.c](../src/drivers/sd_card/sd_protocol.c) is covered by
 [test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c) and
 [test_sd_protocol_native.c](drivers/sd_card/test_sd_protocol_native.c). Keep related scenario tests alongside it.
-FreeRTOS port tests live under [ports/freertos](drivers/sd_card/ports/freertos), and bare-metal port tests under
-[ports/baremetal](drivers/sd_card/ports/baremetal), matching their production port directories.
+Port tests live under [drivers/sd_card](drivers/sd_card), with `test_sd_port_freertos_*` and
+`test_sd_port_baremetal_*` names matching the flat, environment-suffixed production files.
 The layout contract in [test_validation_integrity.py](../../tests/test_validation_integrity.py) checks every Ceedling
 test against a C module in the matching source directory. Scenario suffixes are allowed; they do not create a new
 production module. Support fixtures and standalone smoke programs are not Ceedling test modules.
@@ -33,8 +33,8 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | --- | --- |
 | Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sd_card](drivers/sd_card) |
 | Physical SPI, SDIO-PIO and QSPI-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
-| FreeRTOS facade ownership and serialization | [drivers/sd_card/ports/freertos](drivers/sd_card/ports/freertos) |
-| Bare-metal facade and port behavior | [drivers/sd_card/ports/baremetal](drivers/sd_card/ports/baremetal) |
+| FreeRTOS facade ownership and serialization | [drivers/sd_card](drivers/sd_card), `test_sd_port_freertos_*` |
+| Bare-metal facade and port behavior | [drivers/sd_card](drivers/sd_card), `test_sd_port_baremetal_*` |
 | Card presence, automount and recovery | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [usb](usb) |
 
@@ -49,7 +49,7 @@ option reaches the consolidated protocol compilation.
 [SPI behavior tests](drivers/sd_card/test_sd_spi.c) inject selection failures across command, register, single-block,
 multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
 and preserved stream recovery. Optional wait setup is tested with
-[FreeRTOS port serialization](drivers/sd_card/ports/freertos/test_sd_port_serialization_sdio.c).
+[FreeRTOS port serialization](drivers/sd_card/test_sd_port_freertos_serialization_sdio.c).
 Storage tests cover raw phase validation before CS, arbitrary released-line clock counts/deadlines, short/long native
 response byte packing and partial failure capture. NOR adapter tests verify opcode/address construction and payload
 bit-count overflow independently of the physical engines. The SD host test retains the exact 80-clock, low-speed

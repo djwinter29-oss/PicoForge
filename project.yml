@@ -57,7 +57,7 @@
         - -DPF_SD_NATIVE_HIGH_SPEED=1
       :test_levelx_nor:
         - -DLX_INCLUDE_USER_DEFINE_FILE
-      :test_sd_port_serialization:
+      :test_sd_port_freertos_serialization:
         - -std=c11
         - -D_XOPEN_SOURCE=700
         - -pthread
@@ -83,7 +83,7 @@
       :test_msc_batch_spi:
         - -DPF_CONFIG_SD_CARD_TRANSPORT=1
     :link:
-      :test_sd_port_serialization:
+      :test_sd_port_freertos_serialization:
         - -pthread
       :test_sd_port_:
         - -Wl,--gc-sections

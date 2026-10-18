@@ -6,7 +6,7 @@
 #include "selected_transport.h"
 
 #define FACADE_SOURCE "../../../src/drivers/sd_card/sd.c"
-#define PORT_SOURCE "../../../src/drivers/sd_card/ports/freertos/sd_port.c"
+#define PORT_SOURCE "../../../src/drivers/sd_card/sd_port_freertos.c"
 #include FACADE_SOURCE
 #include PORT_SOURCE
 

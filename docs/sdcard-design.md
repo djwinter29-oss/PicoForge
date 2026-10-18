@@ -24,7 +24,9 @@ sd_card/
   sd_native.c / .h            Native initialization and block operations
   sd_native_host.c / .h       Native command/data sequencing and streams
   sd_spi.c / .h               SPI initialization and block operations
-  sd_port.h / ports/          FreeRTOS and bare-metal integration
+  sd_port.h                   Execution-environment contract
+  sd_port_freertos.c           FreeRTOS reservations and optional waits
+  sd_port_baremetal.c          Single-foreground-context integration
 ```
 
 The native and SPI implementations use one protocol module but retain their distinct initialization,
@@ -33,7 +35,7 @@ legacy/SDSC handling. Backend function/type prefixes are `pf_sd_native_*` and `p
 backend header names are now `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
 physical storage layer, not the native protocol's name or directory.
 
-Production filenames use the short `sd` prefix, including `ports/*/sd_port.c`.
+Production filenames use the short `sd` prefix, including `sd_port_freertos.c` and `sd_port_baremetal.c`.
 Facade functions/types now use `pf_sd_*` and constants/header guards use `PF_SD_*`, replacing `pf_sd_card_*` /
 `PF_SD_CARD_*`. Native protocol/host functions/types use `pf_sd_native_*` and constants use `PF_SD_NATIVE_*`,
 replacing `pf_sdio_pio_*` / `PF_SDIO_PIO_*`; SPI names already use `pf_sd_spi_*` / `PF_SD_SPI_*`.
@@ -42,8 +44,7 @@ Configuration is now one `pf_sd_config_t` containing `transport` and `clock_hz`;
 compatibility aliases are provided. Result values, build targets, and CMake options are unchanged. In particular,
 `PF_SDIO_PIO_HIGH_SPEED` and `PF_SDIO_PIO_FUSED_COPY` remain CMake options and set the C definitions
 `PF_SD_NATIVE_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
-Unit-test filenames use the same source basenames, with port tests beneath the matching `ports/freertos` or
-`ports/baremetal` subtree.
+Unit-test filenames use the same source basenames, with environment-suffixed port tests alongside the other SD tests.
 
 Both backends use the same configuration shape, borrowing a `pf_storage_bus_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
@@ -99,7 +100,7 @@ flowchart TD
 | --- | --- |
 | Board-approved pins and controller selection | [board.c](../firmware/src/board/board.c), [board_profile.c](../firmware/src/board/board_profile.c) |
 | Singleton configuration, dispatch, diagnostics, and firmware/USB ownership | [sd.c](../firmware/src/drivers/sd_card/sd.c) |
-| Execution-environment selection, reservations, and optional waits | [sd_port.h](../firmware/src/drivers/sd_card/sd_port.h), [ports/](../firmware/src/drivers/sd_card/ports/) |
+| Execution-environment selection, reservations, and optional waits | [sd_port.h](../firmware/src/drivers/sd_card/sd_port.h), [FreeRTOS](../firmware/src/drivers/sd_card/sd_port_freertos.c), [bare-metal](../firmware/src/drivers/sd_card/sd_port_baremetal.c) |
 | Block operations, result codes, and telemetry | [sd_block.h](../firmware/src/drivers/sd_card/sd_block.h) |
 | USB-only ownership and block capabilities | [sd_msc.h](../firmware/src/drivers/sd_card/sd_msc.h) |
 | Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../firmware/src/drivers/sd_card/sd_protocol.c) |
@@ -159,8 +160,8 @@ back to native mode can require removing card power, not just resetting the MCU.
 independently of the transport. The default is `FREERTOS`, preserving the current
 application. There is one shared facade, protocol implementation, and selected
 transport backend, not separate RTOS and bare-metal drivers. Only
-[ports/freertos/](../firmware/src/drivers/sd_card/ports/freertos/) depends on
-FreeRTOS; [ports/baremetal/](../firmware/src/drivers/sd_card/ports/baremetal/)
+[sd_port_freertos.c](../firmware/src/drivers/sd_card/sd_port_freertos.c) depends on
+FreeRTOS; [sd_port_baremetal.c](../firmware/src/drivers/sd_card/sd_port_baremetal.c)
 uses the Pico SDK backend without importing or linking the kernel. These are
 execution-environment ports, not filesystem/application integration.
 
@@ -758,9 +759,9 @@ preallocated files), and card busy time before choosing further optimizations.
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
-The FreeRTOS [SD port](../firmware/src/drivers/sd_card/ports/freertos/sd_port.c) requests the optional adapter through
+The FreeRTOS [SD port](../firmware/src/drivers/sd_card/sd_port_freertos.c) requests the optional adapter through
 the common transport interface. Its physical implementation lives in
-[sdio_wait.c](../firmware/src/drivers/storage/sdio_pio/ports/freertos/sdio_wait.c). It reserves
+[sdio_wait_freertos.c](../firmware/src/drivers/storage/sdio_pio/sdio_wait_freertos.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.

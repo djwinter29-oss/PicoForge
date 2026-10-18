@@ -1,3 +1,6 @@
+/** @file sd_port_baremetal.c
+ * @brief Single-foreground-context reservations for the SD facade.
+ */
 #include "sd_port.h"
 
 bool pf_sd_port_init(const pf_sd_config_t *config)

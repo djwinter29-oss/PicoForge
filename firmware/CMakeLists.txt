@@ -176,7 +176,7 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
     )
     if(PF_SD_CARD_INTERRUPT_WAIT)
         target_sources(pf_sdio_backend PRIVATE
-            src/drivers/storage/sdio_pio/ports/freertos/sdio_wait.c)
+            src/drivers/storage/sdio_pio/sdio_wait_freertos.c)
         target_link_libraries(pf_sdio_backend PRIVATE FreeRTOS-Kernel-Static hardware_irq)
     endif()
     pico_generate_pio_header(pf_sdio_backend
@@ -229,7 +229,7 @@ target_link_libraries(pf_sd_card PUBLIC
 
 if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/ports/freertos/sd_port.c
+        src/drivers/sd_card/sd_port_freertos.c
     )
     target_compile_definitions(pf_sd_card PRIVATE
         PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
@@ -237,7 +237,7 @@ if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     target_link_libraries(pf_sd_card PRIVATE FreeRTOS-Kernel-Static hardware_irq)
 else()
     target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/ports/baremetal/sd_port.c
+        src/drivers/sd_card/sd_port_baremetal.c
     )
     # The USB/storage application requires FreeRTOS; this target checks the
     # reusable driver without importing the kernel or accessing card hardware.

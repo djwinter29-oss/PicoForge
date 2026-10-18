@@ -18,8 +18,8 @@ def check_build(directory):
     directory = directory.resolve()
     commands = json.loads((directory / "compile_commands.json").read_text())
     files = [item["file"] for item in commands]
-    ports = [file for file in files if "/drivers/sd_card/ports/" in file]
-    expected = str(DRIVER / "ports/baremetal/sd_port.c")
+    ports = [file for file in files if Path(file).parent == DRIVER and Path(file).name.startswith("sd_port_")]
+    expected = str(DRIVER / "sd_port_baremetal.c")
     if ports != [expected]:
         raise AssertionError(f"Expected only bare-metal port in {directory}: {ports}")
     for item in commands:

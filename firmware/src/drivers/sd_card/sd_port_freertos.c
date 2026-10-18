@@ -1,3 +1,6 @@
+/** @file sd_port_freertos.c
+ * @brief FreeRTOS recursive reservations and optional transport waits for the SD facade.
+ */
 #include "sd_port.h"
 #include "config/config.h"
 

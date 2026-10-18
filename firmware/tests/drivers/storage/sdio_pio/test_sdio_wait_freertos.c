@@ -5,7 +5,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include <stdint.h>
 
-#include "../../../../../../src/drivers/storage/sdio_pio/ports/freertos/sdio_wait.c"
+#include "../../../../src/drivers/storage/sdio_pio/sdio_wait_freertos.c"
 
 typedef struct {
     bool flag[3];
