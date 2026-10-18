@@ -65,7 +65,9 @@ def test_firmware_scripts_pass_version_to_cmake(tmp_path, environment_version, a
     log = tmp_path / "arguments"
     build = tmp_path / "build"
     build.mkdir()
-    (build / "pf_hello_world.elf").touch()
+    elf = build / "pico_forge_rp2350_150_20261018.elf"
+    elf.touch()
+    (build / "pico_forge_elf.txt").write_text(f"{elf}\n")
     if script == "load.sh":
         probe = tmp_path / "openocd"
         probe.write_text('#!/bin/sh\nexit 0\n')

@@ -28,7 +28,7 @@ Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
 Options:
 --board NAME                 Pico SDK board (default: pico)
 --build-dir PATH             Build directory (default: build/firmware-NAME)
---elf PATH                   ELF to flash (default: pf_hello_world.elf in build dir)
+--elf PATH                   ELF to flash (default: generated pico_forge_elf.txt path in build dir)
 --openocd-exe PATH           OpenOCD executable (default: openocd)
 --openocd-target PATH        OpenOCD target config (default: inferred from board)
 --adapter-speed-khz KHZ      Debug probe speed (default: 5000)
@@ -179,11 +179,15 @@ if [ -z "$ELF_PATH" ]; then
     fi
     if [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
        grep -q '^PF_SD_CARD_PORT:STRING=BAREMETAL$' "$BUILD_DIR/CMakeCache.txt"; then
-        echo "The selected build uses the bare-metal driver smoke target, not pf_hello_world." >&2
+        echo "The selected build uses the bare-metal driver smoke target, not pico_forge." >&2
         echo "Select a FreeRTOS application build directory or an explicit --elf." >&2
         exit 1
     fi
-    ELF_PATH="$BUILD_DIR/pf_hello_world.elf"
+    if [ ! -s "$BUILD_DIR/pico_forge_elf.txt" ]; then
+        echo "Firmware ELF path missing; reconfigure/build this directory or pass --elf." >&2
+        exit 1
+    fi
+    IFS= read -r ELF_PATH < "$BUILD_DIR/pico_forge_elf.txt"
 elif [ "${ELF_PATH#/}" = "$ELF_PATH" ]; then
     ELF_PATH="$REPO_ROOT/$ELF_PATH"
 fi

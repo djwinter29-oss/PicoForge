@@ -112,7 +112,7 @@ tools/firmware/build.sh --board pico2 --nor-transport QSPI_PIO
 
 Use `--nor-transport SPI` for the SDK SPI transport. These commands use separate
 `build/nor-BOARD-TRANSPORT` directories and produce `pf_nor_flash_smoke.uf2`,
-not the default SD/USB application's `pf_hello_world.uf2`. The existing
+not the default SD/USB application's [named PicoForge image](../README.md#1-build-the-firmware). The existing
 application name and default build behavior are unchanged.
 
 Equivalent direct CMake configuration:
@@ -245,7 +245,8 @@ tools/firmware/build.sh --board pico2 --storage-backend NOR --nor-transport QSPI
     --nor-region-offset "$PF_NOR_REGION_OFFSET" --nor-region-size "$PF_NOR_REGION_SIZE"
 ```
 
-This produces `pf_hello_world.uf2` under `build/firmware-pico2-NOR-QSPI_PIO`, not a raw smoke.
+This produces the [named PicoForge image](../README.md#1-build-the-firmware) under
+`build/firmware-pico2-NOR-QSPI_PIO`, not a raw smoke.
 Use `SPI` for the supported single-lane transport, or `--storage-backend SD` for the existing SD workflow.
 Without `--storage-backend NOR`, the existing `--nor-transport` option still selects the standalone raw smoke.
 For direct CMake, pass the same `PF_STORAGE_BACKEND`, `PF_NOR_TRANSPORT`, and `PF_NOR_REGION_*` values.

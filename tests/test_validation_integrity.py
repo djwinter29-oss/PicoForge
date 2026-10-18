@@ -141,7 +141,7 @@ def test_storage_manifest_rejects_wrong_backend_dependencies(tmp_path, backend, 
     (tmp_path / 'compile_commands.json').write_text(json.dumps([
         {'file': str(tmp_path / 'firmware/src' / source)} for source in sources
     ]))
-    paths = [tmp_path / 'pf_hello_world.elf']
+    paths = [tmp_path / 'pico_forge_rp2350_150_20261018.elf']
     if valid:
         checker['test_selected_storage_build_dependencies'](paths)
     else:

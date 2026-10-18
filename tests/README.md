@@ -63,7 +63,7 @@ For existing Pico 2 validation builds, run from the repository root:
 
 ```sh
 python3 -m pytest tests -m artifacts \
-    --elf build/validation-pico2-SDIO_PIO/pf_hello_world.elf \
+    --elf "$(cat build/validation-pico2-SDIO_PIO/pico_forge_elf.txt)" \
     --baremetal-build-dir build/validation-pico2-SDIO_PIO-baremetal
 ```
 

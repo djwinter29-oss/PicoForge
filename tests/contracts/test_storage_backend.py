@@ -104,7 +104,9 @@ def test_load_wrapper_preserves_explicit_nor_selection_without_accessing_hardwar
     probe.chmod(0o755)
     build = tmp_path / "build"
     build.mkdir()
-    (build / "pf_hello_world.elf").touch()
+    elf = build / "pico_forge_rp2350_150_20261018.elf"
+    elf.touch()
+    (build / "pico_forge_elf.txt").write_text(f"{elf}\n")
     log = tmp_path / "arguments"
     probe_log = tmp_path / "probe-calls"
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}", CMAKE_ARGUMENT_LOG=str(log),

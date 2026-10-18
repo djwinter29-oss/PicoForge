@@ -128,7 +128,7 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
         fi
         "$FIRMWARE_BUILD_SCRIPT" "$@"
         python3 -m pytest tests/artifacts/test_msc_elf.py \
-            --elf "build/validation-$board_name-$transport_name/pf_hello_world.elf"
+            --elf "$(cat "build/validation-$board_name-$transport_name/pico_forge_elf.txt")"
         echo "=== $board_name / $transport_name / BAREMETAL ==="
         baremetal_dir="build/validation-$board_name-$transport_name-baremetal"
         set -- -S firmware -B "$baremetal_dir" \
