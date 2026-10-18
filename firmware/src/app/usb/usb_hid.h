@@ -15,13 +15,15 @@
 #define PF_HID_SELF_TEST_REPORT_ID 6u
 #define PF_HID_FILESYSTEM_REPORT_ID 7u
 #define PF_HID_REPORT_VERSION 2u
-/** @brief Identity layout with a firmware release version; other reports retain layout 2. */
+/** @brief Identity layout with a firmware release version. */
 #define PF_HID_INFO_REPORT_VERSION 3u
+/** @brief Runtime layout with interval CPU usage and static SRAM reservations. */
+#define PF_HID_STATUS_REPORT_VERSION 3u
 #define PF_HID_PRODUCT_NAME "PicoForge"
 #define PF_HID_PRODUCT_NAME_SIZE 20u
 #define PF_HID_SERIAL_NUMBER_SIZE (2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES)
 #define PF_HID_INFO_PAYLOAD_SIZE (2u + PF_HID_PRODUCT_NAME_SIZE + PF_HID_SERIAL_NUMBER_SIZE + 4u)
-#define PF_HID_STATUS_PAYLOAD_SIZE 13u
+#define PF_HID_STATUS_PAYLOAD_SIZE 23u
 #define PF_HID_MEMORY_PAYLOAD_SIZE 29u
 #define PF_HID_LED_COMMAND_PAYLOAD_SIZE 2u
 #define PF_HID_MSC_COMMAND_PAYLOAD_SIZE 2u
@@ -70,12 +72,15 @@ typedef struct __attribute__((packed)) {
 
 /** Dynamic telemetry returned by HID Input report 2. Integer fields are little-endian. */
 typedef struct __attribute__((packed)) {
-    uint8_t version;
-    uint8_t sequence;
-    uint32_t uptime_ms;
-    uint32_t system_clock_hz;
-    uint8_t flags;
-    int16_t temperature_centidegrees;
+    uint8_t version; /**< Runtime layout version. */
+    uint8_t sequence; /**< Periodic report sequence. */
+    uint32_t uptime_ms; /**< Milliseconds since boot, modulo 2^32. */
+    uint32_t system_clock_hz; /**< Current system clock frequency. */
+    uint8_t flags; /**< PF_HID_STATUS_* board and USB flags. */
+    int16_t temperature_centidegrees; /**< Temperature when its validity flag is set. */
+    uint16_t cpu_usage_basis_points; /**< 0..10000 non-idle time; UINT16_MAX until available. */
+    uint32_t ram_used_bytes; /**< Static SRAM reservations including core and task stacks. */
+    uint32_t ram_total_bytes; /**< SDK-selected on-chip SRAM capacity. */
 } pf_hid_status_report_t;
 
 /** Dynamic SD-card state, bus settings, capacity, and raw SD CID bytes. */

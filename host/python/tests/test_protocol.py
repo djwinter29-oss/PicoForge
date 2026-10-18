@@ -79,8 +79,29 @@ class ProtocolTests(unittest.TestCase):
                 "temperature_centidegrees": 2345,
                 "led_available": True,
                 "led_on": True,
+                "cpu_usage_basis_points": None,
+                "ram_used_bytes": None,
+                "ram_total_bytes": None,
             },
         )
+
+    def test_runtime_layout_three_usage_and_legacy_compatibility(self):
+        prefix = bytes([2]) + struct.pack("<BBIIBh", 3, 9, 123456, 250000000, 0, 0)
+        report = prefix + struct.pack("<HII", 1234, 65536, 532480)
+        status = parse_status_report(report + bytes(8))
+        self.assertEqual(status["cpu_usage_basis_points"], 1234)
+        self.assertEqual(status["ram_used_bytes"], 65536)
+        self.assertEqual(status["ram_total_bytes"], 532480)
+        unknown = parse_status_report(prefix + struct.pack("<HII", 0xffff, 0, 270336))
+        self.assertIsNone(unknown["cpu_usage_basis_points"])
+        self.assertEqual(unknown["ram_used_bytes"], 0)
+        for cpu in (0, 10000):
+            self.assertEqual(parse_status_report(prefix + struct.pack("<HII", cpu, 270336, 270336))
+                             ["cpu_usage_basis_points"], cpu)
+        for malformed in (report[:-1], report + b"\x01", prefix + struct.pack("<HII", 10001, 1, 2),
+                          prefix + struct.pack("<HII", 0, 3, 2), prefix + struct.pack("<HII", 0, 0, 0)):
+            with self.subTest(report=malformed), self.assertRaises(ValueError):
+                parse_status_report(malformed)
 
     def test_rejects_unknown_status_flags(self):
         with self.assertRaisesRegex(ValueError, "unknown HID status flags"):

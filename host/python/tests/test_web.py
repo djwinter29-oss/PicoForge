@@ -15,7 +15,7 @@ class FakeMonitor:
                 "serial_number": "0123456789abcdef",
             },
             "runtime": {
-                "version": 2,
+                "version": 3,
                 "sequence": 7,
                 "uptime_ms": 42_000,
                 "system_clock_hz": 125_000_000,
@@ -25,6 +25,9 @@ class FakeMonitor:
                 "temperature_centidegrees": 2345,
                 "led_available": True,
                 "led_on": False,
+                "cpu_usage_basis_points": 1234,
+                "ram_used_bytes": 65536,
+                "ram_total_bytes": 532480,
             },
             "board_status": {
                 "temperature_valid": True,
@@ -55,6 +58,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["hardware"]["product_name"], "PicoForge")
         self.assertEqual(response.json["runtime"]["uptime_ms"], 42_000)
+        self.assertEqual(response.json["runtime"]["cpu_usage_basis_points"], 1234)
+        self.assertEqual(response.json["runtime"]["ram_used_bytes"], 65536)
+        self.assertEqual(response.json["runtime"]["ram_total_bytes"], 532480)
         self.assertEqual(response.json["board_status"]["temperature_centidegrees"], 2345)
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertEqual(response.headers["Cache-Control"], "no-store")

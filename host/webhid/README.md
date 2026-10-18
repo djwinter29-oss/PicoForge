@@ -12,5 +12,7 @@ The [SD self-test](../../docs/sd-self-test.md) uses HID Report 6 to start/cancel
 a verified temporary-file benchmark and receive progress/timing metrics. Default
 size is 32 MiB; selecting Start authorizes temporary-file writes and replacement.
 The first summary row includes the firmware release version (`Unknown` for legacy firmware).
+Runtime status shows interval CPU usage and static RAM reservations over HID; system clock appears only in the
+summary row. See [runtime telemetry definitions and compatibility](../../docs/usb-protocol.md#input-report-2).
 LED control is in Live Report; USB-drive control is beside the self-test. Do not
 run a competing Python/.NET HID monitor for the same board at the same time.

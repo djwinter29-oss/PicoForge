@@ -23,7 +23,14 @@ export function renderStatus(snapshot) {
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
   document.querySelector("#identity-clock").textContent = clock;
-  document.querySelector("#runtime-clock").textContent = clock;
+  document.querySelector("#cpu-usage").textContent = runtime?.cpu_usage_basis_points == null
+    ? "--" : `${(runtime.cpu_usage_basis_points / 100).toFixed(1)}%`;
+  const ramUsed = runtime?.ram_used_bytes;
+  const ramTotal = runtime?.ram_total_bytes;
+  document.querySelector("#ram-usage").textContent = runtime?.ram_total_bytes
+    ? `${(ramUsed / 1024).toFixed(1)} / ${(ramTotal / 1024).toFixed(0)} KiB ` +
+      `(${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
+    : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
@@ -31,7 +38,6 @@ export function renderStatus(snapshot) {
   const cardPresence = !memory?.configured ? "Not configured"
     : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown";
   setState("#card-presence", cardPresence, memory?.presence_known ? memory.present : undefined);
-  document.querySelector("#sequence").textContent = runtime?.sequence ?? "--";
   const board = snapshot.board_status;
   document.querySelector("#temperature").textContent = board?.temperature_valid
     ? `${(board.temperature_centidegrees / 100).toFixed(2)} °C` : "--";

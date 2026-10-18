@@ -11,6 +11,7 @@
 #include "usb_msc.h"
 #include "app/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
+#include "integration/freertos/runtime_stats.h"
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {
@@ -30,10 +31,15 @@ void pf_hid_build_info_report(pf_hid_info_report_t *report)
 void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence)
 {
     memset(report, 0, sizeof(*report));
-    report->version = PF_HID_REPORT_VERSION;
+    report->version = PF_HID_STATUS_REPORT_VERSION;
     report->sequence = sequence;
     report->uptime_ms = pf_system_uptime_ms();
     report->system_clock_hz = pf_system_clock_hz();
+    pf_runtime_stats_t stats;
+    pf_runtime_stats_read(&stats);
+    report->cpu_usage_basis_points = stats.cpu_usage_basis_points;
+    report->ram_used_bytes = stats.ram_used_bytes;
+    report->ram_total_bytes = stats.ram_total_bytes;
     if (tud_mounted()) {
         report->flags |= PF_HID_STATUS_USB_MOUNTED;
     }

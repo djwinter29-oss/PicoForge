@@ -16,6 +16,11 @@ for (const name of ["web", "webhid"]) {
     assert.match(section('class="identity"'), /id="firmware-version"/);
     const liveReport = section('aria-labelledby="runtime-title"');
     assert.match(liveReport, /id="led-control"/);
+    assert.match(liveReport, /id="cpu-usage"/);
+    assert.match(liveReport, /id="ram-usage"/);
+    assert.doesNotMatch(liveReport, /System clock|runtime-clock/);
+    assert.doesNotMatch(html, /Report sequence|id="sequence"/);
+    assert.equal((html.match(/<span>System clock<\/span>/g) ?? []).length, 1);
     assert.match(liveReport, /SD card presence/);
     assert.match(liveReport, /id="card-presence"/);
     assert.match(liveReport, /<dt>Memory type<\/dt><dd id="memory-type">/);

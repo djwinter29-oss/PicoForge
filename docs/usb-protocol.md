@@ -25,7 +25,7 @@ The complete string is embedded in Pico SDK program metadata. HID reports the th
 so `1.2.3-rc1` appears as `1.2.3` in the dashboard, matching PicoUart.
 USB `bcdDevice` encodes major/minor as BCD (`1.2.3` becomes `0x0102`); major/minor above 99 produce a
 configuration warning and `0x0000`, while HID retains the numeric version.
-It is separate from the HID layout version. Other reports retain layout version `2`.
+It is separate from the HID layout version. Runtime report 2 uses layout `3`; other reports retain layout `2`.
 Updated hosts also accept identity layout `2` with four zero reserved bytes and show
 firmware version as `Unknown`. Older hosts reject layout `3`: restart Python/.NET hosts with the updated
 code and reload browser pages when upgrading firmware.
@@ -45,18 +45,40 @@ All identity fields are stable for a connection. `clk_sys` is intentionally excl
 
 ## Input Report 2
 
-Input report 2 has a 13-byte payload and is published every 250 ms. Its layout version is `2`.
+Input report 2 has a 23-byte payload and is published every 250 ms. Its layout version is `3`.
+Updated Python, .NET and WebHID hosts also accept the legacy 13-byte layout `2`, with CPU/RAM fields unavailable.
+Older hosts reject layout `3`; restart updated Python/.NET services and reload browser pages after upgrading.
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |
-| 0 | 1 | Layout version | `2` |
+| 0 | 1 | Layout version | `3` |
 | 1 | 1 | Sequence | Increments for each accepted periodic report |
 | 2 | 4 | Uptime | Unsigned milliseconds, little-endian; wraps after `2^32` ms |
 | 6 | 4 | `clk_sys` | Current unsigned frequency in Hz, little-endian |
 | 10 | 1 | Flags | Bit 0: USB mounted; bit 1: CDC DTR/open; bit 2: temperature valid; bit 3: board LED available; bit 4: board LED on; other bits reserved |
 | 11 | 2 | Temperature | Signed centidegrees Celsius, little-endian; meaningful only when bit 2 is set |
+| 13 | 2 | CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
+| 15 | 4 | RAM reserved | Static on-chip SRAM reservations in bytes |
+| 19 | 4 | Total RAM | SDK-selected on-chip SRAM capacity in bytes |
 
 The sequence byte wraps modulo 256. Temperature comes from the MCU's internal sensor and is an estimate, not a calibrated ambient measurement. If bit 4 is set, bit 3 must also be set. The input report supports `GET_REPORT`, returning current telemetry. The current system clock is sampled for each report, so hosts should treat it as dynamic.
+
+CPU usage is the single-core non-idle fraction over the latest interval of at least 250 ms, calculated from
+FreeRTOS's cumulative idle-task runtime and the SDK's 64-bit microsecond clock. The first sample establishes a
+baseline and reports unavailable; shorter requests reuse the previous result rather than resetting the interval.
+Interrupt time is attributed to the interrupted task by FreeRTOS, so this is task-load telemetry, not separate ISR
+accounting. Waiting or sleeping tasks are idle time only when the idle task actually runs; polling loops count as busy.
+
+RAM reserved is main SRAM through the SDK linker `__end__`, plus scratch-bank data and both reserved core stacks.
+Statically allocated FreeRTOS task stacks and control blocks are already included in main SRAM and are not counted
+twice. Total capacity comes from the SDK's `SRAM_BASE`/`SRAM_END`, not a board-specific constant. It excludes external
+RAM and does not measure stack high-water marks or live libc heap allocations. FreeRTOS dynamic allocation remains
+disabled. This value is normally constant for a firmware image.
+
+Both dashboards display CPU usage and RAM reserved (used/total KiB and percentage) in Runtime status. System clock
+appears once in the identity row, still updated from this runtime report. Unavailable fields display `--`.
+Report sequence remains available in the protocol and host decoders for diagnostics, but is not displayed.
+The Last report timestamp indicates dashboard freshness.
 
 ## Input Report 3
 

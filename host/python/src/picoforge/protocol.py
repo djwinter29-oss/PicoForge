@@ -17,7 +17,7 @@ FILESYSTEM_PAYLOAD_SIZE = 3
 FILESYSTEM_INPUT_SIZE = FILESYSTEM_PAYLOAD_SIZE + 1
 REPORT_VERSION = 2
 INFO_PAYLOAD_SIZE = 42
-STATUS_PAYLOAD_SIZE = 13
+STATUS_PAYLOAD_SIZE = 23
 MEMORY_PAYLOAD_SIZE = 29
 PRODUCT_NAME_SIZE = 20
 SERIAL_NUMBER_SIZE = 16
@@ -81,16 +81,28 @@ def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object
 def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
     """Decode a report-ID-prefixed periodic HID Input report."""
     data = bytes(report)
-    if len(data) < STATUS_INPUT_SIZE or data[0] != STATUS_REPORT_ID:
+    if len(data) < 14 or data[0] != STATUS_REPORT_ID:
         raise ValueError("unexpected HID status report length or ID")
-    payload = data[1:STATUS_INPUT_SIZE]
-    if any(data[STATUS_INPUT_SIZE:]):
+    version = data[1]
+    if version not in (2, 3):
+        raise ValueError(f"unsupported HID status report version {version}")
+    size = STATUS_INPUT_SIZE if version == 3 else 14
+    if len(data) < size:
+        raise ValueError("unexpected HID status report length")
+    payload = data[1:size]
+    if any(data[size:]):
         raise ValueError("unexpected HID status report padding")
     version, sequence, uptime_ms, system_clock_hz, flags, temperature_centidegrees = struct.unpack(
-        "<BBIIBh", payload
+        "<BBIIBh", payload[:13]
     )
-    if version != REPORT_VERSION:
-        raise ValueError(f"unsupported HID status report version {version}")
+    cpu_usage = ram_used = ram_total = None
+    if version == 3:
+        cpu_usage, ram_used, ram_total = struct.unpack("<HII", payload[13:])
+        if cpu_usage > 10000 and cpu_usage != 0xffff:
+            raise ValueError("invalid CPU usage in HID status report")
+        if ram_total == 0 or ram_used > ram_total:
+            raise ValueError("invalid RAM usage in HID status report")
+        cpu_usage = None if cpu_usage == 0xffff else cpu_usage
     if system_clock_hz == 0:
         raise ValueError("invalid system clock in HID status report")
     if flags & ~STATUS_KNOWN_FLAGS:
@@ -111,6 +123,9 @@ def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "temperature_centidegrees": temperature_centidegrees if temperature_valid else None,
         "led_available": led_available,
         "led_on": led_on,
+        "cpu_usage_basis_points": cpu_usage,
+        "ram_used_bytes": ram_used,
+        "ram_total_bytes": ram_total,
     }
 
 

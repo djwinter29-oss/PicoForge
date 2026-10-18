@@ -110,7 +110,38 @@ test("decode changing telemetry from periodic input report", () => {
     temperature_centidegrees: 2345,
     led_available: true,
     led_on: true,
+    cpu_usage_basis_points: null,
+    ram_used_bytes: null,
+    ram_total_bytes: null,
   });
+});
+
+test("runtime layout three decodes bounded CPU and RAM while rejecting malformed extensions", () => {
+  const report = new Uint8Array(23);
+  const view = new DataView(report.buffer);
+  report[0] = 3;
+  view.setUint32(6, 250_000_000, true);
+  view.setUint16(13, 1234, true);
+  view.setUint32(15, 65536, true);
+  view.setUint32(19, 532480, true);
+  const status = decodeStatusReport(2, view);
+  assert.equal(status.cpu_usage_basis_points, 1234);
+  assert.equal(status.ram_used_bytes, 65536);
+  assert.equal(status.ram_total_bytes, 532480);
+  assert.equal(decodeStatusReport(2, Uint8Array.from([...report, 0])).ram_used_bytes, 65536);
+  assert.throws(() => decodeStatusReport(2, report.subarray(0, 22)), /size/);
+  assert.throws(() => decodeStatusReport(2, Uint8Array.from([...report, 1])), /padding/);
+  for (const cpu of [0, 10000, 0xffff]) {
+    view.setUint16(13, cpu, true);
+    assert.equal(decodeStatusReport(2, view).cpu_usage_basis_points, cpu === 0xffff ? null : cpu);
+  }
+  view.setUint16(13, 10001, true);
+  assert.throws(() => decodeStatusReport(2, view), /CPU/);
+  view.setUint16(13, 0, true);
+  view.setUint32(19, 0, true);
+  assert.throws(() => decodeStatusReport(2, view), /RAM/);
+  view.setUint32(19, 65535, true);
+  assert.throws(() => decodeStatusReport(2, view), /RAM/);
 });
 
 test("derive board status from the dynamic report", () => {

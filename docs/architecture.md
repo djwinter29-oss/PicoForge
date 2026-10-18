@@ -26,6 +26,10 @@ exclusive ownership and create-new/cleanup safeguards. Browser, Python, and
 
 ## Core and Runtime Policy
 
+`integration/freertos/runtime_stats.c` samples FreeRTOS idle runtime and SDK-linked SRAM reservations for HID
+Input Report 2. See [runtime telemetry](usb-protocol.md#input-report-2) for metric definitions, sampling limits
+and host compatibility. Both dashboards show these metrics in Runtime status.
+
 The initial runtime uses FreeRTOS-Kernel 11.3.1 with `configNUMBER_OF_CORES=1`. PicoForge starts its scheduler on core 0 and does not launch framework work on core 1. Core 1 is left unused by this baseline and may be assigned by a product application in a future, explicitly designed mode.
 
 The FreeRTOS port itself is SMP-capable, but that does not mean this build runs SMP: the configured scheduler core count is one. Do not treat this as a hard real-time guarantee. Any core-1 application mode will need defined startup ownership, peripheral/IRQ affinity, cross-core synchronization, and measured timing.

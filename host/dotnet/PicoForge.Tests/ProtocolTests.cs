@@ -93,6 +93,33 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void ParsesRuntimeUsageAndRejectsInvalidExtensions()
+    {
+        var report = new byte[24];
+        report[0] = 2;
+        report[1] = 3;
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(7), 250_000_000);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 1234);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(16), 65536);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 532480);
+        var runtime = HidProtocol.ParseStatusReport(report);
+        Assert.Equal((ushort)1234, runtime.CpuUsageBasisPoints);
+        Assert.Equal(65536u, runtime.RamUsedBytes);
+        Assert.Equal(532480u, runtime.RamTotalBytes);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report.AsSpan(0, 23)));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport([.. report, 1]));
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), ushort.MaxValue);
+        Assert.Null(HidProtocol.ParseStatusReport(report).CpuUsageBasisPoints);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 10001);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 0);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 65535);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+    }
+
+    [Fact]
     public void RejectsDynamicLedOnStatusWhenLedUnavailable()
     {
         var report = new byte[14];
@@ -231,6 +258,11 @@ public sealed class ProtocolTests
         app.MapOpenApi();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var snapshot = JsonDocument.Parse(await client.GetStringAsync("/api/status"));
+        var runtime = snapshot.RootElement.GetProperty("runtime");
+        Assert.Equal(1234, runtime.GetProperty("cpu_usage_basis_points").GetInt32());
+        Assert.Equal(65536, runtime.GetProperty("ram_used_bytes").GetInt32());
+        Assert.Equal(532480, runtime.GetProperty("ram_total_bytes").GetInt32());
         var openApi = await client.GetStringAsync("/openapi/v1.json");
         Assert.Contains("/api/self-test", openApi);
         var response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 16 });
@@ -252,7 +284,10 @@ public sealed class ProtocolTests
         public bool Available { get; set; } = true;
         public (string Action, uint Size) LastCommand { get; private set; }
         public Exception? ExpectedError { get; set; }
-        public StatusResponse Snapshot => new(true, null, null, null, null, null, null, null);
+        public StatusResponse Snapshot => new(true, null, null,
+            new RuntimeStatusResponse(0, 42, 250_000_000, true, false,
+                false, null, false, false, 1234, 65536, 532480),
+            null, null, null, null);
         public bool SetLed(bool on) => false;
         public MscStatusResponse? SetMsc(bool enabled) => null;
         public bool SetSelfTest(string action, uint sizeMib)

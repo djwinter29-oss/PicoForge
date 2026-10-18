@@ -379,6 +379,7 @@ target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
 
 add_executable(pf_hello_world
     src/main.c
+    src/integration/freertos/runtime_stats.c
     src/app/usb/usb_descriptors.c
     src/app/usb/usb_hid.c
     src/app/usb/usb_msc.c

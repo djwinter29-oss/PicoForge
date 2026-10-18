@@ -15,9 +15,17 @@ TEST_INCLUDE_PATH("firmware/third_party/levelx/common/inc")
 
 static pf_levelx_nor_t *opened;
 static pf_nor_result_t init_result;
+static pf_storage_bus_result_t prepare_result;
 static UINT open_result, close_status;
 static bool mounted;
 static unsigned init_calls, open_calls;
+
+static pf_storage_bus_result_t prepare(pf_storage_bus_t *bus, int count)
+{
+    (void)bus;
+    (void)count;
+    return prepare_result;
+}
 
 static bool is_mounted(int count)
 {
@@ -62,11 +70,12 @@ void setUp(void)
 {
     mounted = false;
     init_result = PF_NOR_OK;
+    prepare_result = PF_STORAGE_BUS_OK;
     open_result = LX_SUCCESS;
     close_status = LX_SUCCESS;
     init_calls = open_calls = 0u;
     pf_storage_bus_deinit_Ignore();
-    pf_board_storage_prepare_IgnoreAndReturn(PF_STORAGE_BUS_OK);
+    pf_board_storage_prepare_Stub(prepare);
     pf_nor_transport_init_IgnoreAndReturn(PF_NOR_OK);
     pf_nor_init_Stub(initialize);
     pf_nor_enable_quad_IgnoreAndReturn(PF_NOR_OK);
@@ -94,14 +103,14 @@ void test_initial_diagnostics_and_board_preparation_failure_are_distinct_from_fl
     pf_nor_media_get_diagnostics(&diagnostics);
     TEST_ASSERT_EQUAL_UINT32(0u, diagnostics.sequence);
     TEST_ASSERT_EQUAL(PF_NOR_MEDIA_OPERATION_NONE, diagnostics.operation);
-    pf_board_storage_prepare_IgnoreAndReturn(PF_STORAGE_BUS_INVALID_ARGUMENT);
+    prepare_result = PF_STORAGE_BUS_INVALID_ARGUMENT;
     pf_log_write_ExpectAnyArgs();
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_nor_media_initialize());
     pf_nor_media_get_diagnostics(&diagnostics);
     TEST_ASSERT_EQUAL(PF_NOR_MEDIA_OPERATION_PREPARE, diagnostics.operation);
     TEST_ASSERT_FALSE(diagnostics.failure_usb_owned);
     TEST_ASSERT_EQUAL_UINT(0u, init_calls + open_calls);
-    pf_board_storage_prepare_IgnoreAndReturn(PF_STORAGE_BUS_OK);
+    prepare_result = PF_STORAGE_BUS_OK;
     TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_nor_media_initialize());
 }
 

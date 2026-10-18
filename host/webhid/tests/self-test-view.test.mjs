@@ -121,6 +121,43 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
 }
 
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
+  test(`${name} renders interval CPU and reserved RAM, including legacy and disconnected states`, () => {
+    const elements = new Map();
+    const element = selector => {
+      assert.notEqual(selector, "#runtime-clock", "system clock is shown only in the identity row");
+      assert.notEqual(selector, "#sequence", "report sequence is protocol-only diagnostics");
+      if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", valueAsNumber: 32 });
+      return elements.get(selector);
+    };
+    const previous = globalThis.document;
+    globalThis.document = { querySelector: element };
+    try {
+      const runtime = { system_clock_hz: 250_000_000, cpu_usage_basis_points: 1234,
+        ram_used_bytes: 65536, ram_total_bytes: 532480 };
+      render({ connected: true, runtime });
+      assert.equal(element("#identity-clock").textContent, "250 MHz");
+      assert.equal(element("#cpu-usage").textContent, "12.3%");
+      assert.equal(element("#ram-usage").textContent, "64.0 / 520 KiB (12.3%)");
+      for (const cpu of [0, 10000]) {
+        runtime.cpu_usage_basis_points = cpu;
+        render({ connected: true, runtime });
+        assert.equal(element("#cpu-usage").textContent, `${(cpu / 100).toFixed(1)}%`);
+      }
+      runtime.cpu_usage_basis_points = null;
+      render({ connected: true, runtime });
+      assert.equal(element("#cpu-usage").textContent, "--");
+      assert.match(element("#ram-usage").textContent, /520 KiB/);
+      for (const snapshot of [{ connected: true, runtime: { system_clock_hz: 125_000_000 } },
+        { connected: false }]) {
+        render(snapshot);
+        assert.equal(element("#cpu-usage").textContent, "--");
+        assert.equal(element("#ram-usage").textContent, "--");
+      }
+    } finally {
+      globalThis.document = previous;
+    }
+  });
+
   test(`${name} renders firmware release and does not confuse legacy protocol version with release`, () => {
     const elements = new Map();
     const element = selector => {

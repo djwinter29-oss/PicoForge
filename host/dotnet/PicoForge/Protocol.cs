@@ -10,7 +10,8 @@ public sealed record HardwareInfoResponse(string ProductName, string Mcu, byte M
 /// <summary>Dynamic telemetry reported periodically by the PicoForge HID input report.</summary>
 public sealed record RuntimeStatusResponse(byte Sequence, uint UptimeMs, uint SystemClockHz,
     bool UsbMounted, bool CdcOpen, bool TemperatureValid, short? TemperatureCentidegrees,
-    bool LedAvailable, bool LedOn)
+    bool LedAvailable, bool LedOn, ushort? CpuUsageBasisPoints = null,
+    uint? RamUsedBytes = null, uint? RamTotalBytes = null)
 {
     public BoardStatusResponse ToBoardStatus() => new(TemperatureValid, TemperatureCentidegrees,
         LedAvailable, LedOn);
@@ -66,7 +67,7 @@ internal static class HidProtocol
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
     public const int InfoPayloadSize = 42;
-    public const int StatusPayloadSize = 13;
+    public const int StatusPayloadSize = 23;
     public const int MemoryPayloadSize = 29;
     public const int FilesystemPayloadSize = 3;
     public const int MscStatusPayloadSize = 4;
@@ -101,12 +102,25 @@ internal static class HidProtocol
 
     public static RuntimeStatusResponse ParseStatusReport(ReadOnlySpan<byte> report)
     {
-        Require(report.Length >= StatusInputSize && report[0] == StatusReportId,
+        Require(report.Length >= 14 && report[0] == StatusReportId,
             "unexpected HID status report length or ID");
-        Require(report[StatusInputSize..].IndexOfAnyExcept((byte)0) < 0,
+        Require(report[1] is 2 or 3, "unsupported HID status report version");
+        var size = report[1] == 3 ? StatusInputSize : 14;
+        Require(report.Length >= size, "unexpected HID status report length");
+        Require(report[size..].IndexOfAnyExcept((byte)0) < 0,
             "unexpected HID status report padding");
-        var payload = report.Slice(1, StatusPayloadSize);
-        Require(payload[0] == ReportVersion, "unsupported HID status report version");
+        var payload = report.Slice(1, size - 1);
+        ushort? cpuUsage = null;
+        uint? ramUsed = null, ramTotal = null;
+        if (payload[0] == 3)
+        {
+            var cpu = BinaryPrimitives.ReadUInt16LittleEndian(payload[13..]);
+            Require(cpu <= 10000 || cpu == ushort.MaxValue, "invalid CPU usage in HID status report");
+            cpuUsage = cpu == ushort.MaxValue ? null : cpu;
+            ramUsed = ReadUInt32LittleEndian(payload[15..]);
+            ramTotal = ReadUInt32LittleEndian(payload[19..]);
+            Require(ramTotal != 0 && ramUsed <= ramTotal, "invalid RAM usage in HID status report");
+        }
         var flags = payload[10];
         Require((flags & ~0x1f) == 0, "unknown HID status flags");
         var clockHz = ReadUInt32LittleEndian(payload[6..]);
@@ -118,7 +132,8 @@ internal static class HidProtocol
         var temperature = (short)(payload[11] | payload[12] << 8);
         return new(payload[1], ReadUInt32LittleEndian(payload[2..]), clockHz,
             (flags & 0x01) != 0, (flags & 0x02) != 0,
-            temperatureValid, temperatureValid ? temperature : null, ledAvailable, ledOn);
+            temperatureValid, temperatureValid ? temperature : null, ledAvailable, ledOn,
+            cpuUsage, ramUsed, ramTotal);
     }
 
     public static MemoryStatusResponse ParseMemoryReport(ReadOnlySpan<byte> report)

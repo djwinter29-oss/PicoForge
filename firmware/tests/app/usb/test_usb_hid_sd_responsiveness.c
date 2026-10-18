@@ -10,6 +10,26 @@ void setUp(void)
 }
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
 
+void test_runtime_report_publishes_usage_with_independent_layout_and_exact_offsets(void)
+{
+    pf_hid_status_report_t report;
+    pf_hid_build_status_report(&report, 17u);
+    TEST_ASSERT_EQUAL_UINT(23u, sizeof(report));
+    TEST_ASSERT_EQUAL_UINT8(3u, report.version);
+    TEST_ASSERT_EQUAL_UINT8(17u, report.sequence);
+    TEST_ASSERT_EQUAL_UINT16(1234u, report.cpu_usage_basis_points);
+    TEST_ASSERT_EQUAL_UINT32(65536u, report.ram_used_bytes);
+    TEST_ASSERT_EQUAL_UINT32(532480u, report.ram_total_bytes);
+    const uint8_t *bytes = (const uint8_t *)&report;
+    const uint8_t expected[] = {0xd2u, 0x04u, 0u, 0u, 1u, 0u, 0u, 0x20u, 8u, 0u};
+    TEST_ASSERT_EQUAL_MEMORY(expected, bytes + 13u, sizeof(expected));
+    uint8_t payload[sizeof(report)];
+    TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0u, PF_HID_STATUS_REPORT_ID,
+        HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
+    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(0u, PF_HID_STATUS_REPORT_ID,
+        HID_REPORT_TYPE_INPUT, payload, sizeof(payload) - 1u));
+}
+
 void test_hid_identity_reports_firmware_version_without_changing_payload_size(void)
 {
     pf_hid_info_report_t report;

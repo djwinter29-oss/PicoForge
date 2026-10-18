@@ -45,6 +45,7 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | Product CLI prompt, built-ins, completion and history | [app/cli](app/cli) |
 | Logical blocks, SD adaptation, and FatFs disk results/geometry/protection | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |
+| Interval CPU accounting, first-sample availability and 64-bit runtime deltas | [integration/freertos](integration/freertos) |
 
 The volume lifecycle test is [test_fatfs_volume.c](app/storage/test_fatfs_volume.c), matching
 [fatfs_volume.c](../src/app/storage/fatfs_volume.c). It binds a caller-supplied block device through

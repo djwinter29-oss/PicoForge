@@ -5,6 +5,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* SDK headers may include FreeRTOS while hardware/timer.h is still being parsed. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint64_t time_us_64(void);
+#ifdef __cplusplus
+}
+#endif
+
 #define configUSE_PREEMPTION 1
 #define configUSE_TICKLESS_IDLE 0
 #define configUSE_IDLE_HOOK 0
@@ -42,7 +51,10 @@
 #define configCHECK_FOR_STACK_OVERFLOW 2
 #define configUSE_MALLOC_FAILED_HOOK 0
 #define configUSE_DAEMON_TASK_STARTUP_HOOK 0
-#define configGENERATE_RUN_TIME_STATS 0
+#define configGENERATE_RUN_TIME_STATS 1
+#define configRUN_TIME_COUNTER_TYPE uint64_t
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() ((void)0)
+#define portGET_RUN_TIME_COUNTER_VALUE() time_us_64()
 #define configUSE_TRACE_FACILITY 0
 #define configUSE_STATS_FORMATTING_FUNCTIONS 0
 
@@ -51,6 +63,7 @@
 #define INCLUDE_vTaskDelay 1
 #define INCLUDE_vTaskDelayUntil 1
 #define INCLUDE_xTaskGetSchedulerState 1
+#define INCLUDE_xTaskGetIdleTaskHandle 1
 #define INCLUDE_xTimerPendFunctionCall 1
 
 #if defined(PICO_RP2350) && PICO_RP2350

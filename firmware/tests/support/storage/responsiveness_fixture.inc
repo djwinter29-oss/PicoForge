@@ -61,6 +61,11 @@ void pf_cli_print(const char *message)
 uint8_t pf_system_mcu_id(void) { return PF_SYSTEM_MCU_RP2040; }
 uint32_t pf_system_clock_hz(void) { return 125000000u; }
 uint32_t pf_system_uptime_ms(void) { return 123u; }
+void pf_runtime_stats_read(pf_runtime_stats_t *stats)
+{
+    *stats = (pf_runtime_stats_t){.cpu_usage_basis_points = 1234u,
+        .ram_used_bytes = 65536u, .ram_total_bytes = 532480u};
+}
 bool tud_mounted(void) { return true; }
 bool tud_cdc_connected(void) { return true; }
 bool pf_temperature_read_centidegrees(int16_t *temperature)
