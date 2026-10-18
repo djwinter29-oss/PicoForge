@@ -51,6 +51,8 @@ extern bool __real_mscd_control_xfer_cb(uint8_t rhport, uint8_t stage,
 void __wrap_mscd_reset(uint8_t rhport)
 {
     __real_mscd_reset(rhport);
+    /* Volatile SCSI prevention ends on bus reset/disconnect, not BOT transport reset. */
+    removal_prevented = false;
     transfer_sense_pending = false;
 }
 
@@ -76,6 +78,7 @@ void tud_mount_cb(void)
 
 void tud_umount_cb(void)
 {
+    removal_prevented = false;
     transfer_sense_pending = false;
 }
 

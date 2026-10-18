@@ -14,6 +14,20 @@ class MonitorMscTests(unittest.TestCase):
         self.monitor._active_client = Mock()
         self.monitor._snapshot = {"msc": {"enabled": True, "force_return_supported": True}}
 
+    def test_led_disconnect_after_command_preserves_disconnected_snapshot(self):
+        self.monitor._snapshot = {**_empty_snapshot(), "connected": True,
+                                  "board_status": {"led_available": True, "led_on": False}}
+
+        def disconnect(on):
+            with self.monitor._lock:
+                self.monitor._snapshot = _empty_snapshot()
+
+        self.monitor._active_client.set_led.side_effect = disconnect
+        with self.assertRaisesRegex(RuntimeError, "disconnected"):
+            self.monitor.set_led(True)
+        self.monitor._active_client.set_led.assert_called_once_with(True)
+        self.assertEqual(self.monitor.snapshot(), _empty_snapshot())
+
     def test_confirmed_return_uses_only_hid_on_each_host_platform(self):
         for platform in ("linux", "win32", "darwin"):
             with self.subTest(platform=platform), patch.object(sys, "platform", platform), \

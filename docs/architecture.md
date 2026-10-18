@@ -16,7 +16,8 @@ are closed before command completion, and enabling MSC automatically queues file
 unmount on the worker before acquiring USB ownership. See [the CDC CLI guide](cdc-cli.md) for commands, safeguards,
 resource budgets, and validation limits.
 
-This is a buildable starting point, not yet the complete application framework. The example currently uses Pico SDK and FreeRTOS APIs directly; future modules should establish the boundaries below before more hardware and application behavior is added.
+The firmware separates application policy, middleware, reusable drivers, and platform integration as described below.
+New modules should preserve these boundaries as hardware and application behavior grows.
 
 HID Report 6 starts/cancels a large-file [SD self-test](sd-self-test.md) and
 publishes verification progress and phase timings. Its RTOS-independent engine

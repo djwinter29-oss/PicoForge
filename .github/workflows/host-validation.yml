@@ -41,7 +41,7 @@ jobs:
         run: tools/validation/test-host.sh
 
   ceedling-setup:
-    name: Ceedling project setup
+    name: Firmware unit tests
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -60,5 +60,5 @@ jobs:
         with:
           ruby-version: "3.4"
 
-      - name: Setup and validate Ceedling project
-        run: tools/validation/setup-ceedling-testing.sh help
+      - name: Setup Ceedling and run firmware unit tests
+        run: tools/validation/setup-ceedling-testing.sh test:all

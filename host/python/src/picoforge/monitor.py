@@ -72,7 +72,10 @@ class DeviceMonitor:
                 raise RuntimeError("PicoForge HID is not connected")
             self._active_client.set_led(on)
         with self._lock:
-            board_status = dict(self._snapshot["board_status"])
+            current = self._snapshot.get("board_status")
+            if not isinstance(current, dict):
+                raise RuntimeError("PicoForge HID is disconnected")
+            board_status = dict(current)
             board_status["led_on"] = on
             self._snapshot["board_status"] = board_status
         return board_status

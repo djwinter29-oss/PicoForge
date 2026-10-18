@@ -45,6 +45,16 @@ def test_ceedling_ci_initializes_source_dependency_before_setup():
     assert commands[0][4:] == ['firmware/third_party/embedded-cli']
 
 
+def test_ceedling_ci_runs_all_firmware_tests_once():
+    workflow = (ROOT / '.github/workflows/host-validation.yml').read_text()
+    commands = [
+        shlex.split(line.strip().removeprefix('run: '))
+        for line in workflow.splitlines()
+        if line.strip().startswith('run: tools/validation/setup-ceedling-testing.sh')
+    ]
+    assert commands == [['tools/validation/setup-ceedling-testing.sh', 'test:all']]
+
+
 @pytest.mark.parametrize("script", ["build.sh", "load.sh"])
 @pytest.mark.parametrize("option", [
     "--storage-backend", "--nor-transport", "--nor-region-offset", "--nor-region-size", "--levelx",

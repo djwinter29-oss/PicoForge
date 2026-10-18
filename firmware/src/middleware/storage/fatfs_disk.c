@@ -46,7 +46,8 @@ DSTATUS disk_initialize(BYTE drive)
     }
     pf_block_geometry_t geometry;
     if (disk_device == NULL || pf_block_geometry(disk_device, &geometry) != PF_BLOCK_OK ||
-        geometry.sector_size != FF_MIN_SS || geometry.sector_size != FF_MAX_SS) {
+        geometry.sector_size < FF_MIN_SS || geometry.sector_size > FF_MAX_SS ||
+        (geometry.sector_size & (geometry.sector_size - 1u)) != 0u) {
         return STA_NOINIT;
     }
     return geometry.write_protected ? STA_PROTECT : 0u;
