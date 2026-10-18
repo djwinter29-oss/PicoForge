@@ -130,13 +130,26 @@ guarantee of card reliability.
 
 ## Help and Documentation
 
+**Set up and use**
+
 - [Hardware setup](docs/hardware-setup.md): wiring, supported connections, and board notes.
 - [Console guide](docs/cdc-cli.md): file commands, mounting, and recovery.
 - [SD-card self-test](docs/sd-self-test.md): running tests and understanding results.
+
+**Design reference** (current implementation)
+
 - [Architecture](docs/architecture.md): application layers, runtime, and storage ownership.
 - [SD-card design](docs/sdcard-design.md): driver interfaces, initialization, and transfer policy.
 - [Physical transports](firmware/src/drivers/storage/README.md): SDIO-PIO, SD-SPI, and card wiring.
 - [USB protocol](docs/usb-protocol.md): HID reports, commands, and host compatibility.
+
+**Validation and history**
+
+- [Test records](docs/tests/records/README.md): dated measurements and reviews; not current-firmware qualification.
+- [SD remediation matrix](docs/tests/sd-design-remediation.md): current review dispositions.
+
+**Project**
+
 - [Contributing](CONTRIBUTING.md): development and validation guidance.
 - [Security reporting](SECURITY.md): report vulnerabilities privately.
 

@@ -226,7 +226,4 @@ byte counters and durations; measurement boundaries and safety rules live in
 
 Firmware cross-builds and hardware-free host tests do not verify physical host enumeration. Test the composite interface and CDC/HID behavior on RP2040 and RP2350 boards before relying on it in a product.
 
-The 2026-10-15 static review follow-up fixes cached MSC transfer sense at handled
-BOT and bus resets. Data paths, clocks and buffer defaults are unchanged; no
-new throughput result is claimed. See [SD review scope and validation](sdcard-design.md#static-sd-review-follow-up-2026-10-15)
-for reset ordering, host-model limits, existing overlap and pending HIL comparisons.
+The [2026-10-15 static review record](tests/records/2026-10-15-static-sd-review-followup.md) covers the MSC reset-sense fix and its validation limits.

@@ -239,7 +239,5 @@ test were verified. Those runs did not qualify SPI benchmark performance, physic
 long-duration endurance, media removal, or power-loss recovery. Later SPI measurements are recorded in the
 [transport qualification notes](../firmware/src/drivers/storage/README.md#spi-clock-qualification-2026-10-17).
 
-The 2026-10-15 static review follow-up fixes cached MSC transfer sense at handled
-BOT and bus resets. Data paths, clocks and buffer defaults are unchanged; no
-new throughput result is claimed. See [SD review scope and validation](sdcard-design.md#static-sd-review-follow-up-2026-10-15)
-for reset ordering, host-model limits, existing overlap and pending HIL comparisons.
+For the MSC reset-sense review and its validation limits, see the
+[2026-10-15 static review record](tests/records/2026-10-15-static-sd-review-followup.md).

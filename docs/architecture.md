@@ -63,10 +63,8 @@ remain on that IRQ-owning core; wrong-core lifecycle calls assert rather than si
 Normal USB task processing does not change IRQ ownership or require task affinity. These safeguards have host
 concurrency tests; sustained concurrent USB/media workloads still require target qualification.
 Dependency upgrades must pass the pinned-driver surface contract before the guard can be considered compatible.
-On the connected Pico2 at 250 MHz CPU / 50 MHz SDIO, probe inspection confirmed the active and passive idle tasks
-executing on separate cores. The dashboard enable command completed worker-owned unmount and re-enumerated the
-SD card as a 119.1 GiB USB block device with its existing partition. Host handoff tests pass, but sustained dual-core
-stress remains unqualified.
+Sustained dual-core stress remains unqualified; the one-off Pico 2 observation is in the
+[earlier qualification record](tests/records/earlier-sdio-qualification-undated.md#pico-2-dual-core-msc-handoff-observation).
 
 The example uses static allocation for its application task and the port-provided idle-task memory. Software timers are enabled because the Pico port uses the timer-pend API for SDK synchronization interoperation. Additional tasks should document their stack, priority, ownership, and whether allocation is static or dynamic. The current firmware disables dynamic task allocation.
 

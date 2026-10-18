@@ -1,7 +1,5 @@
 # SD-Card Driver Design
 
-Current source-review dispositions and remaining qualification: [SD remediation matrix](tests/sd-design-remediation.md).
-
 This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
@@ -10,12 +8,16 @@ commands and mounting policy remain in [the CDC CLI guide](cdc-cli.md).
 
 ## Guide
 
-- [Architecture](#architecture) and [block-device boundary](#filesystem-block-device-boundary).
-- [Transport and execution-port selection](#interfacing-with-the-driver).
-- [Initialization](#initialization-workflow), [reads](#read-workflow), and [writes](#write-workflow).
-- [Hardware resources](#hardware-resource-inventory) and [profiling](#performance-controls-and-status).
-- [Ownership](#ownership-workflow) and [validation limits](#validation-and-limits).
-- [Historical qualification](#previously-recorded-qualification) and dated follow-ups at the end of this guide.
+| Need | Go to |
+| --- | --- |
+| Layers and interfaces | [Architecture](#architecture), [block-device boundary](#filesystem-block-device-boundary), [transport and port selection](#interfacing-with-the-driver) |
+| Protocol workflows | [Initialization](#initialization-workflow), [reads](#read-workflow), [writes](#write-workflow), [ownership](#ownership-workflow) |
+| Resources and performance | [Hardware resources](#hardware-resource-inventory), [profiling and MSC batching](#performance-controls-and-status) |
+| Test scope | [Validation limits](#validation-and-limits), [SD self-test](sd-self-test.md) |
+| Review status | [SD remediation matrix](tests/sd-design-remediation.md) |
+| History and measurements | [Historical records](#historical-records) and [test records](tests/records/README.md) |
+
+Sections above describe current implementation; dated measurements and review narratives live only in test records.
 
 ## Architecture
 
@@ -779,6 +781,13 @@ write and before returning success. A failed write is never replayed or synced
 as a recovery attempt. Sync errors return failure and write-error sense. Current
 one-sector callbacks retain their existing synchronous completion behavior.
 
+Cached READ10/WRITE10 sense is invalidated after TinyUSB handles an accepted BOT reset at SETUP and after its MSC
+driver bus-reset processing. GNU linker wrappers in `firmware/src/app/usb/usb_msc.c` interpose the driver's external
+references from `usbd.c`; the vendored stack is unchanged and no ISR or enqueue-time hook mutates the cache. Rejected
+requests, skipped SETUP events, and DATA/ACK stages do not clear it. `python3 -m pytest tests -m contracts` checks
+the pinned source ordering; the Ceedling model does not link TinyUSB. Review details:
+[2026-10-15 follow-up](tests/records/2026-10-15-static-sd-review-followup.md).
+
 Cross-callback write aggregation is not implemented: TinyUSB's completion hook
 runs after CSW is queued, too late to fail the command on a flush error, and the
 application has no pre-CSW command boundary with total write input validity.
@@ -951,87 +960,15 @@ USB host eject and BOT reset behavior, and power interruption during data and
 filesystem-metadata writes. Host regressions are prerequisites, not substitutes,
 for those hardware records.
 
-### Previously Recorded Qualification
+## Historical Records
 
-The remainder of this guide records historical, configuration-specific observations and review follow-ups.
-Earlier clocking, recovery, and qualification algorithms may differ from the current workflows above.
-These records do not qualify every compatible card or the current firmware.
-For later controlled comparisons, see the
-[2026-10-18 speed matrix](tests/records/2026-10-18-sdio-speed-matrix.md) and
-[repeat measurement](tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
+Dated, configuration-specific observations and review follow-ups are kept out of this reference in
+[test records](tests/records/README.md); they may describe earlier clocking, recovery, and qualification algorithms and
+do not qualify the current firmware or other cards. Most relevant:
 
-| Card/configuration | Recorded result |
-| --- | --- |
-| 8 GB Class 10, 250 MHz SYSCLK | 32 MiB self-test exercised lower-clock CMD12 retry, completed near 33 MHz with zero mismatches; 8.48 MB/s write and 9.91 MB/s read |
-| 16 GB Class 4, 20 MHz request / 18.75 MHz actual | 32 MiB passed; 7.11 MB/s write and 6.69 MB/s read |
-| 8 GB SD8GB, stock 150 MHz SYSCLK / 25 MHz SDIO | 32 MiB passed with zero mismatches; 7.22 MB/s write and 1.45 MB/s read |
-| 128 GB SN128, 250 MHz SYSCLK / 50 MHz SDIO | 32 and 128 MiB self-tests recorded zero mismatches; 15.9 MB/s write and 13.7 MB/s read |
-| 128 GB SN128, 200 MHz SYSCLK / 50 MHz SDIO | Recorded 12.5 MB/s write and 9.5 MB/s read |
-| 128 GB SN128, stock 150 MHz SYSCLK / 25 MHz SDIO | Recorded 9.5 MB/s write and 8.3 MB/s read |
-| 128 GB SN128, 280 MHz SYSCLK | Did not work with the card even at 25 MHz SDIO |
-
-Those experiments used falling-edge RX with a fast data divider half the
-command/clock divider. The current RX phases and system-clock sampling are
-documented in the [physical transport reference](../firmware/src/drivers/storage/README.md#physical-storage-bus).
-High-speed TX starts
-the clock and data state machines together and launches at a fixed cycle offset.
-The slow TX program is not suitable for 50 MHz: its observed-edge launch left
-insufficient setup time and produced card CRC-error tokens. A 50 MHz bus needs
-at least 200 MHz SYSCLK; those Pico 2 overclock experiments are diagnostic,
-not supported production clock settings. These are historical experiments;
-the default driver targets 25 MHz. High-speed PIO programs are selected only
-after the explicit build opt-in and a confirmed CMD6 switch. Both former
-initialization scans and the later 128 KiB probe have been replaced by a
-single-sector validation at each startup timing.
-
-## Fixed-25-MHz Follow-up (2026-10-16)
-
-The connected 128 GB SB128 card was tested with the fixed-clock implementation
-at a 25 MHz transfer target. These checks did not establish sustained throughput:
-
-| CPU clock | Observed result |
-| --- | --- |
-| 250 MHz | Initialization failed at the SCR CRC check, before the transfer clock was selected; self-test rejected because no volume was mounted |
-| 150 MHz | Initialized and mounted at 25 MHz; the authorized 32 MiB self-test failed during preparation with `FR_DISK_ERR`, zero payload bytes written/read, and two profiled receive CRC failures |
-| 200 MHz | Initialized and mounted at 25 MHz; the same test failed during preparation with `FR_DISK_ERR`, zero payload bytes written/read, and two profiled receive CRC failures |
-
-Receive captures showed both a nibble-shifted boot-sector image and a correctly
-positioned `55aa` signature with CRC discrepancies on DAT1-DAT3. A temporary
-1 MHz transfer-clock control produced a byte-for-byte identical bad frame to
-one captured at 25 MHz. A cold-powered SPI control initialized and mounted the
-same card at 25 MHz. This narrows the investigation to native transfer/framing
-and its electrical behavior; it does not prove a specific sampling fix. Debugger
-capture attempts did not yield a verified SPI-sector comparison.
-
-The diagnostic clock override was removed and the 150 MHz CPU / fixed-25-MHz
-SDIO firmware restored. Fully remove card power after the SPI control before
-using native SDIO again.
-No filesystem format was performed. No valid benchmark rate was obtained.
-These observations identify a receive-integrity problem, not its cause; card
-speed rating does not distinguish driver sampling/framing faults from wiring,
-power, or signal-integrity faults. Neither a 10 MB/s result nor reliable
-sustained operation is qualified by these tests.
-
-## Static SD Review Follow-up (2026-10-15)
-
-Application READ10/WRITE10 cached sense is now invalidated after TinyUSB handles
-an accepted BOT reset at SETUP, and after its MSC driver bus-reset processing.
-GNU linker wrappers in `firmware/src/app/usb/usb_msc.c` interpose the built-in driver's
-external references from `usbd.c`; the vendored stack is unchanged. No ISR or
-enqueue-time hook mutates this cache. Earlier queued failures cannot erase a
-reset, and failures after handled reset retain their fresh sense. Rejected
-requests, skipped SETUP events, and DATA/ACK stages do not clear it.
-
-`python3 -m pytest tests -m contracts` checks pinned
-source ordering. Ceedling runs production application callbacks and linker wrappers
-against a separate host driver/queue model. TinyUSB itself is not linked in that
-host regression; it is not a real BOT integration or hardware qualification.
-
-At that reset-sense review, the data paths were unchanged: SDIO CMD18 already overlaps completed-block
-decode/CRC with later RX DMA, CMD25 alternates two wire buffers while preparing
-the next block during TX, and fused CRC/copy remains opt-in. FatFs passes
-multi-sector requests through and SPI already uses CMD18/CMD25. No safe small
-performance simplification was identified in that review. The later MSC callback
-batch-boundary repair is described above; the underlying overlap remains. Phase profiling and same-card,
-same-clock normal/preallocated and fused-copy A/B comparisons remain pending
-HIL; this change makes no throughput claim and changes no clocks or buffers.
+- [Earlier SDIO observations (undated)](tests/records/earlier-sdio-qualification-undated.md): card/clock throughput
+  table and why 50 MHz needs high-speed TX.
+- [2026-10-16 fixed-25-MHz follow-up](tests/records/2026-10-16-sdio-fixed-25mhz-followup.md): receive-integrity failures.
+- [2026-10-15 static SD review follow-up](tests/records/2026-10-15-static-sd-review-followup.md): MSC reset-sense review.
+- [2026-10-18 speed matrix](tests/records/2026-10-18-sdio-speed-matrix.md) and
+  [repeat](tests/records/2026-10-18-sdio-speed-matrix-repeat.md): latest controlled comparisons.
