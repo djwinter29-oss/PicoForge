@@ -15,10 +15,26 @@ for (const name of ["web", "webhid"]) {
     assert.equal((html.match(/<\/main>/g) ?? []).length, 1);
     assert.doesNotMatch(html, /id="refresh"|self-test-consent|type="checkbox"/);
     assert.match(section('class="identity"'), /id="firmware-version"/);
+    const settings = section('aria-labelledby="settings-title"');
+    assert.ok(html.indexOf('aria-labelledby="settings-title"') < html.indexOf('aria-labelledby="runtime-title"'));
+    assert.match(settings, /id="settings-clock"/);
+    assert.match(settings, /id="settings-sdio"/);
+    assert.match(settings, /id="settings-spi"/);
+    assert.match(settings, /id="settings-save"/);
     const liveReport = section('aria-labelledby="runtime-title"');
+    assert.doesNotMatch(liveReport, /id="sample-time"|Last report/);
     assert.match(liveReport, /id="led-control"/);
-    assert.match(liveReport, /id="cpu-usage"/);
-    assert.match(liveReport, /id="ram-usage"/);
+    assert.doesNotMatch(liveReport, /id="led-state"|<dt>Onboard LED<\/dt>/);
+    assert.equal((liveReport.match(/<dt>CPU Usage \(Core 1 \/ Core 2\)<\/dt>/g) ?? []).length, 1);
+    assert.doesNotMatch(liveReport, /<dt>CPU core [01] usage<\/dt>/);
+    assert.match(liveReport, /id="cpu-usage-core0"/);
+    assert.match(liveReport, /id="cpu-usage-core1"/);
+    assert.match(liveReport, /<dd><span id="cpu-usage-core0">--<\/span> \/ <span id="cpu-usage-core1">--<\/span><\/dd>/);
+    assert.equal((liveReport.match(/<dt>SRAM \(reserved \/ total\)<\/dt>/g) ?? []).length, 1);
+    assert.doesNotMatch(liveReport, /<dt>On-chip SRAM|<dt>RAM reserved|<dt>Total on-chip SRAM/);
+    assert.match(liveReport, /id="ram-reserved"/);
+    assert.match(liveReport, /id="ram-total"/);
+    assert.match(liveReport, /<dd>\s*<span id="ram-reserved"[^>]*>--<\/span>\s*\/\s*<span id="ram-total"[^>]*>--<\/span>\s*<\/dd>/);
     assert.doesNotMatch(liveReport, /System clock|runtime-clock/);
     assert.doesNotMatch(html, /Report sequence|id="sequence"/);
     assert.equal((html.match(/<span>System clock<\/span>/g) ?? []).length, 1);
@@ -29,25 +45,21 @@ for (const name of ["web", "webhid"]) {
     const memoryReport = section('aria-labelledby="memory-title"');
     assert.doesNotMatch(memoryReport, /id="memory-presence"|<dt>Presence<\/dt>/);
     assert.doesNotMatch(memoryReport, /id="memory-type"/);
+    assert.match(memoryReport, /id="memory-filesystem"/);
     assert.match(memoryReport, /<dt>Manufacturer<\/dt>/);
+      assert.match(memoryReport, /<dt>Serial<\/dt>/);
+    assert.match(memoryReport, /id="msc-control"/);
+    assert.match(memoryReport, /id="msc-note"/);
     const selfTest = section('aria-labelledby="self-test-title"');
     assert.match(selfTest, /<h2 id="self-test-title">Memory Tests<\/h2>/);
-    assert.match(selfTest, /id="msc-control"/);
-    assert.match(selfTest, /id="msc-note"/);
+    assert.match(selfTest, /class="section-heading self-test-heading"[\s\S]*<div class="self-test-controls">/);
     assert.doesNotMatch(selfTest, /msc-force-return|Force return to Pico/);
     assert.doesNotMatch(selfTest, /msc-warning|Firmware owns storage|Disabling can lose/);
-    assert.match(selfTest, /id="msc-note" role="status" hidden><\/p>/);
-    assert.match(selfTest, /Writes and verifies \/PFTEST.BIN, replacing any existing file at that path/);
     assert.match(selfTest, /id="self-test-start"/);
     assert.match(selfTest, /id="self-test-size"[^>]*max="1024"/);
     if (name === "webhid") {
       assert.match(html, /id="connect"/);
       assert.match(html, /id="disconnect"/);
-      const settings = section('aria-labelledby="settings-title"');
-      assert.match(settings, /id="settings-clock"/);
-      assert.match(settings, /id="settings-sdio"/);
-      assert.match(settings, /id="settings-spi"/);
-      assert.match(settings, /id="settings-save"/);
     }
   });
 
@@ -66,6 +78,7 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
     globalThis.document = { querySelector(selector) {
       if (!elements.has(selector)) elements.set(selector, {
         dataset: {}, valueAsNumber: 32, addEventListener(event, handler) { this[event] = handler; },
+        setAttribute(name, value) { this[name] = value; },
       });
       return elements.get(selector);
     } };
@@ -139,6 +152,7 @@ test("shared Disable confirms Pico-side return while Enable needs no confirmatio
   globalThis.document = { querySelector(selector) {
     if (!elements.has(selector)) elements.set(selector, {
       dataset: {}, valueAsNumber: 32, addEventListener(event, handler) { this[event] = handler; },
+        setAttribute(name, value) { this[name] = value; },
     });
     return elements.get(selector);
   } };

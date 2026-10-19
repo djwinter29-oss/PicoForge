@@ -30,13 +30,17 @@ export function renderStatus(snapshot) {
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
   document.querySelector("#identity-clock").textContent = clock;
-  document.querySelector("#cpu-usage").textContent = runtime?.cpu_usage_basis_points == null
-    ? "--" : `${(runtime.cpu_usage_basis_points / 100).toFixed(1)}%`;
+  document.querySelector("#cpu-usage-core0").textContent = runtime?.cpu_usage_core0_basis_points == null
+    ? "--" : `${(runtime.cpu_usage_core0_basis_points / 100).toFixed(1)}%`;
+  document.querySelector("#cpu-usage-core1").textContent = runtime?.cpu_usage_core1_basis_points == null
+    ? "--" : `${(runtime.cpu_usage_core1_basis_points / 100).toFixed(1)}%`;
   const ramUsed = runtime?.ram_used_bytes;
   const ramTotal = runtime?.ram_total_bytes;
-  document.querySelector("#ram-usage").textContent = runtime?.ram_total_bytes
-    ? `${(ramUsed / 1024).toFixed(1)} / ${(ramTotal / 1024).toFixed(0)} KiB ` +
-      `(${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
+  document.querySelector("#ram-reserved").textContent = runtime?.ram_total_bytes
+    ? `${(ramUsed / 1024).toFixed(1)} KiB (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
+    : "--";
+  document.querySelector("#ram-total").textContent = runtime?.ram_total_bytes
+    ? `${(ramTotal / 1024).toFixed(0)} KiB`
     : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
@@ -48,14 +52,15 @@ export function renderStatus(snapshot) {
   const board = snapshot.board_status;
   document.querySelector("#temperature").textContent = board?.temperature_valid
     ? `${(board.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
-  document.querySelector("#led-state").textContent = board?.led_available
-    ? (board.led_on ? "On" : "Off") : "Unavailable";
-  document.querySelector("#led-control").textContent = board?.led_on ? "Turn LED off" : "Turn LED on";
+  const ledControl = document.querySelector("#led-control");
+  const ledOn = board?.led_available ? Boolean(board.led_on) : null;
+  ledControl.textContent = ledOn === null ? "LED: --" : `LED: ${ledOn ? "On" : "Off"}`;
+  ledControl.dataset.state = ledOn === null ? "unknown" : ledOn ? "on" : "off";
+  ledControl.setAttribute("aria-pressed", String(ledOn === true));
+  ledControl.title = ledOn === null ? "Onboard LED unavailable"
+    : `Turn onboard LED ${ledOn ? "off" : "on"}`;
   renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
-  document.querySelector("#sample-time").textContent = snapshot.updated_at
-    ? `Last report ${new Date(snapshot.updated_at).toLocaleTimeString()}` : "Waiting for HID report";
-
   const statusLine = document.querySelector(".status-line");
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
@@ -73,7 +78,7 @@ function renderMemory(memory, filesystemFormat) {
       ? "No card detected. Check card insertion and the active-high DET connection on GP8."
       : memory.present && !memory.initialized
         ? "Card detected but not initialized; check UART logs and SD wiring."
-        : memory.initialized ? "Card metadata is available." : "Card presence has not been established.");
+        : memory.initialized ? "" : "Card presence has not been established.");
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
@@ -85,7 +90,7 @@ function renderMemory(memory, filesystemFormat) {
   set("#memory-product", manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
-  set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
+  set("#memory-serial", manufacturer ? manufacturer.serial_number.toString(16).padStart(8, "0") : "--");
 }
 
 function formatManufacturer(manufacturer) {

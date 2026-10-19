@@ -1,15 +1,34 @@
-import { renderStatus, renderSelfTest } from "./dashboard.mjs";
+import { renderStatus as renderDashboardStatus, renderSelfTest } from "./dashboard.mjs";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
+const settingsSave = document.querySelector("#settings-save");
+const settingsControls = ["#settings-clock", "#settings-sdio", "#settings-spi"]
+  .map(selector => document.querySelector(selector));
 let requestInProgress = false;
 let currentSnapshot = null;
 let selfTestPendingSequence = null;
 let mscRequestInProgress = false;
+let settingsRequestInProgress = false;
+let settingsDirty = false;
+let settingsMessage = null;
 let mscError = null;
 
+function renderStatus(snapshot) {
+  if (!snapshot.connected) {
+    settingsDirty = false;
+    settingsMessage = null;
+  }
+  renderDashboardStatus({
+    ...snapshot,
+    settings_busy: settingsRequestInProgress,
+    settings_dirty: settingsDirty,
+    settings_message: settingsMessage ?? snapshot.settings_message,
+  });
+}
+
 async function updateStatus() {
-  if (requestInProgress || mscRequestInProgress) return;
+  if (requestInProgress || mscRequestInProgress || settingsRequestInProgress) return;
   requestInProgress = true;
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
@@ -35,7 +54,7 @@ async function updateStatus() {
 }
 
 async function setMsc() {
-  if (!currentSnapshot?.msc || mscRequestInProgress) return;
+  if (!currentSnapshot?.msc || mscRequestInProgress || settingsRequestInProgress) return;
   const force = currentSnapshot.msc.enabled;
   if (force && (!currentSnapshot.msc.force_return_supported
     || !window.confirm("Disable USB drive and return storage to Pico? "
@@ -78,7 +97,7 @@ async function setMsc() {
 }
 
 async function setLed() {
-  if (!currentSnapshot?.board_status?.led_available) return;
+  if (!currentSnapshot?.board_status?.led_available || settingsRequestInProgress) return;
   ledControl.disabled = true;
   try {
     const response = await fetch("/api/led", {
@@ -102,8 +121,58 @@ async function setLed() {
   }
 }
 
+function selectedSettings() {
+  return {
+    system_clock_mhz: Number(settingsControls[0].value),
+    sdio_bus_mhz: Number(settingsControls[1].value),
+    spi_bus_mhz: Number(settingsControls[2].value),
+  };
+}
+
+function updateSettingsDirty() {
+  const saved = currentSnapshot?.settings;
+  if (!saved) return;
+  const selected = selectedSettings();
+  settingsDirty = selected.system_clock_mhz !== saved.system_clock_mhz
+    || selected.sdio_bus_mhz !== (saved.sdio_bus_mhz === 25 ? 0 : saved.sdio_bus_mhz)
+    || selected.spi_bus_mhz !== saved.spi_bus_mhz;
+  settingsMessage = null;
+  renderStatus(currentSnapshot);
+}
+
+async function saveSettings() {
+  const msc = currentSnapshot?.msc;
+  if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !settingsDirty
+      || settingsRequestInProgress || !msc || msc.enabled || msc.transition_pending
+      || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending) return;
+  settingsRequestInProgress = true;
+  settingsMessage = "Saving boot settings...";
+  renderStatus(currentSnapshot);
+  try {
+    const response = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(selectedSettings()),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? result.title ?? `Settings endpoint returned HTTP ${response.status}`);
+    if (!result.settings || typeof result.settings.system_clock_mhz !== "number") {
+      throw new Error("Settings endpoint returned invalid readback");
+    }
+    currentSnapshot.settings = result.settings;
+    currentSnapshot.settings_supported = true;
+    settingsDirty = false;
+    settingsMessage = "Saved. Changes take effect after reboot.";
+  } catch (error) {
+    settingsMessage = `Save failed: ${error.message}`;
+  } finally {
+    settingsRequestInProgress = false;
+    if (currentSnapshot) renderStatus(currentSnapshot);
+  }
+}
+
 async function selfTest(action) {
-  if (!currentSnapshot?.connected) return;
+  if (!currentSnapshot?.connected || settingsRequestInProgress) return;
   selfTestPendingSequence = currentSnapshot.self_test?.sequence ?? 0;
   currentSnapshot.self_test_command_pending = true;
   renderStatus(currentSnapshot);
@@ -125,6 +194,8 @@ async function selfTest(action) {
 document.querySelector("#self-test-start").addEventListener("click", () => selfTest("start"));
 document.querySelector("#self-test-cancel").addEventListener("click", () => selfTest("cancel"));
 document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(currentSnapshot ?? {}));
+for (const control of settingsControls) control.addEventListener("change", updateSettingsDirty);
+settingsSave.addEventListener("click", saveSettings);
 ledControl.addEventListener("click", setLed);
 mscControl.addEventListener("click", () => setMsc());
 void updateStatus();

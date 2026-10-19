@@ -6,6 +6,10 @@ internal static class StatusEndpoints
 {
     public sealed record SetLedRequest(bool? On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
+    /// <summary>Requested persistent system clock and storage bus ceilings.</summary>
+    public sealed record SetSettingsRequest(int? SystemClockMhz, int? SdioBusMhz, int? SpiBusMhz);
+    /// <summary>Settings values confirmed by the device after saving.</summary>
+    public sealed record SetSettingsResponse(BootSettingsResponse Settings);
     public sealed record SetMscRequest(bool? Enabled);
     /// <summary>Explicit acknowledgement that forced detach may lose data and corrupt the filesystem.</summary>
     public sealed record ForceReturnMscRequest(bool ConfirmDataLoss);
@@ -27,6 +31,14 @@ internal static class StatusEndpoints
             .WithName("SetBoardLed")
             .WithSummary("Set the onboard board LED")
             .Produces<SetLedResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+        endpoints.MapPost("/api/settings", SetSettings)
+            .WithName("SetBootSettings")
+            .WithSummary("Save persistent boot settings")
+            .WithDescription("Saves supported clock and bus values and verifies them by reading HID Feature report 8.")
+            .Produces<SetSettingsResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
@@ -75,6 +87,35 @@ internal static class StatusEndpoints
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {
             return Results.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
+    }
+
+    private static IResult SetSettings(SetSettingsRequest request, IDeviceMonitor monitor)
+    {
+        if (request.SystemClockMhz is not (0 or 150 or 200 or 250) ||
+            request.SdioBusMhz is not (0 or 25 or 50) ||
+            request.SpiBusMhz is not (0 or 25 or 50))
+            return Results.Problem(statusCode: 400, title: "Unsupported boot settings value");
+        var settings = new BootSettingsResponse(request.SystemClockMhz.Value,
+            request.SdioBusMhz.Value, request.SpiBusMhz.Value);
+        try
+        {
+            var saved = monitor.SetSettings(settings);
+            return saved is null
+                ? Results.Conflict(new { error = "Boot settings are unavailable or storage is busy" })
+                : Results.Ok(new SetSettingsResponse(saved));
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new { error = error.Message });
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "HID settings command delivery failed");
+        }
+        catch (NotSupportedException)
+        {
+            return Results.Problem(statusCode: 503, title: "HID settings command is not supported");
         }
     }
 

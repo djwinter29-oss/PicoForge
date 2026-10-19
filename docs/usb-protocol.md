@@ -25,10 +25,10 @@ The complete string is embedded in Pico SDK program metadata. HID reports the th
 so `1.2.3-rc1` appears as `1.2.3` in the dashboard, matching PicoUart.
 USB `bcdDevice` encodes major/minor as BCD (`1.2.3` becomes `0x0102`); major/minor above 99 produce a
 configuration warning and `0x0000`, while HID retains the numeric version.
-It is separate from the HID layout version. Runtime report 2 and MSC status report 5 use layout `3`;
-other reports retain layout `2`.
+It is separate from the HID layout version. Runtime report 2 uses layout `1`; MSC status report 5 uses layout `3`;
+other reports use their own documented layouts.
 Updated hosts also accept identity layout `2` with four zero reserved bytes and show
-firmware version as `Unknown`. Older hosts reject layout `3`: restart Python/.NET hosts with the updated
+firmware version as `Unknown`. Older hosts reject identity layout `3`: restart Python/.NET hosts with the updated
 code and reload browser pages when upgrading firmware.
 
 | Payload offset | Size | Field | Encoding |
@@ -46,31 +46,31 @@ All identity fields are stable for a connection. `clk_sys` is intentionally excl
 
 ## Input Report 2
 
-Input report 2 has a 23-byte payload and is published every 250 ms. Its layout version is `3`.
-Updated Python, .NET and WebHID hosts also accept the legacy 13-byte layout `2`, with CPU/RAM fields unavailable.
-Older hosts reject layout `3`; restart updated Python/.NET services and reload browser pages after upgrading.
+Input report 2 has a 25-byte payload and is published every 250 ms. Its initial layout version is `1`; firmware and
+host implementations use this contract without legacy-layout handling.
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |
-| 0 | 1 | Layout version | `3` |
+| 0 | 1 | Layout version | `1` |
 | 1 | 1 | Sequence | Increments for each accepted periodic report |
 | 2 | 4 | Uptime | Unsigned milliseconds, little-endian; wraps after `2^32` ms |
 | 6 | 4 | `clk_sys` | Current unsigned frequency in Hz, little-endian |
 | 10 | 1 | Flags | Bit 0: USB mounted; bit 1: CDC DTR/open; bit 2: temperature valid; bit 3: board LED available; bit 4: board LED on; other bits reserved |
 | 11 | 2 | Temperature | Signed centidegrees Celsius, little-endian; meaningful only when bit 2 is set |
-| 13 | 2 | CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
-| 15 | 4 | RAM reserved | Static on-chip SRAM reservations in bytes |
-| 19 | 4 | Total RAM | SDK-selected on-chip SRAM capacity in bytes |
+| 13 | 2 | Core 0 CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
+| 15 | 2 | Core 1 CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
+| 17 | 4 | RAM reserved | Static on-chip SRAM reservations in bytes |
+| 21 | 4 | Total RAM | SDK-selected on-chip SRAM capacity in bytes |
 
 The sequence byte wraps modulo 256. Temperature comes from the MCU's internal sensor and is an estimate, not a calibrated ambient measurement. If bit 4 is set, bit 3 must also be set. The input report supports `GET_REPORT`, returning current telemetry. The current system clock is sampled for each report, so hosts should treat it as dynamic.
 
-CPU usage is the mean non-idle fraction across both scheduler cores over the latest interval of at least 250 ms,
-calculated as one minus FreeRTOS's aggregate idle-task runtime divided by twice the elapsed SDK 64-bit microsecond time.
-One fully busy core and one idle core reports 50%; both busy reports 100%, and both idle reports 0%.
-Adjacent wall-clock/idle sampling skew is saturated at 0% rather than wrapping. The first sample establishes a
-baseline and reports unavailable; shorter requests reuse the previous result rather than resetting the interval.
-Interrupt time is attributed to the interrupted task by FreeRTOS, so this is task-load telemetry, not separate ISR
-accounting. Waiting or sleeping tasks are idle time only when the idle task actually runs; polling loops count as busy.
+CPU usage is measured independently per core over the latest interval of at least 250 ms, as one minus that core's
+FreeRTOS idle-task runtime divided by elapsed SDK 64-bit microsecond time. One busy core and one idle core report
+100% and 0%, respectively. Adjacent wall-clock/idle sampling skew is saturated at 0% rather than wrapping. The first
+sample establishes a baseline and reports unavailable; shorter requests reuse the previous result rather than
+resetting the interval. Interrupt time is attributed to the interrupted task by FreeRTOS, so this is task-load
+telemetry, not separate ISR accounting. Waiting tasks contribute idle time only when the idle task runs; polling
+loops count as busy.
 
 RAM reserved is main SRAM through the SDK linker `__end__`, plus scratch-bank data and both reserved core stacks.
 Statically allocated FreeRTOS task stacks and control blocks are already included in main SRAM and are not counted
@@ -78,7 +78,8 @@ twice. Total capacity comes from the SDK's `SRAM_BASE`/`SRAM_END`, not a board-s
 RAM and does not measure stack high-water marks or live libc heap allocations. FreeRTOS dynamic allocation remains
 disabled. This value is normally constant for a firmware image.
 
-Both dashboards display CPU usage and RAM reserved (used/total KiB and percentage) in Runtime status. System clock
+Both dashboards display Core 0 and Core 1 CPU usage separately, and show reserved RAM and total on-chip SRAM as
+separately labeled values in Runtime status. System clock
 appears once in the identity row, still updated from this runtime report. Unavailable fields display `--`.
 Report sequence remains available in the protocol and host decoders for diagnostics, but is not displayed.
 The Last report timestamp indicates dashboard freshness.
@@ -153,7 +154,8 @@ version `2`, then desired state (`0` disabled or `1` enabled). The distinct conf
 `[3, 2]`, excluding the report ID; layout `2` never interprets action `2` as force.
 Input report 5 carries a 4-byte status payload every 500 ms: version `3`, enabled, transition-pending, and
 request-rejected; the last three fields are booleans. Updated hosts accept legacy status layout `2` but only enable
-force return after observing layout `3`. Older host software must be updated before using this firmware.
+request-rejected; the last three fields are booleans. Updated hosts accept legacy MSC status layout `2` but only enable
+force return after observing MSC status layout `3`. Older host software must be updated before using this firmware.
 
 MSC is disabled at boot. Enabling requires initialized SD media and no outstanding storage command
 or replies. If firmware has mounted the filesystem, enabling queues an unmount on the sole storage worker and keeps
@@ -179,7 +181,7 @@ Python and .NET expose `POST /api/msc/force-return` with `{"confirm_data_loss":t
 confirmation is rejected before HID delivery. WebHID sends the same `[3, 2]` command directly.
 There is no separate Force button. On Windows, Linux and macOS the host only delivers the HID command; Pico
 performs detach, ownership transfer and remount. No host OS eject/unmount command or Linux-specific permission
-is required. Older firmware without status layout `3` cannot use dashboard Disable and displays an update message.
+is required. Older firmware without MSC status layout `3` cannot use dashboard Disable and displays an update message.
 This command never synthesizes a successful SCSI eject.
 
 Firmware still rejects busy storage or a failed device-side sync. After a successful sync, it disconnects USB

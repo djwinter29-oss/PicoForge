@@ -9,6 +9,7 @@ import time
 from typing import Callable
 
 from .device import PicoForgeHid
+from .protocol import build_settings_command_report
 
 
 def _empty_snapshot() -> dict[str, object]:
@@ -22,6 +23,9 @@ def _empty_snapshot() -> dict[str, object]:
         "filesystem_format": None,
         "msc": None,
         "self_test": None,
+        "settings": None,
+        "settings_supported": False,
+        "settings_message": None,
         "updated_at": None,
     }
 
@@ -105,16 +109,46 @@ class DeviceMonitor:
             self._snapshot["msc"] = status
         return status
 
+    def set_settings(self, settings: dict[str, object]) -> dict[str, int]:
+        build_settings_command_report(settings)
+        with self._device_lock:
+            snapshot = self.snapshot()
+            if self._active_client is None:
+                raise RuntimeError("PicoForge HID is not connected")
+            if snapshot.get("settings_supported") is not True:
+                raise RuntimeError("Boot settings are unavailable on this firmware")
+            msc = snapshot.get("msc")
+            if not isinstance(msc, dict):
+                raise RuntimeError("Waiting for storage ownership status")
+            if msc.get("enabled") or msc.get("transition_pending"):
+                raise RuntimeError("Disable the USB drive before saving boot settings")
+            if isinstance(snapshot.get("self_test"), dict) and snapshot["self_test"].get("active"):
+                raise RuntimeError("Wait for the storage self-test to finish before saving boot settings")
+            saved = self._active_client.set_settings(settings)
+            with self._lock:
+                self._snapshot.update(settings=saved, settings_message="Saved. Changes take effect after reboot.")
+            return saved
+
     def _run(self) -> None:
         while not self._stop.is_set():
             client = None
             try:
                 client = self._client_factory()
                 hardware = client.read_info()
+                try:
+                    settings = client.read_settings()
+                    settings_message = None
+                except (OSError, RuntimeError, ValueError) as error:
+                    settings = None
+                    settings_message = f"Boot settings unavailable: {error}"
                 with self._device_lock:
                     self._active_client = client
                 with self._lock:
-                    self._snapshot = {**_empty_snapshot(), "connected": True, "hardware": hardware}
+                    self._snapshot = {
+                        **_empty_snapshot(), "connected": True, "hardware": hardware,
+                        "settings": settings, "settings_supported": settings is not None,
+                        "settings_message": settings_message,
+                    }
                 while not self._stop.is_set():
                     with self._device_lock:
                         item = client.read_input_report(timeout_ms=250)

@@ -318,7 +318,7 @@ target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
 
 add_executable(pico_forge
     src/main.c
-    src/integration/freertos/runtime_stats.c
+    src/app/runtime_stats.c
     src/integration/usb/dcd_guard.c
     src/app/usb/usb_descriptors.c
     src/app/usb/usb_hid.c

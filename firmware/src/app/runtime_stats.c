@@ -14,29 +14,35 @@ extern char __scratch_y_start__[], __scratch_y_end__[];
 extern char __StackTop[], __StackBottom[], __StackOneTop[], __StackOneBottom[];
 
 static uint64_t previous_time; /**< Last interval boundary in microseconds. */
-static uint64_t previous_idle; /**< Cumulative idle time at the last boundary. */
+static uint64_t previous_idle[PF_RUNTIME_CORE_COUNT]; /**< Per-core idle time at the last boundary. */
 static bool sampled; /**< Whether an interval baseline exists. */
-static uint16_t cpu_usage = UINT16_MAX; /**< Cached interval result; unavailable until first interval. */
+static uint16_t cpu_usage[PF_RUNTIME_CORE_COUNT] = {UINT16_MAX, UINT16_MAX}; /**< Cached per-core interval results. */
 
 void pf_runtime_stats_read(pf_runtime_stats_t *stats)
 {
     configASSERT(stats != NULL);
     taskENTER_CRITICAL();
     uint64_t now = time_us_64();
-    uint64_t idle = ulTaskGetIdleRunTimeCounter();
     if (sampled && now - previous_time >= 250000u) {
-        uint64_t capacity = (now - previous_time) * configNUMBER_OF_CORES;
-        uint64_t idle_elapsed = idle - previous_idle;
-        /* Wall and kernel idle timestamps are adjacent, not simultaneous; saturate sampling skew at idle. */
-        cpu_usage = idle_elapsed >= capacity ? 0u :
-            (uint16_t)(((capacity - idle_elapsed) * 10000u) / capacity);
+        uint64_t elapsed = now - previous_time;
+        for (unsigned core = 0u; core < PF_RUNTIME_CORE_COUNT; ++core) {
+            uint64_t idle = ulTaskGetRunTimeCounter(xTaskGetIdleTaskHandleForCore((BaseType_t)core));
+            uint64_t idle_elapsed = idle - previous_idle[core];
+            /* Adjacent wall/idle samples can skew slightly; saturate at idle instead of underflowing. */
+            cpu_usage[core] = idle_elapsed >= elapsed ? 0u :
+                (uint16_t)(((elapsed - idle_elapsed) * 10000u) / elapsed);
+        }
     }
     if (!sampled || now - previous_time >= 250000u) {
         previous_time = now;
-        previous_idle = idle;
+        for (unsigned core = 0u; core < PF_RUNTIME_CORE_COUNT; ++core) {
+            previous_idle[core] = ulTaskGetRunTimeCounter(xTaskGetIdleTaskHandleForCore((BaseType_t)core));
+        }
         sampled = true;
     }
-    stats->cpu_usage_basis_points = cpu_usage;
+    for (unsigned core = 0u; core < PF_RUNTIME_CORE_COUNT; ++core) {
+        stats->cpu_usage_basis_points[core] = cpu_usage[core];
+    }
     taskEXIT_CRITICAL();
     stats->ram_total_bytes = SRAM_END - SRAM_BASE;
     stats->ram_used_bytes = (uintptr_t)__end__ - SRAM_BASE +

@@ -14,7 +14,7 @@ export const SELF_TEST_REPORT_ID = 6;
 export const FILESYSTEM_REPORT_ID = 7;
 export const SETTINGS_REPORT_ID = 8;
 const INFO_PAYLOAD_SIZE = 42;
-const STATUS_PAYLOAD_SIZE = 23;
+const STATUS_PAYLOAD_SIZE = 25;
 const MEMORY_PAYLOAD_SIZE = 29;
 const MSC_STATUS_SIZE = 4;
 const FILESYSTEM_PAYLOAD_SIZE = 3;
@@ -29,7 +29,7 @@ function asView(report) {
 function inputPayload(reportId, report) {
   const view = asView(report);
   const size = ({
-    [STATUS_REPORT_ID]: view.byteLength && view.getUint8(0) === 2 ? 13 : STATUS_PAYLOAD_SIZE,
+    [STATUS_REPORT_ID]: STATUS_PAYLOAD_SIZE,
     [MEMORY_REPORT_ID]: MEMORY_PAYLOAD_SIZE,
     [MSC_COMMAND_REPORT_ID]: MSC_STATUS_SIZE,
     [SELF_TEST_REPORT_ID]: 32,
@@ -123,24 +123,25 @@ export function decodeInfoReport(report) {
 export function decodeStatusReport(reportId, report) {
   if (reportId !== STATUS_REPORT_ID) throw new Error(`Unexpected HID status report ID ${reportId}`);
   const view = asView(report);
-  if (view.byteLength < 13) throw new Error("Unexpected HID status report size");
+  if (view.byteLength < STATUS_PAYLOAD_SIZE) throw new Error("Unexpected HID status report size");
   const version = view.getUint8(0);
-  if (version !== 2 && version !== 3) throw new Error(`Unsupported HID status report version ${version}`);
-  const size = version === 3 ? STATUS_PAYLOAD_SIZE : 13;
+  if (version !== 1) throw new Error(`Unsupported HID status report version ${version}`);
+  const size = STATUS_PAYLOAD_SIZE;
   if (view.byteLength < size) throw new Error("Unexpected HID status report size");
   for (let index = size; index < view.byteLength; index++) {
     if (view.getUint8(index) !== 0) throw new Error("Unexpected HID status report padding");
   }
   const flags = view.getUint8(10);
-  let cpuUsage = null, ramUsed = null, ramTotal = null;
-  if (version === 3) {
-    cpuUsage = view.getUint16(13, true);
-    ramUsed = view.getUint32(15, true);
-    ramTotal = view.getUint32(19, true);
-    if (cpuUsage > 10000 && cpuUsage !== 0xffff) throw new Error("Invalid CPU usage in HID status report");
-    if (ramTotal === 0 || ramUsed > ramTotal) throw new Error("Invalid RAM usage in HID status report");
-    if (cpuUsage === 0xffff) cpuUsage = null;
+  let cpuCore0 = view.getUint16(13, true);
+  let cpuCore1 = view.getUint16(15, true);
+  const ramUsed = view.getUint32(17, true);
+  const ramTotal = view.getUint32(21, true);
+  if ([cpuCore0, cpuCore1].some(cpu => cpu > 10000 && cpu !== 0xffff)) {
+    throw new Error("Invalid per-core CPU usage in HID status report");
   }
+  if (ramTotal === 0 || ramUsed > ramTotal) throw new Error("Invalid RAM usage in HID status report");
+  cpuCore0 = cpuCore0 === 0xffff ? null : cpuCore0;
+  cpuCore1 = cpuCore1 === 0xffff ? null : cpuCore1;
   if ((flags & ~0x1f) !== 0) throw new Error("Unknown HID status flags");
   const ledAvailable = Boolean(flags & 0x08);
   const ledOn = Boolean(flags & 0x10);
@@ -159,7 +160,8 @@ export function decodeStatusReport(reportId, report) {
     temperature_centidegrees: temperatureValid ? view.getInt16(11, true) : null,
     led_available: ledAvailable,
     led_on: ledOn,
-    cpu_usage_basis_points: cpuUsage,
+    cpu_usage_core0_basis_points: cpuCore0,
+    cpu_usage_core1_basis_points: cpuCore1,
     ram_used_bytes: ramUsed,
     ram_total_bytes: ramTotal,
   };

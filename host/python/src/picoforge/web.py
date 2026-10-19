@@ -9,7 +9,7 @@ from typing import Any
 from flask import Flask, jsonify, request, send_from_directory
 
 from .monitor import DeviceMonitor
-from .protocol import build_self_test_command_report
+from .protocol import build_self_test_command_report, build_settings_command_report
 
 
 def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flask:
@@ -65,6 +65,24 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         except RuntimeError as error:
             return jsonify({"error": str(error)}), 409
         except OSError as error:
+            return jsonify({"error": str(error)}), 503
+
+    @app.post("/api/settings")
+    def set_settings():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Expected boot settings JSON"}), 400
+        settings = {key: payload.get(key) for key in
+                    ("system_clock_mhz", "sdio_bus_mhz", "spi_bus_mhz")}
+        try:
+            build_settings_command_report(settings)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        try:
+            return jsonify({"settings": dashboard.set_settings(settings)}), 200
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError) as error:
             return jsonify({"error": str(error)}), 503
 
     @app.post("/api/msc")

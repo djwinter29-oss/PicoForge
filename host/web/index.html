@@ -34,7 +34,43 @@
       <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
       <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
       <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
-      <div class="metric"><span>USB serial</span><strong id="serial">--</strong></div>
+      <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
+    </section>
+
+    <section class="runtime" aria-labelledby="settings-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">BOOT CONFIGURATION</p>
+          <h2 id="settings-title">Device settings</h2>
+        </div>
+        <button class="button" id="settings-save" type="button" disabled>Save for next boot</button>
+      </div>
+      <div class="settings-controls">
+        <label for="settings-clock">System clock
+          <select id="settings-clock" disabled>
+            <option value="0">Build default</option>
+            <option value="150">150 MHz</option>
+            <option value="200">200 MHz</option>
+            <option value="250">250 MHz</option>
+          </select>
+        </label>
+        <label for="settings-sdio">SDIO bus
+          <select id="settings-sdio" disabled>
+            <option value="0">Default Speed, 25 MHz</option>
+            <option value="50">High-Speed, up to 50 MHz</option>
+          </select>
+        </label>
+        <label for="settings-spi">SPI bus ceiling
+          <select id="settings-spi" disabled>
+            <option value="0">Board default</option>
+            <option value="25">25 MHz</option>
+            <option value="50">50 MHz</option>
+          </select>
+        </label>
+      </div>
+      <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
+        Waiting for a PicoForge connection.
+      </p>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">
@@ -44,18 +80,26 @@
           <h2 id="runtime-title">Runtime status</h2>
         </div>
         <div class="actions">
-          <p class="sample-time" id="sample-time">Waiting for HID report</p>
-          <button class="button" id="led-control" type="button" disabled>Set LED</button>
+          <button class="button button-led" id="led-control" type="button" data-state="unknown"
+            aria-pressed="false" title="Onboard LED unavailable" disabled>LED: --</button>
         </div>
       </div>
       <dl class="runtime-grid">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
-        <div><dt>CPU usage</dt><dd id="cpu-usage" title="Non-idle task time over the reporting interval">--</dd></div>
-        <div><dt>RAM reserved</dt><dd id="ram-usage" title="Static data and reserved stacks, not live stack occupancy">--</dd></div>
+        <div>
+          <dt>CPU Usage (Core 1 / Core 2)</dt>
+          <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
+        </div>
+        <div>
+          <dt>SRAM (reserved / total)</dt>
+          <dd>
+            <span id="ram-reserved" title="Static data and reserved core stacks; not live heap or stack usage">--</span> /
+            <span id="ram-total" title="Physical SRAM capacity; excludes external RAM">--</span>
+          </dd>
+        </div>
         <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>SD presence</dt><dd id="card-presence">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
-        <div><dt>Onboard LED</dt><dd id="led-state">--</dd></div>
       </dl>
     </section>
 
@@ -63,10 +107,11 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">STORAGE REPORT</p>
-          <h2 id="memory-title">Memory component</h2>
+          <h2 id="memory-title">SD Card</h2>
         </div>
-        <p class="sample-time">Updated with reports 3 and 7</p>
+        <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
+      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
       <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
         <div><dt>Memory state</dt><dd id="memory-state">--</dd></div>
@@ -76,21 +121,18 @@
         <div><dt>Filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
         <div><dt>Manufacturer</dt><dd id="memory-manufacturer">--</dd></div>
         <div><dt>Product</dt><dd id="memory-product">--</dd></div>
-        <div><dt>Device serial</dt><dd id="memory-serial">--</dd></div>
+        <div><dt>Serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
     </section>
 
     <section class="runtime self-test" aria-labelledby="self-test-title">
-      <div class="section-heading">
+      <div class="section-heading self-test-heading">
         <h2 id="self-test-title">Memory Tests</h2>
-        <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
-      </div>
-      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
-      <p class="sample-time">Writes and verifies /PFTEST.BIN, replacing any existing file at that path.</p>
-      <div class="self-test-controls">
-        <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
-        <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
-        <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
+        <div class="self-test-controls">
+          <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
+          <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
+          <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
+        </div>
       </div>
       <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
       <dl class="runtime-grid">

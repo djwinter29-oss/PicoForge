@@ -5,6 +5,7 @@ internal interface IDeviceMonitor
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
     MscStatusResponse? SetMsc(bool enabled, bool force = false);
+    BootSettingsResponse? SetSettings(BootSettingsResponse settings);
     bool SetSelfTest(string action, uint sizeMib);
 }
 
@@ -13,6 +14,8 @@ internal interface IHidCommands
 {
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
+    BootSettingsResponse? ReadSettings();
+    BootSettingsResponse SetSettings(BootSettingsResponse settings);
     void SetSelfTest(string action, uint sizeMib);
 }
 
@@ -72,6 +75,28 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         }
     }
 
+    public BootSettingsResponse? SetSettings(BootSettingsResponse settings)
+    {
+        HidProtocol.BuildSettingsReport(settings);
+        lock (deviceGate)
+        {
+            IHidCommands? client;
+            lock (gate)
+            {
+                if (activeClient is null || snapshot.Settings is null || snapshot.Msc is null ||
+                    snapshot.Msc.Enabled || snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true)
+                    return null;
+                client = activeClient;
+            }
+            var saved = client.SetSettings(settings);
+            lock (gate)
+            {
+                snapshot = snapshot with { Settings = saved };
+                return saved;
+            }
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -81,11 +106,12 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 client = new PicoForgeHid();
                 var hardware = client.ReadInfo();
+                var settings = client.ReadSettings();
                 lock (deviceGate)
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, null, hardware, null, null, null, null, null);
+                    snapshot = new(true, null, hardware, null, null, null, null, null, Settings: settings);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
@@ -103,7 +129,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                                 report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
                                 memory ?? snapshot.Memory, msc ?? snapshot.Msc,
                                 report?.SelfTest ?? snapshot.SelfTest,
-                                report?.FilesystemFormat ?? snapshot.FilesystemFormat);
+                                report?.FilesystemFormat ?? snapshot.FilesystemFormat, snapshot.Settings);
                         }
                     }
                 }

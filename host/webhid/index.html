@@ -38,29 +38,7 @@
       <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
       <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
       <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
-      <div class="metric"><span>USB serial</span><strong id="serial">--</strong></div>
-    </section>
-
-    <section class="runtime" aria-labelledby="runtime-title">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">LIVE REPORT</p>
-          <h2 id="runtime-title">Runtime status</h2>
-        </div>
-        <div class="actions">
-          <p class="sample-time" id="sample-time">Waiting for HID report</p>
-          <button class="button" id="led-control" type="button" disabled>Set LED</button>
-        </div>
-      </div>
-      <dl class="runtime-grid">
-        <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
-        <div><dt>CPU usage</dt><dd id="cpu-usage" title="Non-idle task time over the reporting interval">--</dd></div>
-        <div><dt>RAM reserved</dt><dd id="ram-usage" title="Static data and reserved stacks, not live stack occupancy">--</dd></div>
-        <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
-        <div><dt>SD presence</dt><dd id="card-presence">--</dd></div>
-        <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
-        <div><dt>Onboard LED</dt><dd id="led-state">--</dd></div>
-      </dl>
+      <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
     </section>
 
     <section class="runtime" aria-labelledby="settings-title">
@@ -99,14 +77,45 @@
       </p>
     </section>
 
+    <section class="runtime" aria-labelledby="runtime-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">LIVE REPORT</p>
+          <h2 id="runtime-title">Runtime status</h2>
+        </div>
+        <div class="actions">
+          <button class="button button-led" id="led-control" type="button" data-state="unknown"
+            aria-pressed="false" title="Onboard LED unavailable" disabled>LED: --</button>
+        </div>
+      </div>
+      <dl class="runtime-grid">
+        <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
+        <div>
+          <dt>CPU Usage (Core 1 / Core 2)</dt>
+          <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
+        </div>
+        <div>
+          <dt>SRAM (reserved / total)</dt>
+          <dd>
+            <span id="ram-reserved" title="Static data and reserved core stacks; not live heap or stack usage">--</span> /
+            <span id="ram-total" title="Physical SRAM capacity; excludes external RAM">--</span>
+          </dd>
+        </div>
+        <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
+        <div><dt>SD presence</dt><dd id="card-presence">--</dd></div>
+        <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
+      </dl>
+    </section>
+
     <section class="runtime" aria-labelledby="memory-title">
       <div class="section-heading">
         <div>
           <p class="eyebrow">STORAGE REPORT</p>
-          <h2 id="memory-title">Memory component</h2>
+          <h2 id="memory-title">SD Card</h2>
         </div>
-        <p class="sample-time">Updated with reports 3 and 7</p>
+        <button class="button" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
+      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
       <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
         <div><dt>Memory state</dt><dd id="memory-state">--</dd></div>
@@ -116,21 +125,18 @@
         <div><dt>Filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
         <div><dt>Manufacturer</dt><dd id="memory-manufacturer">--</dd></div>
         <div><dt>Product</dt><dd id="memory-product">--</dd></div>
-        <div><dt>Device serial</dt><dd id="memory-serial">--</dd></div>
+        <div><dt>Serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
     </section>
 
     <section class="runtime self-test" aria-labelledby="self-test-title">
-      <div class="section-heading">
+      <div class="section-heading self-test-heading">
         <h2 id="self-test-title">Memory Tests</h2>
-        <button class="button" id="msc-control" type="button" disabled>Enable USB drive</button>
-      </div>
-      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
-      <p class="sample-time">Writes and verifies /PFTEST.BIN, replacing any existing file at that path.</p>
-      <div class="self-test-controls">
-        <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
-        <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
-        <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
+        <div class="self-test-controls">
+          <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
+          <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
+          <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
+        </div>
       </div>
       <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
       <dl class="runtime-grid">

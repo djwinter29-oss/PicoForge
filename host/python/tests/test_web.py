@@ -15,7 +15,7 @@ class FakeMonitor:
                 "serial_number": "0123456789abcdef",
             },
             "runtime": {
-                "version": 3,
+                "version": 1,
                 "sequence": 7,
                 "uptime_ms": 42_000,
                 "system_clock_hz": 125_000_000,
@@ -25,7 +25,8 @@ class FakeMonitor:
                 "temperature_centidegrees": 2345,
                 "led_available": True,
                 "led_on": False,
-                "cpu_usage_basis_points": 1234,
+                "cpu_usage_core0_basis_points": 1234,
+                "cpu_usage_core1_basis_points": 5678,
                 "ram_used_bytes": 65536,
                 "ram_total_bytes": 532480,
             },
@@ -36,6 +37,9 @@ class FakeMonitor:
                 "led_on": False,
             },
             "msc": {"enabled": False, "transition_pending": False, "request_rejected": False},
+            "settings": {"system_clock_mhz": 0, "sdio_bus_mhz": 0, "spi_bus_mhz": 0},
+            "settings_supported": True,
+            "settings_message": None,
             "updated_at": "2026-10-10T12:00:00+00:00",
         }
 
@@ -46,6 +50,10 @@ class FakeMonitor:
     def set_msc(self, enabled, *, force=False):
         self.last_msc = (enabled, force)
         return {"enabled": enabled, "transition_pending": True, "request_rejected": False}
+
+    def set_settings(self, settings):
+        self.last_settings = settings
+        return settings
 
     def set_self_test(self, action, size_mib):
         self.last_self_test = (action, size_mib)
@@ -59,7 +67,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["hardware"]["product_name"], "PicoForge")
         self.assertEqual(response.json["runtime"]["uptime_ms"], 42_000)
-        self.assertEqual(response.json["runtime"]["cpu_usage_basis_points"], 1234)
+        self.assertEqual(response.json["runtime"]["cpu_usage_core0_basis_points"], 1234)
+        self.assertEqual(response.json["runtime"]["cpu_usage_core1_basis_points"], 5678)
         self.assertEqual(response.json["runtime"]["ram_used_bytes"], 65536)
         self.assertEqual(response.json["runtime"]["ram_total_bytes"], 532480)
         self.assertEqual(response.json["board_status"]["temperature_centidegrees"], 2345)
@@ -81,6 +90,35 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["board_status"]["led_on"])
+
+    def test_settings_endpoint_validates_and_returns_confirmed_values(self):
+        monitor = FakeMonitor()
+        client = create_app(monitor).test_client()
+        settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 25}
+        for invalid in (
+            {**settings, "system_clock_mhz": 100},
+            {**settings, "sdio_bus_mhz": 40},
+            {**settings, "spi_bus_mhz": True},
+            {"system_clock_mhz": 200},
+        ):
+            response = client.post("/api/settings", json=invalid, base_url="http://127.0.0.1")
+            self.assertEqual(response.status_code, 400)
+        response = client.post("/api/settings", json=settings, base_url="http://127.0.0.1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["settings"], settings)
+        self.assertEqual(monitor.last_settings, settings)
+
+    def test_settings_endpoint_reports_invalid_device_readback_as_service_error(self):
+        class InvalidReadbackMonitor(FakeMonitor):
+            def set_settings(self, settings):
+                raise ValueError("invalid HID settings report")
+
+        response = create_app(InvalidReadbackMonitor()).test_client().post(
+            "/api/settings",
+            json={"system_clock_mhz": 150, "sdio_bus_mhz": 0, "spi_bus_mhz": 0},
+            base_url="http://127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 503)
 
     def test_status_snapshot_includes_board_telemetry(self):
         response = create_app(FakeMonitor()).test_client().get(

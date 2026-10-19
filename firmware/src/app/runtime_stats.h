@@ -1,14 +1,16 @@
 /** @file
- * @brief Single-core FreeRTOS runtime and SDK-linked SRAM reservation telemetry.
+ * @brief Per-core FreeRTOS runtime and SDK-linked SRAM reservation telemetry.
  */
 #ifndef PF_RUNTIME_STATS_H
 #define PF_RUNTIME_STATS_H
 
 #include <stdint.h>
 
-/** CPU interval estimate and static SRAM reservation; no live heap or stack occupancy. */
+#define PF_RUNTIME_CORE_COUNT 2u
+
+/** Per-core CPU interval estimates and static SRAM reservation; no live heap or stack occupancy. */
 typedef struct {
-    uint16_t cpu_usage_basis_points; /**< Mean non-idle fraction across cores, 0..10000; UINT16_MAX initially. */
+    uint16_t cpu_usage_basis_points[PF_RUNTIME_CORE_COUNT]; /**< Per-core non-idle fraction, 0..10000; UINT16_MAX until sampled. */
     uint32_t ram_used_bytes; /**< Linked main/scratch data plus reserved core stacks; task stacks are in data. */
     uint32_t ram_total_bytes; /**< SDK-selected on-chip SRAM capacity, excluding external RAM. */
 } pf_runtime_stats_t;

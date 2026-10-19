@@ -12,7 +12,7 @@
 #include "usb_msc.h"
 #include "app/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
-#include "integration/freertos/runtime_stats.h"
+#include "app/runtime_stats.h"
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {
@@ -38,7 +38,8 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
     report->system_clock_hz = pf_system_clock_hz();
     pf_runtime_stats_t stats;
     pf_runtime_stats_read(&stats);
-    report->cpu_usage_basis_points = stats.cpu_usage_basis_points;
+    report->cpu_usage_core0_basis_points = stats.cpu_usage_basis_points[0];
+    report->cpu_usage_core1_basis_points = stats.cpu_usage_basis_points[1];
     report->ram_used_bytes = stats.ram_used_bytes;
     report->ram_total_bytes = stats.ram_total_bytes;
     if (tud_mounted()) {

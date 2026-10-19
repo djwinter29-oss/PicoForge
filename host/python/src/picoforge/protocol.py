@@ -11,13 +11,16 @@ LED_COMMAND_REPORT_ID = 4
 MSC_COMMAND_REPORT_ID = 5
 SELF_TEST_REPORT_ID = 6
 FILESYSTEM_REPORT_ID = 7
+SETTINGS_REPORT_ID = 8
 SELF_TEST_PAYLOAD_SIZE = 32
 SELF_TEST_INPUT_SIZE = SELF_TEST_PAYLOAD_SIZE + 1
 FILESYSTEM_PAYLOAD_SIZE = 3
 FILESYSTEM_INPUT_SIZE = FILESYSTEM_PAYLOAD_SIZE + 1
+SETTINGS_PAYLOAD_SIZE = 5
+SETTINGS_FEATURE_SIZE = SETTINGS_PAYLOAD_SIZE + 1
 REPORT_VERSION = 2
 INFO_PAYLOAD_SIZE = 42
-STATUS_PAYLOAD_SIZE = 23
+STATUS_PAYLOAD_SIZE = 25
 MEMORY_PAYLOAD_SIZE = 29
 PRODUCT_NAME_SIZE = 20
 SERIAL_NUMBER_SIZE = 16
@@ -51,6 +54,38 @@ def _feature_payload(report: bytes | bytearray | list[int], report_id: int, size
     return payload
 
 
+def parse_settings_report(report: bytes | bytearray | list[int]) -> dict[str, int]:
+    """Decode persisted values from HID Feature report 8."""
+    payload = _feature_payload(report, SETTINGS_REPORT_ID, SETTINGS_PAYLOAD_SIZE)
+    system_clock_mhz = struct.unpack_from("<H", payload, 1)[0]
+    settings = {
+        "system_clock_mhz": system_clock_mhz,
+        "sdio_bus_mhz": payload[3],
+        "spi_bus_mhz": payload[4],
+    }
+    _validate_settings(settings)
+    if payload[0] != 1:
+        raise ValueError("unsupported HID settings report version")
+    return settings
+
+
+def _validate_settings(settings: dict[str, object]) -> None:
+    values = (settings.get("system_clock_mhz"), settings.get("sdio_bus_mhz"), settings.get("spi_bus_mhz"))
+    if (any(type(value) is not int for value in values)
+        or values[0] not in (0, 150, 200, 250)
+        or values[1] not in (0, 25, 50)
+        or values[2] not in (0, 25, 50)):
+        raise ValueError("unsupported boot settings value")
+
+
+def build_settings_command_report(settings: dict[str, object]) -> bytes:
+    """Build report-ID-prefixed HID Feature report 8 for persisted settings."""
+    _validate_settings(settings)
+    return bytes((SETTINGS_REPORT_ID, 1)) + struct.pack(
+        "<HBB", settings["system_clock_mhz"], settings["sdio_bus_mhz"], settings["spi_bus_mhz"]
+    )
+
+
 def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
     """Decode stable product, MCU, and USB serial identity from Feature report 1."""
     payload = _feature_payload(report, INFO_REPORT_ID, INFO_PAYLOAD_SIZE)
@@ -79,30 +114,23 @@ def parse_info_report(report: bytes | bytearray | list[int]) -> dict[str, object
 
 
 def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
-    """Decode a report-ID-prefixed periodic HID Input report."""
+    """Decode the v1 report-ID-prefixed runtime HID Input report."""
     data = bytes(report)
-    if len(data) < 14 or data[0] != STATUS_REPORT_ID:
+    if len(data) < STATUS_INPUT_SIZE or data[0] != STATUS_REPORT_ID:
         raise ValueError("unexpected HID status report length or ID")
-    version = data[1]
-    if version not in (2, 3):
-        raise ValueError(f"unsupported HID status report version {version}")
-    size = STATUS_INPUT_SIZE if version == 3 else 14
-    if len(data) < size:
-        raise ValueError("unexpected HID status report length")
-    payload = data[1:size]
-    if any(data[size:]):
+    payload = data[1:STATUS_INPUT_SIZE]
+    if any(data[STATUS_INPUT_SIZE:]):
         raise ValueError("unexpected HID status report padding")
     version, sequence, uptime_ms, system_clock_hz, flags, temperature_centidegrees = struct.unpack(
         "<BBIIBh", payload[:13]
     )
-    cpu_usage = ram_used = ram_total = None
-    if version == 3:
-        cpu_usage, ram_used, ram_total = struct.unpack("<HII", payload[13:])
-        if cpu_usage > 10000 and cpu_usage != 0xffff:
-            raise ValueError("invalid CPU usage in HID status report")
-        if ram_total == 0 or ram_used > ram_total:
-            raise ValueError("invalid RAM usage in HID status report")
-        cpu_usage = None if cpu_usage == 0xffff else cpu_usage
+    if version != 1:
+        raise ValueError(f"unsupported HID status report version {version}")
+    cpu_core0, cpu_core1, ram_used, ram_total = struct.unpack("<HHII", payload[13:])
+    if any(cpu > 10000 and cpu != 0xffff for cpu in (cpu_core0, cpu_core1)):
+        raise ValueError("invalid per-core CPU usage in HID status report")
+    if ram_total == 0 or ram_used > ram_total:
+        raise ValueError("invalid RAM usage in HID status report")
     if system_clock_hz == 0:
         raise ValueError("invalid system clock in HID status report")
     if flags & ~STATUS_KNOWN_FLAGS:
@@ -123,7 +151,8 @@ def parse_status_report(report: bytes | bytearray | list[int]) -> dict[str, obje
         "temperature_centidegrees": temperature_centidegrees if temperature_valid else None,
         "led_available": led_available,
         "led_on": led_on,
-        "cpu_usage_basis_points": cpu_usage,
+        "cpu_usage_core0_basis_points": None if cpu_core0 == 0xffff else cpu_core0,
+        "cpu_usage_core1_basis_points": None if cpu_core1 == 0xffff else cpu_core1,
         "ram_used_bytes": ram_used,
         "ram_total_bytes": ram_total,
     }

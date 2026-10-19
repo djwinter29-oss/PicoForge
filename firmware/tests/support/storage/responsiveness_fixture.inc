@@ -93,7 +93,7 @@ uint32_t pf_system_clock_hz(void) { return 125000000u; }
 uint32_t pf_system_uptime_ms(void) { return 123u; }
 void pf_runtime_stats_read(pf_runtime_stats_t *stats)
 {
-    *stats = (pf_runtime_stats_t){.cpu_usage_basis_points = 1234u,
+    *stats = (pf_runtime_stats_t){.cpu_usage_basis_points = {1234u, 5678u},
         .ram_used_bytes = 65536u, .ram_total_bytes = 532480u};
 }
 bool tud_mounted(void) { return true; }

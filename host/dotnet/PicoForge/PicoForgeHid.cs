@@ -32,6 +32,22 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         return HidProtocol.ParseInfoReport(report);
     }
 
+    public BootSettingsResponse? ReadSettings()
+    {
+        var report = new byte[Math.Max(HidProtocol.SettingsFeatureSize, device.GetMaxFeatureReportLength() + 1)];
+        report[0] = HidProtocol.SettingsReportId;
+        try
+        {
+            stream.GetFeature(report);
+            return HidProtocol.ParseSettingsReport(report);
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException
+            or NotSupportedException or TimeoutException)
+        {
+            return null;
+        }
+    }
+
     public RuntimeStatusResponse? ReadStatus()
     {
         var report = new byte[Math.Max(HidProtocol.StatusInputSize, device.GetMaxInputReportLength())];
@@ -77,6 +93,14 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     public void SetMsc(bool enabled, bool force = false) =>
         stream.SetFeature(HidProtocol.BuildMscCommandReport(enabled, force));
+    public BootSettingsResponse SetSettings(BootSettingsResponse settings)
+    {
+        stream.SetFeature(HidProtocol.BuildSettingsReport(settings));
+        var saved = ReadSettings();
+        if (saved != settings)
+            throw new InvalidOperationException("Firmware did not confirm the selected boot settings");
+        return saved;
+    }
     public void SetSelfTest(string action, uint sizeMib) => stream.SetFeature(HidProtocol.BuildSelfTestCommandReport(action, sizeMib));
 
     public void Dispose() => stream.Dispose();

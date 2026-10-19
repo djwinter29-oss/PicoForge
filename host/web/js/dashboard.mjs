@@ -23,13 +23,18 @@ export function renderStatus(snapshot) {
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
   document.querySelector("#identity-clock").textContent = clock;
-  document.querySelector("#cpu-usage").textContent = runtime?.cpu_usage_basis_points == null
-    ? "--" : `${(runtime.cpu_usage_basis_points / 100).toFixed(1)}%`;
+    renderSettings(snapshot);
+  document.querySelector("#cpu-usage-core0").textContent = runtime?.cpu_usage_core0_basis_points == null
+    ? "--" : `${(runtime.cpu_usage_core0_basis_points / 100).toFixed(1)}%`;
+  document.querySelector("#cpu-usage-core1").textContent = runtime?.cpu_usage_core1_basis_points == null
+    ? "--" : `${(runtime.cpu_usage_core1_basis_points / 100).toFixed(1)}%`;
   const ramUsed = runtime?.ram_used_bytes;
   const ramTotal = runtime?.ram_total_bytes;
-  document.querySelector("#ram-usage").textContent = runtime?.ram_total_bytes
-    ? `${(ramUsed / 1024).toFixed(1)} / ${(ramTotal / 1024).toFixed(0)} KiB ` +
-      `(${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
+  document.querySelector("#ram-reserved").textContent = runtime?.ram_total_bytes
+    ? `${(ramUsed / 1024).toFixed(1)} KiB (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
+    : "--";
+  document.querySelector("#ram-total").textContent = runtime?.ram_total_bytes
+    ? `${(ramTotal / 1024).toFixed(0)} KiB`
     : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
@@ -41,13 +46,17 @@ export function renderStatus(snapshot) {
   const board = snapshot.board_status;
   document.querySelector("#temperature").textContent = board?.temperature_valid
     ? `${(board.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
-  document.querySelector("#led-state").textContent = board?.led_available
-    ? (board.led_on ? "On" : "Off") : "Unavailable";
-  document.querySelector("#led-control").textContent = board?.led_on ? "Turn LED off" : "Turn LED on";
+  const ledControl = document.querySelector("#led-control");
+  const ledOn = board?.led_available ? Boolean(board.led_on) : null;
+  ledControl.textContent = ledOn === null ? "LED: --" : `LED: ${ledOn ? "On" : "Off"}`;
+  ledControl.dataset.state = ledOn === null ? "unknown" : ledOn ? "on" : "off";
+  ledControl.setAttribute("aria-pressed", String(ledOn === true));
+  ledControl.title = ledOn === null ? "Onboard LED unavailable"
+    : `Turn onboard LED ${ledOn ? "off" : "on"}`;
   const msc = snapshot.msc;
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Disable USB drive" : "Enable USB drive";
-  mscControl.disabled = !connected || !msc || Boolean(msc.transition_pending)
+  mscControl.disabled = snapshot.settings_busy || !connected || !msc || Boolean(msc.transition_pending)
     || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
     || Boolean(msc?.enabled && !msc.force_return_supported);
   document.querySelector("#msc-note").textContent = msc?.enabled && !msc.force_return_supported
@@ -61,13 +70,38 @@ export function renderStatus(snapshot) {
   renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
 
-  const updatedAt = snapshot.updated_at ? new Date(snapshot.updated_at).toLocaleTimeString() : null;
-  document.querySelector("#sample-time").textContent = updatedAt ? `Last report ${updatedAt}` : "Waiting for HID report";
   const message = snapshot.error ?? (runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Connect a PicoForge board");
   const statusLine = document.querySelector(".status-line");
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = message;
+}
+
+function renderSettings(snapshot) {
+  const settings = snapshot.settings;
+  const supported = Boolean(snapshot.connected && snapshot.settings_supported && settings);
+  const msc = snapshot.msc;
+  const storageBusy = !msc || msc.enabled || msc.transition_pending
+    || snapshot.self_test?.active || snapshot.self_test_command_pending;
+  const ready = supported && !storageBusy;
+  if (settings && !snapshot.settings_dirty) {
+    document.querySelector("#settings-clock").value = String(settings.system_clock_mhz);
+    document.querySelector("#settings-sdio").value = String(settings.sdio_bus_mhz === 25 ? 0 : settings.sdio_bus_mhz);
+    document.querySelector("#settings-spi").value = String(settings.spi_bus_mhz);
+  }
+  for (const selector of ["#settings-clock", "#settings-sdio", "#settings-spi"]) {
+    document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
+  }
+  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty;
+  document.querySelector("#settings-note").textContent = snapshot.settings_message
+    || (!snapshot.connected ? "Waiting for a PicoForge connection."
+      : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
+        : !msc ? "Waiting for storage ownership status."
+          : msc.enabled || msc.transition_pending ? "Disable the USB drive before saving settings."
+            : snapshot.self_test?.active || snapshot.self_test_command_pending
+              ? "Wait for the storage test to finish before saving settings."
+              : snapshot.settings_dirty ? "Unsaved changes."
+                : "Changes take effect after reboot.");
 }
 
 function renderMemory(memory, filesystemFormat) {
@@ -79,7 +113,7 @@ function renderMemory(memory, filesystemFormat) {
       ? "No card detected. Check card insertion and the active-high DET connection on GP8."
       : memory.present && !memory.initialized
         ? "Card detected but not initialized; check UART logs and SD wiring."
-        : memory.initialized ? "Card metadata is available." : "Card presence has not been established.");
+        : memory.initialized ? "" : "Card presence has not been established.");
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
@@ -91,7 +125,7 @@ function renderMemory(memory, filesystemFormat) {
   set("#memory-product", manufacturer
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
-  set("#memory-serial", manufacturer ? `0x${manufacturer.serial_number.toString(16).padStart(8, "0")}` : "--");
+    set("#memory-serial", manufacturer ? manufacturer.serial_number.toString(16).padStart(8, "0") : "--");
 }
 
 function formatManufacturer(manufacturer) {

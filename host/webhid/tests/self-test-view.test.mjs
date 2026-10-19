@@ -76,7 +76,10 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
     const elements = new Map();
     const element = selector => {
       assert.notEqual(selector, "#memory-presence", "presence belongs in Live Report");
-      if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", valueAsNumber: 32, checked: false });
+      if (!elements.has(selector)) elements.set(selector, {
+        dataset: {}, textContent: "", valueAsNumber: 32, checked: false,
+        setAttribute(name, value) { this[name] = value; },
+      });
       return elements.get(selector);
     };
     const previous = globalThis.document;
@@ -95,7 +98,9 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
         presence_known: true, present: true, manufacturer } };
       render(snapshot);
       assert.equal(element("#card-presence").textContent, "Present");
+      assert.equal(element("#memory-note").textContent, "");
       assert.equal(element("#memory-manufacturer").textContent, "Kingston (0x41)");
+        assert.equal(element("#memory-serial").textContent, "00000001");
       assert.equal(element("#self-test-state").textContent, "Unavailable");
       snapshot.memory.present = false;
       render(snapshot);
@@ -123,38 +128,123 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
   });
 }
 
+test("shared dashboard preserves unsaved boot settings and blocks writes while storage is owned", () => {
+  const elements = new Map();
+  const element = selector => {
+    if (!elements.has(selector)) elements.set(selector, {
+      dataset: {}, textContent: "", value: "0", valueAsNumber: 32,
+      setAttribute(name, value) { this[name] = value; },
+    });
+    return elements.get(selector);
+  };
+  const previous = globalThis.document;
+  globalThis.document = { querySelector: element };
+  try {
+    const snapshot = {
+      connected: true,
+      settings_supported: true,
+      settings: { system_clock_mhz: 200, sdio_bus_mhz: 25, spi_bus_mhz: 50 },
+      msc: { enabled: false, transition_pending: false },
+      self_test: { active: false },
+    };
+    renderSharedStatus(snapshot);
+    assert.equal(element("#settings-clock").value, "200");
+    assert.equal(element("#settings-sdio").value, "0");
+    assert.equal(element("#settings-spi").value, "50");
+    assert.equal(element("#settings-clock").disabled, false);
+    assert.equal(element("#settings-save").disabled, true);
+
+    snapshot.settings_dirty = true;
+    element("#settings-clock").value = "250";
+    renderSharedStatus(snapshot);
+    assert.equal(element("#settings-clock").value, "250");
+    assert.equal(element("#settings-save").disabled, false);
+
+    snapshot.msc.enabled = true;
+    renderSharedStatus(snapshot);
+    assert.equal(element("#settings-clock").disabled, true);
+    assert.equal(element("#settings-save").disabled, true);
+    assert.match(element("#settings-note").textContent, /Disable the USB drive/);
+  } finally {
+    globalThis.document = previous;
+  }
+});
+
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
-  test(`${name} renders interval CPU and reserved RAM, including legacy and disconnected states`, () => {
+  test(`${name} reports LED state on the toggle control`, () => {
     const elements = new Map();
     const element = selector => {
-      assert.notEqual(selector, "#runtime-clock", "system clock is shown only in the identity row");
-      assert.notEqual(selector, "#sequence", "report sequence is protocol-only diagnostics");
-      if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", valueAsNumber: 32 });
+      if (!elements.has(selector)) elements.set(selector, {
+        dataset: {}, textContent: "", valueAsNumber: 32, setAttribute(name, value) { this[name] = value; },
+      });
       return elements.get(selector);
     };
     const previous = globalThis.document;
     globalThis.document = { querySelector: element };
     try {
-      const runtime = { system_clock_hz: 250_000_000, cpu_usage_basis_points: 1234,
+      const button = element("#led-control");
+      render({ connected: true, board_status: { led_available: true, led_on: false } });
+      assert.equal(button.textContent, "LED: Off");
+      assert.equal(button.dataset.state, "off");
+      assert.equal(button["aria-pressed"], "false");
+      assert.match(button.title, /Turn onboard LED on/);
+      render({ connected: true, board_status: { led_available: true, led_on: true } });
+      assert.equal(button.textContent, "LED: On");
+      assert.equal(button.dataset.state, "on");
+      assert.equal(button["aria-pressed"], "true");
+      assert.match(button.title, /Turn onboard LED off/);
+      render({ connected: true, board_status: { led_available: false, led_on: false } });
+      assert.equal(button.textContent, "LED: --");
+      assert.equal(button.dataset.state, "unknown");
+      assert.equal(button["aria-pressed"], "false");
+    } finally {
+      globalThis.document = previous;
+    }
+  });
+
+  test(`${name} renders interval CPU and reserved RAM, including legacy and disconnected states`, () => {
+    const elements = new Map();
+    const element = selector => {
+      assert.notEqual(selector, "#runtime-clock", "system clock is shown only in the identity row");
+      assert.notEqual(selector, "#sequence", "report sequence is protocol-only diagnostics");
+      if (!elements.has(selector)) elements.set(selector, {
+        dataset: {}, textContent: "", valueAsNumber: 32,
+        setAttribute(name, value) { this[name] = value; },
+      });
+      return elements.get(selector);
+    };
+    const previous = globalThis.document;
+    globalThis.document = { querySelector: element };
+    try {
+      const runtime = { system_clock_hz: 250_000_000,
+        cpu_usage_core0_basis_points: 1234, cpu_usage_core1_basis_points: 5678,
         ram_used_bytes: 65536, ram_total_bytes: 532480 };
       render({ connected: true, runtime });
       assert.equal(element("#identity-clock").textContent, "250 MHz");
-      assert.equal(element("#cpu-usage").textContent, "12.3%");
-      assert.equal(element("#ram-usage").textContent, "64.0 / 520 KiB (12.3%)");
+      assert.equal(element("#cpu-usage-core0").textContent, "12.3%");
+      assert.equal(element("#cpu-usage-core1").textContent, "56.8%");
+      assert.equal(element("#ram-reserved").textContent, "64.0 KiB (12.3%)");
+      assert.equal(element("#ram-total").textContent, "520 KiB");
       for (const cpu of [0, 10000]) {
-        runtime.cpu_usage_basis_points = cpu;
+        runtime.cpu_usage_core0_basis_points = cpu;
+        runtime.cpu_usage_core1_basis_points = cpu;
         render({ connected: true, runtime });
-        assert.equal(element("#cpu-usage").textContent, `${(cpu / 100).toFixed(1)}%`);
+        assert.equal(element("#cpu-usage-core0").textContent, `${(cpu / 100).toFixed(1)}%`);
+        assert.equal(element("#cpu-usage-core1").textContent, `${(cpu / 100).toFixed(1)}%`);
       }
-      runtime.cpu_usage_basis_points = null;
+      runtime.cpu_usage_core0_basis_points = null;
+      runtime.cpu_usage_core1_basis_points = null;
       render({ connected: true, runtime });
-      assert.equal(element("#cpu-usage").textContent, "--");
-      assert.match(element("#ram-usage").textContent, /520 KiB/);
+      assert.equal(element("#cpu-usage-core0").textContent, "--");
+      assert.equal(element("#cpu-usage-core1").textContent, "--");
+      assert.equal(element("#ram-total").textContent, "520 KiB");
       for (const snapshot of [{ connected: true, runtime: { system_clock_hz: 125_000_000 } },
         { connected: false }]) {
         render(snapshot);
-        assert.equal(element("#cpu-usage").textContent, "--");
-        assert.equal(element("#ram-usage").textContent, "--");
+        assert.equal(element("#cpu-usage-core0").textContent, "--");
+        assert.equal(element("#cpu-usage-core1").textContent, "--");
+        assert.equal(element("#ram-reserved").textContent, "--");
+        assert.equal(element("#ram-total").textContent, "--");
       }
     } finally {
       globalThis.document = previous;
@@ -165,7 +255,10 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
     const elements = new Map();
     const element = selector => {
       assert.notEqual(selector, "#self-test-consent");
-      if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", valueAsNumber: 32 });
+      if (!elements.has(selector)) elements.set(selector, {
+        dataset: {}, textContent: "", valueAsNumber: 32,
+        setAttribute(name, value) { this[name] = value; },
+      });
       return elements.get(selector);
     };
     const previous = globalThis.document;

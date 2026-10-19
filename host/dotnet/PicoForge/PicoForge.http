@@ -18,6 +18,12 @@ GET http://127.0.0.1:8766/api/status
 ### Get current device state (200, including connected=false when no board is attached)
 GET {{baseUrl}}/api/status
 
+### Save supported settings for the next boot; response contains HID readback
+POST {{baseUrl}}/api/settings
+Content-Type: application/json
+
+{"system_clock_mhz":200,"sdio_bus_mhz":50,"spi_bus_mhz":25}
+
 ### OpenAPI description in Development
 GET {{baseUrl}}/openapi/v1.json
 

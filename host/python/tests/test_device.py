@@ -39,7 +39,8 @@ class HidEnumerationTests(unittest.TestCase):
 
 
 class StatusReadTests(unittest.TestCase):
-    status = bytes([2]) + struct.pack("<BBIIBh", 2, 0, 0, 150_000_000, 0, 0)
+    status = (bytes([2]) + struct.pack("<BBIIBh", 1, 0, 0, 150_000_000, 0, 0)
+              + struct.pack("<HHII", 0, 0, 0, 270336))
     non_status = (
         bytes([3, 2]) + bytes(28),
         bytes([5, 2, 0, 0, 0]),
@@ -84,6 +85,38 @@ class StatusReadTests(unittest.TestCase):
         connection = self.connection([self.non_status[0]])
         self.assertIsNone(connection.read_status())
         self.assertEqual(len(connection._device.calls), 2)
+
+
+class SettingsDeviceTests(unittest.TestCase):
+    def connection(self, report):
+        class FakeTransport:
+            def get_feature_report(self, report_id, size):
+                self.read_request = (report_id, size)
+                return report
+
+            def send_feature_report(self, payload):
+                self.sent = bytes(payload)
+                return len(payload)
+
+        connection = PicoForgeHid.__new__(PicoForgeHid)
+        connection._device = FakeTransport()
+        connection.closed = False
+        return connection
+
+    def test_reads_and_saves_settings_after_confirming_readback(self):
+        connection = self.connection(bytes([8, 1, 0, 0, 0, 0]))
+        self.assertEqual(connection.read_settings(), {
+            "system_clock_mhz": 0, "sdio_bus_mhz": 0, "spi_bus_mhz": 0,
+        })
+        settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 25}
+        connection._device.get_feature_report = lambda _report_id, _size: bytes([8, 1, 200, 0, 50, 25])
+        self.assertEqual(connection.set_settings(settings), settings)
+        self.assertEqual(connection._device.sent, bytes([8, 1, 200, 0, 50, 25]))
+
+    def test_rejects_unconfirmed_settings_readback(self):
+        connection = self.connection(bytes([8, 1, 0, 0, 0, 0]))
+        with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+            connection.set_settings({"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 25})
 
 
 if __name__ == "__main__":

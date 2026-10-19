@@ -26,6 +26,20 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void SettingsReportRoundTripsAndRejectsUnsupportedValues()
+    {
+        var settings = new BootSettingsResponse(200, 50, 25);
+        var report = HidProtocol.BuildSettingsReport(settings);
+        Assert.Equal(new byte[] { HidProtocol.SettingsReportId, 1, 200, 0, 50, 25 }, report);
+        Assert.Equal(settings, HidProtocol.ParseSettingsReport(report));
+        Assert.Equal(settings, HidProtocol.ParseSettingsReport([0, .. report]));
+        Assert.Throws<InvalidOperationException>(() =>
+            HidProtocol.BuildSettingsReport(new BootSettingsResponse(100, 50, 25)));
+        report[1] = 2;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSettingsReport(report));
+    }
+
+    [Fact]
     public async Task SnapshotDoesNotAcquireDeviceHandleLock()
     {
         using var monitor = new DeviceMonitor();
@@ -61,6 +75,7 @@ public sealed class ProtocolTests
         {
             m => m.SetLed(true),
             m => m.SetMsc(true),
+            m => m.SetSettings(new BootSettingsResponse(150, 0, 0)),
             m => m.SetSelfTest("start", 1),
         })
         {
@@ -69,8 +84,10 @@ public sealed class ProtocolTests
             var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
             typeof(DeviceMonitor).GetField("activeClient", flags)!.SetValue(monitor, client);
             typeof(DeviceMonitor).GetField("snapshot", flags)!.SetValue(monitor, new StatusResponse(true, null, null,
-                null, null, new BoardStatusResponse(false, null, true, false), null, null,
-                new SelfTestStatusResponse(0, "idle", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false)));
+                null, null, new BoardStatusResponse(false, null, true, false), null,
+                new MscStatusResponse(false, false, false),
+                new SelfTestStatusResponse(0, "idle", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false),
+                Settings: new BootSettingsResponse(0, 0, 0)));
             var call = Task.Run(() => command(monitor));
             try
             {
@@ -94,6 +111,8 @@ public sealed class ProtocolTests
         private void Block() { Entered.Set(); Release.Wait(); }
         public void SetLed(bool on) => Block();
         public void SetMsc(bool enabled, bool force = false) => Block();
+        public BootSettingsResponse? ReadSettings() => new BootSettingsResponse(0, 0, 0);
+        public BootSettingsResponse SetSettings(BootSettingsResponse settings) { Block(); return settings; }
         public void SetSelfTest(string action, uint sizeMib) => Block();
     }
 
@@ -176,18 +195,22 @@ public sealed class ProtocolTests
     [Fact]
     public void ParsesRuntimeStateAndRejectsUnknownFlags()
     {
-        var report = new byte[14];
+        var report = new byte[26];
         report[0] = HidProtocol.StatusReportId;
-        report[1] = HidProtocol.ReportVersion;
+        report[1] = HidProtocol.StatusReportVersion;
         report[2] = 9;
         BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(3), 123_456);
         BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(7), 150_000_000);
         report[11] = 0x1f;
         BinaryPrimitives.WriteInt16LittleEndian(report.AsSpan(12), 2345);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 1234);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(16), 5678);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(18), 65536);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(22), 532480);
 
         var runtime = HidProtocol.ParseStatusReport(report);
         Assert.Equal(new RuntimeStatusResponse(9, 123_456, 150_000_000, true, true,
-            true, 2345, true, true), runtime);
+            true, 2345, true, true, 1234, 5678, 65536, 532480), runtime);
         Assert.Equal(new BoardStatusResponse(true, 2345, true, true), runtime.ToBoardStatus());
 
         report[11] = 0x80;
@@ -195,39 +218,48 @@ public sealed class ProtocolTests
     }
 
     [Fact]
-    public void ParsesRuntimeUsageAndRejectsInvalidExtensions()
+    public void ParsesPerCoreRuntimeUsageAndRejectsNonV1StatusLayouts()
     {
-        var report = new byte[24];
-        report[0] = 2;
-        report[1] = 3;
+        var report = new byte[26];
+        report[0] = HidProtocol.StatusReportId;
+        report[1] = HidProtocol.StatusReportVersion;
         BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(7), 250_000_000);
         BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 1234);
-        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(16), 65536);
-        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 532480);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(16), 5678);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(18), 65536);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(22), 532480);
+
         var runtime = HidProtocol.ParseStatusReport(report);
-        Assert.Equal((ushort)1234, runtime.CpuUsageBasisPoints);
+        Assert.Equal((ushort)1234, runtime.CpuUsageCore0BasisPoints);
+        Assert.Equal((ushort)5678, runtime.CpuUsageCore1BasisPoints);
         Assert.Equal(65536u, runtime.RamUsedBytes);
         Assert.Equal(532480u, runtime.RamTotalBytes);
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report.AsSpan(0, 23)));
+
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report.AsSpan(0, 25)));
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport([.. report, 1]));
         BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), ushort.MaxValue);
-        Assert.Null(HidProtocol.ParseStatusReport(report).CpuUsageBasisPoints);
+        Assert.Null(HidProtocol.ParseStatusReport(report).CpuUsageCore0BasisPoints);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 1234);
         BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 10001);
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
-        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 0);
-        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(14), 1234);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(22), 0);
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
-        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(20), 65535);
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+        foreach (byte version in new byte[] { 2, 3, 4 })
+        {
+            report[1] = version;
+            Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
+        }
     }
 
     [Fact]
     public void RejectsDynamicLedOnStatusWhenLedUnavailable()
     {
-        var report = new byte[14];
+        var report = new byte[26];
         report[0] = HidProtocol.StatusReportId;
-        report[1] = HidProtocol.ReportVersion;
+        report[1] = HidProtocol.StatusReportVersion;
         BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(7), 125_000_000);
+        BinaryPrimitives.WriteUInt32LittleEndian(report.AsSpan(22), 270336);
         report[11] = 0x10;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStatusReport(report));
         Assert.Equal(new byte[] { HidProtocol.LedCommandReportId, 2, 1 },
@@ -373,15 +405,32 @@ public sealed class ProtocolTests
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         using var snapshot = JsonDocument.Parse(await client.GetStringAsync("/api/status"));
         var runtime = snapshot.RootElement.GetProperty("runtime");
-        Assert.Equal(1234, runtime.GetProperty("cpu_usage_basis_points").GetInt32());
+        Assert.Equal(1234, runtime.GetProperty("cpu_usage_core0_basis_points").GetInt32());
+        Assert.Equal(5678, runtime.GetProperty("cpu_usage_core1_basis_points").GetInt32());
         Assert.Equal(65536, runtime.GetProperty("ram_used_bytes").GetInt32());
         Assert.Equal(532480, runtime.GetProperty("ram_total_bytes").GetInt32());
+        var settings = snapshot.RootElement.GetProperty("settings");
+        Assert.Equal(0, settings.GetProperty("system_clock_mhz").GetInt32());
+        Assert.True(snapshot.RootElement.GetProperty("settings_supported").GetBoolean());
         var openApi = await client.GetStringAsync("/openapi/v1.json");
         Assert.Contains("/api/self-test", openApi);
         Assert.Contains("/api/msc/force-return", openApi);
         var forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = false });
         Assert.Equal(HttpStatusCode.BadRequest, forceResponse.StatusCode);
         Assert.False(monitor.ForcedReturn);
+        var settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        {
+            system_clock_mhz = 200, sdio_bus_mhz = 50, spi_bus_mhz = 25
+        });
+        Assert.Equal(HttpStatusCode.OK, settingsResponse.StatusCode);
+        using var settingsBody = JsonDocument.Parse(await settingsResponse.Content.ReadAsStringAsync());
+        Assert.Equal(200, settingsBody.RootElement.GetProperty("settings").GetProperty("system_clock_mhz").GetInt32());
+        Assert.Equal(new BootSettingsResponse(200, 50, 25), monitor.LastSettings);
+        settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        {
+            system_clock_mhz = 100, sdio_bus_mhz = 50, spi_bus_mhz = 25
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, settingsResponse.StatusCode);
         forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.OK, forceResponse.StatusCode);
         Assert.True(monitor.ForcedReturn);
@@ -396,11 +445,21 @@ public sealed class ProtocolTests
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 1025 });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         monitor.Available = false;
+        settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        {
+            system_clock_mhz = 150, sdio_bus_mhz = 0, spi_bus_mhz = 0
+        });
+        Assert.Equal(HttpStatusCode.Conflict, settingsResponse.StatusCode);
         forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.Conflict, forceResponse.StatusCode);
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         monitor.ExpectedError = new TimeoutException("HID timeout");
+        settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        {
+            system_clock_mhz = 150, sdio_bus_mhz = 0, spi_bus_mhz = 0
+        });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, settingsResponse.StatusCode);
         forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, forceResponse.StatusCode);
         response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
@@ -452,16 +511,24 @@ public sealed class ProtocolTests
         public (string Action, uint Size) LastCommand { get; private set; }
         public Exception? ExpectedError { get; set; }
         public bool ForcedReturn { get; private set; }
+        public BootSettingsResponse? LastSettings { get; private set; }
         public StatusResponse Snapshot => new(true, null, null,
             new RuntimeStatusResponse(0, 42, 250_000_000, true, false,
-                false, null, false, false, 1234, 65536, 532480),
-            null, null, null, null);
+                false, null, false, false, 1234, 5678, 65536, 532480),
+            null, null, null, null, Settings: new BootSettingsResponse(0, 0, 0));
         public bool? LastLed { get; private set; }
         public bool SetLed(bool on)
         {
             if (ExpectedError is not null) throw ExpectedError;
             LastLed = on;
             return Available;
+        }
+        public BootSettingsResponse? SetSettings(BootSettingsResponse settings)
+        {
+            if (ExpectedError is not null) throw ExpectedError;
+            if (!Available) return null;
+            LastSettings = settings;
+            return settings;
         }
         public MscStatusResponse? SetMsc(bool enabled, bool force = false)
         {

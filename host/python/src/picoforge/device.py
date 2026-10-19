@@ -15,7 +15,10 @@ from .protocol import (
     MSC_COMMAND_REPORT_ID,
     SELF_TEST_REPORT_ID,
     SELF_TEST_INPUT_SIZE,
+    SETTINGS_FEATURE_SIZE,
+    SETTINGS_REPORT_ID,
     STATUS_INPUT_SIZE,
+    build_settings_command_report,
     build_led_command_report,
     build_msc_command_report,
     build_self_test_command_report,
@@ -24,6 +27,7 @@ from .protocol import (
     parse_filesystem_report,
     parse_msc_status_report,
     parse_self_test_report,
+        parse_settings_report,
     parse_status_report,
 )
 
@@ -106,6 +110,11 @@ class PicoForgeHid:
         report = self._device.get_feature_report(INFO_REPORT_ID, INFO_PAYLOAD_SIZE + 1)
         return parse_info_report(report)
 
+    def read_settings(self) -> dict[str, int]:
+        self._require_open()
+        report = self._device.get_feature_report(SETTINGS_REPORT_ID, SETTINGS_FEATURE_SIZE)
+        return parse_settings_report(report)
+
     def read_status(self, timeout_ms: int = 250) -> dict[str, object] | None:
         """Consume non-status input reports while waiting up to timeout_ms for status."""
         if timeout_ms < 0:
@@ -146,6 +155,17 @@ class PicoForgeHid:
         result = self._device.send_feature_report(list(report))
         if result < 0:
             raise OSError("failed to send HID LED command")
+
+    def set_settings(self, settings: dict[str, object]) -> dict[str, int]:
+        self._require_open()
+        report = build_settings_command_report(settings)
+        result = self._device.send_feature_report(list(report))
+        if result < 0:
+            raise OSError("failed to send HID settings command")
+        saved = self.read_settings()
+        if saved != settings:
+            raise RuntimeError("firmware did not confirm the selected boot settings")
+        return saved
 
     def set_msc(self, enable: bool, *, force: bool = False) -> None:
         self._require_open()

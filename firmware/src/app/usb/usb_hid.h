@@ -19,12 +19,12 @@
 /** @brief Identity layout with a firmware release version. */
 #define PF_HID_INFO_REPORT_VERSION 3u
 /** @brief Runtime layout with interval CPU usage and static SRAM reservations. */
-#define PF_HID_STATUS_REPORT_VERSION 3u
+#define PF_HID_STATUS_REPORT_VERSION 1u
 #define PF_HID_PRODUCT_NAME "PicoForge"
 #define PF_HID_PRODUCT_NAME_SIZE 20u
 #define PF_HID_SERIAL_NUMBER_SIZE (2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES)
 #define PF_HID_INFO_PAYLOAD_SIZE (2u + PF_HID_PRODUCT_NAME_SIZE + PF_HID_SERIAL_NUMBER_SIZE + 4u)
-#define PF_HID_STATUS_PAYLOAD_SIZE 23u
+#define PF_HID_STATUS_PAYLOAD_SIZE 25u
 #define PF_HID_MEMORY_PAYLOAD_SIZE 29u
 #define PF_HID_LED_COMMAND_PAYLOAD_SIZE 2u
 #define PF_HID_MSC_COMMAND_PAYLOAD_SIZE 2u
@@ -83,7 +83,8 @@ typedef struct __attribute__((packed)) {
     uint32_t system_clock_hz; /**< Current system clock frequency. */
     uint8_t flags; /**< PF_HID_STATUS_* board and USB flags. */
     int16_t temperature_centidegrees; /**< Temperature when its validity flag is set. */
-    uint16_t cpu_usage_basis_points; /**< 0..10000 non-idle time; UINT16_MAX until available. */
+    uint16_t cpu_usage_core0_basis_points; /**< Core 0 non-idle time, 0..10000; UINT16_MAX until available. */
+    uint16_t cpu_usage_core1_basis_points; /**< Core 1 non-idle time, 0..10000; UINT16_MAX until available. */
     uint32_t ram_used_bytes; /**< Static SRAM reservations including core and task stacks. */
     uint32_t ram_total_bytes; /**< SDK-selected on-chip SRAM capacity. */
 } pf_hid_status_report_t;

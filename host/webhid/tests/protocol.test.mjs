@@ -193,16 +193,20 @@ test("accept zero-prefixed and padded standard feature reports", () => {
 });
 
 test("decode changing telemetry from periodic input report", () => {
-  const payload = new Uint8Array(13);
-  payload[0] = 2;
+  const payload = new Uint8Array(25);
+  payload[0] = 1;
   payload[1] = 9;
   const view = new DataView(payload.buffer);
   view.setUint32(2, 123_456, true);
   view.setUint32(6, 150_000_000, true);
   payload[10] = 0x1f;
   view.setInt16(11, 2345, true);
+  view.setUint16(13, 1234, true);
+  view.setUint16(15, 5678, true);
+  view.setUint32(17, 65536, true);
+  view.setUint32(21, 532480, true);
   assert.deepEqual(decodeStatusReport(2, new DataView(payload.buffer)), {
-    version: 2,
+    version: 1,
     sequence: 9,
     uptime_ms: 123_456,
     system_clock_hz: 150_000_000,
@@ -212,38 +216,49 @@ test("decode changing telemetry from periodic input report", () => {
     temperature_centidegrees: 2345,
     led_available: true,
     led_on: true,
-    cpu_usage_basis_points: null,
-    ram_used_bytes: null,
-    ram_total_bytes: null,
+    cpu_usage_core0_basis_points: 1234,
+    cpu_usage_core1_basis_points: 5678,
+    ram_used_bytes: 65536,
+    ram_total_bytes: 532480,
   });
 });
 
-test("runtime layout three decodes bounded CPU and RAM while rejecting malformed extensions", () => {
-  const report = new Uint8Array(23);
+test("status layout v1 validates per-core CPU and RAM values", () => {
+  const report = new Uint8Array(25);
   const view = new DataView(report.buffer);
-  report[0] = 3;
-  view.setUint32(6, 250_000_000, true);
+  report[0] = 1;
+  view.setUint32(6, 150_000_000, true);
   view.setUint16(13, 1234, true);
-  view.setUint32(15, 65536, true);
-  view.setUint32(19, 532480, true);
+  view.setUint16(15, 5678, true);
+  view.setUint32(17, 65536, true);
+  view.setUint32(21, 532480, true);
   const status = decodeStatusReport(2, view);
-  assert.equal(status.cpu_usage_basis_points, 1234);
+  assert.equal(status.cpu_usage_core0_basis_points, 1234);
+  assert.equal(status.cpu_usage_core1_basis_points, 5678);
   assert.equal(status.ram_used_bytes, 65536);
   assert.equal(status.ram_total_bytes, 532480);
   assert.equal(decodeStatusReport(2, Uint8Array.from([...report, 0])).ram_used_bytes, 65536);
-  assert.throws(() => decodeStatusReport(2, report.subarray(0, 22)), /size/);
+  assert.throws(() => decodeStatusReport(2, report.subarray(0, 24)), /size/);
   assert.throws(() => decodeStatusReport(2, Uint8Array.from([...report, 1])), /padding/);
   for (const cpu of [0, 10000, 0xffff]) {
     view.setUint16(13, cpu, true);
-    assert.equal(decodeStatusReport(2, view).cpu_usage_basis_points, cpu === 0xffff ? null : cpu);
+    assert.equal(decodeStatusReport(2, view).cpu_usage_core0_basis_points, cpu === 0xffff ? null : cpu);
   }
   view.setUint16(13, 10001, true);
-  assert.throws(() => decodeStatusReport(2, view), /CPU/);
+  assert.throws(() => decodeStatusReport(2, view), /per-core CPU/);
   view.setUint16(13, 0, true);
-  view.setUint32(19, 0, true);
+  view.setUint32(21, 0, true);
   assert.throws(() => decodeStatusReport(2, view), /RAM/);
-  view.setUint32(19, 65535, true);
+  view.setUint32(21, 65535, true);
   assert.throws(() => decodeStatusReport(2, view), /RAM/);
+});
+
+test("status decoder accepts only initial layout version one", () => {
+  for (const version of [2, 3, 4]) {
+    const report = new Uint8Array(25);
+    report[0] = version;
+    assert.throws(() => decodeStatusReport(2, report), /Unsupported HID status report version/);
+  }
 });
 
 test("derive board status from the dynamic report", () => {
@@ -339,9 +354,10 @@ test("force return requires capability and sends a distinct command without weak
 });
 
 test("reject an LED-on dynamic status when no LED is available", () => {
-  const payload = new Uint8Array(13);
-  payload[0] = 2;
+  const payload = new Uint8Array(25);
+  payload[0] = 1;
   new DataView(payload.buffer).setUint32(6, 125_000_000, true);
+  new DataView(payload.buffer).setUint32(21, 270336, true);
   payload[10] = 0x10;
   assert.throws(() => decodeStatusReport(2, new DataView(payload.buffer)), /without an available LED/);
 });
@@ -418,14 +434,19 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
     });
     firstDevice.dispatchEvent(event);
   }
-  const runtime = new Uint8Array(23);
+  const runtime = new Uint8Array(25);
   const runtimeView = new DataView(runtime.buffer);
-  runtime[0] = 3;
+  runtime[0] = 1;
   runtimeView.setUint32(6, 250000000, true);
-  runtimeView.setUint32(19, 532480, true);
+  runtimeView.setUint16(13, 1234, true);
+  runtimeView.setUint16(15, 5678, true);
+  runtimeView.setUint32(17, 65536, true);
+  runtimeView.setUint32(21, 532480, true);
   emitPaddedInput(2, runtime);
   assert.equal(client.state.error, null);
   assert.equal(client.state.runtime.system_clock_hz, 250000000);
+  assert.equal(client.state.runtime.cpu_usage_core0_basis_points, 1234);
+  assert.equal(client.state.runtime.cpu_usage_core1_basis_points, 5678);
   emitPaddedInput(5, [3, 0, 0, 0]);
   assert.equal(client.state.error, null);
   assert.equal(client.state.msc.enabled, false);
@@ -439,12 +460,12 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   emitPaddedInput(5, [3, 2, 0, 0]);
   assert.match(client.state.error, /Invalid HID MSC/);
   emitPaddedInput(5, [3, 0, 0, 0]);
-  runtime[10] = 0x08;
-  emitPaddedInput(2, runtime);
   const nextSettings = { system_clock_mhz: 150, sdio_bus_mhz: 0, spi_bus_mhz: 25 };
   assert.equal(await client.saveSettings(nextSettings), true);
   assert.deepEqual(firstDevice.lastFeature, { reportId: 8, payload: [1, 150, 0, 0, 25] });
   assert.deepEqual(client.state.settings, nextSettings);
+  runtime[10] = 0x08;
+  emitPaddedInput(2, runtime);
   await client.setLed(true);
   assert.deepEqual(firstDevice.lastFeature, { reportId: 4, payload: [2, 1] });
   await client.setLed(false);
@@ -465,9 +486,10 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   assert.equal(client.state.reconnecting, false);
   assert.equal(client.state.msc.transition_pending, true);
 
-  const status = new Uint8Array(13);
-  status[0] = 2;
+  const status = new Uint8Array(25);
+  status[0] = 1;
   new DataView(status.buffer).setUint32(6, 150_000_000, true);
+  new DataView(status.buffer).setUint32(21, 532480, true);
   const inputReport = new Event("inputreport");
   Object.defineProperties(inputReport, {
     device: { value: reenumeratedDevice },
