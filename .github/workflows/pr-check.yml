@@ -67,6 +67,12 @@ jobs:
             --elf "$(cat "build/firmware/pico_forge_elf.txt")" \
             --junitxml=build/project-tests.xml
 
+      - name: Build SDK-default clock application
+        if: matrix.clock == 150 && matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'
+        run: >-
+          tools/firmware/build.sh --board "${{ matrix.board }}"
+          --sys-clk-mhz 0 --build-dir build/default-clock
+
   host-validation:
     name: Host validation
     uses: ./.github/workflows/host-validation.yml

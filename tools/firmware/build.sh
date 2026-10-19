@@ -54,7 +54,7 @@ while [ "$#" -gt 0 ]; do
 Usage: tools/firmware/build.sh [options]
 
 Options:
-  --board NAME       Pico SDK board (default: pico)
+  --board NAME       Supported board: pico or pico2 (default: pico)
   --build-dir PATH   Build directory (default: build/firmware-NAME, -baremetal suffix for BAREMETAL)
     --generator NAME  CMake generator (default: Ninja when available)
   --pico-sdk-path PATH

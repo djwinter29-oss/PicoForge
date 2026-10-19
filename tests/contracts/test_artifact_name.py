@@ -15,7 +15,11 @@ pytestmark = pytest.mark.contracts
     ("RP2040", 200, "rp2040_200"),
     ("RP2350", 250, "rp2350_250"),
 ])
-def test_artifact_name_uses_platform_clock_and_utc_date(tmp_path, platform, clock, label):
+@pytest.mark.parametrize("epoch,date,timezone", [
+    ("1792324800", "20261018", "Pacific/Kiritimati"),
+    ("1792411200", "20261019", "America/Los_Angeles"),
+])
+def test_artifact_name_uses_platform_clock_and_utc_date(tmp_path, platform, clock, label, epoch, date, timezone):
     script = tmp_path / "name.cmake"
     script.write_text(
         f'set(PICO_{platform} 1)\nset(PF_SYS_CLK_MHZ {clock})\n'
@@ -24,10 +28,10 @@ def test_artifact_name_uses_platform_clock_and_utc_date(tmp_path, platform, cloc
     )
     result = subprocess.run(
         ["cmake", "-P", str(script)],
-        env=dict(os.environ, SOURCE_DATE_EPOCH="1792324800", TZ="Pacific/Kiritimati"),
+        env=dict(os.environ, SOURCE_DATE_EPOCH=epoch, TZ=timezone),
         capture_output=True, text=True, check=True,
     )
-    assert f"NAME=pico_forge_{label}_20261018" in result.stderr
+    assert f"NAME=pico_forge_{label}_{date}" in result.stderr
 
 
 def test_loader_uses_manifest_not_stale_images_and_fails_without_it(tmp_path):

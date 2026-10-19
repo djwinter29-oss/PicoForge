@@ -27,8 +27,12 @@ jobs:
           version=$(tools/firmware/release-version.sh "$RELEASE_TAG")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  firmware:
+  host-validation:
     needs: validate-tag
+    uses: ./.github/workflows/host-validation.yml
+
+  firmware:
+    needs: [validate-tag, host-validation]
     env:
       PF_FIRMWARE_VERSION: ${{ needs.validate-tag.outputs.version }}
     name: Firmware (${{ matrix.board }}, ${{ matrix.clock }} MHz, ${{ matrix.transport }}, ${{ matrix.port }})
@@ -47,6 +51,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+
+      - name: Use commit timestamp for reproducible build dates
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
       - name: Install build tools
         run: |
@@ -87,6 +94,12 @@ jobs:
             tests/artifacts/test_msc_elf.py \
             --elf "$(cat "build/firmware/pico_forge_elf.txt")" \
             --junitxml=build/project-tests.xml
+
+      - name: Build SDK-default clock application
+        if: matrix.clock == 150 && matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'
+        run: >-
+          tools/firmware/build.sh --board "${{ matrix.board }}"
+          --sys-clk-mhz 0 --build-dir build/default-clock
 
       - name: Package firmware outputs
         run: |

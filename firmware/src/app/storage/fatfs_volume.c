@@ -59,7 +59,7 @@ pf_fatfs_volume_result_t pf_fatfs_volume_mount(
 FRESULT pf_fatfs_volume_format(const pf_block_device_t *device)
 {
     static BYTE work[FF_MAX_SS]; /**< Sole-worker scratch space, kept off the task stack. */
-    const MKFS_PARM options = { .fmt = FM_FAT | FM_SFD, .n_fat = 1u, .n_root = 64u };
+    const MKFS_PARM options = { .fmt = FM_FAT | FM_FAT32 | FM_SFD, .n_fat = 1u, .n_root = 64u };
     if (device == NULL) {
         return FR_INVALID_PARAMETER;
     }

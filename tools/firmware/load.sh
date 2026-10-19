@@ -22,7 +22,7 @@ Usage: tools/firmware/load.sh [options]
 Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
 
 Options:
---board NAME                 Pico SDK board (default: pico)
+--board NAME                 Supported board: pico or pico2 (default: pico)
 --build-dir PATH             Build directory (default: build/firmware-NAME)
 --elf PATH                   ELF to flash (default: generated pico_forge_elf.txt path in build dir)
 --openocd-exe PATH           OpenOCD executable (default: openocd)

@@ -45,7 +45,7 @@ CR, LF, and CRLF are accepted.
 | `sd recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
-| `fs format --confirm` | Destroy files on the selected logical device, create FAT without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
+| `fs format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
 | `fs stat <path>` | Show size, attributes, and filesystem timestamps. |
 | `fs cat <path> [limit]` | Read at most 1024 bytes by default; limit accepts 1..4096 bytes. |

@@ -1,11 +1,40 @@
 """Keep application scheduling unrestricted while retaining SDK flash-safe execution support."""
 from pathlib import Path
 import re
+import subprocess
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.contracts
+
+
+@pytest.mark.parametrize("ndebug", [False, True])
+def test_config_assert_evaluates_once_and_fails_closed(tmp_path, ndebug):
+    harness = tmp_path / "assert.c"
+    harness.write_text('''
+#include <stdlib.h>
+#include "FreeRTOSConfig.h"
+void hard_assertion_failure(void) { _Exit(73); }
+int main(int argc, char **argv) {
+    (void)argv;
+    int evaluated = 0;
+    configASSERT(++evaluated == 1);
+    if (evaluated != 1) return 1;
+    if (argc > 1) configASSERT(0);
+    return 0;
+}
+''')
+    binary = tmp_path / "assert"
+    subprocess.run([
+        "gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", *(["-DNDEBUG"] if ndebug else []),
+        "-I", str(ROOT / "firmware/src/integration/freertos"),
+        "-I", str(ROOT / "firmware/third_party/pico-sdk/src/common/pico_base_headers/include"),
+        str(harness), "-o", str(binary),
+    ], check=True)
+    assert subprocess.run([str(binary)]).returncode == 0
+    failed = subprocess.run([str(binary), "fail"], capture_output=True)
+    assert failed.returncode == (73 if ndebug else -6)
 
 
 def test_two_core_configuration_has_one_authority_and_no_application_affinity():

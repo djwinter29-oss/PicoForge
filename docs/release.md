@@ -20,6 +20,16 @@ Bare-metal images are driver checks, not the USB application; their artifact val
 FreeRTOS images run the applicable application ELF and contract tests. Packages contain ELF, UF2, and `SHA256SUMS`;
 the workflow uploads Actions artifacts and does not publish a GitHub release automatically.
 
+Packaging is gated on the reusable host-validation workflow: Ceedling firmware tests, Python host tests on
+3.10 and 3.12, and WebHID and .NET host tests. Both board jobs at 150 MHz with SDIO/FreeRTOS additionally
+build the complete application with `PF_SYS_CLK_MHZ=0` in a separate directory. These two default-clock checks
+are not packaged and do not duplicate the transport/port matrix. PR builds use the same default-clock checks.
+
+Release builds set `SOURCE_DATE_EPOCH` to the checked-out commit's committer timestamp before configuring CMake.
+The UTC date in image filenames therefore stays fixed when rebuilding the same commit, including through annotated
+tags; local builds can set the same variable explicitly. Without it, local filenames use the configuration date.
+This stabilizes the date input, not a guarantee of bit-for-bit reproducibility across toolchains or build paths.
+
 The SDK defaults are 125 MHz on RP2040 and 150 MHz on RP2350. Release clocks are explicit: 150 MHz is an overclock
 on RP2040; 250 MHz is an overclock on both MCUs. Accepted SDK clock configuration does not establish hardware safety.
 SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON in release builds. It requests the

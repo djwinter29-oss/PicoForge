@@ -1,7 +1,7 @@
 #ifndef PF_FREERTOS_CONFIG_H
 #define PF_FREERTOS_CONFIG_H
 
-#include <assert.h>
+#include "pico/assert.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -62,7 +62,8 @@ uint64_t time_us_64(void);
 #define configUSE_TRACE_FACILITY 0
 #define configUSE_STATS_FORMATTING_FUNCTIONS 0
 
-#define configASSERT(condition) assert(condition)
+/** Keep kernel and project invariants active in Release builds too. */
+#define configASSERT(condition) hard_assert(condition)
 
 #define INCLUDE_uxTaskGetStackHighWaterMark 1
 #define INCLUDE_vTaskDelay 1

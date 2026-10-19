@@ -45,7 +45,7 @@ typedef enum {
 pf_fatfs_volume_result_t pf_fatfs_volume_mount(
     const pf_block_device_t *device, FRESULT *filesystem_result);
 
-/** @brief Destructively create FAT on an initialized, unmounted logical device.
+/** @brief Destructively create FAT12/16/32 without a partition table on an initialized, unmounted logical device.
  * Caller must confirm destruction, exclude USB ownership and serialize on the storage worker.
  * @param device Borrowed logical SD block device.
  * @return FatFs outcome; device binding is released on success and failure.

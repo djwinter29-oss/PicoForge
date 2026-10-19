@@ -60,7 +60,7 @@ with both SDIO_PIO and SPI, and verify final application MSC callback pointers.
 PIO timing checks require a prior firmware build or PIOASM when builds are skipped.
 
 Options:
-  --board NAME          Build only the selected Pico SDK board
+  --board NAME          Build only the selected board: pico or pico2
   --pico-sdk-path PATH  Use an explicit Pico SDK checkout
   --generator NAME      Select a CMake generator
   --skip-firmware       Skip Pico SDK firmware builds

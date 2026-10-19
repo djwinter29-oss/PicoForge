@@ -4,7 +4,27 @@
 
 ## Current Firmware
 
-`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected `PICO_BOARD`; see [artifact naming](../README.md#1-build-the-firmware). The TinyUSB configuration lives under `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger; USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides serialized severity-tagged lines. The USB task services the [CDC CLI](cdc-cli.md) and publishes a versioned HID status report every 250 ms. HID Feature report 1 carries stable product, MCU, and USB serial identity; Input report 2 carries dynamic uptime, system clock, USB/CDC state, internal temperature, and LED state; Feature report 4 accepts LED set-state commands. Hosts read identity once per connection and receive changing values through the periodic input report. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4. The onboard LED uses the selected SDK board's `PICO_DEFAULT_LED_PIN` (GPIO 25 for the current `pico` and `pico2` targets). Simple system, temperature, and LED drivers live flat under `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines in `drivers/storage/`. The shared protocol is documented in [usb-protocol.md](usb-protocol.md). The development VID/PID is `0xCAFE:0x4011` and is not for product release. `firmware/src/main.c` initializes board UART and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature, and LED behavior still require board validation.
+`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the
+platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected `PICO_BOARD`; see
+[artifact naming](../README.md#1-build-the-firmware). The TinyUSB configuration lives under
+`firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live
+under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID
+interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger;
+USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides
+serialized severity-tagged lines. The USB task services the [CDC CLI](cdc-cli.md) and publishes a versioned HID
+status report every 250 ms. HID Feature report 1 carries stable product, MCU, and USB serial identity; Input report 2
+carries dynamic uptime, system clock, USB/CDC state, internal temperature, and LED state; Feature report 4 accepts
+LED set-state commands. Hosts read identity once per connection and receive changing values through the periodic
+input report. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4.
+The fixed Pico/Pico 2 board profile in `firmware/src/board/board_profile.c` assigns the active-high LED to GPIO 25;
+it does not derive wiring from arbitrary SDK board definitions. Other board layouts require a matching board profile;
+see [hardware setup](hardware-setup.md). Simple system, temperature, and LED drivers live flat under
+`firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines
+in `drivers/storage/`. The shared protocol is documented in [usb-protocol.md](usb-protocol.md).
+The development VID/PID is `0xCAFE:0x4011` and is not for product release. `firmware/src/main.c` initializes board UART
+and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler.
+The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature,
+and LED behavior still require board validation.
 
 Input Report 3 publishes SD-card detection/initialization state, selected bus mode, effective bus speed, CSD-derived capacity, and CID identity every second. Input Report 5 reports MSC ownership transitions, while Feature Report 5 requests enable/disable. In MSC mode the USB descriptor appends MSC after CDC and HID, preserving the PID and HID interface number; see [usb-protocol.md](usb-protocol.md). The owner gate rejects firmware block calls while the host owns the card. Enabling queues a worker-owned FatFs unmount before acquisition and is rejected if CLI storage work is pending. The legacy safe-disable command requires host eject. Dashboard **Disable USB drive** instead requests confirmed [Pico-side detach/remount](usb-protocol.md#confirmed-force-return), with one worker mount attempt and explicit failure reporting; host apps never run OS eject commands.
 
@@ -44,6 +64,10 @@ while existing media reservations serialize physical storage operations. FatFs r
 SMP schedules tasks, not arbitrary hardware resources: board setup and IRQ installation still occur before scheduler
 startup, and IRQ routing stays on its initialization core. Peripheral ownership remains explicit rather than being
 inferred from the executing core. Two-core scheduling is not a hard real-time guarantee.
+
+Project `configASSERT` uses the SDK's `hard_assert`, so kernel and project invariants remain active under
+`NDEBUG` in Release builds. Host checks compile the real configuration and SDK assertion header both with and
+without `NDEBUG`; they do not qualify target fault handling.
 
 The project-owned [DCD guard](../firmware/src/integration/usb/dcd_guard.c) interposes the pinned TinyUSB RP2040/RP2350
 driver entry points and its shared USB IRQ handler. A dedicated SDK spinlock and local interrupt masking exclude
@@ -227,12 +251,12 @@ filesystem reports: Ceedling checks its exFAT encoder against the same fixture. 
 to the host decoders, not the firmware's separate command parser. This small fixture covers format, version,
 length and padding boundaries; it is not exhaustive coverage of every HID report family.
 
-PR and manual release-package workflows use six builds: both boards with both FreeRTOS transports, plus SPI
-bare-metal on Pico and SDIO bare-metal on Pico 2. Thus all transport/port combinations and both MCU toolchains
-are covered without eight builds. MSC ELF checks run only for the FreeRTOS application; bare-metal produces a
-link-smoke target, not a USB application. Manual release packaging attaches ELF/UF2 and checksums as workflow
-artifacts with read-only repository permissions. It does not publish a release; default development version
-metadata is retained, so these are validation packages rather than versioned release binaries.
+PR and release-package workflows build both boards at 150 and 250 MHz with both transports and both execution
+ports (16 matrix builds), plus one SDK-default-clock application check per board. MSC ELF checks run only for
+the FreeRTOS application; bare-metal produces a link-smoke target, not a USB application.
+The [release guide](release.md) owns tag validation, version propagation, host-suite gates, package contents and
+reproducible filename dates. Release packages carry the validated tag version, not the local development default;
+they are uploaded as workflow artifacts with read-only repository permissions, not published as GitHub releases.
 
 Host regressions cannot certify MSC end-to-end enumeration/BOT/host-cache behavior, power-loss recovery,
 sustained dual-core stress, or target stack margin. Those remain hardware qualification gaps. No hardware,

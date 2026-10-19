@@ -22,6 +22,7 @@ See [firmware test guidance](../firmware/tests/README.md) for test placement, sc
 | [contracts/test_tinyusb_msc_contract.py](contracts/test_tinyusb_msc_contract.py) | Verify pinned TinyUSB source ordering and MSC linker-wrapper configuration |
 | [contracts/test_storage_layers.py](contracts/test_storage_layers.py) | Verify physical storage mode layout and independence from SD/filesystem headers |
 | [contracts/test_workflows.py](contracts/test_workflows.py) | Verify build matrices, artifact packaging and stack observation |
+| [contracts/test_fatfs_format.py](contracts/test_fatfs_format.py) | Compile pinned FatFs with production configuration, volume and disk adapters; format/mount/file round trips on temporary sparse images |
 | [contracts/test_load_tcl_quoting.py](contracts/test_load_tcl_quoting.py) | Verify OpenOCD argument quoting and validation using a fake executable |
 | [test_validation_integrity.py](test_validation_integrity.py) | Validation-integrity regressions (outside `contracts/`, marked `contracts`) using copied sources and valid/broken ARM ELF fixtures |
 
@@ -32,8 +33,14 @@ python3 -m pip install -r tests/requirements.txt
 python3 -m pytest tests -m contracts
 ```
 
-These tests require initialized TinyUSB sources and Arm GNU `nm`/`readelf`,
+These tests require initialized TinyUSB/FreeRTOS sources, host GCC, CMake, Ruby and Arm GNU `nm`/`readelf`,
 but do not compile firmware or require a connected board.
+The FatFs integration regression uses only temporary sparse files (1 MiB, 16 MiB, 1 GiB, 4 GiB, 32 GiB and 128 GiB
+logical capacities), never block devices or real media. It reproduces the FAT12/16-only formatting failure on large
+volumes, verifies FAT12/16/32 selection with the production formatter, checks the no-partition-table policy, and
+reads a long-named file after remounting. It does not qualify real SD cards.
+The FreeRTOS configuration regression compiles the real SDK assertion header with and without `NDEBUG`,
+checking single evaluation and failure termination in both builds.
 
 ## PIO Instruction Models
 

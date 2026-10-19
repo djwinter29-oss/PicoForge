@@ -98,3 +98,33 @@ def test_release_version_is_validated_before_every_build():
     assert "needs: validate-tag" in workflow
     assert "PF_FIRMWARE_VERSION: ${{ needs.validate-tag.outputs.version }}" in workflow
     assert "name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-cpu${{ matrix.clock }}" in workflow
+
+
+@pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
+def test_default_clock_builds_application_once_per_board_without_packaging_it(name):
+    workflow = (ROOT / ".github/workflows" / name).read_text()
+    step = workflow.split("- name: Build SDK-default clock application\n", 1)[1].split("\n      - name:", 1)[0]
+    assert "if: matrix.clock == 150 && matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'" in step
+    assert 'tools/firmware/build.sh --board "${{ matrix.board }}"' in step
+    assert "--sys-clk-mhz 0 --build-dir build/default-clock" in step
+    assert "--sd-card-port BAREMETAL" not in step
+    assert "cp build/firmware/*.elf build/firmware/*.uf2 package/" in workflow or name == "pr-check.yml"
+
+
+def test_release_gates_packages_on_reusable_complete_host_validation():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    assert "host-validation:\n    needs: validate-tag\n    uses: ./.github/workflows/host-validation.yml" in workflow
+    assert "firmware:\n    needs: [validate-tag, host-validation]" in workflow
+    host = (ROOT / ".github/workflows/host-validation.yml").read_text()
+    assert "tools/validation/setup-ceedling-testing.sh test:all" in host
+    assert "tools/validation/test-host.sh" in host
+    runner = (ROOT / "tools/validation/test-host.sh").read_text()
+    for suite in ("host/python/tests", "host/webhid/tests/*.test.mjs", "host/dotnet/PicoForge.sln"):
+        assert suite in runner
+
+
+def test_release_uses_commit_epoch_before_configuring_artifact_names():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    epoch = 'echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"'
+    assert epoch in workflow
+    assert workflow.index(epoch) < workflow.index("- name: Build firmware")
