@@ -52,6 +52,8 @@ included with the project.
 Application outputs use `pico_forge_<mcu>_<cpu-MHz>_<YYYYMMDD>.*`, for example
 `pico_forge_rp2350_250_20261018.uf2`. The date is UTC at CMake configuration time; the build script reconfigures
 on each run. Reconfigure an existing directory before a new day's direct `cmake --build` to refresh its date.
+Release packages and tag validation are documented in the [release guide](docs/release.md).
+
 Stock clocks are 125 MHz for RP2040 and 150 MHz for RP2350; `--sys-clk-mhz` selects a different clock.
 ELF, UF2, BIN, HEX, map and disassembly outputs share the basename. The CMake target is `pico_forge`.
 `pico_forge_elf.txt` in the build directory records the exact ELF path for flashing and validation;

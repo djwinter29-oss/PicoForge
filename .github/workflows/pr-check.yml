@@ -14,18 +14,17 @@ permissions:
 
 jobs:
   firmware:
-    name: Firmware (${{ matrix.board }}, ${{ matrix.transport }}, ${{ matrix.port }})
+    name: Firmware (${{ matrix.board }}, ${{ matrix.clock }} MHz, ${{ matrix.transport }}, ${{ matrix.port }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
-        include:
-          - {board: pico, transport: SDIO_PIO, port: FREERTOS}
-          - {board: pico2, transport: SDIO_PIO, port: FREERTOS}
-          - {board: pico, transport: SPI, port: FREERTOS}
-          - {board: pico2, transport: SPI, port: FREERTOS}
-          - {board: pico, transport: SPI, port: BAREMETAL}
-          - {board: pico2, transport: SDIO_PIO, port: BAREMETAL}
+        board: [pico, pico2]
+        clock: [150, 250]
+        transport: [SDIO_PIO, SPI]
+        port: [FREERTOS, BAREMETAL]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +50,7 @@ jobs:
         run: >-
           tools/firmware/build.sh --board "${{ matrix.board }}"
           --sd-card-transport "${{ matrix.transport }}" --sd-card-port "${{ matrix.port }}"
-          --build-dir build/firmware
+          --sys-clk-mhz "${{ matrix.clock }}" --build-dir build/firmware
 
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt

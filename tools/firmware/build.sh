@@ -60,6 +60,7 @@ Options:
   --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
     --sys-clk-mhz MHZ  Out-of-spec system clock, 100-250 (default: 0, SDK default)
+    Environment: PF_SDIO_PIO_HIGH_SPEED=ON|OFF overrides the cached SDIO negotiation policy.
     --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
     --sd-card-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
     --sd-card-port NAME  FREERTOS application or BAREMETAL driver smoke (default: FREERTOS)
@@ -126,6 +127,11 @@ elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
 
+set --
+if [ -n "${PF_SDIO_PIO_HIGH_SPEED:-}" ]; then
+    set -- "-DPF_SDIO_PIO_HIGH_SPEED=$PF_SDIO_PIO_HIGH_SPEED"
+fi
+
 cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" \
@@ -134,5 +140,5 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPF_FIRMWARE_VERSION="$FIRMWARE_VERSION" \
     -DPF_SYS_CLK_MHZ="$SYS_CLK_MHZ" \
     -DPF_SD_CARD_PORT="$SD_CARD_PORT" \
-    -DPF_SD_CARD_TRANSPORT="$SD_CARD_TRANSPORT"
-cmake --build "$BUILD_DIR" --parallel
+    -DPF_SD_CARD_TRANSPORT="$SD_CARD_TRANSPORT" "$@"
+cmake --build "$BUILD_DIR" --parallel ${CMAKE_BUILD_PARALLEL_LEVEL:+"$CMAKE_BUILD_PARALLEL_LEVEL"}

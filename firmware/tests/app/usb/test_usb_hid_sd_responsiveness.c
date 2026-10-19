@@ -213,3 +213,69 @@ void test_filesystem_encoder_matches_shared_exfat_vector(void)
     fclose(fixture);
     TEST_ASSERT_TRUE(found);
 }
+
+void test_set_report_validates_callback_envelope_and_command_fields(void)
+{
+    led_requests = msc_requests = force_requests = 0;
+    uint8_t command[] = {PF_HID_REPORT_VERSION, 1u};
+    const uint8_t ids[] = {PF_HID_LED_COMMAND_REPORT_ID, PF_HID_MSC_COMMAND_REPORT_ID};
+    for (unsigned i = 0; i < sizeof(ids); ++i) {
+        tud_hid_set_report_cb(1u, ids[i], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_INPUT, command, sizeof(command));
+        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, NULL, sizeof(command));
+        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, 0u);
+        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, 1u);
+        command[0] = 0xffu;
+        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+        command[0] = PF_HID_REPORT_VERSION;
+        command[1] = 0xffu;
+        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+        command[1] = 1u;
+    }
+    tud_hid_set_report_cb(0u, 0xffu, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_EQUAL_UINT(0u, led_requests + msc_requests + force_requests);
+    tud_hid_set_report_cb(0u, ids[0], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_EQUAL_UINT(1u, led_requests);
+    TEST_ASSERT_TRUE(requested_state);
+    command[1] = 0u;
+    tud_hid_set_report_cb(0u, ids[1], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_EQUAL_UINT(1u, msc_requests);
+    TEST_ASSERT_FALSE(requested_state);
+    uint8_t force[] = {PF_HID_MSC_REPORT_VERSION, 2u, 0u};
+    tud_hid_set_report_cb(0u, ids[1], HID_REPORT_TYPE_FEATURE, force, sizeof(force));
+    TEST_ASSERT_EQUAL_UINT(0u, force_requests);
+    tud_hid_set_report_cb(0u, ids[1], HID_REPORT_TYPE_FEATURE, force, 2u);
+    TEST_ASSERT_EQUAL_UINT(1u, force_requests);
+}
+
+void test_set_report_self_test_requires_exact_size_and_zero_cancel_payload(void)
+{
+    unavailable = false;
+    busy = benchmark_active = benchmark_finished = benchmark_cancelled = false;
+    media_service_busy = false;
+    initialized = mounted = true;
+    queue_fails = false;
+    queued = 0;
+    uint8_t command[] = {PF_HID_REPORT_VERSION, 1u, 32u, 0u, 0u, 0u, 0u};
+    for (unsigned size = 0; size < sizeof(command); ++size) {
+        if (size == sizeof(pf_hid_self_test_command_t)) continue;
+        tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, size);
+    }
+    TEST_ASSERT_EQUAL_UINT(0u, queued);
+    command[0] = 0xffu;
+    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
+    command[0] = PF_HID_REPORT_VERSION;
+    command[1] = 2u;
+    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
+    TEST_ASSERT_EQUAL_UINT(0u, queued);
+    command[1] = 1u;
+    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
+    TEST_ASSERT_EQUAL_UINT(1u, queued);
+    command[1] = 0u;
+    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
+    TEST_ASSERT_FALSE(benchmark_cancelled);
+    command[2] = 0u;
+    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
+    TEST_ASSERT_TRUE(benchmark_cancelled);
+    busy = benchmark_active = false;
+}

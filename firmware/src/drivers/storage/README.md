@@ -121,8 +121,8 @@ two system cycles per bus period, so its divider cannot be below 2.0 and the fas
 * The reported maximum clock is what the planner accepts for a 50 MHz request (50 MHz where SYSCLK / 4 allows it),
   otherwise 25 MHz. The SD host attempts High Speed only when this exceeds 25 MHz.
 
-Host tests sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and limits. Hardware has qualified only
-150 MHz / 25 MHz and 200 MHz / 50 MHz; other High-Speed combinations are modeled, not proven on a card.
+Host tests sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and limits. These checks model timing; they do not qualify hardware. Historical card measurements are listed in the
+[test records](../../../../docs/tests/records/README.md); release qualification remains configuration-specific.
 
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.

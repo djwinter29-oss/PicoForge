@@ -1,25 +1,47 @@
 name: Release build packages
 
 'on':
+  push:
+    tags: ["v*.*.*"] # GitHub globs are filtered strictly by the validation job.
   workflow_dispatch: {}
 
 permissions:
   contents: read
 
 jobs:
-  firmware:
-    name: Firmware (${{ matrix.board }}, ${{ matrix.transport }}, ${{ matrix.port }})
+  validate-tag:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate release tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          test "$RELEASE_REF_TYPE" = tag
+          version=$(tools/firmware/release-version.sh "$RELEASE_TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  firmware:
+    needs: validate-tag
+    env:
+      PF_FIRMWARE_VERSION: ${{ needs.validate-tag.outputs.version }}
+    name: Firmware (${{ matrix.board }}, ${{ matrix.clock }} MHz, ${{ matrix.transport }}, ${{ matrix.port }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
-        include:
-          - {board: pico, transport: SDIO_PIO, port: FREERTOS}
-          - {board: pico2, transport: SDIO_PIO, port: FREERTOS}
-          - {board: pico, transport: SPI, port: FREERTOS}
-          - {board: pico2, transport: SPI, port: FREERTOS}
-          - {board: pico, transport: SPI, port: BAREMETAL}
-          - {board: pico2, transport: SDIO_PIO, port: BAREMETAL}
+        board: [pico, pico2]
+        clock: [150, 250]
+        transport: [SDIO_PIO, SPI]
+        port: [FREERTOS, BAREMETAL]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,14 +60,18 @@ jobs:
 
       - name: Check shell script syntax
         run: |
+          sh -n tools/firmware/release-version.sh
           sh -n tools/firmware/build.sh
           sh -n tools/firmware/load.sh
 
       - name: Build firmware
+        env:
+          PF_SDIO_PIO_HIGH_SPEED: "ON"
+          CMAKE_BUILD_PARALLEL_LEVEL: 2
         run: >-
           tools/firmware/build.sh --board "${{ matrix.board }}"
           --sd-card-transport "${{ matrix.transport }}" --sd-card-port "${{ matrix.port }}"
-          --build-dir build/firmware
+          --sys-clk-mhz "${{ matrix.clock }}" --build-dir build/firmware
 
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt
@@ -72,6 +98,6 @@ jobs:
       - name: Attach build package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: firmware-${{ matrix.board }}-${{ matrix.transport }}-${{ matrix.port }}
+          name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-cpu${{ matrix.clock }}-${{ matrix.transport }}-${{ matrix.port }}${{ matrix.transport == 'SDIO_PIO' && '-HS' || '' }}
           path: package/
           if-no-files-found: error

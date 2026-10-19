@@ -13,12 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_build_matrices_and_compatible_artifact_checks():
     for name in ("pr-check.yml", "release.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text()
-        entries = re.findall(r"\{board: (\w+), transport: (\w+), port: (\w+)\}", workflow)
-        assert len(entries) == 6 and len(set(entries)) == 6
-        assert {e[0] for e in entries} == {"pico", "pico2"}
-        assert {(e[1], e[2]) for e in entries} == {
-            (transport, port) for transport in ("SPI", "SDIO_PIO") for port in ("FREERTOS", "BAREMETAL")
-        }
+        for dimension in ("board: [pico, pico2]", "clock: [150, 250]",
+                          "transport: [SDIO_PIO, SPI]", "port: [FREERTOS, BAREMETAL]"):
+            assert dimension in workflow
+        if name == "release.yml":
+            assert 'PF_SDIO_PIO_HIGH_SPEED: "ON"' in workflow
+        assert '--sys-clk-mhz "${{ matrix.clock }}"' in workflow
         assert '--sd-card-transport "${{ matrix.transport }}"' in workflow
         assert '--sd-card-port "${{ matrix.port }}"' in workflow
         artifact_step = workflow.split("- name: Run project tests", 1)[1]
@@ -73,3 +73,28 @@ def test_stack_observation_uses_current_task_and_is_paced():
         assert 'pdMS_TO_TICKS(30000u)' in text
         assert 'uxTaskGetStackHighWaterMark(NULL)' in text
         assert 'minimum free stack: %u words' in text
+
+
+@pytest.mark.parametrize("tag,valid", [
+    ("v0.0.0", True), ("v1.2.3", True), ("v255.255.255", True),
+    ("v256.0.0", False), ("v999999999999999999.0.0", False),
+    ("v01.2.3", False), ("v1.02.3", False), ("v1.2.03", False),
+    ("1.2.3", False), ("v1.2.3-dev", False), ("v1.2.3-rc1", False),
+    ("v1.2.3\n", False), ("main", False), ("", False),
+])
+def test_release_tag_validation(tag, valid):
+    result = subprocess.run([str(ROOT / "tools/firmware/release-version.sh"), tag],
+                            capture_output=True, text=True)
+    assert (result.returncode == 0) == valid
+    if valid:
+        assert result.stdout == tag[1:] + "\n"
+
+
+def test_release_version_is_validated_before_every_build():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    assert 'tags: ["v*.*.*"]' in workflow
+    assert 'test "$RELEASE_REF_TYPE" = tag' in workflow
+    assert 'tools/firmware/release-version.sh "$RELEASE_TAG"' in workflow
+    assert "needs: validate-tag" in workflow
+    assert "PF_FIRMWARE_VERSION: ${{ needs.validate-tag.outputs.version }}" in workflow
+    assert "name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-cpu${{ matrix.clock }}" in workflow

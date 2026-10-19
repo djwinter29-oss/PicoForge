@@ -121,7 +121,7 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
         src/drivers/storage/sdio_pio/sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
-    option(PF_SDIO_PIO_HIGH_SPEED "Opt in to native High-Speed startup (up to 50 MHz, limited by SYSCLK/4) with one 25 MHz fallback" OFF)
+    option(PF_SDIO_PIO_HIGH_SPEED "Native High-Speed startup (up to 50 MHz, limited by SYSCLK/4) with one 25 MHz fallback" ON)
     target_compile_definitions(pf_sd_card_protocol PRIVATE
         PF_SD_NATIVE_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>)
     target_compile_definitions(pf_sdio_backend PRIVATE
@@ -199,6 +199,7 @@ else()
     target_link_libraries(pf_sd_card_baremetal_smoke PRIVATE pf_sd_card)
     pico_enable_stdio_usb(pf_sd_card_baremetal_smoke 0)
     pico_enable_stdio_uart(pf_sd_card_baremetal_smoke 0)
+    pico_set_program_version(pf_sd_card_baremetal_smoke "${PF_FIRMWARE_VERSION}")
     pico_add_extra_outputs(pf_sd_card_baremetal_smoke)
     return()
 endif()

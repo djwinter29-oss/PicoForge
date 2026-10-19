@@ -372,7 +372,7 @@ flowchart TD
     Identify --> Select[CMD7 select and wait for DAT0 ready]
     Select --> Width[CMD13 ready TRAN; CRC-checked SCR; ACMD6 four-bit mode]
     Width --> Speed[Set 25 MHz target; CMD13 and CRC-checked LBA 0]
-    Speed --> Policy{High-Speed build opt-in and the transport can exceed 25 MHz}
+    Speed --> Policy{High-Speed build option enabled and the transport can exceed 25 MHz}
     Policy -->|No| Ready[Initialized card and telemetry]
     Policy -->|Yes| Switch[CMD6 check and switch; validate group 1 support and selection]
     Switch -->|Unavailable but card operational| Ready
@@ -430,18 +430,18 @@ addressing, and CMD16 is never sent. CID/CSD CRC7 and SCR data CRC16 are checked
 The host switches its bus-width state only after ACMD6 succeeds.
 
 Initialization uses at most 400 kHz and 80 released-line clocks before CMD0,
-then sets a 25 MHz transfer target. CMD13 and a CRC-checked read of LBA 0 are
+then validates a 25 MHz transfer target before optional High-Speed negotiation. CMD13 and a CRC-checked read of LBA 0 are
 required before initialization succeeds. There is no large startup sector scan
 or runtime clock reduction. The target media are Class 10 or newer
 cards; speed class is a usage requirement, not a guarantee of electrical
 compatibility or application throughput, and is not detected/enforced by this
 driver. CSD must advertise a default transfer rate of at least 25 MHz.
 
-`PF_SDIO_PIO_HIGH_SPEED=ON` is an explicit CMake opt-in, OFF by default.
+`PF_SDIO_PIO_HIGH_SPEED` defaults to ON for new SDIO builds, including release builds.
 At or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default Speed and records the
-host limit. Above 100 MHz it requests up to 50 MHz and the transport clamps to its planned ceiling (SYSCLK / 4, so
-37.5 MHz at the stock 150 MHz Pico 2 clock; 50 MHz from 200 MHz). Only 200 MHz / 50 MHz is hardware-qualified; see the
-[clock planning rules](../firmware/src/drivers/storage/README.md#clock-planning).
+host limit. Above 100 MHz it requests up to 50 MHz and the transport clamps to its PIO ceiling (SYSCLK / 4):
+at most 37.5 MHz at 150 MHz CPU and up to 50 MHz at 250 MHz CPU. Negotiation and divider calculations do not
+qualify a board, card, wiring, or overclock; see [release qualification](release.md).
 Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
 group-1 support, busy status and selected function. After DAT0 is ready, it leaves
 CLK running at the old rate for 1 ms before targeting up to 50 MHz. This bounded
@@ -452,16 +452,10 @@ timing and repeat validation; failure of that attempt aborts initialization.
 Unsupported/rejected High Speed is nonfatal only while card operation can be
 confirmed. Runtime read/write errors never trigger speed negotiation or replay.
 
-For an existing Pico 2 build directory, enable the experimental path explicitly:
-
-```sh
-cmake -S firmware -B build/validation-pico2-fixed25-250 -DPF_SDIO_PIO_HIGH_SPEED=ON
-cmake --build build/validation-pico2-fixed25-250
-```
-
-This does not change SYSCLK or qualify an overclock. Leave the option OFF for
-the default design. For the qualified 200 MHz CPU / 50 MHz SD build and the still-failing 250 MHz combination, see the
-[High-Speed lab record](../firmware/src/drivers/storage/README.md#high-speed-bring-up-2026-10-17).
+Existing CMake caches retain their option value. Set `-DPF_SDIO_PIO_HIGH_SPEED=ON` explicitly to adopt the default,
+or `OFF` to select the safe Default-Speed policy. Release builds set ON explicitly.
+This option does not change SYSCLK or qualify an overclock. Historical measurements are in the
+[test records](tests/records/README.md).
 
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is

@@ -85,3 +85,20 @@ def test_firmware_scripts_pass_version_to_cmake(tmp_path, environment_version, a
         env=env, capture_output=True, text=True, check=True,
     )
     assert f"-DPF_FIRMWARE_VERSION={expected}" in log.read_text().splitlines()
+
+
+@pytest.mark.parametrize("policy", ["ON", "OFF"])
+def test_build_script_passes_explicit_sdio_policy(tmp_path, policy):
+    sdk = tmp_path / "sdk/external"
+    sdk.mkdir(parents=True)
+    (sdk / "pico_sdk_import.cmake").touch()
+    cmake = tmp_path / "cmake"
+    cmake.write_text('#!/bin/sh\nprintf "%s\n" "$@" >> "$CMAKE_ARGUMENT_LOG"\n')
+    cmake.chmod(0o755)
+    log = tmp_path / "arguments"
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}",
+               CMAKE_ARGUMENT_LOG=str(log), PF_SDIO_PIO_HIGH_SPEED=policy)
+    subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), "--sd-card-port", "BAREMETAL",
+                    "--pico-sdk-path", str(sdk.parent), "--build-dir", str(tmp_path / "build")],
+                   env=env, check=True, capture_output=True, text=True)
+    assert f"-DPF_SDIO_PIO_HIGH_SPEED={policy}" in log.read_text().splitlines()
