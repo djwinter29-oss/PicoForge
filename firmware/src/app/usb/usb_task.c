@@ -262,8 +262,9 @@ void pf_usb_start(void)
     if (!tusb_init()) {
         panic("Failed to initialize TinyUSB");
     }
-    /* ponytail: boot-only 250 ms detach permits stable enumeration after debugger/watchdog reset.
-     * Runtime MSC transitions do not incur this wait. */
+    /* ponytail: 250 ms boot detach permits stable enumeration after debugger/watchdog reset.
+     * Boot uses busy_wait_ms before the scheduler; runtime MSC transitions wait 250 ms via
+     * sleep_ms with scheduler/time interop. */
     tud_disconnect();
     /* The scheduler is not running yet; do not depend on alarm/RTOS wakeups here. */
     busy_wait_ms(USB_RECONNECT_DETACH_MS);

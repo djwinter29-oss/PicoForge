@@ -56,6 +56,10 @@ jobs:
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt
 
+      - name: Check bare-metal SD port artifacts
+        if: matrix.port == 'BAREMETAL'
+        run: python3 -m pytest tests/artifacts/test_sd_ports.py --baremetal-build-dir build/firmware
+
       - name: Run project tests
         if: matrix.port == 'FREERTOS'
         run: |

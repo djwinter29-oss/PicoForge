@@ -27,6 +27,18 @@ def test_build_matrices_and_compatible_artifact_checks():
                         str(ROOT / ".github/workflows" / name)], check=True)
 
 
+def test_pr_check_validates_baremetal_artifacts_after_build():
+    workflow = (ROOT / ".github/workflows/pr-check.yml").read_text()
+    steps = workflow.split("      - name: ")[1:]
+    artifact_steps = [step for step in steps if "tests/artifacts/test_sd_ports.py" in step]
+    assert len(artifact_steps) == 1
+    artifact_step = artifact_steps[0]
+    assert artifact_step.split("run:", 1)[0].splitlines()[1].strip() == "if: matrix.port == 'BAREMETAL'"
+    assert "python3 -m pytest tests/artifacts/test_sd_ports.py --baremetal-build-dir build/firmware" in artifact_step
+    build_step = next(step for step in steps if step.startswith("Build firmware\n"))
+    assert steps.index(build_step) < steps.index(artifact_step)
+
+
 def test_release_only_packages_workflow_artifacts():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
     assert "workflow_dispatch: {}" in workflow
