@@ -62,3 +62,15 @@ jobs:
 
       - name: Setup Ceedling and run firmware unit tests
         run: tools/validation/setup-ceedling-testing.sh test:all
+
+      - name: Generate firmware coverage reports
+        if: always()
+        run: tools/validation/setup-ceedling-testing.sh gcov:all
+
+      - name: Attach firmware coverage reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: firmware-coverage
+          path: build/ceedling/artifacts/gcov/gcovr/
+          if-no-files-found: warn

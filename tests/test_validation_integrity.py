@@ -45,14 +45,21 @@ def test_ceedling_ci_initializes_source_dependency_before_setup():
     assert commands[0][4:] == ['firmware/third_party/embedded-cli']
 
 
-def test_ceedling_ci_runs_all_firmware_tests_once():
+def test_ceedling_ci_runs_all_firmware_tests_once_and_generates_coverage():
     workflow = (ROOT / '.github/workflows/host-validation.yml').read_text()
     commands = [
         shlex.split(line.strip().removeprefix('run: '))
         for line in workflow.splitlines()
         if line.strip().startswith('run: tools/validation/setup-ceedling-testing.sh')
     ]
-    assert commands == [['tools/validation/setup-ceedling-testing.sh', 'test:all']]
+    assert commands == [
+        ['tools/validation/setup-ceedling-testing.sh', 'test:all'],
+        ['tools/validation/setup-ceedling-testing.sh', 'gcov:all'],
+    ]
+    assert '      - name: Generate firmware coverage reports\n        if: always()\n' in workflow
+    assert '      - name: Attach firmware coverage reports\n        if: always()\n' in workflow
+    assert '          name: firmware-coverage\n' in workflow
+    assert '          path: build/ceedling/artifacts/gcov/gcovr/\n' in workflow
 
 
 @pytest.mark.parametrize("script", ["build.sh", "load.sh"])
