@@ -37,6 +37,7 @@ static bool same_config(const pf_sd_config_t *left,
                         const pf_sd_config_t *right)
 {
     return left->clock_hz == right->clock_hz &&
+           left->native_default_speed_only == right->native_default_speed_only &&
            pf_storage_bus_same(&left->transport, &right->transport);
 }
 
@@ -120,7 +121,8 @@ static bool select_transfer_speed(uint32_t card_address)
 {
     uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
     native_info.high_speed_error = PF_SD_DETAIL_NONE;
-    if (pf_storage_sd_wire_state(&active_config.transport).maximum_clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
+    if (active_config.native_default_speed_only ||
+        pf_storage_sd_wire_state(&active_config.transport).maximum_clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
         native_info.high_speed_error = PF_SD_DETAIL_HOST_STATE;
         return true;
     }

@@ -140,6 +140,7 @@ guarantee of card reliability.
 
 **Design reference** (current implementation)
 
+- [Persistent settings](docs/settings.md): flash settings record, reserved sector, and API.
 - [Architecture](docs/architecture.md): application layers, runtime, and storage ownership.
 - [SD-card design](docs/sdcard-design.md): driver interfaces, initialization, and transfer policy.
 - [Physical transports](firmware/src/drivers/storage/README.md): SDIO-PIO, SD-SPI, and card wiring.
