@@ -6,7 +6,7 @@ BUILD_DIR=""
 ELF_PATH=""
 OPENOCD_EXE="${OPENOCD_EXE:-openocd}"
 OPENOCD_TARGET="${PICO_OPENOCD_TARGET:-}"
-ADAPTER_SPEED_KHZ="${PICO_DEBUG_PROBE_SPEED_KHZ:-5000}"
+ADAPTER_SPEED_KHZ="${PICO_DEBUG_PROBE_SPEED_KHZ-5000}"
 DEBUG_PROBE_SERIAL="${PICO_DEBUG_PROBE_SERIAL:-}"
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
@@ -104,6 +104,17 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+
+case "$ADAPTER_SPEED_KHZ" in
+    ''|*[!0-9]*)
+        echo "OpenOCD adapter speed must be a strictly positive decimal integer." >&2
+        exit 1
+        ;;
+esac
+if ! printf '%s' "$ADAPTER_SPEED_KHZ" | grep -q '[1-9]'; then
+    echo "OpenOCD adapter speed must be a strictly positive decimal integer." >&2
+    exit 1
+fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)

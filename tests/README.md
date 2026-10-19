@@ -21,7 +21,9 @@ See [firmware test guidance](../firmware/tests/README.md) for test placement, sc
 | --- | --- |
 | [contracts/test_tinyusb_msc_contract.py](contracts/test_tinyusb_msc_contract.py) | Verify pinned TinyUSB source ordering and MSC linker-wrapper configuration |
 | [contracts/test_storage_layers.py](contracts/test_storage_layers.py) | Verify physical storage mode layout and independence from SD/filesystem headers |
-| [test_validation_integrity.py](test_validation_integrity.py) | Exercise validation tools with copied sources and valid/broken ARM ELF fixtures |
+| [contracts/test_workflows.py](contracts/test_workflows.py) | Verify build matrices, artifact packaging and stack observation |
+| [contracts/test_load_tcl_quoting.py](contracts/test_load_tcl_quoting.py) | Verify OpenOCD argument quoting and validation using a fake executable |
+| [test_validation_integrity.py](test_validation_integrity.py) | Validation-integrity regressions (outside `contracts/`, marked `contracts`) using copied sources and valid/broken ARM ELF fixtures |
 
 Run from the repository root:
 
@@ -47,7 +49,7 @@ This is an instruction model, not electrical or sustained-transfer qualification
 
 ## Host Applications
 
-Host-side tests live with their implementation: Python tests under `host/python/tests/`, .NET tests under `host/dotnet/tests/`, and browser protocol tests under `host/webhid/tests/`. These tests validate HID protocol decoding and status presentation without requiring a connected board.
+Host-side tests live with their implementation: Python tests under `host/python/tests/`, .NET tests under `host/dotnet/PicoForge.Tests/`, and browser protocol tests under `host/webhid/tests/`. These tests validate HID protocol decoding and status presentation without requiring a connected board.
 
 ## Build-Artifact Tests
 

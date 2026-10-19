@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import ceil
+from time import monotonic
 from typing import Any
 
 from .protocol import (
@@ -105,11 +107,21 @@ class PicoForgeHid:
         return parse_info_report(report)
 
     def read_status(self, timeout_ms: int = 250) -> dict[str, object] | None:
+        """Consume non-status input reports while waiting up to timeout_ms for status."""
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
         self._require_open()
-        report = self._device.read(STATUS_INPUT_SIZE, timeout_ms)
-        return parse_status_report(report) if report else None
+        deadline = monotonic() + timeout_ms / 1000
+        remaining_ms = timeout_ms
+        while True:
+            report = self._device.read(max(STATUS_INPUT_SIZE, MEMORY_INPUT_SIZE, SELF_TEST_INPUT_SIZE), remaining_ms)
+            if not report:
+                return None
+            if report[0] not in (MEMORY_REPORT_ID, FILESYSTEM_REPORT_ID, MSC_COMMAND_REPORT_ID, SELF_TEST_REPORT_ID):
+                return parse_status_report(report)
+            remaining_ms = ceil((deadline - monotonic()) * 1000)
+            if remaining_ms <= 0:
+                return None
 
     def read_input_report(self, timeout_ms: int = 250) -> dict[str, object] | None:
         if timeout_ms < 0:

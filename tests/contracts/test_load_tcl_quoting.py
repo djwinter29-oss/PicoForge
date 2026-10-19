@@ -12,7 +12,7 @@ FAKE_OPENOCD = '#!/bin/sh\nfor a in "$@"; do printf "%s\\0" "$a"; done > "$FAKE_
 VALUES = ["plain", "with space", "br{ace}", "un{balanced", "back\\slash", "dollar$x [cmd] \"q\" ;semi", "{}\\{"]
 
 
-def run_load(tmp_path, elf_name, serial):
+def run_load(tmp_path, elf_name, serial, speed="5000"):
     fake = tmp_path / "fake-openocd"
     fake.write_text(FAKE_OPENOCD)
     fake.chmod(0o755)
@@ -22,7 +22,7 @@ def run_load(tmp_path, elf_name, serial):
     out = tmp_path / "args"
     result = subprocess.run(
         ["sh", str(ROOT / "tools/firmware/load.sh"), "--skip-build", "--elf", str(elf), "--openocd-exe", str(fake),
-         "--probe-serial", serial],
+         "--probe-serial", serial, "--adapter-speed-khz", speed],
         capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "FAKE_OPENOCD_ARGS": str(out)}, check=False)
     return elf, out, result
 
@@ -44,8 +44,27 @@ def test_tcl_arguments_round_trip(tmp_path, value):
     assert str(elf) in fields
 
 
-def test_newline_values_are_rejected_before_openocd(tmp_path):
-    _, out, result = run_load(tmp_path, "fw.elf", "bad\nserial")
+@pytest.mark.parametrize("separator", ["\n", "\r"])
+@pytest.mark.parametrize("argument", ["serial", "elf"])
+def test_newline_values_are_rejected_before_openocd(tmp_path, separator, argument):
+    _, out, result = run_load(tmp_path, f"bad{separator}fw.elf" if argument == "elf" else "fw.elf",
+                              f"bad{separator}serial" if argument == "serial" else "plain")
     assert result.returncode != 0
     assert "newline" in result.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("speed", ["1", "5000", "0010", "999999999999999999999999999999"])
+def test_valid_adapter_speed_is_one_argument(tmp_path, speed):
+    _, out, result = run_load(tmp_path, "fw.elf", "plain", speed)
+    assert result.returncode == 0, result.stderr
+    args = out.read_bytes().split(b"\0")[:-1]
+    assert args.count(f"adapter speed {speed}".encode()) == 1
+
+
+@pytest.mark.parametrize("speed", ["", "0", "000", "-1", "+1", "abc", "1.5", "1 2", "1; shutdown", "1\nexit"])
+def test_invalid_adapter_speed_fails_before_openocd(tmp_path, speed):
+    _, out, result = run_load(tmp_path, "fw.elf", "plain", speed)
+    assert result.returncode != 0
+    assert "adapter speed must be a strictly positive decimal integer" in result.stderr
     assert not out.exists()
