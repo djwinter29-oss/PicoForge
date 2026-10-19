@@ -6,6 +6,25 @@
 #include WORKER_SOURCE
 #include HID_SOURCE
 #include USB_TASK_SOURCE
+#include "drivers/persistent_memory/settings.c"
+
+static pf_settings_t test_settings;
+static unsigned settings_save_calls;
+static bool msc_enabled;
+static bool msc_transition_pending;
+
+bool pf_settings_load(pf_settings_t *settings)
+{
+    *settings = test_settings;
+    return true;
+}
+
+bool pf_settings_save(const pf_settings_t *settings)
+{
+    ++settings_save_calls;
+    test_settings = *settings;
+    return true;
+}
 
 static bool unavailable, reserved, initialized, mounted, queue_fails, retained_cid;
 static TickType_t fake_ticks;
@@ -64,8 +83,8 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
     return pdPASS;
 }
 void pf_usb_msc_request_recovery(void) { ++recovery_requests; }
-bool pf_usb_msc_is_enabled(void) { return false; }
-bool pf_usb_msc_transition_pending(void) { return false; }
+bool pf_usb_msc_is_enabled(void) { return msc_enabled; }
+bool pf_usb_msc_transition_pending(void) { return msc_transition_pending; }
 bool pf_usb_msc_request_rejected(void) { return false; }
 void pf_cli_print(const char *message)
 { TEST_ASSERT_NOT_NULL(message); TEST_ASSERT_NOT_EQUAL(0, *message); ++messages; }

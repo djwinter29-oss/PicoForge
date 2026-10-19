@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #include "board_resources.h"
-#include "config/settings.h"
+#include "drivers/persistent_memory/settings.h"
 #include "sd.h"
 
 /** Apply required board pin assignments, including monitor UART and optional LED. */

@@ -1,7 +1,7 @@
-#ifndef PF_CONFIG_SETTINGS_STORE_H
-#define PF_CONFIG_SETTINGS_STORE_H
+#ifndef PF_PERSISTENT_MEMORY_SETTINGS_STORE_H
+#define PF_PERSISTENT_MEMORY_SETTINGS_STORE_H
 
-#include "config/settings.h"
+#include "drivers/persistent_memory/settings.h"
 #include "hardware/flash.h"
 
 /** Flash offset of the reserved settings sector: the last sector of the board's flash (PICO_FLASH_SIZE_BYTES). */

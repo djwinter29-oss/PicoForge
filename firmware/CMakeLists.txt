@@ -210,7 +210,7 @@ add_library(pf_system STATIC
 target_include_directories(pf_system PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
 )
-target_link_libraries(pf_system PUBLIC hardware_clocks pico_stdlib)
+target_link_libraries(pf_system PUBLIC hardware_clocks hardware_vreg pico_stdlib)
 
 add_library(pf_temperature STATIC
     src/drivers/temperature.c
@@ -287,14 +287,13 @@ target_link_libraries(pf_app_storage PUBLIC
     FreeRTOS-Kernel-Static
 )
 add_library(pf_settings STATIC
-    src/config/settings.c
-    src/config/settings_store.c
-    src/config/system_clock.c
+    src/drivers/persistent_memory/settings.c
+    src/drivers/persistent_memory/settings_store.c
 )
 target_include_directories(pf_settings PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 # pico_flash is an INTERFACE library: flash.c compiles into this target, so it needs the FreeRTOS SMP definitions
 # (LIB_FREERTOS_KERNEL, FREE_RTOS_KERNEL_SMP, configNUMBER_OF_CORES, configUSE_CORE_AFFINITY) here.
-target_link_libraries(pf_settings PUBLIC hardware_clocks hardware_flash hardware_vreg pico_flash pico_sync FreeRTOS-Kernel-Static)
+target_link_libraries(pf_settings PUBLIC hardware_flash pico_flash pico_sync FreeRTOS-Kernel-Static)
 
 add_library(pf_board STATIC
     src/board/board.c

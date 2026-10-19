@@ -43,6 +43,11 @@ for (const name of ["web", "webhid"]) {
     if (name === "webhid") {
       assert.match(html, /id="connect"/);
       assert.match(html, /id="disconnect"/);
+      const settings = section('aria-labelledby="settings-title"');
+      assert.match(settings, /id="settings-clock"/);
+      assert.match(settings, /id="settings-sdio"/);
+      assert.match(settings, /id="settings-spi"/);
+      assert.match(settings, /id="settings-save"/);
     }
   });
 
@@ -69,13 +74,24 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
     Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
     PicoForgeWebHid.prototype.connect = async function () {
       connectedClient = this;
-      this.device = { sendFeatureReport: async (id, payload) => sent.push([id, ...payload]) };
-      this.update({ connected: true, msc: { enabled: true, force_return_supported: true } });
+      let settingsReport = Uint8Array.from([1, 200, 0, 0, 50]);
+      this.device = {
+        sendFeatureReport: async (id, payload) => {
+          sent.push([id, ...payload]);
+          if (id === 8) settingsReport = Uint8Array.from(payload);
+        },
+        receiveFeatureReport: async () => new DataView(settingsReport.buffer),
+      };
+      this.update({ connected: true, settings_supported: true,
+        settings: { system_clock_mhz: 200, sdio_bus_mhz: 0, spi_bus_mhz: 50 },
+        msc: { enabled: true, force_return_supported: true } });
     };
     try {
       await import("../js/app.mjs");
       await elements.get("#connect").click();
       assert.equal(elements.get("#msc-note").hidden, true);
+      assert.equal(elements.get("#settings-clock").value, "200");
+      assert.equal(elements.get("#settings-save").disabled, true);
       await elements.get("#msc-control").click();
       assert.equal(sent.length, 0);
       confirmed = true;
@@ -90,6 +106,14 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
       assert.equal(elements.get("#msc-control").disabled, true);
       await elements.get("#msc-control").click();
       assert.equal(sent.length, 2);
+      connectedClient.update({ msc: { enabled: false, transition_pending: false } });
+      elements.get("#settings-clock").value = "150";
+      elements.get("#settings-sdio").value = "0";
+      elements.get("#settings-spi").value = "25";
+      elements.get("#settings-clock").change();
+      await elements.get("#settings-save").click();
+      assert.deepEqual(sent.at(-1), [8, 1, 150, 0, 0, 25]);
+      assert.match(elements.get("#settings-note").textContent, /after reboot/);
     } finally {
       PicoForgeWebHid.prototype.connect = previousConnect;
       globalThis.document = previousDocument;

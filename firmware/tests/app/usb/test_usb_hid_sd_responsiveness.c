@@ -1,6 +1,7 @@
 #include "unity.h"
 #include <stdio.h>
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
+TEST_INCLUDE_PATH("firmware/tests/support/config")
 #include "storage/responsiveness_fixture.inc"
 
 void setUp(void)
@@ -8,6 +9,11 @@ void setUp(void)
     config_available = true;
     requests = (void *)1;
     cli_session = 9;
+    test_settings = (pf_settings_t){.system_clock_mhz = 200u, .sdio_bus_mhz = 25u, .spi_bus_mhz = 50u};
+    settings_save_calls = 0u;
+    msc_enabled = false;
+        msc_transition_pending = false;
+    busy = false;
 }
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
 
@@ -46,6 +52,57 @@ void test_hid_identity_reports_firmware_version_without_changing_payload_size(vo
     TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0, PF_HID_INFO_REPORT_ID,
         HID_REPORT_TYPE_FEATURE, payload, sizeof(payload)));
     TEST_ASSERT_EQUAL_MEMORY(&report, payload, sizeof(report));
+}
+
+void test_settings_feature_report_encodes_saved_numeric_values(void)
+{
+    pf_hid_settings_report_t report;
+    pf_hid_build_settings_report(&report);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_SETTINGS_REPORT_VERSION, report.version);
+    TEST_ASSERT_EQUAL_UINT16(200u, report.system_clock_mhz);
+    TEST_ASSERT_EQUAL_UINT8(25u, report.sdio_bus_mhz);
+    TEST_ASSERT_EQUAL_UINT8(50u, report.spi_bus_mhz);
+    uint8_t payload[sizeof(report)];
+    TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0u, PF_HID_SETTINGS_REPORT_ID,
+        HID_REPORT_TYPE_FEATURE, payload, sizeof(payload)));
+    TEST_ASSERT_EQUAL_MEMORY(&report, payload, sizeof(report));
+    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(0u, PF_HID_SETTINGS_REPORT_ID,
+        HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
+}
+
+void test_settings_feature_report_validates_and_saves_only_when_storage_is_idle(void)
+{
+    uint8_t command[] = {PF_HID_SETTINGS_REPORT_VERSION, 250u, 0u, 50u, 25u};
+    tud_hid_set_report_cb(1u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_INPUT, command, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, NULL, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command) - 1u);
+    command[0] = 0xffu;
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    command[0] = PF_HID_SETTINGS_REPORT_VERSION;
+    command[1] = 100u;
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+
+    command[1] = 250u;
+    msc_enabled = true;
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    msc_enabled = false;
+    busy = true;
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    busy = false;
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+
+    msc_transition_pending = true;
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    msc_transition_pending = false;
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+
+    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
+    TEST_ASSERT_EQUAL_UINT16(250u, test_settings.system_clock_mhz);
+    TEST_ASSERT_EQUAL_UINT8(50u, test_settings.sdio_bus_mhz);
+    TEST_ASSERT_EQUAL_UINT8(25u, test_settings.spi_bus_mhz);
 }
 
 void test_file_benchmark_rename_preserves_hid_report_encoding(void)

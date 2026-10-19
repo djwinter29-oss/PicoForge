@@ -8,7 +8,7 @@
  * dual-sector journal (sequence number + CRC, write the other sector, then retire the old one) if atomic
  * retention across power loss or frequent writes are ever needed.
  */
-#include "config/settings_store.h"
+#include "drivers/persistent_memory/settings_store.h"
 
 #include <string.h>
 

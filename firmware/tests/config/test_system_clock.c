@@ -2,7 +2,7 @@
 
 TEST_INCLUDE_PATH("firmware/tests/support/config")
 
-#include "config/system_clock.h"
+#include "drivers/system.h"
 #include "clock_model.h"
 
 static uint32_t sys_hz, peri_hz, hstx_hz, wait_cycles;

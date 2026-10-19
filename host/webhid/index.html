@@ -63,6 +63,42 @@
       </dl>
     </section>
 
+    <section class="runtime" aria-labelledby="settings-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">BOOT CONFIGURATION</p>
+          <h2 id="settings-title">Device settings</h2>
+        </div>
+        <button class="button" id="settings-save" type="button" disabled>Save for next boot</button>
+      </div>
+      <div class="settings-controls">
+        <label for="settings-clock">System clock
+          <select id="settings-clock" disabled>
+            <option value="0">Build default</option>
+            <option value="150">150 MHz</option>
+            <option value="200">200 MHz</option>
+            <option value="250">250 MHz</option>
+          </select>
+        </label>
+        <label for="settings-sdio">SDIO bus
+          <select id="settings-sdio" disabled>
+            <option value="0">Default Speed, 25 MHz</option>
+            <option value="50">High-Speed, up to 50 MHz</option>
+          </select>
+        </label>
+        <label for="settings-spi">SPI bus ceiling
+          <select id="settings-spi" disabled>
+            <option value="0">Board default</option>
+            <option value="25">25 MHz</option>
+            <option value="50">50 MHz</option>
+          </select>
+        </label>
+      </div>
+      <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
+        Connect to read the saved settings.
+      </p>
+    </section>
+
     <section class="runtime" aria-labelledby="memory-title">
       <div class="section-heading">
         <div>

@@ -6,8 +6,8 @@ TEST_INCLUDE_PATH("firmware/tests/support/config")
 
 #include "FreeRTOS.h"
 #include "task.h"
-#include "config/settings.h"
-#include "config/settings_store.h"
+#include "drivers/persistent_memory/settings.h"
+#include "drivers/persistent_memory/settings_store.h"
 
 uint8_t pf_test_flash[PICO_FLASH_SIZE_BYTES];
 unsigned pf_test_erase_calls;

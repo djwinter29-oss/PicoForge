@@ -5,7 +5,7 @@
  * Little-endian record: magic u32 'PFCF', version u16, size u16, system_clock_mhz u16, sdio_bus_mhz u8,
  * spi_bus_mhz u8, crc32 u32 over the preceding 12 bytes.
  */
-#include "config/settings.h"
+#include "drivers/persistent_memory/settings.h"
 
 #define MAGIC 0x46434650u /* "PFCF" in little-endian byte order */
 #define CRC_OFFSET (PF_SETTINGS_RECORD_SIZE - 4u)

@@ -5,10 +5,21 @@ const connect = document.querySelector("#connect");
 const disconnect = document.querySelector("#disconnect");
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
+const settingsSave = document.querySelector("#settings-save");
+const settingsClock = document.querySelector("#settings-clock");
+const settingsSdio = document.querySelector("#settings-sdio");
+const settingsSpi = document.querySelector("#settings-spi");
+let settingsDirty = false;
 const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
 
 function render(state) {
   renderStatus(state);
+  if (!state.connected) settingsDirty = false;
+  if (!settingsDirty && state.settings) {
+    settingsClock.value = String(state.settings.system_clock_mhz);
+    settingsSdio.value = String(state.settings.sdio_bus_mhz === 25 ? 0 : state.settings.sdio_bus_mhz);
+    settingsSpi.value = String(state.settings.spi_bus_mhz);
+  }
   connect.disabled = state.busy || state.connected || state.reconnecting || !navigator.hid;
   disconnect.disabled = state.busy || !state.connected;
   ledControl.disabled = state.busy || !state.connected || !state.board_status?.led_available;
@@ -16,6 +27,19 @@ function render(state) {
     || Boolean(state.self_test?.active) || state.self_test_command_pending
     || Boolean(state.msc?.enabled && !state.msc.force_return_supported);
   mscControl.textContent = state.msc?.enabled ? "Disable USB drive" : "Enable USB drive";
+  const settingsReady = state.connected && state.settings_supported && state.settings !== null && Boolean(state.msc)
+    && !state.msc.enabled && !state.msc.transition_pending && !state.self_test?.active
+    && !state.self_test_command_pending;
+  for (const control of [settingsClock, settingsSdio, settingsSpi]) {
+    control.disabled = state.busy || !settingsReady;
+  }
+  settingsSave.disabled = state.busy || !settingsReady;
+  document.querySelector("#settings-note").textContent = state.settings_message
+    || (!state.connected ? "Connect to read the saved settings."
+      : !state.settings_supported ? "Settings are unavailable; update the device firmware."
+        : !state.msc ? "Waiting for storage ownership status."
+          : state.msc.enabled || state.msc.transition_pending ? "Disable the USB drive before saving settings."
+            : "Changes take effect after reboot.");
   document.querySelector("#msc-note").textContent = state.reconnecting
     ? "USB interfaces are reconnecting; HID will resume automatically."
     : state.msc?.enabled && !state.msc.force_return_supported
@@ -45,4 +69,19 @@ document.querySelector("#self-test-start").addEventListener("click", async () =>
 });
 document.querySelector("#self-test-cancel").addEventListener("click", () => client.setSelfTest("cancel"));
 document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(client.state));
+for (const control of [settingsClock, settingsSdio, settingsSpi]) {
+  control.addEventListener("change", () => {
+    settingsDirty = true;
+    render(client.state);
+  });
+}
+settingsSave.addEventListener("click", async () => {
+  const saved = await client.saveSettings({
+    system_clock_mhz: Number(settingsClock.value),
+    sdio_bus_mhz: Number(settingsSdio.value),
+    spi_bus_mhz: Number(settingsSpi.value),
+  });
+  if (saved) settingsDirty = false;
+  render(client.state);
+});
 render(client.state);

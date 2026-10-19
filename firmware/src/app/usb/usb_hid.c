@@ -7,6 +7,7 @@
 #include "board/board.h"
 #include "drivers/sd_card/sd_block.h"
 #include "drivers/led.h"
+#include "drivers/persistent_memory/settings_store.h"
 #include "drivers/temperature.h"
 #include "usb_msc.h"
 #include "app/storage/fatfs_volume.h"
@@ -112,6 +113,18 @@ void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t 
     }
 }
 
+void pf_hid_build_settings_report(pf_hid_settings_report_t *report)
+{
+    pf_settings_t settings;
+    (void)pf_settings_load(&settings);
+    *report = (pf_hid_settings_report_t){
+        .version = PF_HID_SETTINGS_REPORT_VERSION,
+        .system_clock_mhz = settings.system_clock_mhz,
+        .sdio_bus_mhz = settings.sdio_bus_mhz,
+        .spi_bus_mhz = settings.spi_bus_mhz,
+    };
+}
+
 void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report)
 {
     memset(report, 0, sizeof(*report));
@@ -153,6 +166,14 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
         (reqlen >= sizeof(pf_hid_info_report_t))) {
         pf_hid_info_report_t report;
         pf_hid_build_info_report(&report);
+        memcpy(buffer, &report, sizeof(report));
+        return sizeof(report);
+    }
+
+    if ((report_id == PF_HID_SETTINGS_REPORT_ID) && (report_type == HID_REPORT_TYPE_FEATURE) &&
+        (reqlen >= sizeof(pf_hid_settings_report_t))) {
+        pf_hid_settings_report_t report;
+        pf_hid_build_settings_report(&report);
         memcpy(buffer, &report, sizeof(report));
         return sizeof(report);
     }
@@ -225,6 +246,18 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
             (void)pf_storage_worker_benchmark_start(size_mib, pf_usb_msc_is_enabled());
         } else if (size_mib == 0u) {
             (void)pf_storage_worker_benchmark_cancel();
+        }
+    } else if ((report_id == PF_HID_SETTINGS_REPORT_ID) &&
+               (bufsize == sizeof(pf_hid_settings_report_t)) &&
+               (buffer[0] == PF_HID_SETTINGS_REPORT_VERSION) &&
+               !pf_usb_msc_is_enabled() && !pf_usb_msc_transition_pending() && !pf_storage_worker_busy()) {
+        const pf_settings_t settings = {
+            .system_clock_mhz = (uint16_t)buffer[1] | ((uint16_t)buffer[2] << 8u),
+            .sdio_bus_mhz = buffer[3],
+            .spi_bus_mhz = buffer[4],
+        };
+        if (pf_settings_valid(&settings)) {
+            (void)pf_settings_save(&settings);
         }
     }
 }

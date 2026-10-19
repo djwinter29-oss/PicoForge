@@ -14,6 +14,7 @@
 #define PF_HID_MSC_COMMAND_REPORT_ID 5u
 #define PF_HID_SELF_TEST_REPORT_ID 6u
 #define PF_HID_FILESYSTEM_REPORT_ID 7u
+#define PF_HID_SETTINGS_REPORT_ID 8u
 #define PF_HID_REPORT_VERSION 2u
 /** @brief Identity layout with a firmware release version. */
 #define PF_HID_INFO_REPORT_VERSION 3u
@@ -33,6 +34,8 @@
 #define PF_HID_SELF_TEST_COMMAND_PAYLOAD_SIZE 6u
 #define PF_HID_SELF_TEST_STATUS_PAYLOAD_SIZE 32u
 #define PF_HID_FILESYSTEM_PAYLOAD_SIZE 3u
+#define PF_HID_SETTINGS_REPORT_VERSION 1u
+#define PF_HID_SETTINGS_PAYLOAD_SIZE 5u
 
 #define PF_MCU_RP2040 PF_SYSTEM_MCU_RP2040
 #define PF_MCU_RP2350 PF_SYSTEM_MCU_RP2350
@@ -149,6 +152,14 @@ typedef struct __attribute__((packed)) {
     uint8_t format;
 } pf_hid_filesystem_report_t;
 
+/** Persisted boot settings returned by and written through HID Feature report 8. */
+typedef struct __attribute__((packed)) {
+    uint8_t version; /**< Settings report layout version. */
+    uint16_t system_clock_mhz; /**< 0 (build default), 150, 200 or 250. */
+    uint8_t sdio_bus_mhz; /**< 0, 25 or 50. */
+    uint8_t spi_bus_mhz; /**< 0, 25 or 50. */
+} pf_hid_settings_report_t;
+
 _Static_assert(sizeof(pf_hid_self_test_command_t) == PF_HID_SELF_TEST_COMMAND_PAYLOAD_SIZE,
                "Self-test command size changed");
 _Static_assert(sizeof(pf_hid_self_test_status_t) == PF_HID_SELF_TEST_STATUS_PAYLOAD_SIZE,
@@ -160,6 +171,8 @@ _Static_assert(sizeof(pf_hid_status_report_t) == PF_HID_STATUS_PAYLOAD_SIZE,
                "HID status report payload size changed");
 _Static_assert(sizeof(pf_hid_memory_report_t) == PF_HID_MEMORY_PAYLOAD_SIZE,
                "HID memory report payload size changed");
+_Static_assert(sizeof(pf_hid_settings_report_t) == PF_HID_SETTINGS_PAYLOAD_SIZE,
+               "HID settings report payload size changed");
 _Static_assert(sizeof(pf_hid_led_command_report_t) == PF_HID_LED_COMMAND_PAYLOAD_SIZE,
                "HID LED command report payload size changed");
 _Static_assert((sizeof(PF_HID_PRODUCT_NAME) - 1u) <= PF_HID_PRODUCT_NAME_SIZE,
@@ -170,6 +183,7 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
 /** Return false without modifying the report if card state is currently busy. */
 bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence);
 void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t sequence);
+void pf_hid_build_settings_report(pf_hid_settings_report_t *report);
 void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report);
 void pf_hid_build_self_test_report(pf_hid_self_test_status_t *report, uint8_t sequence);
 

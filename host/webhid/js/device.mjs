@@ -12,11 +12,13 @@ export const LED_COMMAND_REPORT_ID = 4;
 export const MSC_COMMAND_REPORT_ID = 5;
 export const SELF_TEST_REPORT_ID = 6;
 export const FILESYSTEM_REPORT_ID = 7;
+export const SETTINGS_REPORT_ID = 8;
 const INFO_PAYLOAD_SIZE = 42;
 const STATUS_PAYLOAD_SIZE = 23;
 const MEMORY_PAYLOAD_SIZE = 29;
 const MSC_STATUS_SIZE = 4;
 const FILESYSTEM_PAYLOAD_SIZE = 3;
+const SETTINGS_PAYLOAD_SIZE = 5;
 
 function asView(report) {
   if (report instanceof DataView) return report;
@@ -52,6 +54,41 @@ function featurePayload(report, reportId, payloadSize) {
     if (view.getUint8(index) !== 0) throw new Error("Unexpected HID feature report padding");
   }
   return new DataView(view.buffer, view.byteOffset + offset, payloadSize);
+}
+
+function validSettings(settings) {
+  return settings && [0, 150, 200, 250].includes(settings.system_clock_mhz)
+    && [0, 25, 50].includes(settings.sdio_bus_mhz)
+    && [0, 25, 50].includes(settings.spi_bus_mhz);
+}
+
+export function buildSettingsReport(settings) {
+  if (!validSettings(settings)) throw new Error("Unsupported boot settings value");
+  const report = new Uint8Array(SETTINGS_PAYLOAD_SIZE);
+  report[0] = 1;
+  new DataView(report.buffer).setUint16(1, settings.system_clock_mhz, true);
+  report[3] = settings.sdio_bus_mhz;
+  report[4] = settings.spi_bus_mhz;
+  return report;
+}
+
+export function decodeSettingsReport(report) {
+  const payload = featurePayload(report, SETTINGS_REPORT_ID, SETTINGS_PAYLOAD_SIZE);
+  const settings = {
+    system_clock_mhz: payload.getUint16(1, true),
+    sdio_bus_mhz: payload.getUint8(3),
+    spi_bus_mhz: payload.getUint8(4),
+  };
+  if (payload.getUint8(0) !== 1 || !validSettings(settings)) {
+    throw new Error("Invalid HID settings report");
+  }
+  return settings;
+}
+
+function sameSettings(left, right) {
+  return left.system_clock_mhz === right.system_clock_mhz
+    && left.sdio_bus_mhz === right.sdio_bus_mhz
+    && left.spi_bus_mhz === right.spi_bus_mhz;
 }
 
 function paddedText(view, offset, length) {
@@ -288,7 +325,8 @@ export function matchesPicoForge(device) {
 
 const NO_TELEMETRY = {
   hardware: null, runtime: null, board_status: null, memory: null, filesystem_format: null, msc: null,
-  self_test: null, self_test_command_pending: false, updated_at: null,
+  self_test: null, self_test_command_pending: false, settings: null, settings_supported: false,
+  settings_message: null, updated_at: null,
 };
 
 export class PicoForgeWebHid {
@@ -307,6 +345,9 @@ export class PicoForgeWebHid {
       filesystem_format: null,
       self_test: null,
       self_test_command_pending: false,
+      settings: null,
+      settings_supported: false,
+      settings_message: null,
       updated_at: null,
       busy: false,
     };
@@ -397,10 +438,18 @@ export class PicoForgeWebHid {
       selected.addEventListener("inputreport", this.onInputReport);
       this.device = selected;
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
+      let settings = null;
+      let settingsMessage = null;
+      try {
+        settings = decodeSettingsReport(await selected.receiveFeatureReport(SETTINGS_REPORT_ID));
+      } catch (error) {
+        settingsMessage = `Boot settings unavailable: ${error.message}`;
+      }
       this.reconnectSerial = selected.serialNumber || hardware.serial_number;
       this.update({ connected: true, busy: false, reconnecting: false, error: null, hardware,
         runtime: null, board_status: null, memory: null, self_test: null,
-        self_test_command_pending: false, updated_at: null });
+        self_test_command_pending: false, settings, settings_supported: settings !== null,
+        settings_message: settingsMessage, updated_at: null });
     } catch (error) {
       selected.removeEventListener("inputreport", this.onInputReport);
       if (selected.opened) {
@@ -422,6 +471,26 @@ export class PicoForgeWebHid {
       this.update({ runtime, board_status: boardStatus, busy: false });
     } catch (error) {
       this.update({ busy: false, error: error.message });
+    }
+  }
+
+  async saveSettings(settings) {
+    const command = buildSettingsReport(settings);
+    if (!this.device || this.state.busy || !this.state.settings_supported) return false;
+    if (this.state.msc?.enabled || this.state.msc?.transition_pending) {
+      this.update({ settings_message: "Disable the USB drive before saving boot settings." });
+      return false;
+    }
+    this.update({ busy: true, settings_message: null });
+    try {
+      await this.device.sendFeatureReport(SETTINGS_REPORT_ID, command);
+      const saved = decodeSettingsReport(await this.device.receiveFeatureReport(SETTINGS_REPORT_ID));
+      if (!sameSettings(saved, settings)) throw new Error("Firmware did not confirm the selected values");
+      this.update({ settings: saved, busy: false, settings_message: "Saved. Changes take effect after reboot." });
+      return true;
+    } catch (error) {
+      this.update({ busy: false, settings_message: `Save failed: ${error.message}` });
+      return false;
     }
   }
 

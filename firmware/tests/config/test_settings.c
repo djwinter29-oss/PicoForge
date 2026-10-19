@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include "config/settings.h"
+#include "drivers/persistent_memory/settings.h"
 
 void setUp(void) {}
 void tearDown(void) {}

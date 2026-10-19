@@ -17,13 +17,28 @@ remains limited to the fixed 25 MHz transfer mode plus that optional negotiation
 ## Using the API
 
 ```c
-#include "config/settings_store.h"
+#include "drivers/persistent_memory/settings_store.h"
 
 pf_settings_t settings;
 bool stored = pf_settings_load(&settings);   /* task, scheduler running; always complete (defaults if !stored) */
 settings.spi_bus_mhz = 25;
 pf_settings_save(&settings);                 /* task, scheduler running; true after read-back verifies */
 ```
+
+## WebHID settings
+
+HID Feature report 8, layout version 1, reads or saves the persisted settings. Its five-byte payload is little-endian:
+
+| Offset | Size | Value |
+| --- | --- | --- |
+| 0 | 1 | Layout version (`1`) |
+| 1 | 2 | `system_clock_mhz` |
+| 3 | 1 | `sdio_bus_mhz` |
+| 4 | 1 | `spi_bus_mhz` |
+
+The report carries numeric values, not UI labels. The WebHID page maps them to select options and verifies a save by
+reading the report back. Writes are rejected while MSC or storage work owns the media. Saved values are applied at
+the next boot; they do not change the active clock or bus immediately.
 
 Before the scheduler starts (runtime-init hooks, `main()`), use the lock-free `pf_settings_load_early()` instead; it
 refuses once the scheduler runs. `main()` loads the settings and passes them to `pf_board_apply_settings()` before
@@ -75,7 +90,7 @@ flash sizes. A board with less flash than the SDK definition is unsupported.
 A saved `system_clock_mhz` is applied by a `PICO_RUNTIME_INIT_FUNC_HW` hook in [main.c](../firmware/src/main.c) ordered
 `00501`: after the SDK clock init (`00500`) and before peripheral resets are released (`00600`), stdio and FreeRTOS, so
 the FreeRTOS port reads the new `clk_sys` for SysTick at scheduler start. The hook reads the record without writing
-(`pf_settings_load_early()`) and calls `pf_system_clock_apply()` ([system_clock.c](../firmware/src/config/system_clock.c)):
+(`pf_settings_load_early()`) and calls `pf_system_clock_apply()` ([system.c](../firmware/src/drivers/system.c)):
 
 - `0`, a corrupt/missing record (which decodes as Defaults), an underivable frequency or the clock already in use change
   nothing, so Defaults keep the build clock.

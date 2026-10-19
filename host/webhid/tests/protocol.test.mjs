@@ -7,14 +7,87 @@ import {
   decodeFilesystemReport,
   decodeMemoryReport,
   decodeMscStatus,
+  decodeSettingsReport,
   decodeStatusReport,
   INFO_REPORT_ID,
   matchesPicoForge,
   PicoForgeWebHid,
+  SETTINGS_REPORT_ID,
   STATUS_REPORT_ID,
   buildSelfTestCommand,
+  buildSettingsReport,
   decodeSelfTestReport,
 } from "../js/device.mjs";
+
+test("settings feature values encode compactly and reject unknown values", () => {
+  const settings = { system_clock_mhz: 200, sdio_bus_mhz: 50, spi_bus_mhz: 25 };
+  const report = buildSettingsReport(settings);
+  assert.deepEqual([...report], [1, 200, 0, 50, 25]);
+  assert.deepEqual(decodeSettingsReport(report), settings);
+  assert.deepEqual(decodeSettingsReport(Uint8Array.from([0, SETTINGS_REPORT_ID, ...report, 0, 0])), settings);
+  for (const invalid of [
+    { ...settings, system_clock_mhz: 100 },
+    { ...settings, sdio_bus_mhz: 40 },
+    { ...settings, spi_bus_mhz: 75 },
+  ]) assert.throws(() => buildSettingsReport(invalid), /Unsupported/);
+  const corrupt = Uint8Array.from(report);
+  corrupt[0] = 2;
+  assert.throws(() => decodeSettingsReport(corrupt), /Invalid/);
+  corrupt[0] = 1;
+  corrupt[1] = 100;
+  assert.throws(() => decodeSettingsReport(corrupt), /Invalid/);
+});
+
+test("settings save refuses MSC ownership and verifies the device readback", async () => {
+  const client = new PicoForgeWebHid(undefined);
+  const sent = [];
+  let stored = Uint8Array.from([1, 0, 0, 0, 0]);
+  client.device = {
+    async sendFeatureReport(reportId, payload) { sent.push([reportId, ...payload]); },
+    async receiveFeatureReport(reportId) {
+      assert.equal(reportId, SETTINGS_REPORT_ID);
+      return new DataView(stored.buffer);
+    },
+  };
+  client.state.settings_supported = true;
+  client.state.msc = { enabled: true, transition_pending: false };
+  const next = { system_clock_mhz: 200, sdio_bus_mhz: 50, spi_bus_mhz: 25 };
+  assert.equal(await client.saveSettings(next), false);
+  assert.equal(sent.length, 0);
+  assert.match(client.state.settings_message, /Disable the USB drive/);
+
+  client.state.msc.enabled = false;
+  assert.equal(await client.saveSettings(next), false);
+  assert.match(client.state.settings_message, /did not confirm/);
+  stored = Uint8Array.from(buildSettingsReport(next));
+  assert.equal(await client.saveSettings(next), true);
+  assert.deepEqual(client.state.settings, next);
+  assert.match(client.state.settings_message, /after reboot/);
+});
+
+test("settings feature report remains optional for older firmware", async () => {
+  const device = new EventTarget();
+  Object.assign(device, {
+    vendorId: 0xcafe,
+    productId: 0x4011,
+    serialNumber: "0123456789abcdef",
+    collections: [{ usagePage: 0xff00, usage: 1 }],
+    opened: false,
+    async open() { this.opened = true; },
+    async close() { this.opened = false; },
+    async receiveFeatureReport(reportId) {
+      if (reportId === INFO_REPORT_ID) return new DataView(infoReport().buffer);
+      throw new Error("Unsupported feature report");
+    },
+  });
+  const hid = new EventTarget();
+  hid.getDevices = async () => [device];
+  const client = new PicoForgeWebHid(hid);
+  await client.connect();
+  assert.equal(client.state.connected, true);
+  assert.equal(client.state.settings_supported, false);
+  assert.match(client.state.settings_message, /Boot settings unavailable/);
+});
 
 test("self-test start/cancel commands validate size and encode HID payloads", () => {
   assert.deepEqual([...buildSelfTestCommand("start", 32)], [2, 1, 32, 0, 0, 0]);
@@ -298,11 +371,15 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
     async open() { this.opened = true; }
     async close() { this.opened = false; }
     async receiveFeatureReport(reportId) {
-      assert.equal(reportId, INFO_REPORT_ID);
-      return new DataView(infoReport().buffer);
+      if (reportId === INFO_REPORT_ID) return new DataView(infoReport().buffer);
+      if (reportId === SETTINGS_REPORT_ID) {
+        return new DataView(this.settingsReport ?? Uint8Array.from([1, 0, 0, 0, 0]).buffer);
+      }
+      throw new Error(`Unexpected feature report ${reportId}`);
     }
     async sendFeatureReport(reportId, payload) {
       this.lastFeature = { reportId, payload: [...payload] };
+      if (reportId === SETTINGS_REPORT_ID) this.settingsReport = Uint8Array.from(payload).buffer;
     }
   }
 
@@ -329,6 +406,8 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
 
   await client.connect();
   assert.equal(client.state.connected, true, client.state.error);
+  assert.equal(client.state.settings_supported, true);
+  assert.deepEqual(client.state.settings, { system_clock_mhz: 0, sdio_bus_mhz: 0, spi_bus_mhz: 0 });
   function emitPaddedInput(reportId, bytes) {
     const buffer = new Uint8Array(36).fill(0xa5);
     buffer.set(bytes, 4);
@@ -362,6 +441,10 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   emitPaddedInput(5, [3, 0, 0, 0]);
   runtime[10] = 0x08;
   emitPaddedInput(2, runtime);
+  const nextSettings = { system_clock_mhz: 150, sdio_bus_mhz: 0, spi_bus_mhz: 25 };
+  assert.equal(await client.saveSettings(nextSettings), true);
+  assert.deepEqual(firstDevice.lastFeature, { reportId: 8, payload: [1, 150, 0, 0, 25] });
+  assert.deepEqual(client.state.settings, nextSettings);
   await client.setLed(true);
   assert.deepEqual(firstDevice.lastFeature, { reportId: 4, payload: [2, 1] });
   await client.setLed(false);

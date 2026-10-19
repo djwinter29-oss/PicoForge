@@ -1,5 +1,5 @@
-#ifndef PF_CONFIG_SETTINGS_H
-#define PF_CONFIG_SETTINGS_H
+#ifndef PF_PERSISTENT_MEMORY_SETTINGS_H
+#define PF_PERSISTENT_MEMORY_SETTINGS_H
 
 #include <stdbool.h>
 #include <stddef.h>
