@@ -62,10 +62,14 @@ jobs:
       - name: Run project tests
         if: matrix.port == 'FREERTOS'
         run: |
-          python3 -m pytest tests/contracts tests/pio tests/test_validation_integrity.py \
+          python3 -m pytest tests/contracts tests/test_validation_integrity.py \
             tests/artifacts/test_msc_elf.py \
             --elf "$(cat "build/firmware/pico_forge_elf.txt")" \
             --junitxml=build/project-tests.xml
+
+      - name: Run SDIO PIO timing tests
+        if: matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'
+        run: python3 -m pytest tests/pio --junitxml=build/pio-timing-tests.xml
 
       - name: Build SDK-default clock application
         if: matrix.clock == 150 && matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'

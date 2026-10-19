@@ -39,6 +39,30 @@ def test_usb_protocol_documents_filesystem_input_report():
 
 
 @pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
+def test_workflows_run_pio_timing_only_for_sdio_freertos(name):
+    workflow = (ROOT / ".github/workflows" / name).read_text()
+    steps = workflow.split("      - name: ")[1:]
+    common = next(step for step in steps if step.startswith("Run project tests\n"))
+    assert common.split("run:", 1)[0].splitlines()[1].strip() == "if: matrix.port == 'FREERTOS'"
+    assert "tests/pio" not in common
+    for suite in ("tests/contracts", "tests/test_validation_integrity.py", "tests/artifacts/test_msc_elf.py"):
+        assert suite in common
+    assert '--elf "$(cat "build/firmware/pico_forge_elf.txt")"' in common
+    assert "--junitxml=build/project-tests.xml" in common
+
+    timing_steps = [step for step in steps if "tests/pio" in step]
+    assert len(timing_steps) == 1
+    timing = timing_steps[0]
+    assert timing.startswith("Run SDIO PIO timing tests\n")
+    assert timing.split("run:", 1)[0].splitlines()[1].strip() == (
+        "if: matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'")
+    assert "python3 -m pytest tests/pio --junitxml=build/pio-timing-tests.xml" in timing
+    assert "continue-on-error" not in timing
+    build = next(step for step in steps if step.startswith("Build firmware\n"))
+    assert steps.index(build) < steps.index(common) < steps.index(timing)
+
+
+@pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
 def test_workflows_validate_baremetal_artifacts_after_build(name):
     workflow = (ROOT / ".github/workflows" / name).read_text()
     steps = workflow.split("      - name: ")[1:]
