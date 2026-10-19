@@ -27,8 +27,20 @@ def test_build_matrices_and_compatible_artifact_checks():
                         str(ROOT / ".github/workflows" / name)], check=True)
 
 
-def test_pr_check_validates_baremetal_artifacts_after_build():
-    workflow = (ROOT / ".github/workflows/pr-check.yml").read_text()
+def test_usb_protocol_documents_filesystem_input_report():
+    doc = (ROOT / "docs/usb-protocol.md").read_text()
+    section = " ".join(doc.split("## Input Report 7", 1)[1].split("\n## ", 1)[0].split())
+    for text in ("3-byte payload", "excluding the report ID", "layout version is `2`", "1000 ms", "push-only",
+                 "`GET_REPORT` is unsupported", "last successfully mounted", "not live mounted state",
+                 "no padding", "modulo 256"):
+        assert text in section
+    for value, name in enumerate(("unknown", "FAT12", "FAT16", "FAT32", "exFAT")):
+        assert f"| {value} | {name} |" in section
+
+
+@pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
+def test_workflows_validate_baremetal_artifacts_after_build(name):
+    workflow = (ROOT / ".github/workflows" / name).read_text()
     steps = workflow.split("      - name: ")[1:]
     artifact_steps = [step for step in steps if "tests/artifacts/test_sd_ports.py" in step]
     assert len(artifact_steps) == 1
@@ -37,6 +49,9 @@ def test_pr_check_validates_baremetal_artifacts_after_build():
     assert "python3 -m pytest tests/artifacts/test_sd_ports.py --baremetal-build-dir build/firmware" in artifact_step
     build_step = next(step for step in steps if step.startswith("Build firmware\n"))
     assert steps.index(build_step) < steps.index(artifact_step)
+    if name == "release.yml":
+        package_step = next(step for step in steps if step.startswith("Package firmware outputs\n"))
+        assert steps.index(artifact_step) < steps.index(package_step)
 
 
 def test_release_only_packages_workflow_artifacts():

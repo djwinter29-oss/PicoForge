@@ -427,6 +427,90 @@ void test_production_cmd18_reader_decodes_all_blocks_then_stops_stream(void)
     TEST_ASSERT_EQUAL_UINT8(12u, pf_test_sdio_last_command);
 }
 
+static void make_multiblock_host(pf_sd_native_host_t *host, pf_test_sdio_pio_t *pio)
+{
+    test_wire = (pf_sdio_pio_t){
+        .pio = pio,
+        .command_sm = 0u,
+        .data_sm = 1u,
+        .dma_channel = 3u,
+        .data_rx_program_offset = 4u,
+        .command_program_loaded = true,
+        .data_rx_program_loaded = true,
+        .dma_claimed = true,
+        .current_clock_hz = 25000000u,
+        .clock_div_ticks = 6u * 256u,
+    };
+    *host = (pf_sd_native_host_t){
+        .transport = pf_sdio_pio_bus(&test_wire),
+        .data_rx_multiblock_supported = true,
+        .bus_width = 4u,
+    };
+    TEST_ASSERT_TRUE(pf_storage_sd_wire_hooks(&host->transport, transport_error, host, pf_sd_idle));
+}
+
+/* Added coverage of existing behavior (no runtime defect found): valid rejected CMD18 is stopped by the real CMD12. */
+void test_rejected_cmd18_with_successful_cmd12_falls_back_to_single_reads(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sd_native_host_t host;
+    uint8_t expected[2][PF_SD_BLOCK_SIZE];
+    uint8_t received[2][PF_SD_BLOCK_SIZE] = {{0}};
+    make_multiblock_host(&host, &pio);
+    for (unsigned i = 0u; i < sizeof(expected); ++i) {
+        ((uint8_t *)expected)[i] = (uint8_t)(i * 7u + 1u);
+    }
+    make_receive_batch(expected, 1u);
+    pf_test_sdio_command_error = 18u;
+
+    TEST_ASSERT_TRUE(pf_sd_native_host_read_blocks(&host, 17u, &received[0][0], 2u));
+    TEST_ASSERT_EQUAL_MEMORY(expected[0], received[0], PF_SD_BLOCK_SIZE);
+    TEST_ASSERT_EQUAL_MEMORY(expected[0], received[1], PF_SD_BLOCK_SIZE);
+    TEST_ASSERT_FALSE(host.data_rx_multiblock_supported);
+    TEST_ASSERT_FALSE(host.read_stream_unresolved);
+    TEST_ASSERT_EQUAL_UINT(4u, pf_test_sdio_command_count);
+    TEST_ASSERT_EQUAL_UINT8(17u, pf_test_sdio_last_command);
+    unsigned cmd18 = 0u, cmd12 = 0u;
+    for (unsigned i = 0u; i < pf_test_sdio_event_count; ++i) {
+        if (pf_test_sdio_events[i] == PF_TEST_CMD18) cmd18 = i + 1u;
+        if (pf_test_sdio_events[i] == PF_TEST_CMD12) cmd12 = i + 1u;
+    }
+    TEST_ASSERT_TRUE(cmd18 != 0u && cmd18 < cmd12);
+}
+
+/* Added coverage of existing behavior (no runtime defect found): a failed CMD12 never falls back to CMD17. */
+void test_rejected_cmd18_with_failed_cmd12_blocks_fallback_until_recovery(void)
+{
+    pf_test_sdio_pio_t pio = {0};
+    pf_sd_native_host_t host;
+    uint8_t expected[2][PF_SD_BLOCK_SIZE] = {{0}};
+    uint8_t received[2][PF_SD_BLOCK_SIZE] = {{0}};
+    make_multiblock_host(&host, &pio);
+    make_receive_batch(expected, 2u);
+    pf_test_sdio_command_error = 18u;
+    pf_test_sdio_command_fail = 12u;
+
+    TEST_ASSERT_FALSE(pf_sd_native_host_read_blocks(&host, 17u, &received[0][0], 2u));
+    TEST_ASSERT_TRUE(host.read_stream_unresolved);
+    TEST_ASSERT_TRUE(host.data_rx_multiblock_supported);
+    TEST_ASSERT_EQUAL_UINT(2u, pf_test_sdio_command_count);
+    TEST_ASSERT_EQUAL_UINT8(12u, pf_test_sdio_last_command);
+
+    TEST_ASSERT_FALSE(pf_sd_native_host_read_blocks(&host, 17u, &received[0][0], 2u));
+    TEST_ASSERT_EQUAL(PF_SD_DETAIL_HOST_STATE, host.last_error);
+    TEST_ASSERT_FALSE(pf_sd_native_host_read_sector(&host, 17u, received[0]));
+    TEST_ASSERT_EQUAL_UINT(2u, pf_test_sdio_command_count);
+
+    pf_test_sdio_command_fail = 0u;
+    pf_test_sdio_command_error = 0u;
+    TEST_ASSERT_TRUE(pf_sd_native_host_recover(&host));
+    TEST_ASSERT_FALSE(host.read_stream_unresolved);
+    TEST_ASSERT_EQUAL_UINT(3u, pf_test_sdio_command_count);
+    TEST_ASSERT_EQUAL_UINT8(12u, pf_test_sdio_last_command);
+    TEST_ASSERT_TRUE(pf_sd_native_host_read_blocks(&host, 17u, &received[0][0], 2u));
+    TEST_ASSERT_EQUAL_MEMORY(expected, received, sizeof(expected));
+}
+
 void test_production_cmd18_reader_stops_after_crc_failure_and_preserves_unresolved_state(void)
 {
     pf_test_sdio_pio_t pio = {0};

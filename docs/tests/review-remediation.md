@@ -60,3 +60,30 @@ Finding 6: Both tasks periodically log their own FreeRTOS minimum untouched stac
 contracts pass. Sampling is observational and does not certify margin; no target measurements were taken.
 See [architecture validation limits](../architecture.md#review-remediation-software-checks) for remaining MSC,
 power-loss, dual-core stress and stack qualification gaps.
+
+## Follow-up remediation (software checks only)
+
+Not a hardware result; the sections above remain historical.
+
+* Input Report 7 (filesystem format) is now documented in [USB protocol](../usb-protocol.md#input-report-7).
+  `test_usb_protocol_documents_filesystem_input_report` was RED (no section), then GREEN.
+* `release.yml` now runs the BAREMETAL `tests/artifacts/test_sd_ports.py` check between build and package, as
+  `pr-check.yml` does. `test_workflows_validate_baremetal_artifacts_after_build` is parameterized over both
+  workflows and checks release ordering; it was RED for `release.yml`, then GREEN.
+* `tests/pio/test_sdio_pio_timing.py` models the assembled `data_tx_fast` opcodes in system cycles: TX SM at half the
+  clock divider (floor and ceiling tick placement, dividers 2.0-3.0 including fractional 2.5), launch phase and
+  cadence, setup/hold of at least one cycle, status token bits (accepted/CRC/write error), card gap, and busy
+  completion, with 0/1 cycle input latency. Single-opcode mutants (launch phase, cadence, status edge, bit count, busy
+  wait) are asserted to fail. Production PIO is unchanged: no check failed within the bounds below.
+  Boundaries (HIL only): FIFO/DMA starvation, pad skew, real card output delay and sustained transfers.
+  Card output delay is modelled as 1-2 cycles after the rising edge; 0 fails at divider 2.75 with one cycle
+  of input latency (the sample lands on the next bit) and 3 or more fails at 50 MHz. Divider 2.75 needs about
+  275 MHz and is not hardware-qualified (only 200 MHz / 50 MHz is).
+* The CMD18 rejection/CMD12 cleanup concern at `sd_native_host.c` is not confirmed. `test_sd_native_host_read_batch.c`
+  adds coverage that already passed on the baseline (not a RED fix): rejected CMD18 with successful CMD12 falls back
+  to single reads; failed CMD12 does not fall back, blocks later reads until `pf_sd_native_host_recover`. Dropping
+  `!stop_ok` from the return condition makes these tests fail.
+
+Commands (repository root, system Python 3 with pytest, Ceedling 1.1.10 with coverage tools on PATH):
+`python3 -m pytest tests/contracts tests/pio tests/test_validation_integrity.py -q`;
+`ceedling test:test_sd_native_host_read_batch`. Results are recorded in the change summary, not here.

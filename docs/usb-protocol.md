@@ -117,6 +117,31 @@ CID and capacity retained internally for SD diagnostics after initialization or 
 Input Report 3 while the card is uninitialized. Its CID-valid and capacity-valid flags remain clear, and CID, clock,
 and capacity fields remain zero, so a card failure does not invalidate the dashboard's live status stream.
 
+## Input Report 7
+
+Input report 7 has a 3-byte payload, excluding the report ID, with no padding. Its layout version is `2`. It is
+push-only: firmware publishes it every 1000 ms while the HID endpoint is ready, and `GET_REPORT` is unsupported (it
+returns no data). The sequence increments only for an accepted report and wraps modulo 256.
+
+| Offset | Bytes | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`2`) |
+| 1 | 1 | Sequence |
+| 2 | 1 | Filesystem format |
+
+| Value | Format |
+| --- | --- |
+| 0 | unknown |
+| 1 | FAT12 |
+| 2 | FAT16 |
+| 3 | FAT32 |
+| 4 | exFAT |
+
+The format is that of the last successfully mounted filesystem, cached when FatFs mount succeeds; it is
+not live mounted state. It reverts to unknown when a mount or format starts, after a successful unmount, on card
+removal, when an uninitialized card forces unmount, and when MSC ownership is acquired. A failed unmount leaves the
+cached value in place. No HID report carries live mounted state; use the [CDC CLI](cdc-cli.md) filesystem commands.
+
 ## Feature Report 4
 
 Feature report 4 accepts a 2-byte command payload: version `2`, then desired LED state (`0` off or `1` on). Setting a state is idempotent; the command is ignored if malformed or if the selected board has no controllable LED. The resulting state is reported in subsequent Input Report 2 telemetry.

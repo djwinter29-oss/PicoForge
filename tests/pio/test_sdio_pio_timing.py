@@ -9,6 +9,7 @@ qualify pad skew, signal integrity, CRC and sustained transfers.
 """
 import glob
 import os
+from bisect import bisect_right
 from pathlib import Path
 import subprocess
 import sys
@@ -248,6 +249,157 @@ def programs():
     return {name: assemble(name) for name in ("data_tx", "data_tx_fast", "data_rx", "data_rx_fast", "command")}
 
 
+def run_fast_tx(ops, ticks, ceil_edges, latency, count=1040, delay=0, status=2, busy=3, gap=2):
+    """Execute the assembled data_tx_fast opcodes against a clock/card model in system cycles.
+
+    sdio_pio.c runs the clock SM at `ticks`/256 and the TX SM at exactly half that (clkdiv_restart plus
+    enable_sm_mask_in_sync start both at cycle 0), so TX tick j and clock tick j/2 coincide. Tick j executes at
+    system cycle floor(j*ticks/512) (ceil for the other bound); pin writes take effect one system cycle later and
+    PIO inputs are observed `latency` cycles late. The card launches on rising CLK plus `delay` cycles: after the
+    end bit sampled on rise e it sends `gap` bit-times later start(0), status[2:0], end(1), `busy` low bits, high.
+    Not modelled: DMA/FIFO starvation, pad skew, real card tODLY/tOH; those need HIL.
+    """
+    at = (lambda j: -(-j * ticks // 512)) if ceil_edges else (lambda j: j * ticks // 512)
+    total = count + 40 + busy
+    rises = [at(4 * m + 2) + 1 for m in range(total)]
+    falls = [at(4 * m) + 1 for m in range(total)]
+    clk = lambda s: int(bisect_right(rises, s) == bisect_right(falls, s))
+    host_times, host_state, card_starts, stream = [-1], [(False, 15)], [], []
+
+    def d0(s):
+        driving_now, value = host_state[bisect_right(host_times, s) - 1]
+        if driving_now:
+            return value & 1
+        index = bisect_right(card_starts, s) - 1
+        return stream[index] if index >= 0 else 1
+
+    def drive(effective, is_driving, value):
+        host_times.append(effective)
+        host_state.append((is_driving, value))
+
+    events, samples, isr, osr, word = [], [], 0, 0, None
+    pc = j = x = y = 0
+    pins, driving, nibble = 15, False, 0
+    for _ in range(count * 8 + 400):
+        op, t = ops[pc], at(j)
+        kind, dest, imm, dly = op >> 13, (op >> 5) & 7, op & 31, (op >> 8) & 31
+        nxt, advance = pc + 1, True
+        if kind == 1:
+            assert (op >> 5) & 3 == 1 and imm in (0, 30), "Unexpected WAIT"
+            advance = (clk(t - latency) if imm == 30 else d0(t - latency)) == (op >> 7) & 1
+        elif kind == 0:
+            assert dest in (2, 4), "Unexpected JMP"  # X-- / Y--
+            counter = x if dest == 2 else y
+            if counter:
+                nxt = imm
+            if dest == 2:
+                x = (x - 1) & 0xffffffff
+            else:
+                y = (y - 1) & 0xffffffff
+        elif kind == 4 and op & 0xe0 == 0xa0:
+            osr = count - 1  # PULL block: the first FIFO word is nibbles - 1
+        elif kind == 4 and op & 0xe0 == 0x20:
+            word, isr = isr, 0  # PUSH block
+        elif kind == 3:
+            if dest == 1:
+                x = osr
+            else:
+                assert dest == 0 and imm == 4 and driving, "Unexpected OUT"
+                pins = nibble & 15
+                drive(t + 1, True, pins)
+                events.append((j, t + 1, "data", nibble))
+                nibble += 1
+        elif kind == 5:
+            pass  # NOP (MOV Y,Y)
+        elif kind == 7:
+            if dest == 0:
+                pins = imm
+                if driving:
+                    drive(t + 1, True, pins)
+                    events.append((j, t + 1, "end", pins))
+                    first = bisect_right(rises, t + 1) + gap
+                    card_starts[:] = [rises[first + i] + delay for i in range(6 + busy)]
+                    stream[:] = [0, (status >> 2) & 1, (status >> 1) & 1, status & 1, 1] + [0] * busy + [1]
+            elif dest == 1:
+                x = imm
+            elif dest == 2:
+                y = imm
+            elif dest == 4:
+                driving = imm != 0
+                drive(t + 1, driving, pins)
+                events.append((j, t + 1, "start" if driving else "release", pins))
+            else:
+                raise AssertionError("Unexpected SET")
+        elif kind == 2:
+            assert dest == 0 and imm == 1, "Unexpected IN"
+            samples.append((t, d0(t - latency)))
+            isr = (isr << 1) | samples[-1][1]
+        elif kind == 6:
+            assert imm == 2 and op & 0x20, "Expected IRQ WAIT 2"
+            return {"events": events, "samples": samples, "word": word, "done": t, "rises": rises,
+                    "high": card_starts[5 + busy] if card_starts else None}
+        else:
+            raise AssertionError("Unexpected fast-TX instruction")
+        if advance:
+            pc = nxt
+            j += 1 + dly
+        else:
+            j += 1
+    raise AssertionError("Fast TX did not complete")
+
+
+FAST_TX_DIVIDERS = (512, 576, 640, 704, 768)  # 200 and 250 MHz stock ratios are 512 and 640
+
+
+def check_fast_tx_launch(ops, ticks, ceil_edges, latency):
+    count = 1040
+    run = run_fast_tx(ops, ticks, ceil_edges, latency, count=count, busy=1)
+    events, rises = run["events"], run["rises"]
+    assert [e[2] for e in events] == ["start"] + ["data"] * count + ["end", "release"]
+    assert events[0][3] == 0 and events[-2][3] == 15
+    assert [e[3] for e in events[1:-2]] == list(range(count))
+    assert {e[0] % 4 for e in events} == {3}, "Launches must follow the clock rise by one SM cycle"
+    assert all(b[0] - a[0] == 4 for a, b in zip(events, events[1:])), "Launch cadence is not one bit time"
+    edges = []
+    for _, effective, name, _ in events:
+        since_rise = effective - rises[bisect_right(rises, effective) - 1]
+        setup = rises[bisect_right(rises, effective)] - effective
+        assert since_rise >= 1 and setup >= 1, (ticks, ceil_edges, latency, name, "setup/hold below one cycle")
+        edges.append(bisect_right(rises, effective))
+    assert all(b - a == 1 for a, b in zip(edges, edges[1:])), "Dropped/duplicated sampling edge"
+
+
+# Card output delay after the rising edge, in system cycles. Zero aliases to the next bit at divider 2.75 with one
+# cycle of input latency, and three or more samples the wrong bit at 50 MHz; real cards need HIL qualification.
+FAST_TX_CARD_DELAYS = (1, 2)
+
+
+def check_fast_tx_status(ops, ticks, ceil_edges, latency):
+    for delay in FAST_TX_CARD_DELAYS:
+        for status in (2, 5, 7):  # accepted, CRC error, write error
+            for busy in (1, 5):
+                for gap in (1, 2, 3):
+                    run = run_fast_tx(ops, ticks, ceil_edges, latency, count=8, delay=delay, status=status,
+                                      busy=busy, gap=gap)
+                    ctx = (ticks, ceil_edges, latency, delay, status, busy, gap)
+                    assert run["word"] == (status << 1) | 1, ("Wrong status bits", run["word"], ctx)
+                    assert run["done"] - latency >= run["high"], ("Completed while the card was busy", ctx)
+
+
+@pytest.mark.parametrize("ceil_edges", (False, True))
+@pytest.mark.parametrize("latency", (0, 1))
+@pytest.mark.parametrize("ticks", FAST_TX_DIVIDERS)
+def test_fast_tx_launch_timing(programs, ticks, latency, ceil_edges):
+    check_fast_tx_launch(programs["data_tx_fast"], ticks, ceil_edges, latency)
+
+
+@pytest.mark.parametrize("ceil_edges", (False, True))
+@pytest.mark.parametrize("latency", (0, 1))
+@pytest.mark.parametrize("ticks", FAST_TX_DIVIDERS)
+def test_fast_tx_status_and_busy(programs, ticks, latency, ceil_edges):
+    check_fast_tx_status(programs["data_tx_fast"], ticks, ceil_edges, latency)
+
+
 TIMINGS = [(half, latency, phase) for half in (6, 4, 3, 2)
            for latency in (0, 1) for phase in range(2 * half)]
 
@@ -397,6 +549,33 @@ def test_command_response(programs):
 def test_instruction_memory(programs):
     assert len(programs["command"]) + max(len(programs["data_rx"]), len(programs["data_rx_fast"])) <= 32, (
         "Command and receive programs exceed shared PIO instruction memory")
+
+
+def fast_tx_mutants(ops):
+    """Single-opcode mutations of the assembled fast TX program, with the check each must trip."""
+    decode = lambda op: (op >> 13, (op >> 5) & 7, (op >> 8) & 31)
+    nop = next(i for i, op in enumerate(ops) if decode(op)[0] == 5 and decode(op)[2] == 2)
+    jump = next(i for i, op in enumerate(ops) if decode(op)[:2] == (0, 2) and decode(op)[2] == 1)
+    sample = next(i for i, op in enumerate(ops) if decode(op)[0] == 2) - 1
+    count = next(i for i, op in enumerate(ops) if decode(op)[:2] == (7, 1))
+    busy = len(ops) - 2
+    assert [decode(ops[i])[0] for i in (sample, busy)] == [1, 1], "Mutation targets moved; update the model"
+    mutate = lambda index, op: ops[:index] + [op] + ops[index + 1:]
+    return {
+        "launch phase": (check_fast_tx_launch, mutate(nop, ops[nop] & ~0x1f00 | 0x100)),
+        "launch cadence": (check_fast_tx_launch, mutate(jump, ops[jump] & ~0x1f00)),
+        "status edge": (check_fast_tx_status, mutate(sample, ops[sample] ^ 0x80)),
+        "status bit count": (check_fast_tx_status, mutate(count, ops[count] - 1)),
+        "busy wait": (check_fast_tx_status, mutate(busy, 0xa042)),
+    }
+
+
+@pytest.mark.parametrize("name", ("launch phase", "launch cadence", "status edge", "status bit count", "busy wait"))
+def test_fast_tx_model_detects_mutated_opcodes(programs, name):
+    check, mutated = fast_tx_mutants(programs["data_tx_fast"])[name]
+    check(programs["data_tx_fast"], 640, False, 0)
+    with pytest.raises(AssertionError):
+        check(mutated, 640, False, 0)
 
 
 @pytest.mark.parametrize("program", ("data_tx", "data_tx_fast"))
