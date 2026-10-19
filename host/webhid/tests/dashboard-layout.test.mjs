@@ -58,8 +58,8 @@ for (const name of ["web", "webhid"]) {
     assert.match(selfTest, /id="self-test-start"/);
     assert.match(selfTest, /id="self-test-size"[^>]*max="1024"/);
     if (name === "webhid") {
-      assert.match(html, /id="connect"/);
-      assert.match(html, /id="disconnect"/);
+      assert.match(html, /id="connection-control"/);
+      assert.doesNotMatch(html, /id="connect"|id="disconnect"/);
     }
   });
 
@@ -71,6 +71,7 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
     const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
     const secureDescriptor = Object.getOwnPropertyDescriptor(globalThis, "isSecureContext");
     const previousConnect = PicoForgeWebHid.prototype.connect;
+    const previousDisconnect = PicoForgeWebHid.prototype.disconnect;
     const elements = new Map();
     const sent = [];
     let confirmed = false;
@@ -99,9 +100,15 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
         settings: { system_clock_mhz: 200, sdio_bus_mhz: 0, spi_bus_mhz: 50 },
         msc: { enabled: true, force_return_supported: true } });
     };
+    PicoForgeWebHid.prototype.disconnect = async function () {
+      this.update({ connected: false, busy: false });
+    };
     try {
       await import("../js/app.mjs");
-      await elements.get("#connect").click();
+      const connectionControl = elements.get("#connection-control");
+      assert.equal(connectionControl.textContent, "Connect");
+      await connectionControl.click();
+      assert.equal(connectionControl.textContent, "Disconnect");
       assert.equal(elements.get("#msc-note").hidden, true);
       assert.equal(elements.get("#settings-clock").value, "200");
       assert.equal(elements.get("#settings-save").disabled, true);
@@ -127,8 +134,11 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
       await elements.get("#settings-save").click();
       assert.deepEqual(sent.at(-1), [8, 1, 150, 0, 0, 25]);
       assert.match(elements.get("#settings-note").textContent, /after reboot/);
+      await connectionControl.click();
+      assert.equal(connectionControl.textContent, "Connect");
     } finally {
       PicoForgeWebHid.prototype.connect = previousConnect;
+      PicoForgeWebHid.prototype.disconnect = previousDisconnect;
       globalThis.document = previousDocument;
       globalThis.window = previousWindow;
       if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);

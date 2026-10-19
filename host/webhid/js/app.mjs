@@ -1,8 +1,7 @@
 import { PicoForgeWebHid } from "./device.mjs";
 import { renderStatus, renderSelfTest } from "./view.mjs";
 
-const connect = document.querySelector("#connect");
-const disconnect = document.querySelector("#disconnect");
+const connectionControl = document.querySelector("#connection-control");
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
 const settingsSave = document.querySelector("#settings-save");
@@ -20,8 +19,10 @@ function render(state) {
     settingsSdio.value = String(state.settings.sdio_bus_mhz === 25 ? 0 : state.settings.sdio_bus_mhz);
     settingsSpi.value = String(state.settings.spi_bus_mhz);
   }
-  connect.disabled = state.busy || state.connected || state.reconnecting || !navigator.hid;
-  disconnect.disabled = state.busy || !state.connected;
+  connectionControl.textContent = state.connected ? "Disconnect" : "Connect";
+  connectionControl.setAttribute("aria-label", state.connected
+    ? "Disconnect from PicoForge board" : "Connect to PicoForge board");
+  connectionControl.disabled = state.busy || state.reconnecting || !navigator.hid;
   ledControl.disabled = state.busy || !state.connected || !state.board_status?.led_available;
   mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending)
     || Boolean(state.self_test?.active) || state.self_test_command_pending
@@ -52,8 +53,10 @@ function render(state) {
   document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
 }
 
-connect.addEventListener("click", () => client.connect());
-disconnect.addEventListener("click", () => client.disconnect());
+connectionControl.addEventListener("click", () => {
+  if (client.state.connected) void client.disconnect();
+  else void client.connect();
+});
 ledControl.addEventListener("click", () => client.setLed(!client.state.board_status?.led_on));
 mscControl.addEventListener("click", () => {
   const enabled = client.state.msc?.enabled;
