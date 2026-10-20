@@ -6,6 +6,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/config")
 #include "clock_model.h"
 
 static uint32_t sys_hz, peri_hz, hstx_hz, wait_cycles;
+static uint32_t reset_pc, reset_sp, reset_delay_ms;
 static enum vreg_voltage voltage;
 static char call_log[16];
 static unsigned log_len;
@@ -42,11 +43,19 @@ bool clock_configure_undivided(enum clock_num_rp clock, uint32_t src, uint32_t a
     }
     return true;
 }
+void watchdog_reboot(uint32_t pc, uint32_t sp, uint32_t delay_ms)
+{
+    reset_pc = pc;
+    reset_sp = sp;
+    reset_delay_ms = delay_ms;
+    call_log[log_len++] = 'r';
+}
 
 void setUp(void)
 {
     sys_hz = peri_hz = hstx_hz = 125000000u;
     wait_cycles = 0u;
+    reset_pc = reset_sp = reset_delay_ms = 0u;
     voltage = VREG_VOLTAGE_1_10;
     log_len = 0u;
     derivable = true;
@@ -98,4 +107,13 @@ void test_voltage_is_raised_only_when_needed_and_never_lowered(void)
     TEST_ASSERT_TRUE(pf_system_clock_apply(150u));
     TEST_ASSERT_EQUAL_INT(VREG_VOLTAGE_1_30, voltage);
     TEST_ASSERT_EQUAL_STRING("pPH", call_log);
+}
+
+void test_system_reset_reboots_without_delay_or_boot_address_override(void)
+{
+    pf_system_reset();
+    TEST_ASSERT_EQUAL_STRING("r", call_log);
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_pc);
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_sp);
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_delay_ms);
 }
