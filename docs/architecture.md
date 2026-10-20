@@ -56,8 +56,9 @@ Input Report 2. See [runtime telemetry](usb-protocol.md#input-report-2) for metr
 and host compatibility. Both dashboards show these metrics in Runtime status.
 
 FreeRTOS-Kernel 11.3.1 runs with `configNUMBER_OF_CORES=2`. The Pico port launches core 1 when the scheduler
-starts on core 0; applications must not launch a second independent core entry point. USB, storage, timer and
-idle tasks use the kernel's all-core affinity default and may migrate. Different priorities may execute
+starts on core 0; applications must not launch a second independent core entry point. USB, storage and timer
+ tasks use the kernel's all-core affinity default and may migrate. Idle tasks are pinned to their corresponding
+physical cores (`configIDLE_AFFINITY=1`) so idle-runtime CPU telemetry remains per-core. Different priorities may execute
 simultaneously. Affinity capability remains enabled for Pico SDK boot-flash-safe execution, which temporarily uses a
 core-specific lockout task; application tasks are not pinned. Task/ISR kernel critical sections exclude both cores,
 while existing media reservations serialize physical storage operations. FatFs retains one executor.

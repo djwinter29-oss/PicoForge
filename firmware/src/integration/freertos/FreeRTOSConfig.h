@@ -28,6 +28,8 @@ uint64_t time_us_64(void);
 #define configNUMBER_OF_CORES 2
 /* SDK flash-safe execution needs affinity support; application tasks keep the all-core default. */
 #define configUSE_CORE_AFFINITY 1
+/* Keep each idle-task runtime counter tied to its physical core for CPU telemetry. */
+#define configIDLE_AFFINITY 1
 #define configRUN_MULTIPLE_PRIORITIES 1
 #define configUSE_PASSIVE_IDLE_HOOK 0
 

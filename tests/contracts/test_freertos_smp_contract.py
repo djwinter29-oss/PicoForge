@@ -42,6 +42,7 @@ def test_two_core_configuration_has_one_authority_and_no_application_affinity():
     for key, value in (
         ("configNUMBER_OF_CORES", 2),
         ("configUSE_CORE_AFFINITY", 1),
+        ("configIDLE_AFFINITY", 1),
         ("configRUN_MULTIPLE_PRIORITIES", 1),
         ("configUSE_PASSIVE_IDLE_HOOK", 0),
         ("INCLUDE_vTaskDelete", 1),
