@@ -14,13 +14,6 @@ for tool in "$PYTHON" "$NODE" "$DOTNET"; do
     fi
 done
 
-if [ -n "${PYTHONPATH:-}" ]; then
-    PYTHONPATH="$REPO_ROOT/host/python/src:$PYTHONPATH"
-else
-    PYTHONPATH="$REPO_ROOT/host/python/src"
-fi
-export PYTHONPATH
-
 printf '%s\n' '=== Python host tests ==='
 "$PYTHON" -m unittest discover -s "$REPO_ROOT/host/python/tests" -v
 

@@ -121,6 +121,20 @@ def test_release_gates_packages_on_reusable_complete_host_validation():
         assert suite in runner
 
 
+def test_host_validation_covers_three_os_and_two_python_versions():
+    workflow = (ROOT / ".github/workflows/host-validation.yml").read_text()
+    for operating_system in ("ubuntu-24.04", "macos-15", "windows-2025"):
+        for python_version in ("3.10", "3.12"):
+            assert f"os: {operating_system}\n            python: \"{python_version}\"" in workflow
+    assert "if: runner.os == 'Linux'" in workflow
+    assert "if: runner.os == 'macOS'" in workflow
+    assert "run: brew install hidapi" in workflow
+    assert "PYTHON: python" in workflow
+    assert "shell: bash\n        run: bash tools/validation/test-host.sh" in workflow
+    assert "if: matrix.python == '3.10'" in workflow
+    assert "if: matrix.python == '3.12'" in workflow
+
+
 def test_release_uses_commit_epoch_before_configuring_artifact_names():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
     epoch = 'echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"'

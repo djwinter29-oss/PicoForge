@@ -8,12 +8,24 @@ permissions:
 
 jobs:
   host-unit-tests:
-    name: Host unit tests
-    runs-on: ubuntu-24.04
+    name: Host unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       matrix:
-        python: ["3.10", "3.12"]
+        include:
+          - os: ubuntu-24.04
+            python: "3.10"
+          - os: ubuntu-24.04
+            python: "3.12"
+          - os: macos-15
+            python: "3.10"
+          - os: macos-15
+            python: "3.12"
+          - os: windows-2025
+            python: "3.10"
+          - os: windows-2025
+            python: "3.12"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,17 +47,25 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Install Python HID system dependency
+      - name: Install Linux HID system dependency
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libhidapi-dev
+
+      - name: Install macOS HID system dependency
+        if: runner.os == 'macOS'
+        run: brew install hidapi
 
       - name: Install Python host dependencies
         run: python -m pip install --disable-pip-version-check --no-input --editable host/python
 
       - name: Run host unit tests
         if: matrix.python == '3.12'
-        run: tools/validation/test-host.sh
+        env:
+          PYTHON: python
+        shell: bash
+        run: bash tools/validation/test-host.sh
 
       - name: Test minimum Python version
         if: matrix.python == '3.10'
