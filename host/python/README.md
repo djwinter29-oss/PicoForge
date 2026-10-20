@@ -5,13 +5,13 @@ The Python host reads the PicoForge vendor-defined HID interface and can serve a
 The dashboard defaults to `127.0.0.1:5000`. Use **Rescan** and the board selector in Device identity to switch between attached boards; `--serial SERIAL` or `--device-path PATH` can set the preferred initial selection. Override the port with `tools/host/run-python.sh web --port PORT`. Only one dashboard server can bind to port 5000 at a time. On Linux, if the launcher reports a permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session.
 
 The shared Python/.NET page refreshes automatically. Its first summary row includes the firmware release version
-(`Unknown` for legacy firmware). The **Board LED** toggle is in Device identity; USB-drive control is beside the SD-card self-test.
+(`Unknown` for legacy firmware). The **Board LED** toggle is in Device identity; SD sharing is beside the self-test.
 Selecting Start authorizes self-test writes and replacement of the reserved test file without a separate checkbox.
 
-Use **Enable USB drive** to hand the SD card to the host. Firmware unmounts its filesystem before USB
+Use **Share SD card** to hand the SD card to the host. Firmware unmounts its filesystem before USB
 briefly re-enumerates with an added MSC interface, keeping the HID identity and interface stable.
 
-**Disable USB drive** requires data-loss confirmation, then requests Pico-side detach and remount over HID.
+**Return to Pico** requires data-loss confirmation, then requests Pico-side detach and remount over HID.
 The same command is used on Windows, Linux and macOS; the host app never runs OS eject/unmount commands and
 requires no UDisks2 or eject permissions. The button requires supporting firmware; older firmware shows an
 update message instead of silently falling back to a different behavior. See the authoritative

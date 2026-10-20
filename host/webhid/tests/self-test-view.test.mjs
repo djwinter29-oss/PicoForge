@@ -15,11 +15,13 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
     globalThis.document = { querySelector: element };
     const status = { state: "idle", active: false, target_bytes: 0, written_bytes: 0, read_bytes: 0,
       write_elapsed_ms: 0, read_elapsed_ms: 0, progress_percent: 0, write_bytes_per_second: null,
-      read_bytes_per_second: null, error: 0, request_error: 0, mismatch_count: 0 };
+        read_bytes_per_second: null, error: 0, request_error: 0, mismatch_count: 0,
+        volume_mounted: true };
     const snapshot = { connected: true, memory: { initialized: true }, filesystem_format: "exfat", msc: { enabled: false }, self_test: status };
     try {
       render(snapshot);
       assert.equal(element("#self-test-start").disabled, false);
+      assert.doesNotMatch(element("#self-test-message").textContent, /Filesystem remains mounted/);
       element("#self-test-size").valueAsNumber = 1024;
       render(snapshot);
       assert.equal(element("#self-test-start").disabled, false);

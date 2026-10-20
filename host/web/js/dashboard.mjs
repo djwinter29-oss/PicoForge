@@ -56,7 +56,7 @@ export function renderStatus(snapshot) {
     : `Turn onboard LED ${ledOn ? "off" : "on"}`;
   const msc = snapshot.msc;
   const mscControl = document.querySelector("#msc-control");
-  mscControl.textContent = msc?.enabled ? "Disable USB drive" : "Enable USB drive";
+  mscControl.textContent = msc?.enabled ? "Return to Pico" : "Share SD card";
   mscControl.disabled = snapshot.settings_busy || !connected || !msc || Boolean(msc.transition_pending)
     || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
     || Boolean(msc?.enabled && !msc.force_return_supported);
@@ -172,7 +172,6 @@ export function renderSelfTest(snapshot) {
   if (status?.request_error) notices.push(`Request rejected: ${errors[status.request_error]}.`);
   if (status?.error) notices.push(`${errors[status.error]} (FatFs ${status.filesystem_result}).`);
   if (status?.file_remains) notices.push("PFTEST.BIN remains on the card.");
-  if (status?.volume_mounted) notices.push("Filesystem remains mounted.");
   if (status?.mismatch_count) notices.push(`${status.mismatch_count} mismatched bytes.`);
   set("#self-test-message", notices.join(" ") || (status?.state === "passed"
     ? "Every byte verified; temporary file removed."

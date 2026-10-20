@@ -27,7 +27,7 @@ function render(state) {
   mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending)
     || Boolean(state.self_test?.active) || state.self_test_command_pending
     || Boolean(state.msc?.enabled && !state.msc.force_return_supported);
-  mscControl.textContent = state.msc?.enabled ? "Disable USB drive" : "Enable USB drive";
+  mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Share SD card";
   const settingsReady = state.connected && state.settings_supported && state.settings !== null && Boolean(state.msc)
     && !state.msc.enabled && !state.msc.transition_pending && !state.self_test?.active
     && !state.self_test_command_pending;

@@ -128,7 +128,6 @@ export function renderSelfTest(snapshot) {
   if (status?.request_error) notices.push(`Request rejected: ${errors[status.request_error]}.`);
   if (status?.error) notices.push(`${errors[status.error]} (FatFs ${status.filesystem_result}).`);
   if (status?.file_remains) notices.push("PFTEST.BIN remains on the card.");
-  if (status?.volume_mounted) notices.push("Filesystem remains mounted.");
   if (status?.mismatch_count) notices.push(`${status.mismatch_count} mismatched bytes.`);
   set("#self-test-message", notices.join(" ") || (status?.state === "passed"
     ? "Every byte verified; temporary file removed."

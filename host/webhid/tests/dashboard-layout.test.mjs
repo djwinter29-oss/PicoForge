@@ -61,6 +61,7 @@ for (const name of ["web", "webhid"]) {
     assert.match(memoryReport, /<dt>Manufacturer<\/dt>/);
       assert.match(memoryReport, /<dt>Serial<\/dt>/);
     assert.match(memoryReport, /id="msc-control"/);
+    assert.match(memoryReport, /Share SD card/);
     assert.match(memoryReport, /id="msc-note"/);
     const selfTest = section('aria-labelledby="self-test-title"');
     assert.match(selfTest, /<h2 id="self-test-title">Memory Tests<\/h2>/);
@@ -131,6 +132,7 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
       assert.equal(connectionControl.textContent, "Connect");
       await connectionControl.click();
       assert.equal(connectionControl.textContent, "Disconnect");
+      assert.equal(elements.get("#msc-control").textContent, "Return to Pico");
       assert.equal(elements.get("#msc-note").hidden, true);
       assert.equal(elements.get("#settings-clock").value, "200");
       assert.equal(elements.get("#settings-save").disabled, true);
@@ -141,6 +143,7 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
       assert.deepEqual(sent, [[5, 3, 2]]);
       assert.equal(elements.get("#msc-control").disabled, true);
       connectedClient.update({ msc: { enabled: false } });
+      assert.equal(elements.get("#msc-control").textContent, "Share SD card");
       confirmed = false;
       await elements.get("#msc-control").click();
       assert.deepEqual(sent[1], [5, 2, 1]);
