@@ -247,6 +247,17 @@ not replace an ongoing test or its retained result. Hosts compute averages from
 byte counters and durations; measurement boundaries and safety rules live in
 [the self-test guide](sd-self-test.md).
 
+## Feature Reports 8 and 9
+
+Feature report 8 reads or saves persisted boot settings. Its payload is the five-byte, little-endian layout documented
+in [persistent settings](settings.md#host-dashboard-settings). The host reads the report back and compares all fields
+before continuing.
+
+Feature report 9 accepts the two-byte payload `[1, 1]` (layout version 1, reboot action), excluding the report ID.
+Firmware rejects malformed commands and requests while MSC or storage work is active. An accepted request is handled
+by the USB task after the HID control transfer returns; firmware waits one second before watchdog reset to allow the
+host to receive the acknowledgement. The Save & Reboot action sends report 9 only after report 8 readback matches.
+
 ## Host Implementations
 
 - Python HIDAPI client and loopback Flask dashboard: `host/python/`.

@@ -2,10 +2,9 @@
 
 The Python host reads the PicoForge vendor-defined HID interface and can serve a local status dashboard. The dashboard and `status` command include SD-card presence, transport, bus speed, capacity, and CID identity when available. From the repository root, `tools/host/run-python.sh` creates `build/picoforge`, installs this package on first run, and starts the dashboard. Pass `status` or `web` to select a command. Set `PYTHON` to choose the base interpreter or `VENV_DIR` to choose the environment path.
 
-The dashboard binds to `127.0.0.1:8765`. Use **Rescan** and the board selector in Device identity to switch between attached boards; `--serial SERIAL` or `--device-path PATH` can still set the preferred initial selection. On Linux, if the launcher reports a permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session.
+The dashboard defaults to `127.0.0.1:5000`. Use **Rescan** and the board selector in Device identity to switch between attached boards; `--serial SERIAL` or `--device-path PATH` can set the preferred initial selection. Override the port with `tools/host/run-python.sh web --port PORT`. Only one dashboard server can bind to port 5000 at a time. On Linux, if the launcher reports a permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session.
 
 The shared Python/.NET page refreshes automatically. Its first summary row includes the firmware release version
-(`Unknown` for legacy firmware). LED control is in Live Report; USB-drive control is beside the SD-card self-test.
 (`Unknown` for legacy firmware). The **Board LED** toggle is in Device identity; USB-drive control is beside the SD-card self-test.
 Selecting Start authorizes self-test writes and replacement of the reserved test file without a separate checkbox.
 

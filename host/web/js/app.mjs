@@ -26,6 +26,10 @@ function boardUrl(path, boardId = selectedBoard) {
   return `${path}${path.includes("?") ? "&" : "?"}board=${encodeURIComponent(boardId)}`;
 }
 
+function boardLabel(board) {
+  return board.serial_number ? `PicoForge / ${board.serial_number}` : `PicoForge / HID ${board.device_path}`;
+}
+
 function renderStatus(snapshot) {
   if (!snapshot.connected) {
     settingsDirty = false;
@@ -78,8 +82,7 @@ function selectBoard(boardId) {
   if (nextBoard === selectedBoard) return;
   selectedBoard = nextBoard;
   const selected = knownBoards.find(board => board.id === selectedBoard);
-  selectedBoardLabel = selected ? `${selected.product_name} / ${selected.serial_number || selected.device_path}`
-    : selectedBoardLabel;
+  selectedBoardLabel = selected ? boardLabel(selected) : selectedBoardLabel;
   selectionVersion++;
   currentSnapshot = null;
   settingsDirty = false;
@@ -108,13 +111,13 @@ async function rescanBoards() {
     for (const board of knownBoards) {
       const option = document.createElement("option");
       option.value = board.id;
-      option.textContent = `${board.product_name} / ${board.serial_number || board.device_path}`;
+      option.textContent = boardLabel(board);
       boardSelect.append(option);
     }
     if (!selectedBoard && result.default_board_id) selectedBoard = result.default_board_id;
     const selected = knownBoards.find(board => board.id === selectedBoard);
     if (selected) {
-      selectedBoardLabel = `${selected.product_name} / ${selected.serial_number || selected.device_path}`;
+      selectedBoardLabel = boardLabel(selected);
     } else if (selectedBoard) {
       const missing = document.createElement("option");
       missing.value = selectedBoard;
@@ -249,7 +252,7 @@ async function saveSettings() {
     currentSnapshot.settings = result.settings;
     currentSnapshot.settings_supported = true;
     settingsDirty = false;
-    settingsMessage = "Saved. Changes take effect after reboot.";
+    settingsMessage = "Saved. Rebooting now.";
   } catch (error) {
     settingsMessage = `Save failed: ${error.message}`;
   } finally {

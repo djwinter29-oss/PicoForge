@@ -13,6 +13,7 @@ export const MSC_COMMAND_REPORT_ID = 5;
 export const SELF_TEST_REPORT_ID = 6;
 export const FILESYSTEM_REPORT_ID = 7;
 export const SETTINGS_REPORT_ID = 8;
+export const REBOOT_REPORT_ID = 9;
 const INFO_PAYLOAD_SIZE = 42;
 const STATUS_PAYLOAD_SIZE = 25;
 const MEMORY_PAYLOAD_SIZE = 29;
@@ -70,6 +71,10 @@ export function buildSettingsReport(settings) {
   report[3] = settings.sdio_bus_mhz;
   report[4] = settings.spi_bus_mhz;
   return report;
+}
+
+export function buildRebootCommandReport() {
+  return Uint8Array.from([1, 1]);
 }
 
 export function decodeSettingsReport(report) {
@@ -488,7 +493,8 @@ export class PicoForgeWebHid {
       await this.device.sendFeatureReport(SETTINGS_REPORT_ID, command);
       const saved = decodeSettingsReport(await this.device.receiveFeatureReport(SETTINGS_REPORT_ID));
       if (!sameSettings(saved, settings)) throw new Error("Firmware did not confirm the selected values");
-      this.update({ settings: saved, busy: false, settings_message: "Saved. Changes take effect after reboot." });
+      await this.device.sendFeatureReport(REBOOT_REPORT_ID, buildRebootCommandReport());
+      this.update({ settings: saved, busy: false, settings_message: "Saved. Rebooting now." });
       return true;
     } catch (error) {
       this.update({ busy: false, settings_message: `Save failed: ${error.message}` });

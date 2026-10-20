@@ -7,7 +7,9 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   const elements = new Map();
   const element = selector => {
     if (!elements.has(selector)) {
-      const target = { textContent: "", valueAsNumber: 32, dataset: {}, style: {}, classList: { toggle() {}, add() {}, remove() {} },
+      const target = { textContent: "", valueAsNumber: 32, dataset: {}, style: {}, children: [],
+        replaceChildren() { this.children = []; }, append(child) { this.children.push(child); },
+        classList: { toggle() {}, add() {}, remove() {} },
         addEventListener: (type, handler) => handlers.set(`${selector}:${type}`, handler) };
       elements.set(selector, new Proxy(target, { get: (object, key) => key in object ? object[key] : () => {} }));
     }
@@ -31,7 +33,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       return { ok: true, json: async () => ({
         boards: [
           { id: "board-a", product_name: "PicoForge", serial_number: "board-A", device_path: "/hid/a" },
-          { id: "board-b", product_name: "PicoForge", serial_number: "board-B", device_path: "/hid/b" },
+          { id: "board-b", product_name: "PicoForge HID", serial_number: null, device_path: "/hid/b" },
         ],
         default_board_id: "board-a",
       }) };
@@ -48,6 +50,10 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     await new Promise(resolve => setImmediate(resolve));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#board-select").value, "board-a");
+    assert.equal(elements.get("#board-select").children.find(option => option.value === "board-a").textContent,
+      "PicoForge / board-A");
+    assert.equal(elements.get("#board-select").children.find(option => option.value === "board-b").textContent,
+      "PicoForge / HID /hid/b");
     assert.ok(requestedUrls.includes("/api/status?board=board-a"));
     for (const name of ["#led-control:click", "#msc-control:click", "#self-test-start:click"]) {
       gate = new Promise(resolve => { release = resolve; });

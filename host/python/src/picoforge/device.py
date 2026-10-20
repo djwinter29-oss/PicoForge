@@ -18,7 +18,6 @@ from .protocol import (
     SETTINGS_FEATURE_SIZE,
     SETTINGS_REPORT_ID,
     build_reboot_command_report,
-    build_reboot_command_report,
     STATUS_INPUT_SIZE,
     build_settings_command_report,
     build_led_command_report,

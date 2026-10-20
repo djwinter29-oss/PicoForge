@@ -6,7 +6,7 @@ from pathlib import Path
 import secrets
 from typing import Any
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .monitor import DashboardBoards
 from .protocol import build_self_test_command_report, build_settings_command_report
@@ -17,7 +17,7 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     installed = Path(__file__).with_name("web")  # packaged from host/web; source checkouts use host/web directly
     root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[3] / "web")
     dashboard = monitor or DashboardBoards()
-    app = Flask(__name__, static_folder=None)
+    app = Flask(__name__, template_folder=str(root), static_folder=None)
     app.config.update(
         SECRET_KEY=secrets.token_bytes(32),
         TRUSTED_HOSTS=["localhost", "127.0.0.1"],
@@ -37,7 +37,7 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
 
     @app.get("/")
     def index():
-        return send_from_directory(root, "index.html")
+        return render_template("index.html", dashboard_type="Python")
 
     @app.get("/favicon.svg")
     def favicon():
@@ -143,7 +143,7 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     return app
 
 
-def run_server(port: int = 8765, serial_number: str | None = None, device_path: str | None = None) -> None:
+def run_server(port: int = 5000, serial_number: str | None = None, device_path: str | None = None) -> None:
     dashboard = DashboardBoards(serial_number, device_path)
     try:
         create_app(dashboard).run(host="127.0.0.1", port=port, debug=False, use_reloader=False)

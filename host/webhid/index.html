@@ -13,7 +13,7 @@
   <header class="topbar">
     <a class="brand" href="./" aria-label="PicoForge WebHID status">
       <span class="brand-mark">PF</span>
-      <span class="brand-copy"><small>BROWSER DEVICE</small><strong>PicoForge</strong></span>
+      <span class="brand-copy"><small>WebHID</small><strong>PicoForge</strong></span>
     </a>
     <div class="connection" id="connection" data-state="disconnected">
       <span class="connection-light" aria-hidden="true"></span>
@@ -52,6 +52,7 @@
           <p class="eyebrow">BOOT CONFIGURATION</p>
           <h2 id="settings-title">Device settings</h2>
         </div>
+        <button class="button" id="settings-save" type="button" disabled>Save &amp; Reboot</button>
       </div>
       <div class="settings-controls">
         <label for="settings-clock">System clock
@@ -75,13 +76,10 @@
             <option value="50">50 MHz</option>
           </select>
         </label>
-        <div class="settings-action">
-          <button class="button" id="settings-save" type="button" disabled>Save for next boot</button>
-        </div>
-        <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
-          Connect to read the saved settings.
-        </p>
       </div>
+      <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
+        Connect to read the saved settings.
+      </p>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">

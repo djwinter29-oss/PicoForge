@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>PicoForge Diagnostics | Host Status</title>
+  <title>PicoForge Diagnostics | {{ dashboard_type }}</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/css/dashboard.css">
   <script type="module" src="/js/app.mjs"></script>
@@ -13,7 +13,7 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="PicoForge host status">
       <span class="brand-mark">PF</span>
-      <span class="brand-copy"><small>DEVICE HOST</small><strong>PicoForge</strong></span>
+      <span class="brand-copy"><small>{{ dashboard_type }}</small><strong>PicoForge</strong></span>
     </a>
     <div class="connection" id="connection" data-state="disconnected">
       <span class="connection-light" aria-hidden="true"></span>
@@ -55,6 +55,7 @@
           <p class="eyebrow">BOOT CONFIGURATION</p>
           <h2 id="settings-title">Device settings</h2>
         </div>
+        <button class="button" id="settings-save" type="button" disabled>Save &amp; Reboot</button>
       </div>
       <div class="settings-controls">
         <label for="settings-clock">System clock
@@ -78,13 +79,10 @@
             <option value="50">50 MHz</option>
           </select>
         </label>
-        <div class="settings-action">
-          <button class="button" id="settings-save" type="button" disabled>Save for next boot</button>
-        </div>
-        <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
-          Waiting for a PicoForge connection.
-        </p>
       </div>
+      <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
+        Waiting for a PicoForge connection.
+      </p>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">

@@ -1,6 +1,7 @@
 import unittest
 
 from picoforge.web import create_app
+from picoforge.cli import parse_args
 
 
 class FakeMonitor:
@@ -70,6 +71,18 @@ class FakeMonitor:
 
 
 class WebTests(unittest.TestCase):
+    def test_dashboard_port_defaults_to_5000_and_can_be_overridden(self):
+        self.assertEqual(parse_args(["web"]).port, 5000)
+        self.assertEqual(parse_args(["web", "--port", "5001"]).port, 5001)
+
+    def test_home_uses_python_in_browser_title_and_wordmark(self):
+        response = create_app(FakeMonitor()).test_client().get(
+            "/", base_url="http://127.0.0.1"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"<title>PicoForge Diagnostics | Python</title>", response.data)
+        self.assertIn(b"<small>Python</small>", response.data)
+
     def test_status_route_returns_snapshot_and_security_headers(self):
         app = create_app(FakeMonitor())
         client = app.test_client()

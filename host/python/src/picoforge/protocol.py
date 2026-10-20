@@ -13,7 +13,6 @@ SELF_TEST_REPORT_ID = 6
 FILESYSTEM_REPORT_ID = 7
 SETTINGS_REPORT_ID = 8
 REBOOT_REPORT_ID = 9
-REBOOT_REPORT_ID = 9
 SELF_TEST_PAYLOAD_SIZE = 32
 SELF_TEST_INPUT_SIZE = SELF_TEST_PAYLOAD_SIZE + 1
 FILESYSTEM_PAYLOAD_SIZE = 3
@@ -86,11 +85,6 @@ def build_settings_command_report(settings: dict[str, object]) -> bytes:
     return bytes((SETTINGS_REPORT_ID, 1)) + struct.pack(
         "<HBB", settings["system_clock_mhz"], settings["sdio_bus_mhz"], settings["spi_bus_mhz"]
     )
-
-
-def build_reboot_command_report() -> bytes:
-    """Build HID Feature report 9 to reboot after a verified settings save."""
-    return bytes((REBOOT_REPORT_ID, 1, 1))
 
 
 def build_reboot_command_report() -> bytes:

@@ -40,7 +40,7 @@ function render(state) {
       : !state.settings_supported ? "Settings are unavailable; update the device firmware."
         : !state.msc ? "Waiting for storage ownership status."
           : state.msc.enabled || state.msc.transition_pending ? "Disable the USB drive before saving settings."
-            : "Changes take effect after reboot.");
+            : "Settings loaded.");
   document.querySelector("#msc-note").textContent = state.reconnecting
     ? "USB interfaces are reconnecting; HID will resume automatically."
     : state.msc?.enabled && !state.msc.force_return_supported

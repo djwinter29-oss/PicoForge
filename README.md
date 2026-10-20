@@ -76,8 +76,9 @@ tools/host/run-python.sh
 ```
 
 The launcher creates its Python environment and installs dependencies on first
-use. Open **http://127.0.0.1:8765/** to view and control the connected board.
+use. Open **http://127.0.0.1:5000/** to view and control the connected board.
 Use **Rescan** and the Device identity board selector to switch between boards.
+Python and .NET both default to port 5000; run one at a time or pass a different port to either launcher.
 Use only one dashboard connection per board at a time.
 
 On Linux, if HID access is denied, run:
@@ -92,7 +93,7 @@ Then reconnect the board and restart the dashboard.
 
 | Interface | Start | Open |
 | --- | --- | --- |
-| .NET dashboard (.NET 10 SDK required) | `tools/host/run-dotnet.sh` | http://127.0.0.1:8766/ |
+| .NET dashboard (.NET 10 SDK required) | `tools/host/run-dotnet.sh` | http://127.0.0.1:5000/ |
 | Direct browser dashboard | `tools/host/run-webhid.sh` | http://localhost:8000/ |
 | USB serial console | Open the PicoForge CDC port in a serial terminal | Enter `help` to list commands |
 

@@ -62,7 +62,12 @@ test("settings save refuses MSC ownership and verifies the device readback", asy
   stored = Uint8Array.from(buildSettingsReport(next));
   assert.equal(await client.saveSettings(next), true);
   assert.deepEqual(client.state.settings, next);
-  assert.match(client.state.settings_message, /after reboot/);
+  assert.match(client.state.settings_message, /Rebooting now/);
+  assert.deepEqual(sent, [
+    [8, 1, 200, 0, 50, 25],
+    [8, 1, 200, 0, 50, 25],
+    [9, 1, 1],
+  ]);
 });
 
 test("settings feature report remains optional for older firmware", async () => {
@@ -382,6 +387,7 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
       this.serialNumber = "0123456789abcdef";
       this.collections = [{ usagePage: 0xff00, usage: 1 }];
       this.opened = false;
+      this.featureReports = [];
     }
 
     async open() { this.opened = true; }
@@ -395,6 +401,7 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
     }
     async sendFeatureReport(reportId, payload) {
       this.lastFeature = { reportId, payload: [...payload] };
+      this.featureReports.push(this.lastFeature);
       if (reportId === SETTINGS_REPORT_ID) this.settingsReport = Uint8Array.from(payload).buffer;
     }
   }
@@ -462,7 +469,10 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   emitPaddedInput(5, [3, 0, 0, 0]);
   const nextSettings = { system_clock_mhz: 150, sdio_bus_mhz: 0, spi_bus_mhz: 25 };
   assert.equal(await client.saveSettings(nextSettings), true);
-  assert.deepEqual(firstDevice.lastFeature, { reportId: 8, payload: [1, 150, 0, 0, 25] });
+  assert.deepEqual(firstDevice.featureReports.slice(-2), [
+    { reportId: 8, payload: [1, 150, 0, 0, 25] },
+    { reportId: 9, payload: [1, 1] },
+  ]);
   assert.deepEqual(client.state.settings, nextSettings);
   runtime[10] = 0x08;
   emitPaddedInput(2, runtime);

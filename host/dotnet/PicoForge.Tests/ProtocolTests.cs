@@ -33,6 +33,7 @@ public sealed class ProtocolTests
         Assert.Equal(new byte[] { HidProtocol.SettingsReportId, 1, 200, 0, 50, 25 }, report);
         Assert.Equal(settings, HidProtocol.ParseSettingsReport(report));
         Assert.Equal(settings, HidProtocol.ParseSettingsReport([0, .. report]));
+        Assert.Equal(new byte[] { HidProtocol.RebootReportId, 1, 1 }, HidProtocol.BuildRebootCommandReport());
         Assert.Throws<InvalidOperationException>(() =>
             HidProtocol.BuildSettingsReport(new BootSettingsResponse(100, 50, 25)));
         report[1] = 2;

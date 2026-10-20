@@ -6,7 +6,9 @@ import unittest
 from picoforge.protocol import (
     LED_COMMAND_REPORT_ID,
     MSC_COMMAND_REPORT_ID,
+    REBOOT_REPORT_ID,
     SETTINGS_REPORT_ID,
+    build_reboot_command_report,
     build_settings_command_report,
     build_led_command_report,
     build_msc_command_report,
@@ -36,6 +38,7 @@ class ProtocolTests(unittest.TestCase):
                 build_settings_command_report({**settings, key: invalid})
         with self.assertRaisesRegex(ValueError, "version"):
             parse_settings_report(bytes([SETTINGS_REPORT_ID, 2, *report[2:]]))
+        self.assertEqual(build_reboot_command_report(), bytes([REBOOT_REPORT_ID, 1, 1]))
 
     def test_shared_filesystem_vectors(self):
         fixture = Path(__file__).resolve().parents[3] / "tests/fixtures/hid-filesystem.csv"

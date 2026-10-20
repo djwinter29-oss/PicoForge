@@ -28,7 +28,9 @@ for (const name of ["web", "webhid"]) {
     assert.match(settings, /id="settings-sdio"/);
     assert.match(settings, /id="settings-spi"/);
     assert.equal((settings.match(/<label for="settings-/g) ?? []).length, 3);
-    assert.match(settings, /class="settings-action"[\s\S]*id="settings-save"[\s\S]*id="settings-note"/);
+    assert.match(settings, /class="section-heading"[\s\S]*id="settings-title"[\s\S]*id="settings-save"[^>]*>Save &amp; Reboot/);
+    assert.doesNotMatch(settings, /class="settings-action"|Changes take effect after reboot/);
+    assert.match(settings, /id="settings-note"/);
     const liveReport = section('aria-labelledby="runtime-title"');
     assert.match(liveReport, /class="runtime-grid runtime-summary"/);
     assert.match(liveReport, /<dt>CLI port<\/dt>/);
@@ -68,10 +70,14 @@ for (const name of ["web", "webhid"]) {
     assert.match(selfTest, /id="self-test-start"/);
     assert.match(selfTest, /id="self-test-size"[^>]*max="1024"/);
     if (name === "webhid") {
+      assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
+      assert.match(html, /<small>WebHID<\/small>/);
       assert.match(html, /id="connection-control"/);
       assert.match(identity, /id="connection-control"/);
       assert.doesNotMatch(html, /id="connect"|id="disconnect"/);
     } else {
+      assert.match(html, /<title>PicoForge Diagnostics \| \{\{ dashboard_type \}\}<\/title>/);
+      assert.match(html, /<small>\{\{ dashboard_type \}\}<\/small>/);
       assert.match(identity, /id="board-select"/);
       assert.match(identity, /id="rescan-boards"/);
     }
@@ -148,8 +154,8 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
       elements.get("#settings-spi").value = "25";
       elements.get("#settings-clock").change();
       await elements.get("#settings-save").click();
-      assert.deepEqual(sent.at(-1), [8, 1, 150, 0, 0, 25]);
-      assert.match(elements.get("#settings-note").textContent, /after reboot/);
+      assert.deepEqual(sent.slice(-2), [[8, 1, 150, 0, 0, 25], [9, 1, 1]]);
+      assert.match(elements.get("#settings-note").textContent, /Rebooting now/);
       await connectionControl.click();
       assert.equal(connectionControl.textContent, "Connect");
     } finally {

@@ -1,4 +1,4 @@
-@baseUrl = http://127.0.0.1:8766
+@baseUrl = http://127.0.0.1:5000
 @boardId = REPLACE_WITH_BOARD_ID
 
 ### Discover attached boards and copy the selected board ID
@@ -22,7 +22,7 @@ GET {{baseUrl}}/api/status?board={{boardId}}
 ### Get current device state (200, including connected=false when no board is attached)
 GET {{baseUrl}}/api/status?board={{boardId}}
 
-### Save supported settings for the next boot; response contains HID readback
+### Save supported settings and reboot after HID readback
 POST {{baseUrl}}/api/settings?board={{boardId}}
 Content-Type: application/json
 

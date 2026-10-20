@@ -18,7 +18,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         selection = command.add_mutually_exclusive_group()
         selection.add_argument("--serial", help="select a board by USB serial number")
         selection.add_argument("--device-path", help="select a HID path")
-    web.add_argument("--port", type=int, default=8765)
+    web.add_argument("--port", type=int, default=5000)
     return parser.parse_args(argv)
 
 

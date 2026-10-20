@@ -1,6 +1,6 @@
 # PicoForge .NET Host
 
-The .NET 10 host monitors the vendor HID interface and serves the shared local dashboard at `http://127.0.0.1:8766/`.
+The .NET 10 host monitors the vendor HID interface and serves the shared local dashboard at `http://127.0.0.1:5000/` by default. Override the port with `tools/host/run-dotnet.sh --port PORT`; only one dashboard server can bind to port 5000 at a time.
 
 ```sh
 dotnet run --project host/dotnet/PicoForge/PicoForge.csproj

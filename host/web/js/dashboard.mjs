@@ -104,7 +104,7 @@ function renderSettings(snapshot) {
             : snapshot.self_test?.active || snapshot.self_test_command_pending
               ? "Wait for the storage test to finish before saving settings."
               : snapshot.settings_dirty ? "Unsaved changes."
-                : "Changes take effect after reboot.");
+                : "Settings loaded.");
 }
 
 function renderMemory(memory, filesystemFormat) {

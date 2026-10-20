@@ -37,11 +37,13 @@ HID Feature report 8, layout version 1, reads or saves the persisted settings. I
 | 4 | 1 | `spi_bus_mhz` |
 
 The report carries numeric values, not UI labels. Direct WebHID and the Python/.NET dashboards map them to select
-options and verify a save by reading the report back. The Python/.NET `GET /api/status` response includes nullable
-`settings` and `settings_supported` fields. `POST /api/settings` accepts the three numeric settings fields and
-returns the values confirmed by the device. Unsupported values return HTTP 400; unsupported firmware or busy storage
-returns HTTP 409. Writes are rejected while MSC or storage work owns the media. Saved values are applied at the next
-boot; they do not change the active clock or bus immediately.
+options and verify a save by reading the report back. After a matching readback, **Save & Reboot** sends HID Feature
+report 9; firmware waits one second for the host command to finish before resetting. The Python/.NET
+`GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
+the three numeric settings fields and returns the values confirmed by the device. Unsupported values return HTTP 400;
+unsupported firmware or busy storage returns HTTP 409. Writes are rejected while MSC or storage work owns the media.
+Values are applied by the rebooted
+firmware; they do not change the active clock or bus before reboot.
 
 Before the scheduler starts (runtime-init hooks, `main()`), use the lock-free `pf_settings_load_early()` instead; it
 refuses once the scheduler runs. `main()` loads the settings and passes them to `pf_board_apply_settings()` before

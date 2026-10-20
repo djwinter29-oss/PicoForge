@@ -4,7 +4,8 @@ using PicoForge;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-builder.WebHost.UseUrls("http://127.0.0.1:8766");
+var port = builder.Configuration.GetValue("port", 5000);
+builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 builder.Services.AddOpenApi();
@@ -33,8 +34,10 @@ app.Use(async (context, next) =>
 
 var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 var files = new PhysicalFileProvider(webRoot);
-app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = files });
 app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+var indexHtml = await File.ReadAllTextAsync(Path.Combine(webRoot, "index.html"));
+app.MapGet("/", () => Results.Content(
+    indexHtml.Replace("{{ dashboard_type }}", ".NET"), "text/html; charset=utf-8"));
 app.MapDeviceStatus();
 if (app.Environment.IsDevelopment()) app.MapOpenApi();
 await app.RunAsync();

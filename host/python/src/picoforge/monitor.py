@@ -127,7 +127,7 @@ class DeviceMonitor:
                 raise RuntimeError("Wait for the storage self-test to finish before saving boot settings")
             saved = self._active_client.set_settings(settings)
             with self._lock:
-                self._snapshot.update(settings=saved, settings_message="Saved. Changes take effect after reboot.")
+                self._snapshot.update(settings=saved, settings_message="Saved. Rebooting now.")
             return saved
 
     def _run(self) -> None:
