@@ -13,16 +13,18 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_build_matrices_and_compatible_artifact_checks():
     for name in ("pr-check.yml", "release.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text()
-        for dimension in ("board: [pico, pico2]", "clock: [150, 250]",
-                          "transport: [SDIO_PIO, SPI]", "port: [FREERTOS, BAREMETAL]"):
+        for dimension in ("board: [pico, pico2]", "transport: [SDIO_PIO, SPI]"):
             assert dimension in workflow
+        for removed in ("BAREMETAL", "matrix.clock", "matrix.port",
+                        "--sys-clk-mhz", "--sd-card-port", "Build SDK-default clock application"):
+            assert removed not in workflow
+        assert re.search(r"^\s+clock:\s*\[", workflow, re.MULTILINE) is None
+        assert re.search(r"^\s+port:\s*\[", workflow, re.MULTILINE) is None
         if name == "release.yml":
             assert 'PF_SDIO_PIO_HIGH_SPEED: "ON"' in workflow
-        assert '--sys-clk-mhz "${{ matrix.clock }}"' in workflow
         assert '--sd-card-transport "${{ matrix.transport }}"' in workflow
-        assert '--sd-card-port "${{ matrix.port }}"' in workflow
         artifact_step = workflow.split("- name: Run project tests", 1)[1]
-        assert "if: matrix.port == 'FREERTOS'" in artifact_step.split("run:", 1)[0]
+        assert "if:" not in artifact_step.split("run:", 1)[0]
         subprocess.run(["ruby", "-ryaml", "-e", "YAML.load_file(ARGV[0])",
                         str(ROOT / ".github/workflows" / name)], check=True)
 
@@ -39,11 +41,11 @@ def test_usb_protocol_documents_filesystem_input_report():
 
 
 @pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
-def test_workflows_run_pio_timing_only_for_sdio_freertos(name):
+def test_workflows_run_pio_timing_only_for_sdio(name):
     workflow = (ROOT / ".github/workflows" / name).read_text()
     steps = workflow.split("      - name: ")[1:]
     common = next(step for step in steps if step.startswith("Run project tests\n"))
-    assert common.split("run:", 1)[0].splitlines()[1].strip() == "if: matrix.port == 'FREERTOS'"
+    assert "if:" not in common.split("run:", 1)[0]
     assert "tests/pio" not in common
     for suite in ("tests/contracts", "tests/test_validation_integrity.py", "tests/artifacts/test_msc_elf.py"):
         assert suite in common
@@ -54,28 +56,11 @@ def test_workflows_run_pio_timing_only_for_sdio_freertos(name):
     assert len(timing_steps) == 1
     timing = timing_steps[0]
     assert timing.startswith("Run SDIO PIO timing tests\n")
-    assert timing.split("run:", 1)[0].splitlines()[1].strip() == (
-        "if: matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'")
+    assert timing.split("run:", 1)[0].splitlines()[1].strip() == "if: matrix.transport == 'SDIO_PIO'"
     assert "python3 -m pytest tests/pio --junitxml=build/pio-timing-tests.xml" in timing
     assert "continue-on-error" not in timing
     build = next(step for step in steps if step.startswith("Build firmware\n"))
     assert steps.index(build) < steps.index(common) < steps.index(timing)
-
-
-@pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
-def test_workflows_validate_baremetal_artifacts_after_build(name):
-    workflow = (ROOT / ".github/workflows" / name).read_text()
-    steps = workflow.split("      - name: ")[1:]
-    artifact_steps = [step for step in steps if "tests/artifacts/test_sd_ports.py" in step]
-    assert len(artifact_steps) == 1
-    artifact_step = artifact_steps[0]
-    assert artifact_step.split("run:", 1)[0].splitlines()[1].strip() == "if: matrix.port == 'BAREMETAL'"
-    assert "python3 -m pytest tests/artifacts/test_sd_ports.py --baremetal-build-dir build/firmware" in artifact_step
-    build_step = next(step for step in steps if step.startswith("Build firmware\n"))
-    assert steps.index(build_step) < steps.index(artifact_step)
-    if name == "release.yml":
-        package_step = next(step for step in steps if step.startswith("Package firmware outputs\n"))
-        assert steps.index(artifact_step) < steps.index(package_step)
 
 
 def test_release_only_packages_workflow_artifacts():
@@ -121,18 +106,7 @@ def test_release_version_is_validated_before_every_build():
     assert 'tools/firmware/release-version.sh "$RELEASE_TAG"' in workflow
     assert "needs: validate-tag" in workflow
     assert "PF_FIRMWARE_VERSION: ${{ needs.validate-tag.outputs.version }}" in workflow
-    assert "name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-cpu${{ matrix.clock }}" in workflow
-
-
-@pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
-def test_default_clock_builds_application_once_per_board_without_packaging_it(name):
-    workflow = (ROOT / ".github/workflows" / name).read_text()
-    step = workflow.split("- name: Build SDK-default clock application\n", 1)[1].split("\n      - name:", 1)[0]
-    assert "if: matrix.clock == 150 && matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'" in step
-    assert 'tools/firmware/build.sh --board "${{ matrix.board }}"' in step
-    assert "--sys-clk-mhz 0 --build-dir build/default-clock" in step
-    assert "--sd-card-port BAREMETAL" not in step
-    assert "cp build/firmware/*.elf build/firmware/*.uf2 package/" in workflow or name == "pr-check.yml"
+    assert "name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-${{ matrix.transport }}" in workflow
 
 
 def test_release_gates_packages_on_reusable_complete_host_validation():

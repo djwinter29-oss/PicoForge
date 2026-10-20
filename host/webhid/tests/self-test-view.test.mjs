@@ -170,13 +170,13 @@ test("shared dashboard preserves unsaved boot settings and blocks writes while s
       connected: true,
       settings_supported: true,
       settings: { system_clock_mhz: 200, sdio_bus_mhz: 25, spi_bus_mhz: 50 },
+      memory: { mode: "spi" },
       msc: { enabled: false, transition_pending: false },
       self_test: { active: false },
     };
     renderSharedStatus(snapshot);
     assert.equal(element("#settings-clock").value, "200");
-    assert.equal(element("#settings-sdio").value, "0");
-    assert.equal(element("#settings-spi").value, "50");
+    assert.equal(element("#settings-storage").value, "50");
     assert.equal(element("#settings-clock").disabled, false);
     assert.equal(element("#settings-save").disabled, true);
 
@@ -184,6 +184,7 @@ test("shared dashboard preserves unsaved boot settings and blocks writes while s
     element("#settings-clock").value = "250";
     renderSharedStatus(snapshot);
     assert.equal(element("#settings-clock").value, "250");
+    assert.equal(element("#settings-storage").value, "50");
     assert.equal(element("#settings-save").disabled, false);
 
     snapshot.msc.enabled = true;
@@ -195,6 +196,55 @@ test("shared dashboard preserves unsaved boot settings and blocks writes while s
     globalThis.document = previous;
   }
 });
+
+for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
+  test(`${name} limits system clock options to the detected MCU`, () => {
+    const elements = new Map();
+    const element = selector => {
+      if (!elements.has(selector)) elements.set(selector, {
+        dataset: {}, textContent: "", value: "0", valueAsNumber: 32,
+        setAttribute(name, value) { this[name] = value; },
+        replaceChildren(...children) {
+          this.children = children;
+          if (!children.some(child => child.value === this.value)) this.value = children[0]?.value ?? "";
+        },
+      });
+      return elements.get(selector);
+    };
+    const previous = globalThis.document;
+    globalThis.document = {
+      querySelector: element,
+      createElement: () => ({ value: "", textContent: "" }),
+    };
+    try {
+      const snapshot = {
+        connected: true,
+        hardware: { mcu: "RP2040" },
+        settings_supported: true,
+        settings: { system_clock_mhz: 0, sdio_bus_mhz: 0, spi_bus_mhz: 0 },
+        msc: { enabled: false },
+        self_test: { active: false },
+      };
+      render(snapshot);
+      const clock = element("#settings-clock");
+      assert.deepEqual(clock.children.map(option => option.value), ["0", "150", "200", "250"]);
+      assert.equal(clock.children[0].textContent, "Default (125 MHz)");
+
+      snapshot.hardware.mcu = "RP2350";
+      render(snapshot);
+      assert.deepEqual(clock.children.map(option => option.value), ["0", "200", "250"]);
+      assert.equal(clock.children[0].textContent, "Default (150 MHz)");
+
+      snapshot.settings.system_clock_mhz = 150;
+      render(snapshot);
+      assert.equal(clock.children.at(-1).value, "150");
+      assert.equal(clock.children.at(-1).disabled, true);
+      assert.equal(clock.children.at(-1).textContent, "150 MHz (saved; unsupported)");
+    } finally {
+      globalThis.document = previous;
+    }
+  });
+}
 
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
   test(`${name} reports LED state on the toggle control`, () => {

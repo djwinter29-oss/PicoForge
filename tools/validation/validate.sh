@@ -55,8 +55,7 @@ while [ "$#" -gt 0 ]; do
 Usage: tools/validation/validate.sh [options]
 
 By default, syntax-check shell scripts, run project and Ceedling tests, and build
-FreeRTOS firmware and bare-metal driver smoke targets for pico and pico2
-with both SDIO_PIO and SPI, and verify final application MSC callback pointers.
+FreeRTOS firmware for pico and pico2 with both SDIO_PIO and SPI at the SDK clock.
 PIO timing checks require a prior firmware build or PIOASM when builds are skipped.
 
 Options:
@@ -120,7 +119,6 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
         transport_name="$2"
         echo "=== $board_name / $transport_name ==="
         set -- --board "$board_name" --sd-card-transport "$transport_name" \
-            --sd-card-port FREERTOS \
             --build-dir "build/validation-$board_name-$transport_name" \
             --pico-sdk-path "$PICO_SDK_PATH_VALUE"
         if [ -n "$GENERATOR" ]; then
@@ -129,18 +127,6 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
         "$FIRMWARE_BUILD_SCRIPT" "$@"
         python3 -m pytest tests/artifacts/test_msc_elf.py \
             --elf "$(cat "build/validation-$board_name-$transport_name/pico_forge_elf.txt")"
-        echo "=== $board_name / $transport_name / BAREMETAL ==="
-        baremetal_dir="build/validation-$board_name-$transport_name-baremetal"
-        set -- -S firmware -B "$baremetal_dir" \
-            -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" -DPICO_BOARD="$board_name" \
-            -DPF_SD_CARD_TRANSPORT="$transport_name" -DPF_SD_CARD_PORT=BAREMETAL \
-            -DPF_SD_CARD_INTERRUPT_WAIT=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-        if [ -n "$GENERATOR" ]; then
-            set -- "$@" -G "$GENERATOR"
-        fi
-        cmake "$@"
-        cmake --build "$baremetal_dir" --parallel
-        python3 -m pytest tests/artifacts/test_sd_ports.py --baremetal-build-dir "$baremetal_dir"
     }
 
     echo "=== Firmware builds ==="

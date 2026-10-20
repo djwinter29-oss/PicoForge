@@ -8,30 +8,27 @@ before any build runs. Manual dispatch must select a tag with the same format; b
 The stripped `X.Y.Z` supplies `PF_FIRMWARE_VERSION` to every build, including HID identity and SDK program metadata.
 Local developer builds retain `0.0.0-dev` unless overridden.
 
-The workflow produces separate checksum-bearing artifacts for every combination of:
+The workflow produces four checksum-bearing artifacts for every combination of:
 
 - Board: `pico` and `pico2`.
-- CPU clock: 150 and 250 MHz.
 - SD transport: `SDIO_PIO` and `SPI`.
-- Port: `FREERTOS` application and `BAREMETAL` driver smoke image.
 
-Artifact names are `firmware-vX.Y.Z-BOARD-cpuCLOCK-TRANSPORT-PORT`, with `-HS` for SDIO builds.
-Bare-metal images are driver checks, not the USB application; their artifact validation gate runs before packaging.
-FreeRTOS images run the applicable application ELF and contract tests. Packages contain ELF, UF2, and `SHA256SUMS`;
-the workflow uploads Actions artifacts and does not publish a GitHub release automatically.
+All artifacts are FreeRTOS applications using the SDK stock clock. Artifact names are
+`firmware-vX.Y.Z-BOARD-TRANSPORT`, with `-HS` for SDIO builds. Packages contain ELF, UF2, and `SHA256SUMS`; the
+workflow uploads Actions artifacts and does not publish a GitHub release automatically.
 
 Packaging is gated on the reusable host-validation workflow: Ceedling firmware tests, Python host tests on
-3.10 and 3.12, and WebHID and .NET host tests. Both board jobs at 150 MHz with SDIO/FreeRTOS additionally
-build the complete application with `PF_SYS_CLK_MHZ=0` in a separate directory. These two default-clock checks
-are not packaged and do not duplicate the transport/port matrix. PR builds use the same default-clock checks.
+3.10 and 3.12, and WebHID and .NET host tests. Each PR/release matrix entry performs one firmware build; runtime
+clock selection remains a boot setting and does not multiply CI artifacts.
 
 Release builds set `SOURCE_DATE_EPOCH` to the checked-out commit's committer timestamp before configuring CMake.
 The UTC date in image filenames therefore stays fixed when rebuilding the same commit, including through annotated
 tags; local builds can set the same variable explicitly. Without it, local filenames use the configuration date.
 This stabilizes the date input, not a guarantee of bit-for-bit reproducibility across toolchains or build paths.
 
-The SDK defaults are 125 MHz on RP2040 and 150 MHz on RP2350. Release clocks are explicit: 150 MHz is an overclock
-on RP2040; 250 MHz is an overclock on both MCUs. Accepted SDK clock configuration does not establish hardware safety.
+The SDK defaults are 125 MHz on RP2040 and 150 MHz on RP2350. The dashboard can apply supported runtime clocks;
+150 MHz is an overclock on RP2040, and 250 MHz is an overclock on both MCUs. Accepted SDK clock configuration
+does not establish hardware safety.
 SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON in release builds. It requests the
 highest supported safe planned rate up to 50 MHz, clamped by the PIO ceiling of SYSCLK/4: at most 37.5 MHz at
 150 MHz CPU, and up to 50 MHz at 250 MHz CPU. Unsupported High Speed or failed faster-bus validation retains the

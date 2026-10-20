@@ -56,7 +56,7 @@ export function renderStatus(snapshot) {
     : `Turn onboard LED ${ledOn ? "off" : "on"}`;
   const msc = snapshot.msc;
   const mscControl = document.querySelector("#msc-control");
-  mscControl.textContent = msc?.enabled ? "Return to Pico" : "Share SD card";
+  mscControl.textContent = msc?.enabled ? "Return to Pico" : "Enable USB drive";
   mscControl.disabled = snapshot.settings_busy || !connected || !msc || Boolean(msc.transition_pending)
     || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
     || Boolean(msc?.enabled && !msc.force_return_supported);
@@ -87,12 +87,16 @@ function renderSettings(snapshot) {
   const storageBusy = !msc || msc.enabled || msc.transition_pending
     || snapshot.self_test?.active || snapshot.self_test_command_pending;
   const ready = supported && !storageBusy;
+  const storageControl = document.querySelector("#settings-storage");
+  updateClockOptions(document.querySelector("#settings-clock"), snapshot.hardware?.mcu,
+    settings?.system_clock_mhz);
   if (settings && !snapshot.settings_dirty) {
     document.querySelector("#settings-clock").value = String(settings.system_clock_mhz);
-    document.querySelector("#settings-sdio").value = String(settings.sdio_bus_mhz === 25 ? 0 : settings.sdio_bus_mhz);
-    document.querySelector("#settings-spi").value = String(settings.spi_bus_mhz);
   }
-  for (const selector of ["#settings-clock", "#settings-sdio", "#settings-spi"]) {
+  if (settings && !snapshot.settings_storage_dirty) {
+    storageControl.value = String(storageSpeed(settings, snapshot.memory?.mode));
+  }
+  for (const selector of ["#settings-clock", "#settings-storage"]) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty;
@@ -105,6 +109,39 @@ function renderSettings(snapshot) {
               ? "Wait for the storage test to finish before saving settings."
               : snapshot.settings_dirty ? "Unsaved changes."
                 : "Settings loaded.");
+}
+
+function updateClockOptions(select, mcu, savedClock) {
+  const choices = mcu === "RP2040"
+    ? [[0, "Default (125 MHz)"], [150, "150 MHz"], [200, "200 MHz"], [250, "250 MHz"]]
+    : mcu === "RP2350"
+      ? [[0, "Default (150 MHz)"], [200, "200 MHz"], [250, "250 MHz"]]
+      : [[0, "Default"]];
+  const unsupportedClock = Number.isInteger(savedClock) && savedClock !== 0
+    && !choices.some(([value]) => value === savedClock) ? savedClock : null;
+  const signature = `${mcu ?? "unknown"}:${unsupportedClock ?? ""}`;
+  if (select.dataset.clockOptions === signature
+    || typeof document.createElement !== "function" || typeof select.replaceChildren !== "function") return;
+
+  const previous = select.value;
+  const options = [...choices, ...(unsupportedClock === null ? []
+    : [[unsupportedClock, `${unsupportedClock} MHz (saved; unsupported)`, true]])]
+    .map(([value, label, disabled = false]) => {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = label;
+      option.disabled = disabled;
+      return option;
+    });
+  select.replaceChildren(...options);
+  select.dataset.clockOptions = signature;
+  select.value = options.some(option => option.value === previous) ? previous : "0";
+}
+
+export function storageSpeed(settings, transport) {
+  if (transport === "sdio") return settings.sdio_bus_mhz === 50 ? 50 : 25;
+  if (transport === "spi") return settings.spi_bus_mhz === 25 ? 25 : 50;
+  return settings.sdio_bus_mhz === 50 || settings.spi_bus_mhz === 50 ? 50 : 25;
 }
 
 function renderMemory(memory, filesystemFormat) {

@@ -42,6 +42,9 @@ report 9; firmware waits one second for the host command to finish before resett
 `GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
 the three numeric settings fields and returns the values confirmed by the device. Unsupported values return HTTP 400;
 unsupported firmware or busy storage returns HTTP 409. Writes are rejected while MSC or storage work owns the media.
+The dashboards expose one **SD Card** speed selector with 25 and 50 MHz choices. Changing it writes the selected speed
+to both bus fields; saving unrelated settings preserves their existing values. The displayed value follows the active
+transport: SDIO zero/default is shown as 25 MHz, while SPI zero uses the board profile's 50 MHz default.
 Values are applied by the rebooted
 firmware; they do not change the active clock or bus before reboot.
 

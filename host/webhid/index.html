@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light">
   <title>PicoForge Diagnostics | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/webhid.css?v=2">
-  <script type="module" src="js/app.mjs?v=2"></script>
+  <link rel="stylesheet" href="css/webhid.css?v=3">
+  <script type="module" src="js/app.mjs?v=3"></script>
 </head>
 <body>
   <header class="topbar">
@@ -57,21 +57,11 @@
       <div class="settings-controls">
         <label for="settings-clock">System clock
           <select id="settings-clock" disabled>
-            <option value="0">Build default</option>
-            <option value="150">150 MHz</option>
-            <option value="200">200 MHz</option>
-            <option value="250">250 MHz</option>
+            <option value="0">Default</option>
           </select>
         </label>
-        <label for="settings-sdio">SDIO bus
-          <select id="settings-sdio" disabled>
-            <option value="0">Default Speed, 25 MHz</option>
-            <option value="50">High-Speed, up to 50 MHz</option>
-          </select>
-        </label>
-        <label for="settings-spi">SPI bus ceiling
-          <select id="settings-spi" disabled>
-            <option value="0">Board default</option>
+        <label for="settings-storage">SD Card
+          <select id="settings-storage" disabled>
             <option value="25">25 MHz</option>
             <option value="50">50 MHz</option>
           </select>
@@ -113,7 +103,7 @@
           <p class="eyebrow">STORAGE REPORT</p>
           <h2 id="memory-title">Storage</h2>
         </div>
-        <button class="button" id="msc-control" type="button" disabled>Share SD card</button>
+        <button class="button" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
       <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
       <p class="sample-time" id="memory-note">Waiting for card status</p>

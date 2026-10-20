@@ -16,18 +16,20 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     return elements.get(selector);
   };
   const connected = { connected: true, error: null, board_status: { led_available: true, led_on: false },
-    msc: { enabled: false, transition_pending: false }, self_test: null };
+    settings_supported: true, settings: { system_clock_mhz: 200, sdio_bus_mhz: 0, spi_bus_mhz: 0 },
+    memory: { mode: "spi" }, msc: { enabled: false, transition_pending: false }, self_test: null };
   let statusFails = false;
   let release;
   let gate;
   const requestedUrls = [];
+  const savedSettings = [];
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
   globalThis.document = {
     querySelector: element,
     createElement: () => ({ value: "", textContent: "" }),
   };
   globalThis.window = { setInterval: callback => { tick = callback; }, confirm: () => true };
-  globalThis.fetch = async url => {
+  globalThis.fetch = async (url, options = {}) => {
     requestedUrls.push(url);
     if (url === "/api/boards") {
       return { ok: true, json: async () => ({
@@ -42,6 +44,11 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       if (statusFails) throw new Error("status down");
       return { ok: true, json: async () => structuredClone(connected) };
     }
+    if (url.startsWith("/api/settings?board=")) {
+      const settings = JSON.parse(options.body);
+      savedSettings.push(settings);
+      return { ok: true, json: async () => ({ settings }) };
+    }
     await gate;
     return { ok: false, status: 503, json: async () => ({ error: "HID command delivery failed" }) };
   };
@@ -55,6 +62,14 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#board-select").children.find(option => option.value === "board-b").textContent,
       "PicoForge / HID /hid/b");
     assert.ok(requestedUrls.includes("/api/status?board=board-a"));
+    elements.get("#settings-clock").value = "250";
+    handlers.get("#settings-clock:change")();
+    await handlers.get("#settings-save:click")();
+    assert.deepEqual(savedSettings[0], { system_clock_mhz: 250, sdio_bus_mhz: 0, spi_bus_mhz: 0 });
+    elements.get("#settings-storage").value = "25";
+    handlers.get("#settings-storage:change")();
+    await handlers.get("#settings-save:click")();
+    assert.deepEqual(savedSettings[1], { system_clock_mhz: 250, sdio_bus_mhz: 25, spi_bus_mhz: 25 });
     for (const name of ["#led-control:click", "#msc-control:click", "#self-test-start:click"]) {
       gate = new Promise(resolve => { release = resolve; });
       statusFails = false;

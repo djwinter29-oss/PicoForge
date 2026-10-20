@@ -190,7 +190,8 @@ wrote in 7,165 ms (4.47 MiB/s, up from 0.89) and read/verified in 15,371 ms
 also fills and checks its pattern a word at a time, which removed CPU time from
 both phases.
 
-With the Pico 2 built at `--sys-clk-mhz 200` and the SD bus unchanged at 12.5 MHz,
+In a historical Pico 2 build using the then-supported 200 MHz build-clock override, with the SD bus unchanged at
+12.5 MHz,
 the same 32 MiB test passed with zero mismatches: write 34,972 ms (0.915 MiB/s)
 and read/verify 15,904 ms (2.012 MiB/s). Reads gained about 16% from the faster
 core; writes did not, because they were limited by CMD25 stream restarts (see below), not CPU.

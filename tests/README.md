@@ -68,19 +68,17 @@ These project-level tests assert properties of supplied cross-build artifacts:
 | [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers and SD build dependencies |
 | [artifacts/test_sd_ports.py](artifacts/test_sd_ports.py) | Verify bare-metal compilation manifests and linked symbols |
 
-For existing Pico 2 validation builds, run from the repository root:
+For existing Pico 2 FreeRTOS validation builds, run from the repository root:
 
 ```sh
 python3 -m pytest tests -m artifacts \
-    --elf "$(cat build/validation-pico2-SDIO_PIO/pico_forge_elf.txt)" \
-    --baremetal-build-dir build/validation-pico2-SDIO_PIO-baremetal
+    --elf "$(cat build/validation-pico2-SDIO_PIO/pico_forge_elf.txt)"
 ```
 
-`validate.sh` invokes these tests after the corresponding firmware builds.
-Bare-metal smoke targets have no USB interface and are not MSC checker inputs.
+`validate.sh` builds the four Pico/Pico 2 × SDIO/SPI FreeRTOS combinations and invokes the MSC artifact check.
+The bare-metal port artifact test remains a developer-only direct CMake smoke check, not a product build.
 The MSC checker requires an unstripped ELF with DWARF and Arm GNU `nm`/`readelf`;
-the storage dependency and port checks require `compile_commands.json` and `CMakeCache.txt`.
-The port checker also requires Arm GNU `nm`.
+the storage dependency check requires `compile_commands.json` and `CMakeCache.txt`.
 Neither test builds or flashes firmware.
 Repeat either option to check multiple inputs. Selecting artifact tests without
 the corresponding input fails explicitly; missing files are never silently skipped.

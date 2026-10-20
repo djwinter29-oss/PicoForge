@@ -92,13 +92,33 @@ def test_build_script_passes_explicit_sdio_policy(tmp_path, policy):
     sdk = tmp_path / "sdk/external"
     sdk.mkdir(parents=True)
     (sdk / "pico_sdk_import.cmake").touch()
+    kernel = tmp_path / "kernel/portable/ThirdParty/GCC/RP2040"
+    kernel.mkdir(parents=True)
+    (kernel / "FreeRTOS_Kernel_import.cmake").touch()
     cmake = tmp_path / "cmake"
     cmake.write_text('#!/bin/sh\nprintf "%s\n" "$@" >> "$CMAKE_ARGUMENT_LOG"\n')
     cmake.chmod(0o755)
     log = tmp_path / "arguments"
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}",
-               CMAKE_ARGUMENT_LOG=str(log), PF_SDIO_PIO_HIGH_SPEED=policy)
-    subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), "--sd-card-port", "BAREMETAL",
-                    "--pico-sdk-path", str(sdk.parent), "--build-dir", str(tmp_path / "build")],
+               CMAKE_ARGUMENT_LOG=str(log), PF_SDIO_PIO_HIGH_SPEED=policy,
+               FREERTOS_KERNEL_PATH=str(kernel.parents[3]))
+    subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), "--sd-card-transport", "SPI",
+                    "--pico-sdk-path", str(sdk.parent)],
                    env=env, check=True, capture_output=True, text=True)
-    assert f"-DPF_SDIO_PIO_HIGH_SPEED={policy}" in log.read_text().splitlines()
+    arguments = log.read_text().splitlines()
+    assert f"-DPF_SDIO_PIO_HIGH_SPEED={policy}" in arguments
+    assert "-DPF_SYS_CLK_MHZ=0" in arguments
+    assert "-DPF_SD_CARD_PORT=FREERTOS" in arguments
+    assert "-DPF_SD_CARD_TRANSPORT=SPI" in arguments
+    assert str(ROOT / "build/firmware-pico-SPI") in arguments
+
+
+@pytest.mark.parametrize(("option", "value"), [
+    ("--sys-clk-mhz", "200"),
+    ("--sd-card-port", "BAREMETAL"),
+])
+def test_build_script_rejects_legacy_build_dimensions(option, value):
+    result = subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), option, value],
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert f"Unknown argument: {option}" in result.stderr

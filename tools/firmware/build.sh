@@ -6,9 +6,7 @@ BUILD_DIR=""
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
-SYS_CLK_MHZ="${PF_SYS_CLK_MHZ:-0}"
 SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
-SD_CARD_PORT="${PF_SD_CARD_PORT:-FREERTOS}"
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
 while [ "$#" -gt 0 ]; do
@@ -33,10 +31,6 @@ while [ "$#" -gt 0 ]; do
             FREERTOS_KERNEL_PATH_VALUE="$2"
             shift 2
             ;;
-        --sys-clk-mhz)
-            SYS_CLK_MHZ="$2"
-            shift 2
-            ;;
         --firmware-version)
             FIRMWARE_VERSION="$2"
             shift 2
@@ -45,25 +39,19 @@ while [ "$#" -gt 0 ]; do
             SD_CARD_TRANSPORT="$2"
             shift 2
             ;;
-        --sd-card-port)
-            SD_CARD_PORT="$2"
-            shift 2
-            ;;
         --help)
             cat <<'EOF'
 Usage: tools/firmware/build.sh [options]
 
 Options:
-  --board NAME       Supported board: pico or pico2 (default: pico)
-  --build-dir PATH   Build directory (default: build/firmware-NAME, -baremetal suffix for BAREMETAL)
-    --generator NAME  CMake generator (default: Ninja when available)
-  --pico-sdk-path PATH
-    --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
-    --sys-clk-mhz MHZ  Out-of-spec system clock, 100-250 (default: 0, SDK default)
-    Environment: PF_SDIO_PIO_HIGH_SPEED=ON|OFF overrides the cached SDIO negotiation policy.
-    --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
+    --board NAME       Supported board: pico or pico2 (default: pico)
     --sd-card-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
-    --sd-card-port NAME  FREERTOS application or BAREMETAL driver smoke (default: FREERTOS)
+    --build-dir PATH   Build directory (default: build/firmware-NAME-TRANSPORT)
+    --generator NAME   CMake generator (default: Ninja when available)
+    --pico-sdk-path PATH
+    --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
+    --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
+    Environment: PF_SDIO_PIO_HIGH_SPEED=ON|OFF overrides the cached SDIO negotiation policy.
 EOF
             exit 0
             ;;
@@ -73,11 +61,6 @@ EOF
             ;;
     esac
 done
-
-case "$SD_CARD_PORT" in
-    FREERTOS|BAREMETAL) ;;
-    *) echo "--sd-card-port must be FREERTOS or BAREMETAL" >&2; exit 2 ;;
-esac
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
@@ -100,8 +83,7 @@ fi
 if [ -z "$FREERTOS_KERNEL_PATH_VALUE" ]; then
     FREERTOS_KERNEL_PATH_VALUE="$SOURCE_DIR/third_party/FreeRTOS-Kernel"
 fi
-if [ "$SD_CARD_PORT" = FREERTOS ] &&
-   [ ! -f "$FREERTOS_KERNEL_PATH_VALUE/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake" ]; then
+if [ ! -f "$FREERTOS_KERNEL_PATH_VALUE/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake" ]; then
     echo "FreeRTOS-Kernel is not available at $FREERTOS_KERNEL_PATH_VALUE." >&2
     echo "Initialize the dependency with 'git submodule update --init --recursive', or pass --freertos-kernel-path." >&2
     exit 1
@@ -119,10 +101,7 @@ if [ -z "$GENERATOR" ]; then
     fi
 fi
 if [ -z "$BUILD_DIR" ]; then
-    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD"
-    if [ "$SD_CARD_PORT" = BAREMETAL ]; then
-        BUILD_DIR="$BUILD_DIR-baremetal"
-    fi
+    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-$SD_CARD_TRANSPORT"
 elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
@@ -138,7 +117,7 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \
     -DPICO_BOARD="$BOARD" \
     -DPF_FIRMWARE_VERSION="$FIRMWARE_VERSION" \
-    -DPF_SYS_CLK_MHZ="$SYS_CLK_MHZ" \
-    -DPF_SD_CARD_PORT="$SD_CARD_PORT" \
+    -DPF_SYS_CLK_MHZ=0 \
+    -DPF_SD_CARD_PORT=FREERTOS \
     -DPF_SD_CARD_TRANSPORT="$SD_CARD_TRANSPORT" "$@"
 cmake --build "$BUILD_DIR" --parallel ${CMAKE_BUILD_PARALLEL_LEVEL:+"$CMAKE_BUILD_PARALLEL_LEVEL"}

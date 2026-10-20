@@ -15,10 +15,18 @@ function renderLinkState(selector, label, active) {
   else element.dataset.active = String(active);
 }
 
+export function storageSpeed(settings, transport) {
+  if (transport === "sdio") return settings.sdio_bus_mhz === 50 ? 50 : 25;
+  if (transport === "spi") return settings.spi_bus_mhz === 25 ? 25 : 50;
+  return settings.sdio_bus_mhz === 50 || settings.spi_bus_mhz === 50 ? 50 : 25;
+}
+
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
   const hardware = snapshot.hardware;
   const runtime = snapshot.runtime;
+  updateClockOptions(document.querySelector("#settings-clock"), hardware?.mcu,
+    snapshot.settings?.system_clock_mhz);
   const connection = document.querySelector("#connection");
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
   document.querySelector("#connection-label").textContent = snapshot.error
@@ -68,6 +76,33 @@ export function renderStatus(snapshot) {
   document.querySelector("#status-message").textContent = snapshot.error
     ?? (snapshot.reconnecting ? "USB interfaces changing; reconnecting HID automatically"
       : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
+}
+
+function updateClockOptions(select, mcu, savedClock) {
+  const choices = mcu === "RP2040"
+    ? [[0, "Default (125 MHz)"], [150, "150 MHz"], [200, "200 MHz"], [250, "250 MHz"]]
+    : mcu === "RP2350"
+      ? [[0, "Default (150 MHz)"], [200, "200 MHz"], [250, "250 MHz"]]
+      : [[0, "Default"]];
+  const unsupportedClock = Number.isInteger(savedClock) && savedClock !== 0
+    && !choices.some(([value]) => value === savedClock) ? savedClock : null;
+  const signature = `${mcu ?? "unknown"}:${unsupportedClock ?? ""}`;
+  if (select.dataset.clockOptions === signature
+    || typeof document.createElement !== "function" || typeof select.replaceChildren !== "function") return;
+
+  const previous = select.value;
+  const options = [...choices, ...(unsupportedClock === null ? []
+    : [[unsupportedClock, `${unsupportedClock} MHz (saved; unsupported)`, true]])]
+    .map(([value, label, disabled = false]) => {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = label;
+      option.disabled = disabled;
+      return option;
+    });
+  select.replaceChildren(...options);
+  select.dataset.clockOptions = signature;
+  select.value = options.some(option => option.value === previous) ? previous : "0";
 }
 
 function renderMemory(memory, filesystemFormat) {

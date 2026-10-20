@@ -120,7 +120,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 if [ -z "$BUILD_DIR" ]; then
-    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD"
+    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-$SD_CARD_TRANSPORT"
 elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
@@ -137,7 +137,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ -n "$FREERTOS_KERNEL_PATH_VALUE" ]; then
         set -- "$@" --freertos-kernel-path "$FREERTOS_KERNEL_PATH_VALUE"
     fi
-    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT" --sd-card-port FREERTOS
+    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT"
     "$@"
 fi
 

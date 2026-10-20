@@ -265,16 +265,17 @@ executable links the production driver and checks unconfigured API paths without
 initializing hardware or touching media.
 
 ```sh
-# Existing full application (default port).
-tools/firmware/build.sh --board pico2 --sd-card-port FREERTOS
+# Standard FreeRTOS application.
+tools/firmware/build.sh --board pico2 --sd-card-transport SDIO_PIO
 
-# Driver-only bare-metal link check; also supports --board pico and transport SPI.
-tools/firmware/build.sh --board pico2 --sd-card-port BAREMETAL \
-    --sd-card-transport SDIO_PIO
+# Developer-only driver link check; also supports pico and SPI.
+cmake -S firmware -B build/driver-smoke-pico2-sdio \
+  -DPICO_BOARD=pico2 -DPF_SD_CARD_PORT=BAREMETAL -DPF_SD_CARD_TRANSPORT=SDIO_PIO
+cmake --build build/driver-smoke-pico2-sdio
 ```
 
-Bare-metal builds use `build/firmware-BOARD-baremetal` by default, separate from
-the application directory. Direct CMake builds use `-DPF_SD_CARD_PORT=BAREMETAL`.
+The standard builder supports only FreeRTOS application images. Direct CMake builds may select
+`-DPF_SD_CARD_PORT=BAREMETAL` for the driver smoke target.
 Invalid port names and bare metal with `PF_SD_CARD_INTERRUPT_WAIT=ON` are rejected;
 SPI also rejects that native-only option. There is no scheduler auto-detection
 or fallback to an unsynchronized port. `load.sh` builds the FreeRTOS application;

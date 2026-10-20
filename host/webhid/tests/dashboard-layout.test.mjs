@@ -27,9 +27,9 @@ for (const name of ["web", "webhid"]) {
     assert.match(settings, /<h2 id="settings-title">Configuration<\/h2>/);
     assert.ok(html.indexOf('aria-labelledby="settings-title"') < html.indexOf('aria-labelledby="runtime-title"'));
     assert.match(settings, /id="settings-clock"/);
-    assert.match(settings, /id="settings-sdio"/);
-    assert.match(settings, /id="settings-spi"/);
-    assert.equal((settings.match(/<label for="settings-/g) ?? []).length, 3);
+    assert.match(settings, /<label for="settings-storage">SD Card[\s\S]*id="settings-storage"[\s\S]*25 MHz[\s\S]*50 MHz/);
+    assert.doesNotMatch(settings, /settings-sdio|settings-spi/);
+    assert.equal((settings.match(/<label for="settings-/g) ?? []).length, 2);
     assert.match(settings, /class="section-heading"[\s\S]*id="settings-title"[\s\S]*id="settings-save"[^>]*>Save &amp; Reboot/);
     assert.doesNotMatch(settings, /class="settings-action"|Changes take effect after reboot/);
     assert.match(settings, /id="settings-note"/);
@@ -65,7 +65,7 @@ for (const name of ["web", "webhid"]) {
     assert.match(memoryReport, /<dt>Manufacturer<\/dt>/);
       assert.match(memoryReport, /<dt>Serial<\/dt>/);
     assert.match(memoryReport, /id="msc-control"/);
-    assert.match(memoryReport, /Share SD card/);
+    assert.match(memoryReport, /Enable USB drive/);
     assert.match(memoryReport, /id="msc-note"/);
     const selfTest = section('aria-labelledby="self-test-title"');
     assert.match(selfTest, /<h2 id="self-test-title">Storage benchmark<\/h2>/);
@@ -152,7 +152,7 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
       assert.deepEqual(sent, [[5, 3, 2]]);
       assert.equal(elements.get("#msc-control").disabled, true);
       connectedClient.update({ msc: { enabled: false } });
-      assert.equal(elements.get("#msc-control").textContent, "Share SD card");
+      assert.equal(elements.get("#msc-control").textContent, "Enable USB drive");
       confirmed = false;
       await elements.get("#msc-control").click();
       assert.deepEqual(sent[1], [5, 2, 1]);
@@ -162,11 +162,13 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
       assert.equal(sent.length, 2);
       connectedClient.update({ msc: { enabled: false, transition_pending: false } });
       elements.get("#settings-clock").value = "150";
-      elements.get("#settings-sdio").value = "0";
-      elements.get("#settings-spi").value = "25";
       elements.get("#settings-clock").change();
       await elements.get("#settings-save").click();
-      assert.deepEqual(sent.slice(-2), [[8, 1, 150, 0, 0, 25], [9, 1, 1]]);
+      assert.deepEqual(sent.slice(-2), [[8, 1, 150, 0, 0, 50], [9, 1, 1]]);
+      elements.get("#settings-storage").value = "25";
+      elements.get("#settings-storage").change();
+      await elements.get("#settings-save").click();
+      assert.deepEqual(sent.slice(-2), [[8, 1, 150, 0, 25, 25], [9, 1, 1]]);
       assert.match(elements.get("#settings-note").textContent, /Rebooting now/);
       await connectionControl.click();
       assert.equal(connectionControl.textContent, "Connect");

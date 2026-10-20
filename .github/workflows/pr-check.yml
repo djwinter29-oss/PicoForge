@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   firmware:
-    name: Firmware (${{ matrix.board }}, ${{ matrix.clock }} MHz, ${{ matrix.transport }}, ${{ matrix.port }})
+    name: Firmware (${{ matrix.board }}, ${{ matrix.transport }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -22,9 +22,7 @@ jobs:
       max-parallel: 4
       matrix:
         board: [pico, pico2]
-        clock: [150, 250]
         transport: [SDIO_PIO, SPI]
-        port: [FREERTOS, BAREMETAL]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,18 +47,12 @@ jobs:
       - name: Build firmware
         run: >-
           tools/firmware/build.sh --board "${{ matrix.board }}"
-          --sd-card-transport "${{ matrix.transport }}" --sd-card-port "${{ matrix.port }}"
-          --sys-clk-mhz "${{ matrix.clock }}" --build-dir build/firmware
+          --sd-card-transport "${{ matrix.transport }}" --build-dir build/firmware
 
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt
 
-      - name: Check bare-metal SD port artifacts
-        if: matrix.port == 'BAREMETAL'
-        run: python3 -m pytest tests/artifacts/test_sd_ports.py --baremetal-build-dir build/firmware
-
       - name: Run project tests
-        if: matrix.port == 'FREERTOS'
         run: |
           python3 -m pytest tests/contracts tests/test_validation_integrity.py \
             tests/artifacts/test_msc_elf.py \
@@ -68,14 +60,8 @@ jobs:
             --junitxml=build/project-tests.xml
 
       - name: Run SDIO PIO timing tests
-        if: matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'
+        if: matrix.transport == 'SDIO_PIO'
         run: python3 -m pytest tests/pio --junitxml=build/pio-timing-tests.xml
-
-      - name: Build SDK-default clock application
-        if: matrix.clock == 150 && matrix.transport == 'SDIO_PIO' && matrix.port == 'FREERTOS'
-        run: >-
-          tools/firmware/build.sh --board "${{ matrix.board }}"
-          --sys-clk-mhz 0 --build-dir build/default-clock
 
   host-validation:
     name: Host validation

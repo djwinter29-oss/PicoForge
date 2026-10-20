@@ -1,11 +1,11 @@
-import { renderStatus as renderDashboardStatus, renderSelfTest } from "./dashboard.mjs";
+import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
 const boardSelect = document.querySelector("#board-select");
 const rescanBoardsButton = document.querySelector("#rescan-boards");
 const settingsSave = document.querySelector("#settings-save");
-const settingsControls = ["#settings-clock", "#settings-sdio", "#settings-spi"]
+const settingsControls = ["#settings-clock", "#settings-storage"]
   .map(selector => document.querySelector(selector));
 let requestInProgress = false;
 let currentSnapshot = null;
@@ -13,6 +13,7 @@ let selfTestPendingSequence = null;
 let mscRequestInProgress = false;
 let settingsRequestInProgress = false;
 let settingsDirty = false;
+let settingsStorageDirty = false;
 let settingsMessage = null;
 let mscError = null;
 let selectedBoard = null;
@@ -33,6 +34,7 @@ function boardLabel(board) {
 function renderStatus(snapshot) {
   if (!snapshot.connected) {
     settingsDirty = false;
+    settingsStorageDirty = false;
     settingsMessage = null;
   }
   renderDashboardStatus({
@@ -40,6 +42,7 @@ function renderStatus(snapshot) {
     no_board_selected: !selectedBoard,
     settings_busy: settingsRequestInProgress,
     settings_dirty: settingsDirty,
+    settings_storage_dirty: settingsStorageDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
   });
 }
@@ -86,6 +89,7 @@ function selectBoard(boardId) {
   selectionVersion++;
   currentSnapshot = null;
   settingsDirty = false;
+  settingsStorageDirty = false;
   settingsMessage = null;
   selfTestPendingSequence = null;
   renderStatus({ connected: false });
@@ -129,6 +133,7 @@ async function rescanBoards() {
       selectionVersion++;
       currentSnapshot = null;
       settingsDirty = false;
+      settingsStorageDirty = false;
       selfTestPendingSequence = null;
       renderStatus({ connected: false });
     }
@@ -212,20 +217,21 @@ async function setLed() {
 }
 
 function selectedSettings() {
+  const saved = currentSnapshot?.settings;
+  const storageMhz = Number(settingsControls[1].value);
   return {
     system_clock_mhz: Number(settingsControls[0].value),
-    sdio_bus_mhz: Number(settingsControls[1].value),
-    spi_bus_mhz: Number(settingsControls[2].value),
+    sdio_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.sdio_bus_mhz ?? 0),
+    spi_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.spi_bus_mhz ?? 0),
   };
 }
 
 function updateSettingsDirty() {
   const saved = currentSnapshot?.settings;
   if (!saved) return;
-  const selected = selectedSettings();
-  settingsDirty = selected.system_clock_mhz !== saved.system_clock_mhz
-    || selected.sdio_bus_mhz !== (saved.sdio_bus_mhz === 25 ? 0 : saved.sdio_bus_mhz)
-    || selected.spi_bus_mhz !== saved.spi_bus_mhz;
+  settingsStorageDirty = Number(settingsControls[1].value)
+    !== storageSpeed(saved, currentSnapshot.memory?.mode);
+  settingsDirty = Number(settingsControls[0].value) !== saved.system_clock_mhz || settingsStorageDirty;
   settingsMessage = null;
   renderStatus(currentSnapshot);
 }
@@ -252,6 +258,7 @@ async function saveSettings() {
     currentSnapshot.settings = result.settings;
     currentSnapshot.settings_supported = true;
     settingsDirty = false;
+    settingsStorageDirty = false;
     settingsMessage = "Saved. Rebooting now.";
   } catch (error) {
     settingsMessage = `Save failed: ${error.message}`;

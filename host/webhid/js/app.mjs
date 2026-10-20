@@ -1,23 +1,27 @@
 import { PicoForgeWebHid } from "./device.mjs";
-import { renderStatus, renderSelfTest } from "./view.mjs?v=2";
+import { renderStatus, renderSelfTest, storageSpeed } from "./view.mjs?v=3";
 
 const connectionControl = document.querySelector("#connection-control");
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
 const settingsSave = document.querySelector("#settings-save");
 const settingsClock = document.querySelector("#settings-clock");
-const settingsSdio = document.querySelector("#settings-sdio");
-const settingsSpi = document.querySelector("#settings-spi");
+const settingsStorage = document.querySelector("#settings-storage");
 let settingsDirty = false;
+let settingsStorageDirty = false;
 const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
 
 function render(state) {
   renderStatus(state);
-  if (!state.connected) settingsDirty = false;
+  if (!state.connected) {
+    settingsDirty = false;
+    settingsStorageDirty = false;
+  }
   if (!settingsDirty && state.settings) {
     settingsClock.value = String(state.settings.system_clock_mhz);
-    settingsSdio.value = String(state.settings.sdio_bus_mhz === 25 ? 0 : state.settings.sdio_bus_mhz);
-    settingsSpi.value = String(state.settings.spi_bus_mhz);
+  }
+  if (!settingsStorageDirty && state.settings) {
+    settingsStorage.value = String(storageSpeed(state.settings, state.memory?.mode));
   }
   connectionControl.textContent = state.connected ? "Disconnect" : "Connect";
   connectionControl.setAttribute("aria-label", state.connected
@@ -27,11 +31,11 @@ function render(state) {
   mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending)
     || Boolean(state.self_test?.active) || state.self_test_command_pending
     || Boolean(state.msc?.enabled && !state.msc.force_return_supported);
-  mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Share SD card";
+  mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
   const settingsReady = state.connected && state.settings_supported && state.settings !== null && Boolean(state.msc)
     && !state.msc.enabled && !state.msc.transition_pending && !state.self_test?.active
     && !state.self_test_command_pending;
-  for (const control of [settingsClock, settingsSdio, settingsSpi]) {
+  for (const control of [settingsClock, settingsStorage]) {
     control.disabled = state.busy || !settingsReady;
   }
   settingsSave.disabled = state.busy || !settingsReady;
@@ -72,19 +76,35 @@ document.querySelector("#self-test-start").addEventListener("click", async () =>
 });
 document.querySelector("#self-test-cancel").addEventListener("click", () => client.setSelfTest("cancel"));
 document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(client.state));
-for (const control of [settingsClock, settingsSdio, settingsSpi]) {
+function selectedSettings() {
+  const saved = client.state.settings;
+  const storageMhz = Number(settingsStorage.value);
+  return {
+    system_clock_mhz: Number(settingsClock.value),
+    sdio_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.sdio_bus_mhz ?? 0),
+    spi_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.spi_bus_mhz ?? 0),
+  };
+}
+
+function updateSettingsDirty() {
+  const saved = client.state.settings;
+  if (!saved) return;
+  settingsStorageDirty = Number(settingsStorage.value) !== storageSpeed(saved, client.state.memory?.mode);
+  settingsDirty = Number(settingsClock.value) !== saved.system_clock_mhz || settingsStorageDirty;
+  render(client.state);
+}
+
+for (const control of [settingsClock, settingsStorage]) {
   control.addEventListener("change", () => {
-    settingsDirty = true;
-    render(client.state);
+    updateSettingsDirty();
   });
 }
 settingsSave.addEventListener("click", async () => {
-  const saved = await client.saveSettings({
-    system_clock_mhz: Number(settingsClock.value),
-    sdio_bus_mhz: Number(settingsSdio.value),
-    spi_bus_mhz: Number(settingsSpi.value),
-  });
-  if (saved) settingsDirty = false;
+  const saved = await client.saveSettings(selectedSettings());
+  if (saved) {
+    settingsDirty = false;
+    settingsStorageDirty = false;
+  }
   render(client.state);
 });
 render(client.state);
