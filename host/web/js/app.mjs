@@ -2,6 +2,8 @@ import { renderStatus as renderDashboardStatus, renderSelfTest } from "./dashboa
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
+const boardSelect = document.querySelector("#board-select");
+const rescanBoardsButton = document.querySelector("#rescan-boards");
 const settingsSave = document.querySelector("#settings-save");
 const settingsControls = ["#settings-clock", "#settings-sdio", "#settings-spi"]
   .map(selector => document.querySelector(selector));
@@ -13,6 +15,16 @@ let settingsRequestInProgress = false;
 let settingsDirty = false;
 let settingsMessage = null;
 let mscError = null;
+let selectedBoard = null;
+let selectedBoardLabel = "";
+let knownBoards = [];
+let scanningBoards = false;
+let selectionVersion = 0;
+
+function boardUrl(path, boardId = selectedBoard) {
+  if (!boardId) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}board=${encodeURIComponent(boardId)}`;
+}
 
 function renderStatus(snapshot) {
   if (!snapshot.connected) {
@@ -21,6 +33,7 @@ function renderStatus(snapshot) {
   }
   renderDashboardStatus({
     ...snapshot,
+    no_board_selected: !selectedBoard,
     settings_busy: settingsRequestInProgress,
     settings_dirty: settingsDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
@@ -30,10 +43,12 @@ function renderStatus(snapshot) {
 async function updateStatus() {
   if (requestInProgress || mscRequestInProgress || settingsRequestInProgress) return;
   requestInProgress = true;
+  const version = selectionVersion;
   try {
-    const response = await fetch("/api/status", { cache: "no-store" });
+    const response = await fetch(boardUrl("/api/status"), { cache: "no-store" });
     if (!response.ok) throw new Error(`Status endpoint returned HTTP ${response.status}`);
     const snapshot = await response.json();
+    if (version !== selectionVersion) return;
     if (mscRequestInProgress) return;
     currentSnapshot = snapshot;
     currentSnapshot.error = mscError ?? currentSnapshot.error;
@@ -41,15 +56,87 @@ async function updateStatus() {
     currentSnapshot.self_test_command_pending = selfTestPendingSequence !== null;
     renderStatus(currentSnapshot);
   } catch (error) {
+    if (version !== selectionVersion) return;
     renderStatus({ connected: false, error: error.message });
     currentSnapshot = null;
   } finally {
     requestInProgress = false;
+    boardSelect.disabled = scanningBoards || knownBoards.length === 0
+      || mscRequestInProgress || settingsRequestInProgress;
+    rescanBoardsButton.disabled = scanningBoards;
     ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
     mscControl.disabled = mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
       || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
       || selfTestPendingSequence !== null
       || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
+    if (version !== selectionVersion) void updateStatus();
+  }
+}
+
+function selectBoard(boardId) {
+  const nextBoard = boardId || null;
+  if (nextBoard === selectedBoard) return;
+  selectedBoard = nextBoard;
+  const selected = knownBoards.find(board => board.id === selectedBoard);
+  selectedBoardLabel = selected ? `${selected.product_name} / ${selected.serial_number || selected.device_path}`
+    : selectedBoardLabel;
+  selectionVersion++;
+  currentSnapshot = null;
+  settingsDirty = false;
+  settingsMessage = null;
+  selfTestPendingSequence = null;
+  renderStatus({ connected: false });
+  void updateStatus();
+}
+
+async function rescanBoards() {
+  if (scanningBoards) return;
+  scanningBoards = true;
+  boardSelect.disabled = true;
+  rescanBoardsButton.disabled = true;
+  try {
+    const response = await fetch("/api/boards", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `Board scan returned HTTP ${response.status}`);
+    const previousBoard = selectedBoard;
+    knownBoards = Array.isArray(result.boards) ? result.boards : [];
+    boardSelect.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = knownBoards.length ? "Select a board" : "No boards found";
+    boardSelect.append(placeholder);
+    for (const board of knownBoards) {
+      const option = document.createElement("option");
+      option.value = board.id;
+      option.textContent = `${board.product_name} / ${board.serial_number || board.device_path}`;
+      boardSelect.append(option);
+    }
+    if (!selectedBoard && result.default_board_id) selectedBoard = result.default_board_id;
+    const selected = knownBoards.find(board => board.id === selectedBoard);
+    if (selected) {
+      selectedBoardLabel = `${selected.product_name} / ${selected.serial_number || selected.device_path}`;
+    } else if (selectedBoard) {
+      const missing = document.createElement("option");
+      missing.value = selectedBoard;
+      missing.textContent = `${selectedBoardLabel || selectedBoard} (not found)`;
+      boardSelect.append(missing);
+    }
+    boardSelect.value = selectedBoard || "";
+    if (previousBoard !== selectedBoard) {
+      selectionVersion++;
+      currentSnapshot = null;
+      settingsDirty = false;
+      selfTestPendingSequence = null;
+      renderStatus({ connected: false });
+    }
+    await updateStatus();
+  } catch (error) {
+    currentSnapshot = null;
+    renderStatus({ connected: false, error: `Board scan failed: ${error.message}` });
+  } finally {
+    scanningBoards = false;
+    boardSelect.disabled = knownBoards.length === 0;
+    rescanBoardsButton.disabled = false;
   }
 }
 
@@ -67,7 +154,7 @@ async function setMsc() {
     : "Preparing storage for USB...";
   document.querySelector("#msc-note").hidden = false;
   try {
-    const response = await fetch(force ? "/api/msc/force-return" : "/api/msc", {
+    const response = await fetch(boardUrl(force ? "/api/msc/force-return" : "/api/msc"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(force ? { confirm_data_loss: true } : { enabled: !currentSnapshot.msc.enabled }),
@@ -100,7 +187,7 @@ async function setLed() {
   if (!currentSnapshot?.board_status?.led_available || settingsRequestInProgress) return;
   ledControl.disabled = true;
   try {
-    const response = await fetch("/api/led", {
+    const response = await fetch(boardUrl("/api/led"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ on: !currentSnapshot.board_status.led_on }),
@@ -149,7 +236,7 @@ async function saveSettings() {
   settingsMessage = "Saving boot settings...";
   renderStatus(currentSnapshot);
   try {
-    const response = await fetch("/api/settings", {
+    const response = await fetch(boardUrl("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(selectedSettings()),
@@ -177,7 +264,7 @@ async function selfTest(action) {
   currentSnapshot.self_test_command_pending = true;
   renderStatus(currentSnapshot);
   try {
-    const response = await fetch("/api/self-test", {
+    const response = await fetch(boardUrl("/api/self-test"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, size_mib: document.querySelector("#self-test-size").valueAsNumber }),
     });
@@ -194,9 +281,11 @@ async function selfTest(action) {
 document.querySelector("#self-test-start").addEventListener("click", () => selfTest("start"));
 document.querySelector("#self-test-cancel").addEventListener("click", () => selfTest("cancel"));
 document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(currentSnapshot ?? {}));
+boardSelect.addEventListener("change", () => selectBoard(boardSelect.value));
+rescanBoardsButton.addEventListener("click", rescanBoards);
 for (const control of settingsControls) control.addEventListener("change", updateSettingsDirty);
 settingsSave.addEventListener("click", saveSettings);
 ledControl.addEventListener("click", setLed);
 mscControl.addEventListener("click", () => setMsc());
-void updateStatus();
+void rescanBoards();
 window.setInterval(updateStatus, 1000);

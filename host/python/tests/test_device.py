@@ -2,11 +2,22 @@ import struct
 import unittest
 from unittest.mock import patch
 
-from picoforge.device import PicoForgeHid, _matches_vendor_collection
+from picoforge.device import PicoForgeHid, _matches_vendor_collection, enumerate_devices
 from picoforge.protocol import SELF_TEST_INPUT_SIZE, parse_status_report
 
 
 class HidEnumerationTests(unittest.TestCase):
+    def test_enumerates_board_identity_without_opening_hid(self):
+        devices = [
+            {"product_string": "PicoForge CDC + HID", "serial_number": "board-A", "path": b"/hid/a"},
+            {"product_string": "", "serial_number": "", "path": b"/hid/b"},
+        ]
+        with patch("picoforge.device._matching_devices", return_value=devices):
+            self.assertEqual(enumerate_devices(), [
+                {"product_name": "PicoForge CDC + HID", "serial_number": "board-A", "device_path": "/hid/a"},
+                {"product_name": "PicoForge", "serial_number": None, "device_path": "/hid/b"},
+            ])
+
     def test_matches_expected_vendor_usage(self):
         self.assertTrue(_matches_vendor_collection({"usage_page": 0xFF00, "usage": 1}))
 
@@ -96,10 +107,12 @@ class SettingsDeviceTests(unittest.TestCase):
 
             def send_feature_report(self, payload):
                 self.sent = bytes(payload)
+                self.sent_reports.append(bytes(payload))
                 return len(payload)
 
         connection = PicoForgeHid.__new__(PicoForgeHid)
         connection._device = FakeTransport()
+        connection._device.sent_reports = []
         connection.closed = False
         return connection
 
@@ -111,12 +124,13 @@ class SettingsDeviceTests(unittest.TestCase):
         settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 25}
         connection._device.get_feature_report = lambda _report_id, _size: bytes([8, 1, 200, 0, 50, 25])
         self.assertEqual(connection.set_settings(settings), settings)
-        self.assertEqual(connection._device.sent, bytes([8, 1, 200, 0, 50, 25]))
+        self.assertEqual(connection._device.sent_reports, [bytes([8, 1, 200, 0, 50, 25]), bytes([9, 1, 1])])
 
     def test_rejects_unconfirmed_settings_readback(self):
         connection = self.connection(bytes([8, 1, 0, 0, 0, 0]))
         with self.assertRaisesRegex(RuntimeError, "did not confirm"):
             connection.set_settings({"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 25})
+        self.assertEqual(connection._device.sent_reports, [bytes([8, 1, 200, 0, 50, 25])])
 
 
 if __name__ == "__main__":

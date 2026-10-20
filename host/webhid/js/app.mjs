@@ -1,5 +1,5 @@
 import { PicoForgeWebHid } from "./device.mjs";
-import { renderStatus, renderSelfTest } from "./view.mjs";
+import { renderStatus, renderSelfTest } from "./view.mjs?v=2";
 
 const connectionControl = document.querySelector("#connection-control");
 const ledControl = document.querySelector("#led-control");

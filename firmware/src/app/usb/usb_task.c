@@ -3,6 +3,7 @@
 #include "pico/stdlib.h"
 #include "tusb.h"
 
+#include "drivers/system.h"
 #include "usb_hid.h"
 #include "middleware/logging/logging.h"
 #include "usb_msc.h"
@@ -195,6 +196,10 @@ static void usb_task(void *context)
         TickType_t now = xTaskGetTickCount();
 
         tud_task();
+        if (pf_hid_take_reboot_request()) {
+            vTaskDelay(pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS));
+            pf_system_reset();
+        }
         pf_usb_msc_task();
         cdc_cli_task();
 

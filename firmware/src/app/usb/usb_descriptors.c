@@ -82,6 +82,10 @@ static uint8_t const hid_report_descriptor[] = {
     0x95, PF_HID_SETTINGS_PAYLOAD_SIZE,
     0x09, 0x08,
     0xB1, 0x02,
+    0x85, PF_HID_REBOOT_REPORT_ID,
+    0x95, PF_HID_REBOOT_COMMAND_PAYLOAD_SIZE,
+    0x09, 0x09,
+    0xB1, 0x02,
     0xC0,
 };
 

@@ -77,6 +77,7 @@ tools/host/run-python.sh
 
 The launcher creates its Python environment and installs dependencies on first
 use. Open **http://127.0.0.1:8765/** to view and control the connected board.
+Use **Rescan** and the Device identity board selector to switch between boards.
 Use only one dashboard connection per board at a time.
 
 On Linux, if HID access is denied, run:

@@ -3,7 +3,7 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from picoforge.monitor import DeviceMonitor, _empty_snapshot
+from picoforge.monitor import DashboardBoards, DeviceMonitor, _empty_snapshot
 
 
 class MonitorMscTests(unittest.TestCase):
@@ -119,3 +119,58 @@ class MonitorSettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.monitor.set_settings({"system_clock_mhz": 100, "sdio_bus_mhz": 0, "spi_bus_mhz": 0})
         self.monitor._active_client.set_settings.assert_not_called()
+
+
+class DashboardBoardsTests(unittest.TestCase):
+    def test_boards_are_lazily_monitored_and_reused_by_stable_serial_id(self):
+        attached = [
+            {"product_name": "PicoForge", "serial_number": "board-A", "device_path": "/hid/a"},
+            {"product_name": "PicoForge", "serial_number": "board-B", "device_path": "/hid/b"},
+        ]
+        created = []
+
+        class FakeMonitor:
+            def __init__(self, serial, path):
+                self.serial = serial
+                self.path = path
+                self.closed = False
+
+            def snapshot(self):
+                return {"serial": self.serial, "device_path": self.path}
+
+            def set_led(self, on):
+                return {"led_on": on}
+
+            def close(self):
+                self.closed = True
+
+        def create_monitor(serial, path):
+            monitor = FakeMonitor(serial, path)
+            created.append(monitor)
+            return monitor
+
+        boards = DashboardBoards(discover=lambda: attached, monitor_factory=create_monitor)
+        listing = boards.boards()
+        first, second = listing["boards"]
+        self.assertEqual(first["id"], listing["default_board_id"])
+        self.assertEqual(created, [])
+        self.assertEqual(boards.snapshot(first["id"])["serial"], "board-A")
+        self.assertEqual(boards.set_led(second["id"], True), {"led_on": True})
+        self.assertEqual(len(created), 2)
+        attached[0]["device_path"] = "/hid/new-a"
+        rescanned = boards.boards()
+        self.assertEqual(rescanned["boards"][0]["id"], first["id"])
+        self.assertEqual(boards.snapshot(first["id"])["device_path"], None)
+        boards.close()
+        self.assertTrue(all(monitor.closed for monitor in created))
+
+    def test_unknown_board_and_duplicate_identity_are_rejected(self):
+        attached = [{"serial_number": "duplicate", "device_path": "/hid/a"}]
+        boards = DashboardBoards(discover=lambda: attached, monitor_factory=lambda *_: Mock())
+        with self.assertRaisesRegex(RuntimeError, "unknown board"):
+            boards.snapshot("unknown")
+        boards.boards()
+        attached.append({"serial_number": "duplicate", "device_path": "/hid/b"})
+        with self.assertRaisesRegex(RuntimeError, "duplicate"):
+            boards.boards()
+        boards.close()

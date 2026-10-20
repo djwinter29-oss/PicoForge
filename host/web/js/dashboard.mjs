@@ -40,15 +40,16 @@ export function renderStatus(snapshot) {
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   const memory = snapshot.memory;
-  const cardPresence = !memory?.configured ? "Not configured"
-    : memory.presence_known ? (memory.present ? "Present" : "Absent") : "Unknown";
-  setState("#card-presence", cardPresence, memory?.presence_known ? memory.present : undefined);
+  const cardAbsent = memory?.presence_known === true && memory.present === false;
+  const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending;
+  document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
+  document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared;
   const board = snapshot.board_status;
   document.querySelector("#temperature").textContent = board?.temperature_valid
     ? `${(board.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
   const ledControl = document.querySelector("#led-control");
   const ledOn = board?.led_available ? Boolean(board.led_on) : null;
-  ledControl.textContent = ledOn === null ? "LED: --" : `LED: ${ledOn ? "On" : "Off"}`;
+  ledControl.textContent = ledOn === null ? "Board LED: --" : `Board LED: ${ledOn ? "On" : "Off"}`;
   ledControl.dataset.state = ledOn === null ? "unknown" : ledOn ? "on" : "off";
   ledControl.setAttribute("aria-pressed", String(ledOn === true));
   ledControl.title = ledOn === null ? "Onboard LED unavailable"
@@ -70,7 +71,9 @@ export function renderStatus(snapshot) {
   renderMemory(snapshot.memory, snapshot.filesystem_format);
   renderSelfTest(snapshot);
 
-  const message = snapshot.error ?? (runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Connect a PicoForge board");
+  const message = snapshot.error ?? (runtime ? "HID status is live"
+    : connected ? "Waiting for first status report"
+      : snapshot.no_board_selected ? "Select a PicoForge board" : "Connect a PicoForge board");
   const statusLine = document.querySelector(".status-line");
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));

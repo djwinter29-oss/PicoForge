@@ -13,17 +13,28 @@ for (const name of ["web", "webhid"]) {
     };
     assert.equal((html.match(/<main>/g) ?? []).length, 1);
     assert.equal((html.match(/<\/main>/g) ?? []).length, 1);
+    assert.match(html, /<title>PicoForge Diagnostics \|/);
+    assert.match(html, /<h1>Diagnostics<\/h1>/);
+    assert.doesNotMatch(html, /Board overview|HID STATUS \/ USB|WEBHID \/ USB/);
     assert.doesNotMatch(html, /id="refresh"|self-test-consent|type="checkbox"/);
-    assert.match(section('class="identity"'), /id="firmware-version"/);
+    const identity = section('aria-labelledby="identity-title"');
+    assert.match(identity, /id="firmware-version"/);
+    assert.match(identity, /id="led-control"/);
+    assert.match(identity, /Board LED: --/);
+    assert.equal((html.match(/id="led-control"/g) ?? []).length, 1);
     const settings = section('aria-labelledby="settings-title"');
     assert.ok(html.indexOf('aria-labelledby="settings-title"') < html.indexOf('aria-labelledby="runtime-title"'));
     assert.match(settings, /id="settings-clock"/);
     assert.match(settings, /id="settings-sdio"/);
     assert.match(settings, /id="settings-spi"/);
-    assert.match(settings, /id="settings-save"/);
+    assert.equal((settings.match(/<label for="settings-/g) ?? []).length, 3);
+    assert.match(settings, /class="settings-action"[\s\S]*id="settings-save"[\s\S]*id="settings-note"/);
     const liveReport = section('aria-labelledby="runtime-title"');
+    assert.match(liveReport, /class="runtime-grid runtime-summary"/);
+    assert.match(liveReport, /<dt>CLI port<\/dt>/);
+    assert.doesNotMatch(liveReport, /<dt>CDC port<\/dt>/);
     assert.doesNotMatch(liveReport, /id="sample-time"|Last report/);
-    assert.match(liveReport, /id="led-control"/);
+    assert.doesNotMatch(liveReport, /id="led-control"/);
     assert.doesNotMatch(liveReport, /id="led-state"|<dt>Onboard LED<\/dt>/);
     assert.equal((liveReport.match(/<dt>CPU Usage \(Core 1 \/ Core 2\)<\/dt>/g) ?? []).length, 1);
     assert.doesNotMatch(liveReport, /<dt>CPU core [01] usage<\/dt>/);
@@ -38,8 +49,7 @@ for (const name of ["web", "webhid"]) {
     assert.doesNotMatch(liveReport, /System clock|runtime-clock/);
     assert.doesNotMatch(html, /Report sequence|id="sequence"/);
     assert.equal((html.match(/<span>System clock<\/span>/g) ?? []).length, 1);
-    assert.match(liveReport, /SD presence/);
-    assert.match(liveReport, /id="card-presence"/);
+    assert.doesNotMatch(liveReport, /SD presence|id="card-presence"/);
     assert.doesNotMatch(html, /Memory type|Memory presence|id="memory-type"/);
     assert.doesNotMatch(liveReport, /USB device|id="usb-state"/);
     const memoryReport = section('aria-labelledby="memory-title"');
@@ -59,7 +69,11 @@ for (const name of ["web", "webhid"]) {
     assert.match(selfTest, /id="self-test-size"[^>]*max="1024"/);
     if (name === "webhid") {
       assert.match(html, /id="connection-control"/);
+      assert.match(identity, /id="connection-control"/);
       assert.doesNotMatch(html, /id="connect"|id="disconnect"/);
+    } else {
+      assert.match(identity, /id="board-select"/);
+      assert.match(identity, /id="rescan-boards"/);
     }
   });
 
@@ -79,10 +93,12 @@ test("WebHID Disable confirms before sending Pico-side detach and does not send 
     globalThis.document = { querySelector(selector) {
       if (!elements.has(selector)) elements.set(selector, {
         dataset: {}, valueAsNumber: 32, addEventListener(event, handler) { this[event] = handler; },
+        replaceChildren() { this.children = []; }, append(option) { (this.children ??= []).push(option); },
         setAttribute(name, value) { this[name] = value; },
       });
       return elements.get(selector);
     } };
+    globalThis.document.createElement = () => ({ value: "", textContent: "" });
     globalThis.window = { confirm: () => confirmed };
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { hid: new EventTarget() } });
     Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
@@ -162,20 +178,27 @@ test("shared Disable confirms Pico-side return while Enable needs no confirmatio
   globalThis.document = { querySelector(selector) {
     if (!elements.has(selector)) elements.set(selector, {
       dataset: {}, valueAsNumber: 32, addEventListener(event, handler) { this[event] = handler; },
+      replaceChildren() { this.children = []; }, append(option) { (this.children ??= []).push(option); },
         setAttribute(name, value) { this[name] = value; },
     });
     return elements.get(selector);
   } };
+  globalThis.document.createElement = () => ({ value: "", textContent: "" });
   globalThis.window = {
     setInterval(callback) { poll = callback; },
     confirm(message) { warning = message; return confirmed; },
   };
   globalThis.fetch = async (url, options) => {
     if (options?.method === "POST") requests.push([url, JSON.parse(options.body)]);
-    const msc = { enabled, force_return_supported: supported, transition_pending: url !== "/api/status" };
-    return { ok: true, json: async () => url === "/api/status"
+    if (url === "/api/boards") return { ok: true, json: async () => ({
+      boards: [{ id: "board-a", product_name: "PicoForge", serial_number: "board-A", device_path: "/hid/a" }],
+      default_board_id: "board-a",
+    }) };
+    const isStatus = url === "/api/status?board=board-a";
+    const msc = { enabled, force_return_supported: supported, transition_pending: !isStatus };
+    return { ok: true, json: async () => isStatus
       ? { connected: true, msc }
-      : url === "/api/msc" ? msc : { msc } };
+      : url.startsWith("/api/msc") ? { msc } : { msc } };
   };
   try {
     await import("../../web/js/app.mjs");
@@ -187,13 +210,13 @@ test("shared Disable confirms Pico-side return while Enable needs no confirmatio
     assert.equal(requests.length, 0);
     confirmed = true;
     await elements.get("#msc-control").click();
-    assert.deepEqual(requests, [["/api/msc/force-return", { confirm_data_loss: true }]]);
+    assert.deepEqual(requests, [["/api/msc/force-return?board=board-a", { confirm_data_loss: true }]]);
     assert.equal(elements.get("#msc-control").disabled, true);
     enabled = false;
     await poll();
     confirmed = false;
     await elements.get("#msc-control").click();
-    assert.deepEqual(requests[1], ["/api/msc", { enabled: true }]);
+    assert.deepEqual(requests[1], ["/api/msc?board=board-a", { enabled: true }]);
     assert.equal(elements.get(".status-line").dataset.error, "false");
     enabled = true;
     supported = false;

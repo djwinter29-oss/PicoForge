@@ -17,6 +17,8 @@ from .protocol import (
     SELF_TEST_INPUT_SIZE,
     SETTINGS_FEATURE_SIZE,
     SETTINGS_REPORT_ID,
+    build_reboot_command_report,
+    build_reboot_command_report,
     STATUS_INPUT_SIZE,
     build_settings_command_report,
     build_led_command_report,
@@ -27,7 +29,7 @@ from .protocol import (
     parse_filesystem_report,
     parse_msc_status_report,
     parse_self_test_report,
-        parse_settings_report,
+    parse_settings_report,
     parse_status_report,
 )
 
@@ -72,12 +74,25 @@ def _matches_vendor_collection(info: dict[str, Any]) -> bool:
     return True
 
 
+def _matching_devices() -> list[dict[str, Any]]:
+    devices = _require_hid().enumerate(VENDOR_ID, 0)
+    return [info for info in devices
+            if info.get("product_id") in PRODUCT_IDS and _matches_vendor_collection(info)]
+
+
+def enumerate_devices() -> list[dict[str, str | None]]:
+    """Return board identity metadata without opening a HID connection."""
+    return [{
+        "product_name": info.get("product_string") or "PicoForge",
+        "serial_number": info.get("serial_number") or None,
+        "device_path": _path_string(info.get("path")),
+    } for info in _matching_devices()]
+
+
 def _select_device(serial_number: str | None, device_path: str | None) -> dict[str, Any]:
     if serial_number is not None and device_path is not None:
         raise ValueError("--serial and --device-path cannot be used together")
-    devices = _require_hid().enumerate(VENDOR_ID, 0)
-    matches = [info for info in devices
-               if info.get("product_id") in PRODUCT_IDS and _matches_vendor_collection(info)]
+    matches = _matching_devices()
     if serial_number is not None:
         matches = [info for info in matches if info.get("serial_number") == serial_number]
     if device_path is not None:
@@ -165,7 +180,14 @@ class PicoForgeHid:
         saved = self.read_settings()
         if saved != settings:
             raise RuntimeError("firmware did not confirm the selected boot settings")
+        self.reboot()
         return saved
+
+    def reboot(self) -> None:
+        self._require_open()
+        result = self._device.send_feature_report(list(build_reboot_command_report()))
+        if result < 0:
+            raise OSError("failed to send HID reboot command")
 
     def set_msc(self, enable: bool, *, force: bool = False) -> None:
         self._require_open()

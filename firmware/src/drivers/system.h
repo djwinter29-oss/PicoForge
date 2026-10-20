@@ -28,4 +28,7 @@ uint32_t pf_system_uptime_ms(void);
  */
 bool pf_system_clock_apply(uint16_t system_clock_mhz);
 
+/** Reboot the MCU through the SDK watchdog. This call does not return. */
+void pf_system_reset(void);
+
 #endif

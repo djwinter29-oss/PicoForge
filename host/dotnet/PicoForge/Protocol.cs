@@ -72,6 +72,7 @@ internal static class HidProtocol
     public const byte SelfTestReportId = 6;
     public const byte FilesystemReportId = 7;
     public const byte SettingsReportId = 8;
+    public const byte RebootReportId = 9;
     public const int SelfTestPayloadSize = 32;
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
@@ -246,6 +247,8 @@ internal static class HidProtocol
         report[5] = (byte)settings.SpiBusMhz;
         return report;
     }
+
+    public static byte[] BuildRebootCommandReport() => [RebootReportId, 1, 1];
 
     private static void ValidateSettings(BootSettingsResponse settings)
     {

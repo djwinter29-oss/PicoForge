@@ -6,6 +6,7 @@
 #include "system.h"
 
 #include "hardware/clocks.h"
+#include "hardware/watchdog.h"
 #include "hardware/vreg.h"
 #include "pico/stdlib.h"
 
@@ -57,4 +58,9 @@ bool pf_system_clock_apply(uint16_t system_clock_mhz)
     clock_configure_undivided(clk_hstx, 0, CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS, target_hz);
 #endif
     return true;
+}
+
+void pf_system_reset(void)
+{
+    watchdog_reboot(0u, 0u, 0u);
 }

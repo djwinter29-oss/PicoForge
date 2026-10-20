@@ -11,6 +11,7 @@ void setUp(void)
     cli_session = 9;
     test_settings = (pf_settings_t){.system_clock_mhz = 200u, .sdio_bus_mhz = 25u, .spi_bus_mhz = 50u};
     settings_save_calls = 0u;
+    reset_requests = 0u;
     msc_enabled = false;
         msc_transition_pending = false;
     busy = false;
@@ -104,6 +105,37 @@ void test_settings_feature_report_validates_and_saves_only_when_storage_is_idle(
     TEST_ASSERT_EQUAL_UINT16(250u, test_settings.system_clock_mhz);
     TEST_ASSERT_EQUAL_UINT8(50u, test_settings.sdio_bus_mhz);
     TEST_ASSERT_EQUAL_UINT8(25u, test_settings.spi_bus_mhz);
+}
+
+void test_reboot_feature_command_is_validated_and_storage_gated(void)
+{
+    const uint8_t command[] = {PF_HID_REBOOT_REPORT_VERSION, 1u};
+    uint8_t invalid[] = {0xffu, 1u};
+
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+    tud_hid_set_report_cb(1u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_INPUT, command, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, invalid, sizeof(invalid));
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command) - 1u);
+    invalid[0] = PF_HID_REBOOT_REPORT_VERSION;
+    invalid[1] = 0u;
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, invalid, sizeof(invalid));
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+
+    msc_enabled = true;
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    msc_enabled = false;
+    msc_transition_pending = true;
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    msc_transition_pending = false;
+    busy = true;
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    busy = false;
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+
+    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 }
 
 void test_file_benchmark_rename_preserves_hid_report_encoding(void)

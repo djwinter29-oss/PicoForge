@@ -21,11 +21,19 @@ internal interface IHidCommands
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
+    private readonly Func<PicoForgeHid> createClient;
     private readonly object gate = new();
     // Handle operations always acquire deviceGate before the snapshot gate.
     private readonly object deviceGate = new();
     private IHidCommands? activeClient;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
+
+    public DeviceMonitor() : this(null, null) { }
+
+    public DeviceMonitor(string? serialNumber, string? devicePath)
+    {
+        createClient = () => new PicoForgeHid(serialNumber, devicePath);
+    }
 
     public StatusResponse Snapshot
     {
@@ -104,7 +112,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             PicoForgeHid? client = null;
             try
             {
-                client = new PicoForgeHid();
+                client = createClient();
                 var hardware = client.ReadInfo();
                 var settings = client.ReadSettings();
                 lock (deviceGate)

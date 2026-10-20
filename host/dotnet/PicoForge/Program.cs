@@ -9,9 +9,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
-builder.Services.AddSingleton<DeviceMonitor>();
-builder.Services.AddSingleton<IDeviceMonitor>(services => services.GetRequiredService<DeviceMonitor>());
-builder.Services.AddHostedService(services => services.GetRequiredService<DeviceMonitor>());
+builder.Services.AddSingleton<DashboardBoards>();
+builder.Services.AddSingleton<IDashboardBoards>(services => services.GetRequiredService<DashboardBoards>());
 
 var app = builder.Build();
 app.UseExceptionHandler();

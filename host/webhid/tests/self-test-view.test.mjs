@@ -72,12 +72,12 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
 }
 
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
-  test(`${name} reports SD-card presence in Live Report and resolves known manufacturer names`, () => {
+  test(`${name} hides Memory Tests during host ownership and hides both storage sections when absent`, () => {
     const elements = new Map();
     const element = selector => {
-      assert.notEqual(selector, "#memory-presence", "presence belongs in Live Report");
+      assert.notEqual(selector, "#card-presence", "SD presence is not a Runtime metric");
       if (!elements.has(selector)) elements.set(selector, {
-        dataset: {}, textContent: "", valueAsNumber: 32, checked: false,
+        dataset: {}, textContent: "", valueAsNumber: 32, checked: false, hidden: false,
         setAttribute(name, value) { this[name] = value; },
       });
       return elements.get(selector);
@@ -95,22 +95,37 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
     };
     try {
       const snapshot = { connected: true, memory: { configured: true, initialized: true,
-        presence_known: true, present: true, manufacturer } };
+        presence_known: true, present: true, manufacturer },
+      msc: { enabled: false, transition_pending: false } };
       render(snapshot);
-      assert.equal(element("#card-presence").textContent, "Present");
+      assert.equal(element('[aria-labelledby="memory-title"]').hidden, false);
+      assert.equal(element('[aria-labelledby="self-test-title"]').hidden, false);
+      snapshot.msc.enabled = true;
+      render(snapshot);
+      assert.equal(element('[aria-labelledby="memory-title"]').hidden, false);
+      assert.equal(element('[aria-labelledby="self-test-title"]').hidden, true);
+      snapshot.msc.enabled = false;
+      snapshot.msc.transition_pending = true;
+      render(snapshot);
+      assert.equal(element('[aria-labelledby="memory-title"]').hidden, false);
+      assert.equal(element('[aria-labelledby="self-test-title"]').hidden, true);
+      snapshot.msc.transition_pending = false;
       assert.equal(element("#memory-note").textContent, "");
       assert.equal(element("#memory-manufacturer").textContent, "Kingston (0x41)");
-        assert.equal(element("#memory-serial").textContent, "00000001");
+      assert.equal(element("#memory-serial").textContent, "00000001");
       assert.equal(element("#self-test-state").textContent, "Unavailable");
       snapshot.memory.present = false;
       render(snapshot);
-      assert.equal(element("#card-presence").textContent, "Absent");
+      assert.equal(element('[aria-labelledby="memory-title"]').hidden, true);
+      assert.equal(element('[aria-labelledby="self-test-title"]').hidden, true);
       snapshot.memory.presence_known = false;
       render(snapshot);
-      assert.equal(element("#card-presence").textContent, "Unknown");
+      assert.equal(element('[aria-labelledby="memory-title"]').hidden, false);
+      assert.equal(element('[aria-labelledby="self-test-title"]').hidden, false);
       snapshot.memory.configured = false;
       render(snapshot);
-      assert.equal(element("#card-presence").textContent, "Not configured");
+      assert.equal(element('[aria-labelledby="memory-title"]').hidden, false);
+      assert.equal(element('[aria-labelledby="self-test-title"]').hidden, false);
       snapshot.memory = { manufacturer: {
         ...manufacturer,
         id: 3,
@@ -184,17 +199,17 @@ for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard
     try {
       const button = element("#led-control");
       render({ connected: true, board_status: { led_available: true, led_on: false } });
-      assert.equal(button.textContent, "LED: Off");
+      assert.equal(button.textContent, "Board LED: Off");
       assert.equal(button.dataset.state, "off");
       assert.equal(button["aria-pressed"], "false");
       assert.match(button.title, /Turn onboard LED on/);
       render({ connected: true, board_status: { led_available: true, led_on: true } });
-      assert.equal(button.textContent, "LED: On");
+      assert.equal(button.textContent, "Board LED: On");
       assert.equal(button.dataset.state, "on");
       assert.equal(button["aria-pressed"], "true");
       assert.match(button.title, /Turn onboard LED off/);
       render({ connected: true, board_status: { led_available: false, led_on: false } });
-      assert.equal(button.textContent, "LED: --");
+      assert.equal(button.textContent, "Board LED: --");
       assert.equal(button.dataset.state, "unknown");
       assert.equal(button["aria-pressed"], "false");
     } finally {

@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>PicoForge | WebHID</title>
+  <title>PicoForge Diagnostics | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/webhid.css">
-  <script type="module" src="js/app.mjs"></script>
+  <link rel="stylesheet" href="css/webhid.css?v=2">
+  <script type="module" src="js/app.mjs?v=2"></script>
 </head>
 <body>
   <header class="topbar">
@@ -24,20 +24,26 @@
   <main>
     <section class="page-heading">
       <div>
-        <p class="eyebrow">WEBHID / USB</p>
-        <h1>Board overview</h1>
-      </div>
-      <div class="actions">
-        <button class="button" id="connection-control" type="button">Connect</button>
+        <h1>Diagnostics</h1>
       </div>
     </section>
 
-    <section class="identity" aria-label="Hardware identity">
+    <section aria-labelledby="identity-title">
+      <div class="section-heading">
+        <h2 id="identity-title">Device identity</h2>
+        <div class="actions" aria-label="Board controls">
+          <button class="button button-led" id="led-control" type="button" data-state="unknown"
+            aria-pressed="false" title="Onboard LED unavailable" disabled>Board LED: --</button>
+          <button class="button button-secondary" id="connection-control" type="button">Connect</button>
+        </div>
+      </div>
+      <div class="identity" aria-label="Hardware identity">
       <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
       <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
       <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
       <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
       <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
+      </div>
     </section>
 
     <section class="runtime" aria-labelledby="settings-title">
@@ -46,7 +52,6 @@
           <p class="eyebrow">BOOT CONFIGURATION</p>
           <h2 id="settings-title">Device settings</h2>
         </div>
-        <button class="button" id="settings-save" type="button" disabled>Save for next boot</button>
       </div>
       <div class="settings-controls">
         <label for="settings-clock">System clock
@@ -70,10 +75,13 @@
             <option value="50">50 MHz</option>
           </select>
         </label>
+        <div class="settings-action">
+          <button class="button" id="settings-save" type="button" disabled>Save for next boot</button>
+        </div>
+        <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
+          Connect to read the saved settings.
+        </p>
       </div>
-      <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
-        Connect to read the saved settings.
-      </p>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">
@@ -82,12 +90,8 @@
           <p class="eyebrow">LIVE REPORT</p>
           <h2 id="runtime-title">Runtime status</h2>
         </div>
-        <div class="actions">
-          <button class="button button-led" id="led-control" type="button" data-state="unknown"
-            aria-pressed="false" title="Onboard LED unavailable" disabled>LED: --</button>
-        </div>
       </div>
-      <dl class="runtime-grid">
+      <dl class="runtime-grid runtime-summary">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
         <div>
           <dt>CPU Usage (Core 1 / Core 2)</dt>
@@ -100,8 +104,7 @@
             <span id="ram-total" title="Physical SRAM capacity; excludes external RAM">--</span>
           </dd>
         </div>
-        <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
-        <div><dt>SD presence</dt><dd id="card-presence">--</dd></div>
+        <div><dt>CLI port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
       </dl>
     </section>

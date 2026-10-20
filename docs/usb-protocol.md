@@ -88,9 +88,11 @@ The Last report timestamp indicates dashboard freshness.
 
 Input report 3 has a 29-byte payload and is normally published every 1000 ms.
 Its layout version is `2`. Dashboards label the card-detect state **SD presence** in Runtime status; they do not
-display a memory-type field because SD is the only supported storage device. The component-type byte remains in the
-wire layout for compatibility. With the reference board profile, presence comes from the active-high DET input on
-GP8, independently of whether card initialization or filesystem mounting succeeds.
+Its layout version is `2`. Dashboards show SD transport and initialization in the SD Card section; they do not
+display a memory-type field because SD is the only supported storage device. The shared dashboards hide the SD Card
+and Memory Tests sections only when presence is known and absent; unknown presence keeps both sections visible. The
+component-type byte remains in the wire layout for compatibility. With the reference board profile, presence comes from
+the active-high DET input on GP8, independently of whether card initialization or filesystem mounting succeeds.
 The storage worker initializes and mounts detected
 media according to [the mounting policy](cdc-cli.md). If storage holds the card
 reservation, periodic memory reports are deferred and GET_REPORT returns no

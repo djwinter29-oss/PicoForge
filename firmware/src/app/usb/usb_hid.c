@@ -14,6 +14,15 @@
 #include "app/storage/storage_worker.h"
 #include "app/runtime_stats.h"
 
+static bool reboot_requested;
+
+bool pf_hid_take_reboot_request(void)
+{
+    const bool requested = reboot_requested;
+    reboot_requested = false;
+    return requested;
+}
+
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {
     char serial_number[PF_HID_SERIAL_NUMBER_SIZE + 1u];
@@ -260,5 +269,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         if (pf_settings_valid(&settings)) {
             (void)pf_settings_save(&settings);
         }
+    } else if ((report_id == PF_HID_REBOOT_REPORT_ID) &&
+               (bufsize == sizeof(pf_hid_reboot_command_t)) &&
+               (buffer[0] == PF_HID_REBOOT_REPORT_VERSION) && (buffer[1] == 1u) &&
+               !pf_usb_msc_is_enabled() && !pf_usb_msc_transition_pending() && !pf_storage_worker_busy()) {
+        reboot_requested = true;
     }
 }

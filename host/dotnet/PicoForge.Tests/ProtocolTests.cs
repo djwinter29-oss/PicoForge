@@ -397,13 +397,15 @@ public sealed class ProtocolTests
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
         builder.Services.AddOpenApi();
-        builder.Services.AddSingleton<IDeviceMonitor>(monitor);
+        builder.Services.AddSingleton<IDashboardBoards>(monitor);
         await using var app = builder.Build();
         app.MapDeviceStatus();
         app.MapOpenApi();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
-        using var snapshot = JsonDocument.Parse(await client.GetStringAsync("/api/status"));
+        using var boardList = JsonDocument.Parse(await client.GetStringAsync("/api/boards"));
+        Assert.Equal("board-a", boardList.RootElement.GetProperty("default_board_id").GetString());
+        using var snapshot = JsonDocument.Parse(await client.GetStringAsync("/api/status?board=board-a"));
         var runtime = snapshot.RootElement.GetProperty("runtime");
         Assert.Equal(1234, runtime.GetProperty("cpu_usage_core0_basis_points").GetInt32());
         Assert.Equal(5678, runtime.GetProperty("cpu_usage_core1_basis_points").GetInt32());
@@ -415,10 +417,11 @@ public sealed class ProtocolTests
         var openApi = await client.GetStringAsync("/openapi/v1.json");
         Assert.Contains("/api/self-test", openApi);
         Assert.Contains("/api/msc/force-return", openApi);
-        var forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = false });
+        Assert.Contains("/api/boards", openApi);
+        var forceResponse = await client.PostAsJsonAsync("/api/msc/force-return?board=board-a", new { confirm_data_loss = false });
         Assert.Equal(HttpStatusCode.BadRequest, forceResponse.StatusCode);
         Assert.False(monitor.ForcedReturn);
-        var settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        var settingsResponse = await client.PostAsJsonAsync("/api/settings?board=board-a", new
         {
             system_clock_mhz = 200, sdio_bus_mhz = 50, spi_bus_mhz = 25
         });
@@ -426,43 +429,43 @@ public sealed class ProtocolTests
         using var settingsBody = JsonDocument.Parse(await settingsResponse.Content.ReadAsStringAsync());
         Assert.Equal(200, settingsBody.RootElement.GetProperty("settings").GetProperty("system_clock_mhz").GetInt32());
         Assert.Equal(new BootSettingsResponse(200, 50, 25), monitor.LastSettings);
-        settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        settingsResponse = await client.PostAsJsonAsync("/api/settings?board=board-a", new
         {
             system_clock_mhz = 100, sdio_bus_mhz = 50, spi_bus_mhz = 25
         });
         Assert.Equal(HttpStatusCode.BadRequest, settingsResponse.StatusCode);
-        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return?board=board-a", new { confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.OK, forceResponse.StatusCode);
         Assert.True(monitor.ForcedReturn);
         using var forceStatus = JsonDocument.Parse(await forceResponse.Content.ReadAsStringAsync());
         Assert.True(forceStatus.RootElement.GetProperty("msc").GetProperty("transition_pending").GetBoolean());
-        var response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 16 });
+        var response = await client.PostAsJsonAsync("/api/self-test?board=board-a", new { action = "start", size_mib = 16 });
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(("start", 16u), monitor.LastCommand);
-        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 1024 });
+        response = await client.PostAsJsonAsync("/api/self-test?board=board-a", new { action = "start", size_mib = 1024 });
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(("start", 1024u), monitor.LastCommand);
-        response = await client.PostAsJsonAsync("/api/self-test", new { action = "start", size_mib = 1025 });
+        response = await client.PostAsJsonAsync("/api/self-test?board=board-a", new { action = "start", size_mib = 1025 });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         monitor.Available = false;
-        settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        settingsResponse = await client.PostAsJsonAsync("/api/settings?board=board-a", new
         {
             system_clock_mhz = 150, sdio_bus_mhz = 0, spi_bus_mhz = 0
         });
         Assert.Equal(HttpStatusCode.Conflict, settingsResponse.StatusCode);
-        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return?board=board-a", new { confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.Conflict, forceResponse.StatusCode);
-        response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
+        response = await client.PostAsJsonAsync("/api/self-test?board=board-a", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         monitor.ExpectedError = new TimeoutException("HID timeout");
-        settingsResponse = await client.PostAsJsonAsync("/api/settings", new
+        settingsResponse = await client.PostAsJsonAsync("/api/settings?board=board-a", new
         {
             system_clock_mhz = 150, sdio_bus_mhz = 0, spi_bus_mhz = 0
         });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, settingsResponse.StatusCode);
-        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return", new { confirm_data_loss = true });
+        forceResponse = await client.PostAsJsonAsync("/api/msc/force-return?board=board-a", new { confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, forceResponse.StatusCode);
-        response = await client.PostAsJsonAsync("/api/self-test", new { action = "cancel" });
+        response = await client.PostAsJsonAsync("/api/self-test?board=board-a", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         await app.StopAsync();
     }
@@ -474,12 +477,12 @@ public sealed class ProtocolTests
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
-        builder.Services.AddSingleton<IDeviceMonitor>(monitor);
+        builder.Services.AddSingleton<IDashboardBoards>(monitor);
         await using var app = builder.Build();
         app.MapDeviceStatus();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
-        foreach (var (path, field) in new[] { ("/api/led", "on"), ("/api/msc", "enabled") })
+        foreach (var (path, field) in new[] { ("/api/led?board=board-a", "on"), ("/api/msc?board=board-a", "enabled") })
         {
             foreach (var body in new[] { "{}", $"{{\"{field}\":null}}", $"{{\"{field}\":\"true\"}}", $"{{\"{field}\":1}}" })
             {
@@ -489,55 +492,57 @@ public sealed class ProtocolTests
             }
         }
         Assert.Null(monitor.LastLed);
-        var response = await client.PostAsJsonAsync("/api/led", new { on = false });
+        var response = await client.PostAsJsonAsync("/api/led?board=board-a", new { on = false });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.False(monitor.LastLed);
-        response = await client.PostAsJsonAsync("/api/msc", new { enabled = false });
+        response = await client.PostAsJsonAsync("/api/msc?board=board-a", new { enabled = false });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         foreach (Exception error in new Exception[] { new IOException(), new TimeoutException(), new UnauthorizedAccessException() })
         {
             monitor.ExpectedError = error;
-            response = await client.PostAsJsonAsync("/api/led", new { on = true });
+            response = await client.PostAsJsonAsync("/api/led?board=board-a", new { on = true });
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-            response = await client.PostAsJsonAsync("/api/msc", new { enabled = true });
+            response = await client.PostAsJsonAsync("/api/msc?board=board-a", new { enabled = true });
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         }
         await app.StopAsync();
     }
 
-    private sealed class SelfTestMonitor : IDeviceMonitor
+    private sealed class SelfTestMonitor : IDashboardBoards
     {
         public bool Available { get; set; } = true;
         public (string Action, uint Size) LastCommand { get; private set; }
         public Exception? ExpectedError { get; set; }
         public bool ForcedReturn { get; private set; }
         public BootSettingsResponse? LastSettings { get; private set; }
-        public StatusResponse Snapshot => new(true, null, null,
+        public DashboardBoardList Boards() => new(
+            [new DashboardBoard("board-a", "PicoForge", "board-A", "/hid/a")], "board-a");
+        public StatusResponse Snapshot(string? boardId) => new(true, null, null,
             new RuntimeStatusResponse(0, 42, 250_000_000, true, false,
                 false, null, false, false, 1234, 5678, 65536, 532480),
             null, null, null, null, Settings: new BootSettingsResponse(0, 0, 0));
         public bool? LastLed { get; private set; }
-        public bool SetLed(bool on)
+        public bool SetLed(string? boardId, bool on)
         {
             if (ExpectedError is not null) throw ExpectedError;
             LastLed = on;
             return Available;
         }
-        public BootSettingsResponse? SetSettings(BootSettingsResponse settings)
+        public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings)
         {
             if (ExpectedError is not null) throw ExpectedError;
             if (!Available) return null;
             LastSettings = settings;
             return settings;
         }
-        public MscStatusResponse? SetMsc(bool enabled, bool force = false)
+        public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false)
         {
             if (ExpectedError is not null) throw ExpectedError;
             if (!Available) return null;
             ForcedReturn = force && !enabled;
             return new MscStatusResponse(true, true, false, true);
         }
-        public bool SetSelfTest(string action, uint sizeMib)
+        public bool SetSelfTest(string? boardId, string action, uint sizeMib)
         {
             if (ExpectedError is not null) throw ExpectedError;
             LastCommand = (action, sizeMib);

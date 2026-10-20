@@ -2,17 +2,21 @@ using HidSharp;
 
 namespace PicoForge;
 
+public sealed record HidBoard(string DevicePath, string? SerialNumber, string ProductName);
+
 internal sealed class PicoForgeHid : IHidCommands, IDisposable
 {
     private readonly HidDevice device;
     private readonly HidStream stream;
 
-    public PicoForgeHid()
+    public PicoForgeHid(string? serialNumber = null, string? devicePath = null)
     {
-        var candidates = DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId)
-            .Concat(DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId + 1))
-            .DistinctBy(candidate => candidate.DevicePath)
-            .Where(HasPicoForgeUsage).ToArray();
+        if (serialNumber is not null && devicePath is not null)
+            throw new ArgumentException("--serial and --device-path cannot be used together");
+        var candidates = MatchingDevices()
+            .Where(candidate => devicePath is null || candidate.DevicePath == devicePath)
+            .Where(candidate => serialNumber is null || candidate.GetSerialNumber() == serialNumber)
+            .ToArray();
         if (candidates.Length == 0)
             throw new InvalidOperationException("PicoForge HID interface not found; check USB connection and HID permissions");
         if (candidates.Length != 1)
@@ -23,6 +27,17 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         stream.ReadTimeout = 250;
         stream.WriteTimeout = 1000;
     }
+
+    public static HidBoard[] Discover() => MatchingDevices().Select(candidate => new HidBoard(
+        candidate.DevicePath,
+        string.IsNullOrEmpty(candidate.GetSerialNumber()) ? null : candidate.GetSerialNumber(),
+        string.IsNullOrEmpty(candidate.GetProductName()) ? "PicoForge" : candidate.GetProductName())).ToArray();
+
+    private static IEnumerable<HidDevice> MatchingDevices() =>
+        DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId)
+            .Concat(DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId + 1))
+            .DistinctBy(candidate => candidate.DevicePath)
+            .Where(HasPicoForgeUsage);
 
     public HardwareInfoResponse ReadInfo()
     {
@@ -99,6 +114,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         var saved = ReadSettings();
         if (saved != settings)
             throw new InvalidOperationException("Firmware did not confirm the selected boot settings");
+        stream.SetFeature(HidProtocol.BuildRebootCommandReport());
         return saved;
     }
     public void SetSelfTest(string action, uint sizeMib) => stream.SetFeature(HidProtocol.BuildSelfTestCommandReport(action, sizeMib));

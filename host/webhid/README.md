@@ -1,3 +1,4 @@
+The **Board LED** toggle and Connect/Disconnect button are in Device identity; USB-drive control is beside the self-test.
 # PicoForge WebHID
 
 Serve the WebHID directory directly so its `index.html` is the site root and the browser gets a secure localhost origin:

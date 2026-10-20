@@ -133,7 +133,9 @@ void panic(const char *format, ...) { (void)format; TEST_FAIL_MESSAGE("Unexpecte
 pf_fatfs_volume_filesystem_format_t pf_fatfs_volume_filesystem_format(void) { return PF_FATFS_VOLUME_FILESYSTEM_EXFAT; }
 
 static unsigned led_requests, msc_requests, force_requests;
+static unsigned reset_requests;
 static bool requested_state;
 bool pf_led_set(bool on) { ++led_requests; requested_state = on; return true; }
+void pf_system_reset(void) { ++reset_requests; }
 void pf_usb_msc_request(bool enabled) { ++msc_requests; requested_state = enabled; }
 void pf_usb_msc_request_force_return(void) { ++force_requests; }
