@@ -1,4 +1,4 @@
-The **Board LED** toggle and Connect/Disconnect button are in Device identity; USB-drive control is beside the self-test.
+The **Board LED** toggle and Connect/Disconnect button are in Device information; USB-drive control is beside the storage benchmark.
 # PicoForge WebHID
 
 Serve the WebHID directory directly so its `index.html` is the site root and the browser gets a secure localhost origin:
@@ -13,9 +13,9 @@ The [SD self-test](../../docs/sd-self-test.md) uses HID Report 6 to start/cancel
 a verified temporary-file benchmark and receive progress/timing metrics. Default
 size is 32 MiB; selecting Start authorizes temporary-file writes and replacement.
 The first summary row includes the firmware release version (`Unknown` for legacy firmware).
-Runtime status shows Core 0 and Core 1 CPU usage separately, plus distinct reserved and total SRAM values; system
+Live diagnostics shows Core 0 and Core 1 CPU usage separately, plus distinct reserved and total SRAM values; system
 clock appears only in the summary row. See [runtime telemetry definitions and compatibility](../../docs/usb-protocol.md#input-report-2).
-The **Board LED** and connection controls are in Device identity; SD sharing is beside the self-test. Do not
+The **Board LED** and connection controls are in Device information; SD sharing is beside the storage benchmark. Do not
 run a competing Python/.NET HID monitor for the same board at the same time.
 
 Windows may deliver Input reports in buffers padded to the collection's maximum Input payload (32 bytes).

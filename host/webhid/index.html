@@ -30,7 +30,7 @@
 
     <section aria-labelledby="identity-title">
       <div class="section-heading">
-        <h2 id="identity-title">Device identity</h2>
+        <h2 id="identity-title">Device information</h2>
         <div class="actions" aria-label="Board controls">
           <button class="button button-led" id="led-control" type="button" data-state="unknown"
             aria-pressed="false" title="Onboard LED unavailable" disabled>Board LED: --</button>
@@ -50,7 +50,7 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">BOOT CONFIGURATION</p>
-          <h2 id="settings-title">Device settings</h2>
+          <h2 id="settings-title">Configuration</h2>
         </div>
         <button class="button" id="settings-save" type="button" disabled>Save &amp; Reboot</button>
       </div>
@@ -86,7 +86,7 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">LIVE REPORT</p>
-          <h2 id="runtime-title">Runtime status</h2>
+          <h2 id="runtime-title">Live diagnostics</h2>
         </div>
       </div>
       <dl class="runtime-grid runtime-summary">
@@ -111,7 +111,7 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">STORAGE REPORT</p>
-          <h2 id="memory-title">SD Card</h2>
+          <h2 id="memory-title">Storage</h2>
         </div>
         <button class="button" id="msc-control" type="button" disabled>Share SD card</button>
       </div>
@@ -131,25 +131,25 @@
 
     <section class="runtime self-test" aria-labelledby="self-test-title">
       <div class="section-heading self-test-heading">
-        <h2 id="self-test-title">Memory Tests</h2>
+        <h2 id="self-test-title">Storage benchmark</h2>
         <div class="self-test-controls">
-          <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
+          <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
           <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
           <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
         </div>
       </div>
       <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
       <dl class="runtime-grid">
-        <div><dt>State</dt><dd id="self-test-state">Unavailable</dd></div>
-        <div><dt>Progress</dt><dd id="self-test-percent">0%</dd></div>
-        <div><dt>Average write</dt><dd id="self-test-write-speed">--</dd></div>
-        <div><dt>Average read</dt><dd id="self-test-read-speed">--</dd></div>
-        <div><dt>Written</dt><dd id="self-test-written">--</dd></div>
-        <div><dt>Verified</dt><dd id="self-test-read">--</dd></div>
-        <div><dt>Write time</dt><dd id="self-test-write-time">--</dd></div>
-        <div><dt>Read time</dt><dd id="self-test-read-time">--</dd></div>
+        <div><dt>Test status</dt><dd id="self-test-state">Unavailable</dd></div>
+        <div><dt>Overall progress</dt><dd id="self-test-percent">0%</dd></div>
+        <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
+        <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
+        <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
+        <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
+        <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
+        <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
       </dl>
-      <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite">No result.</p>
+      <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
     </section>
 
     <footer class="status-line" role="status" aria-live="polite">

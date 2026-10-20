@@ -20,8 +20,17 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
     const snapshot = { connected: true, memory: { initialized: true }, filesystem_format: "exfat", msc: { enabled: false }, self_test: status };
     try {
       render(snapshot);
+      assert.equal(element("#self-test-message").textContent, "");
       assert.equal(element("#self-test-start").disabled, false);
       assert.doesNotMatch(element("#self-test-message").textContent, /Filesystem remains mounted/);
+      status.state = "passed";
+      render(snapshot);
+      assert.equal(element("#self-test-message").textContent, "");
+      status.state = "cancelled";
+      render(snapshot);
+      assert.equal(element("#self-test-message").textContent, "");
+      status.state = "idle";
+      render(snapshot);
       element("#self-test-size").valueAsNumber = 1024;
       render(snapshot);
       assert.equal(element("#self-test-start").disabled, false);
@@ -74,7 +83,7 @@ for (const [name, render] of [["WebHID", renderDirect], ["shared dashboard", ren
 }
 
 for (const [name, render] of [["WebHID", renderDirectStatus], ["shared dashboard", renderSharedStatus]]) {
-  test(`${name} hides Memory Tests during host ownership and hides both storage sections when absent`, () => {
+  test(`${name} hides Storage benchmark during host ownership and hides both storage sections when absent`, () => {
     const elements = new Map();
     const element = selector => {
       assert.notEqual(selector, "#card-presence", "SD presence is not a Runtime metric");

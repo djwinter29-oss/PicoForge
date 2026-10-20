@@ -193,8 +193,8 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .self-test-controls input { width: 100px; height: 38px; padding: 0 10px; border: 1px solid #cbd6d3; border-radius: 7px; font: 12px var(--mono); color: var(--ink); background: var(--paper); }
 .storage-note { margin: 16px 0 8px; }
 .self-test progress { display: block; width: 100%; height: 12px; margin-top: 20px; accent-color: var(--teal); }
-.self-test .runtime-grid { row-gap: 18px; }
 .self-test-message { margin-top: 20px; overflow-wrap: anywhere; }
+.self-test-message:empty { display: none; }
 
 .status-line {
   min-height: 46px;

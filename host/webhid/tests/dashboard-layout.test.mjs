@@ -18,11 +18,13 @@ for (const name of ["web", "webhid"]) {
     assert.doesNotMatch(html, /Board overview|HID STATUS \/ USB|WEBHID \/ USB/);
     assert.doesNotMatch(html, /id="refresh"|self-test-consent|type="checkbox"/);
     const identity = section('aria-labelledby="identity-title"');
+    assert.match(identity, /<h2 id="identity-title">Device information<\/h2>/);
     assert.match(identity, /id="firmware-version"/);
     assert.match(identity, /id="led-control"/);
     assert.match(identity, /Board LED: --/);
     assert.equal((html.match(/id="led-control"/g) ?? []).length, 1);
     const settings = section('aria-labelledby="settings-title"');
+    assert.match(settings, /<h2 id="settings-title">Configuration<\/h2>/);
     assert.ok(html.indexOf('aria-labelledby="settings-title"') < html.indexOf('aria-labelledby="runtime-title"'));
     assert.match(settings, /id="settings-clock"/);
     assert.match(settings, /id="settings-sdio"/);
@@ -32,6 +34,7 @@ for (const name of ["web", "webhid"]) {
     assert.doesNotMatch(settings, /class="settings-action"|Changes take effect after reboot/);
     assert.match(settings, /id="settings-note"/);
     const liveReport = section('aria-labelledby="runtime-title"');
+    assert.match(liveReport, /<h2 id="runtime-title">Live diagnostics<\/h2>/);
     assert.match(liveReport, /class="runtime-grid runtime-summary"/);
     assert.match(liveReport, /<dt>CLI port<\/dt>/);
     assert.doesNotMatch(liveReport, /<dt>CDC port<\/dt>/);
@@ -55,6 +58,7 @@ for (const name of ["web", "webhid"]) {
     assert.doesNotMatch(html, /Memory type|Memory presence|id="memory-type"/);
     assert.doesNotMatch(liveReport, /USB device|id="usb-state"/);
     const memoryReport = section('aria-labelledby="memory-title"');
+    assert.match(memoryReport, /<h2 id="memory-title">Storage<\/h2>/);
     assert.doesNotMatch(memoryReport, /id="memory-presence"|<dt>Presence<\/dt>/);
     assert.doesNotMatch(memoryReport, /id="memory-type"/);
     assert.match(memoryReport, /id="memory-filesystem"/);
@@ -64,7 +68,12 @@ for (const name of ["web", "webhid"]) {
     assert.match(memoryReport, /Share SD card/);
     assert.match(memoryReport, /id="msc-note"/);
     const selfTest = section('aria-labelledby="self-test-title"');
-    assert.match(selfTest, /<h2 id="self-test-title">Memory Tests<\/h2>/);
+    assert.match(selfTest, /<h2 id="self-test-title">Storage benchmark<\/h2>/);
+    assert.match(selfTest, /Test file size \(MiB\)/);
+    assert.match(selfTest, /Average write speed/);
+    assert.match(selfTest, /Average read speed/);
+    assert.match(selfTest, /Written \/ target/);
+    assert.match(selfTest, /Verified \/ target/);
     assert.match(selfTest, /class="section-heading self-test-heading"[\s\S]*<div class="self-test-controls">/);
     assert.doesNotMatch(selfTest, /msc-force-return|Force return to Pico/);
     assert.doesNotMatch(selfTest, /msc-warning|Firmware owns storage|Disabling can lose/);

@@ -129,9 +129,7 @@ export function renderSelfTest(snapshot) {
   if (status?.error) notices.push(`${errors[status.error]} (FatFs ${status.filesystem_result}).`);
   if (status?.file_remains) notices.push("PFTEST.BIN remains on the card.");
   if (status?.mismatch_count) notices.push(`${status.mismatch_count} mismatched bytes.`);
-  set("#self-test-message", notices.join(" ") || (status?.state === "passed"
-    ? "Every byte verified; temporary file removed."
-    : status?.state === "cancelled" ? "Cancelled; cleanup completed." : "No completed result."));
+  set("#self-test-message", notices.join(" "));
   const pending = Boolean(snapshot.self_test_command_pending);
   const mounted = ["fat12", "fat16", "fat32", "exfat"].includes(snapshot.filesystem_format);
   const ready = snapshot.connected && snapshot.memory?.initialized && mounted && status && !snapshot.msc?.enabled;

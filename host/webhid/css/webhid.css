@@ -161,8 +161,8 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .settings-note { min-height: 1.5em; margin: 12px 2px 20px; color: var(--teal-dark); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .storage-note { margin: 16px 0 8px; }
 .self-test progress { display: block; width: 100%; height: 12px; margin-top: 20px; accent-color: var(--teal); }
-.self-test .runtime-grid { row-gap: 18px; }
 .self-test-message { margin-top: 20px; overflow-wrap: anywhere; }
+.self-test-message:empty { display: none; }
 
 .status-line {
   min-height: 46px;
