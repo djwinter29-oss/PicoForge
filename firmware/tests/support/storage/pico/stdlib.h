@@ -4,5 +4,6 @@
 #include <stdint.h>
 #include <stddef.h>
 void sleep_ms(uint32_t ms);
+void busy_wait_ms(uint32_t ms);
 void panic(const char *format, ...);
 #endif

@@ -1,35 +1,11 @@
 /** @file
- * @brief Build-selected MSC storage access; firmware descriptors never bypass ownership.
+ * @brief SD MSC storage access; firmware descriptors never bypass ownership.
  */
 #ifndef PF_MSC_STORAGE_H
 #define PF_MSC_STORAGE_H
 
 #include "middleware/storage/block_device.h"
 
-#if PF_STORAGE_BACKEND_NOR
-#include "app/storage/nor_media.h"
-
-static inline void pf_msc_storage_lock(void) { pf_nor_media_lock(); }
-static inline bool pf_msc_storage_try_lock(void) { return pf_nor_media_try_lock(); }
-static inline void pf_msc_storage_unlock(void) { pf_nor_media_unlock(); }
-static inline bool pf_msc_storage_ready(void) { return pf_nor_media_ready(); }
-static inline uint32_t pf_msc_storage_count(void) { return pf_nor_media_sector_count(); }
-static inline pf_block_result_t pf_msc_storage_acquire(void) { return pf_nor_media_acquire_usb(); }
-static inline pf_block_result_t pf_msc_storage_release(void) { return pf_nor_media_release_usb(); }
-static inline pf_block_result_t pf_msc_storage_release_for_recovery(void)
-{
-    return pf_nor_media_release_usb_for_recovery();
-}
-static inline pf_block_result_t pf_msc_storage_sync(void) { return pf_block_sync(pf_nor_media_usb_device()); }
-static inline pf_block_result_t pf_msc_storage_read(uint32_t first, void *buffer, uint32_t count)
-{
-    return pf_block_read(pf_nor_media_usb_device(), first, buffer, count);
-}
-static inline pf_block_result_t pf_msc_storage_write(uint32_t first, const void *buffer, uint32_t count)
-{
-    return pf_block_write(pf_nor_media_usb_device(), first, buffer, count);
-}
-#else
 #include "drivers/sd_card/sd_block.h"
 #include "app/storage/sd_media.h"
 
@@ -64,6 +40,4 @@ static inline pf_block_result_t pf_msc_storage_write(uint32_t first, const void 
 {
     return pf_msc_storage_result(pf_sd_media_usb_write_blocks(first, buffer, count));
 }
-#endif
-
 #endif

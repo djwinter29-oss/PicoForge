@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -6,14 +7,92 @@ import {
   decodeFilesystemReport,
   decodeMemoryReport,
   decodeMscStatus,
+  decodeSettingsReport,
   decodeStatusReport,
   INFO_REPORT_ID,
   matchesPicoForge,
   PicoForgeWebHid,
+  SETTINGS_REPORT_ID,
   STATUS_REPORT_ID,
   buildSelfTestCommand,
+  buildSettingsReport,
   decodeSelfTestReport,
 } from "../js/device.mjs";
+
+test("settings feature values encode compactly and reject unknown values", () => {
+  const settings = { system_clock_mhz: 200, sdio_bus_mhz: 50, spi_bus_mhz: 25 };
+  const report = buildSettingsReport(settings);
+  assert.deepEqual([...report], [1, 200, 0, 50, 25]);
+  assert.deepEqual(decodeSettingsReport(report), settings);
+  assert.deepEqual(decodeSettingsReport(Uint8Array.from([0, SETTINGS_REPORT_ID, ...report, 0, 0])), settings);
+  for (const invalid of [
+    { ...settings, system_clock_mhz: 100 },
+    { ...settings, sdio_bus_mhz: 40 },
+    { ...settings, spi_bus_mhz: 75 },
+  ]) assert.throws(() => buildSettingsReport(invalid), /Unsupported/);
+  const corrupt = Uint8Array.from(report);
+  corrupt[0] = 2;
+  assert.throws(() => decodeSettingsReport(corrupt), /Invalid/);
+  corrupt[0] = 1;
+  corrupt[1] = 100;
+  assert.throws(() => decodeSettingsReport(corrupt), /Invalid/);
+});
+
+test("settings save refuses MSC ownership and verifies the device readback", async () => {
+  const client = new PicoForgeWebHid(undefined);
+  const sent = [];
+  let stored = Uint8Array.from([1, 0, 0, 0, 0]);
+  client.device = {
+    async sendFeatureReport(reportId, payload) { sent.push([reportId, ...payload]); },
+    async receiveFeatureReport(reportId) {
+      assert.equal(reportId, SETTINGS_REPORT_ID);
+      return new DataView(stored.buffer);
+    },
+  };
+  client.state.settings_supported = true;
+  client.state.msc = { enabled: true, transition_pending: false };
+  const next = { system_clock_mhz: 200, sdio_bus_mhz: 50, spi_bus_mhz: 25 };
+  assert.equal(await client.saveSettings(next), false);
+  assert.equal(sent.length, 0);
+  assert.match(client.state.settings_message, /Disable the USB drive/);
+
+  client.state.msc.enabled = false;
+  assert.equal(await client.saveSettings(next), false);
+  assert.match(client.state.settings_message, /did not confirm/);
+  stored = Uint8Array.from(buildSettingsReport(next));
+  assert.equal(await client.saveSettings(next), true);
+  assert.deepEqual(client.state.settings, next);
+  assert.match(client.state.settings_message, /Rebooting now/);
+  assert.deepEqual(sent, [
+    [8, 1, 200, 0, 50, 25],
+    [8, 1, 200, 0, 50, 25],
+    [9, 1, 1],
+  ]);
+});
+
+test("settings feature report remains optional for older firmware", async () => {
+  const device = new EventTarget();
+  Object.assign(device, {
+    vendorId: 0xcafe,
+    productId: 0x4011,
+    serialNumber: "0123456789abcdef",
+    collections: [{ usagePage: 0xff00, usage: 1 }],
+    opened: false,
+    async open() { this.opened = true; },
+    async close() { this.opened = false; },
+    async receiveFeatureReport(reportId) {
+      if (reportId === INFO_REPORT_ID) return new DataView(infoReport().buffer);
+      throw new Error("Unsupported feature report");
+    },
+  });
+  const hid = new EventTarget();
+  hid.getDevices = async () => [device];
+  const client = new PicoForgeWebHid(hid);
+  await client.connect();
+  assert.equal(client.state.connected, true);
+  assert.equal(client.state.settings_supported, false);
+  assert.match(client.state.settings_message, /Boot settings unavailable/);
+});
 
 test("self-test start/cancel commands validate size and encode HID payloads", () => {
   assert.deepEqual([...buildSelfTestCommand("start", 32)], [2, 1, 32, 0, 0, 0]);
@@ -72,36 +151,17 @@ function infoReport({ reportId = true, mcu = 2, name = "PicoForge", serial = "01
   return reportId ? Uint8Array.from([1, ...payload]) : payload;
 }
 
-test("NOR memory layout reports physical and logical capacity without inventing an SD CID", () => {
+test("memory decoder rejects unsupported versions, components, and modes", () => {
   const bytes = new Uint8Array(29);
   const view = new DataView(bytes.buffer);
-  bytes.set([3, 1, 0x3f, 2, 2]);
-  view.setUint32(5, 992063, true);
-  view.setUint32(9, 6000, true);
-  bytes.set([0xef, 0x40, 0x18], 13);
-  view.setUint32(16, 16777216, true);
-  const memory = decodeMemoryReport(3, view);
-  assert.equal(memory.component_type, "nor-flash");
-  assert.equal(memory.mode, "spi");
-  assert.equal(memory.capacity_bytes, 6000 * 512);
-  assert.equal(memory.physical_capacity_bytes, 16777216);
-  assert.equal(memory.manufacturer.jedec_id, "ef4018");
-  assert.equal(memory.manufacturer.serial_number, null);
-  assert.equal(memory.device_uid, null);
+  bytes[0] = 3;
+  assert.throws(() => decodeMemoryReport(3, view), /Unsupported HID memory report version/);
   bytes[0] = 4;
-  bytes.set([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef], 20);
-  assert.equal(decodeMemoryReport(3, view).device_uid, "0x0123456789abcdef");
-  bytes[4] = 3;
-  assert.equal(decodeMemoryReport(3, view).mode, "qspi");
-  bytes[28] = 1;
-  assert.throws(() => decodeMemoryReport(3, view), /NOR/);
-  bytes.fill(0);
-  bytes.set([3, 0, 1, 2, 2]);
-  assert.equal(decodeMemoryReport(3, view).initialized, false);
-  bytes[0] = 4;
-  assert.equal(decodeMemoryReport(3, view).device_uid, null);
-  bytes[20] = 1;
-  assert.throws(() => decodeMemoryReport(3, view), /CID/);
+  assert.throws(() => decodeMemoryReport(3, view), /Unsupported HID memory report version/);
+  bytes.set([2, 0, 0, 2, 2]);
+  assert.throws(() => decodeMemoryReport(3, view), /Unknown HID memory type or mode/);
+  bytes.set([2, 0, 0, 1, 3]);
+  assert.throws(() => decodeMemoryReport(3, view), /Unknown HID memory type or mode/);
 });
 
 test("decode stable product, MCU, and serial identity", () => {
@@ -138,16 +198,20 @@ test("accept zero-prefixed and padded standard feature reports", () => {
 });
 
 test("decode changing telemetry from periodic input report", () => {
-  const payload = new Uint8Array(13);
-  payload[0] = 2;
+  const payload = new Uint8Array(25);
+  payload[0] = 1;
   payload[1] = 9;
   const view = new DataView(payload.buffer);
   view.setUint32(2, 123_456, true);
   view.setUint32(6, 150_000_000, true);
   payload[10] = 0x1f;
   view.setInt16(11, 2345, true);
+  view.setUint16(13, 1234, true);
+  view.setUint16(15, 5678, true);
+  view.setUint32(17, 65536, true);
+  view.setUint32(21, 532480, true);
   assert.deepEqual(decodeStatusReport(2, new DataView(payload.buffer)), {
-    version: 2,
+    version: 1,
     sequence: 9,
     uptime_ms: 123_456,
     system_clock_hz: 150_000_000,
@@ -157,38 +221,49 @@ test("decode changing telemetry from periodic input report", () => {
     temperature_centidegrees: 2345,
     led_available: true,
     led_on: true,
-    cpu_usage_basis_points: null,
-    ram_used_bytes: null,
-    ram_total_bytes: null,
+    cpu_usage_core0_basis_points: 1234,
+    cpu_usage_core1_basis_points: 5678,
+    ram_used_bytes: 65536,
+    ram_total_bytes: 532480,
   });
 });
 
-test("runtime layout three decodes bounded CPU and RAM while rejecting malformed extensions", () => {
-  const report = new Uint8Array(23);
+test("status layout v1 validates per-core CPU and RAM values", () => {
+  const report = new Uint8Array(25);
   const view = new DataView(report.buffer);
-  report[0] = 3;
-  view.setUint32(6, 250_000_000, true);
+  report[0] = 1;
+  view.setUint32(6, 150_000_000, true);
   view.setUint16(13, 1234, true);
-  view.setUint32(15, 65536, true);
-  view.setUint32(19, 532480, true);
+  view.setUint16(15, 5678, true);
+  view.setUint32(17, 65536, true);
+  view.setUint32(21, 532480, true);
   const status = decodeStatusReport(2, view);
-  assert.equal(status.cpu_usage_basis_points, 1234);
+  assert.equal(status.cpu_usage_core0_basis_points, 1234);
+  assert.equal(status.cpu_usage_core1_basis_points, 5678);
   assert.equal(status.ram_used_bytes, 65536);
   assert.equal(status.ram_total_bytes, 532480);
   assert.equal(decodeStatusReport(2, Uint8Array.from([...report, 0])).ram_used_bytes, 65536);
-  assert.throws(() => decodeStatusReport(2, report.subarray(0, 22)), /size/);
+  assert.throws(() => decodeStatusReport(2, report.subarray(0, 24)), /size/);
   assert.throws(() => decodeStatusReport(2, Uint8Array.from([...report, 1])), /padding/);
   for (const cpu of [0, 10000, 0xffff]) {
     view.setUint16(13, cpu, true);
-    assert.equal(decodeStatusReport(2, view).cpu_usage_basis_points, cpu === 0xffff ? null : cpu);
+    assert.equal(decodeStatusReport(2, view).cpu_usage_core0_basis_points, cpu === 0xffff ? null : cpu);
   }
   view.setUint16(13, 10001, true);
-  assert.throws(() => decodeStatusReport(2, view), /CPU/);
+  assert.throws(() => decodeStatusReport(2, view), /per-core CPU/);
   view.setUint16(13, 0, true);
-  view.setUint32(19, 0, true);
+  view.setUint32(21, 0, true);
   assert.throws(() => decodeStatusReport(2, view), /RAM/);
-  view.setUint32(19, 65535, true);
+  view.setUint32(21, 65535, true);
   assert.throws(() => decodeStatusReport(2, view), /RAM/);
+});
+
+test("status decoder accepts only initial layout version one", () => {
+  for (const version of [2, 3, 4]) {
+    const report = new Uint8Array(25);
+    report[0] = version;
+    assert.throws(() => decodeStatusReport(2, report), /Unsupported HID status report version/);
+  }
 });
 
 test("derive board status from the dynamic report", () => {
@@ -284,9 +359,10 @@ test("force return requires capability and sends a distinct command without weak
 });
 
 test("reject an LED-on dynamic status when no LED is available", () => {
-  const payload = new Uint8Array(13);
-  payload[0] = 2;
+  const payload = new Uint8Array(25);
+  payload[0] = 1;
   new DataView(payload.buffer).setUint32(6, 125_000_000, true);
+  new DataView(payload.buffer).setUint32(21, 270336, true);
   payload[10] = 0x10;
   assert.throws(() => decodeStatusReport(2, new DataView(payload.buffer)), /without an available LED/);
 });
@@ -311,16 +387,22 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
       this.serialNumber = "0123456789abcdef";
       this.collections = [{ usagePage: 0xff00, usage: 1 }];
       this.opened = false;
+      this.featureReports = [];
     }
 
     async open() { this.opened = true; }
     async close() { this.opened = false; }
     async receiveFeatureReport(reportId) {
-      assert.equal(reportId, INFO_REPORT_ID);
-      return new DataView(infoReport().buffer);
+      if (reportId === INFO_REPORT_ID) return new DataView(infoReport().buffer);
+      if (reportId === SETTINGS_REPORT_ID) {
+        return new DataView(this.settingsReport ?? Uint8Array.from([1, 0, 0, 0, 0]).buffer);
+      }
+      throw new Error(`Unexpected feature report ${reportId}`);
     }
     async sendFeatureReport(reportId, payload) {
       this.lastFeature = { reportId, payload: [...payload] };
+      this.featureReports.push(this.lastFeature);
+      if (reportId === SETTINGS_REPORT_ID) this.settingsReport = Uint8Array.from(payload).buffer;
     }
   }
 
@@ -347,6 +429,8 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
 
   await client.connect();
   assert.equal(client.state.connected, true, client.state.error);
+  assert.equal(client.state.settings_supported, true);
+  assert.deepEqual(client.state.settings, { system_clock_mhz: 0, sdio_bus_mhz: 0, spi_bus_mhz: 0 });
   function emitPaddedInput(reportId, bytes) {
     const buffer = new Uint8Array(36).fill(0xa5);
     buffer.set(bytes, 4);
@@ -357,14 +441,19 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
     });
     firstDevice.dispatchEvent(event);
   }
-  const runtime = new Uint8Array(23);
+  const runtime = new Uint8Array(25);
   const runtimeView = new DataView(runtime.buffer);
-  runtime[0] = 3;
+  runtime[0] = 1;
   runtimeView.setUint32(6, 250000000, true);
-  runtimeView.setUint32(19, 532480, true);
+  runtimeView.setUint16(13, 1234, true);
+  runtimeView.setUint16(15, 5678, true);
+  runtimeView.setUint32(17, 65536, true);
+  runtimeView.setUint32(21, 532480, true);
   emitPaddedInput(2, runtime);
   assert.equal(client.state.error, null);
   assert.equal(client.state.runtime.system_clock_hz, 250000000);
+  assert.equal(client.state.runtime.cpu_usage_core0_basis_points, 1234);
+  assert.equal(client.state.runtime.cpu_usage_core1_basis_points, 5678);
   emitPaddedInput(5, [3, 0, 0, 0]);
   assert.equal(client.state.error, null);
   assert.equal(client.state.msc.enabled, false);
@@ -378,6 +467,13 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   emitPaddedInput(5, [3, 2, 0, 0]);
   assert.match(client.state.error, /Invalid HID MSC/);
   emitPaddedInput(5, [3, 0, 0, 0]);
+  const nextSettings = { system_clock_mhz: 150, sdio_bus_mhz: 0, spi_bus_mhz: 25 };
+  assert.equal(await client.saveSettings(nextSettings), true);
+  assert.deepEqual(firstDevice.featureReports.slice(-2), [
+    { reportId: 8, payload: [1, 150, 0, 0, 25] },
+    { reportId: 9, payload: [1, 1] },
+  ]);
+  assert.deepEqual(client.state.settings, nextSettings);
   runtime[10] = 0x08;
   emitPaddedInput(2, runtime);
   await client.setLed(true);
@@ -400,9 +496,10 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   assert.equal(client.state.reconnecting, false);
   assert.equal(client.state.msc.transition_pending, true);
 
-  const status = new Uint8Array(13);
-  status[0] = 2;
+  const status = new Uint8Array(25);
+  status[0] = 1;
   new DataView(status.buffer).setUint32(6, 150_000_000, true);
+  new DataView(status.buffer).setUint32(21, 532480, true);
   const inputReport = new Event("inputreport");
   Object.defineProperties(inputReport, {
     device: { value: reenumeratedDevice },
@@ -457,4 +554,48 @@ test("Windows padded inputs permit MSC enable and reconnect after USB re-enumera
   assert.equal(client.state.self_test_command_pending, false);
   await client.setSelfTest("cancel");
   assert.deepEqual(firmwareOwnedDevice.lastFeature, { reportId: 6, payload: [2, 0, 0, 0, 0, 0] });
+});
+
+test("every true disconnect clears stale telemetry including self-test state", async () => {
+  const stale = {
+    hardware: {}, runtime: {}, board_status: {}, memory: {}, filesystem_format: "fat32", msc: {},
+    self_test: { active: true }, self_test_command_pending: true, updated_at: "now",
+  };
+  const cleared = Object.fromEntries(Object.keys(stale).map(key => [key, key === "self_test_command_pending" ? false : null]));
+  const newClient = (hid = new EventTarget()) => {
+    const client = new PicoForgeWebHid(hid);
+    client.update(stale);
+    return client;
+  };
+  const device = { opened: true, removeEventListener() {}, addEventListener() {}, async close() {} };
+  const expectCleared = client => assert.deepEqual(
+    Object.fromEntries(Object.keys(stale).map(key => [key, client.state[key]])), cleared);
+
+  let client = newClient();
+  client.device = device;
+  client.onDisconnect({ device });
+  expectCleared(client);
+
+  client = newClient();
+  client.device = device;
+  client.reconnectSerial = "0123456789abcdef";
+  await client.disconnect();
+  expectCleared(client);
+
+  const hid = new EventTarget();
+  hid.getDevices = async () => { throw new Error("denied"); };
+  client = newClient(hid);
+  await client.connect();
+  expectCleared(client);
+});
+test("shared canonical filesystem vectors", () => {
+  const fixture = readFileSync(new URL("../../../tests/fixtures/hid-filesystem.csv", import.meta.url), "utf8");
+  for (const content of [fixture, fixture.replace(/\r?\n/g, "\r\n")]) {
+    for (const row of content.trim().split(/\r?\n/).slice(1)) {
+      const [name, hex, expected] = row.split(",");
+      const bytes = Uint8Array.from(Buffer.from(hex, "hex"));
+      if (expected === "invalid") assert.throws(() => decodeFilesystemReport(bytes[0], bytes.slice(1)), undefined, name);
+      else assert.equal(decodeFilesystemReport(bytes[0], bytes.slice(1)).format, expected, name);
+    }
+  }
 });

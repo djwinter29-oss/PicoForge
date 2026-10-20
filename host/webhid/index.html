@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>PicoForge | WebHID</title>
+  <title>PicoForge Diagnostics | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/webhid.css">
-  <script type="module" src="js/app.mjs"></script>
+  <link rel="stylesheet" href="css/webhid.css?v=3">
+  <script type="module" src="js/app.mjs?v=3"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="./" aria-label="PicoForge WebHID status">
       <span class="brand-mark">PF</span>
-      <span class="brand-copy"><small>BROWSER DEVICE</small><strong>PicoForge</strong></span>
+      <span class="brand-copy"><small>WebHID</small><strong>PicoForge</strong></span>
     </a>
     <div class="connection" id="connection" data-state="disconnected">
       <span class="connection-light" aria-hidden="true"></span>
@@ -24,43 +24,76 @@
   <main>
     <section class="page-heading">
       <div>
-        <p class="eyebrow">WEBHID / USB</p>
-        <h1>Board overview</h1>
-      </div>
-      <div class="actions">
-        <button class="button" id="connect" type="button">Connect</button>
-        <button class="button button-secondary" id="disconnect" type="button" disabled>Disconnect</button>
+        <h1>Diagnostics</h1>
       </div>
     </section>
 
-    <section class="identity" aria-label="Hardware identity">
+    <section aria-labelledby="identity-title">
+      <div class="section-heading">
+        <h2 id="identity-title">Device information</h2>
+        <div class="actions" aria-label="Board controls">
+          <button class="button button-led" id="led-control" type="button" data-state="unknown"
+            aria-pressed="false" title="Onboard LED unavailable" disabled>Board LED: --</button>
+          <button class="button button-secondary" id="connection-control" type="button">Connect</button>
+        </div>
+      </div>
+      <div class="identity" aria-label="Hardware identity">
       <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
       <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
       <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
       <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
-      <div class="metric"><span>USB serial</span><strong id="serial">--</strong></div>
+      <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
+      </div>
+    </section>
+
+    <section class="runtime" aria-labelledby="settings-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">BOOT CONFIGURATION</p>
+          <h2 id="settings-title">Configuration</h2>
+        </div>
+        <button class="button" id="settings-save" type="button" disabled>Save &amp; Reboot</button>
+      </div>
+      <div class="settings-controls">
+        <label for="settings-clock">System clock
+          <select id="settings-clock" disabled>
+            <option value="0">Default</option>
+          </select>
+        </label>
+        <label for="settings-storage">SD Card
+          <select id="settings-storage" disabled>
+            <option value="25">25 MHz</option>
+            <option value="50">50 MHz</option>
+          </select>
+        </label>
+      </div>
+      <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
+        Connect to read the saved settings.
+      </p>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">
       <div class="section-heading">
         <div>
           <p class="eyebrow">LIVE REPORT</p>
-          <h2 id="runtime-title">Runtime status</h2>
-        </div>
-        <div class="actions">
-          <p class="sample-time" id="sample-time">Waiting for HID report</p>
-          <button class="button" id="led-control" type="button" disabled>Set LED</button>
+          <h2 id="runtime-title">Live diagnostics</h2>
         </div>
       </div>
-      <dl class="runtime-grid">
+      <dl class="runtime-grid runtime-summary">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
-        <div><dt>CPU usage</dt><dd id="cpu-usage" title="Non-idle task time over the reporting interval">--</dd></div>
-        <div><dt>RAM reserved</dt><dd id="ram-usage" title="Static data and reserved stacks, not live stack occupancy">--</dd></div>
-        <div><dt>CDC port</dt><dd id="cdc-state">--</dd></div>
-        <div><dt>Memory presence</dt><dd id="card-presence">--</dd></div>
-        <div><dt>Memory type</dt><dd id="memory-type">--</dd></div>
+        <div>
+          <dt>CPU Usage (Core 1 / Core 2)</dt>
+          <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
+        </div>
+        <div>
+          <dt>SRAM (reserved / total)</dt>
+          <dd>
+            <span id="ram-reserved" title="Static data and reserved core stacks; not live heap or stack usage">--</span> /
+            <span id="ram-total" title="Physical SRAM capacity; excludes external RAM">--</span>
+          </dd>
+        </div>
+        <div><dt>CLI port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
-        <div><dt>Onboard LED</dt><dd id="led-state">--</dd></div>
       </dl>
     </section>
 
@@ -68,10 +101,11 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">STORAGE REPORT</p>
-          <h2 id="memory-title">Memory component</h2>
+          <h2 id="memory-title">Storage</h2>
         </div>
-        <p class="sample-time">Updated with reports 3 and 7</p>
+        <button class="button" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
+      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
       <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
         <div><dt>Memory state</dt><dd id="memory-state">--</dd></div>
@@ -81,34 +115,31 @@
         <div><dt>Filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
         <div><dt>Manufacturer</dt><dd id="memory-manufacturer">--</dd></div>
         <div><dt>Product</dt><dd id="memory-product">--</dd></div>
-        <div><dt>Device serial</dt><dd id="memory-serial">--</dd></div>
+        <div><dt>Serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
     </section>
 
     <section class="runtime self-test" aria-labelledby="self-test-title">
-      <div class="section-heading">
-        <h2 id="self-test-title">Memory Tests</h2>
-        <button class="button" id="msc-control" type="button" disabled>Enable USB drive</button>
-      </div>
-      <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
-      <p class="sample-time">Writes and verifies /PFTEST.BIN, replacing any existing file at that path.</p>
-      <div class="self-test-controls">
-        <label for="self-test-size">File size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
-        <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
-        <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
+      <div class="section-heading self-test-heading">
+        <h2 id="self-test-title">Storage benchmark</h2>
+        <div class="self-test-controls">
+          <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
+          <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
+          <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
+        </div>
       </div>
       <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
       <dl class="runtime-grid">
-        <div><dt>State</dt><dd id="self-test-state">Unavailable</dd></div>
-        <div><dt>Progress</dt><dd id="self-test-percent">0%</dd></div>
-        <div><dt>Average write</dt><dd id="self-test-write-speed">--</dd></div>
-        <div><dt>Average read</dt><dd id="self-test-read-speed">--</dd></div>
-        <div><dt>Written</dt><dd id="self-test-written">--</dd></div>
-        <div><dt>Verified</dt><dd id="self-test-read">--</dd></div>
-        <div><dt>Write time</dt><dd id="self-test-write-time">--</dd></div>
-        <div><dt>Read time</dt><dd id="self-test-read-time">--</dd></div>
+        <div><dt>Test status</dt><dd id="self-test-state">Unavailable</dd></div>
+        <div><dt>Overall progress</dt><dd id="self-test-percent">0%</dd></div>
+        <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
+        <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
+        <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
+        <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
+        <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
+        <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
       </dl>
-      <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite">No result.</p>
+      <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
     </section>
 
     <footer class="status-line" role="status" aria-live="polite">

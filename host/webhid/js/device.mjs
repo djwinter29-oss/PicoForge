@@ -12,11 +12,14 @@ export const LED_COMMAND_REPORT_ID = 4;
 export const MSC_COMMAND_REPORT_ID = 5;
 export const SELF_TEST_REPORT_ID = 6;
 export const FILESYSTEM_REPORT_ID = 7;
+export const SETTINGS_REPORT_ID = 8;
+export const REBOOT_REPORT_ID = 9;
 const INFO_PAYLOAD_SIZE = 42;
-const STATUS_PAYLOAD_SIZE = 23;
+const STATUS_PAYLOAD_SIZE = 25;
 const MEMORY_PAYLOAD_SIZE = 29;
 const MSC_STATUS_SIZE = 4;
 const FILESYSTEM_PAYLOAD_SIZE = 3;
+const SETTINGS_PAYLOAD_SIZE = 5;
 
 function asView(report) {
   if (report instanceof DataView) return report;
@@ -27,7 +30,7 @@ function asView(report) {
 function inputPayload(reportId, report) {
   const view = asView(report);
   const size = ({
-    [STATUS_REPORT_ID]: view.byteLength && view.getUint8(0) === 2 ? 13 : STATUS_PAYLOAD_SIZE,
+    [STATUS_REPORT_ID]: STATUS_PAYLOAD_SIZE,
     [MEMORY_REPORT_ID]: MEMORY_PAYLOAD_SIZE,
     [MSC_COMMAND_REPORT_ID]: MSC_STATUS_SIZE,
     [SELF_TEST_REPORT_ID]: 32,
@@ -52,6 +55,45 @@ function featurePayload(report, reportId, payloadSize) {
     if (view.getUint8(index) !== 0) throw new Error("Unexpected HID feature report padding");
   }
   return new DataView(view.buffer, view.byteOffset + offset, payloadSize);
+}
+
+function validSettings(settings) {
+  return settings && [0, 150, 200, 250].includes(settings.system_clock_mhz)
+    && [0, 25, 50].includes(settings.sdio_bus_mhz)
+    && [0, 25, 50].includes(settings.spi_bus_mhz);
+}
+
+export function buildSettingsReport(settings) {
+  if (!validSettings(settings)) throw new Error("Unsupported boot settings value");
+  const report = new Uint8Array(SETTINGS_PAYLOAD_SIZE);
+  report[0] = 1;
+  new DataView(report.buffer).setUint16(1, settings.system_clock_mhz, true);
+  report[3] = settings.sdio_bus_mhz;
+  report[4] = settings.spi_bus_mhz;
+  return report;
+}
+
+export function buildRebootCommandReport() {
+  return Uint8Array.from([1, 1]);
+}
+
+export function decodeSettingsReport(report) {
+  const payload = featurePayload(report, SETTINGS_REPORT_ID, SETTINGS_PAYLOAD_SIZE);
+  const settings = {
+    system_clock_mhz: payload.getUint16(1, true),
+    sdio_bus_mhz: payload.getUint8(3),
+    spi_bus_mhz: payload.getUint8(4),
+  };
+  if (payload.getUint8(0) !== 1 || !validSettings(settings)) {
+    throw new Error("Invalid HID settings report");
+  }
+  return settings;
+}
+
+function sameSettings(left, right) {
+  return left.system_clock_mhz === right.system_clock_mhz
+    && left.sdio_bus_mhz === right.sdio_bus_mhz
+    && left.spi_bus_mhz === right.spi_bus_mhz;
 }
 
 function paddedText(view, offset, length) {
@@ -86,24 +128,25 @@ export function decodeInfoReport(report) {
 export function decodeStatusReport(reportId, report) {
   if (reportId !== STATUS_REPORT_ID) throw new Error(`Unexpected HID status report ID ${reportId}`);
   const view = asView(report);
-  if (view.byteLength < 13) throw new Error("Unexpected HID status report size");
+  if (view.byteLength < STATUS_PAYLOAD_SIZE) throw new Error("Unexpected HID status report size");
   const version = view.getUint8(0);
-  if (version !== 2 && version !== 3) throw new Error(`Unsupported HID status report version ${version}`);
-  const size = version === 3 ? STATUS_PAYLOAD_SIZE : 13;
+  if (version !== 1) throw new Error(`Unsupported HID status report version ${version}`);
+  const size = STATUS_PAYLOAD_SIZE;
   if (view.byteLength < size) throw new Error("Unexpected HID status report size");
   for (let index = size; index < view.byteLength; index++) {
     if (view.getUint8(index) !== 0) throw new Error("Unexpected HID status report padding");
   }
   const flags = view.getUint8(10);
-  let cpuUsage = null, ramUsed = null, ramTotal = null;
-  if (version === 3) {
-    cpuUsage = view.getUint16(13, true);
-    ramUsed = view.getUint32(15, true);
-    ramTotal = view.getUint32(19, true);
-    if (cpuUsage > 10000 && cpuUsage !== 0xffff) throw new Error("Invalid CPU usage in HID status report");
-    if (ramTotal === 0 || ramUsed > ramTotal) throw new Error("Invalid RAM usage in HID status report");
-    if (cpuUsage === 0xffff) cpuUsage = null;
+  let cpuCore0 = view.getUint16(13, true);
+  let cpuCore1 = view.getUint16(15, true);
+  const ramUsed = view.getUint32(17, true);
+  const ramTotal = view.getUint32(21, true);
+  if ([cpuCore0, cpuCore1].some(cpu => cpu > 10000 && cpu !== 0xffff)) {
+    throw new Error("Invalid per-core CPU usage in HID status report");
   }
+  if (ramTotal === 0 || ramUsed > ramTotal) throw new Error("Invalid RAM usage in HID status report");
+  cpuCore0 = cpuCore0 === 0xffff ? null : cpuCore0;
+  cpuCore1 = cpuCore1 === 0xffff ? null : cpuCore1;
   if ((flags & ~0x1f) !== 0) throw new Error("Unknown HID status flags");
   const ledAvailable = Boolean(flags & 0x08);
   const ledOn = Boolean(flags & 0x10);
@@ -122,7 +165,8 @@ export function decodeStatusReport(reportId, report) {
     temperature_centidegrees: temperatureValid ? view.getInt16(11, true) : null,
     led_available: ledAvailable,
     led_on: ledOn,
-    cpu_usage_basis_points: cpuUsage,
+    cpu_usage_core0_basis_points: cpuCore0,
+    cpu_usage_core1_basis_points: cpuCore1,
     ram_used_bytes: ramUsed,
     ram_total_bytes: ramTotal,
   };
@@ -142,10 +186,9 @@ export function decodeMemoryReport(reportId, report) {
   const mode = view.getUint8(4);
   const busClockHz = view.getUint32(5, true);
   const blockCount = view.getUint32(9, true);
-  const nor = [3, 4].includes(version) && componentType === 2;
-  if (version !== 2 && !nor) throw new Error(`Unsupported HID memory report version ${version}`);
+  if (version !== 2) throw new Error(`Unsupported HID memory report version ${version}`);
   if ((flags & ~0x3f) !== 0) throw new Error("Unknown HID memory flags");
-  if (nor ? ![2, 3].includes(mode) : componentType > 1 || mode > 2) {
+  if (componentType > 1 || mode > 2) {
     throw new Error("Unknown HID memory type or mode");
   }
   const configured = Boolean(flags & 0x01);
@@ -165,15 +208,7 @@ export function decodeMemoryReport(reportId, report) {
   const cid = new Uint8Array(view.buffer, view.byteOffset + 13, 16);
   if (!initialized && cid.some(byte => byte !== 0)) throw new Error("Unexpected CID without initialized card");
   let manufacturer = null;
-  if (nor && initialized) {
-    if (cid[0] !== 0xef || cid[1] !== 0x40 || cid[2] !== 0x18
-      || cid.subarray(version === 4 ? 15 : 7).some(byte => byte !== 0)
-      || view.getUint32(16, true) !== 16777216 || blockCount * 512 > 16777216) {
-      throw new Error("Invalid NOR identification or capacity");
-    }
-    manufacturer = { id: cid[0], product_name: "W25Q128", jedec_id: "ef4018",
-      serial_number: null };
-  } else if (cidValid) {
+  if (cidValid) {
     const oemId = new TextDecoder("ascii").decode(cid.subarray(1, 3));
     const productName = new TextDecoder("ascii").decode(cid.subarray(3, 8));
     if (!/^[\x20-\x7e]{2}$/.test(oemId) || !/^[\x20-\x7e]{5}$/.test(productName)) {
@@ -197,15 +232,12 @@ export function decodeMemoryReport(reportId, report) {
     presence_known: presenceKnown,
     present: presenceKnown ? present : null,
     initialized,
-    component_type: nor ? "nor-flash" : componentType === 1 ? "sd-card" : null,
-    mode: ({ 1: "sdio", 2: "spi", 3: "qspi" })[mode] ?? null,
+    component_type: componentType === 1 ? "sd-card" : null,
+    mode: ({ 1: "sdio", 2: "spi" })[mode] ?? null,
     bus_clock_hz: initialized ? busClockHz : null,
     block_count: capacityValid ? blockCount : null,
     capacity_bytes: capacityValid ? blockCount * 512 : null,
     manufacturer,
-    ...(nor ? { physical_capacity_bytes: initialized ? view.getUint32(16, true) : null,
-      device_uid: initialized && version === 4
-        ? "0x" + Array.from(cid.subarray(7, 15), byte => byte.toString(16).padStart(2, "0")).join("") : null } : {}),
   };
 }
 
@@ -298,6 +330,12 @@ export function matchesPicoForge(device) {
       && collection.usage === DEVICE_FILTER.usage);
 }
 
+const NO_TELEMETRY = {
+  hardware: null, runtime: null, board_status: null, memory: null, filesystem_format: null, msc: null,
+  self_test: null, self_test_command_pending: false, settings: null, settings_supported: false,
+  settings_message: null, updated_at: null,
+};
+
 export class PicoForgeWebHid {
   constructor(hid, onChange = () => {}) {
     this.hid = hid;
@@ -314,6 +352,9 @@ export class PicoForgeWebHid {
       filesystem_format: null,
       self_test: null,
       self_test_command_pending: false,
+      settings: null,
+      settings_supported: false,
+      settings_message: null,
       updated_at: null,
       busy: false,
     };
@@ -351,11 +392,10 @@ export class PicoForgeWebHid {
       event.device.removeEventListener("inputreport", this.onInputReport);
       this.device = null;
       if (this.reconnectSerial) {
-        this.update({ connected: false, reconnecting: true, busy: false,
-          filesystem_format: null, error: null });
+        this.update({ connected: false, reconnecting: true, busy: false, filesystem_format: null,
+          self_test: null, self_test_command_pending: false, error: null });
       } else {
-        this.update({ connected: false, reconnecting: false, hardware: null, runtime: null,
-          board_status: null, memory: null, filesystem_format: null, updated_at: null, msc: null, busy: false,
+        this.update({ connected: false, reconnecting: false, busy: false, ...NO_TELEMETRY,
           error: "Device disconnected" });
       }
     };
@@ -394,8 +434,7 @@ export class PicoForgeWebHid {
       }
       await this.attachDevice(selected);
     } catch (error) {
-      this.update({ connected: false, busy: false, reconnecting: false, error: error.message,
-        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
+      this.update({ connected: false, busy: false, reconnecting: false, error: error.message, ...NO_TELEMETRY });
     }
   }
 
@@ -406,17 +445,25 @@ export class PicoForgeWebHid {
       selected.addEventListener("inputreport", this.onInputReport);
       this.device = selected;
       const hardware = decodeInfoReport(await selected.receiveFeatureReport(INFO_REPORT_ID));
+      let settings = null;
+      let settingsMessage = null;
+      try {
+        settings = decodeSettingsReport(await selected.receiveFeatureReport(SETTINGS_REPORT_ID));
+      } catch (error) {
+        settingsMessage = `Boot settings unavailable: ${error.message}`;
+      }
       this.reconnectSerial = selected.serialNumber || hardware.serial_number;
       this.update({ connected: true, busy: false, reconnecting: false, error: null, hardware,
         runtime: null, board_status: null, memory: null, self_test: null,
-        self_test_command_pending: false, updated_at: null });
+        self_test_command_pending: false, settings, settings_supported: settings !== null,
+        settings_message: settingsMessage, updated_at: null });
     } catch (error) {
       selected.removeEventListener("inputreport", this.onInputReport);
       if (selected.opened) {
         try { await selected.close(); } catch { }
       }
       if (this.device === selected) this.device = null;
-      this.update({ connected: false, busy: false, reconnecting: false, error: error.message });
+      this.update({ connected: false, busy: false, reconnecting: false, error: error.message, ...NO_TELEMETRY });
     }
   }
 
@@ -431,6 +478,27 @@ export class PicoForgeWebHid {
       this.update({ runtime, board_status: boardStatus, busy: false });
     } catch (error) {
       this.update({ busy: false, error: error.message });
+    }
+  }
+
+  async saveSettings(settings) {
+    const command = buildSettingsReport(settings);
+    if (!this.device || this.state.busy || !this.state.settings_supported) return false;
+    if (this.state.msc?.enabled || this.state.msc?.transition_pending) {
+      this.update({ settings_message: "Disable the USB drive before saving boot settings." });
+      return false;
+    }
+    this.update({ busy: true, settings_message: null });
+    try {
+      await this.device.sendFeatureReport(SETTINGS_REPORT_ID, command);
+      const saved = decodeSettingsReport(await this.device.receiveFeatureReport(SETTINGS_REPORT_ID));
+      if (!sameSettings(saved, settings)) throw new Error("Firmware did not confirm the selected values");
+      await this.device.sendFeatureReport(REBOOT_REPORT_ID, buildRebootCommandReport());
+      this.update({ settings: saved, busy: false, settings_message: "Saved. Rebooting now." });
+      return true;
+    } catch (error) {
+      this.update({ busy: false, settings_message: `Save failed: ${error.message}` });
+      return false;
     }
   }
 
@@ -461,8 +529,7 @@ export class PicoForgeWebHid {
       if (device.opened) await device.close();
       this.device = null;
       this.reconnectSerial = null;
-      this.update({ connected: false, busy: false, reconnecting: false, error: null,
-        hardware: null, runtime: null, board_status: null, memory: null, msc: null, updated_at: null });
+      this.update({ connected: false, busy: false, reconnecting: false, error: null, ...NO_TELEMETRY });
     } catch (error) {
       this.reconnectSerial = reconnectSerial;
       device.addEventListener("inputreport", this.onInputReport);

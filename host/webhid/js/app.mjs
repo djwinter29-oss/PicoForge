@@ -1,21 +1,50 @@
 import { PicoForgeWebHid } from "./device.mjs";
-import { renderStatus, renderSelfTest } from "./view.mjs";
+import { renderStatus, renderSelfTest, storageSpeed } from "./view.mjs?v=3";
 
-const connect = document.querySelector("#connect");
-const disconnect = document.querySelector("#disconnect");
+const connectionControl = document.querySelector("#connection-control");
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
+const settingsSave = document.querySelector("#settings-save");
+const settingsClock = document.querySelector("#settings-clock");
+const settingsStorage = document.querySelector("#settings-storage");
+let settingsDirty = false;
+let settingsStorageDirty = false;
 const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
 
 function render(state) {
   renderStatus(state);
-  connect.disabled = state.busy || state.connected || state.reconnecting || !navigator.hid;
-  disconnect.disabled = state.busy || !state.connected;
+  if (!state.connected) {
+    settingsDirty = false;
+    settingsStorageDirty = false;
+  }
+  if (!settingsDirty && state.settings) {
+    settingsClock.value = String(state.settings.system_clock_mhz);
+  }
+  if (!settingsStorageDirty && state.settings) {
+    settingsStorage.value = String(storageSpeed(state.settings, state.memory?.mode));
+  }
+  connectionControl.textContent = state.connected ? "Disconnect" : "Connect";
+  connectionControl.setAttribute("aria-label", state.connected
+    ? "Disconnect from PicoForge board" : "Connect to PicoForge board");
+  connectionControl.disabled = state.busy || state.reconnecting || !navigator.hid;
   ledControl.disabled = state.busy || !state.connected || !state.board_status?.led_available;
   mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending)
     || Boolean(state.self_test?.active) || state.self_test_command_pending
     || Boolean(state.msc?.enabled && !state.msc.force_return_supported);
-  mscControl.textContent = state.msc?.enabled ? "Disable USB drive" : "Enable USB drive";
+  mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
+  const settingsReady = state.connected && state.settings_supported && state.settings !== null && Boolean(state.msc)
+    && !state.msc.enabled && !state.msc.transition_pending && !state.self_test?.active
+    && !state.self_test_command_pending;
+  for (const control of [settingsClock, settingsStorage]) {
+    control.disabled = state.busy || !settingsReady;
+  }
+  settingsSave.disabled = state.busy || !settingsReady;
+  document.querySelector("#settings-note").textContent = state.settings_message
+    || (!state.connected ? "Connect to read the saved settings."
+      : !state.settings_supported ? "Settings are unavailable; update the device firmware."
+        : !state.msc ? "Waiting for storage ownership status."
+          : state.msc.enabled || state.msc.transition_pending ? "Disable the USB drive before saving settings."
+            : "Settings loaded.");
   document.querySelector("#msc-note").textContent = state.reconnecting
     ? "USB interfaces are reconnecting; HID will resume automatically."
     : state.msc?.enabled && !state.msc.force_return_supported
@@ -28,8 +57,10 @@ function render(state) {
   document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
 }
 
-connect.addEventListener("click", () => client.connect());
-disconnect.addEventListener("click", () => client.disconnect());
+connectionControl.addEventListener("click", () => {
+  if (client.state.connected) void client.disconnect();
+  else void client.connect();
+});
 ledControl.addEventListener("click", () => client.setLed(!client.state.board_status?.led_on));
 mscControl.addEventListener("click", () => {
   const enabled = client.state.msc?.enabled;
@@ -45,4 +76,35 @@ document.querySelector("#self-test-start").addEventListener("click", async () =>
 });
 document.querySelector("#self-test-cancel").addEventListener("click", () => client.setSelfTest("cancel"));
 document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(client.state));
+function selectedSettings() {
+  const saved = client.state.settings;
+  const storageMhz = Number(settingsStorage.value);
+  return {
+    system_clock_mhz: Number(settingsClock.value),
+    sdio_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.sdio_bus_mhz ?? 0),
+    spi_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.spi_bus_mhz ?? 0),
+  };
+}
+
+function updateSettingsDirty() {
+  const saved = client.state.settings;
+  if (!saved) return;
+  settingsStorageDirty = Number(settingsStorage.value) !== storageSpeed(saved, client.state.memory?.mode);
+  settingsDirty = Number(settingsClock.value) !== saved.system_clock_mhz || settingsStorageDirty;
+  render(client.state);
+}
+
+for (const control of [settingsClock, settingsStorage]) {
+  control.addEventListener("change", () => {
+    updateSettingsDirty();
+  });
+}
+settingsSave.addEventListener("click", async () => {
+  const saved = await client.saveSettings(selectedSettings());
+  if (saved) {
+    settingsDirty = false;
+    settingsStorageDirty = false;
+  }
+  render(client.state);
+});
 render(client.state);

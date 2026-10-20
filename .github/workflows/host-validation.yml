@@ -8,8 +8,24 @@ permissions:
 
 jobs:
   host-unit-tests:
-    name: Host unit tests
-    runs-on: ubuntu-24.04
+    name: Host unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: "3.10"
+          - os: ubuntu-24.04
+            python: "3.12"
+          - os: macos-15
+            python: "3.10"
+          - os: macos-15
+            python: "3.12"
+          - os: windows-2025
+            python: "3.10"
+          - os: windows-2025
+            python: "3.12"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -17,38 +33,53 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Setup Node.js
+        if: matrix.python == '3.12'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22.x"
 
       - name: Setup .NET
+        if: matrix.python == '3.12'
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: "10.0.x"
 
-      - name: Install Python HID system dependency
+      - name: Install Linux HID system dependency
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libhidapi-dev
+
+      - name: Install macOS HID system dependency
+        if: runner.os == 'macOS'
+        run: brew install hidapi
 
       - name: Install Python host dependencies
         run: python -m pip install --disable-pip-version-check --no-input --editable host/python
 
       - name: Run host unit tests
-        run: tools/validation/test-host.sh
+        if: matrix.python == '3.12'
+        env:
+          PYTHON: python
+        shell: bash
+        run: bash tools/validation/test-host.sh
+
+      - name: Test minimum Python version
+        if: matrix.python == '3.10'
+        run: python -m unittest discover -s host/python/tests
 
   ceedling-setup:
-    name: Ceedling project setup
+    name: Firmware unit tests
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Initialize firmware test dependencies
-        run: git submodule update --init firmware/third_party/embedded-cli firmware/third_party/levelx
+        run: git submodule update --init firmware/third_party/embedded-cli
 
       - name: Install coverage prerequisites
         run: |
@@ -60,5 +91,17 @@ jobs:
         with:
           ruby-version: "3.4"
 
-      - name: Setup and validate Ceedling project
-        run: tools/validation/setup-ceedling-testing.sh help
+      - name: Setup Ceedling and run firmware unit tests
+        run: tools/validation/setup-ceedling-testing.sh test:all
+
+      - name: Generate firmware coverage reports
+        if: always()
+        run: tools/validation/setup-ceedling-testing.sh gcov:all
+
+      - name: Attach firmware coverage reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: firmware-coverage
+          path: build/ceedling/artifacts/gcov/gcovr/
+          if-no-files-found: warn

@@ -1,0 +1,92 @@
+/**
+ * @file settings.c
+ * @brief Portable settings record validation, serialization and CRC. No hardware access.
+ *
+ * Little-endian record: magic u32 'PFCF', version u16, size u16, system_clock_mhz u16, sdio_bus_mhz u8,
+ * spi_bus_mhz u8, crc32 u32 over the preceding 12 bytes.
+ */
+#include "drivers/persistent_memory/settings.h"
+
+#define MAGIC 0x46434650u /* "PFCF" in little-endian byte order */
+#define CRC_OFFSET (PF_SETTINGS_RECORD_SIZE - 4u)
+
+static uint32_t get_le(const uint8_t *p, unsigned bytes)
+{
+    uint32_t value = 0u;
+    while (bytes-- > 0u) {
+        value = (value << 8) | p[bytes];
+    }
+    return value;
+}
+
+static void put_le(uint8_t *p, unsigned bytes, uint32_t value)
+{
+    for (unsigned i = 0u; i < bytes; ++i) {
+        p[i] = (uint8_t)(value >> (8u * i));
+    }
+}
+
+void pf_settings_defaults(pf_settings_t *settings)
+{
+    *settings = (pf_settings_t){0};
+}
+
+bool pf_settings_valid(const pf_settings_t *settings)
+{
+    return settings != NULL &&
+           (settings->system_clock_mhz == 0u || settings->system_clock_mhz == 150u ||
+            settings->system_clock_mhz == 200u || settings->system_clock_mhz == 250u) &&
+           (settings->sdio_bus_mhz == 0u || settings->sdio_bus_mhz == 25u || settings->sdio_bus_mhz == 50u) &&
+           (settings->spi_bus_mhz == 0u || settings->spi_bus_mhz == 25u || settings->spi_bus_mhz == 50u);
+}
+
+uint32_t pf_settings_crc32(const uint8_t *data, size_t size)
+{
+    uint32_t crc = 0xffffffffu;
+    while (size-- > 0u) {
+        crc ^= *data++;
+        for (unsigned bit = 0u; bit < 8u; ++bit) {
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+        }
+    }
+    return ~crc;
+}
+
+bool pf_settings_encode(const pf_settings_t *settings, uint8_t record[PF_SETTINGS_RECORD_SIZE])
+{
+    if (!pf_settings_valid(settings) || record == NULL) {
+        return false;
+    }
+    put_le(record, 4u, MAGIC);
+    put_le(record + 4, 2u, PF_SETTINGS_FORMAT_VERSION);
+    put_le(record + 6, 2u, PF_SETTINGS_RECORD_SIZE);
+    put_le(record + 8, 2u, settings->system_clock_mhz);
+    record[10] = settings->sdio_bus_mhz;
+    record[11] = settings->spi_bus_mhz;
+    put_le(record + CRC_OFFSET, 4u, pf_settings_crc32(record, CRC_OFFSET));
+    return true;
+}
+
+bool pf_settings_decode(const uint8_t *record, size_t size, pf_settings_t *settings)
+{
+    pf_settings_t parsed;
+    if (settings == NULL) {
+        return false;
+    }
+    pf_settings_defaults(settings);
+    if (record == NULL || size < PF_SETTINGS_RECORD_SIZE || get_le(record, 4u) != MAGIC ||
+        get_le(record + 4, 2u) != PF_SETTINGS_FORMAT_VERSION || get_le(record + 6, 2u) != PF_SETTINGS_RECORD_SIZE ||
+        get_le(record + CRC_OFFSET, 4u) != pf_settings_crc32(record, CRC_OFFSET)) {
+        return false;
+    }
+    parsed = (pf_settings_t){
+        .system_clock_mhz = (uint16_t)get_le(record + 8, 2u),
+        .sdio_bus_mhz = record[10],
+        .spi_bus_mhz = record[11],
+    };
+    if (!pf_settings_valid(&parsed)) {
+        return false;
+    }
+    *settings = parsed;
+    return true;
+}

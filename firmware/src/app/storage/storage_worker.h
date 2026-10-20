@@ -17,7 +17,7 @@ typedef struct {
 
 /** Create the statically allocated sole FatFs worker before the scheduler starts.
  * SD configuration and execution-port setup come from board support. Missing SD
- * configuration permits status commands but prevents mounting. NOR uses its explicit build region.
+ * configuration permits status commands but prevents mounting.
  */
 bool pf_storage_worker_init(void);
 

@@ -7,6 +7,3 @@
 [submodule "firmware/third_party/embedded-cli"]
 	path = firmware/third_party/embedded-cli
 	url = https://github.com/funbiscuit/embedded-cli.git
-[submodule "firmware/third_party/levelx"]
-	path = firmware/third_party/levelx
-	url = https://github.com/eclipse-threadx/levelx.git

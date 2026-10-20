@@ -105,8 +105,8 @@ def test_physical_engines_do_not_include_device_or_filesystem_headers():
     sources = sorted(STORAGE.rglob("*.c")) + sorted(STORAGE.rglob("*.h"))
     assert sources
     forbidden = re.compile(
-        r"(?:sd_card|sdio_pio_protocol|sdio_pio_host|nor_flash|nor_spi|nor_qspi|fatfs|ff\.h|levelx)"
-        r"|(?:^|/)(?:sd|nor)(?:_[^/]*)?\.h$"
+        r"(?:sd_card|sdio_pio_protocol|sdio_pio_host|fatfs|ff\.h)"
+        r"|(?:^|/)sd(?:_[^/]*)?\.h$"
     )
     for source in sources:
         for header in re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE):
@@ -115,7 +115,7 @@ def test_physical_engines_do_not_include_device_or_filesystem_headers():
             )
 
 
-@pytest.mark.parametrize("mode", ["spi", "sdio_pio", "qspi_pio"])
+@pytest.mark.parametrize("mode", ["spi", "sdio_pio"])
 def test_each_physical_mode_has_a_concrete_driver(mode):
     for extension in ("c", "h"):
         assert (STORAGE / mode / f"{mode}.{extension}").is_file()
@@ -123,7 +123,7 @@ def test_each_physical_mode_has_a_concrete_driver(mode):
         assert (STORAGE / mode / f"{mode}.pio").is_file()
 
 
-@pytest.mark.parametrize("device", ["sd_card", "nor_flash"])
+@pytest.mark.parametrize("device", ["sd_card"])
 def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
     directory = ROOT / "firmware/src/drivers" / device
     for source in sorted(directory.rglob("*.c")) + sorted(directory.rglob("*.h")):
@@ -134,8 +134,8 @@ def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
                 assert header.endswith(("/bus.h", "/serial.h", "/sd_wire.h")), (
                     f"{source}: concrete backend include {header}"
                 )
-        assert not re.search(r"\bpf_(?:spi|sdio_pio|qspi_pio)_\w+", text), source
-        assert not re.search(r"\bpf_storage_(?:spi|sdio_pio|qspi_pio)_\w+", text), source
+        assert not re.search(r"\bpf_(?:spi|sdio_pio)_\w+", text), source
+        assert not re.search(r"\bpf_storage_(?:spi|sdio_pio)_\w+", text), source
         assert not re.search(r"\b(?:spi_inst_t|dma_channel_\w+|pio_sm_\w+)\b", text), source
 
 
@@ -151,7 +151,7 @@ def test_common_lifecycle_and_raw_wire_interfaces_do_not_expose_device_transacti
     assert "prepare_80_clocks" not in physical
 
 
-@pytest.mark.parametrize("mode", ["spi", "sdio_pio", "qspi_pio"])
+@pytest.mark.parametrize("mode", ["spi", "sdio_pio"])
 def test_backend_api_and_guards_match_module_names(mode):
     header = (STORAGE / mode / f"{mode}.h").read_text()
     guard = f"PF_{mode.upper()}_H"

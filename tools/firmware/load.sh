@@ -6,16 +6,12 @@ BUILD_DIR=""
 ELF_PATH=""
 OPENOCD_EXE="${OPENOCD_EXE:-openocd}"
 OPENOCD_TARGET="${PICO_OPENOCD_TARGET:-}"
-ADAPTER_SPEED_KHZ="${PICO_DEBUG_PROBE_SPEED_KHZ:-5000}"
+ADAPTER_SPEED_KHZ="${PICO_DEBUG_PROBE_SPEED_KHZ-5000}"
 DEBUG_PROBE_SERIAL="${PICO_DEBUG_PROBE_SERIAL:-}"
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
-STORAGE_BACKEND="${PF_STORAGE_BACKEND:-SD}"
-NOR_TRANSPORT="${PF_NOR_TRANSPORT:-SPI}"
-NOR_REGION_OFFSET="${PF_NOR_REGION_OFFSET:-}"
-NOR_REGION_SIZE="${PF_NOR_REGION_SIZE:-}"
 SKIP_BUILD=0
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
@@ -26,7 +22,7 @@ Usage: tools/firmware/load.sh [options]
 Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
 
 Options:
---board NAME                 Pico SDK board (default: pico)
+--board NAME                 Supported board: pico or pico2 (default: pico)
 --build-dir PATH             Build directory (default: build/firmware-NAME)
 --elf PATH                   ELF to flash (default: generated pico_forge_elf.txt path in build dir)
 --openocd-exe PATH           OpenOCD executable (default: openocd)
@@ -37,10 +33,6 @@ Options:
 --pico-sdk-path PATH         Override Pico SDK path
 --freertos-kernel-path PATH  Override FreeRTOS-Kernel path
 --sd-card-transport NAME     SDIO_PIO or SPI (default: SDIO_PIO)
---storage-backend NAME       SD (default) or NOR application
---nor-transport NAME         NOR application transport: SPI or QSPI_PIO
---nor-region-offset BYTES    Reserved external LevelX offset; required when building NOR
---nor-region-size BYTES      Reserved external LevelX size; required when building NOR
 --skip-build                 Flash an existing ELF without building
 --firmware-version VERSION   Firmware version for builds (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
 --help                       Show this help
@@ -93,22 +85,6 @@ while [ "$#" -gt 0 ]; do
             SD_CARD_TRANSPORT="$2"
             shift 2
             ;;
-        --storage-backend)
-            STORAGE_BACKEND="$2"
-            shift 2
-            ;;
-        --nor-transport)
-            NOR_TRANSPORT="$2"
-            shift 2
-            ;;
-        --nor-region-offset)
-            NOR_REGION_OFFSET="$2"
-            shift 2
-            ;;
-        --nor-region-size)
-            NOR_REGION_SIZE="$2"
-            shift 2
-            ;;
         --skip-build)
             SKIP_BUILD=1
             shift
@@ -129,34 +105,29 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-case "$STORAGE_BACKEND" in
-    SD|NOR) ;;
-    *) echo "--storage-backend must be SD or NOR" >&2; exit 2 ;;
+case "$ADAPTER_SPEED_KHZ" in
+    ''|*[!0-9]*)
+        echo "OpenOCD adapter speed must be a strictly positive decimal integer." >&2
+        exit 1
+        ;;
 esac
-case "$NOR_TRANSPORT" in
-    SPI|QSPI_PIO) ;;
-    *) echo "--nor-transport must be SPI or QSPI_PIO" >&2; exit 2 ;;
-esac
+if ! printf '%s' "$ADAPTER_SPEED_KHZ" | grep -q '[1-9]'; then
+    echo "OpenOCD adapter speed must be a strictly positive decimal integer." >&2
+    exit 1
+fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 if [ -z "$BUILD_DIR" ]; then
-    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD"
-    if [ "$STORAGE_BACKEND" = NOR ]; then
-        BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-NOR-$NOR_TRANSPORT"
-    fi
+    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-$SD_CARD_TRANSPORT"
 elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     set -- "$SCRIPT_DIR/build.sh" --board "$BOARD" --build-dir "$BUILD_DIR" \
-        --firmware-version "$FIRMWARE_VERSION" --storage-backend "$STORAGE_BACKEND"
-    if [ "$STORAGE_BACKEND" = NOR ]; then
-        set -- "$@" --nor-transport "$NOR_TRANSPORT" \
-            --nor-region-offset "$NOR_REGION_OFFSET" --nor-region-size "$NOR_REGION_SIZE"
-    fi
+        --firmware-version "$FIRMWARE_VERSION"
     if [ -n "$GENERATOR" ]; then
         set -- "$@" --generator "$GENERATOR"
     fi
@@ -166,17 +137,20 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ -n "$FREERTOS_KERNEL_PATH_VALUE" ]; then
         set -- "$@" --freertos-kernel-path "$FREERTOS_KERNEL_PATH_VALUE"
     fi
-    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT" --sd-card-port FREERTOS
+    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT"
     "$@"
 fi
 
+if [ "$SKIP_BUILD" -eq 1 ] && [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
+   { grep -q '^PF_STORAGE_BACKEND:STRING=NOR$' "$BUILD_DIR/CMakeCache.txt" ||
+     grep -q '^PF_BUILD_NOR_SMOKE:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt" ||
+     grep -q '^PF_BUILD_LEVELX:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"; }; then
+    echo "The selected build directory contains a legacy NOR configuration; refusing to flash it." >&2
+    echo "Rebuild with tools/firmware/build.sh or choose an SD build directory." >&2
+    exit 1
+fi
+
 if [ -z "$ELF_PATH" ]; then
-    if [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
-       grep -q '^PF_STORAGE_BACKEND:STRING=' "$BUILD_DIR/CMakeCache.txt" &&
-       ! grep -q "^PF_STORAGE_BACKEND:STRING=$STORAGE_BACKEND\$" "$BUILD_DIR/CMakeCache.txt"; then
-        echo "The selected build uses a different storage backend; pass the matching --storage-backend." >&2
-        exit 1
-    fi
     if [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
        grep -q '^PF_SD_CARD_PORT:STRING=BAREMETAL$' "$BUILD_DIR/CMakeCache.txt"; then
         echo "The selected build uses the bare-metal driver smoke target, not pico_forge." >&2
@@ -217,8 +191,16 @@ if ! command -v "$OPENOCD_EXE" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Backslash-escape every Tcl-special character so the value stays one literal word.
 tcl_escape() {
-    printf '%s' "$1" | sed 's/[{}]/\\&/g'
+    case "$1" in
+        *"
+"*|*"$(printf '\r')"*)
+            echo "Unsupported newline in OpenOCD argument: $1" >&2
+            exit 1
+            ;;
+    esac
+    printf '%s' "$1" | sed 's/[][\\{}$";[:space:]]/\\&/g'
 }
 
 ELF_PATH_TCL=$(tcl_escape "$ELF_PATH")
@@ -226,12 +208,12 @@ set -- "$OPENOCD_EXE" -f interface/cmsis-dap.cfg
 
 if [ -n "$DEBUG_PROBE_SERIAL" ]; then
     DEBUG_PROBE_SERIAL_TCL=$(tcl_escape "$DEBUG_PROBE_SERIAL")
-    set -- "$@" -c "adapter serial {$DEBUG_PROBE_SERIAL_TCL}"
+    set -- "$@" -c "adapter serial $DEBUG_PROBE_SERIAL_TCL"
 fi
 
 set -- "$@" \
     -f "$OPENOCD_TARGET" \
     -c "adapter speed $ADAPTER_SPEED_KHZ" \
-    -c "program {$ELF_PATH_TCL} verify reset exit"
+    -c "program $ELF_PATH_TCL verify reset exit"
 
 "$@"

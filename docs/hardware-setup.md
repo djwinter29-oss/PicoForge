@@ -1,9 +1,9 @@
 # PicoForge Hardware Setup Options
 
-Reference hardware setup for standard Pico/Pico 2 boards and external breakouts. See the
-[storage transport guide](../firmware/src/drivers/storage/README.md) for memory/storage modes, wiring, electrical
-requirements, and qualification records. Select one mode per connected device. Some options are not implemented in
-firmware. `TBD` means unassigned.
+Reference hardware setup for standard Pico/Pico 2 boards and an external SD-card breakout. See the
+[storage transport guide](../firmware/src/drivers/storage/README.md) for SDIO-PIO/SD-SPI wiring, card electrical
+requirements, and qualification records. Choose one SD transport at build time. Expansion GPIO examples below
+describe available hardware functions, not implemented application features.
 
 ## Board and Build Selection
 
@@ -13,7 +13,7 @@ firmware. `TBD` means unassigned.
 | Alternate build target | Raspberry Pi Pico 2 (`PICO_BOARD=pico2`); the firmware build defaults to `pico` |
 | MCU | RP2040 on Pico; RP2350 on Pico 2 |
 | Reference power | USB through the board's USB connector |
-| Optional overclock | `tools/firmware/build.sh --board pico2 --sys-clk-mhz 200` (or `PF_SYS_CLK_MHZ=200` with `load.sh`); out of spec, range 100-250 MHz, default `0` keeps the SDK clock. The SDK applies it at boot and raises the regulator to 1.15 V above 150 MHz and 1.30 V above 200 MHz. The SDIO board profile requests 25 MHz; at the stock 150 MHz system clock its integer slow-mode divider produces exactly 25 MHz. |
+| Optional overclock | Select a supported System clock in the dashboard Configuration section; it applies at reboot. Standard firmware builds use the SDK stock clock. Frequencies above the stock clock are out of spec; the SDK raises the regulator above 150 MHz and 200 MHz. SDIO High-Speed negotiation is limited by SYSCLK/4, 50 MHz and one 25 MHz fallback; see [release configurations](release.md). |
 
 ## Debug and Monitoring
 
@@ -44,12 +44,15 @@ The [storage transport guide](../firmware/src/drivers/storage/README.md) owns:
 
 - [GP2-GP8 pin mapping and electrical requirements](../firmware/src/drivers/storage/README.md#memory-and-storage-connections).
 - [SD-card breakout wiring and historical qualification](../firmware/src/drivers/storage/README.md#sd-card-breakout).
-- [W25Q128 breakout wiring](../firmware/src/drivers/storage/README.md#w25q128-flash-breakout).
-- [Transport architecture, lifecycle, and shared-pin restrictions](../firmware/src/drivers/storage/README.md#physical-storage-bus).
+- [SDIO-PIO and SD-SPI transport architecture and lifecycle](../firmware/src/drivers/storage/README.md#physical-storage-bus).
 
 ## User I/O Pin List
 
-This table identifies potential future user-expansion GPIOs after assigning UART0 to GP0/GP1, the memory interface to GP2-GP7, and optional SD-card detect to GP8; it does not imply these expansion features are implemented. In SD-SPI mode GP5 remains connected to DAT1 and GP6 to DAT2, while GP7 is CS. In SPI-NOR mode, GP5/GP6 remain reserved for WP/HOLD and GP7 is CS. These pins remain reserved with fixed wiring. Availability of the listed pins and peripheral functions depends on the selected memory mode and other pin/controller assignments. All listed pins can also be used as digital GPIO or routed to PIO.
+This table identifies potential future user-expansion GPIOs after assigning UART0 to GP0/GP1, the SD-card interface
+to GP2-GP7, and optional SD-card detect to GP8; it does not imply these expansion features are implemented. In SD-SPI
+mode GP5 and GP6 are unused by the card, while GP7 is CS. Availability of listed pins and peripheral functions
+depends on selected transport and other pin/controller assignments. All listed pins can also be used as digital GPIO
+or routed to PIO.
 
 | Available digital GPIO | Header pin | Hardware peripheral functions |
 | --- | --- | --- |
@@ -83,7 +86,12 @@ Complete hardware SPI pin groups (CS may be software-controlled):
 | SPI0 option B | GP20 (pin 26) | GP19 (pin 25) | GP22 (pin 29) | GP21 (pin 27) |
 | SPI1 | GP28 (pin 34) | GP27 (pin 32) | GP26 (pin 31) | GP15 (pin 20), software GPIO |
 
-SPI0 options A/B are alternatives. The GP16-GP22 SPI0 groups are available for expansion only when the memory device is not using SPI0; an SPI-mode storage profile and an SPI0 expansion device cannot operate independently at the same time, even on different GPIO mappings. SPI1 is the independent expansion controller while storage uses SPI0. Select only one pin mapping per controller and avoid GPIO conflicts with other assignments. GP23/GP24 are used internally for SMPS control and USB VBUS sensing; GP25 drives the onboard LED and GP29 senses VSYS. These pins are not on the user header. See the [official Pico pin functions](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pin_functions).
+SPI0 options A/B are alternatives. The GP16-GP22 SPI0 groups are available for expansion only when the SD card is
+not using SPI0; an SD-SPI profile and an SPI0 expansion device cannot operate independently on different GPIO
+mappings. SPI1 is the independent expansion controller while SD uses SPI0. Select only one pin mapping per controller
+and avoid GPIO conflicts. On the reference boards, GP23/GP24 serve internal power/USB functions, GP25 drives the LED,
+and GP29 senses VSYS; these pins are not on the user header. Verify the selected board's
+[official pin functions](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pin_functions).
 
 ## Firmware Resource Mapping
 
@@ -94,7 +102,10 @@ Firmware resources that do not use header GPIOs:
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
-When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or SPI at build time in `firmware/src/config/config.h`; detected cards are mounted by the storage worker as described in [the mounting policy](cdc-cli.md). Validate card I/O on hardware before enabling storage use.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or
+SD-SPI with `tools/firmware/build.sh --sd-card-transport SDIO_PIO` or `--sd-card-transport SPI`; CMake supplies
+the transport selection used by `firmware/src/config/config.h`. Detected cards are mounted by the worker as described in
+[the mounting policy](cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 
@@ -106,7 +117,7 @@ When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/bo
 ## Bring-Up Checklist
 
 1. Confirm the board variant and verify header numbering against its pinout.
-2. Select an SD-card and flash mode from the pin map; check the chosen GPIOs for conflicts before wiring.
+2. Select SDIO-PIO or SD-SPI from the pin map; check the chosen GPIOs for conflicts before wiring.
 3. Verify 3.3 V compatibility, common ground, and power budget before wiring.
 4. Check continuity and rails, then bring up one interface at a time.
 5. Keep board support and this document aligned; record hardware validation results.

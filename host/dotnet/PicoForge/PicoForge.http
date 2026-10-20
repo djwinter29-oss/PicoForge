@@ -1,34 +1,44 @@
+@baseUrl = http://127.0.0.1:5000
+@boardId = REPLACE_WITH_BOARD_ID
+
+### Discover attached boards and copy the selected board ID
+GET {{baseUrl}}/api/boards
+
 ### Start a temporary-file benchmark (writes and removes /PFTEST.BIN)
-POST http://127.0.0.1:8766/api/self-test
+POST {{baseUrl}}/api/self-test?board={{boardId}}
 Content-Type: application/json
 
 {"action":"start","size_mib":32}
 
 ### Cancel and clean up the benchmark
-POST http://127.0.0.1:8766/api/self-test
+POST {{baseUrl}}/api/self-test?board={{boardId}}
 Content-Type: application/json
 
 {"action":"cancel"}
 
 ### Read benchmark progress and average speeds
-GET http://127.0.0.1:8766/api/status
-
-@baseUrl = http://127.0.0.1:8766
+GET {{baseUrl}}/api/status?board={{boardId}}
 
 ### Get current device state (200, including connected=false when no board is attached)
-GET {{baseUrl}}/api/status
+GET {{baseUrl}}/api/status?board={{boardId}}
+
+### Save supported settings and reboot after HID readback
+POST {{baseUrl}}/api/settings?board={{boardId}}
+Content-Type: application/json
+
+{"system_clock_mhz":200,"sdio_bus_mhz":50,"spi_bus_mhz":25}
 
 ### OpenAPI description in Development
 GET {{baseUrl}}/openapi/v1.json
 
 ### Force-return validation only: refuses without explicit data-loss confirmation (400)
-POST {{baseUrl}}/api/msc/force-return
+POST {{baseUrl}}/api/msc/force-return?board={{boardId}}
 Content-Type: application/json
 
 {"confirm_data_loss":false}
 
 ### UNSAFE: detach MSC and attempt a Pico remount; cached host writes may be lost or filesystem corrupted
-POST {{baseUrl}}/api/msc/force-return
+POST {{baseUrl}}/api/msc/force-return?board={{boardId}}
 Content-Type: application/json
 
 {"confirm_data_loss":true}

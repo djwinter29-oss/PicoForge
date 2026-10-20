@@ -10,8 +10,8 @@ usage() {
     cat <<'EOF'
 Usage: tools/host/run-dotnet.sh [application arguments...]
 
-Run the PicoForge .NET host dashboard at http://127.0.0.1:8766/.
-Set DOTNET to select a .NET 10 SDK executable.
+Run the PicoForge .NET host dashboard at http://127.0.0.1:5000/ by default.
+Pass --port PORT to override the port. Set DOTNET to select a .NET 10 SDK executable.
 EOF
 }
 

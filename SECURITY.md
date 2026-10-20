@@ -14,4 +14,9 @@ If private vulnerability reporting is unavailable for this repository, contact t
 
 ## Embedded-Specific Guidance
 
+Destructive USB HID maintenance commands are intended only for trusted local USB hosts with access to the device;
+they are not authenticated against hostile local processes. Forced MSC return bypasses host eject after device-side
+sync and can lose writes still cached by the host. Self-test/benchmark requires firmware ownership and a mounted volume
+and can delete an existing file at the reserved path `/PFTEST.BIN` before creating, verifying, and cleaning up its test file.
+
 Do not commit production credentials, signing keys, customer data, or private device identifiers. The development USB VID/PID in this project is not a production identity. Hardware validation claims must state the board revision and test setup; host-only tests and cross-builds do not establish hardware security or electrical safety.

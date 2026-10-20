@@ -5,22 +5,21 @@
 static const pf_storage_serial_ops_t *serial_ops(const pf_storage_bus_t *transport)
 {
     return transport != NULL && transport->context != NULL && transport->ops != NULL &&
-           (transport->mode == PF_STORAGE_BUS_SPI || transport->mode == PF_STORAGE_BUS_QSPI)
+           transport->mode == PF_STORAGE_BUS_SPI
         ? transport->ops->serial : NULL;
 }
 
 pf_storage_bus_result_t pf_storage_serial_phases_valid(const pf_storage_serial_phase_t *phases,
                                                             size_t count, uint8_t lanes)
 {
-    if (phases == NULL || count == 0u || (lanes != 1u && lanes != 4u)) {
+    if (phases == NULL || count == 0u || lanes != 1u) {
         return PF_STORAGE_BUS_INVALID_ARGUMENT;
     }
     for (size_t index = 0u; index < count; ++index) {
         const pf_storage_serial_phase_t *phase = &phases[index];
         if ((phase->lanes != 1u && phase->lanes != 4u) || phase->bit_count == 0u ||
             phase->bit_count % phase->lanes != 0u ||
-            ((phase->tx != NULL || phase->rx != NULL) && phase->bit_count % 8u != 0u) ||
-            (phase->lanes == 4u && phase->tx != NULL && phase->rx != NULL)) {
+            ((phase->tx != NULL || phase->rx != NULL) && phase->bit_count % 8u != 0u)) {
             return PF_STORAGE_BUS_INVALID_ARGUMENT;
         }
         if (phase->lanes > lanes) {
@@ -30,23 +29,6 @@ pf_storage_bus_result_t pf_storage_serial_phases_valid(const pf_storage_serial_p
             return PF_STORAGE_BUS_UNSUPPORTED;
         }
     }
-    return PF_STORAGE_BUS_OK;
-}
-
-pf_storage_bus_result_t pf_storage_serial_valid(const pf_storage_bus_t *transport, bool *quad_supported)
-{
-    if (transport == NULL || transport->context == NULL || transport->ops == NULL || quad_supported == NULL) {
-        return PF_STORAGE_BUS_INVALID_ARGUMENT;
-    }
-    if (transport->mode == PF_STORAGE_BUS_NATIVE_SD) {
-        return PF_STORAGE_BUS_UNSUPPORTED;
-    }
-    const pf_storage_serial_ops_t *ops = serial_ops(transport);
-    if (ops == NULL || ops->transfer == NULL || (ops->lanes != 1u && ops->lanes != 4u) ||
-        !pf_storage_bus_valid(transport, transport->mode)) {
-        return PF_STORAGE_BUS_INVALID_ARGUMENT;
-    }
-    *quad_supported = ops->lanes == 4u;
     return PF_STORAGE_BUS_OK;
 }
 

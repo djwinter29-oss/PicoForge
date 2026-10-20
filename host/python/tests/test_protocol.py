@@ -1,9 +1,15 @@
+import csv
+from pathlib import Path
 import struct
 import unittest
 
 from picoforge.protocol import (
     LED_COMMAND_REPORT_ID,
     MSC_COMMAND_REPORT_ID,
+    REBOOT_REPORT_ID,
+    SETTINGS_REPORT_ID,
+    build_reboot_command_report,
+    build_settings_command_report,
     build_led_command_report,
     build_msc_command_report,
     parse_info_report,
@@ -11,6 +17,7 @@ from picoforge.protocol import (
     parse_filesystem_report,
     parse_msc_status_report,
     parse_status_report,
+    parse_settings_report,
 )
 
 
@@ -20,24 +27,45 @@ def info_report(mcu=2, name="PicoForge", serial="0123456789abcdef"):
 
 
 class ProtocolTests(unittest.TestCase):
-    def test_nor_memory_layout(self):
+    def test_settings_report_round_trip_and_validation(self):
+        settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 25}
+        report = build_settings_command_report(settings)
+        self.assertEqual(report, bytes([SETTINGS_REPORT_ID, 1, 200, 0, 50, 25]))
+        self.assertEqual(parse_settings_report(report), settings)
+        self.assertEqual(parse_settings_report(bytes([0, *report])), settings)
+        for key, invalid in (("system_clock_mhz", 100), ("sdio_bus_mhz", 40), ("spi_bus_mhz", True)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                build_settings_command_report({**settings, key: invalid})
+        with self.assertRaisesRegex(ValueError, "version"):
+            parse_settings_report(bytes([SETTINGS_REPORT_ID, 2, *report[2:]]))
+        self.assertEqual(build_reboot_command_report(), bytes([REBOOT_REPORT_ID, 1, 1]))
+
+    def test_shared_filesystem_vectors(self):
+        fixture = Path(__file__).resolve().parents[3] / "tests/fixtures/hid-filesystem.csv"
+        with fixture.open() as source:
+            for vector in csv.DictReader(source):
+                with self.subTest(vector=vector["name"]):
+                    report = bytes.fromhex(vector["hex"])
+                    if vector["expected"] == "invalid":
+                        with self.assertRaises(ValueError):
+                            parse_filesystem_report(report)
+                    else:
+                        self.assertEqual(parse_filesystem_report(report)["format"], vector["expected"])
+
+    def test_rejects_unsupported_memory_versions_and_modes(self):
         report = bytearray(30)
-        report[:6] = bytes([3, 3, 1, 0x3f, 2, 2])
-        struct.pack_into("<II", report, 6, 992063, 6000)
-        report[14:17] = bytes.fromhex("ef4018")
-        struct.pack_into("<I", report, 17, 16777216)
-        memory = parse_memory_report(report)
-        self.assertEqual(memory["component_type"], "nor-flash")
-        self.assertEqual(memory["capacity_bytes"], 6000 * 512)
-        self.assertEqual(memory["physical_capacity_bytes"], 16777216)
-        self.assertEqual(memory["manufacturer"]["jedec_id"], "ef4018")
-        self.assertIsNone(memory["manufacturer"]["serial_number"])
-        self.assertIsNone(memory["device_uid"])
+        report[0] = 3
+        report[1] = 3
+        with self.assertRaisesRegex(ValueError, "unsupported HID memory report version"):
+            parse_memory_report(report)
         report[1] = 4
-        report[21:29] = bytes.fromhex("0123456789abcdef")
-        self.assertEqual(parse_memory_report(report)["device_uid"], "0x0123456789abcdef")
-        report[29] = 1
-        with self.assertRaisesRegex(ValueError, "NOR"):
+        with self.assertRaisesRegex(ValueError, "unsupported HID memory report version"):
+            parse_memory_report(report)
+        report[1:6] = bytes([2, 0, 0, 2, 2])
+        with self.assertRaisesRegex(ValueError, "unknown HID memory type or mode"):
+            parse_memory_report(report)
+        report[4:6] = bytes([1, 3])
+        with self.assertRaisesRegex(ValueError, "unknown HID memory type or mode"):
             parse_memory_report(report)
 
     def test_decodes_info_and_product_name(self):
@@ -85,11 +113,12 @@ class ProtocolTests(unittest.TestCase):
                     parse_info_report(report)
 
     def test_decodes_live_status_and_flags(self):
-        payload = struct.pack("<BBIIBh", 2, 9, 123_456, 150_000_000, 0x1F, 2345)
+        payload = (struct.pack("<BBIIBh", 1, 9, 123_456, 150_000_000, 0x1F, 2345)
+                   + struct.pack("<HHII", 1234, 5678, 65536, 532480))
         self.assertEqual(
             parse_status_report(bytes([2]) + payload),
             {
-                "version": 2,
+                "version": 1,
                 "sequence": 9,
                 "uptime_ms": 123_456,
                 "system_clock_hz": 150_000_000,
@@ -99,33 +128,37 @@ class ProtocolTests(unittest.TestCase):
                 "temperature_centidegrees": 2345,
                 "led_available": True,
                 "led_on": True,
-                "cpu_usage_basis_points": None,
-                "ram_used_bytes": None,
-                "ram_total_bytes": None,
+                "cpu_usage_core0_basis_points": 1234,
+                "cpu_usage_core1_basis_points": 5678,
+                "ram_used_bytes": 65536,
+                "ram_total_bytes": 532480,
             },
         )
 
-    def test_runtime_layout_three_usage_and_legacy_compatibility(self):
-        prefix = bytes([2]) + struct.pack("<BBIIBh", 3, 9, 123456, 250000000, 0, 0)
-        report = prefix + struct.pack("<HII", 1234, 65536, 532480)
-        status = parse_status_report(report + bytes(8))
-        self.assertEqual(status["cpu_usage_basis_points"], 1234)
-        self.assertEqual(status["ram_used_bytes"], 65536)
-        self.assertEqual(status["ram_total_bytes"], 532480)
-        unknown = parse_status_report(prefix + struct.pack("<HII", 0xffff, 0, 270336))
-        self.assertIsNone(unknown["cpu_usage_basis_points"])
-        self.assertEqual(unknown["ram_used_bytes"], 0)
-        for cpu in (0, 10000):
-            self.assertEqual(parse_status_report(prefix + struct.pack("<HII", cpu, 270336, 270336))
-                             ["cpu_usage_basis_points"], cpu)
-        for malformed in (report[:-1], report + b"\x01", prefix + struct.pack("<HII", 10001, 1, 2),
-                          prefix + struct.pack("<HII", 0, 3, 2), prefix + struct.pack("<HII", 0, 0, 0)):
+    def test_status_layout_v1_validates_values_and_rejects_other_versions(self):
+        base = struct.pack("<BBIIBh", 1, 9, 123456, 250000000, 0, 0)
+        for version in (2, 3, 4):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "unsupported"):
+                parse_status_report(bytes([2]) + bytes([version]) + base[1:] + struct.pack("<HHII", 1234, 5678, 65536, 532480))
+        report = bytes([2]) + base + struct.pack("<HHII", 1234, 5678, 65536, 532480)
+        status = parse_status_report(report)
+        self.assertEqual(status["cpu_usage_core0_basis_points"], 1234)
+        self.assertEqual(status["cpu_usage_core1_basis_points"], 5678)
+        self.assertNotIn("cpu_usage_basis_points", status)
+        unavailable = bytes([2]) + base + struct.pack("<HHII", 0xffff, 0xffff, 0, 270336)
+        self.assertIsNone(parse_status_report(unavailable)["cpu_usage_core0_basis_points"])
+        self.assertIsNone(parse_status_report(unavailable)["cpu_usage_core1_basis_points"])
+        for malformed in (report[:-1], report + b"\x01",
+                          bytes([2]) + base + struct.pack("<HHII", 10001, 0, 1, 2),
+                          bytes([2]) + base + struct.pack("<HHII", 0, 10001, 1, 2),
+                          bytes([2]) + base + struct.pack("<HHII", 0, 0, 3, 2)):
             with self.subTest(report=malformed), self.assertRaises(ValueError):
                 parse_status_report(malformed)
 
     def test_rejects_unknown_status_flags(self):
         with self.assertRaisesRegex(ValueError, "unknown HID status flags"):
-            parse_status_report(bytes([2]) + struct.pack("<BBIIBh", 2, 0, 1, 125_000_000, 0x80, 0))
+            payload = struct.pack("<BBIIBh", 1, 0, 1, 125_000_000, 0x80, 0)
+            parse_status_report(bytes([2]) + payload + struct.pack("<HHII", 0, 0, 1, 2))
 
     def test_builds_led_command_and_rejects_invalid_dynamic_led_state(self):
         self.assertEqual(build_led_command_report(True), bytes([LED_COMMAND_REPORT_ID, 2, 1]))
@@ -133,7 +166,8 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_led_command_report(1)
         with self.assertRaisesRegex(ValueError, "without an available LED"):
-            parse_status_report(bytes([2]) + struct.pack("<BBIIBh", 2, 0, 1, 125_000_000, 0x10, 0))
+            payload = struct.pack("<BBIIBh", 1, 0, 1, 125_000_000, 0x10, 0)
+            parse_status_report(bytes([2]) + payload + struct.pack("<HHII", 0, 0, 1, 2))
 
     def test_decodes_memory_report_with_sd_cid(self):
         cid = bytes([0x1b]) + b"SD" + b"CARD1" + bytes([0x21]) + bytes.fromhex("12345678") + bytes([0x01, 0xaa, 0xff])
@@ -163,6 +197,15 @@ class ProtocolTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_rejects_non_printable_ascii_cid_text(self):
+        for offset in (1, 2, 3, 7):
+            for value in (0x00, 0x1f, 0x7f, 0x80):
+                cid = bytearray(bytes([0x1b]) + b"SD" + b"CARD1" + bytes([0x21]) + bytes(7))
+                cid[offset] = value
+                payload = struct.pack("<BBBBBII", 2, 7, 0x3f, 1, 2, 25_000_000, 4096) + bytes(cid)
+                with self.subTest(offset=offset, value=value), self.assertRaisesRegex(ValueError, "SD CID"):
+                    parse_memory_report(bytes([3]) + payload)
 
     def test_distinguishes_unknown_presence_before_initialization(self):
         payload = struct.pack("<BBBBBII", 2, 0, 0x01, 1, 1, 0, 0) + bytes(16)

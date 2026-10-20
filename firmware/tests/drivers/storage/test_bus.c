@@ -61,7 +61,7 @@ void test_lifecycle_dispatches_without_owning_context_or_device_protocol(void)
 void test_invalid_lifecycle_handles_and_missing_operations_are_explicit(void)
 {
     const pf_storage_bus_ops_t empty = {0};
-    pf_storage_bus_t bus = { .context = &context, .ops = &empty, .mode = PF_STORAGE_BUS_QSPI };
+    pf_storage_bus_t bus = { .context = &context, .ops = &empty, .mode = PF_STORAGE_BUS_SPI };
     uint32_t actual = 17u;
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_bus_init(NULL));
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_INVALID_ARGUMENT, pf_storage_bus_init(&bus));

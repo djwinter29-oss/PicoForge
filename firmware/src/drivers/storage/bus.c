@@ -15,7 +15,7 @@ bool pf_storage_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpi
 static bool bus_valid(const pf_storage_bus_t *bus)
 {
     return bus != NULL && bus->context != NULL && bus->ops != NULL &&
-           bus->mode >= PF_STORAGE_BUS_SPI && bus->mode <= PF_STORAGE_BUS_QSPI;
+           bus->mode >= PF_STORAGE_BUS_SPI && bus->mode <= PF_STORAGE_BUS_NATIVE_SD;
 }
 
 pf_storage_bus_result_t pf_storage_bus_init(const pf_storage_bus_t *bus)

@@ -14,7 +14,7 @@ static bool pf_storage_worker_recover_media(void);
 static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
 #include "app/usb/usb_msc.c"
-static bool initialized=true, worker_busy, mounted;
+static bool initialized=true, worker_busy, mounted, media_absent, recover_accepted;
 static unsigned locks, syncs, sense, asc;
 static pf_sd_result_t read_result=PF_SD_OK, write_result=PF_SD_OK;
 static pf_sd_result_t sync_result=PF_SD_OK, owner_result=PF_SD_OK;
@@ -22,8 +22,8 @@ static pf_sd_media_owner_t owner=PF_SD_MEDIA_OWNER_USB_MSC;
 static bool pf_fatfs_volume_is_mounted(void) { return mounted; }
 static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
-static bool pf_storage_worker_media_absent(void) { return false; }
-static bool pf_storage_worker_recover_media(void) { return false; }
+static bool pf_storage_worker_media_absent(void) { return media_absent; }
+static bool pf_storage_worker_recover_media(void) { return recover_accepted; }
 static bool pf_storage_worker_return_from_usb(void) { worker_busy = true; return true; }
 static bool pf_storage_worker_unmount_for_usb(void) { worker_busy = true; return true; }
 bool pf_sd_try_lock(void) { ++locks; return true; }
@@ -31,7 +31,7 @@ void pf_sd_lock(void) { ++locks; }
 void pf_sd_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }
 bool pf_sd_is_initialized(void) { return initialized; }
 uint32_t pf_sd_block_count(void) { return 128; }
-void pf_sd_get_info(pf_sd_info_t *i) { *i=(pf_sd_info_t){.present=true,.presence_known=true}; }
+void pf_sd_get_info(pf_sd_info_t *i) { *i=(pf_sd_info_t){.initialized=initialized,.present=!media_absent,.presence_known=true}; }
 pf_sd_result_t pf_sd_media_acquire_usb(void)
 { if(owner_result==PF_SD_OK) owner=PF_SD_MEDIA_OWNER_USB_MSC; return owner_result; }
 pf_sd_result_t pf_sd_media_release_usb(void)
@@ -185,7 +185,7 @@ static void sense_lifecycle(void)
 }
 void setUp(void)
 {
- initialized=true; worker_busy=mounted=false;
+ initialized=true; worker_busy=mounted=media_absent=recover_accepted=false;
  locks=syncs=sense=asc=0;
  read_result=write_result=sync_result=owner_result=PF_SD_OK;
  owner=PF_SD_MEDIA_OWNER_USB_MSC;
@@ -380,4 +380,46 @@ void test_sync_reserved_fields_and_completion_error_boundary(void)
  unsigned before=syncs;
  tud_msc_write10_complete_cb(0);
  TEST_ASSERT_EQUAL_UINT(before,syncs); /* already after CSW */
+}
+
+/* ponytail: exercise app lifecycle boundaries with the existing reset model; this test does not execute TinyUSB BOT itself. */
+void test_volatile_prevention_clears_on_bus_reset_or_disconnect_but_not_bot_reset(void)
+{
+ extern void model_control(uint8_t, const tusb_control_request_t *);
+ tusb_control_request_t reset={.bmRequestType=0x21,.bRequest=MSC_REQ_RESET};
+ TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0,1,0));
+ model_control(CONTROL_STAGE_SETUP,&reset);
+ TEST_ASSERT_TRUE(removal_prevented);
+ for (unsigned boundary=0; boundary<2; ++boundary) {
+  TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0,1,0));
+  if (boundary==0) __wrap_mscd_reset(0);
+  else tud_umount_cb();
+  TEST_ASSERT_FALSE(removal_prevented);
+  pf_usb_msc_request(false); pf_usb_msc_task();
+  TEST_ASSERT_TRUE(msc_enabled && request_rejected);
+  TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC,owner);
+ }
+ TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0,0,false,true));
+ pf_usb_msc_request(false); pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled || request_rejected);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+}
+
+void test_prevent_disconnect_allows_absent_disable_and_unavailable_recovery(void)
+{
+ TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0,1,0));
+ media_absent=true; initialized=false;
+ tud_umount_cb();
+ pf_usb_msc_request(false); pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled || request_rejected);
+ TEST_ASSERT_EQUAL_UINT(0u,syncs);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+
+ msc_enabled=true; owner=PF_SD_MEDIA_OWNER_USB_MSC;
+ TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0,1,0));
+ __wrap_mscd_reset(0);
+ recover_accepted=true;
+ pf_usb_msc_request_recovery(); pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled || request_rejected);
+ TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
 }

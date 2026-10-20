@@ -45,7 +45,7 @@ CR, LF, and CRLF are accepted.
 | `sd recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
-| `fs format --confirm` | Destroy files on the selected logical device, create FAT without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
+| `fs format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
 | `fs stat <path>` | Show size, attributes, and filesystem timestamps. |
 | `fs cat <path> [limit]` | Read at most 1024 bytes by default; limit accepts 1..4096 bytes. |
@@ -56,9 +56,7 @@ CR, LF, and CRLF are accepted.
 | `fs mv <source> <destination>` | Rename a file/directory without overwriting an existing destination. |
 | `fs rm <path> --confirm` | Delete one file with explicit confirmation; directories are refused. |
 
-In NOR builds, the compatibility commands `sd status` and `sd diagnostics` describe the selected NOR media rather
-than an SD card. See [NOR diagnostics and recovery](nor-flash.md#build-selected-fatfs-and-usb-msc) for fields and
-limitations. Recovery completion or failure is reported through the UART logger; neither outcome mounts a volume.
+Recovery completion or failure is reported through the UART logger; neither outcome mounts a volume.
 
 Storage commands require absolute ASCII paths on volume 0, with no drive
 prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
@@ -207,7 +205,7 @@ Run the hardware-independent middleware tests:
 
 ```sh
 tools/validation/setup-ceedling-testing.sh test:test_cli
-tools/validation/setup-ceedling-testing.sh test:test_storage_commands test:test_storage_commands_nor
+tools/validation/setup-ceedling-testing.sh test:test_storage_commands
 ```
 
 They cover prompt/help, commands, invalid arguments, unknown commands, session
@@ -226,3 +224,15 @@ commands first using an existing file and `fs unmount`; only test mutations on a
 disposable file after backing up the card. Verify that MSC enable is rejected
 while mounted or busy and allowed after unmount; after host eject/disable, confirm
 that `fs mount` works again. Do not reset while a filesystem command is in progress.
+### Stalled output
+
+USB tracks successful transfers from the CLI ring to TinyUSB. After five seconds with buffered output and no
+progress, it cancels reply production for that DTR session and drains the worker queue, including completion,
+even while the host is not reading. The session accepts no further input until DTR closes and reopens.
+Buffered output keeps its order; when space becomes available an explicit truncation notice follows it.
+Disconnect clears buffered output and drains completion as before. USB continues its paced service loop.
+
+This is a bounded-memory protocol trade-off: a slow host can receive incomplete command output. Cancellation
+stops display producers, not completed filesystem mutations; file close/cleanup still precedes completion.
+A missing success reply does not mean a write or format failed. Inspect state before retrying a mutation.
+The timeout measures firmware buffer progress, not proof of host application consumption.

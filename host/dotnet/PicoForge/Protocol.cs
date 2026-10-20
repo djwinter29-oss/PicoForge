@@ -7,10 +7,14 @@ namespace PicoForge;
 public sealed record HardwareInfoResponse(string ProductName, string Mcu, byte McuId,
     string SerialNumber, string? FirmwareVersion = null);
 
+/// <summary>Persisted boot clock and storage bus limits.</summary>
+public sealed record BootSettingsResponse(int SystemClockMhz, int SdioBusMhz, int SpiBusMhz);
+
 /// <summary>Dynamic telemetry reported periodically by the PicoForge HID input report.</summary>
 public sealed record RuntimeStatusResponse(byte Sequence, uint UptimeMs, uint SystemClockHz,
     bool UsbMounted, bool CdcOpen, bool TemperatureValid, short? TemperatureCentidegrees,
-    bool LedAvailable, bool LedOn, ushort? CpuUsageBasisPoints = null,
+    bool LedAvailable, bool LedOn, ushort? CpuUsageCore0BasisPoints = null,
+    ushort? CpuUsageCore1BasisPoints = null,
     uint? RamUsedBytes = null, uint? RamTotalBytes = null)
 {
     public BoardStatusResponse ToBoardStatus() => new(TemperatureValid, TemperatureCentidegrees,
@@ -28,8 +32,7 @@ public sealed record SdCardIdentity(byte ManufacturerId, string OemId, string Pr
 /// <summary>Presence, transport, negotiated bus, capacity, and card identity.</summary>
 public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool PresenceKnown,
     bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
-    uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer,
-    uint? PhysicalCapacityBytes = null, string? JedecId = null, string? DeviceUid = null);
+    uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer);
 
 public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected,
     bool ForceReturnSupported = false);
@@ -52,7 +55,10 @@ internal sealed record InputReport(RuntimeStatusResponse? Runtime, MemoryStatusR
 public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoResponse? Hardware,
     RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, BoardStatusResponse? BoardStatus,
     MemoryStatusResponse? Memory, MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null,
-    string? FilesystemFormat = null);
+    string? FilesystemFormat = null, BootSettingsResponse? Settings = null)
+{
+    public bool SettingsSupported => Settings is not null;
+}
 
 internal static class HidProtocol
 {
@@ -65,16 +71,21 @@ internal static class HidProtocol
     public const byte MscCommandReportId = 5;
     public const byte SelfTestReportId = 6;
     public const byte FilesystemReportId = 7;
+    public const byte SettingsReportId = 8;
+    public const byte RebootReportId = 9;
     public const int SelfTestPayloadSize = 32;
     public const byte LedCommandReportId = 4;
     public const byte ReportVersion = 2;
+    public const byte StatusReportVersion = 1;
     public const int InfoPayloadSize = 42;
-    public const int StatusPayloadSize = 23;
+    public const int StatusPayloadSize = 25;
     public const int MemoryPayloadSize = 29;
     public const int FilesystemPayloadSize = 3;
+    public const int SettingsPayloadSize = 5;
     public const int MscStatusPayloadSize = 4;
     public const int InfoFeatureSize = InfoPayloadSize + 1;
     public const int StatusInputSize = StatusPayloadSize + 1;
+    public const int SettingsFeatureSize = SettingsPayloadSize + 1;
 
     public static HardwareInfoResponse ParseInfoReport(ReadOnlySpan<byte> report)
     {
@@ -104,25 +115,22 @@ internal static class HidProtocol
 
     public static RuntimeStatusResponse ParseStatusReport(ReadOnlySpan<byte> report)
     {
-        Require(report.Length >= 14 && report[0] == StatusReportId,
+        Require(report.Length >= StatusInputSize && report[0] == StatusReportId,
             "unexpected HID status report length or ID");
-        Require(report[1] is 2 or 3, "unsupported HID status report version");
-        var size = report[1] == 3 ? StatusInputSize : 14;
+        Require(report[1] == StatusReportVersion, "unsupported HID status report version");
+        var size = StatusInputSize;
         Require(report.Length >= size, "unexpected HID status report length");
         Require(report[size..].IndexOfAnyExcept((byte)0) < 0,
             "unexpected HID status report padding");
         var payload = report.Slice(1, size - 1);
-        ushort? cpuUsage = null;
-        uint? ramUsed = null, ramTotal = null;
-        if (payload[0] == 3)
-        {
-            var cpu = BinaryPrimitives.ReadUInt16LittleEndian(payload[13..]);
-            Require(cpu <= 10000 || cpu == ushort.MaxValue, "invalid CPU usage in HID status report");
-            cpuUsage = cpu == ushort.MaxValue ? null : cpu;
-            ramUsed = ReadUInt32LittleEndian(payload[15..]);
-            ramTotal = ReadUInt32LittleEndian(payload[19..]);
-            Require(ramTotal != 0 && ramUsed <= ramTotal, "invalid RAM usage in HID status report");
-        }
+        var core0 = BinaryPrimitives.ReadUInt16LittleEndian(payload[13..]);
+        var core1 = BinaryPrimitives.ReadUInt16LittleEndian(payload[15..]);
+        var ramUsed = ReadUInt32LittleEndian(payload[17..]);
+        var ramTotal = ReadUInt32LittleEndian(payload[21..]);
+        Require((core0 <= 10000 || core0 == ushort.MaxValue) &&
+                (core1 <= 10000 || core1 == ushort.MaxValue),
+            "invalid per-core CPU usage in HID status report");
+        Require(ramTotal != 0 && ramUsed <= ramTotal, "invalid RAM usage in HID status report");
         var flags = payload[10];
         Require((flags & ~0x1f) == 0, "unknown HID status flags");
         var clockHz = ReadUInt32LittleEndian(payload[6..]);
@@ -135,7 +143,8 @@ internal static class HidProtocol
         return new(payload[1], ReadUInt32LittleEndian(payload[2..]), clockHz,
             (flags & 0x01) != 0, (flags & 0x02) != 0,
             temperatureValid, temperatureValid ? temperature : null, ledAvailable, ledOn,
-            cpuUsage, ramUsed, ramTotal);
+            core0 == ushort.MaxValue ? null : core0,
+            core1 == ushort.MaxValue ? null : core1, ramUsed, ramTotal);
     }
 
     public static MemoryStatusResponse ParseMemoryReport(ReadOnlySpan<byte> report)
@@ -145,13 +154,12 @@ internal static class HidProtocol
         Require(report[(MemoryPayloadSize + 1)..].IndexOfAnyExcept((byte)0) < 0,
             "unexpected HID memory report padding");
         var payload = report[1..];
-        var nor = payload[0] is 3 or 4 && payload[3] == 2;
-        Require(payload[0] == ReportVersion || nor, "unsupported HID memory report version");
+        Require(payload[0] == ReportVersion, "unsupported HID memory report version");
         var flags = payload[2];
         Require((flags & ~0x3f) == 0, "unknown HID memory flags");
         var component = payload[3];
         var mode = payload[4];
-        Require(nor ? mode is 2 or 3 : component <= 1 && mode <= 2, "unknown HID memory type or mode");
+        Require(component <= 1 && mode <= 2, "unknown HID memory type or mode");
         var configured = (flags & 0x01) != 0;
         var presenceKnown = (flags & 0x02) != 0;
         var present = (flags & 0x04) != 0;
@@ -170,19 +178,7 @@ internal static class HidProtocol
                 (initialized || cid.IndexOfAnyExcept((byte)0) < 0),
             "invalid memory metadata values");
         SdCardIdentity? identity = null;
-        uint? physicalCapacity = null;
-        string? jedecId = null;
-        string? deviceUid = null;
-        if (nor && initialized)
-        {
-            physicalCapacity = ReadUInt32LittleEndian(cid[3..]);
-            Require(cid[0] == 0xef && cid[1] == 0x40 && cid[2] == 0x18
-                && cid[(payload[0] == 4 ? 15 : 7)..].IndexOfAnyExcept((byte)0) < 0 && physicalCapacity == 16777216
-                && (ulong)blockCount * 512 <= physicalCapacity, "invalid NOR identification or capacity");
-            jedecId = "ef4018";
-            deviceUid = payload[0] == 4 ? "0x" + Convert.ToHexStringLower(cid.Slice(7, 8)) : null;
-        }
-        else if (cidValid)
+        if (cidValid)
         {
             var oem = Encoding.ASCII.GetString(cid.Slice(1, 2));
             var product = Encoding.ASCII.GetString(cid.Slice(3, 5));
@@ -194,14 +190,13 @@ internal static class HidProtocol
                 BinaryPrimitives.ReadUInt32BigEndian(cid[9..]), 2000 + (date >> 4), date & 0x0f);
         }
         return new(payload[1], configured, presenceKnown, presenceKnown ? present : null,
-            initialized, nor ? "nor-flash" : component == 1 ? "sd-card" : null, mode switch
+            initialized, component == 1 ? "sd-card" : null, mode switch
             {
                 1 => "sdio",
                 2 => "spi",
-                3 => "qspi",
                 _ => null
             }, initialized ? busClockHz : null, capacityValid ? blockCount : null,
-            capacityValid ? (ulong)blockCount * 512 : null, identity, physicalCapacity, jedecId, deviceUid);
+            capacityValid ? (ulong)blockCount * 512 : null, identity);
     }
 
     public static string ParseFilesystemReport(ReadOnlySpan<byte> report)
@@ -229,6 +224,38 @@ internal static class HidProtocol
         Require(payload[0] is 2 or 3 && payload[1] <= 1 && payload[2] <= 1 && payload[3] <= 1,
             "invalid HID MSC status report");
         return new(payload[1] != 0, payload[2] != 0, payload[3] != 0, payload[0] == 3);
+    }
+
+    public static BootSettingsResponse ParseSettingsReport(ReadOnlySpan<byte> report)
+    {
+        var payload = FeaturePayload(report, SettingsReportId, SettingsPayloadSize);
+        Require(payload[0] == 1, "unsupported HID settings report version");
+        var settings = new BootSettingsResponse(BinaryPrimitives.ReadUInt16LittleEndian(payload[1..]),
+            payload[3], payload[4]);
+        ValidateSettings(settings);
+        return settings;
+    }
+
+    public static byte[] BuildSettingsReport(BootSettingsResponse settings)
+    {
+        ValidateSettings(settings);
+        var report = new byte[SettingsFeatureSize];
+        report[0] = SettingsReportId;
+        report[1] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(2), (ushort)settings.SystemClockMhz);
+        report[4] = (byte)settings.SdioBusMhz;
+        report[5] = (byte)settings.SpiBusMhz;
+        return report;
+    }
+
+    public static byte[] BuildRebootCommandReport() => [RebootReportId, 1, 1];
+
+    private static void ValidateSettings(BootSettingsResponse settings)
+    {
+        Require(settings.SystemClockMhz is 0 or 150 or 200 or 250
+            && settings.SdioBusMhz is 0 or 25 or 50
+            && settings.SpiBusMhz is 0 or 25 or 50,
+            "unsupported boot settings value");
     }
 
     public static byte[] BuildMscCommandReport(bool enabled, bool force = false)

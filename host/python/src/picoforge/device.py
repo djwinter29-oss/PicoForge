@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import ceil
+from time import monotonic
 from typing import Any
 
 from .protocol import (
@@ -13,7 +15,11 @@ from .protocol import (
     MSC_COMMAND_REPORT_ID,
     SELF_TEST_REPORT_ID,
     SELF_TEST_INPUT_SIZE,
+    SETTINGS_FEATURE_SIZE,
+    SETTINGS_REPORT_ID,
+    build_reboot_command_report,
     STATUS_INPUT_SIZE,
+    build_settings_command_report,
     build_led_command_report,
     build_msc_command_report,
     build_self_test_command_report,
@@ -22,6 +28,7 @@ from .protocol import (
     parse_filesystem_report,
     parse_msc_status_report,
     parse_self_test_report,
+    parse_settings_report,
     parse_status_report,
 )
 
@@ -66,12 +73,25 @@ def _matches_vendor_collection(info: dict[str, Any]) -> bool:
     return True
 
 
+def _matching_devices() -> list[dict[str, Any]]:
+    devices = _require_hid().enumerate(VENDOR_ID, 0)
+    return [info for info in devices
+            if info.get("product_id") in PRODUCT_IDS and _matches_vendor_collection(info)]
+
+
+def enumerate_devices() -> list[dict[str, str | None]]:
+    """Return board identity metadata without opening a HID connection."""
+    return [{
+        "product_name": info.get("product_string") or "PicoForge",
+        "serial_number": info.get("serial_number") or None,
+        "device_path": _path_string(info.get("path")),
+    } for info in _matching_devices()]
+
+
 def _select_device(serial_number: str | None, device_path: str | None) -> dict[str, Any]:
     if serial_number is not None and device_path is not None:
         raise ValueError("--serial and --device-path cannot be used together")
-    devices = _require_hid().enumerate(VENDOR_ID, 0)
-    matches = [info for info in devices
-               if info.get("product_id") in PRODUCT_IDS and _matches_vendor_collection(info)]
+    matches = _matching_devices()
     if serial_number is not None:
         matches = [info for info in matches if info.get("serial_number") == serial_number]
     if device_path is not None:
@@ -104,12 +124,27 @@ class PicoForgeHid:
         report = self._device.get_feature_report(INFO_REPORT_ID, INFO_PAYLOAD_SIZE + 1)
         return parse_info_report(report)
 
+    def read_settings(self) -> dict[str, int]:
+        self._require_open()
+        report = self._device.get_feature_report(SETTINGS_REPORT_ID, SETTINGS_FEATURE_SIZE)
+        return parse_settings_report(report)
+
     def read_status(self, timeout_ms: int = 250) -> dict[str, object] | None:
+        """Consume non-status input reports while waiting up to timeout_ms for status."""
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
         self._require_open()
-        report = self._device.read(STATUS_INPUT_SIZE, timeout_ms)
-        return parse_status_report(report) if report else None
+        deadline = monotonic() + timeout_ms / 1000
+        remaining_ms = timeout_ms
+        while True:
+            report = self._device.read(max(STATUS_INPUT_SIZE, MEMORY_INPUT_SIZE, SELF_TEST_INPUT_SIZE), remaining_ms)
+            if not report:
+                return None
+            if report[0] not in (MEMORY_REPORT_ID, FILESYSTEM_REPORT_ID, MSC_COMMAND_REPORT_ID, SELF_TEST_REPORT_ID):
+                return parse_status_report(report)
+            remaining_ms = ceil((deadline - monotonic()) * 1000)
+            if remaining_ms <= 0:
+                return None
 
     def read_input_report(self, timeout_ms: int = 250) -> dict[str, object] | None:
         if timeout_ms < 0:
@@ -134,6 +169,24 @@ class PicoForgeHid:
         result = self._device.send_feature_report(list(report))
         if result < 0:
             raise OSError("failed to send HID LED command")
+
+    def set_settings(self, settings: dict[str, object]) -> dict[str, int]:
+        self._require_open()
+        report = build_settings_command_report(settings)
+        result = self._device.send_feature_report(list(report))
+        if result < 0:
+            raise OSError("failed to send HID settings command")
+        saved = self.read_settings()
+        if saved != settings:
+            raise RuntimeError("firmware did not confirm the selected boot settings")
+        self.reboot()
+        return saved
+
+    def reboot(self) -> None:
+        self._require_open()
+        result = self._device.send_feature_report(list(build_reboot_command_report()))
+        if result < 0:
+            raise OSError("failed to send HID reboot command")
 
     def set_msc(self, enable: bool, *, force: bool = False) -> None:
         self._require_open()

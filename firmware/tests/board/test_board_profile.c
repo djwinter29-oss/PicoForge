@@ -18,14 +18,9 @@ void test_standard_board_profile_requests_qualified_sdio_clock_and_consecutive_l
     TEST_ASSERT_EQUAL_UINT32(3u, profile->native_pins.command_gpio);
     for (unsigned lane = 0; lane < 4; ++lane) {
         TEST_ASSERT_EQUAL_UINT32(4u + lane, profile->native_pins.data_gpio[lane]);
-        TEST_ASSERT_EQUAL_UINT32(3u + lane, profile->qspi_pins.data_gpio[lane]);
     }
     TEST_ASSERT_EQUAL_UINT32(profile->native_pins.clock_gpio, profile->spi_pins.clock_gpio);
-    TEST_ASSERT_EQUAL_UINT32(profile->spi_pins.clock_gpio, profile->qspi_pins.clock_gpio);
     TEST_ASSERT_EQUAL_UINT32(profile->native_pins.command_gpio, profile->spi_pins.mosi_gpio);
     TEST_ASSERT_EQUAL_UINT32(profile->native_pins.data_gpio[0], profile->spi_pins.miso_gpio);
     TEST_ASSERT_EQUAL_UINT32(profile->native_pins.data_gpio[3], profile->spi_pins.cs_gpio);
-    TEST_ASSERT_EQUAL_UINT32(profile->spi_pins.cs_gpio, profile->qspi_pins.cs_gpio);
-    TEST_ASSERT_EQUAL_UINT32(profile->qspi_pins.data_gpio[2], profile->serial_wp_gpio);
-    TEST_ASSERT_EQUAL_UINT32(profile->qspi_pins.data_gpio[3], profile->serial_hold_gpio);
 }

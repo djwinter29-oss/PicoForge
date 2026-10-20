@@ -1,7 +1,7 @@
 # Storage File Benchmark
 
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
-It operates on the already-mounted build-selected SD or LevelX NOR volume; the existing host UI/API calls it a
+It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
 self-test. The HID report layout and numeric state/error values are unchanged: wire state 2 (`mounting`) means
 preparing an existing mount, and wire error 5 (`card`) means the selected media is unavailable.
 
@@ -26,7 +26,7 @@ byte counts, average MiB/s, verification results, and cleanup errors.
    does not make ownership available until the worker finishes.
 
 Do not reset, unplug, remove the card, or change transport while the test runs.
-This test writes flash and contributes to card wear. Back up important data
+This test writes to the SD card and contributes to card wear. Back up important data
 before testing. It is not a filesystem repair or full-capacity authenticity test.
 
 The fixed filename `/PFTEST.BIN` is reserved for self-tests. **Starting a test
@@ -143,9 +143,17 @@ tools/validation/setup-ceedling-testing.sh test:test_file_benchmark
 ```
 
 Host tests cover report layout/validation, average calculations, start/cancel
-encoding, API status codes and OpenAPI generation, consent gating, progress,
+encoding, API status codes and OpenAPI generation, mounted-volume admission, progress,
 cleanup messages, and direct-client event handling. Run them through
 `tools/validation/test-host.sh` using the configured Python environment.
+
+### Historical Measurements
+
+The observations below describe earlier firmware and test workflows, including older buffer sizes and unmount
+behavior. They do not override the current [running safeguards](#running) or [measurement boundaries](#measurement).
+For later card/clock comparisons, see the
+[2026-10-18 speed matrix](tests/records/2026-10-18-sdio-speed-matrix.md) and its
+[repeat measurement](tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
 
 On 2026-10-13, the same connected Pico 2 and 16 GB card passed the 32 MiB test
 before batching, after CMD25 writes, and after CMD18 reads were added, in SDIO
@@ -182,7 +190,8 @@ wrote in 7,165 ms (4.47 MiB/s, up from 0.89) and read/verified in 15,371 ms
 also fills and checks its pattern a word at a time, which removed CPU time from
 both phases.
 
-With the Pico 2 built at `--sys-clk-mhz 200` and the SD bus unchanged at 12.5 MHz,
+In a historical Pico 2 build using the then-supported 200 MHz build-clock override, with the SD bus unchanged at
+12.5 MHz,
 the same 32 MiB test passed with zero mismatches: write 34,972 ms (0.915 MiB/s)
 and read/verify 15,904 ms (2.012 MiB/s). Reads gained about 16% from the faster
 core; writes did not, because they were limited by CMD25 stream restarts (see below), not CPU.
@@ -209,7 +218,7 @@ Final Pico 2 hardware validation at 150 MHz CPU / 12.5 MHz SDIO passed three
 128 MiB write/read/verify runs: read 4.693–4.696 MB/s, write 5.032–5.169 MB/s,
 zero mismatches and successful cleanup. These are short filesystem benchmarks,
 not a continuous acquisition guarantee. See
-`tests/records/2026-10-13-sdio-read-throughput.md` for artifacts and scope.
+[the read-throughput record](tests/records/2026-10-13-sdio-read-throughput.md) for artifacts and scope.
 Run the Ceedling SDIO read-batch regressions for DMA boundary and recovery
 checks; see [firmware test guidance](../firmware/tests/README.md#host-behavior-regressions).
 At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
@@ -225,12 +234,11 @@ layout passed, but native browser-to-device WebHID access was not exercised by
 the automated browser in this environment. The integrated browser/CDP connection
 was unavailable, so local Playwright/Chromium was used.
 
-The .NET development launch currently encounters an existing static-web-assets
+At the time of that validation, the .NET development launch encountered a static-web-assets
 path issue in this workspace; its normal launch and generated OpenAPI endpoint
-test were verified. SPI benchmark performance, physical direct-WebHID access,
-long-duration endurance, media-removal, and power-loss recovery remain unverified.
+test were verified. Those runs did not qualify SPI benchmark performance, physical direct-WebHID access,
+long-duration endurance, media removal, or power-loss recovery. Later SPI measurements are recorded in the
+[transport qualification notes](../firmware/src/drivers/storage/README.md#spi-clock-qualification-2026-10-17).
 
-The 2026-10-15 static review follow-up fixes cached MSC transfer sense at handled
-BOT and bus resets. Data paths, clocks and buffer defaults are unchanged; no
-new throughput result is claimed. See [SD review scope and validation](sdcard-design.md#static-sd-review-follow-up-2026-10-15)
-for reset ordering, host-model limits, existing overlap and pending HIL comparisons.
+For the MSC reset-sense review and its validation limits, see the
+[2026-10-15 static review record](tests/records/2026-10-15-static-sd-review-followup.md).

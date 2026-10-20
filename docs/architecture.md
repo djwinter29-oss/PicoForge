@@ -4,7 +4,27 @@
 
 ## Current Firmware
 
-`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected `PICO_BOARD`; see [artifact naming](../README.md#1-build-the-firmware). The TinyUSB configuration lives under `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger; USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides serialized severity-tagged lines. The USB task services the [CDC CLI](cdc-cli.md) and publishes a versioned HID status report every 250 ms. HID Feature report 1 carries stable product, MCU, and USB serial identity; Input report 2 carries dynamic uptime, system clock, USB/CDC state, internal temperature, and LED state; Feature report 4 accepts LED set-state commands. Hosts read identity once per connection and receive changing values through the periodic input report. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4. The onboard LED uses the selected SDK board's `PICO_DEFAULT_LED_PIN` (GPIO 25 for the current `pico` and `pico2` targets). Simple system, temperature, and LED drivers live flat under `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines in `drivers/storage/`. The shared protocol is documented in [usb-protocol.md](usb-protocol.md). The development VID/PID is `0xCAFE:0x4011` and is not for product release. `firmware/src/main.c` initializes board UART and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler. The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature, and LED behavior still require board validation.
+`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the
+platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected `PICO_BOARD`; see
+[artifact naming](../README.md#1-build-the-firmware). The TinyUSB configuration lives under
+`firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live
+under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID
+interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger;
+USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides
+serialized severity-tagged lines. The USB task services the [CDC CLI](cdc-cli.md) and publishes a versioned HID
+status report every 250 ms. HID Feature report 1 carries stable product, MCU, and USB serial identity; Input report 2
+carries dynamic uptime, system clock, USB/CDC state, internal temperature, and LED state; Feature report 4 accepts
+LED set-state commands. Hosts read identity once per connection and receive changing values through the periodic
+input report. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4.
+The fixed Pico/Pico 2 board profile in `firmware/src/board/board_profile.c` assigns the active-high LED to GPIO 25;
+it does not derive wiring from arbitrary SDK board definitions. Other board layouts require a matching board profile;
+see [hardware setup](hardware-setup.md). Simple system, temperature, and LED drivers live flat under
+`firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines
+in `drivers/storage/`. The shared protocol is documented in [usb-protocol.md](usb-protocol.md).
+The development VID/PID is `0xCAFE:0x4011` and is not for product release. `firmware/src/main.c` initializes board UART
+and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler.
+The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature,
+and LED behavior still require board validation.
 
 Input Report 3 publishes SD-card detection/initialization state, selected bus mode, effective bus speed, CSD-derived capacity, and CID identity every second. Input Report 5 reports MSC ownership transitions, while Feature Report 5 requests enable/disable. In MSC mode the USB descriptor appends MSC after CDC and HID, preserving the PID and HID interface number; see [usb-protocol.md](usb-protocol.md). The owner gate rejects firmware block calls while the host owns the card. Enabling queues a worker-owned FatFs unmount before acquisition and is rejected if CLI storage work is pending. The legacy safe-disable command requires host eject. Dashboard **Disable USB drive** instead requests confirmed [Pico-side detach/remount](usb-protocol.md#confirmed-force-return), with one worker mount attempt and explicit failure reporting; host apps never run OS eject commands.
 
@@ -16,12 +36,14 @@ are closed before command completion, and enabling MSC automatically queues file
 unmount on the worker before acquiring USB ownership. See [the CDC CLI guide](cdc-cli.md) for commands, safeguards,
 resource budgets, and validation limits.
 
-This is a buildable starting point, not yet the complete application framework. The example currently uses Pico SDK and FreeRTOS APIs directly; future modules should establish the boundaries below before more hardware and application behavior is added.
+The firmware separates application policy, middleware, reusable drivers, and platform integration as described below.
+New modules should preserve these boundaries as hardware and application behavior grows.
 
 HID Report 6 starts/cancels a large-file [SD self-test](sd-self-test.md) and
 publishes verification progress and phase timings. Its RTOS-independent engine
-lives beside storage middleware and runs in the same sole FatFs worker, with
-exclusive ownership and create-new/cleanup safeguards. Browser, Python, and
+lives in `app/storage` and runs in the same sole FatFs worker, with
+exclusive ownership, explicit replacement of the reserved `/PFTEST.BIN` file, and checked cleanup.
+See the [self-test safeguards](sd-self-test.md#running). Browser, Python, and
 .NET dashboards expose the controls and calculate average read/write metrics.
 
 ## Core and Runtime Policy
@@ -29,19 +51,24 @@ exclusive ownership and create-new/cleanup safeguards. Browser, Python, and
 Before starting the scheduler, USB startup disconnects for 250 ms using the SDK busy wait, then reconnects.
 This boot-only delay must not depend on alarm or RTOS wakeups; an alarm-backed sleep stalled RP2040 startup.
 
-`integration/freertos/runtime_stats.c` samples FreeRTOS idle runtime and SDK-linked SRAM reservations for HID
+`app/runtime_stats.c` samples per-core FreeRTOS idle runtime and SDK-linked SRAM reservations for HID
 Input Report 2. See [runtime telemetry](usb-protocol.md#input-report-2) for metric definitions, sampling limits
 and host compatibility. Both dashboards show these metrics in Runtime status.
 
 FreeRTOS-Kernel 11.3.1 runs with `configNUMBER_OF_CORES=2`. The Pico port launches core 1 when the scheduler
-starts on core 0; applications must not launch a second independent core entry point. USB, storage, timer and
-idle tasks use the kernel's all-core affinity default and may migrate. Different priorities may execute
-simultaneously. Affinity capability remains enabled for SDK flash-safe execution, which temporarily uses a
+starts on core 0; applications must not launch a second independent core entry point. USB, storage and timer
+ tasks use the kernel's all-core affinity default and may migrate. Idle tasks are pinned to their corresponding
+physical cores (`configIDLE_AFFINITY=1`) so idle-runtime CPU telemetry remains per-core. Different priorities may execute
+simultaneously. Affinity capability remains enabled for Pico SDK boot-flash-safe execution, which temporarily uses a
 core-specific lockout task; application tasks are not pinned. Task/ISR kernel critical sections exclude both cores,
-while existing media reservations serialize physical engines and LevelX. FatFs retains one executor.
+while existing media reservations serialize physical storage operations. FatFs retains one executor.
 SMP schedules tasks, not arbitrary hardware resources: board setup and IRQ installation still occur before scheduler
 startup, and IRQ routing stays on its initialization core. Peripheral ownership remains explicit rather than being
 inferred from the executing core. Two-core scheduling is not a hard real-time guarantee.
+
+Project `configASSERT` uses the SDK's `hard_assert`, so kernel and project invariants remain active under
+`NDEBUG` in Release builds. Host checks compile the real configuration and SDK assertion header both with and
+without `NDEBUG`; they do not qualify target fault handling.
 
 The project-owned [DCD guard](../firmware/src/integration/usb/dcd_guard.c) interposes the pinned TinyUSB RP2040/RP2350
 driver entry points and its shared USB IRQ handler. A dedicated SDK spinlock and local interrupt masking exclude
@@ -62,10 +89,8 @@ remain on that IRQ-owning core; wrong-core lifecycle calls assert rather than si
 Normal USB task processing does not change IRQ ownership or require task affinity. These safeguards have host
 concurrency tests; sustained concurrent USB/media workloads still require target qualification.
 Dependency upgrades must pass the pinned-driver surface contract before the guard can be considered compatible.
-On the connected Pico2 at 250 MHz CPU / 50 MHz SDIO, probe inspection confirmed the active and passive idle tasks
-executing on separate cores. The dashboard enable command completed worker-owned unmount and re-enumerated the
-SD card as a 119.1 GiB USB block device with its existing partition. NOR SMP builds and host handoff tests pass,
-but NOR hardware handoff and sustained dual-core stress remain unqualified.
+Sustained dual-core stress remains unqualified; the one-off Pico 2 observation is in the
+[earlier qualification record](tests/records/earlier-sdio-qualification-undated.md#pico-2-dual-core-msc-handoff-observation).
 
 The example uses static allocation for its application task and the port-provided idle-task memory. Software timers are enabled because the Pico port uses the timer-pend API for SDK synchronization interoperation. Additional tasks should document their stack, priority, ownership, and whether allocation is static or dynamic. The current firmware disables dynamic task allocation.
 
@@ -94,9 +119,8 @@ Own product behavior, startup, and composition of the services needed by a firmw
 
 ### Middleware
 
-Provide reusable application-facing services. Storage middleware mounts FatFs over the logical block-device API;
-the application selects SD or translated external NOR and remains responsible for board-approved configuration and
-mounting policy. See [build-selected NOR storage](nor-flash.md#build-selected-fatfs-and-usb-msc).
+Provide reusable application-facing services. Storage middleware adapts FatFs disk I/O to the logical block-device
+API; the application owns the FatFs volume, SD-card configuration, ownership, and mounting policy.
 The firmware currently uses the USB device role; a USB host role is not selected.
 
 ### Drivers
@@ -128,7 +152,7 @@ Embedded CLI is also pinned as a Git submodule. Its application session module i
 of the USB transport and RTOS; see [CDC CLI](cdc-cli.md) for the dependency pin,
 session lifecycle, command-extension rules, memory budget, and validation plan.
 
-The application storage-owner task initializes the selected SD or LevelX NOR backend and mounts its existing volume through the
+The application storage-owner task initializes the SD-card interface and mounts its existing volume through the
 device-independent `pf_fatfs_volume_mount()` service; mounting never formats media. FatFs uses a logical block device,
 selected by the application. The SD API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes
 to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. Mount, unmount, and file
@@ -139,15 +163,15 @@ binding lifetimes, and ownership contracts.
 Application storage policy stays in `app/storage`: `fatfs_volume.c/.h` owns the singleton FatFs instance,
 mount registration and format telemetry; `storage_commands.c/.h` executes CDC storage commands,
 `file_benchmark.c/.h` verifies and times a dedicated file, `storage_worker.c/.h` serializes requests and owns
-automount/recovery policy, and `sd_media.c/.h` and `nor_media.c/.h` own their respective application lifecycle and
-firmware/USB ownership. SD driver dispatch, protocol, telemetry and execution-port locks remain below the application;
+automount/recovery policy, and `sd_media.c/.h` owns the application media lifecycle and firmware/USB ownership.
+SD driver dispatch, protocol, telemetry and execution-port locks remain below the application;
 retained ownership/operation diagnostics belong to `sd_media`. Its static firmware descriptor gates FatFs I/O,
 while the middleware SD adapter is explicitly raw and has no application ownership policy.
 The worker asks `sd_media` to obtain SD configuration and initialize its execution port before task startup;
-the USB task no longer configures SD. Backend-independent command and worker headers do not expose SD configuration.
-NOR builds omit SD protocol/port targets and the SD block adapter; board SD configuration is unavailable without
-touching SD pins. Common FatFs/logical-block middleware links only the selected adapter's device dependencies.
-Automatic mount failures retain backend, volume and FatFs result codes and log the first or changed failure;
+the USB task no longer configures SD. Command and worker headers do not expose SD configuration.
+The firmware build includes the SD protocol/port targets and SD block adapter. Common FatFs/logical-block middleware
+uses the SD block adapter.
+Automatic mount failures retain SD initialization, volume and FatFs result codes and log the first or changed failure;
 identical retries remain paced and do not repeat that worker warning. Successful mounting resets warning suppression.
 Mount registration and format are independent atomic telemetry snapshots; neither grants filesystem access.
 Worker presence fields remain worker-owned: readers inspect them only while the kernel-protected
@@ -155,7 +179,7 @@ Worker presence fields remain worker-owned: readers inspect them only while the 
 
 Product-specific USB behavior lives under `app/usb`: `usb_task.c/.h` owns task startup, CDC command sessions and report
 scheduling; `usb_hid.c/.h` owns the product HID protocol; `usb_msc.c/.h` owns SCSI callbacks and application handoff
-coordination; `msc_storage.h` selects the application media service. `usb_descriptors.c` defines product interfaces.
+coordination; `msc_storage.h` maps MSC operations to the SD media service. `usb_descriptors.c` defines product interfaces.
 TinyUSB configuration remains under `integration/usb`; the pinned TinyUSB stack supplies reusable USB machinery.
 No extra middleware forwarding layer or runtime backend registry is introduced.
 
@@ -206,9 +230,35 @@ Ceedling is configured by the repository-root `project.yml`. Host unit tests bel
 host-testable application, board, driver, integration and middleware modules. The configuration excludes `main.c`;
 board tests use scoped SDK fakes.
 
-`host/python/tests/`, `host/dotnet/tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
+`host/python/tests/`, `host/dotnet/PicoForge.Tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 
 Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow.
 The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support constructs the
-selected transport configuration. External NOR SPI/QSPI-PIO support is implemented; its physical timing, USB interoperability,
-and power-loss qualification remain outstanding. See [NOR flash](nor-flash.md) for supported parts and region safety.
+selected SDIO-PIO or SD-SPI transport configuration. Physical timing, card compatibility, USB interoperability, and
+power-loss qualification remain subject to the limits recorded in the SD validation guide.
+### Review remediation software checks
+
+`INCLUDE_uxTaskGetStackHighWaterMark=1` enables the existing FreeRTOS stack-fill scan. USB and Storage sample
+only their own task (`NULL` handle), at 30-second intervals in their normal loops, and log the minimum untouched
+stack in **StackType_t words**, not bytes. Sampling does not scan a concurrently executing task on the other core.
+It does not reset the watermark, allocate memory, or add a new task. Existing overflow checking remains enabled.
+Sampling can be delayed by a long storage operation; UART logging and scanning add occasional service overhead.
+Unused fill bytes are an observation, not certified margin (unwritten stack reservations can remain filled).
+No target stack observations were collected during remediation.
+
+The canonical hardware-free filesystem HID vectors live in `tests/fixtures/hid-filesystem.csv`. Python, .NET,
+and WebHID consume all valid/invalid vectors directly. Firmware produces reports rather than parsing host input
+filesystem reports: Ceedling checks its exFAT encoder against the same fixture. Invalid telemetry vectors apply
+to the host decoders, not the firmware's separate command parser. This small fixture covers format, version,
+length and padding boundaries; it is not exhaustive coverage of every HID report family.
+
+PR and release-package workflows build both boards at 150 and 250 MHz with both transports and both execution
+ports (16 matrix builds), plus one SDK-default-clock application check per board. MSC ELF checks run only for
+the FreeRTOS application; bare-metal produces a link-smoke target, not a USB application.
+The [release guide](release.md) owns tag validation, version propagation, host-suite gates, package contents and
+reproducible filename dates. Release packages carry the validated tag version, not the local development default;
+they are uploaded as workflow artifacts with read-only repository permissions, not published as GitHub releases.
+
+Host regressions cannot certify MSC end-to-end enumeration/BOT/host-cache behavior, power-loss recovery,
+sustained dual-core stress, or target stack margin. Those remain hardware qualification gaps. No hardware,
+media access, HIL, flashing, or physical measurements were performed for this remediation.

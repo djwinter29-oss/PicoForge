@@ -1,7 +1,7 @@
 #ifndef PF_FREERTOS_CONFIG_H
 #define PF_FREERTOS_CONFIG_H
 
-#include <assert.h>
+#include "pico/assert.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +28,8 @@ uint64_t time_us_64(void);
 #define configNUMBER_OF_CORES 2
 /* SDK flash-safe execution needs affinity support; application tasks keep the all-core default. */
 #define configUSE_CORE_AFFINITY 1
+/* Keep each idle-task runtime counter tied to its physical core for CPU telemetry. */
+#define configIDLE_AFFINITY 1
 #define configRUN_MULTIPLE_PRIORITIES 1
 #define configUSE_PASSIVE_IDLE_HOOK 0
 
@@ -62,8 +64,10 @@ uint64_t time_us_64(void);
 #define configUSE_TRACE_FACILITY 0
 #define configUSE_STATS_FORMATTING_FUNCTIONS 0
 
-#define configASSERT(condition) assert(condition)
+/** Keep kernel and project invariants active in Release builds too. */
+#define configASSERT(condition) hard_assert(condition)
 
+#define INCLUDE_uxTaskGetStackHighWaterMark 1
 #define INCLUDE_vTaskDelay 1
 #define INCLUDE_vTaskDelete 1
 #define INCLUDE_vTaskPrioritySet 1

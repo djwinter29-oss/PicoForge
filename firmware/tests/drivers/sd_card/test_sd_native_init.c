@@ -396,6 +396,16 @@ void test_high_speed_is_attempted_whenever_the_transport_can_exceed_25mhz(void)
     }
 }
 
+void test_default_speed_only_config_never_negotiates_high_speed(void)
+{
+    pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.native_default_speed_only = true;
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
+    TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
+    TEST_ASSERT_FALSE(native_info.high_speed);
+}
+
 void test_card_init_failure_does_not_retry_at_other_clocks(void)
 {
     fail_command = 2u;

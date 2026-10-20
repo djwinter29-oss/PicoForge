@@ -23,13 +23,8 @@ typedef struct {
     uint32_t pio_index;
     uint32_t clock_hz;
     uint32_t spi_index;
-    pf_storage_spi_pins_t spi_pins; /**< Shared SD/NOR SPI signal allocation. */
+    pf_storage_spi_pins_t spi_pins; /**< SD SPI signal allocation. */
     uint32_t spi_clock_hz; /**< SD-SPI ceiling; rates above 25 MHz require card High-Speed support. */
-    pf_storage_qspi_pins_t qspi_pins; /**< Quad serial signal allocation. */
-    uint32_t serial_clock_hz; /**< Initial external serial-device clock. */
-    uint32_t serial_timeout_us; /**< SPI per-byte FIFO deadline. */
-    uint32_t serial_wp_gpio; /**< Inactive-high SPI-only write protect. */
-    uint32_t serial_hold_gpio; /**< Inactive-high SPI-only hold. */
     bool card_detect_enabled;
     uint32_t card_detect_gpio;
     bool card_detect_active_high;
@@ -42,12 +37,5 @@ const pf_board_resources_t *pf_board_resources_get(void);
 
 /** Validate board pin/peripheral assignments without accessing hardware. */
 bool pf_board_resources_validate(const pf_board_resources_t *topology);
-
-/** @brief Validate serial storage and UART/LED conflicts without touching hardware.
- * @param topology Board resource profile.
- * @param quad Select QSPI pins; false selects SPI including WP/HOLD.
- * @return Whether all selected resources are valid and nonoverlapping.
- */
-bool pf_board_resources_validate_serial(const pf_board_resources_t *topology, bool quad);
 
 #endif

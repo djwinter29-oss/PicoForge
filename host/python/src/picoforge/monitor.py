@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import hashlib
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 
-from .device import PicoForgeHid
+from .device import PicoForgeHid, enumerate_devices
+from .protocol import build_settings_command_report
 
 
 def _empty_snapshot() -> dict[str, object]:
@@ -22,6 +24,9 @@ def _empty_snapshot() -> dict[str, object]:
         "filesystem_format": None,
         "msc": None,
         "self_test": None,
+        "settings": None,
+        "settings_supported": False,
+        "settings_message": None,
         "updated_at": None,
     }
 
@@ -72,7 +77,10 @@ class DeviceMonitor:
                 raise RuntimeError("PicoForge HID is not connected")
             self._active_client.set_led(on)
         with self._lock:
-            board_status = dict(self._snapshot["board_status"])
+            current = self._snapshot.get("board_status")
+            if not isinstance(current, dict):
+                raise RuntimeError("PicoForge HID is disconnected")
+            board_status = dict(current)
             board_status["led_on"] = on
             self._snapshot["board_status"] = board_status
         return board_status
@@ -102,25 +110,45 @@ class DeviceMonitor:
             self._snapshot["msc"] = status
         return status
 
+    def set_settings(self, settings: dict[str, object]) -> dict[str, int]:
+        build_settings_command_report(settings)
+        with self._device_lock:
+            snapshot = self.snapshot()
+            if self._active_client is None:
+                raise RuntimeError("PicoForge HID is not connected")
+            if snapshot.get("settings_supported") is not True:
+                raise RuntimeError("Boot settings are unavailable on this firmware")
+            msc = snapshot.get("msc")
+            if not isinstance(msc, dict):
+                raise RuntimeError("Waiting for storage ownership status")
+            if msc.get("enabled") or msc.get("transition_pending"):
+                raise RuntimeError("Disable the USB drive before saving boot settings")
+            if isinstance(snapshot.get("self_test"), dict) and snapshot["self_test"].get("active"):
+                raise RuntimeError("Wait for the storage self-test to finish before saving boot settings")
+            saved = self._active_client.set_settings(settings)
+            with self._lock:
+                self._snapshot.update(settings=saved, settings_message="Saved. Rebooting now.")
+            return saved
+
     def _run(self) -> None:
         while not self._stop.is_set():
             client = None
             try:
                 client = self._client_factory()
                 hardware = client.read_info()
+                try:
+                    settings = client.read_settings()
+                    settings_message = None
+                except (OSError, RuntimeError, ValueError) as error:
+                    settings = None
+                    settings_message = f"Boot settings unavailable: {error}"
                 with self._device_lock:
                     self._active_client = client
                 with self._lock:
                     self._snapshot = {
-                        "connected": True,
-                        "error": None,
-                        "hardware": hardware,
-                        "runtime": None,
-                        "board_status": None,
-                        "memory": None,
-                        "msc": None,
-                        "self_test": None,
-                        "updated_at": None,
+                        **_empty_snapshot(), "connected": True, "hardware": hardware,
+                        "settings": settings, "settings_supported": settings is not None,
+                        "settings_message": settings_message,
                     }
                 while not self._stop.is_set():
                     with self._device_lock:
@@ -185,3 +213,87 @@ class DeviceMonitor:
             if self._active_client is None:
                 raise RuntimeError("PicoForge HID is not connected")
             self._active_client.set_self_test(action, size_mib)
+
+
+class DashboardBoards:
+    """Share one lazily started HID monitor per board across dashboard requests."""
+
+    def __init__(self, serial_number: str | None = None, device_path: str | None = None,
+                 discover: Callable[[], list[dict[str, str | None]]] = enumerate_devices,
+                 monitor_factory: Callable[[str | None, str | None], DeviceMonitor] = DeviceMonitor) -> None:
+        self._serial_number = serial_number
+        self._device_path = device_path
+        self._discover = discover
+        self._monitor_factory = monitor_factory
+        self._lock = threading.RLock()
+        self._known: dict[str, dict[str, str | None]] = {}
+        self._monitors: dict[str, DeviceMonitor] = {}
+        self._closed = False
+
+    def boards(self) -> dict[str, object]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("dashboard is shutting down")
+            boards = []
+            seen: set[str] = set()
+            for device in self._discover():
+                serial = device.get("serial_number") or None
+                path = device.get("device_path") or ""
+                identity = f"serial:{serial}" if serial else f"path:{path}"
+                board_id = hashlib.sha256(identity.encode()).hexdigest()
+                if board_id in seen:
+                    raise RuntimeError("duplicate PicoForge board identity; board serials must be unique")
+                seen.add(board_id)
+                board = {
+                    "id": board_id,
+                    "product_name": device.get("product_name") or "PicoForge",
+                    "serial_number": serial,
+                    "device_path": path,
+                }
+                self._known[board_id] = board
+                boards.append(board)
+
+            preferred = next((board["id"] for board in boards
+                              if (self._serial_number and board["serial_number"] == self._serial_number)
+                              or (self._device_path and board["device_path"] == self._device_path)), None)
+            default = preferred or (
+                None if self._serial_number or self._device_path or not boards else boards[0]["id"]
+            )
+            return {"boards": boards, "default_board_id": default}
+
+    def _monitor(self, board_id: str | None) -> DeviceMonitor:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("dashboard is shutting down")
+            if not board_id or board_id not in self._known:
+                raise RuntimeError("unknown board; rescan and select a listed board")
+            if board_id not in self._monitors:
+                board = self._known[board_id]
+                serial = board["serial_number"]
+                path = None if serial else board["device_path"]
+                self._monitors[board_id] = self._monitor_factory(serial, path)
+            return self._monitors[board_id]
+
+    def snapshot(self, board_id: str | None = None) -> dict[str, object]:
+        return _empty_snapshot() if board_id is None else self._monitor(board_id).snapshot()
+
+    def set_led(self, board_id: str | None, on: bool) -> dict[str, object]:
+        return self._monitor(board_id).set_led(on)
+
+    def set_settings(self, board_id: str | None, settings: dict[str, object]) -> dict[str, int]:
+        return self._monitor(board_id).set_settings(settings)
+
+    def set_msc(self, board_id: str | None, enabled: bool, *, force: bool = False) -> dict[str, object]:
+        return self._monitor(board_id).set_msc(enabled, force=force)
+
+    def set_self_test(self, board_id: str | None, action: str, size_mib: int) -> None:
+        self._monitor(board_id).set_self_test(action, size_mib)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            monitors = list(self._monitors.values())
+        for monitor in monitors:
+            monitor.close()

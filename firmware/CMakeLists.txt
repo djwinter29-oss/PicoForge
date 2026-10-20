@@ -99,64 +99,12 @@ add_library(pf_storage_bus STATIC
     src/drivers/storage/sd_wire.c)
 target_include_directories(pf_storage_bus PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 
-option(PF_BUILD_NOR_SMOKE "Build standalone raw NOR target instead of the SD/USB application" OFF)
-include("${CMAKE_CURRENT_LIST_DIR}/storage_backend.cmake")
-add_compile_definitions(PF_STORAGE_BACKEND_NOR=$<STREQUAL:${PF_STORAGE_BACKEND},NOR>)
-if(PF_STORAGE_BACKEND STREQUAL "NOR")
-    add_compile_definitions(PF_NOR_REGION_OFFSET=${pf_nor_offset}u PF_NOR_REGION_SIZE=${pf_nor_size}u)
-endif()
-set(PF_NOR_TRANSPORT "SPI" CACHE STRING "Raw NOR transport: SPI or QSPI_PIO")
-set_property(CACHE PF_NOR_TRANSPORT PROPERTY STRINGS SPI QSPI_PIO)
-option(PF_BUILD_LEVELX "Build the LevelX NOR port and link smoke" OFF)
-if(PF_BUILD_NOR_SMOKE OR PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
-    add_library(pf_nor_flash STATIC
-        src/drivers/nor_flash/nor.c
-        src/drivers/nor_flash/nor_transport.c)
-    target_include_directories(pf_nor_flash PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
-    if(PF_NOR_TRANSPORT STREQUAL "SPI")
-        target_sources(pf_nor_flash PRIVATE
-            src/drivers/storage/spi/spi.c)
-        target_link_libraries(pf_nor_flash PUBLIC hardware_spi)
-        target_compile_definitions(pf_nor_flash PUBLIC PF_NOR_QSPI=0)
-    elseif(PF_NOR_TRANSPORT STREQUAL "QSPI_PIO")
-        target_sources(pf_nor_flash PRIVATE
-            src/drivers/storage/qspi_pio/qspi_pio.c)
-        pico_generate_pio_header(pf_nor_flash
-            "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/qspi_pio/qspi_pio.pio")
-        target_link_libraries(pf_nor_flash PUBLIC hardware_pio hardware_clocks)
-        target_compile_definitions(pf_nor_flash PUBLIC PF_NOR_QSPI=1)
-    else()
-        message(FATAL_ERROR "PF_NOR_TRANSPORT must be SPI or QSPI_PIO")
-    endif()
-    target_link_libraries(pf_nor_flash PUBLIC pf_storage_bus pico_stdlib hardware_gpio)
-    if(PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
-        add_subdirectory(src/integration/levelx)
-        add_executable(pf_levelx_nor_link_smoke tests/ports/levelx_nor_link_smoke.c)
-        target_link_libraries(pf_levelx_nor_link_smoke PRIVATE pf_levelx_nor)
-        pico_enable_stdio_usb(pf_levelx_nor_link_smoke 0)
-        pico_enable_stdio_uart(pf_levelx_nor_link_smoke 0)
-        pico_add_extra_outputs(pf_levelx_nor_link_smoke)
-    endif()
-endif()
-if(PF_BUILD_NOR_SMOKE)
-    add_executable(pf_nor_flash_smoke
-        tests/ports/nor_flash_smoke.c src/board/board_profile.c src/board/board_storage.c)
-    target_compile_definitions(pf_nor_flash_smoke PRIVATE
-        PF_BOARD_STORAGE_QSPI=$<STREQUAL:${PF_NOR_TRANSPORT},QSPI_PIO>)
-    target_link_libraries(pf_nor_flash_smoke PRIVATE pf_nor_flash)
-    pico_enable_stdio_usb(pf_nor_flash_smoke 0)
-    pico_enable_stdio_uart(pf_nor_flash_smoke 1)
-    pico_add_extra_outputs(pf_nor_flash_smoke)
-    return()
-endif()
-
 if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
     set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the pinned FreeRTOS-Kernel checkout")
     set(FREERTOS_CONFIG_FILE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src/integration/freertos")
     include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 endif()
 
-if(PF_STORAGE_BACKEND STREQUAL "SD")
 add_library(pf_sd_card_protocol STATIC
     src/drivers/sd_card/sd_protocol.c
 )
@@ -173,7 +121,7 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
         src/drivers/storage/sdio_pio/sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
-    option(PF_SDIO_PIO_HIGH_SPEED "Opt in to native High-Speed startup (up to 50 MHz, limited by SYSCLK/4) with one 25 MHz fallback" OFF)
+    option(PF_SDIO_PIO_HIGH_SPEED "Native High-Speed startup (up to 50 MHz, limited by SYSCLK/4) with one 25 MHz fallback" ON)
     target_compile_definitions(pf_sd_card_protocol PRIVATE
         PF_SD_NATIVE_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>)
     target_compile_definitions(pf_sdio_backend PRIVATE
@@ -251,10 +199,9 @@ else()
     target_link_libraries(pf_sd_card_baremetal_smoke PRIVATE pf_sd_card)
     pico_enable_stdio_usb(pf_sd_card_baremetal_smoke 0)
     pico_enable_stdio_uart(pf_sd_card_baremetal_smoke 0)
+    pico_set_program_version(pf_sd_card_baremetal_smoke "${PF_FIRMWARE_VERSION}")
     pico_add_extra_outputs(pf_sd_card_baremetal_smoke)
     return()
-endif()
-
 endif()
 
 add_library(pf_system STATIC
@@ -263,7 +210,7 @@ add_library(pf_system STATIC
 target_include_directories(pf_system PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
 )
-target_link_libraries(pf_system PUBLIC hardware_clocks pico_stdlib)
+target_link_libraries(pf_system PUBLIC hardware_clocks hardware_vreg pico_stdlib)
 
 add_library(pf_temperature STATIC
     src/drivers/temperature.c
@@ -316,20 +263,15 @@ target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
-if(PF_STORAGE_BACKEND STREQUAL "SD")
-    target_sources(pf_storage PRIVATE src/middleware/storage/sd_block_device.c)
-    target_link_libraries(pf_storage PUBLIC pf_sd_card)
-endif()
-if(PF_BUILD_LEVELX OR PF_STORAGE_BACKEND STREQUAL "NOR")
-    target_sources(pf_storage PRIVATE src/middleware/storage/levelx_block_device.c)
-    target_link_libraries(pf_storage PUBLIC pf_levelx_nor)
-endif()
+target_sources(pf_storage PRIVATE src/middleware/storage/sd_block_device.c)
+target_link_libraries(pf_storage PUBLIC pf_sd_card)
 
 add_library(pf_app_storage STATIC
     src/app/storage/fatfs_volume.c
     src/app/storage/storage_commands.c
     src/app/storage/file_benchmark.c
     src/app/storage/storage_worker.c
+    src/app/storage/sd_media.c
 )
 option(PF_STORAGE_SELF_TEST_PREALLOCATE "Preallocate contiguous self-test files outside write timing" OFF)
 target_compile_definitions(pf_app_storage PUBLIC
@@ -344,11 +286,14 @@ target_link_libraries(pf_app_storage PUBLIC
     embedded_cli
     FreeRTOS-Kernel-Static
 )
-if(PF_STORAGE_BACKEND STREQUAL "NOR")
-    target_sources(pf_app_storage PRIVATE src/app/storage/nor_media.c)
-else()
-    target_sources(pf_app_storage PRIVATE src/app/storage/sd_media.c)
-endif()
+add_library(pf_settings STATIC
+    src/drivers/persistent_memory/settings.c
+    src/drivers/persistent_memory/settings_store.c
+)
+target_include_directories(pf_settings PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+# pico_flash is an INTERFACE library: flash.c compiles into this target, so it needs the FreeRTOS SMP definitions
+# (LIB_FREERTOS_KERNEL, FREE_RTOS_KERNEL_SMP, configNUMBER_OF_CORES, configUSE_CORE_AFFINITY) here.
+target_link_libraries(pf_settings PUBLIC hardware_flash pico_flash pico_sync FreeRTOS-Kernel-Static)
 
 add_library(pf_board STATIC
     src/board/board.c
@@ -366,20 +311,14 @@ target_link_libraries(pf_board PUBLIC
     hardware_spi
     pico_stdio_uart
     pf_led
+    pf_settings
 )
-if(PF_STORAGE_BACKEND STREQUAL "SD")
-    target_link_libraries(pf_board PUBLIC ${PF_SD_CARD_BACKEND})
-endif()
-if(PF_STORAGE_BACKEND STREQUAL "NOR")
-    target_sources(pf_board PRIVATE src/board/board_storage.c)
-    target_compile_definitions(pf_board PRIVATE PF_BOARD_STORAGE_QSPI=$<STREQUAL:${PF_NOR_TRANSPORT},QSPI_PIO>)
-    target_link_libraries(pf_board PUBLIC pf_nor_flash)
-endif()
+target_link_libraries(pf_board PUBLIC ${PF_SD_CARD_BACKEND})
 target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
 
 add_executable(pico_forge
     src/main.c
-    src/integration/freertos/runtime_stats.c
+    src/app/runtime_stats.c
     src/integration/usb/dcd_guard.c
     src/app/usb/usb_descriptors.c
     src/app/usb/usb_hid.c
@@ -405,6 +344,7 @@ target_link_libraries(pico_forge
     pf_cli
     pf_app_storage
     pf_board
+    pf_settings
 )
 
 target_compile_definitions(pico_forge PRIVATE
@@ -429,6 +369,27 @@ foreach(symbol IN ITEMS
     irq_add_shared_handler irq_remove_handler)
     target_link_options(pico_forge PRIVATE "LINKER:--wrap=${symbol}")
 endforeach()
+
+# Reserve the last flash sector for settings: shrink the linker FLASH region only. PICO_FLASH_SIZE_BYTES (the
+# physical size used by the settings store) is left untouched, unlike pico_override_flash_size().
+if(PICO_FLASH_SIZE_BYTES)
+    set(pf_flash_size "${PICO_FLASH_SIZE_BYTES}")
+elseif(PICO_DEFAULT_FLASH_SIZE_BYTES)
+    set(pf_flash_size "${PICO_DEFAULT_FLASH_SIZE_BYTES}")
+else()
+    set(pf_flash_size "2 * 1024 * 1024")
+endif()
+set(PF_SETTINGS_SECTOR_SIZE 4096)
+set(pf_link_dir "${CMAKE_CURRENT_BINARY_DIR}/pf_settings_link")
+file(WRITE "${pf_link_dir}/pico_flash_region.ld"
+    "FLASH(rx) : ORIGIN = 0x10000000, LENGTH = (${pf_flash_size}) - ${PF_SETTINGS_SECTOR_SIZE}\n")
+pico_add_linker_script_override_path(pico_forge "${pf_link_dir}" FILES pico_flash_region.ld)
+# Independent check of the linked image, run before the UF2/BIN/HEX outputs are generated.
+add_custom_command(TARGET pico_forge POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -DPF_NM=${CMAKE_NM} -DPF_ELF=$<TARGET_FILE:pico_forge>
+            "-DPF_FLASH_SIZE_BYTES=${pf_flash_size}" -DPF_SECTOR_SIZE=${PF_SETTINGS_SECTOR_SIZE}
+            -P "${CMAKE_CURRENT_LIST_DIR}/check_settings_sector.cmake"
+    VERBATIM)
 
 pico_enable_stdio_usb(pico_forge 0)
 pico_set_program_name(pico_forge "PicoForge")

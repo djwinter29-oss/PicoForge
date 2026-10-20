@@ -25,10 +25,10 @@ The complete string is embedded in Pico SDK program metadata. HID reports the th
 so `1.2.3-rc1` appears as `1.2.3` in the dashboard, matching PicoUart.
 USB `bcdDevice` encodes major/minor as BCD (`1.2.3` becomes `0x0102`); major/minor above 99 produce a
 configuration warning and `0x0000`, while HID retains the numeric version.
-It is separate from the HID layout version. Runtime report 2 and MSC status report 5 use layout `3`;
-other reports retain layout `2`.
+It is separate from the HID layout version. Runtime report 2 uses layout `1`; MSC status report 5 uses layout `3`;
+other reports use their own documented layouts.
 Updated hosts also accept identity layout `2` with four zero reserved bytes and show
-firmware version as `Unknown`. Older hosts reject layout `3`: restart Python/.NET hosts with the updated
+firmware version as `Unknown`. Older hosts reject identity layout `3`: restart Python/.NET hosts with the updated
 code and reload browser pages when upgrading firmware.
 
 | Payload offset | Size | Field | Encoding |
@@ -46,31 +46,31 @@ All identity fields are stable for a connection. `clk_sys` is intentionally excl
 
 ## Input Report 2
 
-Input report 2 has a 23-byte payload and is published every 250 ms. Its layout version is `3`.
-Updated Python, .NET and WebHID hosts also accept the legacy 13-byte layout `2`, with CPU/RAM fields unavailable.
-Older hosts reject layout `3`; restart updated Python/.NET services and reload browser pages after upgrading.
+Input report 2 has a 25-byte payload and is published every 250 ms. Its initial layout version is `1`; firmware and
+host implementations use this contract without legacy-layout handling.
 
 | Payload offset | Size | Field | Encoding |
 | --- | ---: | --- | --- |
-| 0 | 1 | Layout version | `3` |
+| 0 | 1 | Layout version | `1` |
 | 1 | 1 | Sequence | Increments for each accepted periodic report |
 | 2 | 4 | Uptime | Unsigned milliseconds, little-endian; wraps after `2^32` ms |
 | 6 | 4 | `clk_sys` | Current unsigned frequency in Hz, little-endian |
 | 10 | 1 | Flags | Bit 0: USB mounted; bit 1: CDC DTR/open; bit 2: temperature valid; bit 3: board LED available; bit 4: board LED on; other bits reserved |
 | 11 | 2 | Temperature | Signed centidegrees Celsius, little-endian; meaningful only when bit 2 is set |
-| 13 | 2 | CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
-| 15 | 4 | RAM reserved | Static on-chip SRAM reservations in bytes |
-| 19 | 4 | Total RAM | SDK-selected on-chip SRAM capacity in bytes |
+| 13 | 2 | Core 0 CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
+| 15 | 2 | Core 1 CPU usage | Unsigned basis points (0..10000); `65535` means not yet available |
+| 17 | 4 | RAM reserved | Static on-chip SRAM reservations in bytes |
+| 21 | 4 | Total RAM | SDK-selected on-chip SRAM capacity in bytes |
 
 The sequence byte wraps modulo 256. Temperature comes from the MCU's internal sensor and is an estimate, not a calibrated ambient measurement. If bit 4 is set, bit 3 must also be set. The input report supports `GET_REPORT`, returning current telemetry. The current system clock is sampled for each report, so hosts should treat it as dynamic.
 
-CPU usage is the mean non-idle fraction across both scheduler cores over the latest interval of at least 250 ms,
-calculated as one minus FreeRTOS's aggregate idle-task runtime divided by twice the elapsed SDK 64-bit microsecond time.
-One fully busy core and one idle core reports 50%; both busy reports 100%, and both idle reports 0%.
-Adjacent wall-clock/idle sampling skew is saturated at 0% rather than wrapping. The first sample establishes a
-baseline and reports unavailable; shorter requests reuse the previous result rather than resetting the interval.
-Interrupt time is attributed to the interrupted task by FreeRTOS, so this is task-load telemetry, not separate ISR
-accounting. Waiting or sleeping tasks are idle time only when the idle task actually runs; polling loops count as busy.
+CPU usage is measured independently per core over the latest interval of at least 250 ms, as one minus that core's
+FreeRTOS idle-task runtime divided by elapsed SDK 64-bit microsecond time. One busy core and one idle core report
+100% and 0%, respectively. Adjacent wall-clock/idle sampling skew is saturated at 0% rather than wrapping. The first
+sample establishes a baseline and reports unavailable; shorter requests reuse the previous result rather than
+resetting the interval. Interrupt time is attributed to the interrupted task by FreeRTOS, so this is task-load
+telemetry, not separate ISR accounting. Waiting tasks contribute idle time only when the idle task runs; polling
+loops count as busy.
 
 RAM reserved is main SRAM through the SDK linker `__end__`, plus scratch-bank data and both reserved core stacks.
 Statically allocated FreeRTOS task stacks and control blocks are already included in main SRAM and are not counted
@@ -78,7 +78,8 @@ twice. Total capacity comes from the SDK's `SRAM_BASE`/`SRAM_END`, not a board-s
 RAM and does not measure stack high-water marks or live libc heap allocations. FreeRTOS dynamic allocation remains
 disabled. This value is normally constant for a firmware image.
 
-Both dashboards display CPU usage and RAM reserved (used/total KiB and percentage) in Runtime status. System clock
+Both dashboards display Core 0 and Core 1 CPU usage separately, and show reserved RAM and total on-chip SRAM as
+separately labeled values in Runtime status. System clock
 appears once in the identity row, still updated from this runtime report. Unavailable fields display `--`.
 Report sequence remains available in the protocol and host decoders for diagnostics, but is not displayed.
 The Last report timestamp indicates dashboard freshness.
@@ -86,7 +87,13 @@ The Last report timestamp indicates dashboard freshness.
 ## Input Report 3
 
 Input report 3 has a 29-byte payload and is normally published every 1000 ms.
-Its layout version is `2`. The storage worker initializes and mounts detected
+Its layout version is `2`. Dashboards label the card-detect state **SD presence** in Runtime status; they do not
+Its layout version is `2`. Dashboards show SD transport and initialization in the SD Card section; they do not
+display a memory-type field because SD is the only supported storage device. The shared dashboards hide the SD Card
+and Memory Tests sections only when presence is known and absent; unknown presence keeps both sections visible. The
+component-type byte remains in the wire layout for compatibility. With the reference board profile, presence comes from
+the active-high DET input on GP8, independently of whether card initialization or filesystem mounting succeeds.
+The storage worker initializes and mounts detected
 media according to [the mounting policy](cdc-cli.md). If storage holds the card
 reservation, periodic memory reports are deferred and GET_REPORT returns no
 report rather than blocking USB on card initialization/recovery. Hosts should
@@ -113,22 +120,30 @@ CID and capacity retained internally for SD diagnostics after initialization or 
 Input Report 3 while the card is uninitialized. Its CID-valid and capacity-valid flags remain clear, and CID, clock,
 and capacity fields remain zero, so a card failure does not invalidate the dashboard's live status stream.
 
-### NOR memory telemetry (Input Report 3, layouts 3 and 4)
+## Input Report 7
 
-NOR uses the same 29-byte memory payload, version `4`, component type `2` and mode `2` (SPI) or `3` (QSPI).
-Offsets and flag meanings stay the same, except CID-valid means NOR identity-valid. Offset 9 reports
-**LevelX logical sectors**, not raw chip capacity. Identity bytes at offset 13 hold the identified JEDEC ID
-(`EF 40 18` for the supported W25Q128), followed by four little-endian physical-capacity bytes at offset 16,
-eight factory UID bytes at offsets 20..27 (device transmission order, most significant byte first),
-then one reserved zero byte at offset 28. Legacy layout `3` has nine reserved zero bytes at offsets 20..28
-and no UID; updated hosts continue accepting it.
-The current driver accepts only that JEDEC identity; hosts must not interpret these bytes as an SD CID.
-Until the volume is ready, clock, capacity and identity remain zero and presence is unknown, not falsely absent.
-The dashboard displays logical and physical capacity separately; manufacturer/product derive from the validated
-JEDEC ID. `device_uid` is `0x` followed by exactly 16 lowercase hexadecimal digits, preserving leading zeros and all 64 bits;
-it is null before initialization and for layout 3. The dashboards use this factory UID as the NOR device serial,
-distinct from the Pico USB serial. Manufacturing date and revision are not read and are not invented.
-Update firmware and host software together; SD continues using layout 2 unchanged.
+Input report 7 has a 3-byte payload, excluding the report ID, with no padding. Its layout version is `2`. It is
+push-only: firmware publishes it every 1000 ms while the HID endpoint is ready, and `GET_REPORT` is unsupported (it
+returns no data). The sequence increments only for an accepted report and wraps modulo 256.
+
+| Offset | Bytes | Field |
+| --- | --- | --- |
+| 0 | 1 | Version (`2`) |
+| 1 | 1 | Sequence |
+| 2 | 1 | Filesystem format |
+
+| Value | Format |
+| --- | --- |
+| 0 | unknown |
+| 1 | FAT12 |
+| 2 | FAT16 |
+| 3 | FAT32 |
+| 4 | exFAT |
+
+The format is that of the last successfully mounted filesystem, cached when FatFs mount succeeds; it is
+not live mounted state. It reverts to unknown when a mount or format starts, after a successful unmount, on card
+removal, when an uninitialized card forces unmount, and when MSC ownership is acquired. A failed unmount leaves the
+cached value in place. No HID report carries live mounted state; use the [CDC CLI](cdc-cli.md) filesystem commands.
 
 ## Feature Report 4
 
@@ -141,9 +156,10 @@ version `2`, then desired state (`0` disabled or `1` enabled). The distinct conf
 `[3, 2]`, excluding the report ID; layout `2` never interprets action `2` as force.
 Input report 5 carries a 4-byte status payload every 500 ms: version `3`, enabled, transition-pending, and
 request-rejected; the last three fields are booleans. Updated hosts accept legacy status layout `2` but only enable
-force return after observing layout `3`. Older host software must be updated before using this firmware.
+request-rejected; the last three fields are booleans. Updated hosts accept legacy MSC status layout `2` but only enable
+force return after observing MSC status layout `3`. Older host software must be updated before using this firmware.
 
-MSC is disabled at boot. Enabling requires initialized selected SD or NOR media and no outstanding storage command
+MSC is disabled at boot. Enabling requires initialized SD media and no outstanding storage command
 or replies. If firmware has mounted the filesystem, enabling queues an unmount on the sole storage worker and keeps
 the transition pending until it completes. Successful unmount pauses automount before USB ownership acquisition;
 failed unmount rejects the request and leaves firmware ownership intact. No formatting occurs.
@@ -167,11 +183,11 @@ Python and .NET expose `POST /api/msc/force-return` with `{"confirm_data_loss":t
 confirmation is rejected before HID delivery. WebHID sends the same `[3, 2]` command directly.
 There is no separate Force button. On Windows, Linux and macOS the host only delivers the HID command; Pico
 performs detach, ownership transfer and remount. No host OS eject/unmount command or Linux-specific permission
-is required. Older firmware without status layout `3` cannot use dashboard Disable and displays an update message.
+is required. Older firmware without MSC status layout `3` cannot use dashboard Disable and displays an update message.
 This command never synthesizes a successful SCSI eject.
 
 Firmware still rejects busy storage or a failed device-side sync. After a successful sync, it disconnects USB
-before releasing selected SD/NOR ownership under the shared media reservation. The sole storage worker attempts
+before releasing SD ownership under the shared media reservation. The sole storage worker attempts
 initialization and mounting once. Pending remains set until that attempt completes. A failed initialization/mount
 sets request-rejected with enabled false, logs the failure, and leaves storage unmounted with automatic retries
 blocked until an explicit successful `fs mount`. A pre-detach failure leaves MSC enabled. No automatic formatting,
@@ -231,6 +247,17 @@ not replace an ongoing test or its retained result. Hosts compute averages from
 byte counters and durations; measurement boundaries and safety rules live in
 [the self-test guide](sd-self-test.md).
 
+## Feature Reports 8 and 9
+
+Feature report 8 reads or saves persisted boot settings. Its payload is the five-byte, little-endian layout documented
+in [persistent settings](settings.md#host-dashboard-settings). The host reads the report back and compares all fields
+before continuing.
+
+Feature report 9 accepts the two-byte payload `[1, 1]` (layout version 1, reboot action), excluding the report ID.
+Firmware rejects malformed commands and requests while MSC or storage work is active. An accepted request is handled
+by the USB task after the HID control transfer returns; firmware waits one second before watchdog reset to allow the
+host to receive the acknowledgement. The Save & Reboot action sends report 9 only after report 8 readback matches.
+
 ## Host Implementations
 
 - Python HIDAPI client and loopback Flask dashboard: `host/python/`.
@@ -239,7 +266,4 @@ byte counters and durations; measurement boundaries and safety rules live in
 
 Firmware cross-builds and hardware-free host tests do not verify physical host enumeration. Test the composite interface and CDC/HID behavior on RP2040 and RP2350 boards before relying on it in a product.
 
-The 2026-10-15 static review follow-up fixes cached MSC transfer sense at handled
-BOT and bus resets. Data paths, clocks and buffer defaults are unchanged; no
-new throughput result is claimed. See [SD review scope and validation](sdcard-design.md#static-sd-review-follow-up-2026-10-15)
-for reset ordering, host-model limits, existing overlap and pending HIL comparisons.
+The [2026-10-15 static review record](tests/records/2026-10-15-static-sd-review-followup.md) covers the MSC reset-sense fix and its validation limits.

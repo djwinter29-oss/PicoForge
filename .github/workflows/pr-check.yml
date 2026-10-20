@@ -14,12 +14,15 @@ permissions:
 
 jobs:
   firmware:
-    name: Firmware (${{ matrix.board }})
+    name: Firmware (${{ matrix.board }}, ${{ matrix.transport }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         board: [pico, pico2]
+        transport: [SDIO_PIO, SPI]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,19 +42,26 @@ jobs:
       - name: Check shell script syntax
         run: |
           sh -n tools/firmware/build.sh
+          sh -n tools/firmware/load.sh
 
       - name: Build firmware
-        run: tools/firmware/build.sh --board "${{ matrix.board }}"
+        run: >-
+          tools/firmware/build.sh --board "${{ matrix.board }}"
+          --sd-card-transport "${{ matrix.transport }}" --build-dir build/firmware
 
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt
 
       - name: Run project tests
         run: |
-          python3 -m pytest tests/contracts tests/pio tests/test_validation_integrity.py \
+          python3 -m pytest tests/contracts tests/test_validation_integrity.py \
             tests/artifacts/test_msc_elf.py \
-            --elf "$(cat "build/firmware-${{ matrix.board }}/pico_forge_elf.txt")" \
+            --elf "$(cat "build/firmware/pico_forge_elf.txt")" \
             --junitxml=build/project-tests.xml
+
+      - name: Run SDIO PIO timing tests
+        if: matrix.transport == 'SDIO_PIO'
+        run: python3 -m pytest tests/pio --junitxml=build/pio-timing-tests.xml
 
   host-validation:
     name: Host validation

@@ -7,14 +7,21 @@
 #include "board/board.h"
 #include "drivers/sd_card/sd_block.h"
 #include "drivers/led.h"
+#include "drivers/persistent_memory/settings_store.h"
 #include "drivers/temperature.h"
 #include "usb_msc.h"
 #include "app/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
-#include "integration/freertos/runtime_stats.h"
-#if PF_STORAGE_BACKEND_NOR
-#include "app/storage/nor_media.h"
-#endif
+#include "app/runtime_stats.h"
+
+static bool reboot_requested;
+
+bool pf_hid_take_reboot_request(void)
+{
+    const bool requested = reboot_requested;
+    reboot_requested = false;
+    return requested;
+}
 
 void pf_hid_build_info_report(pf_hid_info_report_t *report)
 {
@@ -40,7 +47,8 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
     report->system_clock_hz = pf_system_clock_hz();
     pf_runtime_stats_t stats;
     pf_runtime_stats_read(&stats);
-    report->cpu_usage_basis_points = stats.cpu_usage_basis_points;
+    report->cpu_usage_core0_basis_points = stats.cpu_usage_basis_points[0];
+    report->cpu_usage_core1_basis_points = stats.cpu_usage_basis_points[1];
     report->ram_used_bytes = stats.ram_used_bytes;
     report->ram_total_bytes = stats.ram_total_bytes;
     if (tud_mounted()) {
@@ -65,40 +73,6 @@ void pf_hid_build_status_report(pf_hid_status_report_t *report, uint8_t sequence
 
 bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence)
 {
-#if PF_STORAGE_BACKEND_NOR
-    if (!pf_nor_media_try_lock()) {
-        return false;
-    }
-    pf_nor_media_diagnostics_t info;
-    pf_nor_media_get_diagnostics(&info);
-    pf_nor_media_unlock();
-    memset(report, 0, sizeof(*report));
-    report->version = 4u;
-    report->sequence = sequence;
-    report->component_type = 2u;
-#if PF_NOR_QSPI
-    report->mode = 3u;
-#else
-    report->mode = PF_HID_MEMORY_MODE_SPI;
-#endif
-    report->flags = PF_HID_MEMORY_CONFIGURED;
-    if (info.ready) {
-        report->flags |= PF_HID_MEMORY_PRESENCE_KNOWN | PF_HID_MEMORY_PRESENT |
-                         PF_HID_MEMORY_INITIALIZED | PF_HID_MEMORY_CAPACITY_VALID |
-                         PF_HID_MEMORY_CID_VALID;
-        report->bus_clock_hz = info.bus_clock_hz;
-        report->block_count = info.sector_count;
-        /* Successful initialization identifies only EF 40 18. */
-        report->cid[0] = 0xefu;
-        report->cid[1] = 0x40u;
-        report->cid[2] = 0x18u;
-        for (unsigned i = 0u; i < 4u; ++i) {
-            report->cid[3u + i] = (uint8_t)(info.capacity_bytes >> (8u * i));
-        }
-        memcpy(report->cid + 7u, info.unique_id, sizeof(info.unique_id));
-    }
-    return true;
-#else
     pf_sd_config_t config;
     pf_sd_info_t info;
 
@@ -133,7 +107,6 @@ bool pf_hid_build_memory_report(pf_hid_memory_report_t *report, uint8_t sequence
         memcpy(report->cid, info.cid, sizeof(report->cid));
     }
     return true;
-#endif
 }
 
 void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t sequence)
@@ -148,6 +121,18 @@ void pf_hid_build_filesystem_report(pf_hid_filesystem_report_t *report, uint8_t 
     case PF_FATFS_VOLUME_FILESYSTEM_EXFAT: report->format = PF_HID_FILESYSTEM_EXFAT; break;
     default: report->format = PF_HID_FILESYSTEM_UNKNOWN; break;
     }
+}
+
+void pf_hid_build_settings_report(pf_hid_settings_report_t *report)
+{
+    pf_settings_t settings;
+    (void)pf_settings_load(&settings);
+    *report = (pf_hid_settings_report_t){
+        .version = PF_HID_SETTINGS_REPORT_VERSION,
+        .system_clock_mhz = settings.system_clock_mhz,
+        .sdio_bus_mhz = settings.sdio_bus_mhz,
+        .spi_bus_mhz = settings.spi_bus_mhz,
+    };
 }
 
 void pf_hid_build_msc_status_report(pf_hid_msc_status_report_t *report)
@@ -191,6 +176,14 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
         (reqlen >= sizeof(pf_hid_info_report_t))) {
         pf_hid_info_report_t report;
         pf_hid_build_info_report(&report);
+        memcpy(buffer, &report, sizeof(report));
+        return sizeof(report);
+    }
+
+    if ((report_id == PF_HID_SETTINGS_REPORT_ID) && (report_type == HID_REPORT_TYPE_FEATURE) &&
+        (reqlen >= sizeof(pf_hid_settings_report_t))) {
+        pf_hid_settings_report_t report;
+        pf_hid_build_settings_report(&report);
         memcpy(buffer, &report, sizeof(report));
         return sizeof(report);
     }
@@ -264,5 +257,22 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         } else if (size_mib == 0u) {
             (void)pf_storage_worker_benchmark_cancel();
         }
+    } else if ((report_id == PF_HID_SETTINGS_REPORT_ID) &&
+               (bufsize == sizeof(pf_hid_settings_report_t)) &&
+               (buffer[0] == PF_HID_SETTINGS_REPORT_VERSION) &&
+               !pf_usb_msc_is_enabled() && !pf_usb_msc_transition_pending() && !pf_storage_worker_busy()) {
+        const pf_settings_t settings = {
+            .system_clock_mhz = (uint16_t)buffer[1] | ((uint16_t)buffer[2] << 8u),
+            .sdio_bus_mhz = buffer[3],
+            .spi_bus_mhz = buffer[4],
+        };
+        if (pf_settings_valid(&settings)) {
+            (void)pf_settings_save(&settings);
+        }
+    } else if ((report_id == PF_HID_REBOOT_REPORT_ID) &&
+               (bufsize == sizeof(pf_hid_reboot_command_t)) &&
+               (buffer[0] == PF_HID_REBOOT_REPORT_VERSION) && (buffer[1] == 1u) &&
+               !pf_usb_msc_is_enabled() && !pf_usb_msc_transition_pending() && !pf_storage_worker_busy()) {
+        reboot_requested = true;
     }
 }

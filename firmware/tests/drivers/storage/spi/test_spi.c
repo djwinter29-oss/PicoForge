@@ -4,37 +4,34 @@ TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "bus.h"
 #include "serial.h"
 #include "spi.h"
-#include "nor_transport.h"
 #include <string.h>
 
 serial_fake_t serial_fake;
 spi_inst_t serial_spi[2] = {{0}, {1}};
 static pf_spi_t sd;
-static pf_spi_t nor;
-static pf_storage_bus_t nor_bus;
-static pf_nor_transport_t transport;
+static pf_spi_t peer;
+static pf_storage_bus_t peer_bus;
 
 void setUp(void)
 {
     memset(&serial_fake, 0, sizeof(serial_fake));
     sd = (pf_spi_t){ .instance = spi0, .pins.clock_gpio = 2, .pins.mosi_gpio = 3,
         .pins.miso_gpio = 0, .pins.cs_gpio = 1, .clock_hz = 25000000 };
-    nor = (pf_spi_t){ .instance = spi0, .pins.clock_gpio = 2, .pins.mosi_gpio = 3,
+    peer = (pf_spi_t){ .instance = spi0, .pins.clock_gpio = 2, .pins.mosi_gpio = 3,
         .pins.miso_gpio = 0, .pins.cs_gpio = 5, .clock_hz = 10000000, .timeout_us = 100000 };
-    nor_bus = pf_spi_bus(&nor);
+    peer_bus = pf_spi_bus(&peer);
 }
 
 void tearDown(void)
 {
     pf_spi_deinit(&sd);
-    pf_storage_bus_deinit(&nor_bus);
+    pf_storage_bus_deinit(&peer_bus);
 }
 
-void test_sd_raw_io_and_nor_transactions_share_one_controller_and_restore_device_clock(void)
+void test_spi_devices_share_one_controller_and_restore_device_clock(void)
 {
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&sd));
-    TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&nor_bus, &transport));
-    TEST_ASSERT_FALSE(transport.quad_supported);
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&peer_bus));
     TEST_ASSERT_EQUAL_UINT(1, serial_fake.init);
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_select(&sd, true));
     uint8_t value = 0xfc, received;
@@ -42,39 +39,41 @@ void test_sd_raw_io_and_nor_transactions_share_one_controller_and_restore_device
     TEST_ASSERT_EQUAL_UINT32(25000000, serial_fake.hz);
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_select(&sd, false));
     const uint8_t payload[] = {0xaa, 0x55};
-    pf_nor_transaction_t command = { .command = 2, .address_bytes = 3, .address = 0x123456,
-        .data_lanes = 1, .tx = payload, .length = sizeof(payload) };
-    TEST_ASSERT_EQUAL(PF_NOR_OK, transport.execute(transport.context, &command));
-    const uint8_t expected[] = {0xfc, 2, 0x12, 0x34, 0x56, 0xaa, 0x55};
+    pf_storage_serial_phase_t phase = {.tx = payload, .bit_count = sizeof(payload) * 8u, .lanes = 1u};
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_serial_transfer(&peer_bus, &phase, 1u));
+    const uint8_t expected[] = {0xfc, 0xaa, 0x55};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, serial_fake.bytes, sizeof(expected));
     TEST_ASSERT_EQUAL_UINT32(10000000, serial_fake.hz);
     TEST_ASSERT_FALSE(serial_fake.selected);
-    pf_storage_bus_deinit(&nor_bus);
+    pf_storage_bus_deinit(&peer_bus);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.deinit);
     pf_spi_deinit(&sd);
     TEST_ASSERT_EQUAL_UINT(1, serial_fake.deinit);
 }
 
-void test_nor_fifo_timeout_releases_cs_and_only_its_controller_reference(void)
+void test_spi_fifo_timeout_releases_cs_and_only_its_controller_reference(void)
 {
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&sd));
-    TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&nor_bus, &transport));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&peer_bus));
     serial_fake.short_io = true;
-    pf_nor_transaction_t command = { .command = 6, .data_lanes = 1 };
-    TEST_ASSERT_EQUAL(PF_NOR_TIMEOUT, transport.execute(transport.context, &command));
-    TEST_ASSERT_FALSE(serial_fake.selected || nor.initialized);
+    uint8_t output = 0xa5u;
+    pf_storage_serial_phase_t phase = {.tx = &output, .bit_count = 8u, .lanes = 1u};
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_TIMEOUT, pf_storage_serial_transfer(&peer_bus, &phase, 1u));
+    TEST_ASSERT_FALSE(serial_fake.selected);
+    pf_storage_bus_abort(&peer_bus);
+    TEST_ASSERT_FALSE(serial_fake.selected || peer.initialized);
     TEST_ASSERT_TRUE(sd.initialized);
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.deinit);
 }
 
 void test_bounded_fifo_pipelines_eight_bytes_preserves_order_and_avoids_per_byte_timer_reads(void)
 {
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&nor));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&peer));
     uint8_t output[32], input[32];
     for (unsigned index = 0u; index < sizeof(output); ++index) output[index] = (uint8_t)index;
     serial_fake.delayed_reads = 9u;
     serial_fake.input = 0x91u;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&nor, output, input, sizeof(output)));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&peer, output, input, sizeof(output)));
     TEST_ASSERT_EQUAL_UINT8_ARRAY(output, serial_fake.bytes, sizeof(output));
     TEST_ASSERT_EQUAL_UINT32(8u, serial_fake.peak_pending);
     TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.pending);
@@ -84,25 +83,25 @@ void test_bounded_fifo_pipelines_eight_bytes_preserves_order_and_avoids_per_byte
 
 void test_bounded_fifo_read_only_clocks_ff_and_write_only_drains_receive_fifo(void)
 {
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&nor));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&peer));
     uint8_t input[16];
     serial_fake.input = 0x5au;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&nor, NULL, input, sizeof(input)));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&peer, NULL, input, sizeof(input)));
     for (unsigned index = 0u; index < sizeof(input); ++index) {
         TEST_ASSERT_EQUAL_HEX8(0xffu, serial_fake.bytes[index]);
         TEST_ASSERT_EQUAL_HEX8(0x5au, input[index]);
     }
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&nor, input, NULL, sizeof(input)));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_exchange(&peer, input, NULL, sizeof(input)));
     TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.pending);
     TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.now);
 }
 
 void test_bounded_fifo_reports_tx_stall_without_sending_or_replaying_bytes(void)
 {
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&nor));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&peer));
     serial_fake.fifo_full = true;
     uint8_t byte = 0xa5u;
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_TIMEOUT, pf_spi_exchange(&nor, &byte, NULL, 1u));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_TIMEOUT, pf_spi_exchange(&peer, &byte, NULL, 1u));
     TEST_ASSERT_EQUAL_UINT32(0u, serial_fake.length);
 }
 
@@ -118,7 +117,7 @@ void test_sdk_short_bulk_io_is_reported_without_replay_or_implicit_cs_boundary(v
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_select(&sd, false));
 }
 
-void test_invalid_or_quad_spi_transactions_never_assert_cs(void)
+void test_invalid_or_unsupported_spi_transactions_never_assert_cs(void)
 {
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&sd));
     uint8_t output = 6u;
@@ -135,7 +134,7 @@ void test_invalid_or_quad_spi_transactions_never_assert_cs(void)
 void test_selected_device_prevents_another_device_from_clocking_the_bus(void)
 {
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&sd));
-    TEST_ASSERT_EQUAL(PF_NOR_OK, pf_nor_transport_init(&nor_bus, &transport));
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_storage_bus_init(&peer_bus));
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_select(&sd, true));
     pf_spi_t another = sd;
     another.initialized = false;
@@ -143,11 +142,12 @@ void test_selected_device_prevents_another_device_from_clocking_the_bus(void)
     unsigned cs_high = serial_fake.cs_high;
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_NOT_READY, pf_spi_init(&another));
     TEST_ASSERT_EQUAL_UINT(cs_high, serial_fake.cs_high);
-    pf_nor_transaction_t command = { .command = 6, .data_lanes = 1 };
-    TEST_ASSERT_EQUAL(PF_NOR_NOT_READY, transport.execute(transport.context, &command));
+    uint8_t output = 0xa5u;
+    pf_storage_serial_phase_t phase = {.tx = &output, .bit_count = 8u, .lanes = 1u};
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_NOT_READY, pf_storage_serial_transfer(&peer_bus, &phase, 1u));
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.length);
     TEST_ASSERT_TRUE(sd.initialized);
-    TEST_ASSERT_TRUE(nor.initialized);
+    TEST_ASSERT_TRUE(peer.initialized);
 }
 
 void test_generic_spi_dispatch_clocks_dummy_bytes_and_receives_payload(void)

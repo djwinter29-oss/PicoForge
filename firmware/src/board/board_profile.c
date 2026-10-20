@@ -5,10 +5,10 @@
 /** Reference connector signals shared by the mutually exclusive storage modes. */
 enum {
     STORAGE_CLK = 2u, /**< Common clock output. */
-    STORAGE_IO0 = 3u, /**< CMD or MOSI/IO0. */
-    STORAGE_IO1 = 4u, /**< DAT0 or MISO/IO1. */
-    STORAGE_IO2 = 5u, /**< DAT1 or IO2/WP. */
-    STORAGE_IO3 = 6u, /**< DAT2 or IO3/HOLD. */
+    STORAGE_IO0 = 3u, /**< CMD or MOSI. */
+    STORAGE_IO1 = 4u, /**< DAT0 or MISO. */
+    STORAGE_IO2 = 5u, /**< DAT1. */
+    STORAGE_IO3 = 6u, /**< DAT2. */
     STORAGE_CS = 7u,  /**< DAT3 or serial CS. */
 };
 
@@ -38,18 +38,6 @@ static const pf_board_resources_t board_resources = {
     .spi_pins.miso_gpio = STORAGE_IO1,
     .spi_pins.cs_gpio = STORAGE_CS,
     .spi_clock_hz = 50000000u,
-    .qspi_pins = {
-        .clock_gpio = STORAGE_CLK, .cs_gpio = STORAGE_CS,
-        .data_gpio = { STORAGE_IO0, STORAGE_IO1, STORAGE_IO2, STORAGE_IO3 },
-    },
-#if PF_BOARD_STORAGE_QSPI
-    .serial_clock_hz = 50000000u,
-#else
-    .serial_clock_hz = 40000000u,
-#endif
-    .serial_timeout_us = 100000u,
-    .serial_wp_gpio = STORAGE_IO2,
-    .serial_hold_gpio = STORAGE_IO3,
     /* The selected breakout provides the DET bias; do not add an MCU pull. */
     .card_detect_enabled = true,
     .card_detect_gpio = 8u,
