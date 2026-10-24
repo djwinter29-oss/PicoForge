@@ -4,6 +4,7 @@
 
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
+#include "pico/time.h"
 #include "tusb.h"
 #include "msc_storage.h"
 #include "app/storage/fatfs_volume.h"
@@ -20,6 +21,11 @@ static bool recovery_requested;
 static bool unmount_pending; /**< Worker handoff preparation must finish before ownership changes. */
 static bool force_return_requested; /**< Explicit unsafe command; never inferred from normal disable. */
 static bool remount_pending; /**< Forced return awaits the sole worker's mount result. */
+static bool hid_result_deferred;
+static bool hid_result_read;
+static uint8_t hid_result_transaction_id;
+static uint64_t hid_result_deadline_us;
+static uint64_t hid_result_settle_us;
 /* TinyUSB 0.18.0 overwrites READ10/WRITE10 error sense after our callback.
  * Keep only that transfer's sense until REQUEST SENSE. It is dropped when any
  * later command callback runs, on unmount, and on handled BOT/bus reset.
@@ -135,17 +141,21 @@ bool pf_usb_msc_request_rejected(void)
     return request_rejected;
 }
 
-void pf_usb_msc_request(bool enabled)
+bool pf_usb_msc_request(bool enabled)
 {
     if (remount_pending) {
-        return;
+        request_rejected = true;
+        return false;
     }
     force_return_requested = false;
     recovery_requested = false;
+    hid_result_deferred = false;
+    hid_result_read = false;
     requested_enabled = enabled;
     request_pending = true;
     transition_pending = enabled != msc_enabled;
     request_rejected = false;
+    return true;
 }
 
 void pf_usb_msc_request_recovery(void)
@@ -153,6 +163,8 @@ void pf_usb_msc_request_recovery(void)
     if (remount_pending) {
         return;
     }
+    hid_result_deferred = false;
+    hid_result_read = false;
     force_return_requested = false;
     recovery_requested = true;
     request_pending = true;
@@ -160,11 +172,29 @@ void pf_usb_msc_request_recovery(void)
     request_rejected = false;
 }
 
-void pf_usb_msc_request_force_return(void)
+bool pf_usb_msc_request_force_return(void)
 {
-    pf_usb_msc_request(false);
-    if (!remount_pending) {
-        force_return_requested = true;
+    const bool accepted = pf_usb_msc_request(false);
+    if (accepted) force_return_requested = true;
+    return accepted;
+}
+
+void pf_usb_msc_defer_for_hid_result(uint8_t transaction_id)
+{
+    if (!request_pending || !transition_pending || transaction_id == 0u) {
+        return;
+    }
+    hid_result_deferred = true;
+    hid_result_read = false;
+    hid_result_transaction_id = transaction_id;
+    hid_result_deadline_us = time_us_64() + 500000u;
+}
+
+void pf_usb_msc_note_hid_result_read(uint8_t transaction_id)
+{
+    if (hid_result_deferred && transaction_id == hid_result_transaction_id) {
+        hid_result_read = true;
+        hid_result_settle_us = time_us_64() + 10000u;
     }
 }
 
@@ -310,6 +340,14 @@ static void apply_msc_request(void)
 
 void pf_usb_msc_task(void)
 {
+    if (hid_result_deferred) {
+        uint64_t now_us = time_us_64();
+        if ((!hid_result_read && now_us < hid_result_deadline_us) ||
+            (hid_result_read && now_us < hid_result_settle_us)) {
+            return;
+        }
+        hid_result_deferred = false;
+    }
     if (remount_pending) {
         if (!pf_storage_worker_busy()) {
             remount_pending = false;

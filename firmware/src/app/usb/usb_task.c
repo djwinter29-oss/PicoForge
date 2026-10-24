@@ -21,17 +21,14 @@
 #define USB_CLI_STALL_TIMEOUT (pdMS_TO_TICKS(5000U))
 #define USB_RECONNECT_DETACH_MS 250U
 #define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
-#define USB_HID_MEMORY_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
-#define USB_HID_MSC_REPORT_INTERVAL (pdMS_TO_TICKS(500U))
+#define USB_HID_STORAGE_REPORT_INTERVAL (pdMS_TO_TICKS(500U))
 #define USB_HID_SELF_TEST_INTERVAL (pdMS_TO_TICKS(500U))
-#define USB_HID_FILESYSTEM_INTERVAL (pdMS_TO_TICKS(1000U))
 
 static StaticTask_t usb_task_control_block;
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE];
 static uint8_t hid_sequence;
-static uint8_t memory_sequence;
+static uint8_t storage_sequence;
 static uint8_t self_test_sequence;
-static uint8_t filesystem_sequence;
 static char cli_tx[USB_CLI_TX_SIZE];
 static uint32_t cli_tx_head;
 static uint32_t cli_tx_tail;
@@ -180,10 +177,8 @@ static void usb_task(void *context)
 {
     (void)context;
     TickType_t last_hid_report = xTaskGetTickCount();
-    TickType_t last_memory_report = last_hid_report;
-    TickType_t last_msc_report = last_hid_report;
+    TickType_t last_storage_report = last_hid_report;
     TickType_t last_self_test_report = last_hid_report;
-    TickType_t last_filesystem_report = last_hid_report;
 
     TickType_t last_stack_sample = xTaskGetTickCount();
 
@@ -201,57 +196,44 @@ static void usb_task(void *context)
             pf_system_reset();
         }
         pf_usb_msc_task();
+        pf_hid_poll_async_commands();
         cdc_cli_task();
 
         if (tud_hid_ready() &&
             ((TickType_t)(now - last_hid_report) >= USB_HID_REPORT_INTERVAL)) {
-            pf_hid_status_report_t report;
+            pf_hid_telemetry_report_t report;
 
-            pf_hid_build_status_report(&report, hid_sequence);
-            if (tud_hid_report(PF_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
+            pf_hid_build_telemetry_report(&report, hid_sequence);
+            if (tud_hid_report(PF_HID_TELEMETRY_REPORT_ID, &report, sizeof(report))) {
                 ++hid_sequence;
                 last_hid_report = now;
             }
         }
 
         if (tud_hid_ready() &&
-            ((TickType_t)(now - last_memory_report) >= USB_HID_MEMORY_REPORT_INTERVAL)) {
-            pf_hid_memory_report_t report;
+            ((TickType_t)(now - last_storage_report) >= USB_HID_STORAGE_REPORT_INTERVAL)) {
+            pf_hid_storage_report_t report;
 
-            if (pf_hid_build_memory_report(&report, memory_sequence) &&
-                tud_hid_report(PF_HID_MEMORY_REPORT_ID, &report, sizeof(report))) {
-                ++memory_sequence;
-                last_memory_report = now;
-            }
-        }
-
-        if (tud_hid_ready() &&
-            ((TickType_t)(now - last_msc_report) >= USB_HID_MSC_REPORT_INTERVAL)) {
-            pf_hid_msc_status_report_t report;
-
-            pf_hid_build_msc_status_report(&report);
-            if (tud_hid_report(PF_HID_MSC_COMMAND_REPORT_ID, &report, sizeof(report))) {
-                last_msc_report = now;
+            pf_hid_build_storage_report(&report, storage_sequence);
+            if (tud_hid_report(PF_HID_STORAGE_REPORT_ID, &report, sizeof(report))) {
+                ++storage_sequence;
+                last_storage_report = now;
             }
         }
 
         if (tud_hid_ready() &&
             ((TickType_t)(now - last_self_test_report) >= USB_HID_SELF_TEST_INTERVAL)) {
-            pf_hid_self_test_status_t report;
-            pf_hid_build_self_test_report(&report, self_test_sequence);
-            if (tud_hid_report(PF_HID_SELF_TEST_REPORT_ID, &report, sizeof(report))) {
-                ++self_test_sequence;
+            pf_hid_identity_report_t identity;
+            pf_hid_build_identity_report(&identity);
+            if ((identity.capabilities & PF_HID_CAP_SELF_TEST) != 0u) {
+                pf_hid_self_test_report_t report;
+                pf_hid_build_self_test_report(&report, self_test_sequence);
+                if (tud_hid_report(PF_HID_SELF_TEST_REPORT_ID, &report, sizeof(report))) {
+                    ++self_test_sequence;
+                    last_self_test_report = now;
+                }
+            } else {
                 last_self_test_report = now;
-            }
-        }
-
-        if (tud_hid_ready() &&
-            ((TickType_t)(now - last_filesystem_report) >= USB_HID_FILESYSTEM_INTERVAL)) {
-            pf_hid_filesystem_report_t report;
-            pf_hid_build_filesystem_report(&report, filesystem_sequence);
-            if (tud_hid_report(PF_HID_FILESYSTEM_REPORT_ID, &report, sizeof(report))) {
-                ++filesystem_sequence;
-                last_filesystem_report = now;
             }
         }
 

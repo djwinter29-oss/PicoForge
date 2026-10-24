@@ -77,4 +77,11 @@ bool pf_storage_worker_benchmark_cancel(void);
 /** Copy a coherent benchmark snapshot from the USB task; result persists. */
 void pf_storage_worker_benchmark_status(pf_file_benchmark_status_t *status);
 
+/** @brief Poll the asynchronous benchmark admission result.
+ * @param accepted Receives whether the file/space preflight succeeded.
+ * @param error Receives the specific preflight rejection.
+ * @return True when a result was available; false while preflight is pending.
+ */
+bool pf_storage_worker_benchmark_admission_result(bool *accepted, pf_file_benchmark_error_t *error);
+
 #endif

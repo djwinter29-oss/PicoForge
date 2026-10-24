@@ -54,7 +54,7 @@ Pico SDK included with the project. Each combination has its own directory:
 `build/firmware-<board>-<transport>`.
 `pico_forge_rp2350_250_20261018.uf2`. The date is UTC at CMake configuration time; the build script reconfigures
 on each run. Reconfigure an existing directory before a new day's direct `cmake --build` to refresh its date.
-Release packages and tag validation are documented in the [release guide](docs/release.md).
+Release packages and tag validation are documented in the [release guide](docs/deployment/release.md).
 
 Standard builds use the SDK stock clock: 125 MHz for RP2040 and 150 MHz for RP2350. Use the dashboard's
 System clock setting to select a supported runtime clock; changes take effect after reboot.
@@ -102,7 +102,7 @@ Then reconnect the board and restart the dashboard.
 
 The direct browser dashboard requires a WebHID-capable browser and permission
 to access the device. For the serial console, choose the PicoForge USB port,
-not a Debug Probe's UART port. See the [console guide](docs/cdc-cli.md) for
+not a Debug Probe's UART port. See the [console guide](docs/design/usb/cdc-cli.md) for
 terminal settings and available commands.
 
 ## Using an SD Card
@@ -130,7 +130,7 @@ To use the card as a USB drive:
 The computer and firmware cannot access the card's files at the same time.
 Do not unplug or remove the card during writes.
 
-The dashboard's [SD-card self-test](docs/sd-self-test.md) writes and verifies a
+The dashboard's [SD-card self-test](docs/design/sdcard/sd-self-test.md) writes and verifies a
 temporary `/PFTEST.BIN` file and **replaces any existing file at that path**.
 Selecting Start authorizes those writes. Back up your data first; this is not a filesystem repair or a
 guarantee of card reliability.
@@ -140,21 +140,24 @@ guarantee of card reliability.
 **Set up and use**
 
 - [Hardware setup](docs/hardware-setup.md): wiring, supported connections, and board notes.
-- [Console guide](docs/cdc-cli.md): file commands, mounting, and recovery.
-- [SD-card self-test](docs/sd-self-test.md): running tests and understanding results.
+- [Console guide](docs/design/usb/cdc-cli.md): file commands, mounting, and recovery.
+- [SD-card self-test](docs/design/sdcard/sd-self-test.md): running tests and understanding results.
 
-**Design reference** (current implementation)
+**Design and implementation reference**
 
-- [Persistent settings](docs/settings.md): flash settings record, reserved sector, and API.
-- [Architecture](docs/architecture.md): application layers, runtime, and storage ownership.
-- [SD-card design](docs/sdcard-design.md): driver interfaces, initialization, and transfer policy.
+- [Persistent settings](docs/design/settings.md): flash settings record, reserved sector, and API.
+- [Architecture](docs/design/architecture.md): application layers, runtime, and storage ownership.
+- [SD-card design](docs/design/sdcard/sdcard-design.md): driver interfaces, initialization, and transfer policy.
 - [Physical transports](firmware/src/drivers/storage/README.md): SDIO-PIO, SD-SPI, and card wiring.
-- [USB protocol](docs/usb-protocol.md): HID reports, commands, and host compatibility.
+- [USB CDC/HID overview](docs/design/usb/cdc-hid-overview.md): interface roles and MSC ownership.
+- [HID report reference](docs/design/usb/hid-report-reference.md): proposed consolidated HID design; not implemented.
 
 **Validation and history**
 
 - [Test records](docs/tests/records/README.md): dated measurements and reviews; not current-firmware qualification.
 - [SD remediation matrix](docs/tests/sd-design-remediation.md): current review dispositions.
+- [Firmware development and testing](docs/development/firmware-testing.md): firmware builds, test layers, and hardware limits.
+- [Host tools development](docs/development/host-tools.md): dashboard setup, host tests, and shared frontend boundaries.
 
 **Project**
 

@@ -2,7 +2,7 @@
 
 Dated, configuration-specific records. Each states its date, hardware/firmware configuration, and scope; none
 qualifies the current firmware or other cards unless it says so. Current design lives in
-[SD-card driver design](../../sdcard-design.md); current review dispositions in the
+[SD-card driver design](../../design/sdcard/sdcard-design.md); current review dispositions in the
 [SD remediation matrix](../sd-design-remediation.md).
 
 | Record | Kind |

@@ -69,7 +69,7 @@ Long directory names are clipped in listings.
 `sd status` and `sd info` are available while USB owns the card; neither sends
 commands to the card. Detailed errors and counters do not require `sd profile on`.
 The retry count is explicit initialization requests after the first, not runtime
-transfer replay. See the [native startup policy](sdcard-design.md#initialization-workflow).
+transfer replay. See the [native startup policy](../sdcard/sdcard-design.md#initialization-workflow).
 Every `fs` command is refused
 until the host safely ejects and disables MSC. The storage worker automatically
 attempts to mount detected cards at boot, after insertion, and after MSC returns
@@ -165,20 +165,20 @@ These modification commands change the card. The example leaves the empty
 FatFs currently has no RTC integration: newly modified files receive the fixed
 timestamp `2026-01-01 00:00:00`. `fs stat` reports the stored timestamp, not the
 board's current time. See
-[the hardware validation record](../firmware/src/drivers/storage/README.md#sd-card-breakout)
+[the hardware validation record](../../../firmware/src/drivers/storage/README.md#sd-card-breakout)
 for the tested SPI CLI workflow and remaining qualification limits.
 
 ## Integration
 
-[Application CLI](../firmware/src/app/cli/cli.c) owns the static Embedded
+[Application CLI](../../../firmware/src/app/cli/cli.c) owns the static Embedded
 CLI instance and command bindings. It has no TinyUSB, board, or FreeRTOS
 dependency. Its output callback and input/process API are documented in
-[cli.h](../firmware/src/app/cli/cli.h). Add session bindings using
+[cli.h](../../../firmware/src/app/cli/cli.h). Add session bindings using
 `pf_cli_add_binding()` after initialization; argument-tokenization helpers
 come from the upstream framework. Callbacks execute in the USB task, so keep
 them bounded and non-blocking; do not run long operations there.
 
-[The USB task](../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI.
+[The USB task](../../../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI.
 The CLI uses a 4 KiB aligned static arena, 64-byte RX buffer, 128-byte command
 buffer, 256-byte history buffer, and eight application-binding slots. The CDC
 adapter has a 2 KiB output ring. It processes at most 32 received characters
@@ -188,9 +188,9 @@ most 1 KiB; adding commands requires preserving that output budget. Exceeding th
 ring fails explicitly rather than silently dropping output. HID/MSC continue to
 be serviced by the same task.
 
-[The static storage worker](../firmware/src/app/storage/storage_worker.c)
+[The static storage worker](../../../firmware/src/app/storage/storage_worker.c)
 is the sole FatFs caller for CLI operations. It uses an 8 KiB stack, a one-request
-queue, and eight 256-byte reply slots. [The command dispatcher](../firmware/src/app/storage/storage_commands.c)
+queue, and eight 256-byte reply slots. [The command dispatcher](../../../firmware/src/app/storage/storage_commands.c)
 has no RTOS or USB dependency. The worker sends bounded lines through the queue;
 only the USB task calls CLI print APIs. Replies carry a session ID so old output
 does not leak into a newly opened terminal. Backpressure suspends the worker,

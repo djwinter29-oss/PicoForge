@@ -4,9 +4,9 @@ This folder owns the reusable physical storage engines for RP2040 and RP2350. Th
 transport ownership, lifecycle, shared-pin wiring, and lab hardware records. Device protocols and filesystem policy
 remain above this layer:
 
-- [SD-card design](../../../../docs/sdcard-design.md): initialization, commands, registers, CRC validation,
+- [SD-card design](../../../../docs/design/sdcard/sdcard-design.md): initialization, commands, registers, CRC validation,
   addressing, and sector/stream policy.
-- [CDC CLI guide](../../../../docs/cdc-cli.md): filesystem commands and mounting policy.
+- [CDC CLI guide](../../../../docs/design/usb/cdc-cli.md): filesystem commands and mounting policy.
 - [Hardware setup](../../../../docs/hardware-setup.md): board selection, power, debug connections, and other GPIOs.
 
 ## Physical Storage Bus
@@ -159,7 +159,7 @@ transfer-clock target in `clock_hz`. Pin allocation, controller selection, and D
 integration, not the SD protocol configuration. Backend integration supplies `pins.clock_gpio`, `pins.cs_gpio`, or
 all four `pins.data_gpio` entries as appropriate.
 Physical backend descriptor factories are `pf_spi_bus` and `pf_sdio_pio_bus`.
-See the [SD architecture](../../../../docs/sdcard-design.md#architecture) for the protocol configuration contract.
+See the [SD architecture](../../../../docs/design/sdcard/sdcard-design.md#architecture) for the protocol configuration contract.
 
 Before switching SD transports, the caller must sync/unmount as appropriate, finish the card protocol, deinitialize
 the bus, and satisfy the card's power requirements. Bus abort/deinit never claims to finish an interrupted write or
@@ -208,9 +208,9 @@ GP7 drives CS in that mode. Board support can construct either transport configu
 signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls
 when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their
 combined strength. The storage worker initializes and mounts detected cards according to
-[the mounting policy](../../../../docs/cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
+[the mounting policy](../../../../docs/design/usb/cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
 for single sectors. Card capability negotiation and the board's 50 MHz SPI ceiling are defined by the
-[SPI transfer-clock policy](../../../../docs/sdcard-design.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
+[SPI transfer-clock policy](../../../../docs/design/sdcard/sdcard-design.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
 Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power:
 an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.
 
@@ -239,7 +239,7 @@ qualify physical 37.5/41.67/50 MHz operation; no 50 MHz SPI hardware pass is cla
 
 These records describe the firmware, cards, clocks, and wiring tested at the time. They are not qualification of the
 current transport extraction or a throughput guarantee. See the
-[SD-card validation limits](../../../../docs/sdcard-design.md#validation-and-limits) for current test scope.
+[SD-card validation limits](../../../../docs/design/sdcard/sdcard-design.md#validation-and-limits) for current test scope.
 
 Pico 2 SDIO initialization was verified with the connected 16 GB card: UART reported `SD card initialized`, and HID
 reported `initialized=true`, 30,875,648 sectors (15,808,331,776 bytes), and a 12.5 MHz bus clock. The command PIO drove

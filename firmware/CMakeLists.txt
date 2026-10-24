@@ -93,6 +93,16 @@ endif()
 
 pico_sdk_init()
 
+set(PF_HID_BOARD_MODEL_VALUE 0)
+if(PICO_BOARD STREQUAL "pico")
+    set(PF_HID_BOARD_MODEL_VALUE 1)
+elseif(PICO_BOARD STREQUAL "pico2")
+    set(PF_HID_BOARD_MODEL_VALUE 2)
+elseif(PICO_BOARD STREQUAL "pico2_w")
+    set(PF_HID_BOARD_MODEL_VALUE 3)
+endif()
+add_compile_definitions(PF_HID_BOARD_MODEL=${PF_HID_BOARD_MODEL_VALUE})
+
 add_library(pf_storage_bus STATIC
     src/drivers/storage/bus.c
     src/drivers/storage/serial.c

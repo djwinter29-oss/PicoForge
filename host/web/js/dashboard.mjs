@@ -11,35 +11,38 @@ function uptimeLabel(milliseconds) {
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
   const hardware = snapshot.hardware;
-  const runtime = snapshot.runtime;
+  const runtime = snapshot.telemetry_stale ? null : snapshot.runtime;
   const connection = document.querySelector("#connection");
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
   document.querySelector("#connection-label").textContent = snapshot.error
     ? "Attention" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
   document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
+  document.querySelector("#board-model").textContent = ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W" })[hardware?.board_model]
+    ?? (hardware ? `Unknown (${hardware.board_model})` : "--");
   document.querySelector("#firmware-version").textContent = hardware?.firmware_version ?? "Unknown";
   const clock = runtime
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
   document.querySelector("#identity-clock").textContent = clock;
-    renderSettings(snapshot);
+  renderSettings(snapshot);
   document.querySelector("#cpu-usage-core0").textContent = runtime?.cpu_usage_core0_basis_points == null
     ? "--" : `${(runtime.cpu_usage_core0_basis_points / 100).toFixed(1)}%`;
   document.querySelector("#cpu-usage-core1").textContent = runtime?.cpu_usage_core1_basis_points == null
     ? "--" : `${(runtime.cpu_usage_core1_basis_points / 100).toFixed(1)}%`;
-  const ramUsed = runtime?.ram_used_bytes;
-  const ramTotal = runtime?.ram_total_bytes;
-  document.querySelector("#ram-reserved").textContent = runtime?.ram_total_bytes
+  const ramUsed = hardware?.ram_reserved_bytes;
+  const ramTotal = hardware?.ram_total_bytes;
+  document.querySelector("#ram-reserved").textContent = ramTotal
     ? `${(ramUsed / 1024).toFixed(1)} KiB (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
     : "--";
-  document.querySelector("#ram-total").textContent = runtime?.ram_total_bytes
+  document.querySelector("#ram-total").textContent = ramTotal
     ? `${(ramTotal / 1024).toFixed(0)} KiB`
     : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
-  document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
+  document.querySelector("#uptime").textContent = runtime
+    ? uptimeLabel(runtime.uptime_milliseconds ?? runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
-  const memory = snapshot.memory;
+  const memory = snapshot.storage_stale ? null : snapshot.memory;
   const cardAbsent = memory?.presence_known === true && memory.present === false;
   const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
@@ -68,10 +71,12 @@ export function renderStatus(snapshot) {
     : msc?.transition_pending ? "Preparing storage and changing USB mode; the device will reconnect."
       : "";
   document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
-  renderMemory(snapshot.memory, snapshot.filesystem_format);
+  renderBoardConfiguration(snapshot);
+  renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc);
   renderSelfTest(snapshot);
 
-  const message = snapshot.error ?? (runtime ? "HID status is live"
+  const message = snapshot.error ?? (runtime ? "HID telemetry is live"
+    : connected && snapshot.telemetry_stale ? "Telemetry report is stale"
     : connected ? "Waiting for first status report"
       : snapshot.no_board_selected ? "Select a PicoForge board" : "Connect a PicoForge board");
   const statusLine = document.querySelector(".status-line");
@@ -94,12 +99,16 @@ function renderSettings(snapshot) {
     document.querySelector("#settings-clock").value = String(settings.system_clock_mhz);
   }
   if (settings && !snapshot.settings_storage_dirty) {
-    storageControl.value = String(storageSpeed(settings, snapshot.memory?.mode));
+    storageControl.value = String(storageSpeed(settings));
   }
   for (const selector of ["#settings-clock", "#settings-storage"]) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty;
+  document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
+    || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
+    || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
+    || snapshot.self_test_command_pending;
   document.querySelector("#settings-note").textContent = snapshot.settings_message
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
@@ -138,17 +147,46 @@ function updateClockOptions(select, mcu, savedClock) {
   select.value = options.some(option => option.value === previous) ? previous : "0";
 }
 
-export function storageSpeed(settings, transport) {
-  if (transport === "sdio") return settings.sdio_bus_mhz === 50 ? 50 : 25;
-  if (transport === "spi") return settings.spi_bus_mhz === 25 ? 25 : 50;
-  return settings.sdio_bus_mhz === 50 || settings.spi_bus_mhz === 50 ? 50 : 25;
+export function storageSpeed(settings) {
+  return settings.sdcard_profile;
 }
 
-function renderMemory(memory, filesystemFormat) {
+function renderBoardConfiguration(snapshot) {
+  const configuration = snapshot.board_configuration;
+  const set = (selector, value) => { document.querySelector(selector).textContent = value; };
+  const formatPin = pin => pin === 255 || pin == null ? "Unassigned" : `GP${pin}`;
+  if (!configuration) {
+    set("#board-uart", "--");
+    set("#board-storage-pins", "--");
+    set("#board-reset-cause", "--");
+    return;
+  }
+  const uart = configuration.monitor_uart_index === 255 ? "Unavailable"
+    : `UART${configuration.monitor_uart_index}: TX ${formatPin(configuration.monitor_uart_tx_gpio)}, RX ${formatPin(configuration.monitor_uart_rx_gpio)}`;
+  const transport = (snapshot.hardware?.capabilities & 8) ? "SPI" : "SDIO-PIO";
+  const labels = transport === "SPI" ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
+  const pins = configuration.storage_gpios.map((pin, index) => `${labels[index]} ${formatPin(pin)}`).join(", ");
+  const resetCause = ({ 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" })[configuration.reset_cause]
+    ?? `Unassigned (${configuration.reset_cause})`;
+  set("#board-uart", uart);
+  set("#board-storage-pins", pins);
+  set("#board-reset-cause", resetCause);
+}
+
+function renderMemory(memory, filesystemFormat, stale, msc) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const manufacturer = memory?.manufacturer;
+  if (stale) {
+    set("#memory-note", "Storage status is stale; waiting for a fresh report.");
+    for (const id of ["#memory-state", "#memory-mode", "#memory-speed", "#memory-size",
+      "#memory-filesystem", "#memory-manufacturer", "#memory-product", "#memory-serial"]) set(id, "--");
+    return;
+  }
   set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
   set("#memory-note", !memory?.configured ? "No SD-card transport configured"
+    : msc?.enabled ? "The host owns the SD card through USB mass storage."
+      : msc?.transition_pending ? "Storage status is unavailable during the ownership transition."
+        : memory && !memory.sample_valid ? "Current SD details are unavailable while storage is busy."
     : memory.presence_known && !memory.present
       ? "No card detected. Check card insertion and the active-high DET connection on GP8."
       : memory.present && !memory.initialized
@@ -156,7 +194,7 @@ function renderMemory(memory, filesystemFormat) {
         : memory.initialized ? "" : "Card presence has not been established.");
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
-    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
+    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz (${memory.speed_mode === 2 ? "High-Speed" : "Standard"})`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };

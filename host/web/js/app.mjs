@@ -218,11 +218,9 @@ async function setLed() {
 
 function selectedSettings() {
   const saved = currentSnapshot?.settings;
-  const storageMhz = Number(settingsControls[1].value);
   return {
     system_clock_mhz: Number(settingsControls[0].value),
-    sdio_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.sdio_bus_mhz ?? 0),
-    spi_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.spi_bus_mhz ?? 0),
+    sdcard_profile: settingsStorageDirty ? Number(settingsControls[1].value) : (saved?.sdcard_profile ?? 0),
   };
 }
 
@@ -230,7 +228,7 @@ function updateSettingsDirty() {
   const saved = currentSnapshot?.settings;
   if (!saved) return;
   settingsStorageDirty = Number(settingsControls[1].value)
-    !== storageSpeed(saved, currentSnapshot.memory?.mode);
+    !== storageSpeed(saved);
   settingsDirty = Number(settingsControls[0].value) !== saved.system_clock_mhz || settingsStorageDirty;
   settingsMessage = null;
   renderStatus(currentSnapshot);
@@ -259,12 +257,37 @@ async function saveSettings() {
     currentSnapshot.settings_supported = true;
     settingsDirty = false;
     settingsStorageDirty = false;
-    settingsMessage = "Saved. Rebooting now.";
+    settingsMessage = "Saved for the next boot. Reboot separately to apply.";
   } catch (error) {
     settingsMessage = `Save failed: ${error.message}`;
   } finally {
     settingsRequestInProgress = false;
     if (currentSnapshot) renderStatus(currentSnapshot);
+  }
+
+  async function rebootDevice() {
+    const consequence = settingsDirty
+      ? " Unsaved dashboard changes will be lost."
+      : " Saved next-boot settings will be applied.";
+    if (!currentSnapshot?.connected || settingsRequestInProgress
+        || !window.confirm(`Reboot PicoForge now?${consequence} Continue?`)) return;
+    settingsRequestInProgress = true;
+    settingsMessage = "Requesting reboot...";
+    renderStatus(currentSnapshot);
+    try {
+      const response = await fetch(boardUrl("/api/reboot"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!response.ok) throw new Error(`Reboot endpoint returned HTTP ${response.status}`);
+      settingsMessage = "Reboot requested. Waiting for the device to reconnect.";
+    } catch (error) {
+      settingsMessage = `Reboot failed: ${error.message}`;
+    } finally {
+      settingsRequestInProgress = false;
+      if (currentSnapshot) renderStatus(currentSnapshot);
+    }
   }
 }
 
@@ -295,6 +318,7 @@ boardSelect.addEventListener("change", () => selectBoard(boardSelect.value));
 rescanBoardsButton.addEventListener("click", rescanBoards);
 for (const control of settingsControls) control.addEventListener("change", updateSettingsDirty);
 settingsSave.addEventListener("click", saveSettings);
+document.querySelector("#reboot-control").addEventListener("click", rebootDevice);
 ledControl.addEventListener("click", setLed);
 mscControl.addEventListener("click", () => setMsc());
 void rescanBoards();

@@ -43,6 +43,7 @@
       <div class="identity" aria-label="Hardware identity">
         <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
         <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
+        <div class="metric"><span>Board model</span><strong id="board-model">--</strong></div>
         <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
         <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
         <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
@@ -55,7 +56,10 @@
           <p class="eyebrow">BOOT CONFIGURATION</p>
           <h2 id="settings-title">Configuration</h2>
         </div>
-        <button class="button" id="settings-save" type="button" disabled>Save &amp; Reboot</button>
+        <div class="settings-actions">
+          <button class="button" id="settings-save" type="button" disabled>Save Settings</button>
+          <button class="button button-secondary" id="reboot-control" type="button" disabled>Reboot</button>
+        </div>
       </div>
       <div class="settings-controls">
         <label for="settings-clock">System clock
@@ -65,14 +69,28 @@
         </label>
         <label for="settings-storage">SD Card
           <select id="settings-storage" disabled>
-            <option value="25">25 MHz</option>
-            <option value="50">50 MHz</option>
+            <option value="0">Standard</option>
+            <option value="1">High-Speed</option>
           </select>
         </label>
       </div>
       <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
         Waiting for a PicoForge connection.
       </p>
+    </section>
+
+    <section class="runtime" aria-labelledby="board-configuration-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">BOARD CONFIGURATION</p>
+          <h2 id="board-configuration-title">Configured pins</h2>
+        </div>
+      </div>
+      <dl class="runtime-grid">
+        <div><dt>Monitor UART</dt><dd id="board-uart">--</dd></div>
+        <div><dt>Storage GPIOs</dt><dd id="board-storage-pins">--</dd></div>
+        <div><dt>Reset cause</dt><dd id="board-reset-cause">--</dd></div>
+      </dl>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">

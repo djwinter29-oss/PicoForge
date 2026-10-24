@@ -28,7 +28,7 @@ throughput change after the architecture refactor, but three runs cannot establi
 - Dashboard HID supplied benchmark control/status; CDC diagnostics were captured before and after each image.
 - Throughput is application filesystem MiB/s, not decimal MB/s or raw bus bandwidth.
 - Write timing includes pattern generation, writes, sync and close; read timing includes verification and close.
-  See the [benchmark procedure](../../sd-self-test.md) for timing and cleanup semantics.
+  See the [benchmark procedure](../../design/sdcard/sd-self-test.md) for timing and cleanup semantics.
 
 ## Results
 

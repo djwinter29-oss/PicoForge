@@ -156,6 +156,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .actions select {
   min-height: 38px;
   min-width: 0;

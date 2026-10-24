@@ -2,10 +2,11 @@
 
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
 It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
-self-test. The HID report layout and numeric state/error values are unchanged: wire state 2 (`mounting`) means
-preparing an existing mount, and wire error 5 (`card`) means the selected media is unavailable.
+self-test. HID Input report `11` carries state and progress; Feature report `20`, opcode `4`, starts or cancels it.
+The numeric state/error values retain their documented assignments: wire state 2 (`mounting`) means preparing an
+existing mount, and wire error 5 (`card`) means the selected media is unavailable.
 
-Current source-review dispositions and remaining qualification: [SD remediation matrix](tests/sd-design-remediation.md).
+Current source-review dispositions and remaining qualification: [SD remediation matrix](../../tests/sd-design-remediation.md).
 
 The firmware can write a dedicated file, read it back, verify every byte, and
 report average filesystem write/read speeds over HID. The Python and .NET
@@ -21,7 +22,8 @@ byte counts, average MiB/s, verification results, and cleanup errors.
    The test streams through its fixed buffer, not a file-sized RAM allocation. Larger tests take longer and
    write more data; sufficient free space and (when enabled) contiguous preallocation are still required.
    Update firmware and host software together to use sizes above the previous 128 MiB limit.
-5. Select **Start self-test**. This authorizes writes and replacement of `/PFTEST.BIN`; no checkbox is required.
+5. Select **Start self-test**. The firmware checks the reserved path and free space before accepting the write;
+   no existing file is replaced.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and
    does not make ownership available until the worker finishes.
 
@@ -30,13 +32,11 @@ This test writes to the SD card and contributes to card wear. Back up important 
 before testing. It is not a filesystem repair or full-capacity authenticity test.
 
 The fixed filename `/PFTEST.BIN` is reserved for self-tests. **Starting a test
-deletes an existing file at that path**, including a leftover from an interrupted
-run, regardless of capitalization on FAT. Do not store valuable data under this
-name. The firmware refuses a directory at that path and aborts on inspection or
-deletion errors. Deletion happens before the free-space check, so a subsequent
-space error or cancellation does not restore the old file. A fresh file is then
-created in create-new mode and removed during final cleanup; the filesystem
-remains mounted. If close/unlink fails, explicit status flags identify a possible
+rejects any existing file or directory at that path**, regardless of
+capitalization on FAT. Remove a leftover from an interrupted run manually after
+checking its contents; the firmware never replaces it. A fresh file is created
+in create-new mode and removed during final cleanup; the filesystem remains
+mounted. If close/unlink fails, explicit status flags identify a possible
 remaining test file. Do not assume cleanup after a reset.
 
 Only one storage operation can be outstanding. CLI storage commands, duplicate
@@ -83,7 +83,7 @@ The default test uses normal FatFs allocation. Configure
 `-DPF_STORAGE_SELF_TEST_PREALLOCATE=ON` to call `f_expand()` after creating
 the new test file and before starting write timing. The call asks FatFs for a
 contiguous allocation. Failure is reported as a filesystem error and still
-clears the new test file; the startup replacement policy above still applies. Allocation time is
+cleans up the newly created test file. Allocation time is
 excluded from write averages, so record preallocated and normal results
 separately. This mode changes allocation and wear behavior, may need contiguous
 free space, and is not a raw-driver benchmark. Use `sd profile` with a stable
@@ -99,7 +99,7 @@ stream after every facade call. A non-contiguous operation, synchronization,
 error, removal, or reinitialization still performs the required checked stream
 recovery.
 
-The [2026-10-15 controlled A/B measurement](tests/records/2026-10-15-cmd25-persistence.md)
+The [2026-10-15 controlled A/B measurement](../../tests/records/2026-10-15-cmd25-persistence.md)
 found a 40.93% median write-throughput gain from persistence across six passing
 128 MiB runs at 25 MHz SDIO with contiguous preallocation. This was well above
 the 5-10% threshold for retaining the additional stream state. See that record
@@ -107,8 +107,10 @@ for the historical test variants, raw data, controls, and qualification limits.
 
 The storage worker performs all FatFs operations; the USB task owns HID/CDC.
 Progress is copied under a short FreeRTOS critical section and emitted through
-HID Input Report 6 every 500 ms. Cancellation is checked between chunks and
-before creation; a current I/O operation completes before cleanup. The 8 KiB
+HID Input report `11` every 500 ms when the board advertises self-test capability. Start is preflighted by the
+storage worker while it owns admission; the prior result remains visible until the file/path and free-space checks
+succeed. Cancellation is checked between chunks and before creation; a current I/O operation completes before
+cleanup. The 8 KiB
 worker stack allocation remains unchanged. The test uses a 32 KiB static buffer;
 SDIO batched reads use an additional 33,280-byte (32.5 KiB) static wire buffer.
 The SDIO CRC lookup tables occupy another 8 KiB. No benchmark
@@ -129,13 +131,15 @@ command delivery, not successful completion:
 
 Poll `/api/status` and its `self_test` object. Firmware rejection is reported by
 `request_error`; execution failure uses `error` and `filesystem_result`.
-The direct browser sends the same commands using HID Feature Report 6.
-The wire layout is authoritative in [USB protocol](usb-protocol.md#report-id-6).
+The HID command result reports Pending while start preflight runs, then Completed when the test is accepted or Failed
+for preflight I/O, card, space, or existing-path errors. Input report `11` retains the previous test result for
+rejected starts and carries progress after acceptance. Storage status is reported independently in Input report `10`.
+See the [HID Report Reference](../usb/hid-report-reference.md) for the wire contract.
 
 ## Validation
 
 Host-independent engine tests cover deterministic writes/readback, corruption,
-short writes, cancellation, existing-file replacement and deletion failures, insufficient space, sync
+short writes, cancellation, existing-file rejection, insufficient space, sync
 and close failures, and failed cleanup:
 
 ```sh
@@ -152,8 +156,8 @@ cleanup messages, and direct-client event handling. Run them through
 The observations below describe earlier firmware and test workflows, including older buffer sizes and unmount
 behavior. They do not override the current [running safeguards](#running) or [measurement boundaries](#measurement).
 For later card/clock comparisons, see the
-[2026-10-18 speed matrix](tests/records/2026-10-18-sdio-speed-matrix.md) and its
-[repeat measurement](tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
+[2026-10-18 speed matrix](../../tests/records/2026-10-18-sdio-speed-matrix.md) and its
+[repeat measurement](../../tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
 
 On 2026-10-13, the same connected Pico 2 and 16 GB card passed the 32 MiB test
 before batching, after CMD25 writes, and after CMD18 reads were added, in SDIO
@@ -218,9 +222,9 @@ Final Pico 2 hardware validation at 150 MHz CPU / 12.5 MHz SDIO passed three
 128 MiB write/read/verify runs: read 4.693–4.696 MB/s, write 5.032–5.169 MB/s,
 zero mismatches and successful cleanup. These are short filesystem benchmarks,
 not a continuous acquisition guarantee. See
-[the read-throughput record](tests/records/2026-10-13-sdio-read-throughput.md) for artifacts and scope.
+[the read-throughput record](../../tests/records/2026-10-13-sdio-read-throughput.md) for artifacts and scope.
 Run the Ceedling SDIO read-batch regressions for DMA boundary and recovery
-checks; see [firmware test guidance](../firmware/tests/README.md#host-behavior-regressions).
+checks; see [firmware test guidance](../../../firmware/tests/README.md#host-behavior-regressions).
 At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
 indicating some CPU-side cost, but the overclock is diagnostic only.
 
@@ -238,7 +242,7 @@ At the time of that validation, the .NET development launch encountered a static
 path issue in this workspace; its normal launch and generated OpenAPI endpoint
 test were verified. Those runs did not qualify SPI benchmark performance, physical direct-WebHID access,
 long-duration endurance, media removal, or power-loss recovery. Later SPI measurements are recorded in the
-[transport qualification notes](../firmware/src/drivers/storage/README.md#spi-clock-qualification-2026-10-17).
+[transport qualification notes](../../../firmware/src/drivers/storage/README.md#spi-clock-qualification-2026-10-17).
 
 For the MSC reset-sense review and its validation limits, see the
-[2026-10-15 static review record](tests/records/2026-10-15-static-sd-review-followup.md).
+[2026-10-15 static review record](../../tests/records/2026-10-15-static-sd-review-followup.md).

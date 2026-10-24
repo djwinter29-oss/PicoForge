@@ -27,26 +27,25 @@ pf_settings_save(&settings);                 /* task, scheduler running; true af
 
 ## Host dashboard settings
 
-HID Feature report 8, layout version 1, reads or saves the persisted settings. Its five-byte payload is little-endian:
+HID Feature report `2` reads persisted settings as transport-neutral profiles; Feature report `20`, opcode `6`, saves
+profiles. The profile payload is two-byte little-endian `system_clock_mhz` followed by one-byte `sdcard_profile`
+(`0` Standard, `1` High-Speed). Report `2` also returns the selected board's GPIO configuration. See the exact
+offsets and validation rules in the [HID Report Reference](usb/hid-report-reference.md).
 
-| Offset | Size | Value |
-| --- | --- | --- |
-| 0 | 1 | Layout version (`1`) |
-| 1 | 2 | `system_clock_mhz` |
-| 3 | 1 | `sdio_bus_mhz` |
-| 4 | 1 | `spi_bus_mhz` |
-
-The report carries numeric values, not UI labels. Direct WebHID and the Python/.NET dashboards map them to select
-options and verify a save by reading the report back. After a matching readback, **Save & Reboot** sends HID Feature
-report 9; firmware waits one second for the host command to finish before resetting. The Python/.NET
+The Python, .NET, and WebHID dashboards map these values to select options and verify a save by reading Feature
+report `2` back. Saving does not reboot. **Save & Reboot** issues a separate confirmed reboot command through Feature
+report `20`, opcode `2`; firmware waits one second before resetting. The Python/.NET
 `GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
-the three numeric settings fields and returns the values confirmed by the device. Unsupported values return HTTP 400;
+the system clock and `sdcard_profile`, and returns the values confirmed by the device. Unsupported values return HTTP 400;
 unsupported firmware or busy storage returns HTTP 409. Writes are rejected while MSC or storage work owns the media.
-The dashboards expose one **SD Card** speed selector with 25 and 50 MHz choices. Changing it writes the selected speed
-to both bus fields; saving unrelated settings preserves their existing values. The displayed value follows the active
-transport: SDIO zero/default is shown as 25 MHz, while SPI zero uses the board profile's 50 MHz default.
-Values are applied by the rebooted
-firmware; they do not change the active clock or bus before reboot.
+The dashboards expose one **SD Card** speed selector. High-Speed is a requested profile; the active negotiated timing
+is reported separately because a card or transport may remain at Standard speed. Values apply after reboot and do
+not change the active clock or bus immediately.
+
+For compatibility, the persistent settings record remains unchanged. The firmware maps the build-selected transport's
+legacy numeric field to the profile in Feature report `2`, and maps a saved profile back to that field. SDIO `0`/`25`
+maps to Standard and `50` to High-Speed; SPI `25` maps to Standard and `0`/`50` to High-Speed. A missing record retains
+the existing transport defaults.
 
 Before the scheduler starts (runtime-init hooks, `main()`), use the lock-free `pf_settings_load_early()` instead; it
 refuses once the scheduler runs. `main()` loads the settings and passes them to `pf_board_apply_settings()` before
@@ -88,17 +87,17 @@ offset is derived from the SDK board definition, not hard-coded. No other projec
 target shortens only the linker `FLASH` region by one sector through a `pico_add_linker_script_override_path()`
 override of `pico_flash_region.ld` (the map shows `0x1ff000` / `0x3ff000`), so an oversized image fails to link.
 `PICO_FLASH_SIZE_BYTES` keeps the physical size (`pico_override_flash_size()` is not used because it would change it).
-A post-link step ([check_settings_sector.cmake](../firmware/check_settings_sector.cmake)) additionally compares
+A post-link step ([check_settings_sector.cmake](../../firmware/check_settings_sector.cmake)) additionally compares
 `__flash_binary_end` with the reserved sector before the UF2/BIN/HEX outputs are generated; the contract test in
 `tests/contracts/test_settings_sector.py` runs it with images ending at, before and after the sector start for both
 flash sizes. A board with less flash than the SDK definition is unsupported.
 
 ## System clock
 
-A saved `system_clock_mhz` is applied by a `PICO_RUNTIME_INIT_FUNC_HW` hook in [main.c](../firmware/src/main.c) ordered
+A saved `system_clock_mhz` is applied by a `PICO_RUNTIME_INIT_FUNC_HW` hook in [main.c](../../firmware/src/main.c) ordered
 `00501`: after the SDK clock init (`00500`) and before peripheral resets are released (`00600`), stdio and FreeRTOS, so
 the FreeRTOS port reads the new `clk_sys` for SysTick at scheduler start. The hook reads the record without writing
-(`pf_settings_load_early()`) and calls `pf_system_clock_apply()` ([system.c](../firmware/src/drivers/system.c)):
+(`pf_settings_load_early()`) and calls `pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)):
 
 - `0`, a corrupt/missing record (which decodes as Defaults), an underivable frequency or the clock already in use change
   nothing, so Defaults keep the build clock.

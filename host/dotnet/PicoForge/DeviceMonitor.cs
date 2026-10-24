@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace PicoForge;
 
 internal interface IDeviceMonitor
@@ -6,6 +8,7 @@ internal interface IDeviceMonitor
     bool SetLed(bool on);
     MscStatusResponse? SetMsc(bool enabled, bool force = false);
     BootSettingsResponse? SetSettings(BootSettingsResponse settings);
+    bool Reboot();
     bool SetSelfTest(string action, uint sizeMib);
 }
 
@@ -14,8 +17,10 @@ internal interface IHidCommands
 {
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
-    BootSettingsResponse? ReadSettings();
+    BoardConfigurationResponse ReadConfiguration();
+    BootSettingsResponse ReadSettings();
     BootSettingsResponse SetSettings(BootSettingsResponse settings);
+    void Reboot();
     void SetSelfTest(string action, uint sizeMib);
 }
 
@@ -26,6 +31,9 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     // Handle operations always acquire deviceGate before the snapshot gate.
     private readonly object deviceGate = new();
     private IHidCommands? activeClient;
+    private long telemetryReceipt;
+    private long storageReceipt;
+    private long selfTestReceipt;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
     public DeviceMonitor() : this(null, null) { }
@@ -85,7 +93,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     public BootSettingsResponse? SetSettings(BootSettingsResponse settings)
     {
-        HidProtocol.BuildSettingsReport(settings);
+        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(settings));
         lock (deviceGate)
         {
             IHidCommands? client;
@@ -97,11 +106,33 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 client = activeClient;
             }
             var saved = client.SetSettings(settings);
+            var configuration = client.ReadConfiguration();
             lock (gate)
             {
-                snapshot = snapshot with { Settings = saved };
+                snapshot = snapshot with
+                {
+                    Settings = saved,
+                    BoardConfiguration = configuration
+                };
                 return saved;
             }
+        }
+    }
+
+    public bool Reboot()
+    {
+        lock (deviceGate)
+        {
+            IHidCommands? client;
+            lock (gate)
+            {
+                if (activeClient is null || snapshot.Msc is null || snapshot.Msc.Enabled
+                    || snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true)
+                    return false;
+                client = activeClient;
+            }
+            client.Reboot();
+            return true;
         }
     }
 
@@ -114,12 +145,15 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 client = createClient();
                 var hardware = client.ReadInfo();
-                var settings = client.ReadSettings();
+                var configuration = client.ReadConfiguration();
+                var settings = HidProtocol.ToBootSettings(configuration);
+                telemetryReceipt = storageReceipt = selfTestReceipt = 0;
                 lock (deviceGate)
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, null, hardware, null, null, null, null, null, Settings: settings);
+                    snapshot = new(true, null, hardware, null, null, null, null, null,
+                        Settings: settings, BoardConfiguration: configuration);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
@@ -127,17 +161,40 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     lock (deviceGate)
                     {
                         var report = client.ReadInputReport();
+                        var now = DateTimeOffset.UtcNow;
+                        if (report?.Runtime is not null) telemetryReceipt = Stopwatch.GetTimestamp();
+                        if (report?.Memory is not null) storageReceipt = Stopwatch.GetTimestamp();
+                        if (report?.SelfTest is not null) selfTestReceipt = Stopwatch.GetTimestamp();
                         lock (gate)
                         {
-                            var runtime = report?.Runtime;
-                            var memory = report?.Memory;
-                            var msc = report?.Msc;
-                            var boardStatus = runtime?.ToBoardStatus() ?? snapshot.BoardStatus;
-                            snapshot = new(true, null, hardware, runtime ?? snapshot.Runtime,
-                                report is null ? snapshot.UpdatedAt : DateTimeOffset.UtcNow, boardStatus,
-                                memory ?? snapshot.Memory, msc ?? snapshot.Msc,
-                                report?.SelfTest ?? snapshot.SelfTest,
-                                report?.FilesystemFormat ?? snapshot.FilesystemFormat, snapshot.Settings);
+                            var telemetryStale = IsStale(telemetryReceipt, 750);
+                            var storageStale = IsStale(storageReceipt, 1500);
+                            var selfTestStale = IsStale(selfTestReceipt, 1500);
+                            var runtime = telemetryStale ? null : report?.Runtime ?? snapshot.Runtime;
+                            var memory = storageStale ? null : report?.Memory ?? snapshot.Memory;
+                            var msc = storageStale ? null : report?.Msc ?? snapshot.Msc;
+                            snapshot = snapshot with
+                            {
+                                Connected = true,
+                                Error = null,
+                                Runtime = runtime,
+                                BoardStatus = runtime?.ToBoardStatus(),
+                                Memory = memory,
+                                Msc = msc,
+                                SelfTest = selfTestStale ? null : report?.SelfTest ?? snapshot.SelfTest,
+                                FilesystemFormat = storageStale ? null
+                                    : report?.FilesystemFormat ?? snapshot.FilesystemFormat,
+                                UpdatedAt = report is null ? snapshot.UpdatedAt : now,
+                                TelemetryUpdatedAt = report?.Runtime is null
+                                    ? snapshot.TelemetryUpdatedAt : now,
+                                StorageUpdatedAt = report?.Memory is null
+                                    ? snapshot.StorageUpdatedAt : now,
+                                SelfTestUpdatedAt = report?.SelfTest is null
+                                    ? snapshot.SelfTestUpdatedAt : now,
+                                TelemetryStale = telemetryStale,
+                                StorageStale = storageStale,
+                                SelfTestStale = selfTestStale
+                            };
                         }
                     }
                 }
@@ -148,6 +205,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = null;
+                    telemetryReceipt = storageReceipt = selfTestReceipt = 0;
                     snapshot = new(false, error.Message, null, null, null, null, null, null);
                 }
             }
@@ -171,6 +229,9 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private static bool IsDeviceError(Exception error) => error is IOException or InvalidOperationException
         or UnauthorizedAccessException or NotSupportedException or TimeoutException;
 
+    private static bool IsStale(long receivedAt, int maximumAgeMs) =>
+        receivedAt == 0 || Stopwatch.GetElapsedTime(receivedAt).TotalMilliseconds >= maximumAgeMs;
+
     public bool SetSelfTest(string action, uint sizeMib)
     {
         lock (deviceGate)
@@ -178,7 +239,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             IHidCommands? client;
             lock (gate)
             {
-                if (activeClient is null || snapshot.SelfTest is null) return false;
+                if (activeClient is null || snapshot.Hardware is null
+                    || (snapshot.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) == 0) return false;
                 client = activeClient;
             }
             client.SetSelfTest(action, sizeMib);

@@ -79,19 +79,6 @@ static FRESULT stat_directory(const TCHAR *path, FILINFO *info, int calls)
     return existing_file(info, AM_DIR);
 }
 
-static FRESULT remove_existing(const TCHAR *path, int calls)
-{
-    TEST_ASSERT_EQUAL_STRING(PF_FILE_BENCHMARK_PATH, path);
-    ++unlink_calls;
-    if (calls == 0) {
-        TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PREPARING, final_status.state);
-        TEST_ASSERT_EQUAL_UINT32(0u, write_offset);
-        return FR_OK;
-    }
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_CLEANUP, final_status.state);
-    return FR_OK;
-}
-
 static uint8_t pattern(uint32_t offset)
 {
     uint32_t word = (offset / 4u) ^ 0xa5c391f7u;
@@ -326,37 +313,31 @@ void test_file_benchmark_short_write_is_not_a_pass(void)
     TEST_ASSERT_EQUAL(FR_DISK_ERR, final_status.filesystem_result);
 }
 
-void test_file_benchmark_removes_existing_file_and_runs_full_verification(void)
-{
-    prepare();
-    f_stat_StubWithCallback(stat_existing);
-    f_unlink_StubWithCallback(remove_existing);
-    pf_file_benchmark_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, final_status.state);
-    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.written_bytes);
-    TEST_ASSERT_EQUAL_UINT32(1048576u, final_status.read_bytes);
-    TEST_ASSERT_EQUAL_UINT32(2u, unlink_calls);
-}
-
-void test_file_benchmark_deletion_failure_stops_before_space_check_or_creation(void)
+void test_file_benchmark_preserves_existing_file_and_rejects_start(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(stat_existing);
-    f_unlink_ExpectAnyArgsAndReturn(FR_DENIED);
     pf_file_benchmark_run(1u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
-    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_VOLUME_MOUNTED | PF_FILE_BENCHMARK_FILE_REMAINS, final_status.flags);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_EXISTS, final_status.error);
     TEST_ASSERT_EQUAL_UINT32(0u, final_status.written_bytes);
+    TEST_ASSERT_EQUAL_UINT(0u, unlink_calls);
 }
 
-void test_file_benchmark_refuses_directory_without_unlink(void)
+void test_file_benchmark_preflight_rejects_existing_file_without_mutating_it(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_stat_StubWithCallback(stat_existing);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_EXISTS, pf_file_benchmark_preflight(1u, NULL));
+    TEST_ASSERT_EQUAL_UINT(0u, unlink_calls);
+}
+
+void test_file_benchmark_preflight_rejects_directory_without_mutating_it(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     f_stat_StubWithCallback(stat_directory);
-    pf_file_benchmark_run(1u, clock_ms, update, NULL);
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_FAILED, final_status.state);
-    TEST_ASSERT_EQUAL(FR_DENIED, final_status.filesystem_result);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_EXISTS, pf_file_benchmark_preflight(1u, NULL));
+    TEST_ASSERT_EQUAL_UINT(0u, unlink_calls);
 }
 
 void test_file_benchmark_inspection_error_stops_without_deletion(void)
@@ -394,6 +375,15 @@ void test_file_benchmark_insufficient_space_does_not_create_a_file(void)
     f_getfree_StubWithCallback(get_free);
     pf_file_benchmark_run(32u, clock_ms, update, NULL);
     TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SPACE, final_status.error);
+}
+
+void test_file_benchmark_preflight_accepts_missing_file_with_sufficient_space(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_stat_StubWithCallback(stat_missing);
+    f_getfree_StubWithCallback(get_free);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_NONE, pf_file_benchmark_preflight(1u, NULL));
+    TEST_ASSERT_EQUAL_UINT(0u, unlink_calls);
 }
 
 void test_file_benchmark_sync_failure_is_not_a_pass(void)

@@ -12,6 +12,27 @@ static pf_settings_t test_settings;
 static unsigned settings_save_calls;
 static bool msc_enabled;
 static bool msc_transition_pending;
+static pf_board_resources_t test_topology = {
+    .gpio_count = 30u,
+    .led_enabled = true,
+    .led_gpio = 25u,
+    .led_active_high = true,
+    .monitor_uart_enabled = true,
+    .monitor_uart_index = 0u,
+    .monitor_uart_tx_gpio = 0u,
+    .monitor_uart_rx_gpio = 1u,
+    .monitor_uart_baud_rate = 115200u,
+    .sd_card_enabled = true,
+    .native_pins = {
+        .clock_gpio = 2u,
+        .command_gpio = 3u,
+        .data_gpio = {4u, 5u, 6u, 7u},
+    },
+    .card_detect_enabled = true,
+    .card_detect_gpio = 8u,
+};
+
+const pf_board_resources_t *pf_board_resources_get(void) { return &test_topology; }
 
 bool pf_settings_load(pf_settings_t *settings)
 {
@@ -86,6 +107,8 @@ void pf_usb_msc_request_recovery(void) { ++recovery_requests; }
 bool pf_usb_msc_is_enabled(void) { return msc_enabled; }
 bool pf_usb_msc_transition_pending(void) { return msc_transition_pending; }
 bool pf_usb_msc_request_rejected(void) { return false; }
+void pf_usb_msc_defer_for_hid_result(uint8_t transaction_id) { (void)transaction_id; }
+void pf_usb_msc_note_hid_result_read(uint8_t transaction_id) { (void)transaction_id; }
 void pf_cli_print(const char *message)
 { TEST_ASSERT_NOT_NULL(message); TEST_ASSERT_NOT_EQUAL(0, *message); ++messages; }
 uint8_t pf_system_mcu_id(void) { return PF_SYSTEM_MCU_RP2040; }
@@ -102,8 +125,13 @@ bool pf_temperature_read_centidegrees(int16_t *temperature)
 { *temperature = 2500; return true; }
 bool pf_led_is_available(void) { return true; }
 bool pf_led_is_on(void) { return false; }
+void pico_get_unique_board_id(pico_unique_board_id_t *id)
+{ for (size_t i = 0; i < sizeof(id->id); ++i) id->id[i] = (uint8_t)i; }
 void pico_get_unique_board_id_string(char *id, size_t size)
 { memset(id, 0, size); }
+absolute_time_t get_absolute_time(void) { return 1230000u; }
+uint64_t to_ms_since_boot(absolute_time_t value) { return value / 1000u; }
+uint64_t time_us_64(void) { return 1230000u; }
 
 TickType_t xTaskGetTickCount(void) { return fake_ticks; }
 BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t timeout)
@@ -137,5 +165,5 @@ static unsigned reset_requests;
 static bool requested_state;
 bool pf_led_set(bool on) { ++led_requests; requested_state = on; return true; }
 void pf_system_reset(void) { ++reset_requests; }
-void pf_usb_msc_request(bool enabled) { ++msc_requests; requested_state = enabled; }
-void pf_usb_msc_request_force_return(void) { ++force_requests; }
+bool pf_usb_msc_request(bool enabled) { ++msc_requests; requested_state = enabled; return true; }
+bool pf_usb_msc_request_force_return(void) { ++force_requests; requested_state = false; return true; }

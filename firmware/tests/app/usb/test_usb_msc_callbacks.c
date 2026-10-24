@@ -14,6 +14,7 @@ static bool pf_storage_worker_recover_media(void);
 static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
 #include "app/usb/usb_msc.c"
+uint64_t test_time_us;
 static bool initialized=true, worker_busy, mounted, media_absent, recover_accepted;
 static unsigned locks, syncs, sense, asc;
 static pf_sd_result_t read_result=PF_SD_OK, write_result=PF_SD_OK;
@@ -194,6 +195,9 @@ void setUp(void)
  transition_pending=request_rejected=recovery_requested=false;
  transfer_sense_pending=false;
  unmount_pending = force_return_requested = remount_pending = false;
+ hid_result_deferred = hid_result_read = false;
+ hid_result_transaction_id = 0u;
+ hid_result_deadline_us = hid_result_settle_us = test_time_us = 0u;
  transfer_sense_key=transfer_sense_asc=0;
  extern void model_queue_reset(void);
  model_queue_reset();
@@ -343,6 +347,42 @@ void test_failed_sd_unmount_rejects_enable_without_acquiring_usb(void)
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(request_rejected && mounted && !msc_enabled && !transition_pending);
  TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+}
+
+void test_hid_msc_transition_waits_for_matching_result_read_and_control_completion(void)
+{
+ msc_ejected=true;
+ pf_usb_msc_request(false);
+ pf_usb_msc_defer_for_hid_result(42u);
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && transition_pending);
+
+ pf_usb_msc_note_hid_result_read(41u);
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && transition_pending);
+
+ pf_usb_msc_note_hid_result_read(42u);
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && transition_pending);
+ test_time_us=9999u;
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && transition_pending);
+ test_time_us=10000u;
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled || transition_pending || request_rejected);
+}
+
+void test_hid_msc_transition_uses_bounded_fallback_when_result_is_not_read(void)
+{
+ msc_ejected=true;
+ pf_usb_msc_request(false);
+ pf_usb_msc_defer_for_hid_result(43u);
+ test_time_us=499999u;
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && transition_pending);
+ test_time_us=500000u;
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled || transition_pending || request_rejected);
 }
 
 void test_start_stop_invalid_lun_and_disabled_media_report_fresh_sense(void)

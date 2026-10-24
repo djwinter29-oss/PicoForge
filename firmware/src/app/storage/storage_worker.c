@@ -50,6 +50,10 @@ static pf_file_benchmark_status_t benchmark_status;
 static bool benchmark_active;
 static bool benchmark_finished;
 static bool benchmark_cancelled;
+static bool benchmark_admission_pending;
+static bool benchmark_admission_result_ready;
+static bool benchmark_admission_accepted;
+static pf_file_benchmark_error_t benchmark_admission_error;
 static bool media_service_busy;
 static bool presence_sample_valid;
 static bool presence_sample;
@@ -332,8 +336,28 @@ static void storage_task(void *context)
             continue;
         }
         if (request.test_size_mib != 0u) {
-            pf_file_benchmark_run(request.test_size_mib,
-                                  benchmark_clock, benchmark_update, NULL);
+            pf_file_benchmark_error_t preflight_error =
+                pf_file_benchmark_preflight(request.test_size_mib, NULL);
+            taskENTER_CRITICAL();
+            benchmark_admission_pending = false;
+            benchmark_admission_result_ready = true;
+            benchmark_admission_accepted = preflight_error == PF_FILE_BENCHMARK_ERROR_NONE;
+            benchmark_admission_error = preflight_error;
+            if (benchmark_admission_accepted) {
+                benchmark_status = (pf_file_benchmark_status_t){
+                    .state = PF_FILE_BENCHMARK_QUEUED,
+                    .target_bytes = request.test_size_mib * 1024u * 1024u,
+                };
+            } else {
+                benchmark_status.request_error = preflight_error;
+                benchmark_finished = true;
+            }
+            taskEXIT_CRITICAL();
+            if (!benchmark_admission_accepted) {
+                continue;
+            }
+            pf_file_benchmark_run_after_preflight(request.test_size_mib,
+                                                  benchmark_clock, benchmark_update, NULL);
             taskENTER_CRITICAL();
             benchmark_finished = true;
             taskEXIT_CRITICAL();
@@ -487,46 +511,47 @@ bool pf_storage_worker_benchmark_start(uint32_t size_mib, bool host_owned)
 {
     pf_file_benchmark_error_t rejection = PF_FILE_BENCHMARK_ERROR_NONE;
     refresh_benchmark_completion();
-    taskENTER_CRITICAL();
-    bool unavailable = busy || media_service_busy || (requests == NULL);
-    taskEXIT_CRITICAL();
-    if (unavailable) {
-        rejection = PF_FILE_BENCHMARK_ERROR_BUSY;
-    } else if (host_owned) {
-        rejection = PF_FILE_BENCHMARK_ERROR_USB_OWNER;
-    } else if ((size_mib == 0u) || (size_mib > PF_FILE_BENCHMARK_MAX_MIB)) {
+    if ((size_mib == 0u) || (size_mib > PF_FILE_BENCHMARK_MAX_MIB)) {
         rejection = PF_FILE_BENCHMARK_ERROR_SIZE;
-    } else if (!pf_sd_try_lock()) {
-        rejection = PF_FILE_BENCHMARK_ERROR_BUSY;
     } else {
-        if (!config_available || !pf_sd_is_initialized()) {
-            rejection = PF_FILE_BENCHMARK_ERROR_MEDIA;
-        } else if (!pf_fatfs_volume_is_mounted()) {
-            rejection = PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED;
+        taskENTER_CRITICAL();
+        bool unavailable = busy || media_service_busy || (requests == NULL);
+        taskEXIT_CRITICAL();
+        if (unavailable) {
+            rejection = PF_FILE_BENCHMARK_ERROR_BUSY;
+        } else if (host_owned) {
+            rejection = PF_FILE_BENCHMARK_ERROR_USB_OWNER;
+        } else if (!pf_sd_try_lock()) {
+            rejection = PF_FILE_BENCHMARK_ERROR_BUSY;
+        } else {
+            if (!config_available || !pf_sd_is_initialized()) {
+                rejection = PF_FILE_BENCHMARK_ERROR_MEDIA;
+            } else if (!pf_fatfs_volume_is_mounted()) {
+                rejection = PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED;
+            }
+            pf_sd_unlock();
         }
-        pf_sd_unlock();
     }
     taskENTER_CRITICAL();
     if (busy || media_service_busy) {
         rejection = PF_FILE_BENCHMARK_ERROR_BUSY;
     }
-    benchmark_status.request_error = rejection;
     if (rejection != PF_FILE_BENCHMARK_ERROR_NONE) {
+        benchmark_status.request_error = rejection;
         taskEXIT_CRITICAL();
         return false;
     }
-    benchmark_status = (pf_file_benchmark_status_t){
-        .state = PF_FILE_BENCHMARK_QUEUED, .target_bytes = size_mib * 1024u * 1024u
-    };
     benchmark_active = true;
     benchmark_finished = benchmark_cancelled = false;
+    benchmark_admission_pending = true;
+    benchmark_admission_result_ready = false;
     busy = true;
     taskEXIT_CRITICAL();
     storage_request_t request = { .test_size_mib = size_mib };
     if (xQueueSend(requests, &request, 0u) != pdPASS) {
         taskENTER_CRITICAL();
         busy = benchmark_active = false;
-        benchmark_status.state = PF_FILE_BENCHMARK_FAILED;
+        benchmark_admission_pending = false;
         benchmark_status.request_error = PF_FILE_BENCHMARK_ERROR_BUSY;
         taskEXIT_CRITICAL();
         return false;
@@ -538,7 +563,8 @@ bool pf_storage_worker_benchmark_cancel(void)
 {
     refresh_benchmark_completion();
     taskENTER_CRITICAL();
-    bool accepted = benchmark_active && (benchmark_status.state < PF_FILE_BENCHMARK_CLEANUP);
+    bool accepted = benchmark_active && !benchmark_admission_pending &&
+                    (benchmark_status.state < PF_FILE_BENCHMARK_CLEANUP);
     if (accepted) {
         benchmark_cancelled = true;
         benchmark_status.request_error = PF_FILE_BENCHMARK_ERROR_NONE;
@@ -558,6 +584,23 @@ void pf_storage_worker_benchmark_status(pf_file_benchmark_status_t *status)
     taskENTER_CRITICAL();
     *status = benchmark_status;
     taskEXIT_CRITICAL();
+}
+
+bool pf_storage_worker_benchmark_admission_result(bool *accepted, pf_file_benchmark_error_t *error)
+{
+    if ((accepted == NULL) || (error == NULL)) {
+        return false;
+    }
+    refresh_benchmark_completion();
+    taskENTER_CRITICAL();
+    bool ready = benchmark_admission_result_ready;
+    if (ready) {
+        *accepted = benchmark_admission_accepted;
+        *error = benchmark_admission_error;
+        benchmark_admission_result_ready = false;
+    }
+    taskEXIT_CRITICAL();
+    return ready;
 }
 
 bool pf_storage_worker_media_absent(void)

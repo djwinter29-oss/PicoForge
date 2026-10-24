@@ -7,7 +7,7 @@
   <title>PicoForge Diagnostics | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="css/webhid.css?v=3">
-  <script type="module" src="js/app.mjs?v=3"></script>
+  <script type="module" src="js/app.mjs?v=4"></script>
 </head>
 <body>
   <header class="topbar">
@@ -40,6 +40,7 @@
       <div class="identity" aria-label="Hardware identity">
       <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
       <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
+      <div class="metric"><span>Board model</span><strong id="board-model">--</strong></div>
       <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
       <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
       <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
@@ -52,7 +53,10 @@
           <p class="eyebrow">BOOT CONFIGURATION</p>
           <h2 id="settings-title">Configuration</h2>
         </div>
-        <button class="button" id="settings-save" type="button" disabled>Save &amp; Reboot</button>
+        <div class="actions">
+          <button class="button" id="settings-save" type="button" disabled>Save settings</button>
+          <button class="button button-secondary" id="settings-reboot" type="button" disabled>Reboot</button>
+        </div>
       </div>
       <div class="settings-controls">
         <label for="settings-clock">System clock
@@ -62,14 +66,15 @@
         </label>
         <label for="settings-storage">SD Card
           <select id="settings-storage" disabled>
-            <option value="25">25 MHz</option>
-            <option value="50">50 MHz</option>
+            <option value="0">Standard</option>
+            <option value="1">High-Speed (requested)</option>
           </select>
         </label>
       </div>
       <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
         Connect to read the saved settings.
       </p>
+      <p class="sample-time" id="board-config">Board configuration unavailable.</p>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">
@@ -82,11 +87,11 @@
       <dl class="runtime-grid runtime-summary">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
         <div>
-          <dt>CPU Usage (Core 1 / Core 2)</dt>
+          <dt>Service load (Core 0 / Core 1)</dt>
           <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
         </div>
         <div>
-          <dt>SRAM (reserved / total)</dt>
+          <dt>Firmware RAM reserved / total</dt>
           <dd>
             <span id="ram-reserved" title="Static data and reserved core stacks; not live heap or stack usage">--</span> /
             <span id="ram-total" title="Physical SRAM capacity; excludes external RAM">--</span>
@@ -95,6 +100,7 @@
         <div><dt>CLI port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
       </dl>
+      <p class="sample-time" id="telemetry-freshness" role="status">telemetry: unavailable</p>
     </section>
 
     <section class="runtime" aria-labelledby="memory-title">
@@ -112,11 +118,13 @@
         <div><dt>Mode</dt><dd id="memory-mode">--</dd></div>
         <div><dt>Bus speed</dt><dd id="memory-speed">--</dd></div>
         <div><dt>Capacity</dt><dd id="memory-size">--</dd></div>
-        <div><dt>Filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
+        <div><dt>Active timing</dt><dd id="memory-timing">--</dd></div>
+        <div><dt>Last mounted filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
         <div><dt>Manufacturer</dt><dd id="memory-manufacturer">--</dd></div>
         <div><dt>Product</dt><dd id="memory-product">--</dd></div>
         <div><dt>Serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
+      <p class="sample-time" id="storage-freshness" role="status">storage: unavailable</p>
     </section>
 
     <section class="runtime self-test" aria-labelledby="self-test-title">
@@ -140,6 +148,7 @@
         <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
       </dl>
       <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
+      <p class="sample-time" id="self-test-freshness" role="status">self-test: unavailable</p>
     </section>
 
     <footer class="status-line" role="status" aria-live="polite">

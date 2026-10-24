@@ -13,7 +13,7 @@ describe available hardware functions, not implemented application features.
 | Alternate build target | Raspberry Pi Pico 2 (`PICO_BOARD=pico2`); the firmware build defaults to `pico` |
 | MCU | RP2040 on Pico; RP2350 on Pico 2 |
 | Reference power | USB through the board's USB connector |
-| Optional overclock | Select a supported System clock in the dashboard Configuration section; it applies at reboot. Standard firmware builds use the SDK stock clock. Frequencies above the stock clock are out of spec; the SDK raises the regulator above 150 MHz and 200 MHz. SDIO High-Speed negotiation is limited by SYSCLK/4, 50 MHz and one 25 MHz fallback; see [release configurations](release.md). |
+| Optional overclock | Select a supported System clock in the dashboard Configuration section; it applies at reboot. Standard firmware builds use the SDK stock clock. Frequencies above the stock clock are out of spec; the SDK raises the regulator above 150 MHz and 200 MHz. SDIO High-Speed negotiation is limited by SYSCLK/4, 50 MHz and one 25 MHz fallback; see [release configurations](deployment/release.md). |
 
 ## Debug and Monitoring
 
@@ -105,7 +105,7 @@ Firmware resources that do not use header GPIOs:
 When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or
 SD-SPI with `tools/firmware/build.sh --sd-card-transport SDIO_PIO` or `--sd-card-transport SPI`; CMake supplies
 the transport selection used by `firmware/src/config/config.h`. Detected cards are mounted by the worker as described in
-[the mounting policy](cdc-cli.md). Validate card I/O on hardware before enabling storage use.
+[the mounting policy](design/usb/cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

@@ -40,13 +40,69 @@ static uint32_t count_mismatched_bytes(const uint32_t *words, uint32_t offset, u
 
 static void filesystem_error(pf_file_benchmark_status_t *status, FRESULT result)
 {
-    status->error = result == FR_EXIST ? PF_FILE_BENCHMARK_ERROR_EXISTS : PF_FILE_BENCHMARK_ERROR_FILESYSTEM;
-    status->filesystem_result = result;
+    if (result == FR_EXIST) {
+        status->error = PF_FILE_BENCHMARK_ERROR_EXISTS;
+    } else if (result == FR_NOT_READY) {
+        status->error = PF_FILE_BENCHMARK_ERROR_MEDIA;
+    } else {
+        status->error = PF_FILE_BENCHMARK_ERROR_FILESYSTEM;
+    }
+    status->filesystem_result = status->error == PF_FILE_BENCHMARK_ERROR_FILESYSTEM ? result : FR_OK;
 }
 
-void pf_file_benchmark_run(uint32_t size_mib,
-                           pf_file_benchmark_clock_t clock_ms, pf_file_benchmark_update_t update,
-                           void *context)
+static pf_file_benchmark_error_t preflight_mounted_volume(uint32_t size_mib, FRESULT *filesystem_result)
+{
+    FILINFO existing;
+    FRESULT result = f_stat(PF_FILE_BENCHMARK_PATH, &existing);
+    if (result == FR_OK) {
+        return PF_FILE_BENCHMARK_ERROR_EXISTS;
+    }
+    if (result != FR_NO_FILE) {
+        if (result == FR_NOT_READY) {
+            return PF_FILE_BENCHMARK_ERROR_MEDIA;
+        }
+        if (filesystem_result != NULL) {
+            *filesystem_result = result;
+        }
+        return PF_FILE_BENCHMARK_ERROR_FILESYSTEM;
+    }
+
+    DWORD free_clusters;
+    FATFS *filesystem = NULL;
+    result = f_getfree(PF_FATFS_VOLUME_PATH, &free_clusters, &filesystem);
+    if ((result != FR_OK) || (filesystem == NULL)) {
+        if (result == FR_NOT_READY) {
+            return PF_FILE_BENCHMARK_ERROR_MEDIA;
+        }
+        if (filesystem_result != NULL) {
+            *filesystem_result = result != FR_OK ? result : FR_INT_ERR;
+        }
+        return PF_FILE_BENCHMARK_ERROR_FILESYSTEM;
+    }
+    uint64_t free_bytes = (uint64_t)free_clusters * filesystem->csize * FF_MAX_SS;
+    uint64_t target_bytes = (uint64_t)size_mib * 1024u * 1024u;
+    if (free_bytes < target_bytes + PF_FILE_BENCHMARK_BUFFER_SIZE) {
+        return PF_FILE_BENCHMARK_ERROR_SPACE;
+    }
+    return PF_FILE_BENCHMARK_ERROR_NONE;
+}
+
+pf_file_benchmark_error_t pf_file_benchmark_preflight(uint32_t size_mib, FRESULT *filesystem_result)
+{
+    if (filesystem_result != NULL) {
+        *filesystem_result = FR_OK;
+    }
+    if ((size_mib == 0u) || (size_mib > PF_FILE_BENCHMARK_MAX_MIB)) {
+        return PF_FILE_BENCHMARK_ERROR_SIZE;
+    }
+    if (!pf_fatfs_volume_is_mounted()) {
+        return PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED;
+    }
+    return preflight_mounted_volume(size_mib, filesystem_result);
+}
+
+static void run_benchmark(uint32_t size_mib, pf_file_benchmark_clock_t clock_ms,
+                          pf_file_benchmark_update_t update, void *context, bool preflighted)
 {
     pf_file_benchmark_status_t status = { .state = PF_FILE_BENCHMARK_PREPARING };
     FIL file;
@@ -66,7 +122,7 @@ void pf_file_benchmark_run(uint32_t size_mib,
         goto finish;
     }
     status.target_bytes = size_mib * 1024u * 1024u;
-    if (!pf_fatfs_volume_is_mounted()) {
+    if (!preflighted && !pf_fatfs_volume_is_mounted()) {
         status.error = PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED;
         goto finish;
     }
@@ -75,34 +131,14 @@ void pf_file_benchmark_run(uint32_t size_mib,
         cancelled = true;
         goto finish;
     }
-    FILINFO existing;
-    result = f_stat(PF_FILE_BENCHMARK_PATH, &existing);
-    if (result == FR_OK) {
-        if ((existing.fattrib & AM_DIR) != 0u) {
-            filesystem_error(&status, FR_DENIED);
+    if (!preflighted) {
+        FRESULT preflight_result = FR_OK;
+        pf_file_benchmark_error_t preflight_error = preflight_mounted_volume(size_mib, &preflight_result);
+        if (preflight_error != PF_FILE_BENCHMARK_ERROR_NONE) {
+            status.error = preflight_error;
+            status.filesystem_result = preflight_result;
             goto finish;
         }
-        result = f_unlink(PF_FILE_BENCHMARK_PATH);
-        if (result != FR_OK) {
-            status.flags |= PF_FILE_BENCHMARK_FILE_REMAINS;
-            filesystem_error(&status, result);
-            goto finish;
-        }
-    } else if (result != FR_NO_FILE) {
-        filesystem_error(&status, result);
-        goto finish;
-    }
-    DWORD free_clusters;
-    FATFS *filesystem;
-    result = f_getfree(PF_FATFS_VOLUME_PATH, &free_clusters, &filesystem);
-    if (result != FR_OK) {
-        filesystem_error(&status, result);
-        goto cleanup;
-    }
-    uint64_t free_bytes = (uint64_t)free_clusters * filesystem->csize * FF_MAX_SS;
-    if (free_bytes < (uint64_t)status.target_bytes + PF_FILE_BENCHMARK_BUFFER_SIZE) {
-        status.error = PF_FILE_BENCHMARK_ERROR_SPACE;
-        goto cleanup;
     }
     if (!update(&status, context)) {
         cancelled = true;
@@ -208,4 +244,18 @@ finish:
     status.state = status.error != PF_FILE_BENCHMARK_ERROR_NONE ? PF_FILE_BENCHMARK_FAILED
         : cancelled ? PF_FILE_BENCHMARK_CANCELLED : PF_FILE_BENCHMARK_PASSED;
     (void)update(&status, context);
+}
+
+void pf_file_benchmark_run(uint32_t size_mib,
+                           pf_file_benchmark_clock_t clock_ms, pf_file_benchmark_update_t update,
+                           void *context)
+{
+    run_benchmark(size_mib, clock_ms, update, context, false);
+}
+
+void pf_file_benchmark_run_after_preflight(uint32_t size_mib,
+                                           pf_file_benchmark_clock_t clock_ms,
+                                           pf_file_benchmark_update_t update, void *context)
+{
+    run_benchmark(size_mib, clock_ms, update, context, true);
 }

@@ -29,15 +29,14 @@ def test_build_matrices_and_compatible_artifact_checks():
                         str(ROOT / ".github/workflows" / name)], check=True)
 
 
-def test_usb_protocol_documents_filesystem_input_report():
-    doc = (ROOT / "docs/usb-protocol.md").read_text()
-    section = " ".join(doc.split("## Input Report 7", 1)[1].split("\n## ", 1)[0].split())
-    for text in ("3-byte payload", "excluding the report ID", "layout version is `2`", "1000 ms", "push-only",
-                 "`GET_REPORT` is unsupported", "last successfully mounted", "not live mounted state",
-                 "no padding", "modulo 256"):
+def test_hid_report_reference_documents_filesystem_storage_field():
+    doc = (ROOT / "docs/design/usb/hid-report-reference.md").read_text()
+    section = " ".join(doc.split("## Report ID 10: Storage Status", 1)[1].split("\n## ", 1)[0].split())
+    for text in ("**Total** | **34**", "`filesystem_format`",
+                 "Last successfully mounted format", "not proof that a volume is currently mounted",
+                 "nominally every 500 ms", "modulo 256"):
         assert text in section
-    for value, name in enumerate(("unknown", "FAT12", "FAT16", "FAT32", "exFAT")):
-        assert f"| {value} | {name} |" in section
+    assert "Filesystem format values: `0` Unknown, `1` FAT12, `2` FAT16, `3` FAT32, `4` exFAT" in section
 
 
 @pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))

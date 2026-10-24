@@ -14,7 +14,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     commands = parser.add_subparsers(dest="command", required=True)
     status = commands.add_parser("status", help="read hardware and runtime status")
     web = commands.add_parser("web", help="serve the local status dashboard")
-    for command in (status, web):
+    reboot = commands.add_parser("reboot", help="reboot the selected board")
+    reboot.add_argument("--confirm", action="store_true", required=True,
+                        help="confirm that the board should reboot")
+    for command in (status, web, reboot):
         selection = command.add_mutually_exclusive_group()
         selection.add_argument("--serial", help="select a board by USB serial number")
         selection.add_argument("--device-path", help="select a HID path")
@@ -34,11 +37,33 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         with PicoForgeHid(args.serial, args.device_path) as device:
+            if args.command == "reboot":
+                device.read_info()
+                result = device.reboot()
+                print(json.dumps({"control_result": result}, sort_keys=True))
+                return 0 if result["status"] == "completed" else 1
             info = device.read_info()
+            if not info.get("supported", True):
+                print(json.dumps({
+                    "connected": True,
+                    "hardware": info,
+                    "settings": None,
+                    "board_configuration": None,
+                    "runtime": None,
+                    "memory": None,
+                    "msc": None,
+                    "self_test": None,
+                }, sort_keys=True))
+                return 1
+            configuration = device.read_configuration()
+            settings = {
+                "system_clock_mhz": configuration["system_clock_mhz"],
+                "sdcard_profile": configuration["sdcard_profile"],
+            }
             runtime = None
             memory = None
-            msc = None
             self_test = None
+            self_test_expected = info["self_test_supported"]
             for _ in range(16):
                 item = device.read_input_report(timeout_ms=1500)
                 if item is None:
@@ -47,14 +72,22 @@ def main(argv: list[str] | None = None) -> int:
                     runtime = item["data"]
                 elif item["kind"] == "memory":
                     memory = item["data"]
-                elif item["kind"] == "msc":
-                    msc = item["data"]
                 elif item["kind"] == "self_test":
                     self_test = item["data"]
-                if runtime is not None and memory is not None and msc is not None and self_test is not None:
+                if runtime is not None and memory is not None and (
+                    self_test is not None or not self_test_expected
+                ):
                     break
-            print(json.dumps({"connected": True, "hardware": info, "runtime": runtime,
-                              "memory": memory, "msc": msc, "self_test": self_test}, sort_keys=True))
+            print(json.dumps({
+                "connected": True,
+                "hardware": info,
+                "settings": settings,
+                "board_configuration": configuration,
+                "runtime": runtime,
+                "memory": memory,
+                "msc": memory["msc"] if memory is not None else None,
+                "self_test": self_test,
+            }, sort_keys=True))
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

@@ -1,7 +1,7 @@
 # Earlier SDIO Qualification Observations (Undated)
 
 Date: not recorded. Migrated unchanged from the former "Previously Recorded Qualification" section of
-[SD-card driver design](../../sdcard-design.md); the observations pre-date the 2026-10-13 records.
+[SD-card driver design](../../design/sdcard/sdcard-design.md); the observations pre-date the 2026-10-13 records.
 
 **Scope:** historical, configuration-specific observations. Earlier clocking, recovery, and qualification algorithms
 may differ from the current implementation, and these records do not qualify every compatible card or the current
@@ -32,7 +32,7 @@ later 128 KiB probe have been replaced by a single-sector validation at each sta
 
 ## Pico 2 dual-core MSC handoff observation
 
-Migrated from [architecture](../../architecture.md). On the connected Pico 2 at 250 MHz CPU / 50 MHz SDIO, probe
+Migrated from [architecture](../../design/architecture.md). On the connected Pico 2 at 250 MHz CPU / 50 MHz SDIO, probe
 inspection confirmed the active and passive idle tasks executing on separate cores. The dashboard enable command
 completed worker-owned unmount and re-enumerated the SD card as a 119.1 GiB USB block device with its existing
 partition. Host handoff tests pass, but sustained dual-core stress remains unqualified.

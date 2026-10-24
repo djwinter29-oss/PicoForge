@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include "app/storage/fatfs_volume.h"
 
-/** Reserved file replaced by each accepted benchmark. */
+/** Reserved path that must not exist before a benchmark is accepted. */
 #define PF_FILE_BENCHMARK_PATH "0:/PFTEST.BIN"
 /** Maximum requested benchmark size in MiB. */
 #define PF_FILE_BENCHMARK_MAX_MIB 1024u
@@ -82,10 +82,17 @@ typedef uint32_t (*pf_file_benchmark_clock_t)(void *context);
  */
 typedef bool (*pf_file_benchmark_update_t)(const pf_file_benchmark_status_t *status, void *context);
 
+/** @brief Check whether a benchmark can start without changing the filesystem.
+ * @param size_mib Requested benchmark size.
+ * @param filesystem_result Receives the FatFs result for an I/O failure; may be NULL.
+ * @return The specific preflight rejection, or PF_FILE_BENCHMARK_ERROR_NONE.
+ */
+pf_file_benchmark_error_t pf_file_benchmark_preflight(uint32_t size_mib, FRESULT *filesystem_result);
+
 /** Write and verify a 1..1024 MiB dedicated file from the sole storage task.
  * Requires a mounted volume and firmware ownership (enforced by caller).
- * Deletes an existing PFTEST.BIN before checking space and creating a fresh file.
- * Refuses directories and stops on inspection/deletion errors. Owns one static 32 KiB
+ * Rejects an existing PFTEST.BIN and leaves it untouched.
+ * Refuses an existing path and stops on inspection/creation errors. Owns one static 32 KiB
  * buffer, so calls must be serialized. Timing covers pattern generation plus
  * write/sync/close, and read/verification/close; mount and cleanup are excluded.
  * The test's own file is removed; the existing volume remains mounted.
@@ -94,5 +101,15 @@ typedef bool (*pf_file_benchmark_update_t)(const pf_file_benchmark_status_t *sta
 void pf_file_benchmark_run(uint32_t size_mib,
                            pf_file_benchmark_clock_t clock_ms, pf_file_benchmark_update_t update,
                            void *context);
+
+/** @brief Execute a benchmark after the sole storage worker's successful preflight.
+ * @param size_mib Requested benchmark size.
+ * @param clock_ms Monotonic worker clock.
+ * @param update Progress publisher and cancellation check.
+ * @param context Caller context passed to callbacks.
+ */
+void pf_file_benchmark_run_after_preflight(uint32_t size_mib,
+                                           pf_file_benchmark_clock_t clock_ms,
+                                           pf_file_benchmark_update_t update, void *context);
 
 #endif

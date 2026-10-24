@@ -3,33 +3,37 @@
 from __future__ import annotations
 
 from math import ceil
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any
 
 from .protocol import (
-    INFO_PAYLOAD_SIZE,
-    INFO_REPORT_ID,
-    MEMORY_INPUT_SIZE,
-    MEMORY_REPORT_ID,
-    FILESYSTEM_REPORT_ID,
-    MSC_COMMAND_REPORT_ID,
+    CAP_LED,
+    CAP_REBOOT,
+    CAP_SAVE_SETTINGS,
+    CAP_SELF_TEST,
+    CONFIGURATION_FEATURE_SIZE,
+    CONFIGURATION_REPORT_ID,
+    CONTROL_FEATURE_SIZE,
+    CONTROL_REPORT_ID,
+    IDENTITY_FEATURE_SIZE,
+    IDENTITY_REPORT_ID,
+    STORAGE_INPUT_SIZE,
+    STORAGE_REPORT_ID,
+    TELEMETRY_INPUT_SIZE,
+    TELEMETRY_REPORT_ID,
     SELF_TEST_REPORT_ID,
     SELF_TEST_INPUT_SIZE,
-    SETTINGS_FEATURE_SIZE,
-    SETTINGS_REPORT_ID,
-    build_reboot_command_report,
-    STATUS_INPUT_SIZE,
+    build_control_command_report,
     build_settings_command_report,
     build_led_command_report,
     build_msc_command_report,
     build_self_test_command_report,
-    parse_info_report,
-    parse_memory_report,
-    parse_filesystem_report,
-    parse_msc_status_report,
-    parse_self_test_report,
-    parse_settings_report,
-    parse_status_report,
+    parse_device_identity_report,
+    parse_storage_report,
+    parse_board_configuration_report,
+    parse_control_result_report,
+    parse_self_test_status_report,
+    parse_telemetry_report,
 )
 
 VENDOR_ID = 0xCAFE
@@ -118,30 +122,50 @@ class PicoForgeHid:
             ) from error
         self._device = device
         self.closed = False
+        self._expected_serial_number = info.get("serial_number")
+        self.identity: dict[str, object] | None = None
+        self.configuration: dict[str, object] | None = None
+        self._transaction_id = 0
+        self.last_command_result: dict[str, object] | None = None
+        self._command_uncertain = False
 
     def read_info(self) -> dict[str, object]:
         self._require_open()
-        report = self._device.get_feature_report(INFO_REPORT_ID, INFO_PAYLOAD_SIZE + 1)
-        return parse_info_report(report)
+        report = self._device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE)
+        self.identity = parse_device_identity_report(report)
+        if (self._expected_serial_number and self.identity.get("supported")
+                and str(self._expected_serial_number).upper() != self.identity["serial_number"]):
+            raise ValueError("HID identity UID disagrees with the USB serial string")
+        return self.identity
+
+    def read_configuration(self) -> dict[str, object]:
+        self._require_open()
+        identity = self.identity or self.read_info()
+        if not identity.get("supported"):
+            raise RuntimeError(f"unsupported product: {identity['product_name']}")
+        report = self._device.get_feature_report(CONFIGURATION_REPORT_ID, CONFIGURATION_FEATURE_SIZE)
+        self.configuration = parse_board_configuration_report(report, identity)
+        return self.configuration
 
     def read_settings(self) -> dict[str, int]:
-        self._require_open()
-        report = self._device.get_feature_report(SETTINGS_REPORT_ID, SETTINGS_FEATURE_SIZE)
-        return parse_settings_report(report)
+        configuration = self.read_configuration()
+        return {
+            "system_clock_mhz": configuration["system_clock_mhz"],
+            "sdcard_profile": configuration["sdcard_profile"],
+        }
 
     def read_status(self, timeout_ms: int = 250) -> dict[str, object] | None:
         """Consume non-status input reports while waiting up to timeout_ms for status."""
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
-        self._require_open()
         deadline = monotonic() + timeout_ms / 1000
         remaining_ms = timeout_ms
         while True:
-            report = self._device.read(max(STATUS_INPUT_SIZE, MEMORY_INPUT_SIZE, SELF_TEST_INPUT_SIZE), remaining_ms)
-            if not report:
+            item = self.read_input_report(remaining_ms)
+            if item is None:
                 return None
-            if report[0] not in (MEMORY_REPORT_ID, FILESYSTEM_REPORT_ID, MSC_COMMAND_REPORT_ID, SELF_TEST_REPORT_ID):
-                return parse_status_report(report)
+            if item["kind"] == "runtime":
+                return item["data"]
             remaining_ms = ceil((deadline - monotonic()) * 1000)
             if remaining_ms <= 0:
                 return None
@@ -150,61 +174,109 @@ class PicoForgeHid:
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
         self._require_open()
-        report = self._device.read(max(STATUS_INPUT_SIZE, MEMORY_INPUT_SIZE, SELF_TEST_INPUT_SIZE), timeout_ms)
+        report = self._device.read(
+            max(TELEMETRY_INPUT_SIZE, STORAGE_INPUT_SIZE, SELF_TEST_INPUT_SIZE), timeout_ms
+        )
         if not report:
             return None
-        if report[0] == MEMORY_REPORT_ID:
-            return {"kind": "memory", "data": parse_memory_report(report)}
-        if report[0] == FILESYSTEM_REPORT_ID:
-            return {"kind": "filesystem", "data": parse_filesystem_report(report)}
-        if report[0] == MSC_COMMAND_REPORT_ID:
-            return {"kind": "msc", "data": parse_msc_status_report(report)}
+        identity = self.identity or self.read_info()
+        if not identity.get("supported"):
+            raise RuntimeError(f"unsupported product: {identity['product_name']}")
+        if report[0] == STORAGE_REPORT_ID:
+            data = parse_storage_report(report, identity)
+            return {"kind": "memory", "data": data}
         if report[0] == SELF_TEST_REPORT_ID:
-            return {"kind": "self_test", "data": parse_self_test_report(report)}
-        return {"kind": "runtime", "data": parse_status_report(report)}
+            if not identity["self_test_supported"]:
+                raise ValueError("device published self-test status without advertising capability bit 5")
+            return {"kind": "self_test", "data": parse_self_test_status_report(report)}
+        if report[0] == TELEMETRY_REPORT_ID:
+            return {"kind": "runtime", "data": parse_telemetry_report(report, identity)}
+        raise ValueError(f"unexpected HID Input report ID {report[0]}")
 
-    def set_led(self, on: bool) -> None:
+    def set_led(self, on: bool) -> dict[str, object]:
         self._require_open()
-        report = build_led_command_report(on)
-        result = self._device.send_feature_report(list(report))
-        if result < 0:
-            raise OSError("failed to send HID LED command")
+        identity = self.identity or self.read_info()
+        if not identity["capabilities"] & CAP_LED:
+            raise RuntimeError("board identification LED is unavailable")
+        return self._execute_control(build_led_command_report(on, self._next_transaction_id()), 1)
 
-    def set_settings(self, settings: dict[str, object]) -> dict[str, int]:
+    def set_settings(self, settings: dict[str, object]) -> dict[str, object]:
         self._require_open()
-        report = build_settings_command_report(settings)
-        result = self._device.send_feature_report(list(report))
-        if result < 0:
-            raise OSError("failed to send HID settings command")
-        saved = self.read_settings()
+        identity = self.identity or self.read_info()
+        if not identity["capabilities"] & CAP_SAVE_SETTINGS:
+            raise RuntimeError("persistent settings are unavailable on this firmware")
+        command = build_settings_command_report(settings, self._next_transaction_id())
+        result = self._execute_control(command, 6)
+        if result["status"] != "completed":
+            raise RuntimeError(f"settings command {result['status']}: {result['error']}")
+        configuration = self.read_configuration()
+        saved = {
+            "system_clock_mhz": configuration["system_clock_mhz"],
+            "sdcard_profile": configuration["sdcard_profile"],
+        }
         if saved != settings:
             raise RuntimeError("firmware did not confirm the selected boot settings")
-        self.reboot()
         return saved
 
-    def reboot(self) -> None:
+    def reboot(self) -> dict[str, object]:
         self._require_open()
-        result = self._device.send_feature_report(list(build_reboot_command_report()))
-        if result < 0:
-            raise OSError("failed to send HID reboot command")
+        identity = self.identity or self.read_info()
+        if not identity["capabilities"] & CAP_REBOOT:
+            raise RuntimeError("standalone reboot is unavailable on this firmware")
+        command = build_control_command_report(self._next_transaction_id(), 2, flags=1)
+        return self._execute_control(command, 2)
 
-    def set_msc(self, enable: bool, *, force: bool = False) -> None:
+    def set_msc(self, enable: bool, *, force: bool = False) -> dict[str, object]:
         self._require_open()
-        report = build_msc_command_report(enable, force=force)
-        result = self._device.send_feature_report(list(report))
-        if result < 0:
-            raise OSError("failed to send HID MSC command")
+        identity = self.identity or self.read_info()
+        if not identity["capabilities"] & (1 << 3 | 1 << 4):
+            raise RuntimeError("MSC control is unavailable without a selected storage transport")
+        return self._execute_control(
+            build_msc_command_report(enable, force=force, transaction_id=self._next_transaction_id()), 3
+        )
 
     def close(self) -> None:
         if not self.closed:
             self._device.close()
             self.closed = True
 
-    def set_self_test(self, action: str, size_mib: int = 32) -> None:
+    def set_self_test(self, action: str, size_mib: int | None = None) -> dict[str, object]:
         self._require_open()
-        result = self._device.send_feature_report(list(build_self_test_command_report(action, size_mib)))
-        if result < 0:
-            raise OSError("failed to send HID self-test command")
+        identity = self.identity or self.read_info()
+        if not identity["capabilities"] & CAP_SELF_TEST:
+            raise RuntimeError("SD self-test is unavailable on this firmware")
+        command = build_self_test_command_report(action, size_mib, self._next_transaction_id())
+        return self._execute_control(command, 4)
+
+    def _next_transaction_id(self) -> int:
+        self._transaction_id = self._transaction_id % 255 + 1
+        return self._transaction_id
+
+    def _execute_control(self, command: bytes, opcode: int) -> dict[str, object]:
+        if self._command_uncertain:
+            raise RuntimeError("a prior HID command has an uncertain outcome; reconnect and inspect device state")
+        sent = self._device.send_feature_report(list(command))
+        if sent != len(command):
+            raise OSError(f"failed to send HID control opcode {opcode}")
+        transaction_id = command[2]
+        deadline = monotonic() + 5.0
+        while True:
+            try:
+                report = self._device.get_feature_report(CONTROL_REPORT_ID, CONTROL_FEATURE_SIZE)
+                result = parse_control_result_report(report, self.identity)
+            except (OSError, ValueError):
+                self._command_uncertain = True
+                raise
+            if result["transaction_id"] == transaction_id and result["opcode"] == opcode:
+                if result["status"] != "pending":
+                    self.last_command_result = result
+                    return result
+            if monotonic() >= deadline:
+                self._command_uncertain = True
+                raise TimeoutError(
+                    f"timed out waiting for HID control transaction {transaction_id}; outcome is uncertain"
+                )
+            sleep(0.05)
 
     def _require_open(self) -> None:
         if self.closed:

@@ -9,7 +9,12 @@ from typing import Any
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .monitor import DashboardBoards
-from .protocol import build_self_test_command_report, build_settings_command_report
+from .protocol import (
+    build_self_test_command_report,
+    build_settings_command_report,
+    normalize_legacy_settings,
+    validate_legacy_settings,
+)
 
 
 def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flask:
@@ -73,7 +78,9 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
             return jsonify({"error": "Expected JSON with a boolean 'on' field"}), 400
         try:
-            return jsonify({"board_status": dashboard.set_led(request.args.get("board"), payload["on"])}), 200
+            board_status = dashboard.set_led(request.args.get("board"), payload["on"])
+            snapshot = dashboard.snapshot(request.args.get("board"))
+            return jsonify({"board_status": board_status, "control_result": snapshot.get("control_result")}), 200
         except RuntimeError as error:
             return jsonify({"error": str(error)}), 409
         except OSError as error:
@@ -84,14 +91,39 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected boot settings JSON"}), 400
-        settings = {key: payload.get(key) for key in
-                    ("system_clock_mhz", "sdio_bus_mhz", "spi_bus_mhz")}
+        board_id = request.args.get("board")
+        if "sdcard_profile" in payload:
+            settings = {key: payload.get(key) for key in ("system_clock_mhz", "sdcard_profile")}
+            validator = build_settings_command_report
+        else:
+            settings = {key: payload.get(key) for key in
+                        ("system_clock_mhz", "sdio_bus_mhz", "spi_bus_mhz")}
+            validator = validate_legacy_settings
         try:
-            build_settings_command_report(settings)
+            validator(settings)
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
+        if "sdcard_profile" not in settings:
+            try:
+                snapshot = dashboard.snapshot(board_id)
+                hardware = snapshot.get("hardware")
+                configuration = snapshot.get("board_configuration")
+                if not isinstance(hardware, dict):
+                    raise RuntimeError("Waiting for device identity")
+                current_profile = (
+                    configuration.get("sdcard_profile") if isinstance(configuration, dict) else None
+                )
+                settings = normalize_legacy_settings(
+                    settings, hardware["storage_transport"], current_profile
+                )
+            except ValueError as error:
+                return jsonify({"error": str(error)}), 400
+            except RuntimeError as error:
+                return jsonify({"error": str(error)}), 409
         try:
-            return jsonify({"settings": dashboard.set_settings(request.args.get("board"), settings)}), 200
+            saved = dashboard.set_settings(board_id, settings)
+            snapshot = dashboard.snapshot(board_id)
+            return jsonify({"settings": saved, "control_result": snapshot.get("control_result")}), 200
         except RuntimeError as error:
             return jsonify({"error": str(error)}), 409
         except (OSError, ValueError) as error:
@@ -103,7 +135,21 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
             return jsonify({"error": "Expected JSON with a boolean 'enabled' field"}), 400
         try:
-            return jsonify({"msc": dashboard.set_msc(request.args.get("board"), payload["enabled"])}), 200
+            msc = dashboard.set_msc(request.args.get("board"), payload["enabled"])
+            snapshot = dashboard.snapshot(request.args.get("board"))
+            return jsonify({"msc": msc, "control_result": snapshot.get("control_result")}), 200
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except OSError as error:
+            return jsonify({"error": str(error)}), 503
+
+    @app.post("/api/reboot")
+    def reboot():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or payload.get("confirm") is not True:
+            return jsonify({"error": "Explicit confirm: true is required"}), 400
+        try:
+            return jsonify({"control_result": dashboard.reboot(request.args.get("board"))}), 200
         except RuntimeError as error:
             return jsonify({"error": str(error)}), 409
         except OSError as error:
@@ -115,11 +161,13 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected a self-test JSON command"}), 400
         action = payload.get("action")
-        size_mib = payload.get("size_mib", 32)
+        size_mib = payload.get("size_mib")
+        command_size = None if action == "cancel" else size_mib
         try:
-            build_self_test_command_report(action, size_mib)
-            dashboard.set_self_test(request.args.get("board"), action, size_mib)
-            return jsonify({"accepted": True}), 202
+            build_self_test_command_report(action, command_size)
+            dashboard.set_self_test(request.args.get("board"), action, command_size)
+            snapshot = dashboard.snapshot(request.args.get("board"))
+            return jsonify({"accepted": True, "control_result": snapshot.get("control_result")}), 202
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
         except RuntimeError as error:
@@ -133,7 +181,9 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         if not isinstance(payload, dict) or payload.get("confirm_data_loss") is not True:
             return jsonify({"error": "Explicit confirm_data_loss: true is required"}), 400
         try:
-            return jsonify({"msc": dashboard.set_msc(request.args.get("board"), False, force=True)}), 200
+            msc = dashboard.set_msc(request.args.get("board"), False, force=True)
+            snapshot = dashboard.snapshot(request.args.get("board"))
+            return jsonify({"msc": msc, "control_result": snapshot.get("control_result")}), 200
         except RuntimeError as error:
             return jsonify({"error": str(error)}), 409
         except OSError as error:
