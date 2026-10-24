@@ -3,8 +3,8 @@
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
 It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
 self-test. HID Input report `11` carries state and progress; Feature report `20`, opcode `4`, starts or cancels it.
-The numeric state/error values retain their documented assignments: wire state 2 (`mounting`) means preparing an
-existing mount, and wire error 5 (`card`) means the selected media is unavailable.
+The numeric state/error values retain their documented assignments: wire state 2 (`preparing`) means the worker is
+preparing an accepted run against the existing mount, and wire error 5 (`card`) means the selected media is unavailable.
 
 Current source-review dispositions and remaining qualification: [SD remediation matrix](../../tests/sd-design-remediation.md).
 

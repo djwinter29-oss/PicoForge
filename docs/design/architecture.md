@@ -98,6 +98,11 @@ concurrency tests; sustained concurrent USB/media workloads still require target
 Dependency upgrades must pass the pinned-driver surface contract before the guard can be considered compatible.
 Sustained dual-core stress remains unqualified; the one-off Pico 2 observation is in the
 [earlier qualification record](../tests/records/earlier-sdio-qualification-undated.md#pico-2-dual-core-msc-handoff-observation).
+The 16-entry event queue is a bounded design assumption, not a measured worst-case guarantee. Hardware qualification
+must stress concurrent USB events and slow MSC media callbacks, verify that event order and task readiness remain
+correct, and demonstrate that the queue does not overflow under the supported workload. Overflow remains an explicit
+assertion/fault, not a recoverable event loss; changes to event sources, callback latency, or USB classes require
+revalidating the bound.
 
 The example uses static allocation for its application task and the port-provided idle-task memory. Software timers are enabled because the Pico port uses the timer-pend API for SDK synchronization interoperation. Additional tasks should document their stack, priority, ownership, and whether allocation is static or dynamic. The current firmware disables dynamic task allocation.
 
@@ -208,6 +213,36 @@ output selection performed by board startup. Neither middleware service depends 
   attempt; failure leaves the volume unmounted and blocks automatic retries. It never claims host-cache durability.
 - Uncertain failed writes are not replayed. Host tests cover exclusion, failed sync retention, no-replay and recovery
   rejection/completion; they do not establish physical USB BOT or power-loss qualification.
+
+### Storage Ownership Lifecycle
+
+This is the product-level lifecycle; worker admission and operation completion details are in
+[Storage Worker State](#storage-worker-state), and transition rules are in the
+[SD-card ownership workflow](sdcard/sdcard-design.md#ownership-workflow).
+
+```mermaid
+stateDiagram-v2
+    [*] --> FirmwareOwned: boot / MSC disabled
+    FirmwareOwned --> FirmwareOwned: mount, commands, self-test
+    FirmwareOwned --> ToHost: admitted MSC enable / worker unmount
+    ToHost --> HostOwned: USB re-enumerates with MSC
+    ToHost --> FirmwareOwned: acquisition rejected before ownership transfer
+    HostOwned --> ToFirmware: safe-eject then normal disable
+    HostOwned --> ToFirmware: confirmed force return
+    HostOwned --> FaultedHostOwned: card/media I/O fault
+    FaultedHostOwned --> Recovering: confirmed fault recovery / USB detached
+    ToFirmware --> Recovering: ownership returned / reinitialize
+    Recovering --> FirmwareOwned: initialization and one permitted mount succeed
+    Recovering --> FirmwareUnavailable: initialization or mount fails
+    FirmwareUnavailable --> Recovering: explicit recovery or mount retry
+    FirmwareUnavailable --> FirmwareOwned: card insertion / lifecycle retry succeeds
+```
+
+The diagram shows ownership and recovery, not every request state. Worker admission remains held through file cleanup,
+command reply draining, and the relevant ownership transition. A failed force-return mount leaves firmware owning the
+card but the volume unmounted; it must not be interpreted as a successful return to a usable filesystem. Fault recovery
+is distinct: it detaches faulted host-owned media and reinitializes without claiming a clean eject or automatically
+mounting the filesystem.
 
 ### Storage Worker State
 

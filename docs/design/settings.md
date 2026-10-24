@@ -109,9 +109,12 @@ the FreeRTOS port reads the new `clk_sys` for SysTick at scheduler start. The ho
   ceiling needs at least 100 MHz). On RP2350, `clk_hstx` is reconfigured so its recorded frequency matches. Ticks run
   from `clk_ref` (unchanged) and peripherals are still in reset, so nothing else sees the transition.
 
-`SYS_CLK_HZ`, the `main.c` static assertion and the artifact name remain the BUILD clock, not the runtime speed. 150 MHz
-on RP2040 and 200/250 MHz are out of specification, and QSPI flash is clocked from `clk_sys` (the same exposure as a
-compile-time overclock). None of this is hardware-qualified; only the host model tests below exercise it.
+`SYS_CLK_HZ`, the `main.c` static assertion and the artifact name remain the BUILD clock, not the runtime speed. The
+clock selector exposes values, not a guarantee that each value is supported by every board/MCU combination: 150 MHz
+on RP2040 and 200/250 MHz are outside the respective MCU specifications, and QSPI flash is clocked from `clk_sys`
+(the same exposure as a compile-time overclock). Treat out-of-spec profiles as experimental, not product-qualified.
+Do not advertise a profile as supported for a product until that exact board, MCU, flash, clock, and peripheral
+combination has been qualified. None of these runtime clock profiles is hardware-qualified by the host model tests.
 
 ## Tests
 

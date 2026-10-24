@@ -3,8 +3,9 @@
 This guide summarizes firmware build and test workflows for RP2040 and RP2350. The canonical C test placement and
 hardware limits are in [firmware test guidance](../../firmware/tests/README.md) and the
 [test ownership index](../../tests/README.md). System and layer boundaries are in the
-[architecture guide](../design/architecture.md); the HID report reference describes a proposed protocol and is not
-implemented firmware behavior.
+[architecture guide](../design/architecture.md); the software HID protocol is implemented across firmware and host
+clients, while physical USB behavior remains a hardware-qualification item. The
+[HID Report Reference](../design/usb/hid-report-reference.md) is authoritative for the current contract.
 
 ## Prerequisites
 
