@@ -18,11 +18,11 @@
 bool pf_settings_load_early(pf_settings_t *settings);
 
 /**
- * @brief Read the persisted settings from a running FreeRTOS task, serialized against pf_settings_save().
+ * @brief Read the persisted settings from the designated settings-owner task.
  *
- * Waits up to one second for an in-progress save. Returns false with complete defaults when called from an ISR or
- * before the scheduler runs (use pf_settings_load_early()), when the scheduler is suspended, or when the wait
- * times out.
+ * Runtime settings access is owned by the USB task, which also performs saves; callers must not access this API
+ * concurrently from other tasks. Returns false with complete defaults during a save, from an ISR, before the
+ * scheduler runs (use pf_settings_load_early()), or when the scheduler is suspended.
  * @param settings Always filled; complete defaults unless a valid record was loaded.
  * @return true if a valid record was loaded.
  */
@@ -32,13 +32,13 @@ bool pf_settings_load(pf_settings_t *settings);
  * @brief Persist @p settings: erase and program the reserved sector through flash_safe_execute (about 50 ms with
  * interrupts disabled).
  *
- * Call only from a FreeRTOS task with the scheduler running; ISRs, pre-scheduler and suspended-scheduler callers
- * are rejected. Saves and loads are serialized by one mutex, so a concurrent or re-entrant call fails instead of
- * overlapping. The SDK's FreeRTOS flash lockout reuses one static task control block, so this function waits for
- * that task to be reclaimed before it returns and refuses further saves if it never is: it must remain the only
- * flash_safe_execute() caller, and tasks must not be created or deleted while a save is in progress.
+ * Call only from the designated settings-owner task with the scheduler running; ISRs, pre-scheduler and
+ * suspended-scheduler callers are rejected. This is the sole project flash_safe_execute() caller. The SDK's
+ * FreeRTOS flash lockout reuses one static task control block, so this function waits for that task to be reclaimed
+ * before it returns and refuses further saves if it never is. Do not create or delete tasks while a save is in
+ * progress.
  * @return false, without touching flash, for invalid settings, an unsafe context or a busy mutex; true only after
- * the stored record reads back identical. An unchanged record is not rewritten.
+ * the stored record reads back identical. An unchanged record is not rewritten. A re-entrant save is rejected.
  */
 bool pf_settings_save(const pf_settings_t *settings);
 

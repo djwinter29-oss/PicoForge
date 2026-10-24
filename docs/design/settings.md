@@ -47,19 +47,19 @@ legacy numeric field to the profile in Feature report `2`, and maps a saved prof
 maps to Standard and `50` to High-Speed; SPI `25` maps to Standard and `0`/`50` to High-Speed. A missing record retains
 the existing transport defaults.
 
-Before the scheduler starts (runtime-init hooks, `main()`), use the lock-free `pf_settings_load_early()` instead; it
-refuses once the scheduler runs. `main()` loads the settings and passes them to `pf_board_apply_settings()` before
-storage starts, so a saved bus speed takes effect on the next boot.
+Settings follow PicoUart's small boot-config pattern: one settings module owns the record and the only runtime writer
+is the USB task ([reference implementation](https://github.com/djwinter29-oss/PicoUart/blob/main/firmware/src/platform/boot_config.c)).
+PicoForge keeps its portable record codec separate because the HID/profile migration and protocol tests share it.
+Before the scheduler starts, runtime-init and `main()` use `pf_settings_load_early()`; `main()` passes the result to
+`pf_board_apply_settings()` before storage starts. Runtime reads and saves belong to the USB task; they are not a
+general multi-task settings API.
 
-`pf_settings_load()` and `pf_settings_save()` share one mutex, so a load never overlaps an erase/program and a
-concurrent or re-entrant call fails (load returns defaults, save returns false) instead of waiting forever. Both reject
-ISR callers and a not-running or suspended scheduler. `pf_settings_save()` also rejects invalid values, skips an
-identical record, and runs erase/program through `flash_safe_execute` (interrupts off and the other core held, roughly
-50 ms; USB can miss frames, so do not save during MSC transfers). `pf_settings` is the only `flash_safe_execute` caller
-and must stay so: with FreeRTOS static allocation the SDK reuses one static lockout TCB, so a save waits until the
-idle task has reclaimed it and refuses further saves if that never happens. Do not create or delete tasks during a save.
-The `pf_settings` library links `FreeRTOS-Kernel-Static` because the interface library `pico_flash` compiles `flash.c`
-into it; the images contain `flash_lockout_task`, i.e. the FreeRTOS SMP lockout path.
+`pf_settings_save()` rejects ISR, pre-scheduler and suspended-scheduler callers, invalid settings, and re-entrant
+saves. It skips an identical record and uses `flash_safe_execute` for erase/program (interrupts off and the other
+core held, roughly 50 ms; USB can miss frames, so do not save during MSC transfers). Unlike the PicoUart reference,
+PicoForge disables FreeRTOS dynamic allocation: the SDK reuses a static lockout task control block. Therefore the
+settings module waits for that task to be reclaimed and refuses another save if it is not; it must remain the only
+`flash_safe_execute()` caller, and tasks must not be created or deleted during a save.
 
 ## Record format
 

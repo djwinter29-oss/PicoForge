@@ -14,10 +14,8 @@
 
 #include "FreeRTOS.h"
 #include "pico/flash.h"
-#include "pico/mutex.h"
 #include "task.h"
 
-#define LOCK_TIMEOUT_MS 1000u
 #define SAVE_TIMEOUT_MS 1000u
 #define LOCKOUT_RECLAIM_TIMEOUT_MS 1000u
 
@@ -29,11 +27,11 @@ typedef struct {
     uint8_t page[FLASH_PAGE_SIZE]; /**< Record padded with 0xFF. */
 } write_request_t;
 
-/** Serializes load, save and the flash-safe zone. */
-auto_init_mutex(store_mutex);
-/** Task count before the last flash_safe_execute; valid while lockout_pending. Guarded by store_mutex. */
+/** Rejects re-entrant access while a save is executing. Runtime access belongs to the USB task. */
+static bool save_in_progress;
+/** Task count before the last flash_safe_execute; valid while lockout_pending. */
 static UBaseType_t tasks_before_lockout;
-/** True while the SDK's static lockout task may not have been reclaimed yet. Guarded by store_mutex. */
+/** True while the SDK's static lockout task may not have been reclaimed yet. */
 static bool lockout_pending;
 
 static const uint8_t *stored_record(void)
@@ -80,17 +78,14 @@ bool pf_settings_load_early(pf_settings_t *settings)
 
 bool pf_settings_load(pf_settings_t *settings)
 {
-    bool loaded;
     if (settings == NULL) {
         return false;
     }
-    if (!task_context() || !mutex_enter_timeout_ms(&store_mutex, LOCK_TIMEOUT_MS)) {
+    if (!task_context() || save_in_progress) {
         pf_settings_defaults(settings);
         return false;
     }
-    loaded = pf_settings_decode(stored_record(), PF_SETTINGS_RECORD_SIZE, settings);
-    mutex_exit(&store_mutex);
-    return loaded;
+    return pf_settings_decode(stored_record(), PF_SETTINGS_RECORD_SIZE, settings);
 }
 
 bool pf_settings_save(const pf_settings_t *settings)
@@ -99,10 +94,10 @@ bool pf_settings_save(const pf_settings_t *settings)
     bool saved = false;
 
     memset(request.page, 0xff, sizeof(request.page));
-    if (!task_context() || !pf_settings_encode(settings, request.page) ||
-        !mutex_enter_timeout_ms(&store_mutex, LOCK_TIMEOUT_MS)) {
+    if (!task_context() || !pf_settings_encode(settings, request.page) || save_in_progress) {
         return false;
     }
+    save_in_progress = true;
     if (lockout_pending) {
         lockout_pending = !lockout_reclaimed(0u);
     }
@@ -116,6 +111,6 @@ bool pf_settings_save(const pf_settings_t *settings)
         lockout_pending = !lockout_reclaimed(LOCKOUT_RECLAIM_TIMEOUT_MS);
         saved = rc == PICO_OK && memcmp(stored_record(), request.page, PF_SETTINGS_RECORD_SIZE) == 0;
     }
-    mutex_exit(&store_mutex);
+    save_in_progress = false;
     return saved;
 }
