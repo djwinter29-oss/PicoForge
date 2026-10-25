@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Set release package version
@@ -83,7 +83,7 @@ jobs:
               assert web.joinpath(name).is_file(), name
           PY
           wheel-check/bin/picoforge --help
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-python
           path: dist/*.whl
@@ -106,7 +106,7 @@ jobs:
           cp -r host/webhid/css host/webhid/js build/webhid/
           cd build/webhid
           zip -r "../../dist/picoforge-webhid-v$VERSION.zip" .
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-webhid
           path: dist/*.zip
@@ -146,7 +146,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends cmake ninja-build
 
       - name: Install Arm GNU Toolchain
-        uses: carlosperate/arm-none-eabi-gcc-action@98c40e51546516419841748d3210c290df0d2c6c # v1
+        uses: carlosperate/arm-none-eabi-gcc-action@49f4db4520f840e77ab1e99b24cfac2c540a21b1 # v1
         with:
           release: "13.3.Rel1"
 
@@ -185,7 +185,7 @@ jobs:
           sha256sum *.elf *.uf2 > SHA256SUMS
 
       - name: Attach build package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-${{ matrix.transport }}${{ matrix.transport == 'SDIO_PIO' && '-HS' || '' }}
           path: package/
@@ -201,11 +201,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: firmware-v*
           path: firmware-packages
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           path: dist
