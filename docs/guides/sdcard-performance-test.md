@@ -1,8 +1,8 @@
 # SD-Card Performance Test
 
 This guide owns the benchmark's safety rules, execution workflow, measurement boundaries, and result interpretation.
-For card-driver behavior and transport constraints, see the [SD-card driver design](../design/sdcard/sdcard-driver-design.md);
-for the full SD documentation map, see the [SD-card documentation index](../design/sdcard/README.md).
+For card-driver behavior, see the [SD-card driver design](../design/sdcard/sdcard-driver-design.md);
+for wiring and transport constraints, see [SD-card physical links](../design/sdcard/sdcard-physical-links.md).
 
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
 It operates on the already-mounted SD-card volume; the existing host UI/API calls it a

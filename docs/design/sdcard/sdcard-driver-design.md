@@ -1,11 +1,10 @@
 # SD-Card Driver Design
 
-This document describes the implemented SD memory-card driver for RP2040 and
+This document describes the SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
 [SD-card driver guide](sdcard-physical-links.md#memory-and-storage-connections); filesystem
-commands and mounting policy remain in [the CDC CLI guide](../../guides/usb-cdc-cli.md). Use the
-[SD-card documentation index](README.md) for related design and test references.
+commands and mounting policy remain in [the CDC CLI guide](../../guides/usb-cdc-cli.md).
 
 ## Guide
 

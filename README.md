@@ -167,8 +167,9 @@ PicoForge, UART0 is used for independent debug logging; it is not a multi-port U
 
 - [Architecture](docs/design/architecture.md): firmware layers, runtime, and storage ownership.
 - [Persistent settings](docs/design/settings.md): supported profiles, persistence, and API.
-- [SD-card design](docs/design/sdcard/README.md): driver, physical links, and transport references.
-- [USB design](docs/design/usb/README.md): interface overview and HID protocol reference.
+- [SD-card driver design](docs/design/sdcard/sdcard-driver-design.md): driver layers, protocol, and ownership.
+- [SD-card physical links](docs/design/sdcard/sdcard-physical-links.md): transport engines, wiring, and clock planning.
+- [USB HID report reference](docs/design/usb/usb-hid-report-reference.md): report layouts and command semantics.
 
 **Development and validation**
 

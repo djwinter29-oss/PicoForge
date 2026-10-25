@@ -1,10 +1,7 @@
 # USB HID Report Reference
 
-This document is the authoritative HID wire contract. For the interface overview and CDC CLI behavior, see the
-[USB documentation index](README.md).
-
-> **Status:** Implemented in firmware and Python, .NET, and WebHID clients. Host-side tests and RP2040/RP2350
-> firmware builds cover the software contract; physical USB qualification remains outstanding.
+This document is the authoritative HID wire contract. For CDC CLI behavior, see the
+[USB CDC CLI guide](../../guides/usb-cdc-cli.md).
 
 ## Report ID Allocation
 
