@@ -1,5 +1,6 @@
 #include "unity.h"
 
+#include <stdbool.h>
 #include <string.h>
 
 TEST_INCLUDE_PATH("firmware/tests/support/config")
