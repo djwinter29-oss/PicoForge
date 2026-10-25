@@ -266,11 +266,12 @@ target_include_directories(embedded_cli PUBLIC
 
 add_library(pf_cli STATIC
     src/app/cli/cli.c
+    src/app/cli/cli_storage.c
 )
 target_include_directories(pf_cli PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
 )
-target_link_libraries(pf_cli PUBLIC embedded_cli)
+target_link_libraries(pf_cli PUBLIC embedded_cli pf_storage)
 
 add_library(pf_storage STATIC
     src/middleware/storage/block_device.c
@@ -288,7 +289,6 @@ target_include_directories(pf_storage PUBLIC
 )
 
 add_library(pf_app_storage STATIC
-    src/app/storage/storage_commands.c
     src/app/storage/file_benchmark.c
     src/app/storage/storage_worker.c
 )
@@ -300,6 +300,7 @@ target_include_directories(pf_app_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/app/storage"
 )
 target_link_libraries(pf_app_storage PUBLIC
+    pf_cli
     pf_storage
     pf_sdcard
     pf_system

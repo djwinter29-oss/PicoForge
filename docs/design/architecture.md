@@ -190,8 +190,8 @@ backend-neutral snapshot (state, medium, bus and pins, presence, clock, capacity
 includes no driver headers so another medium can implement the same API.
 Layers above middleware treat storage as a filesystem that can be exported as USB MSC, and use only this service:
 the CLI `storage status` and the HID board/storage reports are built from that snapshot.
-Application storage stays in `app/storage`: `storage_commands.c/.h` executes CDC storage commands,
-`file_benchmark.c/.h` verifies and times a dedicated file, and `storage_worker.c/.h` is the sole FatFs executor that
+The CDC `storage`/`fs` commands live in `app/cli/cli_storage.c/.h` and are executed by the worker. Application storage
+stays in `app/storage`: `file_benchmark.c/.h` verifies and times a dedicated file, and `storage_worker.c/.h` is the sole FatFs executor that
 serializes requests and runs the storage policy while idle.
 The worker calls `pf_storage_setup()` before task startup; the USB task no longer configures SD. Command and worker
 headers do not expose SD configuration.

@@ -1,5 +1,5 @@
 #include "unity.h"
-#include "app/storage/storage_commands.h"
+#include "app/cli/cli_storage.h"
 #include "embedded_cli.h"
 #include "Mockff.h"
 #include "Mockfatfs_volume.h"
@@ -87,7 +87,7 @@ static bool reply(const char *line, void *context)
 
 static void run(const char *arguments)
 {
-    pf_storage_command_execute(false, "fs", arguments, reply, NULL);
+    pf_cli_storage_execute(false, "fs", arguments, reply, NULL);
 }
 
 static FRESULT mkdir_denied(const TCHAR *path, int calls)
@@ -110,7 +110,7 @@ void tearDown(void) {}
 
 void test_refuses_filesystem_access_while_usb_owns_card(void)
 {
-    pf_storage_command_execute(true, "fs", "write /a text", reply, NULL);
+    pf_cli_storage_execute(true, "fs", "write /a text", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Media owned by USB"));
 }
 
@@ -160,7 +160,7 @@ void test_mount_and_unmount_report_success(void)
     pf_storage_initialize_ExpectAndReturn(PF_BLOCK_OK);
     pf_storage_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
-    pf_storage_command_execute(false, "fs", "mount", reply, NULL);
+    pf_cli_storage_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     pf_fatfs_volume_unmount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
@@ -176,7 +176,7 @@ void test_mount_reports_fatfs_failure(void)
     pf_storage_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
     pf_fatfs_volume_mount_ReturnThruPtr_filesystem_result(&result);
-    pf_storage_command_execute(false, "fs", "mount", reply, NULL);
+    pf_cli_storage_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "NO_FILESYSTEM"));
 }
 
@@ -199,7 +199,7 @@ void test_mount_reports_card_initialization_failure_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
     pf_storage_initialize_ExpectAndReturn(PF_BLOCK_IO_ERROR);
-    pf_storage_command_execute(false, "fs", "mount", reply, NULL);
+    pf_cli_storage_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "storage initialization"));
 }
 
@@ -338,7 +338,7 @@ void test_status_is_available_during_host_ownership(void)
     };
     pf_storage_get_status_ExpectAnyArgs();
     pf_storage_get_status_ReturnThruPtr_status(&status);
-    pf_storage_command_execute(true, "storage", "status", reply, NULL);
+    pf_cli_storage_execute(true, "storage", "status", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "state=usb owner=USB medium=sd bus=sdio present=yes"));
     TEST_ASSERT_NOT_NULL(strstr(output, "bytes=15808331776"));
     TEST_ASSERT_NOT_NULL(strstr(output, "last_error=write:"));
@@ -346,7 +346,7 @@ void test_status_is_available_during_host_ownership(void)
 
 void test_removed_sd_family_reports_usage(void)
 {
-    pf_storage_command_execute(false, "sd", "info", reply, NULL);
+    pf_cli_storage_execute(false, "sd", "info", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Usage: storage status"));
 }
 
@@ -363,7 +363,7 @@ void test_cancelled_listing_still_closes_directory(void)
     f_opendir_ExpectAnyArgsAndReturn(FR_OK);
     f_readdir_StubWithCallback(read_directory);
     f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    pf_storage_command_execute(false, "fs", "ls", disconnected_reply, NULL);
+    pf_cli_storage_execute(false, "fs", "ls", disconnected_reply, NULL);
 }
 
 void test_disconnected_output_does_not_skip_write_sync_or_close(void)
@@ -374,7 +374,7 @@ void test_disconnected_output_does_not_skip_write_sync_or_close(void)
     f_write_StubWithCallback(write_file);
     f_sync_ExpectAnyArgsAndReturn(FR_OK);
     f_close_ExpectAnyArgsAndReturn(FR_OK);
-    pf_storage_command_execute(false, "fs", "write /a \"hello world\"", disconnected_reply, NULL);
+    pf_cli_storage_execute(false, "fs", "write /a \"hello world\"", disconnected_reply, NULL);
 }
 
 void test_rejects_long_arguments_without_truncation(void)

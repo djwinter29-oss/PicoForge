@@ -25,7 +25,7 @@ typedef struct {
     bool return_from_usb; /**< Attempt one mount after a confirmed forced USB detach. */
     bool unmount_for_usb; /**< Unregister FatFs for the pending USB ownership transition. */
     char family[8]; /**< Command family: storage or fs. */
-    char arguments[PF_STORAGE_COMMAND_ARGS_SIZE]; /**< Copied command arguments. */
+    char arguments[PF_CLI_STORAGE_ARGS_SIZE]; /**< Copied command arguments. */
 } storage_request_t;
 
 static StaticTask_t worker_control;
@@ -145,8 +145,8 @@ static void return_from_usb(void)
 static void execute_command(storage_request_t *request)
 {
     bool previously_mounted = pf_fatfs_volume_is_mounted();
-    pf_storage_command_execute(request->host_owned, request->family, request->arguments,
-                               send_reply, request);
+    pf_cli_storage_execute(request->host_owned, request->family, request->arguments,
+                           send_reply, request);
     pf_storage_note_command(previously_mounted);
     pf_storage_worker_reply_t reply = { .session = request->session, .done = true };
     (void)xQueueSend(replies, &reply, portMAX_DELAY);

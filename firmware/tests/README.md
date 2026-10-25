@@ -41,9 +41,9 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | FreeRTOS SD reservation and storage ownership integration | [middleware/storage](middleware/storage), `test_storage_media_freertos_serialization_*` |
 | SD media ownership and byte transfers with the bare-metal port | [middleware/storage](middleware/storage), `test_storage_media_baremetal_*` |
 | Media configuration, owner-gated I/O and neutral status | [middleware/storage](middleware/storage) |
-| Commands, file benchmark, automount and recovery through the worker | [app/storage](app/storage) |
+| File benchmark, automount and recovery through the worker | [app/storage](app/storage) |
 | Singleton volume lifecycle and format telemetry | [middleware/storage](middleware/storage) |
-| Product CLI prompt, built-ins, completion and history | [app/cli](app/cli) |
+| Product CLI prompt, built-ins, completion, history and `storage`/`fs` commands | [app/cli](app/cli) |
 | Boot-config record validation and platform flash persistence | [config](config), [platform](platform) |
 | Logical blocks, FatFs disk results/geometry/protection, and volume lifecycle | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |

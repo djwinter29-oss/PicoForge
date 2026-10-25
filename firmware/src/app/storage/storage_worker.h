@@ -5,14 +5,14 @@
 #define PF_STORAGE_WORKER_H
 
 #include <stdint.h>
-#include "storage_commands.h"
+#include "app/cli/cli_storage.h"
 #include "file_benchmark.h"
 
 /** One queued command output line or completion marker. */
 typedef struct {
     uint32_t session; /**< Originating CDC session; stale output must be discarded. */
     bool done; /**< Completion marker; draining it releases command admission. */
-    char line[PF_STORAGE_REPLY_SIZE]; /**< NUL-terminated output; unused for completion. */
+    char line[PF_CLI_STORAGE_REPLY_SIZE]; /**< NUL-terminated output; unused for completion. */
 } pf_storage_worker_reply_t;
 
 /** Create the statically allocated sole FatFs worker before the scheduler starts.

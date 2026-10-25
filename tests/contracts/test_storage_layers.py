@@ -26,14 +26,17 @@ def test_project_c_includes_do_not_traverse_relative_directories():
 def test_storage_application_policy_stays_out_of_middleware():
     middleware = ROOT / "firmware/src/middleware/storage"
     application = ROOT / "firmware/src/app/storage"
-    for module in ("storage_commands", "file_benchmark", "storage_worker"):
+    for module in ("file_benchmark", "storage_worker"):
         for extension in ("c", "h"):
             assert (application / f"{module}.{extension}").is_file()
             assert not (middleware / f"{module}.{extension}").exists()
+    for extension in ("c", "h"):
+        assert (ROOT / f"firmware/src/app/cli/cli_storage.{extension}").is_file()
+        assert not (application / f"storage_commands.{extension}").exists()
     for source in sorted(middleware.glob("*.c")) + sorted(middleware.glob("*.h")):
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
         assert not any(header.startswith("app/") or Path(header).name in (
-            "storage_commands.h", "file_benchmark.h", "storage_worker.h", "cli.h"
+            "cli_storage.h", "file_benchmark.h", "storage_worker.h", "cli.h"
         ) for header in headers), source
 
 
