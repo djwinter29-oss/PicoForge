@@ -150,7 +150,7 @@ static void info_stub(pf_sd_info_t *info, int calls)
     (void)calls;
     *info = (pf_sd_info_t){
         .initialized = ready, .presence_known = true, .present = true, .cid_valid = true,
-        .bus_clock_hz = 25000000u, .block_count = 64u,
+        .bus_clock_hz = 25000000u, .block_count = 64u, .high_speed = true,
     };
 }
 
@@ -173,6 +173,7 @@ void test_status_reports_board_fields_without_blocking_and_maps_lifecycle_states
     pf_storage_get_status(&status);
     TEST_ASSERT_EQUAL(PF_STORAGE_STATE_READY, status.state);
     TEST_ASSERT_TRUE(status.id_valid);
+    TEST_ASSERT_TRUE(status.high_speed);
     TEST_ASSERT_EQUAL_UINT32(64u, status.sector_count);
     mounted = true;
     pf_storage_get_status(&status);
@@ -190,4 +191,35 @@ void test_status_reports_board_fields_without_blocking_and_maps_lifecycle_states
     TEST_ASSERT_EQUAL(PF_STORAGE_OPERATION_INIT, status.last_failure);
     TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, status.last_failure_result);
     ready = true;
+}
+
+static void absent_info(pf_sd_info_t *info, int calls)
+{
+    (void)calls;
+    *info = (pf_sd_info_t){.presence_known = true};
+}
+
+void test_removal_unmount_failure_is_reported_and_retried_until_binding_is_released(void)
+{
+    mounted = true;
+    presence_sample_valid = true;
+    presence_sample = false;
+    presence_sample_count = CARD_PRESENCE_DEBOUNCE_SAMPLES - 1u;
+    stable_presence_valid = true;
+    stable_card_present = true;
+    pf_sd_get_info_Stub(absent_info);
+    pf_sd_confirm_removed_Expect();
+    pf_fatfs_volume_forget_filesystem_format_Expect();
+    pf_fatfs_volume_unmount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
+    pf_log_write_ExpectAnyArgs();
+    pf_storage_poll();
+    TEST_ASSERT_TRUE(mounted);
+    TEST_ASSERT_FALSE(pf_storage_msc_acquire() == PF_BLOCK_OK);
+    pf_fatfs_volume_unmount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
+    pf_storage_poll();
+    mounted = false;
+    pf_storage_poll();
+    TEST_ASSERT_TRUE(stable_presence_valid);
+    TEST_ASSERT_FALSE(stable_card_present);
+    presence_sample_valid = stable_presence_valid = false;
 }

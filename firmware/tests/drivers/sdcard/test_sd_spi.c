@@ -216,6 +216,15 @@ void test_spi_high_speed_requires_check_and_successful_switch_before_raising_clo
     TEST_ASSERT_EQUAL_UINT32(37500000u, card_bus_clock_hz);
     TEST_ASSERT_EQUAL_UINT(length, position);
     TEST_ASSERT_EQUAL_UINT(PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK, card_init_stage);
+    configuration_set = true;
+    pf_sd_info_t info;
+    pf_sd_backend_get_info(&info);
+    TEST_ASSERT_TRUE(info.high_speed);
+    TEST_ASSERT_FALSE(info.native_details_valid);
+    TEST_ASSERT_EQUAL_UINT32(37500000u, info.bus_clock_hz);
+    card_initialized = false;
+    pf_sd_backend_get_info(&info);
+    TEST_ASSERT_FALSE(info.high_speed);
 }
 
 void test_spi_unsupported_busy_or_declined_high_speed_retains_default_clock(void)
@@ -226,10 +235,25 @@ void test_spi_unsupported_busy_or_declined_high_speed_retains_default_clock(void
         queue_switch(mode == 0u ? 1u : 2u, mode == 2u ? 0u : 1u, mode == 1u, false);
         if (mode == 3u) { queue[1] = SD_R1_ILLEGAL_COMMAND; queue[2] = 0xffu; length = 3u; }
         TEST_ASSERT_TRUE(select_transfer_clock(csd));
+        TEST_ASSERT_FALSE(card_high_speed);
         TEST_ASSERT_EQUAL_UINT32(25000000u, clock_request);
         TEST_ASSERT_EQUAL_UINT(mode == 2u ? 2u : 1u, command_count);
         TEST_ASSERT_EQUAL_UINT(mode == 3u ? 0u : command_count, reads);
     }
+}
+
+void test_spi_high_speed_status_is_negotiated_not_inferred_from_achieved_clock(void)
+{
+    uint8_t csd[16] = {[3] = 0x32u, [4] = 0x40u};
+    prepare_clock();
+    queue_switch(2u, 1u, false, false);
+    clock_actual = 25000000u;
+    TEST_ASSERT_TRUE(select_transfer_clock(csd));
+    configuration_set = true;
+    pf_sd_info_t info;
+    pf_sd_backend_get_info(&info);
+    TEST_ASSERT_TRUE(info.high_speed);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, info.bus_clock_hz);
 }
 
 void test_spi_clock_policy_honors_explicit_default_and_csd_limits_without_cmd6(void)

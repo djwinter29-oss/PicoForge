@@ -86,7 +86,7 @@ typedef struct {
     uint32_t rx_stalls; /**< Receive FIFO stalls. */
 } pf_sd_error_counters_t;
 
-/** Common media telemetry followed by native-only diagnostics.
+/** Common media telemetry and negotiated timing, plus native-only diagnostics.
  * Native diagnostics can retain registers and capacity after failure; initialized alone gates I/O.
  * SPI leaves native-only fields zero and exposes identity/capacity only while initialized.
  */
@@ -98,9 +98,9 @@ typedef struct {
     uint32_t bus_clock_hz; /**< Current transfer clock when initialized, otherwise zero. */
     uint32_t block_count; /**< Decoded capacity in 512-byte sectors; native may retain it after failure. */
     uint8_t cid[16]; /**< Card identification register; meaningful when cid_valid is true. */
-    bool native_details_valid; /**< Native diagnostic fields below are populated; false for SPI. */
+    bool native_details_valid; /**< Native diagnostic fields are populated; false for SPI. */
     bool initialization_error; /**< Most recent native initialization attempt failed. */
-    bool high_speed; /**< Native card High-Speed selection recorded during initialization. */
+    bool high_speed; /**< Negotiated High-Speed timing; SPI exposes this only while initialized. */
     uint8_t bus_width; /**< Native host's negotiated DAT width. */
     uint8_t sd_spec; /**< Decoded native SCR specification version. */
     uint8_t supported_bus_widths; /**< Native SCR bus-width capability bits. */

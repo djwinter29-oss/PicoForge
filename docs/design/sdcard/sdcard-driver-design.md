@@ -775,10 +775,16 @@ this active-transport table.
 
 The driver has no phase-profiling instrumentation. Above the driver, `pf_storage_get_status()` in
 `middleware/storage/storage.h` reports a backend-neutral snapshot: state, medium, bus and pins, presence,
-effective bus clock, capacity, CID, and the last failed storage operation with its block result. The CLI
+negotiated High-Speed timing, effective bus clock, capacity, CID, and the last failed storage operation with its block
+result. Both SPI and native SD report negotiated timing independently of the achieved clock; a clamped clock does
+not imply Default-Speed timing. SPI clears this status when media is not initialized. The CLI
 `storage status` and HID storage report are built from that snapshot only. Measure throughput with the
 [file benchmark](sdcard-performance-test.md) and an external trace; the driver's always-on CRC, timeout and
 stall counters remain internal error evidence, not latency measurements.
+
+After debounced removal, the storage service invalidates cached filesystem-format telemetry and unregisters any
+mounted volume. Failed unregistering is logged and retried on subsequent absent-media polls while the volume remains
+registered; USB acquisition stays blocked by that registration. Unregistering is cleanup, not a successful flush.
 
 ### MSC Batching And Validation Boundary
 

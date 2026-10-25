@@ -57,6 +57,7 @@ void pf_sd_backend_confirm_removed(void)
 static pf_sd_config_t active_config; /**< Configuration borrowing the board-owned physical context. */
 static bool configuration_set; /**< Configuration locked after physical initialization succeeds. */
 static bool card_initialized; /**< Current media may serve transfers; uncertain completion clears this. */
+static bool card_high_speed; /**< CMD6 selected High-Speed timing; not inferred from achieved SCK. */
 static bool card_block_addressed; /**< Commands use sector addresses rather than byte addresses. */
 static uint32_t card_sector_count; /**< Capacity decoded from CSD; exposed only while initialized. */
 static uint32_t card_bus_clock_hz; /**< Actual SDK-selected bus rate, including identification timing. */
@@ -290,6 +291,7 @@ static bool read_register(uint8_t command, uint8_t data[16])
 /** @brief Negotiate card timing before raising SCK; unsupported cards retain their CSD-limited default rate. */
 static bool select_transfer_clock(const uint8_t csd[16])
 {
+    card_high_speed = false;
     uint32_t default_clock;
     if (!pf_sd_csd_transfer_hz(csd, &default_clock)) {
         return false;
@@ -319,6 +321,7 @@ static bool select_transfer_clock(const uint8_t csd[16])
                 return false;
             }
             if (pf_sd_native_switch_selected_high_speed(status)) {
+                card_high_speed = true;
                 transfer_clock = requested;
             } else if ((status[16] & 0x0fu) != 0u) {
                 return false;
@@ -739,6 +742,7 @@ void pf_sd_backend_get_info(pf_sd_info_t *info)
     }
     info->initialized = pf_sd_backend_is_initialized();
     if (info->initialized) {
+        info->high_speed = card_high_speed;
         info->cid_valid = true;
         info->bus_clock_hz = card_bus_clock_hz;
         info->block_count = card_sector_count;

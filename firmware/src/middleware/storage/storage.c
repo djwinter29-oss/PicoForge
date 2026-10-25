@@ -334,14 +334,18 @@ static void poll_locked(void)
             mount_retry_waiting = false;
             if (!stable_card_present) {
                 pf_sd_confirm_removed();
-                if (pf_fatfs_volume_is_mounted()) {
-                    (void)pf_fatfs_volume_unmount(NULL);
-                }
                 pf_fatfs_volume_forget_filesystem_format();
-                return;
             }
         }
         if (!stable_card_present) {
+            if (pf_fatfs_volume_is_mounted()) {
+                FRESULT filesystem_result = FR_OK;
+                pf_fatfs_volume_result_t result = pf_fatfs_volume_unmount(&filesystem_result);
+                if (result != PF_FATFS_VOLUME_OK && result != PF_FATFS_VOLUME_NOT_MOUNTED) {
+                    PF_LOG_ERROR("storage", "Removed media unmount failed: volume=%u FatFs=%u; retrying next poll",
+                                 (unsigned)result, (unsigned)filesystem_result);
+                }
+            }
             return;
         }
     }

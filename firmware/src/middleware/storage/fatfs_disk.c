@@ -8,13 +8,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static const pf_block_device_t *disk_device;
+static const pf_block_device_t *disk_device; /**< Borrowed binding; serialized with all FatFs operations. */
 
 void pf_fatfs_disk_bind(const pf_block_device_t *device)
 {
     disk_device = device;
 }
 
+/** @brief Translate block failures without treating unavailable media or write protection as success. */
 static DRESULT translate_result(pf_block_result_t result)
 {
     if (result == PF_BLOCK_OK) {
