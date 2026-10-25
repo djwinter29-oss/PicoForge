@@ -1,14 +1,14 @@
 /** @file
  * @brief SPI implementation of the shared SD backend contract; CMake selects this or native SD.
  */
-#include "sd_spi.h"
+#include "sd_spi_internal.h"
 #include "sd_backend.h"
 
 #include <stddef.h>
 #include <string.h>
 
 #include "sd_protocol.h"
-#include "drivers/sdcard/sd_link_serial.h"
+#include "drivers/sdcard/spi/sd_link_spi.h"
 
 pf_sd_link_mode_t pf_sd_backend_mode(void)
 {
@@ -94,7 +94,7 @@ static bool card_is_present(void)
 
 static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 {
-    if (pf_sd_link_serial_exchange(&active_config.transport, &value, received, 1u) != PF_SD_LINK_OK) {
+    if (pf_sd_link_spi_exchange(&active_config.transport, &value, received, 1u) != PF_SD_LINK_OK) {
         card_initialized = false;
         return false;
     }
@@ -103,7 +103,7 @@ static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 
 static bool select_card(void)
 {
-    if (pf_sd_link_serial_select(&active_config.transport, true) != PF_SD_LINK_OK) {
+    if (pf_sd_link_spi_select(&active_config.transport, true) != PF_SD_LINK_OK) {
         card_initialized = false;
         return false;
     }
@@ -115,7 +115,7 @@ static bool deselect_card(void)
     /* CS is high before the trailing clocks. The pinned blocking SDK returns
      * len after receiving every byte; an alternate short-return seam gives no
      * clock-completion guarantee. Invalidate and propagate, never recover/replay. */
-    if (pf_sd_link_serial_select(&active_config.transport, false) != PF_SD_LINK_OK) {
+    if (pf_sd_link_spi_select(&active_config.transport, false) != PF_SD_LINK_OK) {
         return false;
     }
     uint8_t ignored;
@@ -147,7 +147,7 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
         return false;
     }
     bool success = false;
-    if (pf_sd_link_serial_exchange(&active_config.transport, frame, NULL, sizeof(frame)) != PF_SD_LINK_OK) {
+    if (pf_sd_link_spi_exchange(&active_config.transport, frame, NULL, sizeof(frame)) != PF_SD_LINK_OK) {
         goto done;
     }
     if (command == SD_CMD_STOP_TRANSMISSION) {
@@ -191,7 +191,7 @@ static bool send_command(uint8_t command, uint32_t argument,
         send_command_selected(command, argument, response)) {
         success = (extra_size == 0u) ||
                   ((extra != NULL) &&
-                   (pf_sd_link_serial_exchange(&active_config.transport, NULL, extra, extra_size) == PF_SD_LINK_OK));
+                   (pf_sd_link_spi_exchange(&active_config.transport, NULL, extra, extra_size) == PF_SD_LINK_OK));
     }
     bool deselected = deselect_card();
     if (!deselected) {
@@ -232,7 +232,7 @@ static bool read_data_block(uint8_t *data, size_t size)
     if (token != SD_DATA_START_BLOCK) {
         goto data_done;
     }
-    if (pf_sd_link_serial_exchange(&active_config.transport, NULL, data, size) != PF_SD_LINK_OK ||
+    if (pf_sd_link_spi_exchange(&active_config.transport, NULL, data, size) != PF_SD_LINK_OK ||
         !exchange_byte_checked(0xffu, &crc_high) ||
         !exchange_byte_checked(0xffu, &crc_low)) {
         goto data_done;
@@ -353,7 +353,7 @@ static bool initialize_card(void)
     last_init_response_received = false;
     card_init_stage = PF_SD_SPI_INIT_STAGE_IDLE_CLOCKS;
     memset(idle_clocks, 0xff, sizeof(idle_clocks));
-    if (pf_sd_link_serial_exchange(&active_config.transport, idle_clocks, NULL, sizeof(idle_clocks)) != PF_SD_LINK_OK) {
+    if (pf_sd_link_spi_exchange(&active_config.transport, idle_clocks, NULL, sizeof(idle_clocks)) != PF_SD_LINK_OK) {
         return false;
     }
 
@@ -474,11 +474,11 @@ void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
 
 static bool write_data_block(const uint8_t *buffer, uint8_t token)
 {
-    if (pf_sd_link_serial_exchange(&active_config.transport, &token, NULL, 1u) != PF_SD_LINK_OK) {
+    if (pf_sd_link_spi_exchange(&active_config.transport, &token, NULL, 1u) != PF_SD_LINK_OK) {
         card_initialized = false;
         return false;
     }
-    bool sent = pf_sd_link_serial_exchange(&active_config.transport, buffer, NULL, PF_SD_BLOCK_SIZE)
+    bool sent = pf_sd_link_spi_exchange(&active_config.transport, buffer, NULL, PF_SD_BLOCK_SIZE)
         == PF_SD_LINK_OK;
     if (!sent) {
         card_initialized = false;

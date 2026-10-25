@@ -1,7 +1,7 @@
 #ifndef PF_SPI_H
 #define PF_SPI_H
 
-#include "drivers/sdcard/sd_link_serial.h"
+#include "drivers/sdcard/spi/sd_link_spi.h"
 #include "drivers/sdcard/spi/spi_pins.h"
 #include "hardware/spi.h"
 

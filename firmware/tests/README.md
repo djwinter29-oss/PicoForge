@@ -137,7 +137,7 @@ when the upstream DCD entry surface changes. SDIO wait tests also force a comple
 cleanup on a second host thread. Run the focused synchronization checks with:
 
 ```bash
-ceedling 'test:pattern[(dcd_guard|sdio_wait_freertos|fatfs_volume)]'
+ceedling 'test:pattern[(dcd_guard|sdio_pio_wait_freertos|fatfs_volume)]'
 python3 -m pytest tests/contracts/test_tinyusb_dcd_contract.py -q
 ```
 

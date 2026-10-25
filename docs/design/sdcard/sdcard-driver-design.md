@@ -31,9 +31,9 @@ Read the driver from the public facade down to the hardware. Each boundary has o
 | Layer | Contract | Responsibility |
 | --- | --- | --- |
 | Storage integration | `middleware/storage/storage.h` | Filesystem lifecycle and exclusive firmware/USB ownership; applications stop here. |
-| Public SD facade | `sd.h`, `sd_block.h` | Configuration checks and synchronous, serialized block operations. |
+| Public SD facade | `sd.h` | Configuration, reservations, serialized block operations and diagnostics. |
 | Selected card protocol | `sd_backend.h` | Card identification, addressing, transfers and recovery; calls require serialization. |
-| Physical link | `sd_link*.h` | Resource lifecycle, clocks and raw SPI or CMD/DAT operations; no card protocol. |
+| Physical link | `sd_link.h`, `sdio/sd_link_sdio.h`, `spi/sd_link_spi.h` | Resource lifecycle, clocks and raw SPI or CMD/DAT operations; no card protocol. |
 | Execution port | `sd_port.h` | Reservations and optional scheduler waits, independently selected from the transport. |
 
 Board composition supplies a persistent physical context, saved speed and card detect; it is not another transfer
@@ -42,18 +42,17 @@ layer. CMake selects one complete transport path:
 | Boundary | Native SDIO-PIO | SD-SPI |
 | --- | --- | --- |
 | Board binding (`sd_board_internal.h`) | `sdio/sd_board_sdio.c` | `spi/sd_board_spi.c` |
-| Card protocol (`sd_backend.h`) | `sdio/sd_backend_sdio.c`, with `sdio/sd_native_host.c` for sequencing | `spi/sd_backend_spi.c` |
-| Raw operations | `sd_link_wire.h` | `sd_link_serial.h` |
+| Card protocol (`sd_backend.h`) | `sdio/sd_backend_sdio.c`, with `sdio/sd_sdio_host.c` for sequencing | `spi/sd_backend_spi.c` |
+| Raw operations | `sdio/sd_link_sdio.h` | `spi/sd_link_spi.h` |
 | Physical engine | `sdio/sdio_pio.c` and PIO programs | `spi/spi.c` |
 
 The two columns are build alternatives, not runtime branches. Root files hold shared code and contracts, including
-the `sd_link*` physical boundary declarations and descriptor helpers. Each transport directory contains its
-protocol implementation, board binding, diagnostics and physical engine:
+the common `sd_link.h` lifecycle contract and descriptor helpers. Each transport directory contains its
+protocol implementation, board binding, diagnostics, raw-operation contract and physical engine:
 
 ```text
 sdcard/
-  sd.c / .h                   Serialized facade and configuration
-  sd_block.h                  Raw block operations and telemetry
+  sd.c / .h                   Serialized facade; public configuration, block operations and telemetry
   sd_backend.h                Shared internal protocol contract; one implementation linked
   sd_board.c / .h              Shared saved-speed and card-detect setup
   sd_board_internal.h          Internal board-binding contract
@@ -62,21 +61,21 @@ sdcard/
   sd_port_freertos.c           FreeRTOS reservations and optional waits
   sd_port_baremetal.c          Single-foreground-context integration
   sd_link.c / .h              Physical lifecycle contract, descriptor and presence helpers
-  sd_link_serial.h            Raw SPI contract implemented by spi/spi.c
-  sd_link_wire.h              Raw CMD/DAT contract implemented by sdio/sdio_pio.c
   sdio/
+    sd_link_sdio.h            Raw CMD/DAT contract implemented by sdio_pio.c
     sd_backend_sdio.c         Native implementation of sd_backend.h
     sd_board_sdio.c           Native implementation of sd_board_internal.h
-    sd_native.h               Native-specific diagnostics and constants
-    sd_native_host.c / .h     Native command/data sequencing and streams
+    sd_sdio_internal.h        Native-specific diagnostics and constants
+    sd_sdio_host.c / .h       Native command/data sequencing and streams
     sdio_pio.c / .h           Native SD PIO/DMA engine
     sdio_pio_pins.h           Native physical pin types
     sdio_pio.pio              Generated PIO programs
-    sdio_wait_freertos.c      Optional bounded native waits
+    sdio_pio_wait_freertos.c  Optional bounded PIO completion waits
   spi/
+    sd_link_spi.h             Raw SPI contract implemented by spi.c
     sd_backend_spi.c          SPI implementation of sd_backend.h
     sd_board_spi.c            SPI implementation of sd_board_internal.h
-    sd_spi.h                  SPI-specific diagnostics
+    sd_spi_internal.h         SPI-specific diagnostics
     spi.c / .h                Pico SDK SPI controller engine
     spi_pins.h                SPI physical pin types
 ```
@@ -86,7 +85,7 @@ response formats, data framing, and recovery sequences. Native requires modern S
 legacy/SDSC handling. Both implement the same `pf_sd_backend_*` functions declared only in
 `sd_backend.h`; CMake links `sdio/sd_backend_sdio.c` or `spi/sd_backend_spi.c`, never both.
 Implementation filenames carry a transport suffix while shared function names remain identical.
-The transport-local `sd_native.h` and `sd_spi.h`
+The transport-local `sd_sdio_internal.h` and `sd_spi_internal.h`
 contain protocol-specific diagnostics and constants, not duplicate backend APIs. PIO and DMA implementation belongs
 to the `sdio/sdio_pio.c` physical link engine, not the native protocol files.
 
@@ -815,7 +814,7 @@ preallocated files), and card busy time before choosing further optimizations.
 
 The FreeRTOS [SD port](../../../firmware/src/drivers/sdcard/sd_port_freertos.c) requests the optional adapter through
 the common transport interface. Its physical implementation lives in
-[sdio_wait_freertos.c](../../../firmware/src/drivers/sdcard/sdio/sdio_wait_freertos.c). It reserves
+[sdio_pio_wait_freertos.c](../../../firmware/src/drivers/sdcard/sdio/sdio_pio_wait_freertos.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.

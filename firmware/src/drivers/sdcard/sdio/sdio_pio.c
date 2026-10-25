@@ -63,8 +63,8 @@ static uint32_t maximum_clock_hz(uint32_t system_hz)
 }
 
 /** @brief Report a physical failure without importing device diagnostics. */
-static void wire_error(pf_sdio_pio_t *host, pf_sd_link_wire_error_t error,
-                       pf_sd_link_wire_phase_t phase)
+static void wire_error(pf_sdio_pio_t *host, pf_sd_link_sdio_error_t error,
+                       pf_sd_link_sdio_phase_t phase)
 {
     if (host != NULL) {
         host->last_error = error;
@@ -120,21 +120,21 @@ static bool fifo_stalled(pf_sdio_pio_t *host, bool tx)
 #else
     host->pio->fdebug = mask;
 #endif
-    wire_error(host, tx ? PF_SD_LINK_WIRE_ERROR_TX_STALL : PF_SD_LINK_WIRE_ERROR_RX_STALL,
-               PF_SD_LINK_WIRE_PHASE_DATA);
+    wire_error(host, tx ? PF_SD_LINK_SDIO_ERROR_TX_STALL : PF_SD_LINK_SDIO_ERROR_RX_STALL,
+               PF_SD_LINK_SDIO_PHASE_DATA);
     return true;
 }
 
 /** @brief Distinguish DMA starvation, PIO noncompletion, and a held-low data line. */
 static void data_timeout(pf_sdio_pio_t *host, bool tx, bool dma_busy)
 {
-    pf_sd_link_wire_error_t error = PF_SD_LINK_WIRE_ERROR_PIO_TIMEOUT;
+    pf_sd_link_sdio_error_t error = PF_SD_LINK_SDIO_ERROR_PIO_TIMEOUT;
     if (dma_busy) {
-        error = PF_SD_LINK_WIRE_ERROR_DMA_TIMEOUT;
+        error = PF_SD_LINK_SDIO_ERROR_DMA_TIMEOUT;
     } else if (tx && pio_sm_get_rx_fifo_level(host->pio, host->data_sm) != 0u) {
-        error = PF_SD_LINK_WIRE_ERROR_BUSY_TIMEOUT;
+        error = PF_SD_LINK_SDIO_ERROR_BUSY_TIMEOUT;
     }
-    wire_error(host, error, PF_SD_LINK_WIRE_PHASE_DATA);
+    wire_error(host, error, PF_SD_LINK_SDIO_PHASE_DATA);
 }
 
 static const pio_program_t *data_rx_program(const pf_sdio_pio_t *host)
@@ -194,7 +194,7 @@ bool pf_sdio_pio_tx_prepare(pf_sdio_pio_t *host)
     if ((host == NULL) || (host->pio == NULL) ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED))) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_SETUP);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
     pio_sm_set_enabled(host->pio, host->command_sm, false);
@@ -209,7 +209,7 @@ bool pf_sdio_pio_tx_prepare(pf_sdio_pio_t *host)
     }
     if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
         !pio_can_add_program(host->pio, data_tx_program(host))) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_SETUP);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
     host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
@@ -265,7 +265,7 @@ bool pf_sdio_pio_restore_command(pf_sdio_pio_t *host)
     }
     if ((!host->command_program_loaded && !load_command_program(host)) ||
         (!host->data_rx_program_loaded && !load_data_rx_program(host))) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_SETUP);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
     pio_sm_clear_fifos(host->pio, host->command_sm);
@@ -345,7 +345,7 @@ bool pf_sdio_pio_clocks(pf_sdio_pio_t *host, uint32_t cycles, uint32_t timeout_u
         !host->dma_claimed || host->mode_restore_failed ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED))) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_SETUP);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
     pf_sdio_pio_abort(host);
@@ -362,14 +362,14 @@ bool pf_sdio_pio_clocks(pf_sdio_pio_t *host, uint32_t cycles, uint32_t timeout_u
     uint32_t start = time_us_32();
     for (uint32_t cycle = 0u; cycle < cycles; cycle++) {
         if ((uint32_t)(time_us_32() - start) >= timeout_us) {
-            wire_error(host, PF_SD_LINK_WIRE_ERROR_PIO_TIMEOUT, PF_SD_LINK_WIRE_PHASE_SETUP);
+            wire_error(host, PF_SD_LINK_SDIO_ERROR_PIO_TIMEOUT, PF_SD_LINK_SDIO_PHASE_SETUP);
             pf_sdio_pio_abort(host);
             return false;
         }
         for (uint level = 0u; level < 2u; level++) {
             while ((gpio_get(host->config.pins.clock_gpio) != 0u) != (level == 0u)) {
                 if ((uint32_t)(time_us_32() - start) >= timeout_us) {
-                    wire_error(host, PF_SD_LINK_WIRE_ERROR_PIO_TIMEOUT, PF_SD_LINK_WIRE_PHASE_SETUP);
+                    wire_error(host, PF_SD_LINK_SDIO_ERROR_PIO_TIMEOUT, PF_SD_LINK_SDIO_PHASE_SETUP);
                     pf_sdio_pio_abort(host);
                     return false;
                 }
@@ -395,7 +395,7 @@ bool pf_sdio_pio_set_clock(pf_sdio_pio_t *host, uint32_t clock_hz)
     if ((host == NULL) || (host->pio == NULL) || (divider_ticks == 0u) || host->mode_restore_failed ||
         ((host->clock_owner != PF_SDIO_PIO_CLOCK_UNOWNED) &&
          (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND))) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_SETUP);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
     /* Card output timing follows the requested mode, so a clamped High-Speed request keeps High-Speed sampling. */
@@ -416,7 +416,7 @@ bool pf_sdio_pio_set_clock(pf_sdio_pio_t *host, uint32_t clock_hz)
         host->data_tx_fast = high_speed;
         if (!load_data_rx_program(host)) {
             host->mode_restore_failed = true;
-            wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_SETUP);
+            wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
             return false;
         }
     } else {
@@ -568,7 +568,7 @@ bool pf_sdio_pio_exchange(pf_sdio_pio_t *host, const uint8_t *tx, size_t tx_size
          (host->clock_owner != PF_SDIO_PIO_CLOCK_COMMAND)) ||
         (rx_bits != 0u && (rx == NULL || capacity < rx_bits / 8u)) ||
         rx_bits > 136u || rx_bits % 8u != 0u) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_COMMAND);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_COMMAND);
         return false;
     }
     if (host->clock_owner == PF_SDIO_PIO_CLOCK_UNOWNED) {
@@ -601,7 +601,7 @@ bool pf_sdio_pio_exchange(pf_sdio_pio_t *host, const uint8_t *tx, size_t tx_size
         }
         if (((uint32_t)(time_us_32() - start) >= timeout_us) &&
             (!pio_interrupt_get(host->pio, RESPONSE_IRQ) || (read < count))) {
-            wire_error(host, PF_SD_LINK_WIRE_ERROR_PIO_TIMEOUT, PF_SD_LINK_WIRE_PHASE_COMMAND);
+            wire_error(host, PF_SD_LINK_SDIO_ERROR_PIO_TIMEOUT, PF_SD_LINK_SDIO_PHASE_COMMAND);
             pio_sm_clear_fifos(host->pio, host->command_sm);
             pio_sm_restart(host->pio, host->command_sm);
             pio_sm_exec(host->pio, host->command_sm, pio_encode_jmp(host->command_program_offset));
@@ -624,7 +624,7 @@ bool pf_sdio_pio_rx_start(pf_sdio_pio_t *host, uint32_t *destination,
         (destination == NULL) || (((uintptr_t)destination & 3u) != 0u) ||
         (words == 0u) || (nibbles == 0u) || ((nibbles & 7u) != 0u) || (blocks == 0u) ||
         ((uint64_t)(nibbles / 8u) * blocks != words)) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_DATA);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_DATA);
         return false;
     }
     pio_sm_set_enabled(host->pio, host->data_sm, false);
@@ -657,7 +657,7 @@ bool pf_sdio_pio_rx_poll(pf_sdio_pio_t *host, uint32_t start,
     uint32_t timeout_us, bool *complete)
 {
     if ((host == NULL) || (host->pio == NULL) || !host->dma_claimed || (complete == NULL)) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_DATA);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_DATA);
         return false;
     }
     *complete = pio_interrupt_get(host->pio, RX_IRQ) && !dma_channel_is_busy(host->dma_channel);
@@ -718,14 +718,14 @@ bool pf_sdio_pio_rx_progress(pf_sdio_pio_t *host, const uint32_t *buffer,
 {
     if ((host == NULL) || !host->dma_claimed || (buffer == NULL) || (completed_words == NULL) ||
         (capacity_words > UINT32_MAX / sizeof(uint32_t))) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_DATA);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_DATA);
         return false;
     }
     uint32_t write_addr = dma_channel_hw_addr(host->dma_channel)->write_addr;
     uint32_t start = (uint32_t)(uintptr_t)buffer;
     if ((write_addr < start) || (write_addr - start > capacity_words * sizeof(uint32_t)) ||
         ((write_addr & (sizeof(uint32_t) - 1u)) != 0u)) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_DATA);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_DATA);
         return false;
     }
     *completed_words = (write_addr - start) / sizeof(uint32_t);
@@ -741,7 +741,7 @@ bool pf_sdio_pio_tx_start(pf_sdio_pio_t *host, const uint32_t *image,
         (host->clock_owner != PF_SDIO_PIO_CLOCK_DATA_TX) ||
         (image == NULL) || (((uintptr_t)image & 3u) != 0u) ||
         (words == 0u) || (nibbles == 0u) || ((uint64_t)words * 8u != nibbles)) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_DATA);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_DATA);
         return false;
     }
     pio_sm_clear_fifos(host->pio, host->data_sm);
@@ -784,7 +784,7 @@ bool pf_sdio_pio_tx_finish(pf_sdio_pio_t *host, uint32_t timeout_us,
 {
     if ((host == NULL) || (host->pio == NULL) || !host->dma_claimed ||
         !host->data_tx_program_loaded || (response_word == NULL)) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_DATA);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_DATA);
         return false;
     }
     uint32_t start = time_us_32();
@@ -813,7 +813,7 @@ bool pf_sdio_pio_tx_finish(pf_sdio_pio_t *host, uint32_t timeout_us,
         return false;
     }
     if (pio_sm_get_rx_fifo_level(host->pio, host->data_sm) == 0u) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_DATA);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_DATA);
         return false;
     }
     *response_word = pio_sm_get(host->pio, host->data_sm);
@@ -823,13 +823,13 @@ bool pf_sdio_pio_tx_finish(pf_sdio_pio_t *host, uint32_t timeout_us,
 bool pf_sdio_pio_wait_ready(pf_sdio_pio_t *host, uint32_t timeout_us)
 {
     if ((host == NULL) || (host->pio == NULL)) {
-        wire_error(host, PF_SD_LINK_WIRE_ERROR_STATE, PF_SD_LINK_WIRE_PHASE_BUSY);
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_BUSY);
         return false;
     }
     uint32_t start = time_us_32();
     while (gpio_get(host->config.pins.data_gpio[0]) == 0u) {
         if ((uint32_t)(time_us_32() - start) > timeout_us) {
-            wire_error(host, PF_SD_LINK_WIRE_ERROR_BUSY_TIMEOUT, PF_SD_LINK_WIRE_PHASE_BUSY);
+            wire_error(host, PF_SD_LINK_SDIO_ERROR_BUSY_TIMEOUT, PF_SD_LINK_SDIO_PHASE_BUSY);
             return false;
         }
         wire_idle(host);
@@ -906,18 +906,18 @@ bool pf_sd_link_enable_wait(const pf_sd_link_t *bus)
 #endif
 }
 
-bool pf_sd_link_wire_valid(const pf_sd_link_t *bus)
+bool pf_sd_link_sdio_valid(const pf_sd_link_t *bus)
 {
     return pf_sd_link_valid(bus, PF_SD_LINK_NATIVE_SD);
 }
 
-pf_sd_link_wire_state_t pf_sd_link_wire_state(const pf_sd_link_t *bus)
+pf_sd_link_sdio_state_t pf_sd_link_sdio_state(const pf_sd_link_t *bus)
 {
-    if (!pf_sd_link_wire_valid(bus)) {
-        return (pf_sd_link_wire_state_t){0};
+    if (!pf_sd_link_sdio_valid(bus)) {
+        return (pf_sd_link_sdio_state_t){0};
     }
     pf_sdio_pio_t *host = bus->context;
-    return (pf_sd_link_wire_state_t){
+    return (pf_sd_link_sdio_state_t){
         .ready = host->pio != NULL,
         .healthy = host->pio != NULL && !host->mode_restore_failed,
         .data_high = host->pio != NULL && gpio_get(host->config.pins.data_gpio[0]) != 0u,
@@ -926,10 +926,10 @@ pf_sd_link_wire_state_t pf_sd_link_wire_state(const pf_sd_link_t *bus)
     };
 }
 
-bool pf_sd_link_wire_hooks(const pf_sd_link_t *bus,
-                          pf_sd_link_wire_error_hook_t error, void *context, void (*idle)(void))
+bool pf_sd_link_sdio_hooks(const pf_sd_link_t *bus,
+                          pf_sd_link_sdio_error_hook_t error, void *context, void (*idle)(void))
 {
-    if (!pf_sd_link_wire_valid(bus)) {
+    if (!pf_sd_link_sdio_valid(bus)) {
         return false;
     }
     pf_sdio_pio_t *host = bus->context;
@@ -939,75 +939,75 @@ bool pf_sd_link_wire_hooks(const pf_sd_link_t *bus,
     return true;
 }
 
-bool pf_sd_link_wire_clocks(const pf_sd_link_t *bus, uint32_t cycles, uint32_t timeout_us)
+bool pf_sd_link_sdio_clocks(const pf_sd_link_t *bus, uint32_t cycles, uint32_t timeout_us)
 {
-    return pf_sd_link_wire_valid(bus) && cycles != 0u && timeout_us != 0u &&
+    return pf_sd_link_sdio_valid(bus) && cycles != 0u && timeout_us != 0u &&
            pf_sdio_pio_clocks(bus->context, cycles, timeout_us);
 }
 
-bool pf_sd_link_wire_idle(const pf_sd_link_t *bus)
+bool pf_sd_link_sdio_idle(const pf_sd_link_t *bus)
 {
-    return pf_sd_link_wire_valid(bus) && pf_sdio_pio_restore_command(bus->context);
+    return pf_sd_link_sdio_valid(bus) && pf_sdio_pio_restore_command(bus->context);
 }
 
-bool pf_sd_link_wire_exchange(const pf_sd_link_t *bus, const uint8_t *tx, size_t tx_size,
+bool pf_sd_link_sdio_exchange(const pf_sd_link_t *bus, const uint8_t *tx, size_t tx_size,
                                 uint16_t rx_bits, uint8_t *rx, size_t capacity, size_t *received,
                                 uint32_t timeout_us)
 {
     if (received != NULL) {
         *received = 0u;
     }
-    return pf_sd_link_wire_valid(bus) && tx != NULL && tx_size != 0u &&
+    return pf_sd_link_sdio_valid(bus) && tx != NULL && tx_size != 0u &&
            rx_bits % 8u == 0u && (rx_bits == 0u || (rx != NULL && capacity >= rx_bits / 8u)) &&
            received != NULL && timeout_us != 0u &&
            pf_sdio_pio_exchange(bus->context, tx, tx_size, rx_bits, rx, capacity, received, timeout_us);
 }
 
-bool pf_sd_link_wire_rx_start(const pf_sd_link_t *bus, uint32_t *buffer,
+bool pf_sd_link_sdio_rx_start(const pf_sd_link_t *bus, uint32_t *buffer,
                                 uint32_t words, uint32_t nibbles, uint32_t blocks)
 {
-    return pf_sd_link_wire_valid(bus) && buffer != NULL && words != 0u && nibbles != 0u &&
+    return pf_sd_link_sdio_valid(bus) && buffer != NULL && words != 0u && nibbles != 0u &&
            blocks != 0u && pf_sdio_pio_rx_start(bus->context, buffer, words, nibbles, blocks);
 }
 
-bool pf_sd_link_wire_rx_finish(const pf_sd_link_t *bus, uint32_t timeout_us)
+bool pf_sd_link_sdio_rx_finish(const pf_sd_link_t *bus, uint32_t timeout_us)
 {
-    return pf_sd_link_wire_valid(bus) && timeout_us != 0u &&
+    return pf_sd_link_sdio_valid(bus) && timeout_us != 0u &&
            pf_sdio_pio_rx_finish(bus->context, timeout_us);
 }
 
-void pf_sd_link_wire_rx_cancel(const pf_sd_link_t *bus)
+void pf_sd_link_sdio_rx_cancel(const pf_sd_link_t *bus)
 {
-    if (pf_sd_link_wire_valid(bus)) {
+    if (pf_sd_link_sdio_valid(bus)) {
         pf_sdio_pio_rx_cleanup(bus->context);
     }
 }
 
-bool pf_sd_link_wire_rx_poll(const pf_sd_link_t *bus, uint32_t start,
+bool pf_sd_link_sdio_rx_poll(const pf_sd_link_t *bus, uint32_t start,
                                uint32_t timeout_us, bool *complete)
 {
-    return pf_sd_link_wire_valid(bus) && complete != NULL && timeout_us != 0u &&
+    return pf_sd_link_sdio_valid(bus) && complete != NULL && timeout_us != 0u &&
            pf_sdio_pio_rx_poll(bus->context, start, timeout_us, complete);
 }
 
-void pf_sd_link_wire_rx_wait(const pf_sd_link_t *bus)
+void pf_sd_link_sdio_rx_wait(const pf_sd_link_t *bus)
 {
-    if (pf_sd_link_wire_valid(bus)) {
+    if (pf_sd_link_sdio_valid(bus)) {
         pf_sdio_pio_rx_wait(bus->context);
     }
 }
 
-bool pf_sd_link_wire_rx_progress(const pf_sd_link_t *bus,
+bool pf_sd_link_sdio_rx_progress(const pf_sd_link_t *bus,
                                    const uint32_t *buffer, uint32_t capacity, uint32_t *words)
 {
-    return pf_sd_link_wire_valid(bus) && buffer != NULL && words != NULL && capacity != 0u &&
+    return pf_sd_link_sdio_valid(bus) && buffer != NULL && words != NULL && capacity != 0u &&
            pf_sdio_pio_rx_progress(bus->context, buffer, capacity, words);
 }
 
-bool pf_sd_link_wire_tx_start(const pf_sd_link_t *bus,
+bool pf_sd_link_sdio_tx_start(const pf_sd_link_t *bus,
                                 const uint32_t *buffer, uint32_t words, uint32_t nibbles)
 {
-    if (!pf_sd_link_wire_valid(bus) || buffer == NULL || words == 0u || nibbles == 0u) {
+    if (!pf_sd_link_sdio_valid(bus) || buffer == NULL || words == 0u || nibbles == 0u) {
         return false;
     }
     pf_sdio_pio_t *host = bus->context;
@@ -1015,15 +1015,15 @@ bool pf_sd_link_wire_tx_start(const pf_sd_link_t *bus,
            pf_sdio_pio_tx_start(host, buffer, words, nibbles);
 }
 
-bool pf_sd_link_wire_tx_finish(const pf_sd_link_t *bus, uint32_t timeout_us, uint32_t *response)
+bool pf_sd_link_sdio_tx_finish(const pf_sd_link_t *bus, uint32_t timeout_us, uint32_t *response)
 {
-    return pf_sd_link_wire_valid(bus) && timeout_us != 0u && response != NULL &&
+    return pf_sd_link_sdio_valid(bus) && timeout_us != 0u && response != NULL &&
            pf_sdio_pio_tx_finish(bus->context, timeout_us, response);
 }
 
-bool pf_sd_link_wire_wait_high(const pf_sd_link_t *bus, uint32_t timeout_us)
+bool pf_sd_link_sdio_wait_high(const pf_sd_link_t *bus, uint32_t timeout_us)
 {
-    return pf_sd_link_wire_valid(bus) && timeout_us != 0u &&
+    return pf_sd_link_sdio_valid(bus) && timeout_us != 0u &&
            pf_sdio_pio_wait_ready(bus->context, timeout_us);
 }
 

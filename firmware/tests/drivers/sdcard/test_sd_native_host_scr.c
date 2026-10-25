@@ -12,7 +12,7 @@ static pf_sdio_pio_t test_wire;
 
 #include "drivers/sdcard/sdio/sdio_pio.c"
 #include "drivers/sdcard/sd_link.c"
-#include "drivers/sdcard/sdio/sd_native_host.c"
+#include "drivers/sdcard/sdio/sd_sdio_host.c"
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
@@ -99,7 +99,7 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         .data_rx_program_loaded = true,
     };
     pf_sd_native_host_t host = { .transport = pf_sdio_pio_bus(&test_wire) };
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t scr[8];
 
     for (unsigned failure = 0u; failure < sizeof(failure_stages) / sizeof(failure_stages[0]);

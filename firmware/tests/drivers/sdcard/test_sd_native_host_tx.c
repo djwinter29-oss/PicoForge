@@ -13,7 +13,7 @@ static pf_sdio_pio_t test_wire;
 
 #include "drivers/sdcard/sdio/sdio_pio.c"
 #include "drivers/sdcard/sd_link.c"
-#include "drivers/sdcard/sdio/sd_native_host.c"
+#include "drivers/sdcard/sdio/sd_sdio_host.c"
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
@@ -122,7 +122,7 @@ void test_cmd24_uses_full_source_dma_path_and_checks_data_completion(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE];
 
     for (unsigned i = 0u; i < sizeof(block); ++i) {
@@ -157,7 +157,7 @@ void test_cmd25_batches_and_continues_without_reissuing_command(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t blocks[4u * PF_SD_BLOCK_SIZE] = {0};
     unsigned command_count;
 
@@ -177,7 +177,7 @@ void test_cmd24_waits_for_both_dma_and_pio_completion_independently(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
 
     pf_test_sdio_dma_busy_delay = 1u;
@@ -196,7 +196,7 @@ void test_cmd24_treats_a_pio_tx_fifo_stall_as_fatal(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
 
     pf_test_sdio_force_tx_stall = true;
@@ -211,7 +211,7 @@ void test_fast_tx_uses_half_clock_divider_and_synchronized_sm_restart(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint32_t sm_mask = (1u << test_wire.command_sm) | (1u << test_wire.data_sm);
 
     test_wire.system_clock_hz = 250000000u;
@@ -234,7 +234,7 @@ void test_clock_owner_rejects_command_during_standalone_or_tx_clock_ownership(vo
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t response[6];
 
     test_wire.clock_owner = PF_SDIO_PIO_CLOCK_INITIALIZATION;
@@ -254,7 +254,7 @@ void test_cmd24_command_and_program_failures_do_not_report_data_success(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
 
     pf_test_sdio_command_error = 24u;
@@ -277,7 +277,7 @@ void test_cmd25_failed_data_keeps_stream_until_stop_recovery_succeeds(void)
 {
     pf_test_sdio_pio_t pio = {0};
     pf_sd_native_host_t host = make_host(&pio);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t blocks[2u * PF_SD_BLOCK_SIZE] = {0};
 
     pf_test_sdio_data_response = 0x0bu;

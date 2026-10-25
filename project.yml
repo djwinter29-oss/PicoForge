@@ -74,7 +74,7 @@
         - -pthread
         - -ffunction-sections
         - -fdata-sections
-      :test_sdio_wait_freertos:
+      :test_sdio_pio_wait_freertos:
         - -D_XOPEN_SOURCE=700
         - -pthread
       :test_usb_hid_sd_responsiveness:
@@ -98,7 +98,7 @@
       :test_dcd_guard:
         - -pthread
         - -Wl,--gc-sections
-      :test_sdio_wait_freertos:
+      :test_sdio_pio_wait_freertos:
         - -pthread
       :test_storage_media_freertos_serialization:
         - -pthread

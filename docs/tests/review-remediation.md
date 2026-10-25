@@ -80,7 +80,7 @@ Not a hardware result; the sections above remain historical.
   Card output delay is modelled as 1-2 cycles after the rising edge; 0 fails at divider 2.75 with one cycle
   of input latency (the sample lands on the next bit) and 3 or more fails at 50 MHz. Divider 2.75 needs about
   275 MHz and is not hardware-qualified (only 200 MHz / 50 MHz is).
-* The CMD18 rejection/CMD12 cleanup concern at `sd_native_host.c` is not confirmed. `test_sd_native_host_read_batch.c`
+* The CMD18 rejection/CMD12 cleanup concern at `sd_sdio_host.c` is not confirmed. `test_sd_native_host_read_batch.c`
   adds coverage that already passed on the baseline (not a RED fix): rejected CMD18 with successful CMD12 falls back
   to single reads; failed CMD12 does not fall back, blocks later reads until `pf_sd_native_host_recover`. Dropping
   `!stop_ok` from the return condition makes these tests fail.

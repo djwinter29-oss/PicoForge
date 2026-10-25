@@ -1,13 +1,13 @@
-#ifndef PF_SD_NATIVE_HOST_H
-#define PF_SD_NATIVE_HOST_H
+#ifndef PF_SD_SDIO_HOST_H
+#define PF_SD_SDIO_HOST_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include "sd_native.h"
+#include "sd_sdio_internal.h"
 #include "sd_protocol.h"
-#include "drivers/sdcard/sd_link_wire.h"
+#include "drivers/sdcard/sdio/sd_link_sdio.h"
 
 /** SD protocol state layered over a native wire transport. */
 typedef struct {

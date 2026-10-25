@@ -16,21 +16,21 @@ sources live beside their physical engines; their card policy and filesystem int
 drivers/sdcard/
   sd*.c / sd*.h          shared facade, contracts, board setup, protocol helpers and execution ports
   sd_link.h / .c        common declarations, descriptor validation and presence helpers
-  sd_link_serial.h      SPI CS and byte exchange declarations
-  sd_link_wire.h        SD CMD/DAT declarations
-  spi/sd_backend_spi.c / sd_spi.h / sd_board_spi.c
+  spi/sd_link_spi.h     SPI CS and byte exchange declarations
+  sdio/sd_link_sdio.h   SD CMD/DAT declarations
+  spi/sd_backend_spi.c / sd_spi_internal.h / sd_board_spi.c
   spi/spi.h / spi.c / spi_pins.h
-  sdio/sd_backend_sdio.c / sd_native.h / sd_board_sdio.c
-  sdio/sd_native_host.h / sd_native_host.c
+  sdio/sd_backend_sdio.c / sd_sdio_internal.h / sd_board_sdio.c
+  sdio/sd_sdio_host.h / sd_sdio_host.c
   sdio/sdio_pio.h / sdio_pio.c / sdio_pio_pins.h / sdio_pio.pio
-  sdio/sdio_wait_freertos.c
+  sdio/sdio_pio_wait_freertos.c
 ```
 
 The [common link interface](../../../firmware/src/drivers/sdcard/sd_link.h) contains descriptor/presence helpers,
 physical lifecycle, clock and platform services. Pin types belong to the concrete engines. Wire operations are separate
 SDK-independent interfaces:
-[raw serial](../../../firmware/src/drivers/sdcard/sd_link_serial.h) and
-[SD CMD/DAT](../../../firmware/src/drivers/sdcard/sd_link_wire.h).
+[raw serial](../../../firmware/src/drivers/sdcard/spi/sd_link_spi.h) and
+[SD CMD/DAT](../../../firmware/src/drivers/sdcard/sdio/sd_link_sdio.h).
 `pf_sd_link_t` is a non-owning descriptor: board/storage integration owns the concrete context, and the caller
 serializes access. Protocol clients
 do not dereference backend contexts, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
@@ -50,14 +50,14 @@ resource state remain private to each backend.
 | Interface | C namespace | Header guard |
 | --- | --- | --- |
 | Common link | `pf_sd_link_*`, `pf_sd_link_t` | `PF_SD_LINK_H` |
-| Raw serial | `pf_sd_link_serial_*` | `PF_SD_LINK_SERIAL_H` |
-| SD CMD/DAT wire | `pf_sd_link_wire_*` | `PF_SD_LINK_WIRE_H` |
+| Raw serial | `pf_sd_link_spi_*` | `PF_SD_LINK_SPI_H` |
+| SD CMD/DAT wire | `pf_sd_link_sdio_*` | `PF_SD_LINK_SDIO_H` |
 
 Backend factories are `pf_spi_bus` and `pf_sdio_pio_bus`. CMake links exactly one backend, which directly implements
 the common link functions and its own SPI or SD CMD/DAT functions. There are no operation tables, optional capabilities,
 or runtime backend discovery. The descriptor retains context, signaling mode and optional board presence detection.
 The bus result/mode constants use `PF_SD_LINK_*`; SD wire diagnostics use
-`PF_SD_LINK_WIRE_*`. Callers must use these names; no compatibility aliases are provided.
+`PF_SD_LINK_SDIO_*`. Callers must use these names; no compatibility aliases are provided.
 Device configuration members named `transport` remain unchanged.
 
 | Physical mode | Implementation | Device configurations |
@@ -83,7 +83,7 @@ SD-SPI retains SDK blocking bulk I/O with protocol-level deadlines.
 Configure and zero-initialize the concrete context, obtain its non-owning bus handle, then initialize it before
 device-protocol operations. Contexts must outlive all synchronous calls; do not copy a live context. The common
 interface exposes `pf_sd_link_init`, `pf_sd_link_set_clock`, `pf_sd_link_abort`, and
-`pf_sd_link_deinit`. Statically linked wire calls use `pf_sd_link_serial_*` or `pf_sd_link_wire_*` from their interface
+`pf_sd_link_deinit`. Statically linked wire calls use `pf_sd_link_spi_*` or `pf_sd_link_sdio_*` from their interface
 headers; the common lifecycle has no device-shaped transfer operation. Concrete backend headers are only for
 board/storage composition and physical-engine tests.
 
@@ -136,7 +136,7 @@ Released-line clock generation takes a count at the current rate and a caller de
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 
 Platform time, bounded delays, and optional scheduler-wait setup are statically linked backend functions.
-The [FreeRTOS wait adapter](../../../firmware/src/drivers/sdcard/sdio/sdio_wait_freertos.c) owns PIO IRQ details;
+The [FreeRTOS wait adapter](../../../firmware/src/drivers/sdcard/sdio/sdio_pio_wait_freertos.c) owns PIO IRQ details;
 SD's execution port only
 requests that the transport enable it. The backend retains its physical configuration and installed wait hook across
 common-interface initialization failures and deinitialization, so reinitialization does not need device-side pin setup.

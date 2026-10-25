@@ -1,7 +1,7 @@
 /** @file
  * @brief Internal protocol contract implemented by exactly one CMake-selected SD backend.
  *
- * These operations do not acquire the execution-port reservation. Use the public sd.h/sd_block.h facade,
+ * These operations do not acquire the execution-port reservation. Use the public sd.h facade,
  * which serializes calls and rejects unconfigured access; direct backend tests must provide serialization.
  * Configuration persists across initialization failures and removal. Media readiness is a separate state.
  */

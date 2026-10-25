@@ -1,5 +1,8 @@
-#ifndef PF_SD_NATIVE_H
-#define PF_SD_NATIVE_H
+/** @file
+ * @brief Native SD protocol configuration and diagnostic declarations; not the shared backend API.
+ */
+#ifndef PF_SD_SDIO_INTERNAL_H
+#define PF_SD_SDIO_INTERNAL_H
 
 #include <stdint.h>
 #include <stddef.h>

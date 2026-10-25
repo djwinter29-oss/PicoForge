@@ -7,7 +7,6 @@
 #include <string.h>
 
 #include "drivers/sdcard/sd.h"
-#include "drivers/sdcard/sd_block.h"
 #include "drivers/sdcard/sd_board.h"
 #include "drivers/sdcard/sd_port.h"
 #include "middleware/storage/fatfs_volume.h"

@@ -121,7 +121,7 @@ target_compile_options(pf_sdcard_protocol PRIVATE -ffunction-sections -fdata-sec
 if(PF_SDCARD_TRANSPORT STREQUAL "SDIO_PIO")
     add_library(pf_sdio_backend STATIC
         src/drivers/sdcard/sdio/sd_backend_sdio.c
-        src/drivers/sdcard/sdio/sd_native_host.c
+        src/drivers/sdcard/sdio/sd_sdio_host.c
         src/drivers/sdcard/sdio/sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
@@ -134,7 +134,7 @@ if(PF_SDCARD_TRANSPORT STREQUAL "SDIO_PIO")
     )
     if(PF_SDCARD_INTERRUPT_WAIT)
         target_sources(pf_sdio_backend PRIVATE
-            src/drivers/sdcard/sdio/sdio_wait_freertos.c)
+            src/drivers/sdcard/sdio/sdio_pio_wait_freertos.c)
         target_link_libraries(pf_sdio_backend PRIVATE FreeRTOS-Kernel-Static hardware_irq)
     endif()
     pico_generate_pio_header(pf_sdio_backend

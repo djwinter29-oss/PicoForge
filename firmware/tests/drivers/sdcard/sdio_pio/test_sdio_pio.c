@@ -16,11 +16,11 @@ bool pf_test_sdio_streams_were_cleared;
 bool pf_test_sdio_can_add_program;
 unsigned pf_test_sdio_removed_programs;
 
-static pf_sd_link_wire_error_t observed_error;
-static pf_sd_link_wire_phase_t observed_phase;
+static pf_sd_link_sdio_error_t observed_error;
+static pf_sd_link_sdio_phase_t observed_phase;
 static unsigned waits;
 
-static void on_error(void *context, pf_sd_link_wire_error_t error, pf_sd_link_wire_phase_t phase)
+static void on_error(void *context, pf_sd_link_sdio_error_t error, pf_sd_link_sdio_phase_t phase)
 {
     TEST_ASSERT_NOT_NULL(context);
     observed_error = error;
@@ -65,7 +65,7 @@ void setUp(void)
     pf_test_sdio_clock_auto_toggle = false;
     pf_test_sdio_response_word_limit = 5u;
     pf_test_sdio_clock_rising_edges = 0u;
-    observed_error = PF_SD_LINK_WIRE_ERROR_NONE;
+    observed_error = PF_SD_LINK_SDIO_ERROR_NONE;
     waits = 0u;
 }
 
@@ -173,7 +173,7 @@ void test_high_speed_request_that_would_double_sample_is_rejected_without_changi
     uint32_t ticks = host.clock_div_ticks, actual = host.current_clock_hz;
     /* 250 MHz / 26 MHz needs a 4.8 divider: the shortened RX loop would sample one nibble twice. */
     TEST_ASSERT_FALSE(pf_sdio_pio_set_clock(&host, 26000000u));
-    TEST_ASSERT_EQUAL(PF_SD_LINK_WIRE_ERROR_STATE, observed_error);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_ERROR_STATE, observed_error);
     TEST_ASSERT_EQUAL_UINT32(ticks, host.clock_div_ticks);
     TEST_ASSERT_EQUAL_UINT32(actual, host.current_clock_hz);
     TEST_ASSERT_TRUE(host.data_rx_fast && !host.mode_restore_failed);
@@ -192,9 +192,9 @@ void test_reported_maximum_clock_matches_what_set_clock_will_actually_time(void)
         pf_test_sdio_system_clock_hz = cases[index].system_hz;
         pf_sdio_pio_t host = {.config = pins()};
         pf_sd_link_t bus = pf_sdio_pio_bus(&host);
-        TEST_ASSERT_EQUAL_UINT32(cases[index].maximum_hz, pf_sd_link_wire_state(&bus).maximum_clock_hz);
+        TEST_ASSERT_EQUAL_UINT32(cases[index].maximum_hz, pf_sd_link_sdio_state(&bus).maximum_clock_hz);
         TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_init(&bus));
-        TEST_ASSERT_EQUAL_UINT32(cases[index].maximum_hz, pf_sd_link_wire_state(&bus).maximum_clock_hz);
+        TEST_ASSERT_EQUAL_UINT32(cases[index].maximum_hz, pf_sd_link_sdio_state(&bus).maximum_clock_hz);
         uint32_t actual;
         TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_set_clock(&bus, 25000000u, &actual));
         TEST_ASSERT_TRUE(actual <= 25000000u && actual <= cases[index].maximum_hz);
@@ -215,7 +215,7 @@ void test_native_descriptor_lifecycle_has_no_serial_or_device_protocol_dependenc
     uint32_t actual;
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_set_clock(&bus, 25000000u, &actual));
     TEST_ASSERT_EQUAL_UINT32(25000000u, actual);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_valid(&bus));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_valid(&bus));
     pf_sd_link_abort(&bus);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
     pf_sd_link_deinit(&bus);
@@ -235,12 +235,12 @@ void test_common_lifecycle_retains_configuration_and_wait_binding_for_retry_and_
     pf_test_sdio_can_add_program = true;
     for (unsigned attempt = 0u; attempt < 2u; ++attempt) {
         TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_init(&transport));
-        TEST_ASSERT_TRUE(pf_sd_link_wire_state(&transport).ready);
+        TEST_ASSERT_TRUE(pf_sd_link_sdio_state(&transport).ready);
         TEST_ASSERT_TRUE(host.wait_hook == on_wait);
-        TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&transport, on_error, &host, NULL));
+        TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&transport, on_error, &host, NULL));
         TEST_ASSERT_TRUE(host.error_hook == on_error);
         pf_sd_link_deinit(&transport);
-        TEST_ASSERT_FALSE(pf_sd_link_wire_state(&transport).ready);
+        TEST_ASSERT_FALSE(pf_sd_link_sdio_state(&transport).ready);
         TEST_ASSERT_EQUAL_PTR(pio0, host.config.pio);
         TEST_ASSERT_TRUE(host.wait_hook == on_wait);
     }
@@ -282,8 +282,8 @@ void test_tx_completion_without_a_response_token_reports_a_wire_error(void)
     pf_test_sdio_data_fifo_words = 0u;
     uint32_t token = 0xa5a5a5a5u;
     TEST_ASSERT_FALSE(pf_sdio_pio_tx_finish(&host, 1000u, &token));
-    TEST_ASSERT_EQUAL(PF_SD_LINK_WIRE_ERROR_STATE, observed_error);
-    TEST_ASSERT_EQUAL(PF_SD_LINK_WIRE_PHASE_DATA, observed_phase);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_ERROR_STATE, observed_error);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_PHASE_DATA, observed_phase);
     TEST_ASSERT_EQUAL_HEX32(0xa5a5a5a5u, token);
     TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
     pf_sdio_pio_deinit(&host);
@@ -321,8 +321,8 @@ void test_native_rx_timeout_reports_generic_diagnostics_and_uses_bounded_wait_ho
     pf_test_sdio_dma_busy = true;
     TEST_ASSERT_FALSE(pf_sdio_pio_rx_finish(&host, 10u));
     TEST_ASSERT_GREATER_THAN_UINT(0u, waits);
-    TEST_ASSERT_EQUAL(PF_SD_LINK_WIRE_ERROR_DMA_TIMEOUT, observed_error);
-    TEST_ASSERT_EQUAL(PF_SD_LINK_WIRE_PHASE_DATA, observed_phase);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_ERROR_DMA_TIMEOUT, observed_error);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_PHASE_DATA, observed_phase);
     pf_sdio_pio_rx_cleanup(&host);
     TEST_ASSERT_FALSE(pf_test_sdio_dma_busy);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
@@ -334,22 +334,22 @@ void test_native_clocks_use_requested_count_current_rate_and_deadline_without_ca
     pf_sdio_pio_t host = {.config = pins()};
     pf_sd_link_t bus = pf_sdio_pio_bus(&host);
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_init(&bus));
-    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&bus, on_error, &host, NULL));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&bus, on_error, &host, NULL));
     uint32_t actual;
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_set_clock(&bus, 1000000u, &actual));
     pf_test_sdio_clock_gpio = host.config.pins.clock_gpio;
     pf_test_sdio_gpio_level = 0u;
     pf_test_sdio_clock_auto_toggle = true;
-    TEST_ASSERT_TRUE(pf_sd_link_wire_clocks(&bus, 13u, 1000u));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_clocks(&bus, 13u, 1000u));
     TEST_ASSERT_EQUAL_UINT(13u, pf_test_sdio_clock_rising_edges);
-    TEST_ASSERT_EQUAL_UINT32(actual, pf_sd_link_wire_state(&bus).current_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(actual, pf_sd_link_sdio_state(&bus).current_clock_hz);
     TEST_ASSERT_EQUAL(PF_SDIO_PIO_CLOCK_UNOWNED, host.clock_owner);
-    TEST_ASSERT_FALSE(pf_sd_link_wire_clocks(&bus, 1000u, 10u));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_clocks(&bus, 1000u, 10u));
     TEST_ASSERT_LESS_THAN_UINT(1000u, pf_test_sdio_clock_rising_edges - 13u);
     pf_test_sdio_clock_auto_toggle = false;
-    TEST_ASSERT_FALSE(pf_sd_link_wire_clocks(&bus, 13u, 10u));
-    TEST_ASSERT_EQUAL(PF_SD_LINK_WIRE_ERROR_PIO_TIMEOUT, observed_error);
-    TEST_ASSERT_EQUAL(PF_SD_LINK_WIRE_PHASE_SETUP, observed_phase);
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_clocks(&bus, 13u, 10u));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_ERROR_PIO_TIMEOUT, observed_error);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_PHASE_SETUP, observed_phase);
     TEST_ASSERT_EQUAL(PF_SDIO_PIO_CLOCK_UNOWNED, host.clock_owner);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_command_count);
     pf_sd_link_deinit(&bus);
@@ -363,12 +363,12 @@ void test_native_raw_exchange_returns_short_long_and_partial_bytes_without_packi
     uint8_t frame[] = {0x46u, 0x11u, 0x22u, 0x33u, 0x44u, 0u};
     uint8_t response[17];
     size_t received;
-    TEST_ASSERT_TRUE(pf_sd_link_wire_exchange(&bus, frame, sizeof(frame), 48u,
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_exchange(&bus, frame, sizeof(frame), 48u,
                                                response, sizeof(response), &received, 1000u));
     const uint8_t expected[] = {6u, 0u, 0u, 0u, 0u, 1u};
     TEST_ASSERT_EQUAL_UINT(sizeof(expected), received);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, response, received);
-    TEST_ASSERT_TRUE(pf_sd_link_wire_exchange(&bus, frame, sizeof(frame), 136u,
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_exchange(&bus, frame, sizeof(frame), 136u,
                                                response, sizeof(response), &received, 1000u));
     TEST_ASSERT_EQUAL_UINT(17u, received);
     for (size_t index = 0u; index < received; ++index) {
@@ -376,16 +376,16 @@ void test_native_raw_exchange_returns_short_long_and_partial_bytes_without_packi
     }
     pf_test_sdio_response_word_limit = 1u;
     memset(response, 0x55, sizeof(response));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_exchange(&bus, frame, sizeof(frame), 48u,
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_exchange(&bus, frame, sizeof(frame), 48u,
                                                 response, sizeof(response), &received, 10u));
     TEST_ASSERT_EQUAL_UINT(4u, received);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, response, received);
     TEST_ASSERT_EQUAL_HEX8(0x55u, response[received]);
     unsigned calls = pf_test_sdio_command_count;
-    TEST_ASSERT_FALSE(pf_sd_link_wire_exchange(&bus, frame, sizeof(frame), 48u,
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_exchange(&bus, frame, sizeof(frame), 48u,
                                                 response, 5u, &received, 100u));
     TEST_ASSERT_EQUAL_UINT(0u, received);
-    TEST_ASSERT_FALSE(pf_sd_link_wire_exchange(&bus, frame, 5u, 48u,
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_exchange(&bus, frame, 5u, 48u,
                                                 response, sizeof(response), &received, 100u));
     TEST_ASSERT_EQUAL_UINT(0u, received);
     TEST_ASSERT_EQUAL_UINT(calls, pf_test_sdio_command_count);
@@ -400,23 +400,23 @@ void test_unsupported_native_operations_do_not_touch_a_serial_backend(void)
     uint8_t frame[6] = {0};
     size_t received = 5u;
     bool complete = false;
-    TEST_ASSERT_FALSE(pf_sd_link_wire_valid(&bus));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_state(&bus).ready);
-    TEST_ASSERT_FALSE(pf_sd_link_wire_hooks(&bus, NULL, NULL, NULL));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_clocks(&bus, 80u, 100u));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_idle(&bus));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_exchange(&bus, frame, sizeof(frame), 48u,
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_valid(&bus));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_state(&bus).ready);
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_hooks(&bus, NULL, NULL, NULL));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_clocks(&bus, 80u, 100u));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_idle(&bus));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_exchange(&bus, frame, sizeof(frame), 48u,
                                                 frame, sizeof(frame), &received, 100u));
     TEST_ASSERT_EQUAL_UINT(0u, received);
-    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_start(&bus, words, 5u, 40u, 1u));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_finish(&bus, 100u));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_poll(&bus, 0u, 100u, &complete));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_progress(&bus, words, 5u, &complete_words));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_tx_start(&bus, words, 5u, 40u));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_tx_finish(&bus, 100u, words));
-    TEST_ASSERT_FALSE(pf_sd_link_wire_wait_high(&bus, 100u));
-    pf_sd_link_wire_rx_cancel(&bus);
-    pf_sd_link_wire_rx_wait(&bus);
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_rx_start(&bus, words, 5u, 40u, 1u));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_rx_finish(&bus, 100u));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_rx_poll(&bus, 0u, 100u, &complete));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_rx_progress(&bus, words, 5u, &complete_words));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_tx_start(&bus, words, 5u, 40u));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_tx_finish(&bus, 100u, words));
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_wait_high(&bus, 100u));
+    pf_sd_link_sdio_rx_cancel(&bus);
+    pf_sd_link_sdio_rx_wait(&bus);
 }
 
 void test_static_native_lifecycle_rejects_invalid_handles_without_acquiring_resources(void)

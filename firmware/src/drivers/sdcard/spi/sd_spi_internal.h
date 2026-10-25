@@ -1,5 +1,8 @@
-#ifndef PF_SD_SPI_H
-#define PF_SD_SPI_H
+/** @file
+ * @brief SPI card-protocol diagnostic declarations; not the shared backend API.
+ */
+#ifndef PF_SD_SPI_INTERNAL_H
+#define PF_SD_SPI_INTERNAL_H
 
 #include <stdbool.h>
 #include <stdint.h>

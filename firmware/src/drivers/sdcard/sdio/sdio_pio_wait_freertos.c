@@ -1,4 +1,4 @@
-/** @file sdio_wait_freertos.c
+/** @file sdio_pio_wait_freertos.c
  * @brief Bounded FreeRTOS notification waits for the native PIO transport.
  */
 #include "sdio_pio.h"

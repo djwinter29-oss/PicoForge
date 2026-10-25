@@ -1,14 +1,14 @@
 /** @file
  * @brief Native SD implementation of the shared backend contract over the SDIO-PIO wire interface.
  */
-#include "sd_native.h"
+#include "sd_sdio_internal.h"
 #include "sd_backend.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-#include "sd_native_host.h"
+#include "sd_sdio_host.h"
 #include "sd_protocol.h"
 
 static pf_sd_native_host_t native_host;
@@ -52,7 +52,7 @@ static bool same_config(const pf_sd_config_t *left,
 
 static bool config_is_valid(const pf_sd_config_t *config)
 {
-    if (config == NULL || !pf_sd_link_wire_valid(&config->transport)) {
+    if (config == NULL || !pf_sd_link_sdio_valid(&config->transport)) {
         return false;
     }
 
@@ -92,7 +92,7 @@ static bool wait_card_data_ready(void)
 {
     uint32_t start = (uint32_t)pf_sd_link_time_us(&active_config.transport);
 
-    while (!pf_sd_link_wire_state(&active_config.transport).data_high) {
+    while (!pf_sd_link_sdio_state(&active_config.transport).data_high) {
         if (!card_detect_present()) {
             return protocol_failure(PF_SD_DETAIL_REMOVED);
         }
@@ -130,7 +130,7 @@ static bool select_transfer_speed(uint32_t card_address)
     uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
     native_info.high_speed_error = PF_SD_DETAIL_NONE;
     if (active_config.clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ || active_config.native_default_speed_only ||
-        pf_sd_link_wire_state(&active_config.transport).maximum_clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
+        pf_sd_link_sdio_state(&active_config.transport).maximum_clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
         native_info.high_speed_error = PF_SD_DETAIL_HOST_STATE;
         return true;
     }
@@ -433,7 +433,7 @@ pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
     last_short_response_argument = 0u;
     card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
     native_host.last_error = PF_SD_DETAIL_NONE;
-    if (!pf_sd_link_wire_state(&native_host.transport).ready) {
+    if (!pf_sd_link_sdio_state(&native_host.transport).ready) {
         if (!pf_sd_native_host_init(&native_host, &active_config)) {
             goto failed;
         }
@@ -446,7 +446,7 @@ pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
     if (!pf_sd_native_host_prepare_initialization(&native_host)) {
         goto failed;
     }
-    native_info.actual_init_clock_hz = pf_sd_link_wire_state(&native_host.transport).current_clock_hz;
+    native_info.actual_init_clock_hz = pf_sd_link_sdio_state(&native_host.transport).current_clock_hz;
     if (initialize_card()) {
         card_initialized = true;
         native_info.initialization_error = false;
@@ -463,7 +463,7 @@ failed:
 
 bool pf_sd_backend_is_initialized(void)
 {
-    if (!pf_sd_link_wire_state(&native_host.transport).healthy ||
+    if (!pf_sd_link_sdio_state(&native_host.transport).healthy ||
         (configuration_set && !card_detect_present())) {
         /* Absence or broken host mode blocks I/O without discarding protocol state. */
         card_initialized = false;
@@ -529,7 +529,7 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
     bool success = pf_sd_native_host_write_sector(&native_host, first_block, write_buffer);
     /* A lost command/data response or busy timeout cannot prove CMD24 complete.
      * Restoration only repairs the host; require reinitialization, never replay. */
-    if (!success || !pf_sd_link_wire_state(&native_host.transport).healthy) {
+    if (!success || !pf_sd_link_sdio_state(&native_host.transport).healthy) {
         return runtime_failure();
     }
     return PF_SD_OK;
@@ -575,7 +575,7 @@ void pf_sd_backend_get_info(pf_sd_info_t *info)
     }
     info->initialized = pf_sd_backend_is_initialized();
     info->bus_width = native_host.bus_width;
-    info->actual_clock_hz = pf_sd_link_wire_state(&native_host.transport).current_clock_hz;
+    info->actual_clock_hz = pf_sd_link_sdio_state(&native_host.transport).current_clock_hz;
     info->errors = native_host.errors;
     info->detail_error = native_host.last_error;
     if (native_info.block_count != 0u) {

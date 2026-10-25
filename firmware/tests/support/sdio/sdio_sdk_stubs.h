@@ -7,7 +7,7 @@
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #if !defined(PF_TEST_SDIO_WIRE_ONLY)
-#include "sd_native_host.h"
+#include "sd_sdio_host.h"
 #endif
 
 #define PF_TEST_SDIO_MAX_RX_BATCH_BYTES (64u * 520u)

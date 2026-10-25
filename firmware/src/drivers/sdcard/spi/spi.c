@@ -242,13 +242,13 @@ bool pf_sd_link_enable_wait(const pf_sd_link_t *bus)
     return false;
 }
 
-pf_sd_link_result_t pf_sd_link_serial_select(const pf_sd_link_t *transport, bool selected)
+pf_sd_link_result_t pf_sd_link_spi_select(const pf_sd_link_t *transport, bool selected)
 {
     return pf_sd_link_valid(transport, PF_SD_LINK_SPI) ? pf_spi_select(transport->context, selected) :
                                                        PF_SD_LINK_INVALID_ARGUMENT;
 }
 
-pf_sd_link_result_t pf_sd_link_serial_exchange(const pf_sd_link_t *transport,
+pf_sd_link_result_t pf_sd_link_spi_exchange(const pf_sd_link_t *transport,
                                               const uint8_t *tx, uint8_t *rx, size_t length)
 {
     return pf_sd_link_valid(transport, PF_SD_LINK_SPI) ?

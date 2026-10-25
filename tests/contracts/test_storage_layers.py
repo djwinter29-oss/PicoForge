@@ -11,6 +11,8 @@ SDCARD = ROOT / "firmware/src/drivers/sdcard"
 ENGINES = {"sdio_pio": SDCARD / "sdio", "spi": SDCARD / "spi"}
 PHYSICAL_SOURCES = [
     *SDCARD.glob("sd_link*.[ch]"),
+    SDCARD / "sdio/sd_link_sdio.h",
+    SDCARD / "spi/sd_link_spi.h",
     *ENGINES["sdio_pio"].glob("sdio_*.[ch]"),
     *ENGINES["spi"].glob("spi*.[ch]"),
 ]
@@ -94,7 +96,7 @@ def test_usb_product_behavior_lives_in_the_application():
 
 def test_sd_ownership_policy_stays_above_driver_and_middleware():
     driver = ROOT / "firmware/src/drivers/sdcard"
-    for source in (driver / "sd.c", driver / "sd.h", driver / "sd_block.h"):
+    for source in (driver / "sd.c", driver / "sd.h"):
         text = source.read_text()
         assert not re.search(r"\b(?:active_owner|reinit_after_usb_owner|pf_storage_\w+|PF_SD_OWNER_\w+)\b", text), source
         assert not re.search(r'#include\s*"[^"]*(?:app/|middleware/)', text), source
@@ -155,7 +157,7 @@ def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
         for header in re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', text, re.MULTILINE):
             assert not header.startswith(("hardware/", "pico/")), f"{source}: hardware dependency {header}"
             if "sdcard/" in header:
-                assert header.startswith("drivers/sdcard/sd_link"), (
+                assert re.fullmatch(r"drivers/sdcard/(?:sdio/|spi/)?sd_link\w*\.h", header), (
                     f"{source}: concrete backend include {header}"
                 )
         assert not re.search(r"\bpf_(?:spi|sdio_pio)_\w+", text), source
@@ -166,10 +168,10 @@ def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
 def test_common_lifecycle_and_raw_wire_interfaces_do_not_expose_device_transactions():
     common = (SDCARD / "sd_link.h").read_text()
     assert not re.search(r"\b(?:response_bits|response_words|dummy_cycles|address_bytes|tx_prepare)\b", common)
-    assert "pf_sd_link_wire_state_t" not in common
-    serial = (SDCARD / "sd_link_serial.h").read_text()
+    assert "pf_sd_link_sdio_state_t" not in common
+    serial = (SDCARD / "spi/sd_link_spi.h").read_text()
     assert not re.search(r"\b(?:command|address_bytes|dummy_cycles)\s*;", serial)
-    native = (SDCARD / "sd_link_wire.h").read_text()
+    native = (SDCARD / "sdio/sd_link_sdio.h").read_text()
     assert not re.search(r"\b(?:clock_owner|last_response_words|rx_ready|mode_restore_failed)\b", native)
     physical = (SDCARD / "sdio/sdio_pio.c").read_text()
     assert "prepare_80_clocks" not in physical
@@ -188,19 +190,22 @@ def test_backend_api_and_guards_match_module_names(mode):
             assert not re.search(rf"\bPF_STORAGE_{mode.upper()}_H\b", source.read_text()), source
 
 
-@pytest.mark.parametrize("module", ["sd_link", "sd_link_serial", "sd_link_wire"])
+@pytest.mark.parametrize("module", ["sd_link", "sd_link_spi", "sd_link_sdio"])
 def test_wire_interface_names_and_guards_match_modules(module):
-    header = (SDCARD / f"{module}.h").read_text()
+    directory = SDCARD if module == "sd_link" else ENGINES[
+        "spi" if module == "sd_link_spi" else "sdio_pio"
+    ]
+    header = (directory / f"{module}.h").read_text()
     guard = f"PF_{module.upper()}_H"
     assert re.search(rf"^#ifndef {guard}\n#define {guard}$", header, re.MULTILINE)
     assert f"pf_{module}_" in header
-    sources = [SDCARD / f"{module}.h"]
+    sources = [directory / f"{module}.h"]
     if module == "sd_link":
         sources.append(SDCARD / "sd_link.c")
     else:
-        backend = "spi" if module == "sd_link_serial" else "sdio_pio"
+        backend = "spi" if module == "sd_link_spi" else "sdio_pio"
         sources.append(ENGINES[backend] / f"{backend}.c")
-        assert not (SDCARD / f"{module}.c").exists()
+        assert not (directory / f"{module}.c").exists()
     for source in sources:
         text = source.read_text()
         assert not re.search(r"\b(?:pf_storage_transport\w*|pf_storage_native\w*|PF_STORAGE_TRANSPORT\w*"
@@ -218,8 +223,8 @@ def test_wire_interface_names_and_guards_match_modules(module):
 def test_sd_link_uses_static_functions_without_operation_tables_or_serial_phases():
     for source in PHYSICAL_SOURCES:
         assert not re.search(
-            r"\b(?:pf_sd_link(?:_serial|_wire)?_ops_t|pf_sd_link_serial_phase_t"
-            r"|pf_sd_link_serial_transfer|pf_spi_transfer)\b",
+            r"\b(?:pf_sd_link(?:_spi|_sdio)?_ops_t|pf_sd_link_spi_phase_t"
+            r"|pf_sd_link_spi_transfer|pf_spi_transfer)\b",
             source.read_text()
         ), source
 
@@ -228,7 +233,7 @@ def test_protocol_backends_implement_one_shared_contract_and_cmake_selects_board
     header = (SDCARD / "sd_backend.h").read_text()
     functions = re.findall(r"\b(pf_sd_backend_\w+)\s*\(", header)
     assert functions
-    for mode, diagnostic in (("sdio", "sd_native"), ("spi", "sd_spi")):
+    for mode, diagnostic in (("sdio", "sd_sdio_internal"), ("spi", "sd_spi_internal")):
         source = (SDCARD / mode / f"sd_backend_{mode}.c").read_text()
         for function in functions:
             assert re.search(rf"\b{function}\s*\([^;]*?\)\s*\{{", source, re.DOTALL), (mode, function)
@@ -240,7 +245,7 @@ def test_protocol_backends_implement_one_shared_contract_and_cmake_selects_board
             assert re.search(rf"\b{function}\s*\([^;]*?\)\s*\{{", source, re.DOTALL), (mode, function)
     facade = (SDCARD / "sd.c").read_text()
     assert '#include "sd_backend.h"' in facade
-    assert not re.search(r'#include "(?:sd_native|sd_spi)\.h"', facade)
+    assert not re.search(r'#include "(?:sd_sdio_internal|sd_spi_internal)\.h"', facade)
     cmake = (ROOT / "firmware/CMakeLists.txt").read_text()
     assert "PF_CONFIG_SDCARD_TRANSPORT" not in cmake
     sdio, spi = cmake.split('if(PF_SDCARD_TRANSPORT STREQUAL "SDIO_PIO")', 1)[1].split("else()", 1)
@@ -253,6 +258,7 @@ def test_protocol_backends_implement_one_shared_contract_and_cmake_selects_board
 
 def test_transport_implementations_stay_out_of_shared_directories():
     assert not (SDCARD / "link").exists()
+    assert sorted(source.name for source in SDCARD.glob("sd_link*")) == ["sd_link.c", "sd_link.h"]
     for source in SDCARD.glob("*.[ch]"):
         assert not re.match(
             r"(?:sd_native|sd_spi|sdio_|sd_backend_(?:sdio|spi)|sd_board_(?:sdio|spi))",
@@ -262,3 +268,10 @@ def test_transport_implementations_stay_out_of_shared_directories():
         for contract in ("sd_backend", "sd_board_internal"):
             assert (SDCARD / f"{contract}.h").is_file()
             assert not (SDCARD / mode / f"{contract}.h").exists()
+
+
+def test_public_sd_api_is_declared_in_one_header():
+    assert not (SDCARD / "sd_block.h").exists()
+    header = (SDCARD / "sd.h").read_text()
+    for function in ("init", "lock", "read_blocks", "write_blocks", "sync", "get_info"):
+        assert re.search(rf"\bpf_sd_{function}\s*\(", header), function

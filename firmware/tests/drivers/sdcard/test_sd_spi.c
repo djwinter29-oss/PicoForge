@@ -6,7 +6,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #include "spi_production_fixture.h"
 #include "sd_protocol.h"
 #include "sd_link.h"
-#include "sd_link_serial.h"
+#include "sd_link_spi.h"
 #include "spi.h"
 
 static pf_spi_t physical_bus;
@@ -846,5 +846,5 @@ static pf_sd_link_result_t spi_fixture_set_clock(const pf_sd_link_t *bus, uint32
 
 static pf_sd_link_result_t spi_fixture_select(const pf_sd_link_t *bus, bool select)
 {
-    return reject_select ? reject_selection(bus->context, select) : pf_sd_link_serial_select(bus, select);
+    return reject_select ? reject_selection(bus->context, select) : pf_sd_link_spi_select(bus, select);
 }

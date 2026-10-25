@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "hardware/pio.h"
-#include "drivers/sdcard/sd_link_wire.h"
+#include "drivers/sdcard/sdio/sd_link_sdio.h"
 #include "drivers/sdcard/sdio/sdio_pio_pins.h"
 
 /** Physical clock ownership, private to this backend's resource management. */
@@ -41,10 +41,10 @@ typedef struct {
     uint32_t previous_input_sync_bypass;/**< Saved GPIO synchronizer state. */
     uint32_t input_sync_bypass_mask;    /**< Bits owned by this transport. */
     pf_sdio_pio_clock_owner_t clock_owner; /**< Current CLK owner. */
-    pf_sd_link_wire_error_t last_error; /**< Latest physical failure. */
+    pf_sd_link_sdio_error_t last_error; /**< Latest physical failure. */
     pf_sdio_pio_wait_hook_t wait_hook; /**< Optional bounded scheduler wait. */
     void (*idle_hook)(void);           /**< Optional bounded ordinary polling callback. */
-    pf_sd_link_wire_error_hook_t error_hook; /**< Optional diagnostic reporting. */
+    pf_sd_link_sdio_error_hook_t error_hook; /**< Optional diagnostic reporting. */
     void *hook_context;                /**< Borrowed diagnostic callback argument. */
     bool mode_restore_failed;          /**< Command program restoration failed. */
     bool command_program_loaded;       /**< Command program owns instruction memory. */

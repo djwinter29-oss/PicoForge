@@ -113,7 +113,7 @@ Actual local verification by Codex (coordinator rerun still independent):
   `validation-pico-SPI`. Verbose logs showed respectively 552/546/558 compile
   commands and fresh ELF links. SDIO compiled native/native_host; SPI targets
   compiled sd_spi; all compiled current sd_protocol and storage commands and
-  consumed sd_block.h. Cache SHA-256 values matched before/after exactly.
+  consumed sd.h. Cache SHA-256 values matched before/after exactly.
 - `git diff --check` and staged diff checks passed; index remained empty.
   All commands ran from repository root. No dependencies installed, vendored
   sources changed, commit/push/PR, flashing, physical-media access or benchmark

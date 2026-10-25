@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "sd_block.h"
+#include "sd.h"
 
 /** Calculate the SD command CRC7; NULL input returns zero. */
 uint8_t pf_sd_crc7(const uint8_t *data, size_t size);
