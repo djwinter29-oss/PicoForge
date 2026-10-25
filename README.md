@@ -147,7 +147,7 @@ card wear. Back up your data first; this is not a filesystem repair or a guarant
 - [Persistent settings](docs/design/settings.md): flash settings record, reserved sector, and API.
 - [Architecture](docs/design/architecture.md): application layers, runtime, and storage ownership.
 - [SD-card documentation](docs/design/sdcard/README.md): driver design and performance-test references.
-- [Physical transports](firmware/src/drivers/storage/README.md): SDIO-PIO, SD-SPI, and card wiring.
+- [SD-card driver and physical links](firmware/src/drivers/sd_card/README.md): SDIO-PIO, SD-SPI, and card wiring.
 - [USB documentation](docs/design/usb/README.md): interface overview, CDC CLI, and HID protocol references.
 
 **Validation and history**

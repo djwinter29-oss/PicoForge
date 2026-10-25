@@ -1,8 +1,9 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "pico/stdlib.h"
-#include "board/board.h"
 #include "drivers/boot_config.h"
+#include "drivers/led.h"
+#include "drivers/monitor_uart.h"
 #include "drivers/system.h"
 #include "pico/runtime.h"
 #include "drivers/temperature.h"
@@ -16,10 +17,8 @@ _Static_assert(SYS_CLK_HZ == PF_IMAGE_SYS_CLK_MHZ * 1000000u,
 /* Runs after the SDK clock init (00500) and before peripheral resets are released (00600), stdio and FreeRTOS. */
 static void apply_saved_system_clock(void)
 {
-    pf_boot_config_t settings;
-    /* Missing or corrupt records load as Defaults (0 = keep the build clock). */
-    (void)pf_boot_config_load_early(&settings);
-    (void)pf_system_clock_apply(settings.system_clock_mhz);
+    /* First boot-config access: loads the record before the scheduler; missing or corrupt records give 0. */
+    (void)pf_system_clock_apply(pf_sysclk_profile_mhz(pf_boot_config_sysclk()));
 }
 PICO_RUNTIME_INIT_FUNC_HW(apply_saved_system_clock, "00501");
 
@@ -31,8 +30,9 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 
 int main(void)
 {
-    if (!pf_board_init()) {
-        panic("Failed to initialize board pin assignments");
+    pf_monitor_uart_init();
+    if (!pf_led_init()) {
+        panic("Failed to initialize board LED");
     }
     pf_log_init();
     PF_LOG_INFO("boot", "Firmware initialization started");

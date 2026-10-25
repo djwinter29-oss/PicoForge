@@ -26,10 +26,10 @@ static bool pf_storage_worker_unmount_for_usb(void);
 #define pf_sd_native_read_blocks pf_sd_spi_read_blocks
 #define pf_sd_native_write_blocks pf_sd_spi_write_blocks
 #define pf_sd_native_sync pf_sd_spi_sync
-#define TEST_TRANSPORT PF_STORAGE_BUS_SPI
+#define TEST_TRANSPORT PF_SD_LINK_SPI
 #else
 #include "drivers/sd_card/sd_native.h"
-#define TEST_TRANSPORT PF_STORAGE_BUS_NATIVE_SD
+#define TEST_TRANSPORT PF_SD_LINK_NATIVE_SD
 #endif
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */

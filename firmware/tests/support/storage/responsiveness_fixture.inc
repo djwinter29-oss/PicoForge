@@ -6,37 +6,48 @@
 #include WORKER_SOURCE
 #include HID_SOURCE
 #include USB_TASK_SOURCE
-static pf_boot_config_t test_settings;
+static pf_sysclk_profile_t test_sysclk, saved_sysclk;
+static pf_sd_speed_t test_sd_speed, saved_sd_speed;
 static unsigned settings_save_calls;
+static bool settings_save_fails;
 static bool msc_enabled;
 static bool msc_transition_pending;
-static pf_board_resources_t test_topology = {
-    .led_gpio = 25u,
-    .led_active_high = true,
-    .monitor_uart_index = 0u,
-    .monitor_uart_tx_gpio = 0u,
-    .monitor_uart_rx_gpio = 1u,
-    .monitor_uart_baud_rate = 115200u,
-    .sdio_pio_pins = {
-        .clock_gpio = 2u,
-        .command_gpio = 3u,
-        .data_gpio = {4u, 5u, 6u, 7u},
-    },
-    .card_detect_gpio = 8u,
+const pf_led_board_t pf_led_board = {.gpio = 25u, .active_high = true};
+const pf_monitor_uart_board_t pf_monitor_uart_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
+const pf_sdio_pio_board_t pf_sdio_pio_board = {
+    .pins = {.clock_gpio = 2u, .command_gpio = 3u, .data_gpio = {4u, 5u, 6u, 7u}},
 };
+const pf_sd_board_t pf_sd_board = {.card_detect_gpio = 8u};
 
-const pf_board_resources_t *pf_board_resources_get(void) { return &test_topology; }
+pf_sysclk_profile_t pf_boot_config_sysclk(void) { return test_sysclk; }
+pf_sd_speed_t pf_boot_config_sd_speed(void) { return test_sd_speed; }
 
-bool pf_boot_config_load(pf_boot_config_t *settings)
+bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile)
 {
-    *settings = test_settings;
+    if ((unsigned)profile > PF_SYSCLK_250MHZ) {
+        return false;
+    }
+    test_sysclk = profile;
     return true;
 }
 
-bool pf_boot_config_save(const pf_boot_config_t *settings)
+bool pf_boot_config_set_sd_speed(pf_sd_speed_t speed)
+{
+    if (speed != PF_SD_SPEED_DEFAULT && speed != PF_SD_SPEED_HIGH) {
+        return false;
+    }
+    test_sd_speed = speed;
+    return true;
+}
+
+bool pf_boot_config_save(void)
 {
     ++settings_save_calls;
-    test_settings = *settings;
+    if (settings_save_fails) {
+        return false;
+    }
+    saved_sysclk = test_sysclk;
+    saved_sd_speed = test_sd_speed;
     return true;
 }
 
@@ -67,9 +78,9 @@ void pf_sd_get_info(pf_sd_info_t *info)
         memset(info->cid, 0x5a, sizeof(info->cid));
     }
 }
-bool pf_board_get_sd_card_config(pf_sd_config_t *config)
+bool pf_sd_board_config(pf_sd_config_t *config)
 {
-    config->transport.mode = PF_STORAGE_BUS_NATIVE_SD;
+    config->transport.mode = PF_SD_LINK_NATIVE_SD;
     return true;
 }
 BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)

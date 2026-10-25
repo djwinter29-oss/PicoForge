@@ -13,8 +13,8 @@
 #define backend_write pf_sd_spi_write_blocks
 #define backend_sync pf_sd_spi_sync
 #define backend_info pf_sd_spi_get_info
-#define TEST_TRANSPORT PF_STORAGE_BUS_SPI
-#define OTHER_TRANSPORT PF_STORAGE_BUS_NATIVE_SD
+#define TEST_TRANSPORT PF_SD_LINK_SPI
+#define OTHER_TRANSPORT PF_SD_LINK_NATIVE_SD
 #else
 #include "drivers/sd_card/sd_native.h"
 #define backend_init pf_sd_native_init
@@ -27,7 +27,7 @@
 #define backend_write pf_sd_native_write_blocks
 #define backend_sync pf_sd_native_sync
 #define backend_info pf_sd_native_get_info
-#define TEST_TRANSPORT PF_STORAGE_BUS_NATIVE_SD
-#define OTHER_TRANSPORT PF_STORAGE_BUS_SPI
+#define TEST_TRANSPORT PF_SD_LINK_NATIVE_SD
+#define OTHER_TRANSPORT PF_SD_LINK_SPI
 #endif
 #endif

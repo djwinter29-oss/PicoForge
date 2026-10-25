@@ -1,5 +1,5 @@
 #include "unity.h"
-#include "bus.h"
+#include "sd_link.h"
 #define PF_CONFIG_SD_CARD_INTERRUPT_WAIT 1
 TEST_INCLUDE_PATH("firmware/tests/support/storage/serialization")
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
@@ -24,9 +24,9 @@ static bool enable_wait(void *context)
 
 void test_port_requests_opaque_wait_setup_and_propagates_failure(void)
 {
-    const pf_storage_bus_ops_t ops = {.enable_wait = enable_wait};
+    const pf_sd_link_ops_t ops = {.enable_wait = enable_wait};
     pf_sd_config_t config = {
-        .transport = {.context = &wait_calls, .ops = &ops, .mode = PF_STORAGE_BUS_NATIVE_SD},
+        .transport = {.context = &wait_calls, .ops = &ops, .mode = PF_SD_LINK_NATIVE_SD},
     };
     wait_calls = 0u;
     wait_available = false;
@@ -36,7 +36,7 @@ void test_port_requests_opaque_wait_setup_and_propagates_failure(void)
     wait_available = true;
     TEST_ASSERT_TRUE(pf_sd_port_init(&config));
     TEST_ASSERT_EQUAL_UINT(2u, wait_calls);
-    config.transport.mode = PF_STORAGE_BUS_SPI;
+    config.transport.mode = PF_SD_LINK_SPI;
     TEST_ASSERT_FALSE(pf_sd_port_init(&config));
     TEST_ASSERT_EQUAL_UINT(2u, wait_calls);
 }

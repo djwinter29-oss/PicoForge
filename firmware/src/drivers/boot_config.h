@@ -2,64 +2,58 @@
 #define PF_DRIVERS_BOOT_CONFIG_H
 
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
 
-/** Size in bytes of the serialized boot-config record. */
-#define PF_BOOT_CONFIG_RECORD_SIZE 16u
-/** Record format version; a different value is treated as unknown and yields defaults. */
-#define PF_BOOT_CONFIG_FORMAT_VERSION 1u
+/** User-selected SD-card speed profile; each transport maps it to its own bus clock. */
+typedef enum {
+    PF_SD_SPEED_DEFAULT = 0, /**< 25 MHz Default Speed; used when nothing is saved. */
+    PF_SD_SPEED_HIGH = 1, /**< 50 MHz High-Speed; SDIO falls back to 25 MHz if the card refuses. */
+} pf_sd_speed_t;
 
-/** Boot-applied configuration. Zero in every field selects the build/SDK default. */
-typedef struct {
-    uint16_t system_clock_mhz; /**< 0 (keep the build clock), 150, 200 or 250; applied at boot. */
-    uint8_t sdio_bus_mhz;      /**< 0/25 (25 MHz Default Speed) or 50 (allow High-Speed negotiation); SDIO_PIO only. */
-    uint8_t spi_bus_mhz;       /**< 0 (default), 25 or 50 MHz ceiling; used only by SPI images. */
-} pf_boot_config_t;
-
-/** Fill @p config with the complete default configuration. */
-void pf_boot_config_defaults(pf_boot_config_t *config);
-
-/** Return true when every field holds a supported value. */
-bool pf_boot_config_valid(const pf_boot_config_t *config);
+/** User-selected system clock profile; the flash record and HID protocol carry it as MHz. */
+typedef enum {
+    PF_SYSCLK_DEFAULT = 0, /**< Keep the SDK/build clock; used when nothing is saved. */
+    PF_SYSCLK_150MHZ = 1, /**< 150 MHz. */
+    PF_SYSCLK_200MHZ = 2, /**< 200 MHz. */
+    PF_SYSCLK_250MHZ = 3, /**< 250 MHz. */
+} pf_sysclk_profile_t;
 
 /**
- * @brief Return the boot configuration loaded by the most recent early load.
- * @return Pointer to the immutable active configuration, initially all defaults.
+ * @brief Convert a system clock profile to MHz.
+ * @return 0 (keep the SDK/build clock) for PF_SYSCLK_DEFAULT or an unknown profile, otherwise 150, 200 or 250.
  */
-const pf_boot_config_t *pf_boot_config_active(void);
-
-/** IEEE 802.3 CRC-32 (reflected, init and final XOR 0xFFFFFFFF). */
-uint32_t pf_boot_config_crc32(const uint8_t *data, size_t size);
-
-/** Serialize valid configuration into @p record; returns false (record untouched) if invalid. */
-bool pf_boot_config_encode(const pf_boot_config_t *config, uint8_t record[PF_BOOT_CONFIG_RECORD_SIZE]);
+static inline uint16_t pf_sysclk_profile_mhz(pf_sysclk_profile_t profile)
+{
+    static const uint16_t mhz[] = {0u, 150u, 200u, 250u};
+    return (unsigned)profile < sizeof(mhz) / sizeof(mhz[0]) ? mhz[profile] : 0u;
+}
 
 /**
- * Parse a stored record. Any missing, erased, malformed, unknown-version, out-of-range or CRC-invalid
- * input returns false and leaves @p config holding the complete defaults; fields are never partially applied.
+ * @brief Return the configured system clock profile.
+ *
+ * The first call loads the saved record and must run before the scheduler starts (the boot clock hook).
  */
-bool pf_boot_config_decode(const uint8_t *record, size_t size, pf_boot_config_t *config);
+pf_sysclk_profile_t pf_boot_config_sysclk(void);
 
 /**
- * @brief Read and activate the saved configuration before the scheduler starts.
- * @param config Always filled; complete defaults unless a valid record was loaded.
- * @return true if a valid record was loaded.
+ * @brief Change the configured system clock in RAM; persist with pf_boot_config_save(), applied at the next boot.
+ * @return false (configuration unchanged) for an unknown profile.
  */
-bool pf_boot_config_load_early(pf_boot_config_t *config);
+bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile);
+
+/** @brief Return the configured SD-card speed profile. */
+pf_sd_speed_t pf_boot_config_sd_speed(void);
 
 /**
- * @brief Read the saved configuration from the designated USB settings-owner task.
- * @param config Always filled; complete defaults unless a valid record was loaded.
- * @return true if a valid record was loaded.
+ * @brief Change the configured SD-card speed in RAM; persist with pf_boot_config_save(), applied at the next boot.
+ * @return false (configuration unchanged) for an unknown profile.
  */
-bool pf_boot_config_load(pf_boot_config_t *config);
+bool pf_boot_config_set_sd_speed(pf_sd_speed_t speed);
 
 /**
- * @brief Validate and persist boot-applied configuration.
- * @param config Configuration to persist.
+ * @brief Persist the configuration to flash from a task context.
  * @return true only when the record was read back successfully.
  */
-bool pf_boot_config_save(const pf_boot_config_t *config);
+bool pf_boot_config_save(void);
 
 #endif

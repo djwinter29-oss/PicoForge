@@ -1,6 +1,6 @@
 # PicoForge Architecture
 
-> **Status:** The firmware configures two-core FreeRTOS SMP for RP2040 and RP2350. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](usb/usb-cdc-cli.md). The board profile assigns card detect, so the worker debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive; dashboard Disable requests confirmed [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety), while legacy safe-disable commands require host eject. The HID contract is implemented across firmware and host clients; physical USB qualification remains outstanding. See [the hardware validation record](../../firmware/src/drivers/storage/README.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
+> **Status:** The firmware configures two-core FreeRTOS SMP for RP2040 and RP2350. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](usb/usb-cdc-cli.md). The board profile assigns card detect, so the worker debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive; dashboard Disable requests confirmed [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety), while legacy safe-disable commands require host eject. The HID contract is implemented across firmware and host clients; physical USB qualification remains outstanding. See [the hardware validation record](../../firmware/src/drivers/sd_card/README.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
 
 ## Current Firmware
 
@@ -9,22 +9,23 @@ platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected
 [artifact naming](../../README.md#1-build-the-firmware). The TinyUSB configuration lives under
 `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live
 under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID
-interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger;
-USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides
-serialized severity-tagged lines. The USB task services the [CDC CLI](usb/usb-cdc-cli.md) and publishes HID Input
+interface. Board startup passes its monitor UART assignment to `drivers/monitor_uart`, which initializes and selects
+it for stdio before the logger is enabled; USB stdio stays disabled so log messages remain separate from CDC. The
+`middleware/logging` library provides serialized severity-tagged lines. The USB task services the
+[CDC CLI](usb/usb-cdc-cli.md) and publishes HID Input
 report `3` telemetry every 250 ms, plus storage and capability-gated self-test reports `10` and `11` every 500 ms.
 Feature report `1` carries stable product, MCU, board, capability, and SRAM information; Feature report `2` carries
 persisted profiles and board GPIO configuration. Feature report `20` handles LED, reboot, MSC, self-test, and
 settings transactions. The [HID Report Reference](usb/usb-hid-report-reference.md) defines the wire contract and
 validation. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4.
-The shared Pico-family profile in `firmware/src/board/board_profile.c` uses the SDK's default UART and direct-LED
+The shared Pico-family profile in `firmware/src/config/board.c` uses the SDK's default UART and direct-LED
 assignments, while keeping PicoForge's storage connector wiring in one profile. Pico, Pico 2, and Pico 2 W use the
 same monitor UART pins; boards without a direct GPIO LED do not advertise one. This follows PicoUart's
 [board-configuration approach](https://github.com/djwinter29-oss/PicoUart/blob/main/docs/hardware-setup.md) without
 adopting its UART-channel map or hardware features. Other layouts require a matching board profile; see
 [hardware setup](../hardware-setup.md). Simple system, temperature, and LED drivers live flat under
 `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines
-in `drivers/storage/`. USB interface roles, descriptors, and lifecycle are documented in the
+in `drivers/sd_card/`. USB interface roles, descriptors, and lifecycle are documented in the
 [HID Report Reference](usb/usb-hid-report-reference.md). The development VID/PID is `0xCAFE:0x4011` and is not for product
 release. `firmware/src/main.c` initializes board UART
 and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler.
@@ -140,7 +141,7 @@ The firmware currently uses the USB device role; a USB host role is not selected
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sd_card/`. Reusable filesystem adaptation belongs in middleware; media lifecycle and firmware/USB ownership policy belongs in the application. Keep board pin/power setup and controller resource selection in board support under `firmware/src/board/`. FatFs consumes the [logical block interface](../../firmware/src/middleware/storage/block_device.h) through an application owner-gated descriptor; transport configuration lives in [board support](../../firmware/src/board/board.h). See the [hardware setup options](../hardware-setup.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sd_card/`. Reusable filesystem adaptation belongs in middleware; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: `firmware/src/config/board.c` defines one assignment object per driver, declared `extern` in that driver's header. Each driver initializes its own hardware from it (`pf_led_init()`, `pf_monitor_uart_init()`), and [sd_board.c](../../firmware/src/drivers/sd_card/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/middleware/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../hardware-setup.md).
 
 ### SD-Card Driver Structure
 
@@ -150,7 +151,7 @@ workflows, explicitly selected FreeRTOS/bare-metal ports, and hardware resource
 inventory. The default USB/storage application remains FreeRTOS-only; the
 bare-metal configuration builds the reusable driver and its link-smoke target.
 Board wiring and physical
-qualification records remain in the [storage transport guide](../../firmware/src/drivers/storage/README.md#sd-card-breakout).
+qualification records remain in the [SD-card driver guide](../../firmware/src/drivers/sd_card/README.md#sd-card-breakout).
 
 ### Platform
 
@@ -159,12 +160,12 @@ The board pin/peripheral profile is immutable and selected at build time; firmwa
 instead of repeating pin-range, mux, and collision validation at runtime. Wiring must agree with
 [the hardware setup baseline](../hardware-setup.md) and the board schematic. Boot-applied settings and their public
 load/save API live in `firmware/src/drivers/boot_config.c/.h`; RP2 flash persistence and FreeRTOS-safe access live in
-`firmware/src/platform/boot_config_store.c/.h`. Board pin mapping lives in `firmware/src/board/`; each build-selected
+`firmware/src/platform/boot_config_store.c/.h`. Board pin mapping lives in `firmware/src/config/board.c`; each build-selected
 profile contains only its SDIO-PIO or SPI wiring. Physical card operation still needs board validation.
 
 ## External Components
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The SD memory-card protocols are implemented in `firmware/src/drivers/sd_card/`; their reusable SPI and PIO engines live in `firmware/src/drivers/storage/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/` and compiled into the firmware.
+Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The SD memory-card protocols are implemented in `firmware/src/drivers/sd_card/`; their reusable SPI and PIO engines live in `firmware/src/drivers/sd_card/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/` and compiled into the firmware.
 Its upstream disk interface and configuration live under `firmware/src/integration/fatfs/`; project-owned disk
 adaptation lives under `firmware/src/middleware/storage/`, while the singleton volume lifecycle lives in
 `firmware/src/app/storage/`.

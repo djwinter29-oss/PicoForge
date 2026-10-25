@@ -4,9 +4,9 @@ void pf_sd_unlock(void) {}
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
-#include "drivers/storage/sdio_pio/sdio_pio.c"
-#include "drivers/storage/bus.c"
-#include "drivers/storage/sd_wire.c"
+#include "drivers/sd_card/sdio_pio/sdio_pio.c"
+#include "drivers/sd_card/link/sd_link.c"
+#include "drivers/sd_card/link/sd_link_wire.c"
 
 static pf_sdio_pio_t test_wire;
 static bool test_present(const void *context) { (void)context; return pf_test_sdio_gpio_level != 0u; }

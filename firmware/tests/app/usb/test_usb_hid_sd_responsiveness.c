@@ -34,8 +34,10 @@ void setUp(void)
     requests = (void *)1;
     replies = (void *)2;
     cli_session = 9u;
-    test_settings = (pf_boot_config_t){.system_clock_mhz = 200u, .sdio_bus_mhz = 25u, .spi_bus_mhz = 50u};
+    test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
+    test_sd_speed = saved_sd_speed = PF_SD_SPEED_DEFAULT;
     settings_save_calls = 0u;
+    settings_save_fails = false;
     reset_requests = 0u;
     led_requests = msc_requests = force_requests = 0u;
     queries = queued = recovery_requests = normal_submissions = messages = 0u;
@@ -169,20 +171,39 @@ void test_control_feature_reports_transaction_results_and_rejects_malformed_enve
 
 void test_save_settings_command_updates_next_boot_profile_and_returns_saved_values(void)
 {
-    const uint8_t arguments[5] = {200u, 0u, 1u, 0u, 0u};
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    const uint8_t bad_profile[5] = {150u, 0u, 2u, 0u, 0u};
+    const uint8_t bad_clock[5] = {100u, 0u, 1u, 0u, 0u};
     send_control(9u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     const pf_hid_control_result_t result = read_control_result();
     TEST_ASSERT_EQUAL_UINT8(2u, result.status);
     TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
-    TEST_ASSERT_EQUAL_UINT16(200u, test_settings.system_clock_mhz);
-    TEST_ASSERT_EQUAL_UINT8(50u, test_settings.sdio_bus_mhz);
-    TEST_ASSERT_EQUAL_UINT16(200u, result.result_data[0] | ((uint16_t)result.result_data[1] << 8u));
+    TEST_ASSERT_EQUAL(PF_SYSCLK_150MHZ, saved_sysclk);
+    TEST_ASSERT_EQUAL(PF_SD_SPEED_HIGH, saved_sd_speed);
+    TEST_ASSERT_EQUAL_UINT16(150u, result.result_data[0] | ((uint16_t)result.result_data[1] << 8u));
     TEST_ASSERT_EQUAL_UINT8(1u, result.result_data[2]);
 
+    /* Rejected or failed saves leave the RAM copy equal to the saved one. */
+    test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
+    test_sd_speed = saved_sd_speed = PF_SD_SPEED_DEFAULT;
+    send_control(10u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_profile);
+    TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    send_control(13u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_clock);
+    TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, test_sd_speed);
+
+    settings_save_fails = true;
+    send_control(11u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(6u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, test_sd_speed);
+
     busy = true;
-    send_control(10u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    send_control(12u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     TEST_ASSERT_EQUAL_UINT8(5u, read_control_result().status);
-    TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
+    TEST_ASSERT_EQUAL_UINT(2u, settings_save_calls);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
 }
 
 void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)

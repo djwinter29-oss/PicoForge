@@ -1,0 +1,41 @@
+#ifndef PF_SD_LINK_SERIAL_H
+#define PF_SD_LINK_SERIAL_H
+
+#include "sd_link.h"
+
+/** One raw serial phase; buffers remain borrowed until transfer returns.
+ * Buffered phases contain whole bytes, MSB first. With neither buffer, drive ones for bit_count bits.
+ * Phase boundaries do not release CS.
+ */
+typedef struct {
+    const uint8_t *tx; /**< Optional output; NULL drives ones. */
+    uint8_t *rx; /**< Optional input; NULL discards. */
+    size_t bit_count; /**< Bits across all lanes; whole lane symbols, nonzero. */
+    uint8_t lanes; /**< Must be one for SPI. */
+} pf_sd_link_serial_phase_t;
+
+/** Raw serial operations; no opcodes, addresses, device status, or retries. */
+struct pf_sd_link_serial_ops {
+    pf_sd_link_result_t (*transfer)(void *context, const pf_sd_link_serial_phase_t *phases,
+                                             size_t count); /**< One CS boundary, cleanup on failure. */
+    pf_sd_link_result_t (*select)(void *context, bool selected); /**< Optional manual CS control. */
+    pf_sd_link_result_t (*exchange)(void *context, const uint8_t *tx,
+                                             uint8_t *rx, size_t length); /**< Optional raw single-lane bytes. */
+    uint8_t lanes; /**< Supported lane count; one for SPI. */
+};
+
+/** Validate every phase before any hardware access, including unsupported lanes. */
+pf_sd_link_result_t pf_sd_link_serial_phases_valid(const pf_sd_link_serial_phase_t *phases,
+                                                            size_t count, uint8_t lanes);
+/** Validate manual CS and raw byte exchange for caller-controlled transactions. */
+bool pf_sd_link_serial_raw_valid(const pf_sd_link_t *transport);
+/** Execute caller-supplied phases under one CS assertion; no command construction or replay. */
+pf_sd_link_result_t pf_sd_link_serial_transfer(const pf_sd_link_t *transport,
+                                                        const pf_sd_link_serial_phase_t *phases, size_t count);
+/** Assert/deassert CS for caller-sequenced raw byte exchanges. */
+pf_sd_link_result_t pf_sd_link_serial_select(const pf_sd_link_t *transport, bool selected);
+/** Exchange bytes without changing CS; NULL TX sends ones, NULL RX discards. */
+pf_sd_link_result_t pf_sd_link_serial_exchange(const pf_sd_link_t *transport,
+                                                        const uint8_t *tx, uint8_t *rx, size_t length);
+
+#endif

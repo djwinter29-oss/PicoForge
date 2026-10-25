@@ -5,8 +5,8 @@ TEST_INCLUDE_PATH("firmware/tests/support/spi")
 #define PF_SPI_PRODUCTION_TEST
 #include "spi_production_fixture.h"
 #include "sd_protocol.h"
-#include "bus.h"
-#include "serial.h"
+#include "sd_link.h"
+#include "sd_link_serial.h"
 #include "spi.h"
 
 static pf_spi_t physical_bus;
@@ -30,8 +30,8 @@ static bool scripted_reads;
 static uint8_t read_payloads[6][64];
 static uint32_t clock_request, clock_actual;
 static unsigned clock_calls, commands_at_clock;
-static pf_storage_bus_result_t clock_result;
-static pf_storage_bus_ops_t clock_ops;
+static pf_sd_link_result_t clock_result;
+static pf_sd_link_ops_t clock_ops;
 
 uint32_t time_us_32(void) { now += clock_step; return now; }
 static uint32_t profile_clock(void) { return now; }
@@ -106,7 +106,7 @@ static void reset(uint8_t response)
         .instance = &test_spi, .pins.clock_gpio = 2u, .pins.mosi_gpio = 3u,
         .pins.miso_gpio = 0u, .pins.cs_gpio = 1u, .clock_hz = 25000000u,
     };
-    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&physical_bus));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_spi_init(&physical_bus));
     card_initialized = card_block_addressed = true;
     card_sector_count = 128;
     configuration_set = false;
@@ -125,7 +125,7 @@ static void reset(uint8_t response)
     scripted_reads = false;
     memset(read_payloads, 0, sizeof(read_payloads));
     clock_calls = clock_request = clock_actual = commands_at_clock = 0u;
-    clock_result = PF_STORAGE_BUS_OK;
+    clock_result = PF_SD_LINK_OK;
     clock_step = 25000u;
     memset(payload, 0, sizeof(payload));
     pf_sd_set_profiling_enabled(false);
@@ -142,7 +142,7 @@ void tearDown(void)
     pf_sd_set_idle_hook(NULL);
 }
 
-static pf_storage_bus_result_t record_clock(void *context, uint32_t requested, uint32_t *actual)
+static pf_sd_link_result_t record_clock(void *context, uint32_t requested, uint32_t *actual)
 {
     TEST_ASSERT_EQUAL_PTR(&physical_bus, context);
     TEST_ASSERT_FALSE(selected);
@@ -278,7 +278,7 @@ void test_spi_transfer_clock_failure_or_invalid_actual_rate_fails_initialization
     uint8_t csd[16] = {[3] = 0x32u};
     for (unsigned failure = 0u; failure < 3u; ++failure) {
         prepare_clock();
-        if (failure == 0u) clock_result = PF_STORAGE_BUS_IO_ERROR;
+        if (failure == 0u) clock_result = PF_SD_LINK_IO_ERROR;
         if (failure == 1u) clock_actual = 399999u;
         if (failure == 2u) clock_actual = 25000001u;
         TEST_ASSERT_FALSE(select_transfer_clock(csd));
@@ -379,12 +379,12 @@ void test_spi_initialization_fails_when_crc_enable_is_rejected_or_uncertain(void
 
 static unsigned selection_attempts;
 
-static pf_storage_bus_result_t reject_selection(void *context, bool select)
+static pf_sd_link_result_t reject_selection(void *context, bool select)
 {
     TEST_ASSERT_EQUAL_PTR(&physical_bus, context);
     TEST_ASSERT_TRUE(select);
     ++selection_attempts;
-    return PF_STORAGE_BUS_IO_ERROR;
+    return PF_SD_LINK_IO_ERROR;
 }
 
 void test_spi_selection_failure_stops_every_command_and_transfer_without_cleanup_or_replay(void)
@@ -393,8 +393,8 @@ void test_spi_selection_failure_stops_every_command_and_transfer_without_cleanup
     uint8_t response;
     for (unsigned operation = 0u; operation < 8u; ++operation) {
         reset(0);
-        pf_storage_bus_ops_t ops = *active_config.transport.ops;
-        pf_storage_serial_ops_t serial_ops = *ops.serial;
+        pf_sd_link_ops_t ops = *active_config.transport.ops;
+        pf_sd_link_serial_ops_t serial_ops = *ops.serial;
         serial_ops.select = reject_selection;
         ops.serial = &serial_ops;
         active_config.transport.ops = &ops;

@@ -6,11 +6,16 @@
 #include "pico/unique_id.h"
 #include "tusb.h"
 #include "usb_hid.h"
-#include "board/board.h"
-#include "board/board_resources.h"
 #include "config/config.h"
-#include "drivers/sd_card/sd_block.h"
 #include "drivers/led.h"
+#include "drivers/monitor_uart.h"
+#include "drivers/sd_card/sd_board.h"
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+#include "drivers/sd_card/sdio_pio/sdio_pio_pins.h"
+#else
+#include "drivers/sd_card/spi/spi_pins.h"
+#endif
+#include "drivers/sd_card/sd_block.h"
 #include "drivers/boot_config.h"
 #include "drivers/temperature.h"
 #include "usb_msc.h"
@@ -53,7 +58,7 @@ static pf_hid_control_request_t pending_self_test_request;
 
 static uint8_t gpio_value(uint32_t gpio)
 {
-    return (gpio == PF_BOARD_PIN_UNASSIGNED || gpio > UINT8_MAX - 1u)
+    return (gpio > UINT8_MAX - 1u)
         ? UINT8_MAX : (uint8_t)gpio;
 }
 
@@ -87,15 +92,6 @@ static void set_result(const pf_hid_control_request_t *request, uint8_t status, 
         .error_reason = error,
     };
     if (result_data != NULL) memcpy(control_result.result_data, result_data, sizeof(control_result.result_data));
-}
-
-static uint8_t persisted_sd_profile(const pf_boot_config_t *settings)
-{
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-    return settings->spi_bus_mhz == 25u ? 0u : 1u;
-#else
-    return settings->sdio_bus_mhz == 50u ? 1u : 0u;
-#endif
 }
 
 static uint8_t board_model(void)
@@ -162,38 +158,34 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
 
 void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
 {
-    const pf_board_resources_t *topology = pf_board_resources_get();
-    pf_boot_config_t settings;
-    (void)pf_boot_config_load(&settings);
-
     memset(report, 0, sizeof(*report));
     report->version = PF_HID_REPORT_VERSION;
-    report->stored_sysclk_profile = settings.system_clock_mhz;
-    report->stored_sdcard_profile = persisted_sd_profile(&settings);
-    report->monitor_uart_index = topology->monitor_uart_index <= 1u
-        ? (uint8_t)topology->monitor_uart_index : UINT8_MAX;
-    report->monitor_uart_tx_gpio = gpio_value(topology->monitor_uart_tx_gpio);
-    report->monitor_uart_rx_gpio = gpio_value(topology->monitor_uart_rx_gpio);
+    report->stored_sysclk_profile = pf_sysclk_profile_mhz(pf_boot_config_sysclk());
+    report->stored_sdcard_profile = (uint8_t)pf_boot_config_sd_speed();
+    report->monitor_uart_index = pf_monitor_uart_board.uart_index <= 1u
+        ? (uint8_t)pf_monitor_uart_board.uart_index : UINT8_MAX;
+    report->monitor_uart_tx_gpio = gpio_value(pf_monitor_uart_board.tx_gpio);
+    report->monitor_uart_rx_gpio = gpio_value(pf_monitor_uart_board.rx_gpio);
     for (size_t index = 0u; index < sizeof(report->storage_gpios); ++index) {
         report->storage_gpios[index] = UINT8_MAX;
     }
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-    report->storage_gpios[0] = gpio_value(topology->spi_pins.clock_gpio);
-    report->storage_gpios[1] = gpio_value(topology->spi_pins.mosi_gpio);
-    report->storage_gpios[2] = gpio_value(topology->spi_pins.miso_gpio);
-    report->storage_gpios[3] = gpio_value(topology->spi_pins.cs_gpio);
+    report->storage_gpios[0] = gpio_value(pf_spi_board.pins.clock_gpio);
+    report->storage_gpios[1] = gpio_value(pf_spi_board.pins.mosi_gpio);
+    report->storage_gpios[2] = gpio_value(pf_spi_board.pins.miso_gpio);
+    report->storage_gpios[3] = gpio_value(pf_spi_board.pins.cs_gpio);
 #else
-    report->storage_gpios[0] = gpio_value(topology->sdio_pio_pins.clock_gpio);
-    report->storage_gpios[1] = gpio_value(topology->sdio_pio_pins.command_gpio);
+    report->storage_gpios[0] = gpio_value(pf_sdio_pio_board.pins.clock_gpio);
+    report->storage_gpios[1] = gpio_value(pf_sdio_pio_board.pins.command_gpio);
     for (size_t index = 0u; index < 4u; ++index) {
-        report->storage_gpios[index + 2u] = gpio_value(topology->sdio_pio_pins.data_gpio[index]);
+        report->storage_gpios[index + 2u] = gpio_value(pf_sdio_pio_board.pins.data_gpio[index]);
     }
 #endif
     report->board_flags |= PF_HID_BOARD_FLAG_CARD_DETECT;
-    report->card_detect_gpio = gpio_value(topology->card_detect_gpio);
-    if (topology->led_gpio != PF_BOARD_PIN_UNASSIGNED) {
+    report->card_detect_gpio = gpio_value(pf_sd_board.card_detect_gpio);
+    if (pf_led_board.gpio != PF_LED_GPIO_NONE) {
         report->board_flags |= PF_HID_BOARD_FLAG_LED;
-        report->led_gpio = gpio_value(topology->led_gpio);
+        report->led_gpio = gpio_value(pf_led_board.gpio);
     } else {
         report->led_gpio = UINT8_MAX;
     }
@@ -230,7 +222,7 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
 {
     pf_sd_config_t config;
     pf_sd_info_t info = {0};
-    const bool configured = pf_board_get_sd_card_config(&config);
+    const bool configured = pf_sd_board_config(&config);
     const bool msc_enabled = pf_usb_msc_is_enabled();
     const bool transition_pending = pf_usb_msc_transition_pending();
 
@@ -255,7 +247,7 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
     pf_sd_unlock();
     report->sd_flags |= PF_HID_STORAGE_SAMPLE_VALID;
     report->component_type = 1u;
-    report->bus_mode = config.transport.mode == PF_STORAGE_BUS_SPI
+    report->bus_mode = config.transport.mode == PF_SD_LINK_SPI
         ? PF_HID_BUS_MODE_SPI : PF_HID_BUS_MODE_SDIO;
     if (info.presence_known) {
         report->sd_flags |= PF_HID_STORAGE_PRESENCE_KNOWN;
@@ -301,7 +293,6 @@ void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t se
 
 static void process_control_request(const pf_hid_control_request_t *request)
 {
-    pf_boot_config_t settings;
     uint8_t result_data[4] = {0};
     uint8_t status = PF_HID_COMMAND_INVALID;
     uint8_t error = PF_HID_ERROR_MALFORMED;
@@ -410,33 +401,34 @@ static void process_control_request(const pf_hid_control_request_t *request)
     } else if (request->opcode == PF_HID_OPCODE_SAVE_SETTINGS) {
         const uint16_t system_clock_mhz = read_u16_le(request->arguments);
         const uint8_t sdcard_profile = request->arguments[2];
+        const pf_sysclk_profile_t old_sysclk = pf_boot_config_sysclk();
+        const pf_sd_speed_t old_sd_speed = pf_boot_config_sd_speed();
+        pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
+        while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != system_clock_mhz) {
+            ++sysclk;
+        }
         if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
             error = PF_HID_ERROR_MALFORMED;
-        } else if (sdcard_profile > 1u ||
-                   (system_clock_mhz != 0u && system_clock_mhz != 150u &&
-                    system_clock_mhz != 200u && system_clock_mhz != 250u)) {
+        } else if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || !pf_boot_config_set_sysclk(sysclk) ||
+                   !pf_boot_config_set_sd_speed((pf_sd_speed_t)sdcard_profile)) {
             error = PF_HID_ERROR_ARGUMENT;
         } else if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
             status = PF_HID_COMMAND_BUSY;
             error = PF_HID_ERROR_BUSY;
+        } else if (!pf_boot_config_save()) {
+            status = PF_HID_COMMAND_FAILED;
+            error = PF_HID_ERROR_OPERATION;
         } else {
-            (void)pf_boot_config_load(&settings);
-            settings.system_clock_mhz = system_clock_mhz;
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-            settings.spi_bus_mhz = sdcard_profile == 0u ? 25u : 50u;
-#else
-            settings.sdio_bus_mhz = sdcard_profile == 0u ? 25u : 50u;
-#endif
-            if (!pf_boot_config_save(&settings)) {
-                status = PF_HID_COMMAND_FAILED;
-                error = PF_HID_ERROR_OPERATION;
-            } else {
-                result_data[0] = (uint8_t)system_clock_mhz;
-                result_data[1] = (uint8_t)(system_clock_mhz >> 8u);
-                result_data[2] = sdcard_profile;
-                status = PF_HID_COMMAND_COMPLETED;
-                error = PF_HID_ERROR_NONE;
-            }
+            result_data[0] = (uint8_t)system_clock_mhz;
+            result_data[1] = (uint8_t)(system_clock_mhz >> 8u);
+            result_data[2] = sdcard_profile;
+            status = PF_HID_COMMAND_COMPLETED;
+            error = PF_HID_ERROR_NONE;
+        }
+        if (status != PF_HID_COMMAND_COMPLETED) {
+            /* Keep the RAM copy equal to flash so reports never show unsaved values. */
+            (void)pf_boot_config_set_sysclk(old_sysclk);
+            (void)pf_boot_config_set_sd_speed(old_sd_speed);
         }
     } else {
         status = PF_HID_COMMAND_UNSUPPORTED;

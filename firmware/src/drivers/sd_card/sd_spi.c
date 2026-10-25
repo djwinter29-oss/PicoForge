@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "sd_protocol.h"
-#include "drivers/storage/serial.h"
+#include "drivers/sd_card/link/sd_link_serial.h"
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u
@@ -56,15 +56,15 @@ static bool same_config(const pf_sd_config_t *left,
                         const pf_sd_config_t *right)
 {
     return left->clock_hz == right->clock_hz &&
-           pf_storage_bus_same(&left->transport, &right->transport);
+           pf_sd_link_same(&left->transport, &right->transport);
 }
 
 static bool config_is_valid(const pf_sd_config_t *config)
 {
-    if (config == NULL || !pf_storage_bus_valid(&config->transport, PF_STORAGE_BUS_SPI)) {
+    if (config == NULL || !pf_sd_link_valid(&config->transport, PF_SD_LINK_SPI)) {
         return false;
     }
-    if (!pf_storage_serial_raw_valid(&config->transport)) {
+    if (!pf_sd_link_serial_raw_valid(&config->transport)) {
         return false;
     }
 
@@ -75,17 +75,17 @@ static bool config_is_valid(const pf_sd_config_t *config)
 
 static bool card_is_present(void)
 {
-    return pf_storage_bus_present(&active_config.transport);
+    return pf_sd_link_present(&active_config.transport);
 }
 
 static uint32_t spi_profile_clock(void)
 {
-    return (uint32_t)pf_storage_bus_time_us(&active_config.transport);
+    return (uint32_t)pf_sd_link_time_us(&active_config.transport);
 }
 
 static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 {
-    if (pf_storage_serial_exchange(&active_config.transport, &value, received, 1u) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_serial_exchange(&active_config.transport, &value, received, 1u) != PF_SD_LINK_OK) {
         card_initialized = false;
         return false;
     }
@@ -94,7 +94,7 @@ static bool exchange_byte_checked(uint8_t value, uint8_t *received)
 
 static bool select_card(void)
 {
-    if (pf_storage_serial_select(&active_config.transport, true) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_serial_select(&active_config.transport, true) != PF_SD_LINK_OK) {
         card_initialized = false;
         return false;
     }
@@ -106,7 +106,7 @@ static bool deselect_card(void)
     /* CS is high before the trailing clocks. The pinned blocking SDK returns
      * len after receiving every byte; an alternate short-return seam gives no
      * clock-completion guarantee. Invalidate and propagate, never recover/replay. */
-    if (pf_storage_serial_select(&active_config.transport, false) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_serial_select(&active_config.transport, false) != PF_SD_LINK_OK) {
         return false;
     }
     uint8_t ignored;
@@ -115,7 +115,7 @@ static bool deselect_card(void)
 
 static bool wait_ready(uint32_t timeout_us)
 {
-    uint32_t start = (uint32_t)pf_storage_bus_time_us(&active_config.transport);
+    uint32_t start = (uint32_t)pf_sd_link_time_us(&active_config.transport);
     uint32_t profile_start = pf_sd_profile_begin();
 
     do {
@@ -129,7 +129,7 @@ static bool wait_ready(uint32_t timeout_us)
             return true;
         }
         pf_sd_idle();
-    } while ((uint32_t)((uint32_t)pf_storage_bus_time_us(&active_config.transport) - start) < timeout_us);
+    } while ((uint32_t)((uint32_t)pf_sd_link_time_us(&active_config.transport) - start) < timeout_us);
 
     pf_sd_profile_end(PF_SD_PROFILE_BUSY, profile_start);
     pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
@@ -147,7 +147,7 @@ static bool send_command_selected(uint8_t command, uint32_t argument,
 
     uint32_t profile_start = pf_sd_profile_begin();
     bool success = false;
-    if (pf_storage_serial_exchange(&active_config.transport, frame, NULL, sizeof(frame)) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_serial_exchange(&active_config.transport, frame, NULL, sizeof(frame)) != PF_SD_LINK_OK) {
         goto done;
     }
     if (command == SD_CMD_STOP_TRANSMISSION) {
@@ -192,7 +192,7 @@ static bool send_command(uint8_t command, uint32_t argument,
         send_command_selected(command, argument, response)) {
         success = (extra_size == 0u) ||
                   ((extra != NULL) &&
-                   (pf_storage_serial_exchange(&active_config.transport, NULL, extra, extra_size) == PF_STORAGE_BUS_OK));
+                   (pf_sd_link_serial_exchange(&active_config.transport, NULL, extra, extra_size) == PF_SD_LINK_OK));
     }
     bool deselected = deselect_card();
     if (!deselected) {
@@ -213,7 +213,7 @@ static bool send_application_command(uint8_t command, uint32_t argument,
 
 static bool read_data_block(uint8_t *data, size_t size)
 {
-    uint32_t start = (uint32_t)pf_storage_bus_time_us(&active_config.transport);
+    uint32_t start = (uint32_t)pf_sd_link_time_us(&active_config.transport);
     /* DATA covers token wait, payload and wire CRC; CRC measures CPU validation. */
     uint32_t profile_start = pf_sd_profile_begin();
     uint8_t token, crc_high, crc_low;
@@ -230,12 +230,12 @@ static bool read_data_block(uint8_t *data, size_t size)
             goto data_done;
         }
         pf_sd_idle();
-    } while ((uint32_t)((uint32_t)pf_storage_bus_time_us(&active_config.transport) - start) < SD_SPI_RESPONSE_TIMEOUT_US);
+    } while ((uint32_t)((uint32_t)pf_sd_link_time_us(&active_config.transport) - start) < SD_SPI_RESPONSE_TIMEOUT_US);
     if (token != SD_DATA_START_BLOCK) {
         pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
         goto data_done;
     }
-    if (pf_storage_serial_exchange(&active_config.transport, NULL, data, size) != PF_STORAGE_BUS_OK ||
+    if (pf_sd_link_serial_exchange(&active_config.transport, NULL, data, size) != PF_SD_LINK_OK ||
         !exchange_byte_checked(0xffu, &crc_high) ||
         !exchange_byte_checked(0xffu, &crc_low)) {
         goto data_done;
@@ -259,7 +259,7 @@ data_done:
 
 static bool receive_write_response(uint8_t *response)
 {
-    uint32_t start = (uint32_t)pf_storage_bus_time_us(&active_config.transport);
+    uint32_t start = (uint32_t)pf_sd_link_time_us(&active_config.transport);
 
     do {
         if (!exchange_byte_checked(0xffu, response)) {
@@ -270,7 +270,7 @@ static bool receive_write_response(uint8_t *response)
             return (*response & 0x1fu) == 0x05u;
         }
         pf_sd_idle();
-    } while ((uint32_t)((uint32_t)pf_storage_bus_time_us(&active_config.transport) - start) < SD_SPI_RESPONSE_TIMEOUT_US);
+    } while ((uint32_t)((uint32_t)pf_sd_link_time_us(&active_config.transport) - start) < SD_SPI_RESPONSE_TIMEOUT_US);
 
     return false;
 }
@@ -340,8 +340,8 @@ static bool select_transfer_clock(const uint8_t csd[16])
         }
     }
     card_init_stage = PF_SD_SPI_INIT_STAGE_TRANSFER_CLOCK;
-    return pf_storage_bus_set_clock(&active_config.transport, transfer_clock, &card_bus_clock_hz) ==
-               PF_STORAGE_BUS_OK &&
+    return pf_sd_link_set_clock(&active_config.transport, transfer_clock, &card_bus_clock_hz) ==
+               PF_SD_LINK_OK &&
            card_bus_clock_hz >= SD_SPI_INIT_CLOCK_HZ && card_bus_clock_hz <= transfer_clock;
 }
 
@@ -362,7 +362,7 @@ static bool initialize_card(void)
     last_init_response_received = false;
     card_init_stage = PF_SD_SPI_INIT_STAGE_IDLE_CLOCKS;
     memset(idle_clocks, 0xff, sizeof(idle_clocks));
-    if (pf_storage_serial_exchange(&active_config.transport, idle_clocks, NULL, sizeof(idle_clocks)) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_serial_exchange(&active_config.transport, idle_clocks, NULL, sizeof(idle_clocks)) != PF_SD_LINK_OK) {
         return false;
     }
 
@@ -375,7 +375,7 @@ static bool initialize_card(void)
         if (attempt + 1u == SD_SPI_COMMAND_RETRIES) {
             return false;
         }
-        pf_storage_bus_delay_ms(&active_config.transport, 10u);
+        pf_sd_link_delay_ms(&active_config.transport, 10u);
     }
 
     card_init_stage = PF_SD_SPI_INIT_STAGE_IF_CONDITION;
@@ -404,7 +404,7 @@ static bool initialize_card(void)
     }
 
     card_init_stage = PF_SD_SPI_INIT_STAGE_OPERATING_CONDITION;
-    start = (uint32_t)pf_storage_bus_time_us(&active_config.transport);
+    start = (uint32_t)pf_sd_link_time_us(&active_config.transport);
     do {
         if (!send_application_command(
                 SD_ACMD_SD_SEND_OP_COND,
@@ -415,8 +415,8 @@ static bool initialize_card(void)
         if (response == 0u) {
             break;
         }
-        pf_storage_bus_delay_ms(&active_config.transport, 10u);
-    } while ((uint32_t)((uint32_t)pf_storage_bus_time_us(&active_config.transport) - start) <
+        pf_sd_link_delay_ms(&active_config.transport, 10u);
+    } while ((uint32_t)((uint32_t)pf_sd_link_time_us(&active_config.transport) - start) <
              SD_SPI_INITIALIZATION_TIMEOUT_US);
     if (response != 0u) {
         return false;
@@ -483,13 +483,13 @@ void pf_sd_spi_get_last_init_response(uint8_t *command, uint8_t *response,
 
 static bool write_data_block(const uint8_t *buffer, uint8_t token)
 {
-    if (pf_storage_serial_exchange(&active_config.transport, &token, NULL, 1u) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_serial_exchange(&active_config.transport, &token, NULL, 1u) != PF_SD_LINK_OK) {
         card_initialized = false;
         return false;
     }
     uint32_t profile_start = pf_sd_profile_begin();
-    bool sent = pf_storage_serial_exchange(&active_config.transport, buffer, NULL, PF_SD_BLOCK_SIZE)
-        == PF_STORAGE_BUS_OK;
+    bool sent = pf_sd_link_serial_exchange(&active_config.transport, buffer, NULL, PF_SD_BLOCK_SIZE)
+        == PF_SD_LINK_OK;
     pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
     if (!sent) {
         card_initialized = false;
@@ -582,7 +582,7 @@ pf_sd_result_t pf_sd_spi_init(const pf_sd_config_t *config)
     }
     if (!configuration_set) {
         active_config = *config;
-        if (pf_storage_bus_init(&active_config.transport) != PF_STORAGE_BUS_OK) {
+        if (pf_sd_link_init(&active_config.transport) != PF_SD_LINK_OK) {
             return PF_SD_INIT_FAILED;
         }
         configuration_set = true;
@@ -590,7 +590,7 @@ pf_sd_result_t pf_sd_spi_init(const pf_sd_config_t *config)
     pf_sd_profile_set_clock(spi_profile_clock);
 
     card_initialized = false;
-    if (pf_storage_bus_set_clock(&active_config.transport, SD_SPI_INIT_CLOCK_HZ, &card_bus_clock_hz) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_set_clock(&active_config.transport, SD_SPI_INIT_CLOCK_HZ, &card_bus_clock_hz) != PF_SD_LINK_OK) {
         return PF_SD_INIT_FAILED;
     }
     if (!card_is_present() || !initialize_card()) {
@@ -753,7 +753,7 @@ void pf_sd_spi_get_info(pf_sd_info_t *info)
     if (!configuration_set) {
         return;
     }
-    if (pf_storage_bus_presence_known(&active_config.transport)) {
+    if (pf_sd_link_presence_known(&active_config.transport)) {
         info->presence_known = true;
         info->present = card_is_present();
     } else if (pf_sd_spi_is_initialized()) {

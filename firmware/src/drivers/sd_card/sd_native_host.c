@@ -23,68 +23,68 @@ static void set_error(pf_sd_native_host_t *host, pf_sd_detail_error_t error)
 }
 
 /** @brief Map physical failures into the SD adapter's existing diagnostic contract. */
-static void transport_error(void *context, pf_storage_sd_wire_error_t error, pf_storage_sd_wire_phase_t phase)
+static void transport_error(void *context, pf_sd_link_wire_error_t error, pf_sd_link_wire_phase_t phase)
 {
     pf_sd_native_host_t *host = context;
-    bool timeout = (error == PF_STORAGE_SD_WIRE_ERROR_PIO_TIMEOUT) ||
-                   (error == PF_STORAGE_SD_WIRE_ERROR_DMA_TIMEOUT) ||
-                   (error == PF_STORAGE_SD_WIRE_ERROR_BUSY_TIMEOUT);
+    bool timeout = (error == PF_SD_LINK_WIRE_ERROR_PIO_TIMEOUT) ||
+                   (error == PF_SD_LINK_WIRE_ERROR_DMA_TIMEOUT) ||
+                   (error == PF_SD_LINK_WIRE_ERROR_BUSY_TIMEOUT);
     if (timeout) {
         pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
-        if (phase == PF_STORAGE_SD_WIRE_PHASE_COMMAND) {
+        if (phase == PF_SD_LINK_WIRE_PHASE_COMMAND) {
             ++host->errors.command_timeouts;
-        } else if (phase == PF_STORAGE_SD_WIRE_PHASE_DATA) {
+        } else if (phase == PF_SD_LINK_WIRE_PHASE_DATA) {
             ++host->errors.data_timeouts;
         }
     }
     switch (error) {
-    case PF_STORAGE_SD_WIRE_ERROR_NONE:
+    case PF_SD_LINK_WIRE_ERROR_NONE:
         break;
-    case PF_STORAGE_SD_WIRE_ERROR_STATE:
+    case PF_SD_LINK_WIRE_ERROR_STATE:
         set_error(host, PF_SD_DETAIL_HOST_STATE);
         break;
-    case PF_STORAGE_SD_WIRE_ERROR_PIO_TIMEOUT:
+    case PF_SD_LINK_WIRE_ERROR_PIO_TIMEOUT:
         ++host->errors.pio_timeouts;
         set_error(host, PF_SD_DETAIL_PIO_TIMEOUT);
         break;
-    case PF_STORAGE_SD_WIRE_ERROR_DMA_TIMEOUT:
+    case PF_SD_LINK_WIRE_ERROR_DMA_TIMEOUT:
         ++host->errors.dma_timeouts;
         set_error(host, PF_SD_DETAIL_DMA_TIMEOUT);
         break;
-    case PF_STORAGE_SD_WIRE_ERROR_BUSY_TIMEOUT:
+    case PF_SD_LINK_WIRE_ERROR_BUSY_TIMEOUT:
         ++host->errors.busy_timeouts;
         set_error(host, PF_SD_DETAIL_BUSY_TIMEOUT);
         break;
-    case PF_STORAGE_SD_WIRE_ERROR_TX_STALL:
+    case PF_SD_LINK_WIRE_ERROR_TX_STALL:
         ++host->errors.tx_stalls;
         set_error(host, PF_SD_DETAIL_TX_STALL);
         break;
-    case PF_STORAGE_SD_WIRE_ERROR_RX_STALL:
+    case PF_SD_LINK_WIRE_ERROR_RX_STALL:
         ++host->errors.rx_stalls;
         set_error(host, PF_SD_DETAIL_RX_STALL);
         break;
     }
 }
 
-static const pf_storage_bus_t *profile_transport;
+static const pf_sd_link_t *profile_transport;
 
 static uint32_t native_profile_clock(void)
 {
-    return (uint32_t)pf_storage_bus_time_us(profile_transport);
+    return (uint32_t)pf_sd_link_time_us(profile_transport);
 }
 
 bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_config_t *config)
 {
-    if ((host == NULL) || pf_storage_sd_wire_state(&host->transport).ready || config == NULL ||
-        !pf_storage_sd_wire_valid(&config->transport)) {
+    if ((host == NULL) || pf_sd_link_wire_state(&host->transport).ready || config == NULL ||
+        !pf_sd_link_wire_valid(&config->transport)) {
         return false;
     }
     host->transport = config->transport;
-    if (pf_storage_bus_init(&host->transport) != PF_STORAGE_BUS_OK) {
+    if (pf_sd_link_init(&host->transport) != PF_SD_LINK_OK) {
         return false;
     }
-    if (!pf_storage_sd_wire_hooks(&host->transport, transport_error, host, pf_sd_idle)) {
-        pf_storage_bus_deinit(&host->transport);
+    if (!pf_sd_link_wire_hooks(&host->transport, transport_error, host, pf_sd_idle)) {
+        pf_sd_link_deinit(&host->transport);
         set_error(host, PF_SD_DETAIL_HOST_STATE);
         return false;
     }
@@ -108,7 +108,7 @@ void pf_sd_native_host_deinit(pf_sd_native_host_t *host)
     if (host == NULL) {
         return;
     }
-    pf_storage_bus_deinit(&host->transport);
+    pf_sd_link_deinit(&host->transport);
     if (profile_transport == &host->transport) {
         pf_sd_profile_set_clock(NULL);
         profile_transport = NULL;
@@ -120,7 +120,7 @@ void pf_sd_native_host_abort(pf_sd_native_host_t *host)
 {
     if (host != NULL) {
         pf_sd_detail_error_t previous_error = host->last_error;
-        pf_storage_bus_abort(&host->transport);
+        pf_sd_link_abort(&host->transport);
         if (previous_error != PF_SD_DETAIL_NONE) {
             host->last_error = previous_error;
         }
@@ -134,12 +134,12 @@ bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t clock_hz)
         return false;
     }
     uint32_t actual;
-    return pf_storage_bus_set_clock(&host->transport, clock_hz, &actual) == PF_STORAGE_BUS_OK;
+    return pf_sd_link_set_clock(&host->transport, clock_hz, &actual) == PF_SD_LINK_OK;
 }
 
 bool pf_sd_native_host_prepare_initialization(pf_sd_native_host_t *host)
 {
-    if ((host == NULL) || !pf_storage_sd_wire_state(&host->transport).healthy) {
+    if ((host == NULL) || !pf_sd_link_wire_state(&host->transport).healthy) {
         set_error(host, PF_SD_DETAIL_HOST_STATE);
         return false;
     }
@@ -147,7 +147,7 @@ bool pf_sd_native_host_prepare_initialization(pf_sd_native_host_t *host)
         return false;
     }
     if (!pf_sd_native_host_set_clock(host, 400000u) ||
-        !pf_storage_sd_wire_clocks(&host->transport, 80u, SDIO_COMMAND_TIMEOUT_US)) {
+        !pf_sd_link_wire_clocks(&host->transport, 80u, SDIO_COMMAND_TIMEOUT_US)) {
         return false;
     }
     host->bus_width = 1u;
@@ -156,7 +156,7 @@ bool pf_sd_native_host_prepare_initialization(pf_sd_native_host_t *host)
 
 bool pf_sd_native_host_set_bus_width(pf_sd_native_host_t *host, uint8_t width)
 {
-    if ((host == NULL) || !pf_storage_sd_wire_state(&host->transport).healthy || ((width != 1u) && (width != 4u)) ||
+    if ((host == NULL) || !pf_sd_link_wire_state(&host->transport).healthy || ((width != 1u) && (width != 4u)) ||
         host->write_stream_open || host->read_stream_unresolved) {
         set_error(host, PF_SD_DETAIL_HOST_STATE);
         return false;
@@ -178,7 +178,7 @@ bool pf_sd_native_host_command_bytes(pf_sd_native_host_t *host, uint8_t command,
     }
     uint32_t profile_start = pf_sd_profile_begin();
     size_t received = 0u;
-    bool ok = pf_storage_sd_wire_exchange(&host->transport, frame, sizeof(frame), response_bits,
+    bool ok = pf_sd_link_wire_exchange(&host->transport, frame, sizeof(frame), response_bits,
                                          response, response_capacity, &received, SDIO_COMMAND_TIMEOUT_US);
     pf_sd_profile_end(PF_SD_PROFILE_COMMAND, profile_start);
     memset(host->last_response_words, 0, sizeof(host->last_response_words));
@@ -209,13 +209,13 @@ static bool read_data_block(pf_sd_native_host_t *host, uint8_t command,
         return false;
     }
     uint32_t bytes = (uint32_t)size + 8u;
-    if (!pf_storage_sd_wire_rx_start(&host->transport, image, bytes / 4u, bytes * 2u, 1u)) {
+    if (!pf_sd_link_wire_rx_start(&host->transport, image, bytes / 4u, bytes * 2u, 1u)) {
         return false;
     }
     if (!pf_sd_native_host_command_bytes(host, command, argument, 48u, response, sizeof(response)) ||
         !pf_sd_native_host_parse_response(host, command, response, &response_argument) ||
         !pf_sd_native_host_response_status_ok(host, response_argument, PF_SD_NATIVE_R1_ERROR_MASK) ||
-        !pf_storage_sd_wire_rx_finish(&host->transport, SDIO_DATA_TIMEOUT_US)) {
+        !pf_sd_link_wire_rx_finish(&host->transport, SDIO_DATA_TIMEOUT_US)) {
         goto cleanup;
     }
     success = data != NULL
@@ -226,7 +226,7 @@ static bool read_data_block(pf_sd_native_host_t *host, uint8_t command,
         set_error(host, PF_SD_DETAIL_DATA_CRC);
     }
 cleanup:
-    pf_storage_sd_wire_rx_cancel(&host->transport);
+    pf_sd_link_wire_rx_cancel(&host->transport);
     return success;
 }
 
@@ -251,7 +251,7 @@ bool pf_sd_native_host_read_scr(pf_sd_native_host_t *host, uint32_t relative_car
         return false;
     }
     host->last_error = PF_SD_DETAIL_NONE;
-    if (!pf_storage_sd_wire_rx_start(&host->transport, image, SCR_DMA_WORDS, SCR_DATA_BITS, 1u)) {
+    if (!pf_sd_link_wire_rx_start(&host->transport, image, SCR_DMA_WORDS, SCR_DATA_BITS, 1u)) {
         return false;
     }
     host->scr_stage = PF_SD_NATIVE_INIT_STAGE_SCR_PREFIX;
@@ -267,7 +267,7 @@ bool pf_sd_native_host_read_scr(pf_sd_native_host_t *host, uint32_t relative_car
         goto cleanup;
     }
     host->scr_stage = PF_SD_NATIVE_INIT_STAGE_SCR_DATA;
-    if (!pf_storage_sd_wire_rx_finish(&host->transport, SDIO_DATA_TIMEOUT_US)) {
+    if (!pf_sd_link_wire_rx_finish(&host->transport, SDIO_DATA_TIMEOUT_US)) {
         goto cleanup;
     }
     memset(scr, 0, 8u);
@@ -290,7 +290,7 @@ bool pf_sd_native_host_read_scr(pf_sd_native_host_t *host, uint32_t relative_car
         set_error(host, PF_SD_DETAIL_DATA_CRC);
     }
 cleanup:
-    pf_storage_sd_wire_rx_cancel(&host->transport);
+    pf_sd_link_wire_rx_cancel(&host->transport);
     return success;
 }
 
@@ -310,7 +310,7 @@ static bool stop_multiblock(pf_sd_native_host_t *host)
               pf_sd_native_host_response_status_ok(host, argument, PF_SD_NATIVE_R1_ERROR_MASK);
     if (ok) {
         uint32_t busy_start = pf_sd_profile_begin();
-        ok = pf_storage_sd_wire_wait_high(&host->transport, SDIO_DATA_TIMEOUT_US);
+        ok = pf_sd_link_wire_wait_high(&host->transport, SDIO_DATA_TIMEOUT_US);
         pf_sd_profile_end(PF_SD_PROFILE_BUSY, busy_start);
     }
     pf_sd_profile_end(PF_SD_PROFILE_STOP, profile_start);
@@ -336,7 +336,7 @@ static bool decode_completed_blocks(pf_sd_native_host_t *host, uint8_t *blocks,
     uint32_t batch_words, uint32_t *decoded_count)
 {
     uint32_t words;
-    if (!pf_storage_sd_wire_rx_progress(&host->transport, read_wire_buffer, batch_words, &words)) {
+    if (!pf_sd_link_wire_rx_progress(&host->transport, read_wire_buffer, batch_words, &words)) {
         return false;
     }
     uint32_t completed = words / SDIO_DATA_WORD_COUNT;
@@ -358,7 +358,7 @@ static bool decode_completed_blocks(pf_sd_native_host_t *host, uint8_t *blocks,
 bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sector,
     uint8_t *blocks, uint32_t block_count)
 {
-    if ((host == NULL) || !pf_storage_sd_wire_state(&host->transport).ready ||
+    if ((host == NULL) || !pf_sd_link_wire_state(&host->transport).ready ||
         host->read_stream_unresolved) {
         set_error(host, PF_SD_DETAIL_HOST_STATE);
         return false;
@@ -381,7 +381,7 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sec
         uint32_t batch_words = SDIO_DATA_WORD_COUNT * count;
         uint32_t decoded = 0u;
         bool complete = false, crc_failed = false, wire_failed = false;
-        if (!pf_storage_sd_wire_rx_start(&host->transport, read_wire_buffer, batch_words,
+        if (!pf_sd_link_wire_rx_start(&host->transport, read_wire_buffer, batch_words,
                                                   SDIO_DATA_NIBBLE_COUNT, count)) {
             return false;
         }
@@ -392,10 +392,10 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sec
         bool response_ok = response_valid &&
             pf_sd_native_host_response_status_ok(host, response_argument, PF_SD_NATIVE_R1_ERROR_MASK);
         if (response_ok) {
-            uint32_t start = (uint32_t)pf_storage_bus_time_us(&host->transport);
+            uint32_t start = (uint32_t)pf_sd_link_time_us(&host->transport);
             uint32_t profile_start = pf_sd_profile_begin();
             for (;;) {
-                if (!pf_storage_sd_wire_rx_poll(&host->transport, start, SDIO_DATA_TIMEOUT_US, &complete)) {
+                if (!pf_sd_link_wire_rx_poll(&host->transport, start, SDIO_DATA_TIMEOUT_US, &complete)) {
                     wire_failed = true;
                     break;
                 }
@@ -405,7 +405,7 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sec
                 if (!crc_failed && !decode_completed_blocks(host, blocks, batch_words, &decoded)) {
                     crc_failed = true;
                 }
-                pf_storage_sd_wire_rx_wait(&host->transport);
+                pf_sd_link_wire_rx_wait(&host->transport);
             }
             pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
             if (complete && !crc_failed &&
@@ -413,7 +413,7 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sec
                 crc_failed = true;
             }
         }
-        pf_storage_sd_wire_rx_cancel(&host->transport);
+        pf_sd_link_wire_rx_cancel(&host->transport);
         bool stop_ok = stop_multiblock(host);
         host->read_stream_unresolved = !stop_ok;
         if (!stop_ok || !response_valid || crc_failed || wire_failed) {
@@ -453,13 +453,13 @@ bool pf_sd_native_host_write_sector(pf_sd_native_host_t *host, uint32_t sector,
         return false;
     }
     bool success = false;
-    if (pf_storage_sd_wire_tx_start(&host->transport, image, SDIO_DATA_WORD_COUNT, SDIO_DATA_NIBBLE_COUNT)) {
+    if (pf_sd_link_wire_tx_start(&host->transport, image, SDIO_DATA_WORD_COUNT, SDIO_DATA_NIBBLE_COUNT)) {
         uint32_t profile_start = pf_sd_profile_begin();
-        success = pf_storage_sd_wire_tx_finish(&host->transport, SDIO_DATA_TIMEOUT_US, &token) &&
+        success = pf_sd_link_wire_tx_finish(&host->transport, SDIO_DATA_TIMEOUT_US, &token) &&
                   pf_sd_native_write_response_accepted(token);
         pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
     }
-    return pf_storage_sd_wire_idle(&host->transport) && success;
+    return pf_sd_link_wire_idle(&host->transport) && success;
 }
 
 bool pf_sd_native_host_write_stream_continues(const pf_sd_native_host_t *host, uint32_t sector)
@@ -470,10 +470,10 @@ bool pf_sd_native_host_write_stream_continues(const pf_sd_native_host_t *host, u
 bool pf_sd_native_host_recover(pf_sd_native_host_t *host)
 {
     if ((host == NULL) || (!host->write_stream_open && !host->read_stream_unresolved &&
-                           pf_storage_sd_wire_state(&host->transport).healthy)) {
+                           pf_sd_link_wire_state(&host->transport).healthy)) {
         return true;
     }
-    if (!pf_storage_sd_wire_idle(&host->transport) ||
+    if (!pf_sd_link_wire_idle(&host->transport) ||
         ((host->write_stream_open || host->read_stream_unresolved) && !stop_multiblock(host))) {
         return false;
     }
@@ -484,12 +484,12 @@ bool pf_sd_native_host_recover(pf_sd_native_host_t *host)
 
 void pf_sd_native_host_forget_removed_card(pf_sd_native_host_t *host)
 {
-    if ((host == NULL) || !pf_storage_sd_wire_state(&host->transport).ready) {
+    if ((host == NULL) || !pf_sd_link_wire_state(&host->transport).ready) {
         return;
     }
     host->write_stream_open = false;
     host->read_stream_unresolved = false;
-    if (!pf_storage_sd_wire_idle(&host->transport)) {
+    if (!pf_sd_link_wire_idle(&host->transport)) {
         pf_sd_native_host_deinit(host);
     }
 }
@@ -501,7 +501,7 @@ bool pf_sd_native_host_write_blocks(pf_sd_native_host_t *host, uint32_t first_se
     uint32_t response_argument;
     uint8_t response[6];
     bool continues = pf_sd_native_host_write_stream_continues(host, first_sector);
-    if ((host == NULL) || !pf_storage_sd_wire_state(&host->transport).ready || (blocks == NULL) || (block_count == 0u) ||
+    if ((host == NULL) || !pf_sd_link_wire_state(&host->transport).ready || (blocks == NULL) || (block_count == 0u) ||
         (!continues && (block_count < 2u))) {
         return false;
     }
@@ -532,7 +532,7 @@ bool pf_sd_native_host_write_blocks(pf_sd_native_host_t *host, uint32_t first_se
     bool ok = true;
     for (uint32_t index = 0u; index < block_count; index++) {
         uint32_t token;
-        if (!pf_storage_sd_wire_tx_start(&host->transport, images[index & 1u],
+        if (!pf_sd_link_wire_tx_start(&host->transport, images[index & 1u],
                                           SDIO_DATA_WORD_COUNT, SDIO_DATA_NIBBLE_COUNT)) {
             ok = false;
             break;
@@ -543,7 +543,7 @@ bool pf_sd_native_host_write_blocks(pf_sd_native_host_t *host, uint32_t first_se
                                            (uint8_t *)images[(index + 1u) & 1u])) {
             ok = false;
         }
-        bool finished = pf_storage_sd_wire_tx_finish(&host->transport, SDIO_DATA_TIMEOUT_US, &token);
+        bool finished = pf_sd_link_wire_tx_finish(&host->transport, SDIO_DATA_TIMEOUT_US, &token);
         pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
         if (!ok || !finished || !pf_sd_native_write_response_accepted(token)) {
             ok = false;

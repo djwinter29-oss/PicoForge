@@ -3,7 +3,7 @@
 This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
-[storage transport guide](../../../firmware/src/drivers/storage/README.md#memory-and-storage-connections); filesystem
+[SD-card driver guide](../../../firmware/src/drivers/sd_card/README.md#memory-and-storage-connections); filesystem
 commands and mounting policy remain in [the CDC CLI guide](../usb/usb-cdc-cli.md). Use the
 [SD-card documentation index](README.md) for related design and test references.
 
@@ -26,7 +26,8 @@ One configured card is exposed through a transport-neutral, synchronous block
 API. Native SDIO-PIO uses four data lanes; SD-SPI uses a Pico SDK SPI controller.
 Here, SDIO means native SD memory-card signaling, not support for SDIO I/O cards.
 
-Native and SPI protocol files live together under `firmware/src/drivers/sd_card/`:
+Native and SPI protocol files live at the top of `firmware/src/drivers/sd_card/`; the physical link engines live in
+its subdirectories:
 
 ```text
 sd_card/
@@ -39,13 +40,16 @@ sd_card/
   sd_port.h                   Execution-environment contract
   sd_port_freertos.c           FreeRTOS reservations and optional waits
   sd_port_baremetal.c          Single-foreground-context integration
+  link/                       Common link descriptor, raw serial and SD CMD/DAT capabilities
+  sdio_pio/                   Native SD PIO/DMA engine
+  spi/                        Pico SDK SPI controller engine
 ```
 
 The native and SPI implementations use one protocol module but retain their distinct initialization,
 response formats, data framing, and recovery sequences. Native requires modern SDHC/SDXC; SPI retains its existing
 legacy/SDSC handling. Backend function/type prefixes are `pf_sd_native_*` and `pf_sd_spi_*`;
 backend header names are `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
-physical storage layer, not the native protocol's name or directory.
+`sdio_pio/` physical link engine, not the native protocol files.
 
 Production filenames use the short `sd` prefix, including `sd_port_freertos.c` and `sd_port_baremetal.c`.
 Facade functions/types use `pf_sd_*` and constants/header guards use `PF_SD_*`. Native protocol/host functions/types
@@ -55,12 +59,12 @@ The `pf_sdio_pio_*` namespace belongs to the physical PIO transport, not the SD 
 `PF_SD_NATIVE_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
 Unit-test filenames use the same source basenames, with environment-suffixed port tests alongside the other SD tests.
 
-Both backends use the same configuration shape, borrowing a `pf_storage_bus_t` descriptor plus the protocol
+Both backends use the same configuration shape, borrowing a `pf_sd_link_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
 no GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
-See [pin allocation and runtime state](../../../firmware/src/drivers/storage/README.md#pin-allocation-and-runtime-state)
+See [pin allocation and runtime state](../../../firmware/src/drivers/sd_card/README.md#pin-allocation-and-runtime-state)
 for authoritative physical ownership and configuration details.
-The execution port requests optional waits through `pf_storage_bus_enable_wait`, without PIO/IRQ knowledge.
+The execution port requests optional waits through `pf_sd_link_enable_wait`, without PIO/IRQ knowledge.
 `pf_sd_port_init` returns `bool`; callers must handle failure when optional waits were requested. Application
 startup reports this as a fatal setup error rather than silently ignoring a failed wait binding.
 
@@ -71,9 +75,9 @@ Diagnostic and idle callbacks are bound once during host initialization, not on 
 SPI token handling stays local to its driver, which shares one CID/CSD register-read path. A failed SPI selection
 invalidates the card and returns immediately without exchanging bytes, issuing commands, or attempting deselection.
 
-### Physical Storage Bus
+### Physical Link
 
-The [storage transport guide](../../../firmware/src/drivers/storage/README.md#physical-storage-bus) owns the physical
+The [SD-card driver guide](../../../firmware/src/drivers/sd_card/README.md#physical-link) owns the physical
 engine layout, lifecycle, typed transfer interfaces, and shared-pin restrictions. This document covers the SD protocol
 and its integration above those engines.
 
@@ -84,7 +88,7 @@ ownership or packed response words. The existing packed-response diagnostic API 
 
 ```mermaid
 flowchart TD
-    Board[Board profile and build-time transport selection] --> Config[pf_board_get_sd_card_config]
+    Board[Board profile and build-time transport selection] --> Config[pf_sd_board_config]
     Config --> Gate[Application sd_media lifecycle and ownership]
     Gate --> Card[SD-card configuration and dispatch]
     App[Application storage worker, commands and self-test] --> Storage[Storage mount service]
@@ -113,7 +117,7 @@ flowchart TD
 | Responsibility | Implementation |
 | --- | --- |
 | Application storage task, automount, commands, and file benchmark | [app/storage/](../../../firmware/src/app/storage/) |
-| Board-approved pins and controller selection | [board.c](../../../firmware/src/board/board.c), [board_profile.c](../../../firmware/src/board/board_profile.c) |
+| Board-approved pins and controller selection | [board.c](../../../firmware/src/config/board.c), [sd_board.c](../../../firmware/src/drivers/sd_card/sd_board.c) |
 | Serialized protocol dispatch and driver initialization stage | [sd.c](../../../firmware/src/drivers/sd_card/sd.c) |
 | Application board configuration, diagnostics, firmware/USB ownership and gated FatFs access | [sd_media.c](../../../firmware/src/app/storage/sd_media.c) |
 | Execution-environment selection, reservations, and optional waits | [sd_port.h](../../../firmware/src/drivers/sd_card/sd_port.h), [FreeRTOS](../../../firmware/src/drivers/sd_card/sd_port_freertos.c), [bare-metal](../../../firmware/src/drivers/sd_card/sd_port_baremetal.c) |
@@ -125,9 +129,9 @@ flowchart TD
 | Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../../../firmware/src/drivers/sd_card/sd_protocol.c) |
 | Native card initialization and transfer policy | [sd_native.c](../../../firmware/src/drivers/sd_card/sd_native.c) |
 | Native SD command/data adapter and stream policy | [sd_native_host.c](../../../firmware/src/drivers/sd_card/sd_native_host.c) |
-| Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../../../firmware/src/drivers/storage/sdio_pio/sdio_pio.c), [sdio_pio.pio](../../../firmware/src/drivers/storage/sdio_pio/sdio_pio.pio) |
+| Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../../../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c), [sdio_pio.pio](../../../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.pio) |
 | SPI card protocol | [sd_spi.c](../../../firmware/src/drivers/sd_card/sd_spi.c) |
-| Shared SPI hardware transport | [spi.c](../../../firmware/src/drivers/storage/spi/spi.c) |
+| Shared SPI hardware transport | [spi.c](../../../firmware/src/drivers/sd_card/spi/spi.c) |
 | FatFs result/status conversion and CTRL_SYNC | [fatfs_disk.c](../../../firmware/src/middleware/storage/fatfs_disk.c) |
 
 ### Filesystem Block-Device Boundary
@@ -143,7 +147,7 @@ The generic interface remains `block_device.c/.h`, and
 `sd_block_device.c/.h` exposes `pf_sd_block_device()`. The FatFs disk adapter exposes `pf_fatfs_disk_bind()`.
 These replace the earlier storage-prefixed volume/adapter APIs without compatibility aliases.
 
-FatFs disk I/O uses a borrowed `pf_block_device_t`, not SD commands or the physical storage bus. Its operations provide
+FatFs disk I/O uses a borrowed `pf_block_device_t`, not SD commands or the physical link. Its operations provide
 media metadata, sector reads, sector writes, and sync with device-independent results. Geometry includes sector
 count, byte size, erase granularity, and write protection. Shared dispatch rejects incomplete descriptors, invalid
 geometry, empty or overflowing batches, and out-of-range sectors before data transfer. Read-only media still permits
@@ -462,7 +466,7 @@ This option does not change SYSCLK or qualify an overclock. Historical measureme
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
 20.833 MHz. High-Speed dividers are even and limited to 3.0 so the cycle-locked TX and shortened RX programs stay valid;
-the [clock planning table](../../../firmware/src/drivers/storage/README.md#clock-planning) lists each rule. This deterministic divider
+the [clock planning table](../../../firmware/src/drivers/sd_card/README.md#clock-planning) lists each rule. This deterministic divider
 rounding is not adaptive speed selection.
 SYSCLK must be at least 100 MHz. Use SDK-supported clock settings and check
 effective-clock telemetry; an accepted divider does not qualify an overclock.
@@ -525,10 +529,10 @@ command that completes before a delayed poll is not reported as a timeout.
 In-PIO timeouts are not used because the command (20) and receive (12) programs
 use all 32 PIO instructions. Receive start detection qualifies DAT0 at the same
 settled edge used for payload rather than treating any asynchronous low level as
-the start bit. The [physical transport reference](../../../firmware/src/drivers/storage/README.md#physical-storage-bus)
+the start bit. The [physical transport reference](../../../firmware/src/drivers/sd_card/README.md#physical-link)
 defines Default-Speed and High-Speed sampling phases. Command responses retain
 falling-edge sampling and framing/CRC validation; see the historical
-[Class 4 read-only check](../../../firmware/src/drivers/storage/README.md#class-4-read-only-bring-up-2026-10-15).
+[Class 4 read-only check](../../../firmware/src/drivers/sd_card/README.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
 
@@ -640,8 +644,8 @@ The default CMake transport is SDIO-PIO; the board profile requests 25 MHz.
 At 150 MHz SYSCLK, the slow-mode divider produces an exact 25 MHz bus.
 The integer divider can round down for other system clocks; initialization never
 selects a lower candidate after errors. SPI's zero clock request selects 25 MHz. See
-[board_profile.c](../../../firmware/src/board/board_profile.c) for authoritative values
-and [storage wiring](../../../firmware/src/drivers/storage/README.md#memory-and-storage-connections) for header
+[board.c](../../../firmware/src/config/board.c) for authoritative values
+and [storage wiring](../../../firmware/src/drivers/sd_card/README.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 
 | Resource | SDIO-PIO | SD-SPI |
@@ -831,7 +835,7 @@ preallocated files), and card busy time before choosing further optimizations.
 
 The FreeRTOS [SD port](../../../firmware/src/drivers/sd_card/sd_port_freertos.c) requests the optional adapter through
 the common transport interface. Its physical implementation lives in
-[sdio_wait_freertos.c](../../../firmware/src/drivers/storage/sdio_pio/sdio_wait_freertos.c). It reserves
+[sdio_wait_freertos.c](../../../firmware/src/drivers/sd_card/sdio_pio/sdio_wait_freertos.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.
@@ -941,7 +945,7 @@ Use the existing [test guidance](../../../firmware/tests/README.md) and
 
 Host tests and timing models do not establish electrical margins or target
 hardware safety. Physical qualification is card, board, wiring, and clock
-specific; see [hardware records](../../../firmware/src/drivers/storage/README.md#sd-card-breakout),
+specific; see [hardware records](../../../firmware/src/drivers/sd_card/README.md#sd-card-breakout),
 [SD-card performance test](sdcard-performance-test.md), and [test records](../../tests/records).
 Read-only initialization success does not qualify high-speed writes. Power-loss
 recovery, complete MSC lifecycles, and sustained endurance require separate

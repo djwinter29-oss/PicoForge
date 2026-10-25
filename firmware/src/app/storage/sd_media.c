@@ -5,7 +5,7 @@
 
 #include <stddef.h>
 
-#include "board/board.h"
+#include "drivers/sd_card/sd_board.h"
 #include "drivers/sd_card/sd_port.h"
 #include "app/storage/fatfs_volume.h"
 #include "middleware/storage/sd_block_device.h"
@@ -32,7 +32,7 @@ pf_sd_result_t pf_sd_media_setup(void)
     if (configured) {
         return PF_SD_OK;
     }
-    if (!pf_board_get_sd_card_config(&media_config)) {
+    if (!pf_sd_board_config(&media_config)) {
         PF_LOG_WARNING("sd", "SD board configuration unavailable");
         return PF_SD_NOT_CONFIGURED;
     }

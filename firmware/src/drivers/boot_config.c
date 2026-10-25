@@ -1,59 +1,56 @@
 /**
  * @file boot_config.c
- * @brief Boot configuration defaults, validation, serialization and persistence facade.
- *
- * Little-endian record: magic u32 'PFCF', version u16, size u16, system_clock_mhz u16, sdio_bus_mhz u8,
- * spi_bus_mhz u8, crc32 u32 over the preceding 12 bytes.
+ * @brief Boot configuration: one RAM copy, its v1 flash record codec, and the persistence facade.
  */
 #include "drivers/boot_config.h"
+
+#include <stddef.h>
 
 #include "platform/boot_config_store.h"
 
 #define MAGIC 0x46434650u /* "PFCF" in little-endian byte order */
-#define CRC_OFFSET (PF_BOOT_CONFIG_RECORD_SIZE - 4u)
+#define FORMAT_VERSION 1u
 
-static pf_boot_config_t active_config;
+/**
+ * @brief v1 flash record, stored little-endian.
+ *
+ * ponytail: written and read as raw memory, which matches the flash byte order only on a little-endian CPU (RP2040,
+ * RP2350 and the host tests). Every field is naturally aligned, so there is no padding; the static assert guards the
+ * layout. Upgrade path for a big-endian target: serialize each field explicitly.
+ */
+typedef struct {
+    uint32_t magic; /**< MAGIC. */
+    uint16_t version; /**< FORMAT_VERSION. */
+    uint16_t size; /**< sizeof(record_t). */
+    uint16_t sysclk_mhz; /**< 0 (SDK/build clock), 150, 200 or 250. */
+    uint8_t sdio_bus_mhz; /**< SD speed, written as 25 Default or 50 High; older firmware may leave 0 (Default). */
+    uint8_t spi_bus_mhz; /**< Same value as sdio_bus_mhz; either at 50 reads as High. */
+    uint32_t crc; /**< IEEE CRC-32 of all preceding bytes. */
+} record_t;
 
-static uint32_t get_le(const uint8_t *p, unsigned bytes)
+_Static_assert(sizeof(record_t) == 16u && offsetof(record_t, crc) == 12u, "v1 record layout");
+
+/** RAM copy of the configuration; all-zero is the complete default. */
+typedef struct {
+    pf_sysclk_profile_t sysclk; /**< System clock profile. */
+    pf_sd_speed_t sd_speed; /**< Shared SD-card speed profile. */
+} boot_config_t;
+
+static boot_config_t config; /**< Configuration returned by the getters and written by save. */
+static bool loaded; /**< The saved record has been read once. */
+
+static bool sd_field_valid(uint8_t mhz)
 {
-    uint32_t value = 0u;
-    while (bytes-- > 0u) {
-        value = (value << 8) | p[bytes];
-    }
-    return value;
+    return mhz == 0u || mhz == 25u || mhz == 50u;
 }
 
-static void put_le(uint8_t *p, unsigned bytes, uint32_t value)
+/** @brief IEEE 802.3 CRC-32 (reflected, init and final XOR 0xFFFFFFFF). */
+static uint32_t crc32(const void *data, size_t size)
 {
-    for (unsigned i = 0u; i < bytes; ++i) {
-        p[i] = (uint8_t)(value >> (8u * i));
-    }
-}
-
-void pf_boot_config_defaults(pf_boot_config_t *settings)
-{
-    *settings = (pf_boot_config_t){0};
-}
-
-bool pf_boot_config_valid(const pf_boot_config_t *settings)
-{
-    return settings != NULL &&
-           (settings->system_clock_mhz == 0u || settings->system_clock_mhz == 150u ||
-            settings->system_clock_mhz == 200u || settings->system_clock_mhz == 250u) &&
-           (settings->sdio_bus_mhz == 0u || settings->sdio_bus_mhz == 25u || settings->sdio_bus_mhz == 50u) &&
-           (settings->spi_bus_mhz == 0u || settings->spi_bus_mhz == 25u || settings->spi_bus_mhz == 50u);
-}
-
-const pf_boot_config_t *pf_boot_config_active(void)
-{
-    return &active_config;
-}
-
-uint32_t pf_boot_config_crc32(const uint8_t *data, size_t size)
-{
+    const uint8_t *bytes = data;
     uint32_t crc = 0xffffffffu;
     while (size-- > 0u) {
-        crc ^= *data++;
+        crc ^= *bytes++;
         for (unsigned bit = 0u; bit < 8u; ++bit) {
             crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
         }
@@ -61,78 +58,95 @@ uint32_t pf_boot_config_crc32(const uint8_t *data, size_t size)
     return ~crc;
 }
 
-bool pf_boot_config_encode(const pf_boot_config_t *settings, uint8_t record[PF_BOOT_CONFIG_RECORD_SIZE])
+static void encode(const boot_config_t *in, record_t *record)
 {
-    if (!pf_boot_config_valid(settings) || record == NULL) {
-        return false;
-    }
-    put_le(record, 4u, MAGIC);
-    put_le(record + 4, 2u, PF_BOOT_CONFIG_FORMAT_VERSION);
-    put_le(record + 6, 2u, PF_BOOT_CONFIG_RECORD_SIZE);
-    put_le(record + 8, 2u, settings->system_clock_mhz);
-    record[10] = settings->sdio_bus_mhz;
-    record[11] = settings->spi_bus_mhz;
-    put_le(record + CRC_OFFSET, 4u, pf_boot_config_crc32(record, CRC_OFFSET));
-    return true;
-}
-
-bool pf_boot_config_decode(const uint8_t *record, size_t size, pf_boot_config_t *settings)
-{
-    pf_boot_config_t parsed;
-    if (settings == NULL) {
-        return false;
-    }
-    pf_boot_config_defaults(settings);
-    if (record == NULL || size < PF_BOOT_CONFIG_RECORD_SIZE || get_le(record, 4u) != MAGIC ||
-        get_le(record + 4, 2u) != PF_BOOT_CONFIG_FORMAT_VERSION || get_le(record + 6, 2u) != PF_BOOT_CONFIG_RECORD_SIZE ||
-        get_le(record + CRC_OFFSET, 4u) != pf_boot_config_crc32(record, CRC_OFFSET)) {
-        return false;
-    }
-    parsed = (pf_boot_config_t){
-        .system_clock_mhz = (uint16_t)get_le(record + 8, 2u),
-        .sdio_bus_mhz = record[10],
-        .spi_bus_mhz = record[11],
+    const uint8_t sd_mhz = in->sd_speed == PF_SD_SPEED_HIGH ? 50u : 25u;
+    *record = (record_t){
+        .magic = MAGIC,
+        .version = FORMAT_VERSION,
+        .size = sizeof(record_t),
+        .sysclk_mhz = pf_sysclk_profile_mhz(in->sysclk),
+        .sdio_bus_mhz = sd_mhz,
+        .spi_bus_mhz = sd_mhz,
     };
-    if (!pf_boot_config_valid(&parsed)) {
+    record->crc = crc32(record, offsetof(record_t, crc));
+}
+
+/** @brief Parse a record; anything malformed, unknown or out of range yields false and leaves @p out untouched. */
+static bool decode(const record_t *record, boot_config_t *out)
+{
+    pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
+    while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != record->sysclk_mhz) {
+        ++sysclk;
+    }
+    if (record->magic != MAGIC || record->version != FORMAT_VERSION || record->size != sizeof(record_t) ||
+        record->crc != crc32(record, offsetof(record_t, crc)) || pf_sysclk_profile_mhz(sysclk) != record->sysclk_mhz ||
+        !sd_field_valid(record->sdio_bus_mhz) || !sd_field_valid(record->spi_bus_mhz)) {
         return false;
     }
-    *settings = parsed;
+    *out = (boot_config_t){
+        .sysclk = sysclk,
+        .sd_speed = record->sdio_bus_mhz == 50u || record->spi_bus_mhz == 50u ? PF_SD_SPEED_HIGH : PF_SD_SPEED_DEFAULT,
+    };
     return true;
 }
 
-bool pf_boot_config_load_early(pf_boot_config_t *config)
+/**
+ * @brief Load the saved record into the RAM copy once.
+ *
+ * ponytail: lazy load on the first getter. The boot clock hook runs before the scheduler, so in firmware the first
+ * call always takes the lock-free early read; the task-context read only serves hosts/tests that skip the hook. A
+ * failed read latches defaults until reboot, which is acceptable because the record only changes through save().
+ */
+static void ensure_loaded(void)
 {
-    uint8_t record[PF_BOOT_CONFIG_RECORD_SIZE];
-    bool loaded;
-    if (config == NULL) {
-        return false;
+    record_t record;
+    if (loaded) {
+        return;
     }
-    pf_boot_config_defaults(config);
-    if (pf_platform_boot_config_read_early(record, sizeof(record))) {
-        loaded = pf_boot_config_decode(record, sizeof(record), config);
-    } else {
-        loaded = false;
+    loaded = true;
+    if (pf_platform_boot_config_read_early((uint8_t *)&record, sizeof(record)) ||
+        pf_platform_boot_config_read((uint8_t *)&record, sizeof(record))) {
+        (void)decode(&record, &config);
     }
-    active_config = *config;
-    return loaded;
 }
 
-bool pf_boot_config_load(pf_boot_config_t *config)
+pf_sysclk_profile_t pf_boot_config_sysclk(void)
 {
-    uint8_t record[PF_BOOT_CONFIG_RECORD_SIZE];
-    if (config == NULL) {
-        return false;
-    }
-    pf_boot_config_defaults(config);
-    if (!pf_platform_boot_config_read(record, sizeof(record))) {
-        return false;
-    }
-    return pf_boot_config_decode(record, sizeof(record), config);
+    ensure_loaded();
+    return config.sysclk;
 }
 
-bool pf_boot_config_save(const pf_boot_config_t *config)
+bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile)
 {
-    uint8_t record[PF_BOOT_CONFIG_RECORD_SIZE];
-    return pf_boot_config_encode(config, record) &&
-           pf_platform_boot_config_write(record, sizeof(record));
+    ensure_loaded();
+    if ((unsigned)profile > PF_SYSCLK_250MHZ) {
+        return false;
+    }
+    config.sysclk = profile;
+    return true;
+}
+
+pf_sd_speed_t pf_boot_config_sd_speed(void)
+{
+    ensure_loaded();
+    return config.sd_speed;
+}
+
+bool pf_boot_config_set_sd_speed(pf_sd_speed_t speed)
+{
+    ensure_loaded();
+    if (speed != PF_SD_SPEED_DEFAULT && speed != PF_SD_SPEED_HIGH) {
+        return false;
+    }
+    config.sd_speed = speed;
+    return true;
+}
+
+bool pf_boot_config_save(void)
+{
+    record_t record;
+    ensure_loaded();
+    encode(&config, &record);
+    return pf_platform_boot_config_write((const uint8_t *)&record, sizeof(record));
 }

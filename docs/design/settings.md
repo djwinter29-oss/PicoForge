@@ -3,27 +3,34 @@
 Settings live in one reserved flash sector. Each image has a compile-time transport (Pico/Pico 2 × SPI/SDIO_PIO);
 there is no runtime transport selector.
 
-| Field | Values | Default (`0`) | Used by |
+| Setting | Values | Default | Applied |
 | --- | --- | --- | --- |
-| `system_clock_mhz` | 0, 150, 200, 250 | Keep the build clock (`PF_SYS_CLK_MHZ`, else the SDK stock clock) | Both; applied at boot |
-| `sdio_bus_mhz` | 0, 25, 50 | 25 MHz Default Speed only | SDIO_PIO images |
-| `spi_bus_mhz` | 0, 25, 50 | 50 MHz ceiling (board profile) | SPI images |
+| System clock (`pf_sysclk_profile_t`) | `PF_SYSCLK_DEFAULT`, `PF_SYSCLK_150MHZ`, `PF_SYSCLK_200MHZ`, `PF_SYSCLK_250MHZ` | Default: keep the build clock (`PF_SYS_CLK_MHZ`, else the SDK stock clock) | At boot |
+| SD speed (`pf_sd_speed_t`) | `PF_SD_SPEED_DEFAULT` (25 MHz), `PF_SD_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
 
-An image reads only its own bus-speed field. Values are ceilings: SPI above 25 MHz needs the card's CMD6 High-Speed
-support, otherwise the existing CSD-limited 25 MHz is kept. For SDIO, `0` and `25` stay at 25 MHz Default Speed; `50`
-allows the existing High-Speed negotiation, still limited by `PF_SDIO_PIO_HIGH_SPEED`, SYSCLK/4 and the card. SDIO
-remains limited to the fixed 25 MHz transfer mode plus that optional negotiation.
+Both transports share the SD speed profile; [sd_board.c](../../firmware/src/drivers/sd_card/sd_board.c) converts it
+to a clock. The speeds are ceilings: SPI above 25 MHz needs the card's CMD6 High-Speed support, otherwise the
+CSD-limited 25 MHz is kept, and the result never exceeds the board's SPI clock. SDIO Default stays at 25 MHz Default
+Speed; High allows the existing High-Speed negotiation, still limited by `PF_SDIO_PIO_HIGH_SPEED`, SYSCLK/4 and the
+card. SPI images used to default to the 50 MHz board ceiling; they now default to 25 MHz like SDIO.
 
 ## Using the API
 
 ```c
 #include "drivers/boot_config.h"
 
-pf_boot_config_t settings;
-bool stored = pf_boot_config_load(&settings);   /* task, scheduler running; always complete (defaults if !stored) */
-settings.spi_bus_mhz = 25;
-pf_boot_config_save(&settings);                 /* task, scheduler running; true after read-back verifies */
+pf_sysclk_profile_t clk = pf_boot_config_sysclk();   /* saved value, or PF_SYSCLK_DEFAULT */
+pf_sd_speed_t speed = pf_boot_config_sd_speed();     /* saved value, or PF_SD_SPEED_DEFAULT */
+pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ);         /* RAM copy only; false for unknown profiles */
+pf_boot_config_set_sd_speed(PF_SD_SPEED_HIGH);       /* RAM copy only */
+pf_boot_config_save();                               /* task, scheduler running; true after read-back verifies */
 ```
+
+The header exposes only these five functions plus the inline `pf_sysclk_profile_mhz()` conversion (`0` for
+Default); the record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
+once. Setters change only the RAM copy; saved values take effect at the next boot
+because the SD drivers lock their first configuration. The HID handler restores the previous values when a save
+does not complete, so reports never show unsaved values.
 
 ## Host dashboard settings
 
@@ -42,22 +49,20 @@ The dashboards expose one **SD Card** speed selector. High-Speed is a requested 
 is reported separately because a card or transport may remain at Standard speed. Values apply after reboot and do
 not change the active clock or bus immediately.
 
-For compatibility, the persistent settings record remains unchanged. The firmware maps the build-selected transport's
-legacy numeric field to the profile in Feature report `2`, and maps a saved profile back to that field. SDIO `0`/`25`
-maps to Standard and `50` to High-Speed; SPI `25` maps to Standard and `0`/`50` to High-Speed. A missing record retains
-the existing transport defaults.
+For compatibility, the persistent settings record remains unchanged. Saving writes the profile as `25`/`50` to both
+legacy bus bytes; loading reads High-Speed when either byte is `50` and Standard otherwise, so `boot_config` does not
+depend on the build transport. Older firmware wrote only its own transport's byte and left the other `0`, which
+this rule still reads correctly. A missing record uses Default.
 
 Boot-applied settings live behind the driver `drivers/boot_config.c/.h`. The USB task is the only runtime writer.
 RP2 flash access and FreeRTOS-safe erase/program handling are isolated in the platform store
 `platform/boot_config_store.c/.h`; the boot-config driver owns the record format, validation, defaults, and public
-load/save API. This keeps hardware-specific flash operations behind the platform interface.
-Before the scheduler starts, the runtime-init hook uses `pf_boot_config_load_early()`, which also records the active
-boot configuration. Board setup reads that immutable active snapshot when it prepares the selected SD transport;
-there is no separate board-level boot-config application step. Runtime reads and saves belong to the USB task; they
+API. This keeps hardware-specific flash operations behind the platform interface.
+Before the scheduler starts, the runtime-init hook makes the first getter call, so the record is loaded through the
+lock-free early flash read. The SD board setup later reads the same RAM copy when it prepares the selected transport. Runtime reads and saves belong to the USB task; they
 are not a general multi-task settings API.
 
-`pf_boot_config_save()` rejects ISR, pre-scheduler and suspended-scheduler callers, invalid settings, and re-entrant
-saves. It skips an identical record and uses `flash_safe_execute` for erase/program (interrupts off and the other
+`pf_boot_config_save()` rejects ISR, pre-scheduler and suspended-scheduler callers and re-entrant saves. It skips an identical record and uses `flash_safe_execute` for erase/program (interrupts off and the other
 core held, roughly 50 ms; USB can miss frames, so do not save during MSC transfers). Unlike the PicoUart reference,
 PicoForge disables FreeRTOS dynamic allocation: the SDK reuses a static lockout task control block. Therefore the
 settings module waits for that task to be reclaimed and refuses another save if it is not; it must remain the only
@@ -73,8 +78,8 @@ Little-endian, 16 bytes, padded with `0xFF` to one 256-byte page at the start of
 | 4 | 2 | format version (`1`) |
 | 6 | 2 | record size (`16`) |
 | 8 | 2 | `system_clock_mhz` |
-| 10 | 1 | `sdio_bus_mhz` |
-| 11 | 1 | `spi_bus_mhz` |
+| 10 | 1 | SDIO bus MHz (`0`/`25` Default, `50` High) |
+| 11 | 1 | SPI bus MHz (`0`/`25` Default, `50` High) |
 | 12 | 4 | CRC-32 (IEEE, reflected) of bytes 0–11 |
 
 Missing, erased, short, wrong magic/version/size, CRC-invalid or out-of-range data returns the complete defaults;
@@ -96,10 +101,10 @@ flash sizes. A board with less flash than the SDK definition is unsupported.
 
 ## System clock
 
-A saved `system_clock_mhz` is applied by a `PICO_RUNTIME_INIT_FUNC_HW` hook in [main.c](../../firmware/src/main.c) ordered
+A saved system clock profile is applied by a `PICO_RUNTIME_INIT_FUNC_HW` hook in [main.c](../../firmware/src/main.c) ordered
 `00501`: after the SDK clock init (`00500`) and before peripheral resets are released (`00600`), stdio and FreeRTOS, so
 the FreeRTOS port reads the new `clk_sys` for SysTick at scheduler start. The hook reads the record without writing
-(`pf_boot_config_load_early()`) and calls `pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)):
+(the first `pf_boot_config_sysclk()` call) and calls `pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)):
 
 - `0`, a corrupt/missing record (which decodes as Defaults), an underivable frequency or the clock already in use change
   nothing, so Defaults keep the build clock.

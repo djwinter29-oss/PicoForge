@@ -279,8 +279,6 @@ def normalize_legacy_settings(
     if other not in (0, selected):
         raise ValueError("settings for the unselected storage transport must be zero or match the selected profile")
     profile = int(selected == 50)
-    if transport == "spi" and selected == 0:
-        profile = 1
     if selected == 0 and other == 0 and current_profile in (0, 1):
         profile = current_profile
     return {"system_clock_mhz": clock, "sdcard_profile": profile}

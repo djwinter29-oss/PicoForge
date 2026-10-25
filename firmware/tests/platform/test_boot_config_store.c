@@ -6,7 +6,6 @@ TEST_INCLUDE_PATH("firmware/tests/support/config")
 
 #include "FreeRTOS.h"
 #include "task.h"
-#include "drivers/boot_config.h"
 #include "platform/boot_config_store.h"
 
 uint8_t pf_test_flash[PICO_FLASH_SIZE_BYTES];
@@ -84,132 +83,118 @@ void test_reserved_sector_is_the_last_sector_and_aligned(void)
     TEST_ASSERT_EQUAL_UINT32(0u, PF_PLATFORM_BOOT_CONFIG_FLASH_OFFSET % FLASH_SECTOR_SIZE);
 }
 
-void test_erased_flash_loads_complete_defaults(void)
+static const uint8_t record_a[16] = {'P', 'F', 'C', 'F', 1, 0, 16, 0, 200, 0, 50, 25, 1, 2, 3, 4};
+static const uint8_t record_b[16] = {'P', 'F', 'C', 'F', 1, 0, 16, 0, 150, 0, 25, 50, 5, 6, 7, 8};
+
+void test_erased_flash_reads_as_erased_bytes(void)
 {
-    pf_boot_config_t settings = {150u, 25u, 25u};
-    TEST_ASSERT_FALSE(pf_boot_config_load(&settings));
-    TEST_ASSERT_EQUAL_UINT16(0u, settings.system_clock_mhz);
-    TEST_ASSERT_EQUAL_UINT8(0u, settings.sdio_bus_mhz);
-    TEST_ASSERT_EQUAL_UINT8(0u, settings.spi_bus_mhz);
+    uint8_t data[16] = {0};
+    const uint8_t erased[16] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    TEST_ASSERT_TRUE(pf_platform_boot_config_read(data, sizeof(data)));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(erased, data, sizeof(data));
 }
 
-void test_save_then_load_round_trips_and_only_touches_the_reserved_sector(void)
+void test_write_then_read_round_trips_and_only_touches_the_reserved_sector(void)
 {
-    pf_boot_config_t saved = {.system_clock_mhz = 250u, .sdio_bus_mhz = 25u, .spi_bus_mhz = 50u}, loaded;
+    uint8_t data[16];
     pf_test_flash[PF_PLATFORM_BOOT_CONFIG_FLASH_OFFSET - 1u] = 0x5au;
-    TEST_ASSERT_TRUE(pf_boot_config_save(&saved));
-    TEST_ASSERT_TRUE(pf_boot_config_load(&loaded));
-    TEST_ASSERT_EQUAL_MEMORY(&saved, &loaded, sizeof(saved));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_read(data, sizeof(data)));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(record_a, data, sizeof(data));
     TEST_ASSERT_EQUAL_UINT8(0x5au, pf_test_flash[PF_PLATFORM_BOOT_CONFIG_FLASH_OFFSET - 1u]);
     TEST_ASSERT_EQUAL_UINT(1u, pf_test_erase_calls);
     TEST_ASSERT_EQUAL_UINT(1u, program_calls);
 }
 
-void test_unchanged_save_does_not_erase_again(void)
+void test_unchanged_write_does_not_erase_again(void)
 {
-    pf_boot_config_t settings = {.spi_bus_mhz = 25u};
-    TEST_ASSERT_TRUE(pf_boot_config_save(&settings));
-    TEST_ASSERT_TRUE(pf_boot_config_save(&settings));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
     TEST_ASSERT_EQUAL_UINT(1u, safe_calls);
 }
 
-void test_invalid_settings_never_reach_flash(void)
+void test_invalid_buffers_never_reach_flash(void)
 {
-    pf_boot_config_t invalid = {.system_clock_mhz = 100u};
-    TEST_ASSERT_FALSE(pf_boot_config_save(&invalid));
-    TEST_ASSERT_FALSE(pf_boot_config_save(NULL));
+    uint8_t large[FLASH_PAGE_SIZE + 1u] = {0};
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(NULL, 16u));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(record_a, 0u));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(large, sizeof(large)));
     TEST_ASSERT_EQUAL_UINT(0u, safe_calls);
 }
 
-void test_unsafe_flash_state_fails_without_writing_and_save_can_retry(void)
+void test_unsafe_flash_state_fails_without_writing_and_write_can_retry(void)
 {
-    pf_boot_config_t settings = {.sdio_bus_mhz = 50u};
     pf_test_safe_execute_result = -1;
-    TEST_ASSERT_FALSE(pf_boot_config_save(&settings));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_erase_calls);
     pf_test_safe_execute_result = PICO_OK;
-    TEST_ASSERT_TRUE(pf_boot_config_save(&settings));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
 }
 
 void test_failed_program_is_reported_via_readback(void)
 {
-    pf_boot_config_t settings = {.sdio_bus_mhz = 50u};
     skip_program = true;
-    TEST_ASSERT_FALSE(pf_boot_config_save(&settings));
-}
-
-void test_failed_erase_is_reported_and_a_retry_succeeds(void)
-{
-    pf_boot_config_t settings = {.spi_bus_mhz = 25u}, loaded;
-    pf_test_safe_execute_result = -7;
-    TEST_ASSERT_FALSE(pf_boot_config_save(&settings));
-    TEST_ASSERT_FALSE(pf_boot_config_load(&loaded));
-    pf_test_safe_execute_result = PICO_OK;
-    TEST_ASSERT_TRUE(pf_boot_config_save(&settings));
-    TEST_ASSERT_TRUE(pf_boot_config_load(&loaded));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
 }
 
 static void reenter_during_flash_op(void)
 {
-    static pf_boot_config_t other = {.spi_bus_mhz = 50u};
-    pf_boot_config_t loaded = {.spi_bus_mhz = 25u};
-    TEST_ASSERT_FALSE(pf_boot_config_save(&other));
-    TEST_ASSERT_FALSE(pf_boot_config_load(&loaded));
-    TEST_ASSERT_EQUAL_UINT8(0u, loaded.spi_bus_mhz);
+    uint8_t data[16];
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(record_b, sizeof(record_b)));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_read(data, sizeof(data)));
 }
 
-void test_load_and_save_cannot_overlap_a_save_in_progress(void)
+void test_read_and_write_cannot_overlap_a_write_in_progress(void)
 {
-    pf_boot_config_t settings = {.sdio_bus_mhz = 25u}, loaded;
+    uint8_t data[16];
     during_flash_op = reenter_during_flash_op;
-    TEST_ASSERT_TRUE(pf_boot_config_save(&settings));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
     TEST_ASSERT_EQUAL_UINT(1u, safe_calls);
     during_flash_op = NULL;
-    TEST_ASSERT_TRUE(pf_boot_config_load(&loaded));
-    TEST_ASSERT_EQUAL_UINT8(25u, loaded.sdio_bus_mhz);
+    TEST_ASSERT_TRUE(pf_platform_boot_config_read(data, sizeof(data)));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(record_a, data, sizeof(data));
 }
 
-void test_save_and_runtime_load_reject_isr_and_non_running_scheduler(void)
+void test_write_and_runtime_read_reject_isr_and_non_running_scheduler(void)
 {
-    pf_boot_config_t settings = {.spi_bus_mhz = 25u}, loaded = {.spi_bus_mhz = 25u};
+    uint8_t data[16];
     BaseType_t states[] = {taskSCHEDULER_NOT_STARTED, taskSCHEDULER_SUSPENDED};
     for (unsigned i = 0u; i < 2u; ++i) {
         scheduler_state = states[i];
-        TEST_ASSERT_FALSE(pf_boot_config_save(&settings));
-        TEST_ASSERT_FALSE(pf_boot_config_load(&loaded));
+        TEST_ASSERT_FALSE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
+        TEST_ASSERT_FALSE(pf_platform_boot_config_read(data, sizeof(data)));
     }
     scheduler_state = taskSCHEDULER_RUNNING;
     pf_test_in_isr = 1;
-    TEST_ASSERT_FALSE(pf_boot_config_save(&settings));
-    TEST_ASSERT_FALSE(pf_boot_config_load(&loaded));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_read(data, sizeof(data)));
     TEST_ASSERT_EQUAL_UINT(0u, safe_calls);
     pf_test_in_isr = 0;
-    TEST_ASSERT_TRUE(pf_boot_config_save(&settings));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
 }
 
-void test_early_load_reads_only_before_the_scheduler_starts(void)
+void test_early_read_works_only_before_the_scheduler_starts(void)
 {
-    pf_boot_config_t settings = {.system_clock_mhz = 200u}, loaded;
-    TEST_ASSERT_TRUE(pf_boot_config_save(&settings));
-    TEST_ASSERT_FALSE(pf_boot_config_load_early(&loaded));
-    TEST_ASSERT_EQUAL_UINT16(0u, loaded.system_clock_mhz);
+    uint8_t data[16];
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_read_early(data, sizeof(data)));
     scheduler_state = taskSCHEDULER_NOT_STARTED;
-    TEST_ASSERT_TRUE(pf_boot_config_load_early(&loaded));
-    TEST_ASSERT_EQUAL_UINT16(200u, loaded.system_clock_mhz);
+    TEST_ASSERT_TRUE(pf_platform_boot_config_read_early(data, sizeof(data)));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(record_a, data, sizeof(data));
 }
 
-void test_save_waits_for_the_lockout_task_and_refuses_while_it_is_unreclaimed(void)
+void test_write_waits_for_the_lockout_task_and_refuses_while_it_is_unreclaimed(void)
 {
-    pf_boot_config_t first = {.spi_bus_mhz = 25u}, second = {.spi_bus_mhz = 50u};
-    TEST_ASSERT_TRUE(pf_boot_config_save(&first));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
     TEST_ASSERT_EQUAL_UINT(3u, reclaim_polls);
     TEST_ASSERT_EQUAL_UINT(5u, task_count);
 
-    /* The idle task never reclaims the TCB: the save itself is verified, later saves are refused. */
+    /* The idle task never reclaims the TCB: the write itself is verified, later writes are refused. */
     reclaim_polls = 0u;
     task_count_after_lockout = 99u;
     task_count = 5u;
-    TEST_ASSERT_TRUE(pf_boot_config_save(&second));
-    TEST_ASSERT_FALSE(pf_boot_config_save(&first));
+    TEST_ASSERT_TRUE(pf_platform_boot_config_write(record_b, sizeof(record_b)));
+    TEST_ASSERT_FALSE(pf_platform_boot_config_write(record_a, sizeof(record_a)));
     TEST_ASSERT_EQUAL_UINT(2u, safe_calls);
 }

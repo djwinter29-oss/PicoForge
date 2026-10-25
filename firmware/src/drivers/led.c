@@ -7,16 +7,17 @@ static bool led_active_high;
 static bool led_available;
 static bool led_on;
 
-bool pf_led_init(uint32_t gpio, bool active_high)
+bool pf_led_init(void)
 {
-    if (gpio >= NUM_BANK0_GPIOS) {
-        led_available = false;
-        led_on = false;
+    if (led_available || pf_led_board.gpio == PF_LED_GPIO_NONE) {
+        return true;
+    }
+    if (pf_led_board.gpio >= NUM_BANK0_GPIOS) {
         return false;
     }
 
-    led_gpio = gpio;
-    led_active_high = active_high;
+    led_gpio = pf_led_board.gpio;
+    led_active_high = pf_led_board.active_high;
     led_on = false;
     led_available = true;
     gpio_init((uint)led_gpio);

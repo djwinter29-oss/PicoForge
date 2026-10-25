@@ -36,8 +36,8 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 
 | Behavior | Test directory |
 | --- | --- |
-| Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sd_card](drivers/sd_card) |
-| Physical SPI and SDIO-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/storage](drivers/storage) |
+| Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sd_card/link](drivers/sd_card/link), [sdio_pio](drivers/sd_card/sdio_pio), [spi](drivers/sd_card/spi) |
+| Physical SPI and SDIO-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/sd_card/link](drivers/sd_card/link), [sdio_pio](drivers/sd_card/sdio_pio), [spi](drivers/sd_card/spi) |
 | FreeRTOS SD reservation and application ownership integration | [app/storage](app/storage), `test_sd_media_freertos_serialization_*` |
 | SD media ownership and byte transfers with the bare-metal port | [app/storage](app/storage), `test_sd_media_baremetal_*` |
 | Media configuration, owner-gated I/O, retained diagnostics, commands, file benchmark, automount and recovery | [app/storage](app/storage) |
@@ -77,9 +77,9 @@ and preserved stream recovery. Optional wait setup is tested with
 Storage tests cover raw phase validation before CS, arbitrary released-line clock counts/deadlines, short/long native
 response byte packing and partial failure capture. The SD host test retains the exact 80-clock, low-speed
 initialization check.
-Common lifecycle tests live in [test_bus.c](drivers/storage/test_bus.c), raw serial dispatch
-tests in [test_serial.c](drivers/storage/test_serial.c), and native dispatch tests in
-[test_sd_wire.c](drivers/storage/test_sd_wire.c). Concrete backend tests remain under their corresponding storage
+Common lifecycle tests live in [test_sd_link.c](drivers/sd_card/link/test_sd_link.c), raw serial dispatch
+tests in [test_sd_link_serial.c](drivers/sd_card/link/test_sd_link_serial.c), and native dispatch tests in
+[test_sd_link_wire.c](drivers/sd_card/link/test_sd_link_wire.c). Concrete backend tests remain under their corresponding backend
 subdirectories. Cross-layer HID/card-unavailable scenarios are owned by
 [test_usb_hid_sd_responsiveness.c](app/usb/test_usb_hid_sd_responsiveness.c), matching the HID source module.
 

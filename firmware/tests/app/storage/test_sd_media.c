@@ -6,7 +6,7 @@
 #include "Mocksd.h"
 #include "Mocksd_block.h"
 #include "Mocksd_port.h"
-#include "Mockboard.h"
+#include "Mocksd_board.h"
 #include "Mockfatfs_volume.h"
 #include "Mocklogging.h"
 
@@ -53,7 +53,7 @@ void setUp(void)
     ready = true;
     depth = init_calls = 0u;
     io_result = PF_SD_OK;
-    config = (pf_sd_config_t){.transport.mode = PF_STORAGE_BUS_NATIVE_SD, .clock_hz = 25000000u};
+    config = (pf_sd_config_t){.transport.mode = PF_SD_LINK_NATIVE_SD, .clock_hz = 25000000u};
     configured = true;
     media_config = config;
     pf_sd_lock_Stub(lock);
@@ -77,16 +77,16 @@ void test_setup_reports_unavailable_configuration_and_port_failure_then_borrows_
 {
     configured = false;
     TEST_ASSERT_EQUAL(PF_SD_NOT_CONFIGURED, pf_sd_media_initialize());
-    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(false);
+    pf_sd_board_config_ExpectAnyArgsAndReturn(false);
     pf_log_write_ExpectAnyArgs();
     TEST_ASSERT_EQUAL(PF_SD_NOT_CONFIGURED, pf_sd_media_setup());
-    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
-    pf_board_get_sd_card_config_ReturnThruPtr_config(&config);
+    pf_sd_board_config_ExpectAnyArgsAndReturn(true);
+    pf_sd_board_config_ReturnThruPtr_config(&config);
     pf_sd_port_init_ExpectAnyArgsAndReturn(false);
     pf_log_write_ExpectAnyArgs();
     TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_media_setup());
-    pf_board_get_sd_card_config_ExpectAnyArgsAndReturn(true);
-    pf_board_get_sd_card_config_ReturnThruPtr_config(&config);
+    pf_sd_board_config_ExpectAnyArgsAndReturn(true);
+    pf_sd_board_config_ReturnThruPtr_config(&config);
     pf_sd_port_init_ExpectAnyArgsAndReturn(true);
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_setup());
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_setup());

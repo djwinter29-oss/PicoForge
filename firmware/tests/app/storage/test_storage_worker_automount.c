@@ -9,7 +9,7 @@ void setUp(void)
     pf_log_write_Ignore();
     config_available = configured = transport_selected = true;
     requests = (void *)1;
-    media_config.transport.mode = PF_STORAGE_BUS_NATIVE_SD;
+    media_config.transport.mode = PF_SD_LINK_NATIVE_SD;
 }
 void tearDown(void) { TEST_ASSERT_EQUAL_UINT(0, reservation_depth); }
 

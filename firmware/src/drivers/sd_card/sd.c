@@ -17,7 +17,7 @@
 #define selected_sync pf_sd_spi_sync
 #define selected_info pf_sd_spi_get_info
 #define selected_stage pf_sd_spi_get_init_stage
-#define SELECTED_MODE PF_STORAGE_BUS_SPI
+#define SELECTED_MODE PF_SD_LINK_SPI
 #define SELECTED_NAME "spi"
 #else
 #include "sd_native.h"
@@ -29,7 +29,7 @@
 #define selected_sync pf_sd_native_sync
 #define selected_info pf_sd_native_get_info
 #define selected_stage pf_sd_native_get_init_stage
-#define SELECTED_MODE PF_STORAGE_BUS_NATIVE_SD
+#define SELECTED_MODE PF_SD_LINK_NATIVE_SD
 #define SELECTED_NAME "sdio"
 #endif
 

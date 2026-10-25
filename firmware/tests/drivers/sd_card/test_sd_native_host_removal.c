@@ -11,9 +11,9 @@ static pf_sdio_pio_t test_wire;
 #include <string.h>
 
 #include "drivers/sd_card/sd_native.c"
-#include "drivers/storage/sdio_pio/sdio_pio.c"
-#include "drivers/storage/bus.c"
-#include "drivers/storage/sd_wire.c"
+#include "drivers/sd_card/sdio_pio/sdio_pio.c"
+#include "drivers/sd_card/link/sd_link.c"
+#include "drivers/sd_card/link/sd_link_wire.c"
 #include "drivers/sd_card/sd_native_host.c"
 #include "drivers/sd_card/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
@@ -55,7 +55,7 @@ void test_forget_removed_clears_stream_state_before_restoring_mode(void)
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
-    TEST_ASSERT_TRUE(pf_storage_sd_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_observed_host = &host;
     pf_test_sdio_expect_streams_cleared = true;
@@ -87,7 +87,7 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
         .write_stream_open = true,
         .read_stream_unresolved = true,
     };
-    TEST_ASSERT_TRUE(pf_storage_sd_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_can_add_program = false;
     pf_sd_native_host_forget_removed_card(&host);
@@ -102,7 +102,7 @@ void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 {
     test_wire = (pf_sdio_pio_t){};
     pf_sd_native_host_t host = { .transport = pf_sdio_pio_bus(&test_wire) };
-    TEST_ASSERT_TRUE(pf_storage_sd_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
+    TEST_ASSERT_TRUE(pf_sd_link_wire_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_sd_native_host_forget_removed_card(NULL);
     pf_sd_native_host_forget_removed_card(&host);

@@ -170,7 +170,7 @@ class ProtocolTests(unittest.TestCase):
                          {"system_clock_mhz": 200, "sdcard_profile": 1})
         self.assertEqual(normalize_legacy_settings(
             {"system_clock_mhz": 0, "sdio_bus_mhz": 0, "spi_bus_mhz": 0}, "spi"
-        ), {"system_clock_mhz": 0, "sdcard_profile": 1})
+        ), {"system_clock_mhz": 0, "sdcard_profile": 0})
 
 
 if __name__ == "__main__":
