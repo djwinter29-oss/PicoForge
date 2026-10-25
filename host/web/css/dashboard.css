@@ -129,7 +129,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
   font: 600 14px var(--mono);
   font-variant-numeric: tabular-nums;
 }
-.metric-product strong { color: var(--teal); font-size: 14px; }
 
 .runtime { margin-top: 20px; padding: 0; background: transparent; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
@@ -161,7 +160,10 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .pin-map-disclosure > summary { padding: 8px 12px; color: var(--teal-dark); font-weight: 650; cursor: pointer; }
 .pin-map-disclosure > summary:focus-visible { outline: 3px solid var(--lime); outline-offset: -3px; }
 .pin-map-disclosure[open] > summary { border-bottom: 1px solid var(--line); }
-.pin-map-disclosure .runtime-grid { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.pin-tables { display: grid; gap: 16px; padding: 12px; overflow-x: auto; }
+.pin-tables table { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+.pin-tables caption { padding: 0 0 8px; text-align: left; color: var(--teal-dark); font-weight: 650; }
+.pin-tables th, .pin-tables td { padding: 7px 12px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
 .confirmation-dialog { width: min(520px, calc(100% - 32px)); padding: 24px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 16px 48px #102d2b40; }
 .confirmation-dialog::backdrop { background: #102d2b70; }
 .confirmation-dialog h2, .confirmation-dialog p { margin-bottom: 12px; }

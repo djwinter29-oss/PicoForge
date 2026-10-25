@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>PicoForge Diagnostics | {{ dashboard_type }}</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
   <link rel="stylesheet" href="/css/dashboard.css">
   <script type="module" src="/js/app.mjs"></script>
 </head>
@@ -41,7 +41,7 @@
         </div>
       </div>
       <div class="identity" aria-label="Hardware identity">
-        <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
+        <div class="metric"><span>Product</span><strong id="product-name">--</strong></div>
         <div class="metric"><span>Board model</span><strong id="board-model">--</strong></div>
         <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
         <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
@@ -84,10 +84,16 @@
       </p>
       <details class="pin-map-disclosure">
         <summary>Pin configuration</summary>
-        <dl class="runtime-grid">
-          <div><dt>Monitor UART</dt><dd id="board-uart">--</dd></div>
-          <div><dt>Storage GPIOs</dt><dd id="board-storage-pins">--</dd></div>
-        </dl>
+        <div class="pin-tables">
+          <table>
+            <caption id="board-uart-title">Monitor UART</caption>
+            <tbody id="board-uart"></tbody>
+          </table>
+          <table>
+            <caption id="board-storage-title">Storage</caption>
+            <tbody id="board-storage-pins"></tbody>
+          </table>
+        </div>
       </details>
     </section>
 
@@ -99,8 +105,8 @@
       </div>
       <dl class="runtime-grid runtime-summary">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
-        <div>
-          <dt>CPU Usage (Core 1 / Core 2)</dt>
+        <div title="Service-pass workload proxies, not CPU utilization">
+          <dt>Service load (Core 0 / Core 1)</dt>
           <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
         </div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>

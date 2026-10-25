@@ -199,7 +199,9 @@ storage transport.
 The stored clock and SD-card profile values are the persisted settings for the next boot, not measured runtime
 values; report `3` carries the active system-clock frequency and report `10` carries the active SD speed mode and bus
 clock. After a successful opcode `6` save, firmware returns the verified saved values in the control result and
-queues a reboot through the existing deferred USB reboot path. Hosts must not send a second reboot command or
+queues a reboot through the existing deferred USB reboot path. During the one-second grace period, firmware
+continues servicing USB control transfers so the host can read the completion result before reset.
+Hosts must not send a second reboot command or
 require a configuration read before disconnect; reread report `2` after reconnection. The SD-card profile is a request applied to the
 build-selected transport from report `1`: Standard disables High-Speed timing; High-Speed permits CMD6 negotiation
 within the transport's firmware ceiling, system-clock limit, and card capability. It does not guarantee that

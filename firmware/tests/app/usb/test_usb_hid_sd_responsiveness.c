@@ -44,6 +44,7 @@ void setUp(void)
     reply_count = drained_replies = 0u;
     fake_ticks = 0u;
     fake_connected = true;
+    reset_requests = reboot_usb_polls = 0u;
     fake_done = false;
     msc_enabled = msc_transition_pending = false;
     unavailable = reserved = initialized = mounted = queue_fails = retained_cid = false;
@@ -210,6 +211,23 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     TEST_ASSERT_EQUAL_UINT(2u, settings_save_calls);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
     TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+}
+
+void test_save_reboot_services_control_result_until_grace_period_expires(void)
+{
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    send_control(9u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
+    reboot_usb_polls = 0u;
+    fake_ticks = (TickType_t)-10;
+    const TickType_t started = fake_ticks;
+    reboot_after_usb_flush();
+    TEST_ASSERT_EQUAL_UINT(pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS), (TickType_t)(fake_ticks - started));
+    TEST_ASSERT_GREATER_THAN_UINT(1u, reboot_usb_polls);
+    TEST_ASSERT_EQUAL_UINT8(9u, reboot_ack.transaction_id);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_OPCODE_SAVE_SETTINGS, reboot_ack.opcode);
+    TEST_ASSERT_EQUAL_UINT8(2u, reboot_ack.status);
+    TEST_ASSERT_EQUAL_UINT(1u, reset_requests);
 }
 
 void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)

@@ -175,6 +175,17 @@ static void cdc_cli_task(void)
     cli_drain_output();
 }
 
+/** @brief Keep control transfers serviced during the acknowledgement grace period before resetting. */
+static void reboot_after_usb_flush(void)
+{
+    const TickType_t started = xTaskGetTickCount();
+    do {
+        tud_task_ext(0u, false);
+        vTaskDelay(pdMS_TO_TICKS(1u));
+    } while ((TickType_t)(xTaskGetTickCount() - started) < pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS));
+    pf_system_reset();
+}
+
 static void usb_task(void *context)
 {
     (void)context;
@@ -194,8 +205,7 @@ static void usb_task(void *context)
 
         tud_task();
         if (pf_hid_take_reboot_request()) {
-            vTaskDelay(pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS));
-            pf_system_reset();
+            reboot_after_usb_flush();
         }
         pf_usb_msc_task();
         pf_hid_poll_async_commands();

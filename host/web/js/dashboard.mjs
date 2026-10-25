@@ -8,8 +8,11 @@ function uptimeLabel(milliseconds) {
   return days ? `${days}d ${hours}h ${minutes}m` : `${hours}h ${minutes}m ${seconds}s`;
 }
 
+let lastStorageDetails = null;
+
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
+  if (!connected) lastStorageDetails = null;
   const hardware = snapshot.hardware;
   const runtime = snapshot.telemetry_stale ? null : snapshot.runtime;
   const connection = document.querySelector("#connection");
@@ -119,7 +122,8 @@ function renderSettings(snapshot) {
             : snapshot.self_test?.active || snapshot.self_test_command_pending
               ? "Wait for the storage test to finish before saving settings."
               : snapshot.settings_dirty ? "Unsaved changes."
-                : "Settings loaded.");
+                : "");
+  document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
 }
 
 function updateClockOptions(select, mcu, savedClock) {
@@ -157,46 +161,73 @@ function renderBoardConfiguration(snapshot) {
   const configuration = snapshot.board_configuration;
   const set = (selector, value) => { document.querySelector(selector).textContent = value; };
   const formatPin = pin => pin === 255 || pin == null ? "Unassigned" : `GP${pin}`;
+  const renderPins = (selector, signals, pins) => {
+    const headings = document.createElement("tr");
+    const values = document.createElement("tr");
+    signals.forEach((signal, index) => {
+      const heading = document.createElement("th");
+      heading.scope = "col";
+      heading.textContent = signal;
+      const cell = document.createElement("td");
+      cell.textContent = configuration ? formatPin(pins[index]) : "--";
+      headings.append(heading);
+      values.append(cell);
+    });
+    document.querySelector(selector).replaceChildren(headings, values);
+  };
+  const spi = configuration?.storage_transport === "spi";
+  const labels = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
+  set("#board-uart-title", configuration && configuration.monitor_uart_index !== 255
+    ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
+  set("#board-storage-title", configuration ? `Storage (${spi ? "SPI" : "SDIO-PIO"})` : "Storage");
+  renderPins("#board-uart", ["TX", "RX"],
+    [configuration?.monitor_uart_tx_gpio, configuration?.monitor_uart_rx_gpio]);
+  renderPins("#board-storage-pins", [...labels, "Card detect"],
+    [...labels.map((_, index) => configuration?.storage_gpios[index]), configuration?.card_detect_gpio]);
   if (!configuration) {
-    set("#board-uart", "--");
-    set("#board-storage-pins", "--");
     set("#board-reset-cause", "--");
     return;
   }
-  const uart = configuration.monitor_uart_index === 255 ? "Unavailable"
-    : `UART${configuration.monitor_uart_index}: TX ${formatPin(configuration.monitor_uart_tx_gpio)}, RX ${formatPin(configuration.monitor_uart_rx_gpio)}`;
-  const transport = (snapshot.hardware?.capabilities & 8) ? "SPI" : "SDIO-PIO";
-  const labels = transport === "SPI" ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
-  const pins = configuration.storage_gpios.map((pin, index) => `${labels[index]} ${formatPin(pin)}`).join(", ");
   const resetCause = ({ 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" })[configuration.reset_cause]
     ?? `Unassigned (${configuration.reset_cause})`;
-  set("#board-uart", uart);
-  set("#board-storage-pins", pins);
   set("#board-reset-cause", resetCause);
 }
 
 function renderMemory(memory, filesystemFormat, stale, msc) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
-  const manufacturer = memory?.manufacturer;
+  const busy = !stale && memory?.configured && memory.sample_valid === false
+    && !msc?.enabled && !msc?.transition_pending;
+  if (!stale && memory?.sample_valid && memory.initialized) {
+    lastStorageDetails = { memory, filesystemFormat };
+  } else if (!busy) {
+    lastStorageDetails = null;
+  }
   if (stale) {
     set("#memory-note", "Storage status is stale; waiting for a fresh report.");
     for (const id of ["#memory-state", "#memory-mode", "#memory-speed", "#memory-size",
       "#memory-filesystem", "#memory-manufacturer", "#memory-product", "#memory-serial"]) set(id, "--");
     return;
   }
-  set("#memory-state", memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
+  set("#memory-state", msc?.enabled ? "USB host"
+    : msc?.transition_pending ? "Transitioning"
+      : memory?.configured && memory.sample_valid === false ? "Busy"
+        : memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
   set("#memory-note", !memory?.configured ? "No SD-card transport configured"
     : msc?.enabled ? "The host owns the SD card through USB mass storage."
       : msc?.transition_pending ? "Storage status is unavailable during the ownership transition."
-        : memory && !memory.sample_valid ? "Current SD details are unavailable while storage is busy."
+        : memory && !memory.sample_valid ? ""
     : memory.presence_known && !memory.present
       ? "No card detected. Check card insertion and the active-high DET connection on GP8."
       : memory.present && !memory.initialized
         ? "Card detected but not initialized; check UART logs and SD wiring."
         : memory.initialized ? "" : "Card presence has not been established.");
+  if (busy && lastStorageDetails) {
+    ({ memory, filesystemFormat } = lastStorageDetails);
+  }
+  const manufacturer = memory?.manufacturer;
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
-    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz (${memory.speed_mode === 2 ? "High-Speed" : "Standard"})`
+    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz (${memory.speed_mode === 2 || memory.speed_mode === "high-speed" ? "High-Speed" : "Standard"})`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };

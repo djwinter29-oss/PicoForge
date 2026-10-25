@@ -8,6 +8,9 @@ python3 -m http.server 8000 --directory host/webhid
 
 Open `http://localhost:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
 The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or a host server API.
+Every explicit **Connect** opens the browser device chooser, including when devices were previously authorized,
+so the user selects which board to open. Cancel leaves the page disconnected. Close other clients using that board
+before connecting; the chooser cannot override another application's HID access.
 
 ## Protocol compatibility
 
@@ -20,8 +23,20 @@ Mandatory identity/configuration failures are explicit connection errors, not le
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.
-Stale measurements are removed, freshness is shown per report, and disconnect clears all connection caches.
+Stale measurements are removed, unavailable/stale freshness is shown per report, and disconnect clears connection caches.
 Firmware RAM reserved / total is boot-stable build accounting, not live heap or stack usage.
+
+## Dashboard layout
+
+The page follows the Python/.NET dashboard: a six-field Device information row (product, board/MCU, serial,
+system clock, firmware RAM reserved / total, firmware version) and a Board configuration row with clock, SD-card
+profile, and reset cause. Pin configuration starts collapsed and contains full-width, vertically stacked Monitor
+UART and Storage tables. Each table has signal headings above one GPIO row.
+
+Live diagnostics shows uptime, service load for Core 0 / Core 1, board temperature, then CLI port. Storage combines
+effective bus clock and timing in one field. Busy sampling retains the last valid card details without inserting
+a message or shifting the table; stale reports, disconnects, ownership transitions, and valid absent/uninitialized
+samples clear retained details. Retained values are display-only and never authorize a command.
 
 ## Controls
 
@@ -32,7 +47,10 @@ writes. Reconnecting reads the outstanding result without resubmitting it. Do no
 
 **Save and Reboot** confirms with the user, sends one settings command, and verifies its completion result.
 Firmware saves the settings and schedules the reboot; Feature 2 is reread after reconnection.
-**Reboot** is separate, capability-gated, and explicitly confirmed. Standard/High-Speed is a stored request;
+**Reboot Board** is separate, capability-gated, and explicitly confirmed. Save, reboot, and Return to Pico use
+matching modal dialogs with Cancel and Escape support; no command is sent until confirmed, and safety gates are
+checked again at confirmation. Routine loaded-settings and fresh-report messages are hidden.
+Standard/High-Speed is a stored request;
 Storage shows the actual selected timing and effective bus clock.
 
 USB ownership transitions briefly re-enumerate. The WebHID API does not expose the USB serial string, so the

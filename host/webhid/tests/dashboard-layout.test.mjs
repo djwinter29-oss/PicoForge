@@ -1,23 +1,41 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs";
+import { PicoForgeWebHid } from "../js/device.mjs?v=2";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 test("standalone dashboard labels profiles, active measurements, controls and accessible statuses", () => {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
+  assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
+  assert.match(html, /src="js\/app\.mjs\?v=7"/);
+  const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
+  assert.match(app, /from "\.\/device\.mjs\?v=2"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=2"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
-  assert.match(html, /value="1">High-Speed \(requested\)/);
+  assert.match(html, /value="1">High-Speed/);
   assert.match(html, /id="settings-save"[^>]*>Save and Reboot/);
   assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
   assert.doesNotMatch(html, /Save &amp; Reboot|25 MHz|50 MHz|Core 1 \/ Core 2/);
   assert.match(html, /Firmware RAM reserved \/ total/);
   assert.match(html, /Service load \(Core 0 \/ Core 1\)/);
-  assert.match(html, /Last mounted filesystem/);
-  assert.match(html, /id="memory-timing"/);
+  assert.match(html, /<dt>Filesystem<\/dt>/);
+  assert.doesNotMatch(html, /class="eyebrow"|id="mcu"|id="memory-timing"|id="board-config"/);
+  assert.doesNotMatch(html, /metric-product/);
+  assert.match(html, /id="settings-title">Board configuration/);
+  const identity = html.split('aria-label="Hardware identity"')[1].split("</section>")[0];
+  assert.deepEqual([...identity.matchAll(/<strong id="([^"]+)"/g)].map(match => match[1]),
+    ["product-name", "board-model", "serial", "identity-clock", "ram-usage", "firmware-version"]);
+  const runtime = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
+  assert.deepEqual([...runtime.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
+    ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port"]);
+  assert.match(html, /<details class="pin-map-disclosure">/);
+  assert.match(html, /id="board-uart"[\s\S]*id="board-storage-pins"/);
+  for (const name of ["configuration", "reboot", "return"]) {
+    assert.match(html, new RegExp(`<dialog class="confirmation-dialog" id="${name}-dialog"`));
+  }
   assert.match(html, /id="led-control"[\s\S]*?aria-pressed="false"/);
   assert.match(html, /<progress[^>]*aria-label="Self-test progress"/);
   for (const name of ["telemetry", "storage", "self-test"]) {
@@ -36,16 +54,16 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
   const elements = new Map();
   const el = selector => {
     if (!elements.has(selector)) elements.set(selector, { value: "0", dataset: {}, valueAsNumber: 32,
+      open: false, showModal() { this.open = true; }, close() { this.open = false; },
       addEventListener(type, handler) { this[type] = handler; }, setAttribute(name, value) { this[name] = value; },
       replaceChildren(...children) { this.children = children; } });
     return elements.get(selector);
   };
   let client;
-  let confirmed = false;
-  let warning = "";
   const commands = [];
-  globalThis.document = { querySelector: el, createElement: () => ({}) };
-  globalThis.window = { confirm(message) { warning = message; return confirmed; } };
+  globalThis.document = { querySelector: el, createElement: () => ({ children: [],
+    append(...children) { this.children.push(...children); } }) };
+  globalThis.window = { confirm() { assert.fail("Use styled dialogs, not browser confirmations"); } };
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { hid: new EventTarget() } });
   Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
   PicoForgeWebHid.prototype.connect = async function () {
@@ -67,30 +85,57 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     await import(`../js/app.mjs?test=${Date.now()}`);
     await el("#connection-control").click();
     assert.equal(el("#settings-storage").value, "1");
-    el("#settings-clock").value = "150"; el("#settings-clock").change();
+    assert.equal(el("#settings-note").hidden, true);
+    assert.equal(el("#settings-save").disabled, true);
+    el("#settings-clock").value = "250"; el("#settings-clock").change();
     client.update({ error: null });
-    assert.equal(el("#settings-clock").value, "150");
+    assert.equal(el("#settings-clock").value, "250");
     await el("#settings-save").click();
     assert.deepEqual(commands, []);
-    confirmed = true;
+    assert.equal(el("#configuration-dialog").open, true);
+    assert.match(el("#configuration-dialog-profile").textContent, /250 MHz.*High-Speed/);
+    el("#cancel-configuration").click();
+    await el("#confirm-configuration").click();
+    assert.deepEqual(commands, []);
     await el("#settings-save").click();
-    assert.deepEqual(commands, [["save", { system_clock_mhz: 150, sdcard_profile: 1 }]]);
-    confirmed = false;
+    await el("#confirm-configuration").click();
+    assert.deepEqual(commands, [["save", { system_clock_mhz: 250, sdcard_profile: 1 }]]);
     await el("#settings-reboot").click();
     assert.equal(commands.length, 1);
-    confirmed = true; await el("#settings-reboot").click();
+    assert.equal(el("#reboot-dialog").open, true);
+    el("#reboot-dialog").keydown({ key: "Escape", preventDefault() {} });
+    assert.equal(el("#reboot-dialog").open, false);
+    await el("#confirm-reboot").click();
+    assert.equal(commands.length, 1);
+    await el("#settings-reboot").click();
+    await el("#confirm-reboot").click();
     assert.deepEqual(commands[1], ["reboot", true]);
     await el("#msc-control").click();
     assert.deepEqual(commands[2], ["msc", true, false]);
     client.update({ msc: { enabled: true, transition_pending: false } });
-    confirmed = false; await el("#msc-control").click();
+    await el("#msc-control").click();
     assert.equal(commands.length, 3);
-    assert.match(warning, /writes may be lost.*filesystem may be corrupted/);
-    confirmed = true; await el("#msc-control").click();
+    assert.equal(el("#return-dialog").open, true);
+    el("#cancel-return").click();
+    await el("#confirm-return").click();
+    assert.equal(commands.length, 3);
+    await el("#msc-control").click();
+    await el("#confirm-return").click();
     assert.deepEqual(commands[3], ["msc", false, true]);
+    await el("#msc-control").click();
     client.update({ outcome_uncertain: true });
     assert.equal(el("#msc-control").disabled, true);
     assert.equal(el("#settings-save").disabled, true);
+    await el("#confirm-return").click();
+    assert.equal(commands.length, 4);
+    client.update({ outcome_uncertain: false });
+    await el("#msc-control").click();
+    assert.equal(el("#return-dialog").open, true);
+    client.update({ connected: false });
+    assert.equal(el("#return-dialog").open, false);
+    await el("#confirm-return").click();
+    assert.equal(commands.length, 4);
+    client.update({ connected: true });
     client.update({ outcome_uncertain: false, freshness: { 3: "stale", 10: "stale", 11: "stale" },
       runtime: null, board_status: null, msc: null, self_test: null });
     assert.equal(el("#msc-control").disabled, true);

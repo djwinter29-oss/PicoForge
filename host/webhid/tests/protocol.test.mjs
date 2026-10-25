@@ -6,6 +6,42 @@ import {
 } from "../js/device.mjs";
 import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit } from "./support/fixtures.mjs";
 
+test("explicit connect always requests selection regardless of previously authorized devices", async () => {
+  for (const count of [0, 1, 2]) {
+    const { client, hid, device } = fakeConnection();
+    const other = fakeConnection().device;
+    let selections = 0;
+    hid.getDevices = async () => [other, device].slice(0, count);
+    hid.requestDevice = async options => {
+      selections++;
+      assert.deepEqual(options.filters, [0x4011, 0x4012].map(productId =>
+        ({ vendorId: 0xcafe, usagePage: 0xff00, usage: 1, productId })));
+      return [device];
+    };
+    await client.connect();
+    assert.equal(selections, 1);
+    assert.equal(client.state.connected, true);
+    assert.equal(client.device, device);
+    assert.equal(other.opened, false);
+    await client.disconnect();
+  }
+});
+
+test("cancelled or denied selection never opens a previously authorized device", async () => {
+  for (const denied of [false, true]) {
+    const { client, hid, device } = fakeConnection();
+    hid.requestDevice = async () => {
+      if (denied) throw new Error("Device permission denied");
+      return [];
+    };
+    await client.connect();
+    assert.equal(client.state.connected, false);
+    assert.equal(client.state.busy, false);
+    assert.equal(device.opened, false);
+    assert.equal(client.state.error, denied ? "Device permission denied" : null);
+  }
+});
+
 test("identity validates exact WebHID payload, product, layout, capabilities, board, and RAM", () => {
   const report = identity();
   const decoded = decodeIdentityReport(report);

@@ -9,7 +9,14 @@ product, board model, serial / UID, system clock, firmware RAM reserved / total,
 (`Unknown` for legacy firmware). The six fields share one desktop row and wrap on smaller screens.
 The **Board LED** toggle is in Device information; SD sharing is beside the self-test.
 The **Pin configuration** disclosure under Board configuration is collapsed by default; expand it to view
-monitor UART pins and storage GPIOs. Reset cause stays visible beside the clock and SD-card settings.
+separate Monitor UART and Storage tables, each with signal names across the first row and GPIO values across
+the second row, including card detect. Monitor UART appears above Storage, with both tables spanning the area.
+Reset cause stays visible beside the clock and SD-card settings.
+During benchmark I/O, the storage status sampler may be unable to acquire the driver lock. The dashboard shows
+**Busy**, not an initialization failure, and retains the last sampled card details without adding a message above
+the table, keeping the layout stable during I/O.
+Retained details are cleared on disconnect, board selection changes, stale reports, ownership transitions, or a
+fresh sample showing absent or uninitialized media.
 Selecting Start authorizes temporary self-test writes. An existing `/PFTEST.BIN` file or directory is rejected and
 never replaced.
 

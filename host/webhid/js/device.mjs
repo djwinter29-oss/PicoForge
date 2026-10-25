@@ -314,8 +314,7 @@ export class PicoForgeWebHid {
     if (!this.hid || this.state.busy || this.device || this.state.reconnecting) return;
     this.update({ busy: true, error: null });
     try {
-      const allowed = (await this.hid.getDevices()).filter(matchesPicoForge);
-      const devices = allowed.length === 1 ? allowed : await this.hid.requestDevice({
+      const devices = await this.hid.requestDevice({
         filters: [0x4011, 0x4012].map(productId => ({ ...DEVICE_FILTER, productId })),
       });
       if (!devices.length) return;

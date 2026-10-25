@@ -22,8 +22,11 @@ function renderLinkState(selector, label, active) {
   else element.dataset.active = String(active);
 }
 
+let lastStorageDetails = null;
+
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
+  if (!connected) lastStorageDetails = null;
   const hardware = snapshot.hardware;
   const runtime = snapshot.runtime;
   updateClockOptions(document.querySelector("#settings-clock"), hardware?.mcu,
@@ -33,8 +36,8 @@ export function renderStatus(snapshot) {
   document.querySelector("#connection-label").textContent = snapshot.error
     ? "Attention" : snapshot.reconnecting ? "Reconnecting" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
-  document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
-  document.querySelector("#board-model").textContent = hardware?.board_name ?? "--";
+  document.querySelector("#board-model").textContent = hardware
+    ? `${hardware.board_name} (${hardware.mcu})` : "--";
   document.querySelector("#firmware-version").textContent = hardware?.firmware_version ?? "Unknown";
   const clock = runtime
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
@@ -46,11 +49,10 @@ export function renderStatus(snapshot) {
     ? "--" : `${(runtime.cpu_usage_core1_basis_points / 100).toFixed(1)}%`;
   const ramUsed = hardware?.ram_reserved_bytes;
   const ramTotal = hardware?.ram_total_bytes;
-  document.querySelector("#ram-reserved").textContent = ramTotal
-    ? `${(ramUsed / 1024).toFixed(1)} KiB (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
-    : "--";
-  document.querySelector("#ram-total").textContent = ramTotal
-    ? `${(ramTotal / 1024).toFixed(0)} KiB`
+  document.querySelector("#ram-usage").textContent = Number.isSafeInteger(ramTotal) && ramTotal > 0
+    && Number.isSafeInteger(ramUsed) && ramUsed >= 0 && ramUsed <= ramTotal
+    ? `${(ramUsed / 1024).toFixed(1)} / ${(ramTotal / 1024).toFixed(0)} KiB`
+      + ` (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
     : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
@@ -71,7 +73,7 @@ export function renderStatus(snapshot) {
   ledControl.setAttribute("aria-pressed", String(ledOn === true));
   ledControl.title = ledOn === null ? "Onboard LED unavailable"
     : `Turn onboard LED ${ledOn ? "off" : "on"}`;
-  renderMemory(snapshot.memory, snapshot.filesystem_format);
+  renderMemory(snapshot.memory, snapshot.filesystem_format, snapshot.msc);
   renderSelfTest(snapshot);
   const statusLine = document.querySelector(".status-line");
   statusLine.dataset.error = String(Boolean(snapshot.error));
@@ -81,24 +83,51 @@ export function renderStatus(snapshot) {
       : snapshot.reconnecting ? "USB interfaces changing; reconnecting HID automatically"
       : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
   for (const [id, label] of [[3, "telemetry"], [10, "storage"], [11, "self-test"]]) {
-    document.querySelector(`#${label}-freshness`).textContent = id === 11 && !(hardware?.capabilities & 32)
+    const status = document.querySelector(`#${label}-freshness`);
+    status.textContent = id === 11 && !(hardware?.capabilities & 32)
       ? "Self-test unavailable" : `${label}: ${snapshot.freshness?.[id] ?? "unavailable"}`;
+    status.hidden = snapshot.freshness?.[id] === "fresh";
   }
+  renderBoardConfiguration(snapshot);
+}
+
+function renderBoardConfiguration(snapshot) {
   const config = snapshot.settings;
-  const pin = value => value === 255 ? "--" : `GP${value}`;
-  document.querySelector("#board-config").textContent = config
-    ? `Reset: ${["Unknown", "Power-on", "Watchdog", "Software-requested", "HardFault recovery"][config.reset_cause]
-      ?? `Unknown (${config.reset_cause})`}. LED ${pin(config.led_gpio)}; detect ${pin(config.card_detect_gpio)}. `
-      + `Monitor UART ${config.monitor_uart_index === 255 ? "--" : config.monitor_uart_index}: `
-      + `TX ${pin(config.monitor_uart_tx_gpio)}, RX ${pin(config.monitor_uart_rx_gpio)}`
-      + `${config.board_flags & 4 ? " (enabled)" : " (disabled)"}. `
-      + `${hardware.transport.toUpperCase()} ${hardware.transport === "spi" ? "CLK/MOSI/MISO/CS" : "CLK/CMD/DAT0–3"}: `
-      + config.storage_gpios.map(pin).join(", ")
-    : "Board configuration unavailable.";
+  const spi = snapshot.hardware?.transport === "spi";
+  const signals = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
+  const renderPins = (selector, labels, pins) => {
+    const headings = document.createElement("tr");
+    const values = document.createElement("tr");
+    labels.forEach((label, index) => {
+      const heading = document.createElement("th");
+      heading.scope = "col";
+      heading.textContent = label;
+      const cell = document.createElement("td");
+      cell.textContent = !config ? "--" : pins[index] === 255 || pins[index] == null
+        ? "Unassigned" : `GP${pins[index]}`;
+      headings.append(heading);
+      values.append(cell);
+    });
+    document.querySelector(selector).replaceChildren(headings, values);
+  };
+  document.querySelector("#board-uart-title").textContent = config && config.monitor_uart_index !== 255
+    ? `Monitor UART${config.monitor_uart_index}` : "Monitor UART";
+  document.querySelector("#board-storage-title").textContent = config
+    ? `Storage (${spi ? "SPI" : "SDIO-PIO"})` : "Storage";
+  renderPins("#board-uart", ["TX", "RX"], [config?.monitor_uart_tx_gpio, config?.monitor_uart_rx_gpio]);
+  renderPins("#board-storage-pins", [...signals, "Card detect"],
+    [...signals.map((_, index) => config?.storage_gpios?.[index]), config?.card_detect_gpio]);
+  document.querySelector("#board-reset-cause").textContent = config
+    ? ["Unknown", "Power-on", "Watchdog", "Software request", "Watchdog after HardFault"][config.reset_cause]
+      ?? `Unassigned (${config.reset_cause})` : "--";
 }
 
 function updateClockOptions(select, mcu, savedClock) {
-  const choices = [[0, "Build clock"], [150, "150 MHz"], [200, "200 MHz"], [250, "250 MHz"]];
+  const choices = mcu === "RP2040"
+    ? [[0, "Default (125 MHz)"], [150, "150 MHz"], [200, "200 MHz"], [250, "250 MHz"]]
+    : mcu === "RP2350"
+      ? [[0, "Default (150 MHz)"], [200, "200 MHz"], [250, "250 MHz"]]
+      : [[0, "Default"]];
   const unsupportedClock = Number.isInteger(savedClock) && savedClock !== 0
     && !choices.some(([value]) => value === savedClock) ? savedClock : null;
   const signature = `${mcu ?? "unknown"}:${unsupportedClock ?? ""}`;
@@ -120,23 +149,28 @@ function updateClockOptions(select, mcu, savedClock) {
   select.value = options.some(option => option.value === previous) ? previous : "0";
 }
 
-function renderMemory(memory, filesystemFormat) {
+function renderMemory(memory, filesystemFormat, msc) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
-  const manufacturer = memory?.manufacturer;
-  set("#memory-state", memory?.sample_valid === false ? "Sample unavailable"
+  const busy = memory?.configured && memory.sample_valid === false
+    && !msc?.enabled && !msc?.transition_pending;
+  if (memory?.sample_valid && memory.initialized) lastStorageDetails = { memory, filesystemFormat };
+  else if (!busy) lastStorageDetails = null;
+  set("#memory-state", msc?.enabled ? "USB host" : msc?.transition_pending ? "Transitioning" : busy ? "Busy"
     : memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
   set("#memory-note", !memory ? "Waiting for fresh storage status."
-    : !memory.sample_valid ? "Current SD sample unavailable; this does not mean the card is absent."
+    : !memory.sample_valid ? ""
       : !memory.configured ? "No SD-card transport configured"
     : memory.presence_known && !memory.present
       ? "No card detected. Check card insertion and the configured card-detect connection."
       : memory.present && !memory.initialized
         ? "Card detected but not initialized; check UART logs and SD wiring."
         : memory.initialized ? "" : "Card presence has not been established.");
+  document.querySelector("#memory-note").hidden = !document.querySelector("#memory-note").textContent;
+  if (busy && lastStorageDetails) ({ memory, filesystemFormat } = lastStorageDetails);
+  const manufacturer = memory?.manufacturer;
   set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
-  set("#memory-timing", ({ 1: "Standard", 2: "High-Speed" })[memory?.speed_mode] ?? "--");
   set("#memory-speed", memory?.bus_clock_hz
-    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
+    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz (${memory.speed_mode === 2 ? "High-Speed" : "Standard"})`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };

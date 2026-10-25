@@ -157,6 +157,18 @@ pf_fatfs_volume_filesystem_format_t pf_fatfs_volume_filesystem_format(void) { re
 
 static unsigned led_requests, msc_requests, force_requests;
 static unsigned reset_requests;
+static unsigned reboot_usb_polls;
+static pf_hid_control_result_t reboot_ack;
+void vTaskDelay(TickType_t ticks) { fake_ticks += ticks; }
+void tud_task_ext(uint32_t timeout_ms, bool in_isr)
+{
+    TEST_ASSERT_EQUAL_UINT32(0u, timeout_ms);
+    TEST_ASSERT_FALSE(in_isr);
+    TEST_ASSERT_EQUAL_UINT(0u, reset_requests);
+    ++reboot_usb_polls;
+    TEST_ASSERT_EQUAL_UINT16(sizeof(reboot_ack), tud_hid_get_report_cb(
+        0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE, (uint8_t *)&reboot_ack, sizeof(reboot_ack)));
+}
 static bool requested_state;
 bool pf_led_set(bool on) { ++led_requests; requested_state = on; return true; }
 void pf_system_reset(void) { ++reset_requests; }

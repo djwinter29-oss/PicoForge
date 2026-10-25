@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { renderStatus } from "../../web/js/dashboard.mjs";
 
 test("shared dashboard handlers survive a status failure that clears the snapshot mid-command", async () => {
   const handlers = new Map();
@@ -10,7 +11,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     if (!elements.has(selector)) {
       const target = { textContent: "", valueAsNumber: 32, dataset: {}, style: {}, children: [],
         open: false, showModal() { this.open = true; }, close() { this.open = false; },
-        replaceChildren() { this.children = []; }, append(child) { this.children.push(child); },
+        replaceChildren(...children) { this.children = children; }, append(child) { this.children.push(child); },
         classList: { toggle() {}, add() {}, remove() {} },
         addEventListener: (type, handler) => handlers.set(`${selector}:${type}`, handler) };
       elements.set(selector, new Proxy(target, { get: (object, key) => key in object ? object[key] : () => {} }));
@@ -33,7 +34,8 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
   globalThis.document = {
     querySelector: element,
-    createElement: () => ({ value: "", textContent: "" }),
+    createElement: () => ({ value: "", textContent: "", children: [],
+      append(...children) { this.children.push(...children); } }),
   };
   globalThis.window = { setInterval: callback => { tick = callback; }, confirm: () => true };
   const saveAndConfirm = async () => {
@@ -79,6 +81,62 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(typeof handlers.get("#reboot-control:click"), "function");
     assert.equal(typeof tick, "function", "startup must register status polling");
     assert.equal(elements.get("#connection-label").textContent, "Connected");
+    assert.equal(elements.get("#settings-note").textContent, "");
+    assert.equal(elements.get("#settings-note").hidden, true);
+    renderStatus({ ...connected, memory: { configured: true, sample_valid: false, initialized: false } });
+    assert.equal(elements.get("#memory-state").textContent, "Busy");
+    assert.equal(elements.get("#memory-note").textContent, "");
+    assert.equal(elements.get("#memory-speed").textContent, "--");
+    for (const speedMode of ["high-speed", 2]) {
+      renderStatus({ ...connected, memory: { configured: true, sample_valid: true, initialized: true,
+        present: true, bus_clock_hz: 50000000, speed_mode: speedMode } });
+      assert.equal(elements.get("#memory-state").textContent, "Ready");
+      assert.equal(elements.get("#memory-speed").textContent, "50 MHz (High-Speed)");
+    }
+    const validStorage = { ...connected, filesystem_format: "exfat", memory: {
+      configured: true, sample_valid: true, initialized: true, present: true, mode: "sdio",
+      bus_clock_hz: 50000000, speed_mode: "high-speed", capacity_bytes: 127865454592,
+      manufacturer: { id: 3, product_name: "SB128", product_revision: "8.0", manufacture_year: 2020,
+        manufacture_month: 1, serial_number: 4089330880 },
+    } };
+    const busyStorage = { ...connected, memory: { configured: true, sample_valid: false } };
+    renderStatus(validStorage);
+    const detailIds = ["#memory-mode", "#memory-speed", "#memory-size", "#memory-filesystem",
+      "#memory-manufacturer", "#memory-product", "#memory-serial"];
+    const details = detailIds.map(id => elements.get(id).textContent);
+    for (let sample = 0; sample < 3; sample++) {
+      renderStatus(busyStorage);
+      assert.equal(elements.get("#memory-state").textContent, "Busy");
+      assert.equal(elements.get("#memory-note").textContent, "");
+      assert.deepEqual(detailIds.map(id => elements.get(id).textContent), details);
+    }
+    for (const invalidation of [
+      { connected: false },
+      { ...connected, storage_stale: true },
+      { ...connected, memory: { configured: true, sample_valid: true, presence_known: true, present: false } },
+      { ...connected, memory: { configured: true, sample_valid: true, present: true, initialized: false } },
+      { ...connected, msc: { enabled: true } },
+      { ...connected, msc: { transition_pending: true } },
+    ]) {
+      renderStatus(validStorage);
+      renderStatus(invalidation);
+      renderStatus(busyStorage);
+      assert.equal(elements.get("#memory-speed").textContent, "--", "invalidated details must not return");
+    }
+    renderStatus(connected);
+    for (const transport of ["sdio", "spi"]) {
+      renderStatus({ ...connected, board_configuration: {
+        storage_transport: transport, storage_gpios: [2, 3, 4, 5, 6, 7], card_detect_gpio: 8,
+        monitor_uart_index: 0, monitor_uart_tx_gpio: 0, monitor_uart_rx_gpio: 255, reset_cause: 2,
+      } });
+      const rows = id => elements.get(id).children.map(row => row.children.map(cell => cell.textContent));
+      assert.deepEqual(rows("#board-uart"), [["TX", "RX"], ["GP0", "Unassigned"]]);
+      assert.deepEqual(rows("#board-storage-pins"), transport === "spi"
+        ? [["CLK", "MOSI", "MISO", "CS", "Card detect"], ["GP2", "GP3", "GP4", "GP5", "GP8"]]
+        : [["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3", "Card detect"],
+          ["GP2", "GP3", "GP4", "GP5", "GP6", "GP7", "GP8"]]);
+    }
+    renderStatus(connected);
     assert.equal(elements.get("#board-model").textContent, "Pico 2 (RP2350)");
     assert.equal(elements.get("#ram-usage").textContent, "118.2 / 520 KiB (22.7%)");
     const html = readFileSync(new URL("../../web/index.html", import.meta.url), "utf8");
@@ -92,9 +150,10 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.match(html, /id="settings-title">Board configuration<\/h2>/);
     assert.doesNotMatch(html, /BOOT CONFIGURATION/);
     assert.doesNotMatch(html, /class="eyebrow"/);
+    assert.doesNotMatch(html, /metric-product/);
     const diagnostics = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
     assert.deepEqual([...diagnostics.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
-      ["Uptime", "CPU Usage (Core 1 / Core 2)", "Board temperature", "CLI port"]);
+      ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port"]);
     const pins = html.match(/<details class="pin-map-disclosure"([^>]*)>([\s\S]*?)<\/details>/);
     assert.ok(pins);
     assert.doesNotMatch(pins[1], /\bopen\b/);
@@ -144,6 +203,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       await saveAndConfirm();
       assert.equal(requestedUrls.at(-1), "/api/settings?board=board-a", "failed save must not reboot");
       assert.match(elements.get("#settings-note").textContent, /Save failed/);
+      assert.equal(elements.get("#settings-note").hidden, false);
     }
     saveFails = false;
     readbackMismatch = false;

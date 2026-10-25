@@ -60,6 +60,7 @@ export function fakeConnection({ capabilities, ...options } = {}) {
       return reply;
     } });
   const hid = new EventTarget(); hid.getDevices = async () => [device];
+  hid.requestDevice = async () => [device];
   const client = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, ...options });
   return { client, device, hid, reads, sent };
 }
