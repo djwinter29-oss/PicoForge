@@ -102,7 +102,7 @@ Then reconnect the board and restart the dashboard.
 
 The direct browser dashboard requires a WebHID-capable browser and permission
 to access the device. For the serial console, choose the PicoForge USB port,
-not a Debug Probe's UART port. See the [console guide](docs/design/usb/cdc-cli.md) for
+not a Debug Probe's UART port. See the [console guide](docs/design/usb/usb-cdc-cli.md) for
 terminal settings and available commands.
 
 ## Using an SD Card
@@ -130,27 +130,25 @@ To use the card as a USB drive:
 The computer and firmware cannot access the card's files at the same time.
 Do not unplug or remove the card during writes.
 
-The dashboard's [SD-card self-test](docs/design/sdcard/sd-self-test.md) writes and verifies a
-temporary `/PFTEST.BIN` file and **replaces any existing file at that path**.
-Selecting Start authorizes those writes. Back up your data first; this is not a filesystem repair or a
-guarantee of card reliability.
+The dashboard's SD-card self-test writes and verifies a temporary `/PFTEST.BIN` file. It refuses to start if a file
+already exists at that path and does not replace it. Selecting Start authorizes writes to the card and contributes to
+card wear. Back up your data first; this is not a filesystem repair or a guarantee of card reliability.
 
 ## Help and Documentation
 
 **Set up and use**
 
 - [Hardware setup](docs/hardware-setup.md): wiring, supported connections, and board notes.
-- [Console guide](docs/design/usb/cdc-cli.md): file commands, mounting, and recovery.
-- [SD-card self-test](docs/design/sdcard/sd-self-test.md): running tests and understanding results.
+- [Console guide](docs/design/usb/usb-cdc-cli.md): file commands, mounting, and recovery.
+- [SD-card performance test](docs/design/sdcard/sdcard-performance-test.md): running tests and understanding results.
 
 **Design and implementation reference**
 
 - [Persistent settings](docs/design/settings.md): flash settings record, reserved sector, and API.
 - [Architecture](docs/design/architecture.md): application layers, runtime, and storage ownership.
-- [SD-card design](docs/design/sdcard/sdcard-design.md): driver interfaces, initialization, and transfer policy.
+- [SD-card documentation](docs/design/sdcard/README.md): driver design and performance-test references.
 - [Physical transports](firmware/src/drivers/storage/README.md): SDIO-PIO, SD-SPI, and card wiring.
-- [USB CDC/HID overview](docs/design/usb/cdc-hid-overview.md): interface roles and MSC ownership.
-- [HID report reference](docs/design/usb/hid-report-reference.md): proposed consolidated HID design; not implemented.
+- [USB documentation](docs/design/usb/README.md): interface overview, CDC CLI, and HID protocol references.
 
 **Validation and history**
 

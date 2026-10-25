@@ -114,7 +114,7 @@ Firmware resources that do not use header GPIOs:
 When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or
 SD-SPI with `tools/firmware/build.sh --sd-card-transport SDIO_PIO` or `--sd-card-transport SPI`; CMake supplies
 the transport selection used by `firmware/src/config/config.h`. Detected cards are mounted by the worker as described in
-[the mounting policy](design/usb/cdc-cli.md). Validate card I/O on hardware before enabling storage use.
+[the mounting policy](design/usb/usb-cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

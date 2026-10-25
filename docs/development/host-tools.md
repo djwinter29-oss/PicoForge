@@ -29,7 +29,7 @@ tools/host/run-webhid.sh
 
 Python and .NET serve the shared dashboard at `http://127.0.0.1:5000/` by default; run only one server on that port at
 a time. WebHID serves the standalone browser app at `http://localhost:8000/`. A browser dashboard requires WebHID
-support and local USB permission. The CDC console is documented in the [CDC CLI guide](../design/usb/cdc-cli.md).
+support and local USB permission. The CDC console is documented in the [CDC CLI guide](../design/usb/usb-cdc-cli.md).
 
 The Python launcher provisions its environment on first use. To install the package explicitly for development and
 tests:
@@ -75,8 +75,8 @@ API response contract. WebHID is independent and owns its renderer and assets un
 USB handling there rather than creating a second Python/.NET frontend.
 
 Current host behavior follows the firmware's implemented HID reports. The
-[HID Report Reference](../design/usb/hid-report-reference.md) describes a proposed consolidated protocol and is not
-yet implemented; do not treat its report IDs or fields as the current host contract.
+[HID Report Reference](../design/usb/usb-hid-report-reference.md) is the authoritative protocol contract; host
+changes must preserve its framing, validation, and asynchronous-operation semantics.
 
 Only one active HID monitor per board should be used at a time. Separate host processes do not share device readers
 and can conflict for access to the same USB interface.

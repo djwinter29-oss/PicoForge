@@ -33,7 +33,7 @@ SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON i
 highest supported safe planned rate up to 50 MHz, clamped by the PIO ceiling of SYSCLK/4: at most 37.5 MHz at
 150 MHz CPU, and up to 50 MHz at 250 MHz CPU. Unsupported High Speed or failed faster-bus validation retains the
 bounded 25 MHz safe fallback policy; failed fallback aborts initialization. Actual rates depend on card support and
-divider planning. SPI follows its separate card-rate and divider policy. See [SD design](../design/sdcard/sdcard-design.md).
+divider planning. SPI follows its separate card-rate and divider policy. See [SD design](../design/sdcard/sdcard-driver-design.md).
 
 Product release remains blocked on allocation/owner approval of a USB identity. `0xCAFE:0x4011` is the documented
 development VID/PID and remains unchanged; it must not be represented as an allocated product identity.

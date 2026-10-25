@@ -30,7 +30,7 @@ def test_build_matrices_and_compatible_artifact_checks():
 
 
 def test_hid_report_reference_documents_filesystem_storage_field():
-    doc = (ROOT / "docs/design/usb/hid-report-reference.md").read_text()
+    doc = (ROOT / "docs/design/usb/usb-hid-report-reference.md").read_text()
     section = " ".join(doc.split("## Report ID 10: Storage Status", 1)[1].split("\n## ", 1)[0].split())
     for text in ("**Total** | **34**", "`filesystem_format`",
                  "Last successfully mounted format", "not proof that a volume is currently mounted",

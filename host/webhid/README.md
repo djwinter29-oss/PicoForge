@@ -12,7 +12,7 @@ The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial
 ## Protocol compatibility
 
 This standalone client targets layout version 1 of the authoritative
-[HID Report Reference](../../docs/design/usb/hid-report-reference.md), implemented by firmware and the Python,
+[HID Report Reference](../../docs/design/usb/usb-hid-report-reference.md), implemented by firmware and the Python,
 .NET, shared dashboard, and direct WebHID clients. Physical USB qualification remains outstanding.
 It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
 (9), and Input 3 telemetry (22), 10 storage (34), and optionally 11 self-test (32, capability bit 5).
@@ -38,7 +38,7 @@ USB ownership transitions briefly re-enumerate. The WebHID API does not expose t
 dashboard identifies a reconnect candidate by reading Feature 1 and matching its stable device UID before
 resuming; it does not replay the prior command. **Return to Pico** is explicitly confirmed force return, not an OS eject.
 Stop host file activity and safely eject whenever possible first. See the
-[force-return risks](../../docs/design/usb/hid-report-reference.md#msc-force-return-safety).
+[force-return risks](../../docs/design/usb/usb-hid-report-reference.md#msc-force-return-safety).
 The card is not automatically formatted or repaired, and reconnect does not prove successful remount.
 
 The optional self-test requires fresh, known self-test status and an already-mounted filesystem.

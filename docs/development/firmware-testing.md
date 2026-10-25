@@ -5,7 +5,7 @@ hardware limits are in [firmware test guidance](../../firmware/tests/README.md) 
 [test ownership index](../../tests/README.md). System and layer boundaries are in the
 [architecture guide](../design/architecture.md); the software HID protocol is implemented across firmware and host
 clients, while physical USB behavior remains a hardware-qualification item. The
-[HID Report Reference](../design/usb/hid-report-reference.md) is authoritative for the current contract.
+[HID Report Reference](../design/usb/usb-hid-report-reference.md) is authoritative for the current contract.
 
 ## Prerequisites
 
@@ -81,6 +81,6 @@ need `pioasm` from an SDIO_PIO build. The
 
 Host tests and cross-builds do not establish physical behavior. Board validation must use the intended board, card,
 breakout, wiring, and exact firmware image. Follow the [hardware setup guide](../hardware-setup.md), storage
-[transport and qualification notes](../design/sdcard/sdcard-design.md), and the specific procedure for the behavior
+[transport and qualification notes](../design/sdcard/sdcard-driver-design.md), and the specific procedure for the behavior
 under test. Record partial runs as partial; passing tests do not imply sustained card integrity, safe power-loss
 recovery, or full MSC host compatibility.

@@ -16,14 +16,14 @@ static pf_spi_t sd_transport;
 static bool monitor_uart_initialized;
 static bool led_initialized;
 static bool storage_configured;
-static pf_settings_t active_settings;
+static pf_boot_config_t active_boot_config;
 
-bool pf_board_apply_settings(const pf_settings_t *settings)
+bool pf_board_apply_boot_config(const pf_boot_config_t *config)
 {
-    if (storage_configured || !pf_settings_valid(settings)) {
+    if (storage_configured || !pf_boot_config_valid(config)) {
         return false;
     }
-    active_settings = *settings;
+    active_boot_config = *config;
     return true;
 }
 
@@ -39,7 +39,7 @@ bool pf_board_init(void)
     const pf_board_resources_t *topology = pf_board_resources_get();
     uart_inst_t *uart;
 
-    if (!pf_board_resources_validate(topology) || !topology->monitor_uart_enabled) {
+    if (!topology->monitor_uart_enabled) {
         return false;
     }
 
@@ -65,8 +65,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
 {
     const pf_board_resources_t *topology = pf_board_resources_get();
 
-    if ((config == NULL) || !topology->sd_card_enabled ||
-        !pf_board_resources_validate(topology)) {
+    if ((config == NULL) || !topology->sd_card_enabled) {
         return false;
     }
 
@@ -80,7 +79,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
     *config = (pf_sd_config_t){
         .transport = pf_sdio_pio_bus(&sd_transport),
         .clock_hz = topology->clock_hz,
-        .native_default_speed_only = active_settings.sdio_bus_mhz != 50u,
+        .native_default_speed_only = active_boot_config.sdio_bus_mhz != 50u,
     };
 #else
     if (!storage_configured) {
@@ -91,7 +90,7 @@ bool pf_board_get_sd_card_config(pf_sd_config_t *config)
     }
     *config = (pf_sd_config_t){
         .transport = pf_spi_bus(&sd_transport),
-        .clock_hz = active_settings.spi_bus_mhz != 0u ? active_settings.spi_bus_mhz * 1000000u
+        .clock_hz = active_boot_config.spi_bus_mhz != 0u ? active_boot_config.spi_bus_mhz * 1000000u
                                                          : topology->spi_clock_hz,
     };
 #endif

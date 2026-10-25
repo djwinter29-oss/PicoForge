@@ -34,7 +34,7 @@ void setUp(void)
     requests = (void *)1;
     replies = (void *)2;
     cli_session = 9u;
-    test_settings = (pf_settings_t){.system_clock_mhz = 200u, .sdio_bus_mhz = 25u, .spi_bus_mhz = 50u};
+    test_settings = (pf_boot_config_t){.system_clock_mhz = 200u, .sdio_bus_mhz = 25u, .spi_bus_mhz = 50u};
     settings_save_calls = 0u;
     reset_requests = 0u;
     led_requests = msc_requests = force_requests = 0u;

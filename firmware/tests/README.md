@@ -43,6 +43,7 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 | Media configuration, owner-gated I/O, retained diagnostics, commands, file benchmark, automount and recovery | [app/storage](app/storage) |
 | Singleton volume lifecycle and format telemetry | [app/storage](app/storage) |
 | Product CLI prompt, built-ins, completion and history | [app/cli](app/cli) |
+| Boot-config record validation and platform flash persistence | [config](config), [platform](platform) |
 | Logical blocks, SD adaptation, and FatFs disk results/geometry/protection | [middleware/storage](middleware/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |
 | Interval CPU accounting, first-sample availability and 64-bit runtime deltas | [integration/freertos](integration/freertos) |
@@ -132,5 +133,5 @@ python3 -m pytest tests/contracts/test_tinyusb_dcd_contract.py -q
 These checks validate integration synchronization, not the real controller or an SMP-enabled firmware image.
 
 Application CLI tests compile the pinned Embedded CLI submodule, so initialize
-submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/design/usb/cdc-cli.md#validation)
+submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/design/usb/usb-cdc-cli.md#validation)
 for the focused command and board-only checks.

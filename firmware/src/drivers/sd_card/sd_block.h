@@ -107,7 +107,7 @@ typedef enum {
      * DATA includes native TX response/busy and overlapped encode/decode;
      * STOP includes command/busy. RECOVERY is reserved/unmetered.
      * Never sum elapsed_us or compare phase values across transports directly.
-     * See docs/design/sdcard/sdcard-design.md, Profile Measurement Boundaries. ABI preserved. */
+     * See docs/design/sdcard/sdcard-driver-design.md, Profile Measurement Boundaries. ABI preserved. */
     PF_SD_PROFILE_COMMAND = 0,
     PF_SD_PROFILE_DATA,
     PF_SD_PROFILE_CRC,

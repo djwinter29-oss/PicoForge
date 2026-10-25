@@ -16,11 +16,11 @@ briefly re-enumerates with an added MSC interface, keeping the HID identity and 
 The same command is used on Windows, Linux and macOS; the host app never runs OS eject/unmount commands and
 requires no UDisks2 or eject permissions. The button requires supporting firmware; older firmware shows an
 update message instead of silently falling back to a different behavior. See the authoritative
-[force-return design and risks](../../docs/design/usb/hid-report-reference.md#msc-force-return-safety); a successful remount
+[force-return design and risks](../../docs/design/usb/usb-hid-report-reference.md#msc-force-return-safety); a successful remount
 does not establish filesystem integrity. This is OS-independent command behavior, not physical qualification
 on every OS. Native HID access still requires the platform's usual permissions and drivers.
 
-The dashboard also controls the [SD-card self-test](../../docs/design/sdcard/sd-self-test.md)
+The dashboard also controls the [SD-card self-test](../../docs/design/sdcard/sdcard-performance-test.md)
 over HID and displays progress, verified byte counts, and average MiB/s. Its
 `POST /api/self-test` accepts `{"action":"start","size_mib":32}` or
 `{"action":"cancel"}`. A 202 response acknowledges delivery; completion and

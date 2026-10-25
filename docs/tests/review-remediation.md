@@ -36,7 +36,7 @@ publication, admission release, and disconnect cleanup. Completion is simulated 
 cancellation; this is not a scheduler or FatFs end-to-end test. Existing file producer loops close opened files
 when a reply returns false; mutation commands retain their own close/sync behavior. Worker completion remains
 queued after execution/cleanup and admission remains held until done is drained. The explicit CLI truncation
-notice and DTR reopen requirement are documented in [CDC CLI](../design/usb/cdc-cli.md#stalled-output).
+notice and DTR reopen requirement are documented in [CDC CLI](../design/usb/usb-cdc-cli.md#stalled-output).
 
 Finding 2: DeviceMonitor reads under a device-handle lock and publishes under the snapshot lock. Commands,
 handle publication and disposal acquire the device lock first; disposal releases the snapshot lock before I/O.
@@ -66,7 +66,7 @@ power-loss, dual-core stress and stack qualification gaps.
 Not a hardware result; the sections above remain historical.
 
 * Input Report 7 (filesystem format in the implementation at the time of this record) is described in the
-  [HID Report Reference](../design/usb/hid-report-reference.md); the proposed design combines it into report 10.
+  [HID Report Reference](../design/usb/usb-hid-report-reference.md); the implemented design combines it into report 10.
   `test_usb_protocol_documents_filesystem_input_report` was RED (no section), then GREEN.
 * `release.yml` now runs the BAREMETAL `tests/artifacts/test_sd_ports.py` check between build and package, as
   `pr-check.yml` does. `test_workflows_validate_baremetal_artifacts_after_build` is parameterized over both

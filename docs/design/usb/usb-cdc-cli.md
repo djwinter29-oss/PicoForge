@@ -1,5 +1,8 @@
 # USB CDC CLI
 
+This guide owns terminal usage, CLI commands, and CDC/storage behavior. For interface roles and the
+authoritative HID contract, see the [USB documentation index](README.md).
+
 USB CDC ACM is the interactive command interface. UART remains the independent
 debug-log transport. Normal storage commands do not change MSC ownership;
 explicit confirmed fault recovery is the exception described below. The periodic
@@ -69,7 +72,7 @@ Long directory names are clipped in listings.
 `sd status` and `sd info` are available while USB owns the card; neither sends
 commands to the card. Detailed errors and counters do not require `sd profile on`.
 The retry count is explicit initialization requests after the first, not runtime
-transfer replay. See the [native startup policy](../sdcard/sdcard-design.md#initialization-workflow).
+transfer replay. See the [native startup policy](../sdcard/sdcard-driver-design.md#initialization-workflow).
 Every `fs` command is refused
 until the host safely ejects and disables MSC. The storage worker automatically
 attempts to mount detected cards at boot, after insertion, and after MSC returns

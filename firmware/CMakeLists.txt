@@ -296,19 +296,26 @@ target_link_libraries(pf_app_storage PUBLIC
     embedded_cli
     FreeRTOS-Kernel-Static
 )
-add_library(pf_settings STATIC
-    src/drivers/persistent_memory/settings.c
-    src/drivers/persistent_memory/settings_store.c
+add_library(pf_platform_boot_config_store STATIC
+    src/platform/boot_config_store.c
 )
-target_include_directories(pf_settings PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+target_include_directories(pf_platform_boot_config_store PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 # pico_flash is an INTERFACE library: flash.c compiles into this target, so it needs the FreeRTOS SMP definitions
 # (LIB_FREERTOS_KERNEL, FREE_RTOS_KERNEL_SMP, configNUMBER_OF_CORES, configUSE_CORE_AFFINITY) here.
-target_link_libraries(pf_settings PUBLIC hardware_flash pico_flash pico_sync FreeRTOS-Kernel-Static)
+target_link_libraries(pf_platform_boot_config_store PUBLIC
+    hardware_flash
+    pico_flash
+    pico_sync
+    FreeRTOS-Kernel-Static
+)
+
+add_library(pf_boot_config STATIC src/drivers/boot_config.c)
+target_include_directories(pf_boot_config PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+target_link_libraries(pf_boot_config PUBLIC pf_platform_boot_config_store)
 
 add_library(pf_board STATIC
     src/board/board.c
     src/board/board_profile.c
-    src/board/board_resources.c
 )
 target_include_directories(pf_board PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
@@ -321,7 +328,7 @@ target_link_libraries(pf_board PUBLIC
     hardware_spi
     pico_stdio_uart
     pf_led
-    pf_settings
+    pf_boot_config
 )
 target_link_libraries(pf_board PUBLIC ${PF_SD_CARD_BACKEND})
 target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
@@ -354,7 +361,7 @@ target_link_libraries(pico_forge
     pf_cli
     pf_app_storage
     pf_board
-    pf_settings
+    pf_boot_config
 )
 
 target_compile_definitions(pico_forge PRIVATE
@@ -390,7 +397,7 @@ else()
     set(pf_flash_size "2 * 1024 * 1024")
 endif()
 set(PF_SETTINGS_SECTOR_SIZE 4096)
-set(pf_link_dir "${CMAKE_CURRENT_BINARY_DIR}/pf_settings_link")
+set(pf_link_dir "${CMAKE_CURRENT_BINARY_DIR}/pf_boot_config_link")
 file(WRITE "${pf_link_dir}/pico_flash_region.ld"
     "FLASH(rx) : ORIGIN = 0x10000000, LENGTH = (${pf_flash_size}) - ${PF_SETTINGS_SECTOR_SIZE}\n")
 pico_add_linker_script_override_path(pico_forge "${pf_link_dir}" FILES pico_flash_region.ld)

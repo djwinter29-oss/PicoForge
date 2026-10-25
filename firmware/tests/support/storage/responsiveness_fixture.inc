@@ -6,14 +6,11 @@
 #include WORKER_SOURCE
 #include HID_SOURCE
 #include USB_TASK_SOURCE
-#include "drivers/persistent_memory/settings.c"
-
-static pf_settings_t test_settings;
+static pf_boot_config_t test_settings;
 static unsigned settings_save_calls;
 static bool msc_enabled;
 static bool msc_transition_pending;
 static pf_board_resources_t test_topology = {
-    .gpio_count = 30u,
     .led_enabled = true,
     .led_gpio = 25u,
     .led_active_high = true,
@@ -34,13 +31,13 @@ static pf_board_resources_t test_topology = {
 
 const pf_board_resources_t *pf_board_resources_get(void) { return &test_topology; }
 
-bool pf_settings_load(pf_settings_t *settings)
+bool pf_boot_config_load(pf_boot_config_t *settings)
 {
     *settings = test_settings;
     return true;
 }
 
-bool pf_settings_save(const pf_settings_t *settings)
+bool pf_boot_config_save(const pf_boot_config_t *settings)
 {
     ++settings_save_calls;
     test_settings = *settings;

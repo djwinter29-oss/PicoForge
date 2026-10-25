@@ -2,7 +2,7 @@
 #include "task.h"
 #include "pico/stdlib.h"
 #include "board/board.h"
-#include "drivers/persistent_memory/settings_store.h"
+#include "drivers/boot_config.h"
 #include "drivers/system.h"
 #include "pico/runtime.h"
 #include "drivers/temperature.h"
@@ -16,9 +16,9 @@ _Static_assert(SYS_CLK_HZ == PF_IMAGE_SYS_CLK_MHZ * 1000000u,
 /* Runs after the SDK clock init (00500) and before peripheral resets are released (00600), stdio and FreeRTOS. */
 static void apply_saved_system_clock(void)
 {
-    pf_settings_t settings;
+    pf_boot_config_t settings;
     /* Missing or corrupt records load as Defaults (0 = keep the build clock). */
-    (void)pf_settings_load_early(&settings);
+    (void)pf_boot_config_load_early(&settings);
     (void)pf_system_clock_apply(settings.system_clock_mhz);
 }
 PICO_RUNTIME_INIT_FUNC_HW(apply_saved_system_clock, "00501");
@@ -31,10 +31,10 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 
 int main(void)
 {
-    pf_settings_t settings;
+    pf_boot_config_t settings;
     /* Invalid or missing settings load as complete defaults, so boot never depends on them. */
-    (void)pf_settings_load_early(&settings);
-    (void)pf_board_apply_settings(&settings);
+    (void)pf_boot_config_load_early(&settings);
+    (void)pf_board_apply_boot_config(&settings);
     if (!pf_board_init()) {
         panic("Failed to initialize board pin assignments");
     }

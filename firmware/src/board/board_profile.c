@@ -35,7 +35,6 @@ enum {
 
 /* Shared storage wiring for Pico-family reference boards. */
 static const pf_board_resources_t board_resources = {
-    .gpio_count = NUM_BANK0_GPIOS,
     .led_enabled = PF_BOARD_LED_ENABLED,
     .led_gpio = PF_BOARD_LED_GPIO,
     .led_active_high = !PICO_DEFAULT_LED_PIN_INVERTED,

@@ -17,12 +17,12 @@ remains limited to the fixed 25 MHz transfer mode plus that optional negotiation
 ## Using the API
 
 ```c
-#include "drivers/persistent_memory/settings_store.h"
+#include "drivers/boot_config.h"
 
-pf_settings_t settings;
-bool stored = pf_settings_load(&settings);   /* task, scheduler running; always complete (defaults if !stored) */
+pf_boot_config_t settings;
+bool stored = pf_boot_config_load(&settings);   /* task, scheduler running; always complete (defaults if !stored) */
 settings.spi_bus_mhz = 25;
-pf_settings_save(&settings);                 /* task, scheduler running; true after read-back verifies */
+pf_boot_config_save(&settings);                 /* task, scheduler running; true after read-back verifies */
 ```
 
 ## Host dashboard settings
@@ -30,7 +30,7 @@ pf_settings_save(&settings);                 /* task, scheduler running; true af
 HID Feature report `2` reads persisted settings as transport-neutral profiles; Feature report `20`, opcode `6`, saves
 profiles. The profile payload is two-byte little-endian `system_clock_mhz` followed by one-byte `sdcard_profile`
 (`0` Standard, `1` High-Speed). Report `2` also returns the selected board's GPIO configuration. See the exact
-offsets and validation rules in the [HID Report Reference](usb/hid-report-reference.md).
+offsets and validation rules in the [HID Report Reference](usb/usb-hid-report-reference.md).
 
 The Python, .NET, and WebHID dashboards map these values to select options and verify a save by reading Feature
 report `2` back. Saving does not reboot. **Save & Reboot** issues a separate confirmed reboot command through Feature
@@ -47,14 +47,15 @@ legacy numeric field to the profile in Feature report `2`, and maps a saved prof
 maps to Standard and `50` to High-Speed; SPI `25` maps to Standard and `0`/`50` to High-Speed. A missing record retains
 the existing transport defaults.
 
-Settings follow PicoUart's small boot-config pattern: one settings module owns the record and the only runtime writer
-is the USB task ([reference implementation](https://github.com/djwinter29-oss/PicoUart/blob/main/firmware/src/platform/boot_config.c)).
-PicoForge keeps its portable record codec separate because the HID/profile migration and protocol tests share it.
-Before the scheduler starts, runtime-init and `main()` use `pf_settings_load_early()`; `main()` passes the result to
-`pf_board_apply_settings()` before storage starts. Runtime reads and saves belong to the USB task; they are not a
+Boot-applied settings live behind the driver `drivers/boot_config.c/.h`. The USB task is the only runtime writer.
+RP2 flash access and FreeRTOS-safe erase/program handling are isolated in the platform store
+`platform/boot_config_store.c/.h`; the boot-config driver owns the record format, validation, defaults, and public
+load/save API. This keeps hardware-specific flash operations behind the platform interface.
+Before the scheduler starts, runtime-init and `main()` use `pf_boot_config_load_early()`; `main()` passes the result to
+`pf_board_apply_boot_config()` before storage starts. Runtime reads and saves belong to the USB task; they are not a
 general multi-task settings API.
 
-`pf_settings_save()` rejects ISR, pre-scheduler and suspended-scheduler callers, invalid settings, and re-entrant
+`pf_boot_config_save()` rejects ISR, pre-scheduler and suspended-scheduler callers, invalid settings, and re-entrant
 saves. It skips an identical record and uses `flash_safe_execute` for erase/program (interrupts off and the other
 core held, roughly 50 ms; USB can miss frames, so do not save during MSC transfers). Unlike the PicoUart reference,
 PicoForge disables FreeRTOS dynamic allocation: the SDK reuses a static lockout task control block. Therefore the
@@ -97,7 +98,7 @@ flash sizes. A board with less flash than the SDK definition is unsupported.
 A saved `system_clock_mhz` is applied by a `PICO_RUNTIME_INIT_FUNC_HW` hook in [main.c](../../firmware/src/main.c) ordered
 `00501`: after the SDK clock init (`00500`) and before peripheral resets are released (`00600`), stdio and FreeRTOS, so
 the FreeRTOS port reads the new `clk_sys` for SysTick at scheduler start. The hook reads the record without writing
-(`pf_settings_load_early()`) and calls `pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)):
+(`pf_boot_config_load_early()`) and calls `pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)):
 
 - `0`, a corrupt/missing record (which decodes as Defaults), an underivable frequency or the clock already in use change
   nothing, so Defaults keep the build clock.
@@ -118,7 +119,7 @@ combination has been qualified. None of these runtime clock profiles is hardware
 
 ## Tests
 
-Host tests (`firmware/tests/config`, `test_sd_native_init.c`) run with `ceedling test:all`; they cover defaults, the
+Host tests (`firmware/tests/drivers`, `test_sd_native_init.c`) run with `ceedling test:all`; they cover defaults, the
 CRC-32 check value, every-bit CRC coverage, each corruption class, the flash store against a host flash model (round
 trip, no redundant erase, failed program, rejected ISR/scheduler contexts, re-entrant and overlapping load/save through
 a modelled mutex, lockout-TCB reclamation) and the clock sequence against modelled clock/regulator APIs.

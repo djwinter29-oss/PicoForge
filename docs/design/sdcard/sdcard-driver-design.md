@@ -4,7 +4,8 @@ This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
 [storage transport guide](../../../firmware/src/drivers/storage/README.md#memory-and-storage-connections); filesystem
-commands and mounting policy remain in [the CDC CLI guide](../usb/cdc-cli.md).
+commands and mounting policy remain in [the CDC CLI guide](../usb/usb-cdc-cli.md). Use the
+[SD-card documentation index](README.md) for related design and test references.
 
 ## Guide
 
@@ -13,7 +14,7 @@ commands and mounting policy remain in [the CDC CLI guide](../usb/cdc-cli.md).
 | Layers and interfaces | [Architecture](#architecture), [block-device boundary](#filesystem-block-device-boundary), [transport and port selection](#interfacing-with-the-driver) |
 | Protocol workflows | [Initialization](#initialization-workflow), [reads](#read-workflow), [writes](#write-workflow), [ownership](#ownership-workflow) |
 | Resources and performance | [Hardware resources](#hardware-resource-inventory), [profiling and MSC batching](#performance-controls-and-status) |
-| Test scope | [Validation limits](#validation-and-limits), [SD self-test](sd-self-test.md) |
+| Test scope | [Validation limits](#validation-and-limits), [SD-card performance test](sdcard-performance-test.md) |
 | Review status | [SD remediation matrix](../../tests/sd-design-remediation.md) |
 | History and measurements | [Historical records](#historical-records) and [test records](../../tests/records/README.md) |
 
@@ -824,7 +825,7 @@ preallocated files), and card busy time before choosing further optimizations.
 | Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; SB128 filesystem tests qualified at 25 MHz, not 50 MHz |
 | Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](../../tests/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
-| Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD self-test](sd-self-test.md) |
+| Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD-card performance test](sdcard-performance-test.md) |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
@@ -900,7 +901,7 @@ application, a statically
 allocated FreeRTOS recursive mutex
 serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
-[CDC recovery workflow](../usb/cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
+[CDC recovery workflow](../usb/usb-cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
 before returning ownership and queues worker-only reinitialization. It never
 reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
 inhibited until a successful explicit `fs mount`; presence debounce continues.
@@ -914,7 +915,7 @@ FatFs transaction. The storage worker's exclusive workflow and busy gating
 protect filesystem operations across multiple facade calls; the per-call mutex
 alone cannot do that. Profile snapshots use the same mutex. Returning ownership sets a reinitialization
 request because the host may have changed the filesystem. See
-[HID report contract and MSC lifecycle](../usb/hid-report-reference.md) for transition rules.
+[HID report contract and MSC lifecycle](../usb/usb-hid-report-reference.md) for transition rules.
 
 Backend headers remain available to their implementation and focused transport
 tests. Application filesystem and MSC I/O must use `sd_media`; telemetry may query the serialized raw driver.
@@ -941,7 +942,7 @@ Use the existing [test guidance](../../../firmware/tests/README.md) and
 Host tests and timing models do not establish electrical margins or target
 hardware safety. Physical qualification is card, board, wiring, and clock
 specific; see [hardware records](../../../firmware/src/drivers/storage/README.md#sd-card-breakout),
-[SD self-test](sd-self-test.md), and [test records](../../tests/records).
+[SD-card performance test](sdcard-performance-test.md), and [test records](../../tests/records).
 Read-only initialization success does not qualify high-speed writes. Power-loss
 recovery, complete MSC lifecycles, and sustained endurance require separate
 qualification. CSD v1/v2 capacity must fit the 32-bit block contract; SDUC,

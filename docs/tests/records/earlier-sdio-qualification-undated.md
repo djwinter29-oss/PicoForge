@@ -1,7 +1,7 @@
 # Earlier SDIO Qualification Observations (Undated)
 
 Date: not recorded. Migrated unchanged from the former "Previously Recorded Qualification" section of
-[SD-card driver design](../../design/sdcard/sdcard-design.md); the observations pre-date the 2026-10-13 records.
+[SD-card driver design](../../design/sdcard/sdcard-driver-design.md); the observations pre-date the 2026-10-13 records.
 
 **Scope:** historical, configuration-specific observations. Earlier clocking, recovery, and qualification algorithms
 may differ from the current implementation, and these records do not qualify every compatible card or the current

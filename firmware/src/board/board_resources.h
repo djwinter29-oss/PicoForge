@@ -7,9 +7,8 @@
 
 #define PF_BOARD_PIN_UNASSIGNED UINT32_MAX
 
-/** Board-owned GPIO and peripheral resource assignments. */
+/** Immutable board GPIO and peripheral assignments selected at build time. */
 typedef struct {
-    uint32_t gpio_count;
     bool led_enabled;
     uint32_t led_gpio;
     bool led_active_high;
@@ -34,8 +33,5 @@ typedef struct {
 
 /** Return the immutable pin profile selected for this board build. */
 const pf_board_resources_t *pf_board_resources_get(void);
-
-/** Validate board pin/peripheral assignments without accessing hardware. */
-bool pf_board_resources_validate(const pf_board_resources_t *topology);
 
 #endif

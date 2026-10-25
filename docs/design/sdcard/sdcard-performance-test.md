@@ -1,4 +1,8 @@
-# Storage File Benchmark
+# SD-Card Performance Test
+
+This guide owns the benchmark's safety rules, execution workflow, measurement boundaries, and result interpretation.
+For card-driver behavior and transport constraints, see the [SD-card driver design](sdcard-driver-design.md); for the
+full SD documentation map, see the [SD-card documentation index](README.md).
 
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
 It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
@@ -89,7 +93,7 @@ separately. This mode changes allocation and wear behavior, may need contiguous
 free space, and is not a raw-driver benchmark. Use `sd profile` with a stable
 build and card when inspecting driver instrumentation windows. These windows
 overlap and cannot be summed or directly compared across transports; see
-[profile measurement boundaries](sdcard-design.md#profile-measurement-boundaries).
+[profile measurement boundaries](sdcard-driver-design.md#profile-measurement-boundaries).
 
 ## CMD25 Persistence Decision
 
@@ -134,7 +138,7 @@ Poll `/api/status` and its `self_test` object. Firmware rejection is reported by
 The HID command result reports Pending while start preflight runs, then Completed when the test is accepted or Failed
 for preflight I/O, card, space, or existing-path errors. Input report `11` retains the previous test result for
 rejected starts and carries progress after acceptance. Storage status is reported independently in Input report `10`.
-See the [HID Report Reference](../usb/hid-report-reference.md) for the wire contract.
+See the [HID Report Reference](../usb/usb-hid-report-reference.md) for the wire contract.
 
 ## Validation
 

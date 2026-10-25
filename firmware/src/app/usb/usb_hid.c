@@ -11,7 +11,7 @@
 #include "config/config.h"
 #include "drivers/sd_card/sd_block.h"
 #include "drivers/led.h"
-#include "drivers/persistent_memory/settings_store.h"
+#include "drivers/boot_config.h"
 #include "drivers/temperature.h"
 #include "usb_msc.h"
 #include "app/storage/fatfs_volume.h"
@@ -89,7 +89,7 @@ static void set_result(const pf_hid_control_request_t *request, uint8_t status, 
     if (result_data != NULL) memcpy(control_result.result_data, result_data, sizeof(control_result.result_data));
 }
 
-static uint8_t persisted_sd_profile(const pf_settings_t *settings)
+static uint8_t persisted_sd_profile(const pf_boot_config_t *settings)
 {
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
     return settings->spi_bus_mhz == 25u ? 0u : 1u;
@@ -164,8 +164,8 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
 void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
 {
     const pf_board_resources_t *topology = pf_board_resources_get();
-    pf_settings_t settings;
-    (void)pf_settings_load(&settings);
+    pf_boot_config_t settings;
+    (void)pf_boot_config_load(&settings);
 
     memset(report, 0, sizeof(*report));
     report->version = PF_HID_REPORT_VERSION;
@@ -306,7 +306,7 @@ void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t se
 
 static void process_control_request(const pf_hid_control_request_t *request)
 {
-    pf_settings_t settings;
+    pf_boot_config_t settings;
     uint8_t result_data[4] = {0};
     uint8_t status = PF_HID_COMMAND_INVALID;
     uint8_t error = PF_HID_ERROR_MALFORMED;
@@ -428,14 +428,14 @@ static void process_control_request(const pf_hid_control_request_t *request)
             status = PF_HID_COMMAND_BUSY;
             error = PF_HID_ERROR_BUSY;
         } else {
-            (void)pf_settings_load(&settings);
+            (void)pf_boot_config_load(&settings);
             settings.system_clock_mhz = system_clock_mhz;
 #if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
             settings.spi_bus_mhz = sdcard_profile == 0u ? 25u : 50u;
 #else
             settings.sdio_bus_mhz = sdcard_profile == 0u ? 25u : 50u;
 #endif
-            if (!pf_settings_save(&settings)) {
+            if (!pf_boot_config_save(&settings)) {
                 status = PF_HID_COMMAND_FAILED;
                 error = PF_HID_ERROR_OPERATION;
             } else {

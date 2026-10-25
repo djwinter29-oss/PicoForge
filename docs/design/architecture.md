@@ -1,6 +1,6 @@
 # PicoForge Architecture
 
-> **Status:** The firmware configures two-core FreeRTOS SMP for RP2040 and RP2350. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](usb/cdc-cli.md). With card detect enabled it debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive; dashboard Disable requests confirmed [Pico-side detach/remount](usb/hid-report-reference.md#msc-force-return-safety), while legacy safe-disable commands require host eject. The HID contract is implemented across firmware and host clients; physical USB qualification remains outstanding. See [the hardware validation record](../../firmware/src/drivers/storage/README.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
+> **Status:** The firmware configures two-core FreeRTOS SMP for RP2040 and RP2350. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](usb/usb-cdc-cli.md). With card detect enabled it debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive; dashboard Disable requests confirmed [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety), while legacy safe-disable commands require host eject. The HID contract is implemented across firmware and host clients; physical USB qualification remains outstanding. See [the hardware validation record](../../firmware/src/drivers/storage/README.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
 
 ## Current Firmware
 
@@ -11,11 +11,11 @@ platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected
 under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID
 interface. Board startup assigns, initializes and selects the monitor UART for stdio before enabling the logger;
 USB stdio stays disabled so log messages remain separate from CDC. The `middleware/logging` library provides
-serialized severity-tagged lines. The USB task services the [CDC CLI](usb/cdc-cli.md) and publishes HID Input
+serialized severity-tagged lines. The USB task services the [CDC CLI](usb/usb-cdc-cli.md) and publishes HID Input
 report `3` telemetry every 250 ms, plus storage and capability-gated self-test reports `10` and `11` every 500 ms.
 Feature report `1` carries stable product, MCU, board, capability, and SRAM information; Feature report `2` carries
 persisted profiles and board GPIO configuration. Feature report `20` handles LED, reboot, MSC, self-test, and
-settings transactions. The [HID Report Reference](usb/hid-report-reference.md) defines the wire contract and
+settings transactions. The [HID Report Reference](usb/usb-hid-report-reference.md) defines the wire contract and
 validation. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4.
 The shared Pico-family profile in `firmware/src/board/board_profile.c` uses the SDK's default UART and direct-LED
 assignments, while keeping PicoForge's storage connector wiring in one profile. Pico, Pico 2, and Pico 2 W use the
@@ -24,8 +24,8 @@ same monitor UART pins; boards without a direct GPIO LED do not advertise one. T
 adopting its UART-channel map or hardware features. Other layouts require a matching board profile; see
 [hardware setup](../hardware-setup.md). Simple system, temperature, and LED drivers live flat under
 `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines
-in `drivers/storage/`. Interface roles and lifecycle are documented in the
-[USB CDC/HID overview](usb/cdc-hid-overview.md). The development VID/PID is `0xCAFE:0x4011` and is not for product
+in `drivers/storage/`. USB interface roles, descriptors, and lifecycle are documented in the
+[HID Report Reference](usb/usb-hid-report-reference.md). The development VID/PID is `0xCAFE:0x4011` and is not for product
 release. `firmware/src/main.c` initializes board UART
 and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler.
 The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature,
@@ -33,10 +33,10 @@ and LED behavior still require board validation.
 
 Input report `10` publishes SD detection/initialization, selected bus mode, effective bus speed, capacity, CID,
 filesystem format, and MSC ownership state every 500 ms. In MSC mode the USB descriptor appends MSC after CDC and HID,
-preserving the HID interface number; see the [USB CDC/HID overview](usb/cdc-hid-overview.md). The owner gate rejects
+preserving the HID interface number; see the [HID Report Reference](usb/usb-hid-report-reference.md). The owner gate rejects
 firmware block calls while the host owns the card. Enabling queues a worker-owned FatFs unmount before acquisition
 and is rejected if CLI storage work is pending. Normal disable requires host eject; the dashboard's confirmed
-**Disable USB drive** action requests [Pico-side detach/remount](usb/hid-report-reference.md#msc-force-return-safety),
+**Disable USB drive** action requests [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety),
 with one worker mount attempt and explicit failure reporting. Host apps never run OS eject commands.
 
 CDC storage commands are queued to a statically allocated FreeRTOS storage worker,
@@ -44,17 +44,17 @@ which is the sole FatFs caller for this workflow. USB/CLI and storage communicat
 through bounded request/reply queues; filesystem calls do not execute in the USB
 task. MSC transitions are rejected while a storage command is outstanding. Files
 are closed before command completion, and enabling MSC automatically queues filesystem
-unmount on the worker before acquiring USB ownership. See [the CDC CLI guide](usb/cdc-cli.md) for commands, safeguards,
+unmount on the worker before acquiring USB ownership. See [the CDC CLI guide](usb/usb-cdc-cli.md) for commands, safeguards,
 resource budgets, and validation limits.
 
 The firmware separates application policy, middleware, reusable drivers, and platform integration as described below.
 New modules should preserve these boundaries as hardware and application behavior grows.
 
-Feature Report `20` and Input report `11` implement the [SD self-test](sdcard/sd-self-test.md). Its RTOS-independent engine lives
+Feature Report `20` and Input report `11` implement the [SD self-test](sdcard/sdcard-performance-test.md). Its RTOS-independent engine lives
 in `app/storage` and runs in the sole FatFs worker. The worker checks ownership,
 the mounted filesystem, available space, and the reserved `/PFTEST.BIN` path
 before accepting a run; existing files are left untouched. See the
-[self-test safeguards](sdcard/sd-self-test.md#running). Browser, Python, and
+[performance-test safeguards](sdcard/sdcard-performance-test.md#running). Browser, Python, and
 .NET dashboards expose the controls and calculate average read/write metrics.
 
 ## Core and Runtime Policy
@@ -144,7 +144,7 @@ Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple sy
 
 ### SD-Card Driver Structure
 
-See [SD-Card Driver Design](sdcard/sdcard-design.md) for the authoritative layer
+See [SD-Card Driver Design](sdcard/sdcard-driver-design.md) for the authoritative layer
 boundaries, SDIO-PIO and SPI interfaces, initialization/read/write/ownership
 workflows, explicitly selected FreeRTOS/bare-metal ports, and hardware resource
 inventory. The default USB/storage application remains FreeRTOS-only; the
@@ -154,7 +154,14 @@ qualification records remain in the [storage transport guide](../../firmware/src
 
 ### Platform
 
-Own board support, configuration, logging, version metadata, and integration with the selected MCU and SDK. The board topology/configuration API lives in `firmware/src/board/`; board-specific pin mapping belongs here and must agree with [the hardware setup baseline](../hardware-setup.md) and the board schematic. The selected Pico profile exposes SDIO-PIO and SPI wiring for explicit transport selection; physical card operation still needs board validation.
+Own board support, boot configuration, logging, version metadata, and integration with the selected MCU and SDK.
+The board pin/peripheral profile is immutable and selected at build time; firmware trusts this project-owned profile
+instead of repeating pin-range, mux, and collision validation at runtime. Wiring must agree with
+[the hardware setup baseline](../hardware-setup.md) and the board schematic. Boot-applied settings and their public
+load/save API live in `firmware/src/drivers/boot_config.c/.h`; RP2 flash persistence and FreeRTOS-safe access live in
+`firmware/src/platform/boot_config_store.c/.h`. Board pin mapping lives in `firmware/src/board/`; the selected Pico
+profile exposes SDIO-PIO and SPI wiring for explicit transport selection. Physical card operation still needs board
+validation.
 
 ## External Components
 
@@ -164,7 +171,7 @@ adaptation lives under `firmware/src/middleware/storage/`, while the singleton v
 `firmware/src/app/storage/`.
 
 Embedded CLI is also pinned as a Git submodule. Its application session module is independent
-of the USB transport and RTOS; see [CDC CLI](usb/cdc-cli.md) for the dependency pin,
+of the USB transport and RTOS; see [CDC CLI](usb/usb-cdc-cli.md) for the dependency pin,
 session lifecycle, command-extension rules, memory budget, and validation plan.
 
 The application storage-owner task initializes the SD-card interface and mounts its existing volume through the
@@ -172,7 +179,7 @@ device-independent `pf_fatfs_volume_mount()` service; mounting never formats med
 selected by the application. The SD API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes
 to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. Mount, unmount, and file
 operations require caller serialization because FatFs is configured without cross-task locking. See the
-[filesystem block-device boundary](sdcard/sdcard-design.md#filesystem-block-device-boundary) for authoritative layering,
+[filesystem block-device boundary](sdcard/sdcard-driver-design.md#filesystem-block-device-boundary) for authoritative layering,
 binding lifetimes, and ownership contracts.
 
 Application storage policy stays in `app/storage`: `fatfs_volume.c/.h` owns the singleton FatFs instance,
@@ -221,7 +228,7 @@ output selection performed by board startup. Neither middleware service depends 
 
 This is the product-level lifecycle; worker admission and operation completion details are in
 [Storage Worker State](#storage-worker-state), and transition rules are in the
-[SD-card ownership workflow](sdcard/sdcard-design.md#ownership-workflow).
+[SD-card ownership workflow](sdcard/sdcard-driver-design.md#ownership-workflow).
 
 ```mermaid
 stateDiagram-v2
