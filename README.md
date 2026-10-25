@@ -1,12 +1,20 @@
 # PicoForge
 
 [![PR Check](https://github.com/djwinter29-oss/PicoForge/actions/workflows/pr-check.yml/badge.svg?branch=main)](https://github.com/djwinter29-oss/PicoForge/actions/workflows/pr-check.yml)
+[![Release](https://github.com/djwinter29-oss/PicoForge/actions/workflows/release.yml/badge.svg)](https://github.com/djwinter29-oss/PicoForge/actions/workflows/release.yml)
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
 ![Targets: RP2040 and RP2350](https://img.shields.io/badge/Targets-RP2040%20%7C%20RP2350-2674b8)
 
 PicoForge is firmware for Raspberry Pi Pico and Pico 2 boards. Connect a board
 over USB to monitor its status, control its LED, and work with files on an
 attached SD card using a dashboard or serial console.
+
+[Firmware and host downloads](https://github.com/djwinter29-oss/PicoForge/releases/latest) ·
+[WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) ·
+[Python package](https://pypi.org/project/picoforge/)
+
+Publication endpoints require the initial [release setup](docs/deployment/release.md#publishing-setup);
+links may be unavailable until the first successful publication.
 
 **Status:** under active development. Back up important card data before use.
 High-speed SD-card operation depends on the board, card, and wiring; a short
@@ -38,6 +46,10 @@ SD-card breakout. Use 3.3 V logic and a common ground, never 5 V.
 ## Get Started
 
 ### 1. Build the Firmware
+
+Prebuilt board/transport packages are available from
+[Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest); extract the matching UF2 to skip the build.
+To build from source:
 
 Clone the repository, then run these commands from its root:
 
@@ -73,6 +85,25 @@ For a Pico build, use `pico_forge_rp2040_125_<YYYYMMDD>.uf2` from `build/firmwar
 Always use the image built for your board.
 
 ### 3. Open the Dashboard
+
+Use the hosted [WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge,
+click **Connect**, and choose your board. No Python or .NET installation is needed.
+
+For the local Python dashboard, install [picoforge](https://pypi.org/project/picoforge/) in a Python 3.10+
+virtual environment:
+
+```sh
+python -m pip install picoforge
+picoforge web
+```
+
+Alternatively, download a self-contained .NET host for Windows x64, Linux x64, or macOS ARM64 from
+[Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest). Extract the entire archive and run
+`PicoForge.exe` on Windows or `./PicoForge` on Linux/macOS. It does not require the .NET SDK or runtime;
+native HID dependencies and platform permission requirements still apply. See the
+[release guide](docs/deployment/release.md#using-downloads).
+
+From a source checkout:
 
 ```sh
 tools/host/run-python.sh

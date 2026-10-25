@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /host/python
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+  - package-ecosystem: pip
+    directory: /tests
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+  - package-ecosystem: nuget
+    directory: /host/dotnet
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

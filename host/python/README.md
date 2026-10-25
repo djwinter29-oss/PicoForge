@@ -1,5 +1,21 @@
 # PicoForge Python Tools
 
+## Install
+
+With Python 3.10+ in a virtual environment:
+
+```sh
+python -m pip install picoforge
+picoforge web
+```
+
+The [PyPI package](https://pypi.org/project/picoforge/) includes the local dashboard assets.
+The same wheel is attached to [GitHub Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest).
+These downloads become available after the initial [publishing setup](../../docs/deployment/release.md#publishing-setup)
+and successful release. For source development, use `python -m pip install --editable host/python` at the repository root.
+
+## Usage
+
 The Python host reads the PicoForge vendor-defined HID interface and can serve a local status dashboard. The dashboard and `status` command include SD-card presence, transport, bus speed, capacity, and CID identity when available. From the repository root, `tools/host/run-python.sh` creates `build/picoforge`, installs this package on first run, and starts the dashboard. Pass `status` or `web` to select a command. Set `PYTHON` to choose the base interpreter or `VENV_DIR` to choose the environment path.
 
 The dashboard defaults to `127.0.0.1:5000`. Use **Rescan** and the board selector in Device identity to switch between attached boards; `--serial SERIAL` or `--device-path PATH` can set the preferred initial selection. Override the port with `tools/host/run-python.sh web --port PORT`. Only one dashboard server can bind to port 5000 at a time. On Linux, if the launcher reports a permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session.

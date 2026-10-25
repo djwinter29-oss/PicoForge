@@ -1,5 +1,12 @@
 # PicoForge WebHID
 
+Open the hosted [WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
+The hosted site is deployed from successful releases after the initial
+[Pages setup](../../docs/deployment/release.md#publishing-setup).
+For offline/local hosting, download the WebHID ZIP from
+[Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest), extract it, and serve the extracted directory
+on localhost. Opening `index.html` directly as a file is not supported.
+
 Serve the WebHID directory directly so its `index.html` is the site root and the browser gets a secure localhost origin:
 
 ```sh
