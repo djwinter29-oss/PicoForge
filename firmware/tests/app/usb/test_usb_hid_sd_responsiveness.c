@@ -296,7 +296,7 @@ void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(
     fake_done = true;
     cdc_cli_task();
     TEST_ASSERT_FALSE(pf_storage_worker_busy());
-    TEST_ASSERT_TRUE(pf_storage_worker_submit("sd", "status", false, cli_session));
+    TEST_ASSERT_TRUE(pf_storage_worker_submit("storage", "status", false, cli_session));
     fake_connected = false;
     cdc_cli_task();
     TEST_ASSERT_FALSE(cli_connected || cli_stalled);

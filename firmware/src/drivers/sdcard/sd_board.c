@@ -4,6 +4,7 @@
 #include "sd_board.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include "config/config.h"
 #include "drivers/boot_config.h"
@@ -64,4 +65,28 @@ bool pf_sd_board_config(pf_sd_config_t *config)
 #endif
     config->transport.present = card_present;
     return true;
+}
+
+/** @brief Narrow a GPIO number to a status byte; out-of-range reads as UINT8_MAX. */
+static uint8_t pin_byte(uint32_t gpio)
+{
+    return gpio > UINT8_MAX - 1u ? UINT8_MAX : (uint8_t)gpio;
+}
+
+void pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio)
+{
+    memset(bus_gpios, UINT8_MAX, 6u);
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
+    bus_gpios[0] = pin_byte(pf_sdio_pio_board.pins.clock_gpio);
+    bus_gpios[1] = pin_byte(pf_sdio_pio_board.pins.command_gpio);
+    for (size_t index = 0u; index < 4u; ++index) {
+        bus_gpios[index + 2u] = pin_byte(pf_sdio_pio_board.pins.data_gpio[index]);
+    }
+#else
+    bus_gpios[0] = pin_byte(pf_spi_board.pins.clock_gpio);
+    bus_gpios[1] = pin_byte(pf_spi_board.pins.mosi_gpio);
+    bus_gpios[2] = pin_byte(pf_spi_board.pins.miso_gpio);
+    bus_gpios[3] = pin_byte(pf_spi_board.pins.cs_gpio);
+#endif
+    *detect_gpio = pin_byte(pf_sd_board.card_detect_gpio);
 }

@@ -29,3 +29,15 @@ void test_spi_clock_follows_the_speed_profile(void)
     TEST_ASSERT_TRUE(pf_sd_board_config(&config));
     TEST_ASSERT_EQUAL_UINT32(50000000u, config.clock_hz);
 }
+
+void test_spi_pins_fill_four_entries_and_mark_the_rest_unused(void)
+{
+    uint8_t pins[6];
+    uint8_t detect = 0u;
+
+    pf_sd_board_pins(pins, &detect);
+
+    const uint8_t expected[6] = {2u, 0u, 0u, 0u, UINT8_MAX, UINT8_MAX};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, pins, 6u);
+    TEST_ASSERT_EQUAL_UINT8(0u, detect);
+}

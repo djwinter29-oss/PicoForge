@@ -2,7 +2,7 @@
 
 TEST_INCLUDE_PATH("firmware/tests/support/msc")
 TEST_SOURCE_FILE("sd.c")
-TEST_SOURCE_FILE("sd_media.c")
+TEST_SOURCE_FILE("storage.c")
 TEST_SOURCE_FILE("sd_port_freertos.c")
 
 #include "msc_batch_cases.inc"

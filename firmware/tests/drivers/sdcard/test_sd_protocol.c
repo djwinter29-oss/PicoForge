@@ -1,18 +1,7 @@
 #include "unity.h"
 #include "sd_protocol.h"
 
-static int lock_depth, lock_calls, unlock_calls;
-
-void pf_sd_lock(void) { ++lock_depth; ++lock_calls; }
-void pf_sd_unlock(void) { TEST_ASSERT_GREATER_THAN_INT(0, lock_depth); --lock_depth; ++unlock_calls; }
-
-void setUp(void)
-{
-    lock_depth = lock_calls = unlock_calls = 0;
-    pf_sd_set_profiling_enabled(false);
-    pf_sd_profile_set_clock(NULL);
-    pf_sd_reset_profile();
-}
+void setUp(void) {}
 void tearDown(void) {}
 
 void test_converts_block_and_byte_address_arguments(void)
@@ -25,83 +14,6 @@ void test_converts_block_and_byte_address_arguments(void)
     TEST_ASSERT_EQUAL_UINT32(17u * PF_SD_BLOCK_SIZE, argument);
     TEST_ASSERT_FALSE(pf_sd_block_argument((UINT32_MAX / PF_SD_BLOCK_SIZE) + 1u, false, &argument));
     TEST_ASSERT_FALSE(pf_sd_block_argument(0u, true, NULL));
-}
-
-static uint32_t profile_time;
-
-static uint32_t profile_clock(void)
-{
-    return profile_time;
-}
-
-void test_profile_is_optional_and_handles_clock_wrap(void)
-{
-    pf_sd_profile_t metrics;
-    pf_sd_profile_set_clock(profile_clock);
-    profile_time = 100u;
-    pf_sd_profile_end(PF_SD_PROFILE_DATA, 0u);
-    pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
-    pf_sd_get_profile(&metrics);
-    TEST_ASSERT_EQUAL_UINT32(0u, metrics.calls[PF_SD_PROFILE_DATA]);
-    TEST_ASSERT_EQUAL_UINT32(0u, metrics.events[PF_SD_PROFILE_TIMEOUT]);
-
-    pf_sd_set_profiling_enabled(true);
-    profile_time = UINT32_MAX - 4u;
-    uint32_t start = pf_sd_profile_begin();
-    profile_time = 5u;
-    pf_sd_profile_end(PF_SD_PROFILE_DATA, start);
-    pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
-    pf_sd_get_profile(&metrics);
-    TEST_ASSERT_EQUAL_UINT64(10u, metrics.elapsed_us[PF_SD_PROFILE_DATA]);
-    TEST_ASSERT_EQUAL_UINT32(1u, metrics.calls[PF_SD_PROFILE_DATA]);
-    TEST_ASSERT_EQUAL_UINT32(1u, metrics.events[PF_SD_PROFILE_TIMEOUT]);
-
-    pf_sd_profile_end(PF_SD_PROFILE_PHASE_COUNT, start);
-    pf_sd_profile_end((pf_sd_profile_phase_t)-1, start);
-    pf_sd_profile_event(PF_SD_PROFILE_EVENT_COUNT);
-    pf_sd_profile_event((pf_sd_profile_event_t)-1);
-    pf_sd_get_profile(NULL);
-    pf_sd_reset_profile();
-    pf_sd_get_profile(&metrics);
-    TEST_ASSERT_EQUAL_UINT32(0u, metrics.calls[PF_SD_PROFILE_DATA]);
-    start = pf_sd_profile_begin();
-    profile_time = 8u;
-    pf_sd_profile_end(PF_SD_PROFILE_DATA, start);
-    pf_sd_get_profile(&metrics);
-    TEST_ASSERT_EQUAL_UINT64(3u, metrics.elapsed_us[PF_SD_PROFILE_DATA]);
-}
-
-void test_public_profile_controls_are_serialized_and_hot_path_is_lock_free(void)
-{
-    pf_sd_profile_t metrics;
-    lock_calls = unlock_calls = 0;
-    pf_sd_set_profiling_enabled(true);
-    pf_sd_reset_profile();
-    pf_sd_get_profile(&metrics);
-    pf_sd_get_profile(NULL);
-    TEST_ASSERT_EQUAL_INT(3, lock_calls);
-    TEST_ASSERT_EQUAL_INT(3, unlock_calls);
-    TEST_ASSERT_EQUAL_INT(0, lock_depth);
-
-    pf_sd_profile_set_clock(profile_clock);
-    pf_sd_profile_end(PF_SD_PROFILE_DATA, pf_sd_profile_begin());
-    pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
-    TEST_ASSERT_EQUAL_INT(3, lock_calls);
-}
-
-void test_public_profile_controls_nest_under_held_reservation(void)
-{
-    pf_sd_profile_t metrics;
-    lock_calls = unlock_calls = 0;
-    pf_sd_lock();
-    pf_sd_set_profiling_enabled(true);
-    pf_sd_reset_profile();
-    pf_sd_get_profile(&metrics);
-    TEST_ASSERT_EQUAL_INT(1, lock_depth);
-    TEST_ASSERT_EQUAL_INT(4, lock_calls);
-    TEST_ASSERT_EQUAL_INT(3, unlock_calls);
-    pf_sd_unlock();
-    TEST_ASSERT_EQUAL_INT(0, lock_depth);
 }
 
 void test_shared_transfer_bounds_and_zero_count(void)
@@ -331,24 +243,4 @@ void test_rejects_invalid_v1_block_length_and_zero_capacity(void)
     csd[5] = 0u;
     TEST_ASSERT_FALSE(pf_sd_csd_sector_count(csd, &sectors));
     TEST_ASSERT_EQUAL_UINT32(17u, sectors);
-}
-
-void test_reserved_profile_slots_keep_abi_and_zero_snapshots_across_reset(void)
-{
-    TEST_ASSERT_EQUAL_UINT(5, PF_SD_PROFILE_RECOVERY);
-    TEST_ASSERT_EQUAL_UINT(6, PF_SD_PROFILE_PHASE_COUNT);
-    TEST_ASSERT_EQUAL_UINT(3, PF_SD_PROFILE_RECOVERY_ATTEMPT);
-    TEST_ASSERT_EQUAL_UINT(4, PF_SD_PROFILE_EVENT_COUNT);
-    pf_sd_set_profiling_enabled(true);
-    pf_sd_profile_set_clock(profile_clock);
-    pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
-    for (unsigned snapshot = 0; snapshot < 2; ++snapshot) {
-        pf_sd_profile_t metrics;
-        pf_sd_get_profile(&metrics);
-        TEST_ASSERT_EQUAL_UINT64(0, metrics.elapsed_us[PF_SD_PROFILE_RECOVERY]);
-        TEST_ASSERT_EQUAL_UINT(0, metrics.calls[PF_SD_PROFILE_RECOVERY]);
-        TEST_ASSERT_EQUAL_UINT(0, metrics.events[PF_SD_PROFILE_RECOVERY_ATTEMPT]);
-        TEST_ASSERT_EQUAL_UINT(snapshot == 0, metrics.events[PF_SD_PROFILE_TIMEOUT]);
-        pf_sd_reset_profile();
-    }
 }

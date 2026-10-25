@@ -25,4 +25,11 @@ extern const pf_sd_board_t pf_sd_board;
  */
 bool pf_sd_board_config(pf_sd_config_t *config);
 
+/**
+ * @brief Report board SD pins for status; GPIOs above 254 read as UINT8_MAX.
+ * @param bus_gpios Receives SDIO CLK, CMD, D0-D3 or SPI SCK, MOSI, MISO, CS; unused entries are UINT8_MAX.
+ * @param detect_gpio Receives the card-detect GPIO.
+ */
+void pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio);
+
 #endif

@@ -9,17 +9,11 @@
 #include "config/config.h"
 #include "drivers/led.h"
 #include "drivers/monitor_uart.h"
-#include "drivers/sdcard/sd_board.h"
-#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
-#include "drivers/sdcard/sdio_pio/sdio_pio_pins.h"
-#else
-#include "drivers/sdcard/spi/spi_pins.h"
-#endif
-#include "drivers/sdcard/sd_block.h"
+#include "middleware/storage/storage.h"
 #include "drivers/boot_config.h"
 #include "drivers/temperature.h"
 #include "usb_msc.h"
-#include "app/storage/fatfs_volume.h"
+#include "middleware/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
 #include "app/runtime_stats.h"
 
@@ -146,11 +140,10 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     report->board_model = board_model();
     report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS;
     if (pf_led_is_available()) report->capabilities |= PF_HID_CAP_LED;
-#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI
-    report->capabilities |= PF_HID_CAP_SPI;
-#else
-    report->capabilities |= PF_HID_CAP_SDIO;
-#endif
+    pf_storage_status_t storage;
+    pf_storage_get_status(&storage);
+    if (storage.bus == PF_STORAGE_BUS_SPI) report->capabilities |= PF_HID_CAP_SPI;
+    if (storage.bus == PF_STORAGE_BUS_SDIO) report->capabilities |= PF_HID_CAP_SDIO;
     report->capabilities |= PF_HID_CAP_SELF_TEST;
     report->ram_total_bytes = stats.ram_total_bytes;
     report->ram_reserved_bytes = stats.ram_used_bytes;
@@ -166,23 +159,11 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
         ? (uint8_t)pf_monitor_uart_board.uart_index : UINT8_MAX;
     report->monitor_uart_tx_gpio = gpio_value(pf_monitor_uart_board.tx_gpio);
     report->monitor_uart_rx_gpio = gpio_value(pf_monitor_uart_board.rx_gpio);
-    for (size_t index = 0u; index < sizeof(report->storage_gpios); ++index) {
-        report->storage_gpios[index] = UINT8_MAX;
-    }
-#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI
-    report->storage_gpios[0] = gpio_value(pf_spi_board.pins.clock_gpio);
-    report->storage_gpios[1] = gpio_value(pf_spi_board.pins.mosi_gpio);
-    report->storage_gpios[2] = gpio_value(pf_spi_board.pins.miso_gpio);
-    report->storage_gpios[3] = gpio_value(pf_spi_board.pins.cs_gpio);
-#else
-    report->storage_gpios[0] = gpio_value(pf_sdio_pio_board.pins.clock_gpio);
-    report->storage_gpios[1] = gpio_value(pf_sdio_pio_board.pins.command_gpio);
-    for (size_t index = 0u; index < 4u; ++index) {
-        report->storage_gpios[index + 2u] = gpio_value(pf_sdio_pio_board.pins.data_gpio[index]);
-    }
-#endif
-    report->board_flags |= PF_HID_BOARD_FLAG_CARD_DETECT;
-    report->card_detect_gpio = gpio_value(pf_sd_board.card_detect_gpio);
+    pf_storage_status_t storage;
+    pf_storage_get_status(&storage);
+    memcpy(report->storage_gpios, storage.bus_gpios, sizeof(report->storage_gpios));
+    if (storage.detect_gpio != UINT8_MAX) report->board_flags |= PF_HID_BOARD_FLAG_CARD_DETECT;
+    report->card_detect_gpio = storage.detect_gpio;
     if (pf_led_board.gpio != PF_LED_GPIO_NONE) {
         report->board_flags |= PF_HID_BOARD_FLAG_LED;
         report->led_gpio = gpio_value(pf_led_board.gpio);
@@ -220,9 +201,7 @@ void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t se
 
 void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequence)
 {
-    pf_sd_config_t config;
-    pf_sd_info_t info = {0};
-    const bool configured = pf_sd_board_config(&config);
+    pf_storage_status_t storage;
     const bool msc_enabled = pf_usb_msc_is_enabled();
     const bool transition_pending = pf_usb_msc_transition_pending();
 
@@ -232,7 +211,12 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
     report->msc_enabled = msc_enabled;
     report->msc_transition_pending = transition_pending;
     report->msc_request_rejected = pf_usb_msc_request_rejected();
-    if (configured) report->sd_flags |= PF_HID_STORAGE_CONFIGURED;
+    if (!msc_enabled && !transition_pending) {
+        pf_storage_get_status(&storage);
+    } else {
+        storage = (pf_storage_status_t){.state = PF_STORAGE_STATE_USB};
+    }
+    if (storage.state != PF_STORAGE_STATE_NOT_CONFIGURED) report->sd_flags |= PF_HID_STORAGE_CONFIGURED;
 
     switch (pf_fatfs_volume_filesystem_format()) {
     case PF_FATFS_VOLUME_FILESYSTEM_FAT12: report->filesystem_format = PF_HID_FILESYSTEM_FAT12; break;
@@ -242,32 +226,28 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
     default: report->filesystem_format = PF_HID_FILESYSTEM_UNKNOWN; break;
     }
 
-    if (!configured || msc_enabled || transition_pending || !pf_sd_try_lock()) return;
-    pf_sd_get_info(&info);
-    pf_sd_unlock();
+    if (storage.state < PF_STORAGE_STATE_ABSENT || storage.state == PF_STORAGE_STATE_USB) return;
     report->sd_flags |= PF_HID_STORAGE_SAMPLE_VALID;
-    report->component_type = 1u;
-    report->bus_mode = config.transport.mode == PF_SD_LINK_SPI
-        ? PF_HID_BUS_MODE_SPI : PF_HID_BUS_MODE_SDIO;
-    if (info.presence_known) {
+    report->component_type = storage.medium == PF_STORAGE_MEDIUM_SDCARD ? 1u : 0u;
+    report->bus_mode = storage.bus == PF_STORAGE_BUS_SPI ? PF_HID_BUS_MODE_SPI : PF_HID_BUS_MODE_SDIO;
+    if (storage.state == PF_STORAGE_STATE_ABSENT) {
         report->sd_flags |= PF_HID_STORAGE_PRESENCE_KNOWN;
-        if (info.present) report->sd_flags |= PF_HID_STORAGE_PRESENT;
-    } else if (info.initialized) {
-        report->sd_flags |= PF_HID_STORAGE_PRESENCE_KNOWN | PF_HID_STORAGE_PRESENT;
+        return;
     }
-    if (!info.initialized || ((report->sd_flags & PF_HID_STORAGE_PRESENCE_KNOWN) != 0u &&
-                              (report->sd_flags & PF_HID_STORAGE_PRESENT) == 0u)) return;
-
-    report->sd_flags |= PF_HID_STORAGE_INITIALIZED;
-    report->bus_clock_hz = info.bus_clock_hz;
-    report->speed_mode = info.high_speed ? PF_HID_SPEED_MODE_HIGH_SPEED : PF_HID_SPEED_MODE_STANDARD;
-    if (info.cid_valid) {
+    if (storage.state == PF_STORAGE_STATE_UNINITIALIZED) {
+        if (storage.presence_known) report->sd_flags |= PF_HID_STORAGE_PRESENCE_KNOWN | PF_HID_STORAGE_PRESENT;
+        return;
+    }
+    report->sd_flags |= PF_HID_STORAGE_PRESENCE_KNOWN | PF_HID_STORAGE_PRESENT | PF_HID_STORAGE_INITIALIZED;
+    report->bus_clock_hz = storage.bus_clock_hz;
+    report->speed_mode = storage.high_speed ? PF_HID_SPEED_MODE_HIGH_SPEED : PF_HID_SPEED_MODE_STANDARD;
+    if (storage.id_valid) {
         report->sd_flags |= PF_HID_STORAGE_CID_VALID;
-        memcpy(report->cid, info.cid, sizeof(report->cid));
+        memcpy(report->cid, storage.id, sizeof(report->cid));
     }
-    if (info.block_count != 0u) {
+    if (storage.sector_count != 0u) {
         report->sd_flags |= PF_HID_STORAGE_CAPACITY_VALID;
-        report->block_count = info.block_count;
+        report->block_count = storage.sector_count;
     }
 }
 

@@ -4,7 +4,6 @@
 TEST_INCLUDE_PATH("firmware/tests/support/msc")
 TEST_SOURCE_FILE("firmware/tests/support/msc/msc_reset_model.c")
 TEST_SOURCE_FILE("firmware/tests/support/msc/msc_reset_queue.c")
-#define PF_STORAGE_H
 #define PF_STORAGE_WORKER_H
 static bool pf_fatfs_volume_is_mounted(void);
 static void pf_fatfs_volume_forget_filesystem_format(void);
@@ -17,9 +16,9 @@ static bool pf_storage_worker_unmount_for_usb(void);
 uint64_t test_time_us;
 static bool initialized=true, worker_busy, mounted, media_absent, recover_accepted;
 static unsigned locks, syncs, sense, asc;
-static pf_sd_result_t read_result=PF_SD_OK, write_result=PF_SD_OK;
-static pf_sd_result_t sync_result=PF_SD_OK, owner_result=PF_SD_OK;
-static pf_sd_media_owner_t owner=PF_SD_MEDIA_OWNER_USB_MSC;
+static pf_block_result_t read_result=PF_BLOCK_OK, write_result=PF_BLOCK_OK;
+static pf_block_result_t sync_result=PF_BLOCK_OK, owner_result=PF_BLOCK_OK;
+static enum { OWNER_FIRMWARE, OWNER_USB } owner=OWNER_USB;
 static bool pf_fatfs_volume_is_mounted(void) { return mounted; }
 static void pf_fatfs_volume_forget_filesystem_format(void) {}
 static bool pf_storage_worker_busy(void) { return worker_busy; }
@@ -27,21 +26,21 @@ static bool pf_storage_worker_media_absent(void) { return media_absent; }
 static bool pf_storage_worker_recover_media(void) { return recover_accepted; }
 static bool pf_storage_worker_return_from_usb(void) { worker_busy = true; return true; }
 static bool pf_storage_worker_unmount_for_usb(void) { worker_busy = true; return true; }
-bool pf_sd_try_lock(void) { ++locks; return true; }
-void pf_sd_lock(void) { ++locks; }
-void pf_sd_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }
-bool pf_sd_is_initialized(void) { return initialized; }
-uint32_t pf_sd_block_count(void) { return 128; }
-void pf_sd_get_info(pf_sd_info_t *i) { *i=(pf_sd_info_t){.initialized=initialized,.present=!media_absent,.presence_known=true}; }
-pf_sd_result_t pf_sd_media_acquire_usb(void)
-{ if(owner_result==PF_SD_OK) owner=PF_SD_MEDIA_OWNER_USB_MSC; return owner_result; }
-pf_sd_result_t pf_sd_media_release_usb(void)
-{ if(owner_result==PF_SD_OK) owner=PF_SD_MEDIA_OWNER_FIRMWARE; return owner_result; }
-pf_sd_result_t pf_sd_media_release_usb_for_recovery(void)
-{ TEST_ASSERT_FALSE(initialized); return pf_sd_media_release_usb(); }
-pf_sd_result_t pf_sd_media_usb_sync(void) { ++syncs; return sync_result; }
-pf_sd_result_t pf_sd_media_usb_read_blocks(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return read_result; }
-pf_sd_result_t pf_sd_media_usb_write_blocks(uint32_t l, const void *b, uint32_t n) { (void)l;(void)b;(void)n; return write_result; }
+bool pf_storage_try_lock(void) { ++locks; return true; }
+void pf_storage_lock(void) { ++locks; }
+void pf_storage_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }
+bool pf_storage_msc_ready(void) { return initialized; }
+uint32_t pf_storage_msc_count(void) { return 128; }
+pf_block_result_t pf_storage_msc_acquire(void)
+{ if(owner_result==PF_BLOCK_OK) owner=OWNER_USB; return owner_result; }
+pf_block_result_t pf_storage_msc_release(void)
+{ if(owner_result==PF_BLOCK_OK) owner=OWNER_FIRMWARE; return owner_result; }
+pf_block_result_t pf_storage_msc_release_for_recovery(void)
+{ TEST_ASSERT_FALSE(initialized); return pf_storage_msc_release(); }
+pf_block_result_t pf_storage_msc_sync(void) { ++syncs; return sync_result; }
+pf_block_result_t pf_storage_msc_read(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return read_result; }
+pf_block_result_t pf_storage_msc_write(uint32_t l, const void *b, uint32_t n)
+{ (void)l;(void)b;(void)n; return write_result; }
 bool tud_msc_set_sense(uint8_t l, uint8_t s, uint8_t a, uint8_t q) { (void)l;(void)q; sense=s; asc=a; return true; }
 /* Callback-boundary model of the pinned source ordering, not a BOT test. */
 static void request_sense(unsigned expected_key, unsigned expected_asc)
@@ -58,7 +57,7 @@ static void transfer_failures(void)
  uint8_t block[512]={0};
  for (unsigned partial=0; partial<2; ++partial) {
   unsigned size=partial ? 16 : 512, offset=partial ? 4 : 0;
-  read_result=PF_SD_IO_ERROR;
+  read_result=PF_BLOCK_IO_ERROR;
   TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,offset,block,size)==-1);
   TEST_ASSERT_TRUE(sense==3 && asc==0x11);
   tud_msc_set_sense(0,2,0x3a,0); /* Unconditional TinyUSB failure overwrite. */
@@ -71,22 +70,22 @@ static void transfer_failures(void)
    TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,offset,block,size)==-1);
    tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x11);
   }
-  read_result=PF_SD_OK; write_result=PF_SD_IO_ERROR;
+  read_result=PF_BLOCK_OK; write_result=PF_BLOCK_IO_ERROR;
   TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,offset,block,size)==-1);
   TEST_ASSERT_TRUE(sense==3 && asc==0x0c);
   tud_msc_set_sense(0,2,0x3a,0); request_sense(3,0x0c); request_sense(0,0);
   for (unsigned not_configured=0; not_configured<2; ++not_configured) {
-   read_result=write_result=not_configured ? PF_SD_NOT_CONFIGURED : PF_SD_NOT_READY;
+   read_result=write_result=not_configured ? PF_BLOCK_NOT_READY : PF_BLOCK_NOT_READY;
    TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,offset,block,size)==-1);
    tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
-   read_result=PF_SD_OK;
+   read_result=PF_BLOCK_OK;
    TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,offset,block,size)==-1);
    tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
   }
-  read_result=write_result=PF_SD_OK;
+  read_result=write_result=PF_BLOCK_OK;
  }
  /* A later application error supersedes pending transfer sense. */
- read_result=PF_SD_IO_ERROR;
+ read_result=PF_BLOCK_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==-1);
  initialized=false;
  TEST_ASSERT_TRUE(!tud_msc_test_unit_ready_cb(0)); request_sense(2,0x3a);
@@ -94,7 +93,7 @@ static void transfer_failures(void)
  tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
  TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,0,block,512)==-1);
  tud_msc_set_sense(0,2,0x3a,0); request_sense(2,0x3a);
- initialized=true; read_result=PF_SD_OK;
+ initialized=true; read_result=PF_BLOCK_OK;
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==512);
  TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,0,block,512)==512);
  request_sense(0,0);
@@ -103,17 +102,17 @@ static void sense_lifecycle(void)
 {
  uint8_t block[512]={0}, cmd[16]={0x35};
  /* TinyUSB overwrites failed transfer sense; stale app sense must not leak. */
- read_result=PF_SD_IO_ERROR;
+ read_result=PF_BLOCK_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==-1);
- read_result=PF_SD_OK;
+ read_result=PF_BLOCK_OK;
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==512);
  tud_msc_set_sense(0,0,0,0); request_sense(0,0);
- read_result=PF_SD_IO_ERROR;
+ read_result=PF_BLOCK_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,4,block,16)==-1);
- read_result=PF_SD_OK;
+ read_result=PF_BLOCK_OK;
  TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,0)==0);
  tud_msc_set_sense(0,0,0,0); request_sense(0,0);
- read_result=PF_SD_IO_ERROR;
+ read_result=PF_BLOCK_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==-1);
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,128,0,block,512)==-1);
  tud_msc_set_sense(0,2,0x3a,0); request_sense(5,0x21);
@@ -128,18 +127,18 @@ static void sense_lifecycle(void)
  tud_umount_cb(); tud_msc_set_sense(0,0,0,0); request_sense(0,0);
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==-1);
  tud_mount_cb(); tud_msc_set_sense(0,0,0,0); request_sense(0,0);
- read_result=PF_SD_OK;
+ read_result=PF_BLOCK_OK;
  /* Built-in TinyUSB commands call these callbacks, not our SCSI hook. */
  for (unsigned c=0; c<3; ++c) {
   uint32_t blocks; uint16_t size;
-  read_result=PF_SD_IO_ERROR;
+  read_result=PF_BLOCK_IO_ERROR;
   TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==-1);
   tud_msc_set_sense(0,2,0x3a,0);
   if (c==0) TEST_ASSERT_TRUE(tud_msc_test_unit_ready_cb(0));
   else if (c==1) { tud_msc_capacity_cb(0,&blocks,&size); TEST_ASSERT_TRUE(blocks==128 && size==512); }
   else TEST_ASSERT_TRUE(tud_msc_is_writable_cb(0));
   tud_msc_set_sense(0,0,0,0); request_sense(0,0);
-  read_result=PF_SD_OK;
+  read_result=PF_BLOCK_OK;
  }
  /* Failure paths still report fresh NOT READY. */
  initialized=false;
@@ -155,7 +154,7 @@ static void sense_lifecycle(void)
  extern void model_dispatch(void);
  extern void model_control(uint8_t, const tusb_control_request_t *);
  tusb_control_request_t reset={.bmRequestType=0x21,.bRequest=MSC_REQ_RESET};
- read_result=PF_SD_IO_ERROR;
+ read_result=PF_BLOCK_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,block,512)==-1);
  tud_msc_set_sense(0,2,0x3a,0);
  model_enqueue(1); /* BOT setup */
@@ -182,14 +181,14 @@ static void sense_lifecycle(void)
   model_control(invalid==3 ? CONTROL_STAGE_ACK : CONTROL_STAGE_SETUP,&req);
   request_sense(3,0x11);
  }
- read_result=PF_SD_OK;
+ read_result=PF_BLOCK_OK;
 }
 void setUp(void)
 {
  initialized=true; worker_busy=mounted=media_absent=recover_accepted=false;
  locks=syncs=sense=asc=0;
- read_result=write_result=sync_result=owner_result=PF_SD_OK;
- owner=PF_SD_MEDIA_OWNER_USB_MSC;
+ read_result=write_result=sync_result=owner_result=PF_BLOCK_OK;
+ owner=OWNER_USB;
  msc_enabled=true;
  msc_ejected=removal_prevented=request_pending=requested_enabled=false;
  transition_pending=request_rejected=recovery_requested=false;
@@ -228,11 +227,11 @@ void test_sync_eject_removal_prevention_and_owner_handoff(void)
  TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && syncs==range_before);
  cmd[8]=1; TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,0)==0);
  cmd[5]=0; cmd[8]=0;
- sync_result=PF_SD_IO_ERROR;
+ sync_result=PF_BLOCK_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && sense==3);
- sync_result=PF_SD_NOT_READY;
+ sync_result=PF_BLOCK_NOT_READY;
  TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && sense==2);
- sync_result=PF_SD_OK;
+ sync_result=PF_BLOCK_OK;
  cmd[1]=2; TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && sense==5); cmd[1]=0;
  TEST_ASSERT_TRUE(tud_msc_scsi_cb(1,cmd,NULL,0)==-1);
  initialized=false; unsigned failed_before=syncs;
@@ -250,11 +249,11 @@ void test_sync_eject_removal_prevention_and_owner_handoff(void)
  TEST_ASSERT_TRUE(!tud_msc_prevent_allow_medium_removal_cb(0,2,0) && removal_prevented);
  TEST_ASSERT_TRUE(!tud_msc_prevent_allow_medium_removal_cb(0,0,1) && removal_prevented);
  TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0,0,0));
- sync_result=PF_SD_IO_ERROR;
+ sync_result=PF_BLOCK_IO_ERROR;
  TEST_ASSERT_TRUE(!tud_msc_start_stop_cb(0,0,false,true) && !msc_ejected);
- sync_result=PF_SD_NOT_READY;
+ sync_result=PF_BLOCK_NOT_READY;
  TEST_ASSERT_TRUE(!tud_msc_start_stop_cb(0,0,false,true) && !msc_ejected && sense==2);
- sync_result=PF_SD_OK;
+ sync_result=PF_BLOCK_OK;
  TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0,0,false,true) && msc_ejected);
  before=syncs;
  TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0,0,false,true) && syncs==before);
@@ -262,10 +261,10 @@ void test_sync_eject_removal_prevention_and_owner_handoff(void)
  TEST_ASSERT_TRUE(!tud_msc_start_stop_cb(0,0,true,true) && msc_ejected);
  initialized=true;
  worker_busy=true; pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
- worker_busy=false; owner_result=PF_SD_IO_ERROR;
- pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled && owner==PF_SD_MEDIA_OWNER_USB_MSC);
- owner_result=PF_SD_OK; transfer_sense_pending=true;
- pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(!msc_enabled && owner==PF_SD_MEDIA_OWNER_FIRMWARE && !transfer_sense_pending);
+ worker_busy=false; owner_result=PF_BLOCK_IO_ERROR;
+ pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled && owner==OWNER_USB);
+ owner_result=PF_BLOCK_OK; transfer_sense_pending=true;
+ pf_usb_msc_request(false); pf_usb_msc_task(); TEST_ASSERT_TRUE(!msc_enabled && owner==OWNER_FIRMWARE && !transfer_sense_pending);
  before=syncs; tud_msc_write10_complete_cb(0); TEST_ASSERT_TRUE(syncs==before);
  TEST_ASSERT_TRUE(locks==0 && !mounted);
 }
@@ -273,19 +272,19 @@ void test_sync_eject_removal_prevention_and_owner_handoff(void)
 void test_enable_queues_unmount_and_waits_before_sd_ownership_handoff(void)
 {
  msc_enabled=false;
- owner=PF_SD_MEDIA_OWNER_FIRMWARE;
+ owner=OWNER_FIRMWARE;
  mounted=true;
  pf_usb_msc_request(true);
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(unmount_pending && worker_busy && transition_pending && !request_rejected);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
  pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled);
  mounted=false;
  worker_busy=false;
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(msc_enabled && !transition_pending && !request_rejected);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC,owner);
+ TEST_ASSERT_EQUAL(OWNER_USB,owner);
 }
 
 void test_force_return_bypasses_only_host_eject_and_waits_for_worker_mount(void)
@@ -298,7 +297,7 @@ void test_force_return_bypasses_only_host_eject_and_waits_for_worker_mount(void)
  pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled || msc_ejected || request_rejected);
  TEST_ASSERT_TRUE(remount_pending && transition_pending && worker_busy);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
  TEST_ASSERT_EQUAL_UINT(1u,syncs);
  pf_usb_msc_request(true);
  pf_usb_msc_task();
@@ -317,12 +316,12 @@ void test_force_return_rejects_busy_or_failed_device_sync_without_releasing_sd(v
  TEST_ASSERT_TRUE(msc_enabled && request_rejected);
  TEST_ASSERT_EQUAL_UINT(0u,syncs);
  worker_busy=false;
- sync_result=PF_SD_IO_ERROR;
+ sync_result=PF_BLOCK_IO_ERROR;
  pf_usb_msc_request_force_return();
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(msc_enabled && request_rejected);
  TEST_ASSERT_FALSE(transition_pending || remount_pending);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC,owner);
+ TEST_ASSERT_EQUAL(OWNER_USB,owner);
 }
 
 void test_force_return_reports_failed_mount_without_reexposing_sd(void)
@@ -333,20 +332,20 @@ void test_force_return_reports_failed_mount_without_reexposing_sd(void)
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(request_rejected);
  TEST_ASSERT_FALSE(msc_enabled || msc_ejected || transition_pending);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 }
 
 void test_failed_sd_unmount_rejects_enable_without_acquiring_usb(void)
 {
  msc_enabled=false;
- owner=PF_SD_MEDIA_OWNER_FIRMWARE;
+ owner=OWNER_FIRMWARE;
  mounted=true;
  pf_usb_msc_request(true);
  pf_usb_msc_task();
  worker_busy=false;
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(request_rejected && mounted && !msc_enabled && !transition_pending);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 }
 
 void test_hid_msc_transition_waits_for_matching_result_read_and_control_completion(void)
@@ -411,7 +410,7 @@ void test_sync_reserved_fields_and_completion_error_boundary(void)
  }
  TEST_ASSERT_EQUAL_INT(-1,tud_msc_scsi_cb(0,cmd,NULL,1));
  TEST_ASSERT_EQUAL_UINT(0,syncs);
- sync_result=PF_SD_NOT_CONFIGURED;
+ sync_result=PF_BLOCK_NOT_READY;
  TEST_ASSERT_EQUAL_INT(-1,tud_msc_scsi_cb(0,cmd,NULL,0));
  TEST_ASSERT_EQUAL_UINT(2,sense); TEST_ASSERT_EQUAL_UINT(0x3a,asc);
  TEST_ASSERT_FALSE(tud_msc_start_stop_cb(0,0,false,true));
@@ -437,12 +436,12 @@ void test_volatile_prevention_clears_on_bus_reset_or_disconnect_but_not_bot_rese
   TEST_ASSERT_FALSE(removal_prevented);
   pf_usb_msc_request(false); pf_usb_msc_task();
   TEST_ASSERT_TRUE(msc_enabled && request_rejected);
-  TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC,owner);
+  TEST_ASSERT_EQUAL(OWNER_USB,owner);
  }
  TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0,0,false,true));
  pf_usb_msc_request(false); pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled || request_rejected);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 }
 
 void test_prevent_disconnect_allows_absent_disable_and_unavailable_recovery(void)
@@ -453,13 +452,13 @@ void test_prevent_disconnect_allows_absent_disable_and_unavailable_recovery(void
  pf_usb_msc_request(false); pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled || request_rejected);
  TEST_ASSERT_EQUAL_UINT(0u,syncs);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 
- msc_enabled=true; owner=PF_SD_MEDIA_OWNER_USB_MSC;
+ msc_enabled=true; owner=OWNER_USB;
  TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0,1,0));
  __wrap_mscd_reset(0);
  recover_accepted=true;
  pf_usb_msc_request_recovery(); pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled || request_rejected);
- TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE,owner);
+ TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 }

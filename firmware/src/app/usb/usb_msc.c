@@ -6,8 +6,8 @@
 #include "pico/stdlib.h"
 #include "pico/time.h"
 #include "tusb.h"
-#include "msc_storage.h"
-#include "app/storage/fatfs_volume.h"
+#include "middleware/storage/storage.h"
+#include "middleware/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
 
 static bool msc_enabled;
@@ -220,10 +220,7 @@ static void apply_msc_request(void)
     request_pending = false;
     if (recovery_requested) {
         recovery_requested = false;
-        pf_sd_info_t info;
-        pf_sd_get_info(&info);
-        bool initialized = info.initialized;
-        if (!msc_enabled || initialized || removal_prevented ||
+        if (!msc_enabled || pf_storage_msc_ready() || removal_prevented ||
             pf_storage_worker_busy() || pf_fatfs_volume_is_mounted() ||
             !pf_storage_worker_recover_media()) {
             transition_pending = false;
@@ -233,7 +230,7 @@ static void apply_msc_request(void)
         /* The queued worker waits for our reservation. Detach before handing
          * it the card; this is never reported as successful SCSI eject/sync. */
         (void)tud_disconnect();
-        result = pf_msc_storage_release_for_recovery();
+        result = pf_storage_msc_release_for_recovery();
         if (result != PF_BLOCK_OK) {
             transition_pending = false;
             request_rejected = true;
@@ -259,7 +256,7 @@ static void apply_msc_request(void)
         force_return_requested = false;
         /* Device sync cannot flush writes still cached by the host. A device-side
          * failure keeps USB ownership; only the explicit command bypasses host eject. */
-        if (pf_fatfs_volume_is_mounted() || pf_msc_storage_sync() != PF_BLOCK_OK) {
+        if (pf_fatfs_volume_is_mounted() || pf_storage_msc_sync() != PF_BLOCK_OK) {
             transition_pending = false;
             request_rejected = true;
             return;
@@ -275,7 +272,7 @@ static void apply_msc_request(void)
             (void)tud_connect();
             return;
         }
-        result = pf_msc_storage_release();
+        result = pf_storage_msc_release();
         if (result != PF_BLOCK_OK) {
             transition_pending = false;
             request_rejected = true;
@@ -288,7 +285,7 @@ static void apply_msc_request(void)
     }
 
     if (requested_enabled) {
-        if (!pf_msc_storage_ready()) {
+        if (!pf_storage_msc_ready()) {
             transition_pending = false;
             request_rejected = true;
             return;
@@ -303,7 +300,7 @@ static void apply_msc_request(void)
             request_pending = true;
             return;
         }
-        result = pf_msc_storage_acquire();
+        result = pf_storage_msc_acquire();
         if (result != PF_BLOCK_OK) {
             transition_pending = false;
             request_rejected = true;
@@ -314,19 +311,15 @@ static void apply_msc_request(void)
         removal_prevented = false;
         msc_enabled = true;
     } else {
-        bool media_absent;
-        pf_sd_info_t info;
-        pf_sd_get_info(&info);
-        media_absent = info.presence_known && !info.present &&
-                       pf_storage_worker_media_absent();
+        bool media_absent = pf_storage_worker_media_absent();
         if (removal_prevented ||
-            (!media_absent && (!msc_ejected || pf_msc_storage_sync() != PF_BLOCK_OK))) {
+            (!media_absent && (!msc_ejected || pf_storage_msc_sync() != PF_BLOCK_OK))) {
             transition_pending = false;
             request_rejected = true;
             return;
         }
         msc_enabled = false;
-        result = pf_msc_storage_release();
+        result = pf_storage_msc_release();
         if (result != PF_BLOCK_OK) {
             msc_enabled = true;
             transition_pending = false;
@@ -359,13 +352,13 @@ void pf_usb_msc_task(void)
     if (!request_pending) {
         return;
     }
-    if (!pf_msc_storage_try_lock()) {
+    if (!pf_storage_try_lock()) {
         return;
     }
     bool was_enabled = msc_enabled;
     bool detached_first = recovery_requested || force_return_requested;
     apply_msc_request();
-    pf_msc_storage_unlock();
+    pf_storage_unlock();
     if (was_enabled != msc_enabled) {
         transfer_sense_pending = false;
         if (!detached_first) {
@@ -378,7 +371,7 @@ void pf_usb_msc_task(void)
 
 static bool media_ready(uint8_t lun)
 {
-    if ((lun == 0u) && msc_enabled && !msc_ejected && pf_msc_storage_ready()) {
+    if ((lun == 0u) && msc_enabled && !msc_ejected && pf_storage_msc_ready()) {
         return true;
     }
     set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
@@ -404,14 +397,14 @@ bool tud_msc_test_unit_ready_cb(uint8_t lun)
 void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_size)
 {
     transfer_sense_pending = false;
-    *block_count = media_ready(lun) ? pf_msc_storage_count() : 0u;
+    *block_count = media_ready(lun) ? pf_storage_msc_count() : 0u;
     *block_size = 512u;
 }
 
 /* Eject and SYNCHRONIZE CACHE share the same pre-CSW sync contract. */
 static bool sync_media(uint8_t lun)
 {
-    pf_block_result_t result = pf_msc_storage_sync();
+    pf_block_result_t result = pf_storage_msc_sync();
     if (result == PF_BLOCK_OK) {
         return true;
     }
@@ -432,7 +425,7 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
     }
     if (load_eject) {
         if (start) {
-            if (!pf_msc_storage_ready()) {
+            if (!pf_storage_msc_ready()) {
                 set_sense(lun, SCSI_SENSE_NOT_READY, 0x3au, 0x00u);
                 return false;
             }
@@ -497,7 +490,7 @@ static bool transfer_is_valid(uint8_t lun, uint32_t lba, uint32_t offset,
         fail_transfer(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x24u);
         return false;
     }
-    uint32_t capacity = pf_msc_storage_count();
+    uint32_t capacity = pf_storage_msc_count();
     uint32_t blocks = full_sectors ? size / 512u : 1u;
     if ((lba >= capacity) || (blocks > capacity - lba)) {
         fail_transfer(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u);
@@ -516,11 +509,11 @@ static int32_t read10(uint8_t lun, uint32_t lba, uint32_t offset,
         return 0;
     }
     if ((offset == 0u) && (bufsize % 512u == 0u)) {
-        return transfer_result(lun, pf_msc_storage_read(
+        return transfer_result(lun, pf_storage_msc_read(
                                    lba, buffer, bufsize / 512u),
                                bufsize, false);
     }
-    pf_block_result_t result = pf_msc_storage_read(lba, sector_buffer, 1u);
+    pf_block_result_t result = pf_storage_msc_read(lba, sector_buffer, 1u);
     if (result != PF_BLOCK_OK) {
         return transfer_result(lun, result, bufsize, false);
     }
@@ -539,21 +532,21 @@ static int32_t write10(uint8_t lun, uint32_t lba, uint32_t offset,
     }
     if ((offset == 0u) && (bufsize % 512u == 0u)) {
         uint32_t count = bufsize / 512u;
-        pf_block_result_t result = pf_msc_storage_write(lba, buffer, count);
+        pf_block_result_t result = pf_storage_msc_write(lba, buffer, count);
         /* SDIO CMD25 can retain an open stream. Sync batched writes before reporting
          * success, while errors can still reach TinyUSB. Never retry or sync
          * a failed, potentially accepted write. */
         if ((result == PF_BLOCK_OK) && (count > 1u)) {
-            result = pf_msc_storage_sync();
+            result = pf_storage_msc_sync();
         }
         return transfer_result(lun, result, bufsize, true);
     }
-    pf_block_result_t result = pf_msc_storage_read(lba, sector_buffer, 1u);
+    pf_block_result_t result = pf_storage_msc_read(lba, sector_buffer, 1u);
     if (result != PF_BLOCK_OK) {
         return transfer_result(lun, result, bufsize, false);
     }
     memcpy(sector_buffer + offset, buffer, bufsize);
-    return transfer_result(lun, pf_msc_storage_write(lba, sector_buffer, 1u),
+    return transfer_result(lun, pf_storage_msc_write(lba, sector_buffer, 1u),
                            bufsize, true);
 }
 
@@ -563,18 +556,18 @@ static int32_t write10(uint8_t lun, uint32_t lba, uint32_t offset,
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                          void *buffer, uint32_t bufsize)
 {
-    pf_msc_storage_lock();
+    pf_storage_lock();
     int32_t result = read10(lun, lba, offset, buffer, bufsize);
-    pf_msc_storage_unlock();
+    pf_storage_unlock();
     return result;
 }
 
 int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                           uint8_t *buffer, uint32_t bufsize)
 {
-    pf_msc_storage_lock();
+    pf_storage_lock();
     int32_t result = write10(lun, lba, offset, buffer, bufsize);
-    pf_msc_storage_unlock();
+    pf_storage_unlock();
     return result;
 }
 
@@ -607,7 +600,7 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
                        ((uint32_t)scsi_cmd[3] << 16u) |
                        ((uint32_t)scsi_cmd[4] << 8u) | scsi_cmd[5];
         uint32_t count = ((uint32_t)scsi_cmd[7] << 8u) | scsi_cmd[8];
-        uint32_t capacity = pf_msc_storage_count();
+        uint32_t capacity = pf_storage_msc_count();
         /* A zero count covers the remainder of the medium, not an invalid LBA. */
         if ((lba >= capacity) || (count > capacity - lba)) {
             set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x21u, 0x00u);

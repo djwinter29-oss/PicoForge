@@ -3,9 +3,7 @@
 #include "embedded_cli.h"
 #include "Mockff.h"
 #include "Mockfatfs_volume.h"
-#include "Mocksd_block.h"
-#include "Mocksd.h"
-#include "Mocksd_media.h"
+#include "Mockstorage.h"
 
 #include <string.h>
 
@@ -159,8 +157,8 @@ void test_creates_directory_and_reports_fatfs_errors(void)
 void test_mount_and_unmount_report_success(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_media_initialize_ExpectAndReturn(PF_SD_OK);
-    pf_sd_media_firmware_device_ExpectAndReturn(&device);
+    pf_storage_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_storage_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
     pf_storage_command_execute(false, "fs", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
@@ -174,8 +172,8 @@ void test_mount_reports_fatfs_failure(void)
 {
     FRESULT result = FR_NO_FILESYSTEM;
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_media_initialize_ExpectAndReturn(PF_SD_OK);
-    pf_sd_media_firmware_device_ExpectAndReturn(&device);
+    pf_storage_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_storage_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
     pf_fatfs_volume_mount_ReturnThruPtr_filesystem_result(&result);
     pf_storage_command_execute(false, "fs", "mount", reply, NULL);
@@ -192,7 +190,7 @@ void test_mount_does_not_initialize_an_already_mounted_device(void)
 void test_mount_rejects_missing_configuration_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_media_initialize_ExpectAndReturn(PF_SD_NOT_CONFIGURED);
+    pf_storage_initialize_ExpectAndReturn(PF_BLOCK_NOT_READY);
     run("mount");
     TEST_ASSERT_NOT_NULL(strstr(output, "configuration unavailable"));
 }
@@ -200,9 +198,9 @@ void test_mount_rejects_missing_configuration_without_binding(void)
 void test_mount_reports_card_initialization_failure_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_media_initialize_ExpectAndReturn(PF_SD_INIT_FAILED);
+    pf_storage_initialize_ExpectAndReturn(PF_BLOCK_IO_ERROR);
     pf_storage_command_execute(false, "fs", "mount", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "SD initialization"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "storage initialization"));
 }
 
 void test_lists_directory_and_closes_handle(void)
@@ -333,127 +331,23 @@ void test_df_reports_64_bit_capacity(void)
 
 void test_status_is_available_during_host_ownership(void)
 {
-    pf_sd_info_t info = {
-        .initialized = true, .presence_known = true, .present = true,
-        .bus_clock_hz = 12500000u, .block_count = 30875648u
+    pf_storage_status_t status = {
+        .medium = PF_STORAGE_MEDIUM_SDCARD, .bus = PF_STORAGE_BUS_SDIO, .state = PF_STORAGE_STATE_USB,
+        .presence_known = true, .bus_clock_hz = 12500000u, .sector_count = 30875648u,
+        .last_failure = PF_STORAGE_OPERATION_WRITE, .last_failure_result = PF_BLOCK_IO_ERROR,
     };
-    pf_sd_get_info_ExpectAnyArgs();
-    pf_sd_get_info_ReturnThruPtr_info(&info);
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    pf_sd_transport_name_ExpectAndReturn("sdio");
-    pf_storage_command_execute(true, "sd", "status", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "owner=USB"));
+    pf_storage_get_status_ExpectAnyArgs();
+    pf_storage_get_status_ReturnThruPtr_status(&status);
+    pf_storage_command_execute(true, "storage", "status", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "state=usb owner=USB medium=sd bus=sdio present=yes"));
     TEST_ASSERT_NOT_NULL(strstr(output, "bytes=15808331776"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "last_error=write:"));
 }
 
-void test_info_reports_native_identity_registers_clocks_and_persistent_errors(void)
+void test_removed_sd_family_reports_usage(void)
 {
-    pf_sd_info_t info = {
-        .cid_valid = true, .native_details_valid = true, .initialization_error = true,
-        .block_count = 249737216u, .ocr = 0xc0ff8000u, .rca = 0x1234u,
-        .bus_width = 4u, .sd_spec = 3u, .supported_bus_widths = 5u,
-        .requested_init_clock_hz = 400000u, .actual_init_clock_hz = 398089u,
-        .requested_clock_hz = 25000000u, .actual_clock_hz = 20833333u,
-        .init_attempts = 2u, .high_speed_fallbacks = 1u,
-        .detail_error = PF_SD_DETAIL_DATA_CRC,
-        .errors = { .data_crc_errors = 3u, .dma_timeouts = 1u },
-    };
-    info.cid[0] = 3u;
-    memcpy(info.cid + 3u, "SB128", 5u);
-    info.cid[8] = 0x80u;
-    info.cid[13] = 1u;
-    info.cid[14] = 0x41u;
-    pf_sd_get_info_ExpectAnyArgs();
-    pf_sd_get_info_ReturnThruPtr_info(&info);
-    pf_storage_command_execute(true, "sd", "info", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "product=SB128 revision=8.0"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "date=2020-01"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "capacity=127865454592"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "ocr=c0ff8000 ccs=1 rca=1234"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "requested_hz=25000000 actual_hz=20833333"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "error=data_crc phase=init"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "data_crc=3"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "dma_timeouts=1"));
-}
-
-void test_info_explicitly_reports_unavailable_native_details(void)
-{
-    pf_sd_info_t info = {0};
-    pf_sd_get_info_ExpectAnyArgs();
-    pf_sd_get_info_ReturnThruPtr_info(&info);
     pf_storage_command_execute(false, "sd", "info", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "Native startup details unavailable"));
-}
-
-void test_profile_enable_and_snapshot_are_serialized_commands(void)
-{
-    pf_sd_profile_t metrics = { 0 };
-    metrics.elapsed_us[PF_SD_PROFILE_CRC] = 1234u;
-    metrics.calls[PF_SD_PROFILE_CRC] = 8u;
-    metrics.events[PF_SD_PROFILE_TIMEOUT] = 2u;
-    pf_sd_set_profiling_enabled_Expect(true);
-    pf_sd_get_profile_ExpectAnyArgs();
-    pf_sd_get_profile_ReturnThruPtr_profile(&metrics);
-    pf_storage_command_execute(false, "sd", "profile on", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "recovery_us=reserved calls=reserved"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "crc_copy_us=1234 calls=8"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "timeouts=2"));
-}
-
-void test_profile_changes_are_rejected_during_usb_ownership(void)
-{
-    pf_storage_command_execute(true, "sd", "profile reset", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "firmware card ownership"));
-}
-
-void test_profile_rejects_unknown_actions(void)
-{
-    pf_storage_command_execute(false, "sd", "profile invalid", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "Usage: sd profile"));
-}
-
-void test_diagnostics_reports_last_failure(void)
-{
-    pf_sd_media_diagnostics_t diagnostics = {
-        .sequence = 7u,
-        .operation = PF_SD_MEDIA_OPERATION_WRITE,
-        .result = PF_SD_IO_ERROR,
-        .owner = PF_SD_MEDIA_OWNER_USB_MSC,
-        .transport = PF_SD_TRANSPORT_SPI,
-        .transport_init_stage = 9u,
-    };
-    diagnostics.profile.events[PF_SD_PROFILE_CRC_FAILURE] = 2u;
-    diagnostics.profile.events[PF_SD_PROFILE_TIMEOUT] = 3u;
-    pf_sd_media_get_diagnostics_ExpectAnyArgs();
-    pf_sd_media_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
-
-    pf_storage_command_execute(true, "sd", "diagnostics", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
-
-    TEST_ASSERT_NOT_NULL(strstr(
-        output, "sequence=7 operation=write result=io_error owner=USB transport=spi init_stage=9"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "crc_failures=2"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "timeouts=3"));
-}
-
-void test_diagnostics_clear_requires_firmware_ownership(void)
-{
-    pf_storage_command_execute(true, "sd", "diagnostics clear", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "requires firmware card ownership"));
-}
-
-void test_diagnostics_clear_resets_then_reports(void)
-{
-    pf_sd_media_diagnostics_t diagnostics = { 0 };
-    pf_sd_media_clear_diagnostics_Expect();
-    pf_sd_media_get_diagnostics_ExpectAnyArgs();
-    pf_sd_media_get_diagnostics_ReturnThruPtr_diagnostics(&diagnostics);
-
-    pf_storage_command_execute(false, "sd", "diagnostics clear", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "recoveries=reserved"));
-
-    TEST_ASSERT_NOT_NULL(strstr(output, "sequence=0 operation=none result=ok"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "Usage: storage status"));
 }
 
 static bool disconnected_reply(const char *line, void *context)

@@ -14,10 +14,6 @@ static bool msc_enabled;
 static bool msc_transition_pending;
 const pf_led_board_t pf_led_board = {.gpio = 25u, .active_high = true};
 const pf_monitor_uart_board_t pf_monitor_uart_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
-const pf_sdio_pio_board_t pf_sdio_pio_board = {
-    .pins = {.clock_gpio = 2u, .command_gpio = 3u, .data_gpio = {4u, 5u, 6u, 7u}},
-};
-const pf_sd_board_t pf_sd_board = {.card_detect_gpio = 8u};
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void) { return test_sysclk; }
 pf_sd_speed_t pf_boot_config_sd_speed(void) { return test_sd_speed; }
@@ -57,31 +53,25 @@ static bool fake_connected = true;
 static bool fake_done;
 static unsigned reply_count, drained_replies;
 static unsigned queries, queued, recovery_requests, normal_submissions, messages;
-bool pf_sd_try_lock(void)
+bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
+void pf_storage_get_status(pf_storage_status_t *status)
 {
     TEST_ASSERT_FALSE(reserved);
-    reserved = !unavailable;
-    return reserved;
-}
-void pf_sd_unlock(void) { TEST_ASSERT_TRUE(reserved); reserved = false; }
-bool pf_sd_is_initialized(void) { TEST_ASSERT_TRUE(reserved); return initialized; }
-bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
-void pf_sd_get_info(pf_sd_info_t *info)
-{
-    TEST_ASSERT_TRUE(reserved);
-    ++queries;
-    *info = (pf_sd_info_t){
-        .initialized = initialized, .presence_known = true, .present = true,
-        .cid_valid = initialized || retained_cid, .bus_clock_hz = 25000000, .block_count = 128
+    *status = (pf_storage_status_t){
+        .medium = PF_STORAGE_MEDIUM_SDCARD, .bus = PF_STORAGE_BUS_SDIO,
+        .bus_gpios = {2u, 3u, 4u, 5u, 6u, 7u}, .detect_gpio = 8u, .state = PF_STORAGE_STATE_BUSY,
     };
-    if (info->cid_valid) {
-        memset(info->cid, 0x5a, sizeof(info->cid));
-    }
-}
-bool pf_sd_board_config(pf_sd_config_t *config)
-{
-    config->transport.mode = PF_SD_LINK_NATIVE_SD;
-    return true;
+    if (unavailable) return;
+    reserved = true;
+    ++queries;
+    status->presence_known = true;
+    status->id_valid = initialized || retained_cid;
+    if (status->id_valid) memset(status->id, 0x5a, sizeof(status->id));
+    status->bus_clock_hz = 25000000u;
+    status->sector_count = 128u;
+    status->state = !initialized ? PF_STORAGE_STATE_UNINITIALIZED
+        : pf_fatfs_volume_is_mounted() ? PF_STORAGE_STATE_MOUNTED : PF_STORAGE_STATE_READY;
+    reserved = false;
 }
 BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
 {

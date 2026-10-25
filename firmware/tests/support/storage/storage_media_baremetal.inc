@@ -5,16 +5,17 @@
 #define DRIVER_SOURCE "drivers/sdcard/sd.c"
 #define PORT_SOURCE "drivers/sdcard/sd_port_baremetal.c"
 #include DRIVER_SOURCE
-#define MEDIA_SOURCE "app/storage/sd_media.c"
+#define MEDIA_SOURCE "middleware/storage/storage.c"
 #include MEDIA_SOURCE
 #include PORT_SOURCE
 bool pf_fatfs_volume_is_mounted(void) { return false; }
-static pf_sd_result_t initialize_media(const pf_sd_config_t *config)
+static pf_sd_result_t bind_and_initialize(const pf_sd_config_t *config)
 {
     configured = true;
     media_config = *config;
-    return pf_sd_media_initialize();
+    return initialize_media();
 }
+void pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio) { (void)bus_gpios; (void)detect_gpio; }
 
 static bool initialized;
 static unsigned reads, writes, syncs;
@@ -50,8 +51,6 @@ pf_sd_result_t backend_write(uint32_t first, const void *buffer, uint32_t count)
     return PF_SD_OK;
 }
 pf_sd_result_t backend_sync(void) { ++syncs; return PF_SD_OK; }
-void pf_sd_get_profile(pf_sd_profile_t *profile)
-{ *profile = (pf_sd_profile_t){0}; }
 
 static void check_baremetal(void)
 {
@@ -61,27 +60,27 @@ static void check_baremetal(void)
     TEST_ASSERT_TRUE(pf_sd_try_lock());
     pf_sd_unlock(); pf_sd_unlock(); pf_sd_unlock();
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_init(NULL));
-    TEST_ASSERT_EQUAL(PF_SD_NOT_CONFIGURED, pf_sd_media_read_blocks(0, NULL, 0));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_CONFIGURED, read_blocks_for_owner(false, 0, NULL, 0));
     pf_sd_config_t config = { .transport.mode = TEST_TRANSPORT };
     TEST_ASSERT_TRUE(pf_sd_port_init(&config));
-    TEST_ASSERT_EQUAL(PF_SD_OK, initialize_media(&config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, bind_and_initialize(&config));
     uint8_t input[1024], output[1024];
     memset(input, 0x5a, sizeof(input));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_write_blocks(0, input, 2));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_sync());
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_read_blocks(0, output, 2));
+    TEST_ASSERT_EQUAL(PF_SD_OK, write_blocks_for_owner(false, 0, input, 2));
+    TEST_ASSERT_EQUAL(PF_SD_OK, sync_for_owner(false));
+    TEST_ASSERT_EQUAL(PF_SD_OK, read_blocks_for_owner(false, 0, output, 2));
     TEST_ASSERT_EQUAL_MEMORY(input, output, sizeof(input));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_acquire_usb());
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_media_write_blocks(0, input, 2));
+    TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_storage_msc_acquire());
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, write_blocks_for_owner(false, 0, input, 2));
     TEST_ASSERT_EQUAL_UINT(1, writes);
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_usb_write_blocks(0, input, 2));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_usb_read_blocks(0, output, 2));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_usb_sync());
+    TEST_ASSERT_EQUAL(PF_SD_OK, write_blocks_for_owner(true, 0, input, 2));
+    TEST_ASSERT_EQUAL(PF_SD_OK, read_blocks_for_owner(true, 0, output, 2));
+    TEST_ASSERT_EQUAL(PF_SD_OK, sync_for_owner(true));
     TEST_ASSERT_EQUAL_UINT(2, reads);
     TEST_ASSERT_EQUAL_UINT(2, writes);
     TEST_ASSERT_EQUAL_UINT(2, syncs);
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_media_release_usb());
-    TEST_ASSERT_TRUE(pf_sd_media_take_reinit_request());
+    TEST_ASSERT_EQUAL(PF_BLOCK_OK, pf_storage_msc_release());
+    TEST_ASSERT_TRUE(reinit_after_usb_owner);
     pf_sd_info_t info;
     pf_sd_get_info(&info);
     TEST_ASSERT_TRUE(info.initialized);

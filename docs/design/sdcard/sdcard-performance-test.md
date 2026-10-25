@@ -90,10 +90,8 @@ contiguous allocation. Failure is reported as a filesystem error and still
 cleans up the newly created test file. Allocation time is
 excluded from write averages, so record preallocated and normal results
 separately. This mode changes allocation and wear behavior, may need contiguous
-free space, and is not a raw-driver benchmark. Use `sd profile` with a stable
-build and card when inspecting driver instrumentation windows. These windows
-overlap and cannot be summed or directly compared across transports; see
-[profile measurement boundaries](sdcard-driver-design.md#profile-measurement-boundaries).
+free space, and is not a raw-driver benchmark. The driver has no phase profiling; use an external trace for
+per-phase timing, see [performance controls and status](sdcard-driver-design.md#performance-controls-and-status).
 
 ## CMD25 Persistence Decision
 

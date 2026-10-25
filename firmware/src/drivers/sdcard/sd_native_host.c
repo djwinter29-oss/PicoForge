@@ -13,7 +13,6 @@
  * wire blocks while later blocks arrive; use chained ping-pong DMA if this ceiling becomes limiting. */
 static uint32_t read_wire_buffer[SDIO_DATA_WORD_COUNT * SDIO_READ_BATCH_BLOCKS];
 
-static uint32_t native_profile_clock(void);
 
 static void set_error(pf_sd_native_host_t *host, pf_sd_detail_error_t error)
 {
@@ -30,7 +29,6 @@ static void transport_error(void *context, pf_sd_link_wire_error_t error, pf_sd_
                    (error == PF_SD_LINK_WIRE_ERROR_DMA_TIMEOUT) ||
                    (error == PF_SD_LINK_WIRE_ERROR_BUSY_TIMEOUT);
     if (timeout) {
-        pf_sd_profile_event(PF_SD_PROFILE_TIMEOUT);
         if (phase == PF_SD_LINK_WIRE_PHASE_COMMAND) {
             ++host->errors.command_timeouts;
         } else if (phase == PF_SD_LINK_WIRE_PHASE_DATA) {
@@ -66,13 +64,6 @@ static void transport_error(void *context, pf_sd_link_wire_error_t error, pf_sd_
     }
 }
 
-static const pf_sd_link_t *profile_transport;
-
-static uint32_t native_profile_clock(void)
-{
-    return (uint32_t)pf_sd_link_time_us(profile_transport);
-}
-
 bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_config_t *config)
 {
     if ((host == NULL) || pf_sd_link_wire_state(&host->transport).ready || config == NULL ||
@@ -88,8 +79,6 @@ bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_config_t *con
         set_error(host, PF_SD_DETAIL_HOST_STATE);
         return false;
     }
-    profile_transport = &host->transport;
-    pf_sd_profile_set_clock(native_profile_clock);
     host->scr_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
     host->write_stream_next_sector = 0u;
     host->bus_width = 1u;
@@ -109,10 +98,6 @@ void pf_sd_native_host_deinit(pf_sd_native_host_t *host)
         return;
     }
     pf_sd_link_deinit(&host->transport);
-    if (profile_transport == &host->transport) {
-        pf_sd_profile_set_clock(NULL);
-        profile_transport = NULL;
-    }
     memset(host, 0, sizeof(*host));
 }
 
@@ -176,11 +161,9 @@ bool pf_sd_native_host_command_bytes(pf_sd_native_host_t *host, uint8_t command,
         set_error(host, PF_SD_DETAIL_HOST_STATE);
         return false;
     }
-    uint32_t profile_start = pf_sd_profile_begin();
     size_t received = 0u;
     bool ok = pf_sd_link_wire_exchange(&host->transport, frame, sizeof(frame), response_bits,
                                          response, response_capacity, &received, SDIO_COMMAND_TIMEOUT_US);
-    pf_sd_profile_end(PF_SD_PROFILE_COMMAND, profile_start);
     memset(host->last_response_words, 0, sizeof(host->last_response_words));
     host->last_response_word_count = (received + 3u) / 4u;
     for (size_t index = 0u; index < received; ++index) {
@@ -304,16 +287,12 @@ static bool stop_multiblock(pf_sd_native_host_t *host)
 {
     uint8_t response[6];
     uint32_t argument;
-    uint32_t profile_start = pf_sd_profile_begin();
     bool ok = pf_sd_native_host_command_bytes(host, 12u, 0u, 48u, response, sizeof(response)) &&
               pf_sd_native_host_parse_response(host, 12u, response, &argument) &&
               pf_sd_native_host_response_status_ok(host, argument, PF_SD_NATIVE_R1_ERROR_MASK);
     if (ok) {
-        uint32_t busy_start = pf_sd_profile_begin();
         ok = pf_sd_link_wire_wait_high(&host->transport, SDIO_DATA_TIMEOUT_US);
-        pf_sd_profile_end(PF_SD_PROFILE_BUSY, busy_start);
     }
-    pf_sd_profile_end(PF_SD_PROFILE_STOP, profile_start);
     return ok;
 }
 
@@ -393,7 +372,6 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sec
             pf_sd_native_host_response_status_ok(host, response_argument, PF_SD_NATIVE_R1_ERROR_MASK);
         if (response_ok) {
             uint32_t start = (uint32_t)pf_sd_link_time_us(&host->transport);
-            uint32_t profile_start = pf_sd_profile_begin();
             for (;;) {
                 if (!pf_sd_link_wire_rx_poll(&host->transport, start, SDIO_DATA_TIMEOUT_US, &complete)) {
                     wire_failed = true;
@@ -407,7 +385,6 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sec
                 }
                 pf_sd_link_wire_rx_wait(&host->transport);
             }
-            pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
             if (complete && !crc_failed &&
                 (!decode_completed_blocks(host, blocks, batch_words, &decoded) || (decoded != count))) {
                 crc_failed = true;
@@ -420,7 +397,6 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first_sec
             return false;
         }
         if (!complete) {
-            pf_sd_profile_event(PF_SD_PROFILE_BATCH_FALLBACK);
             host->data_rx_multiblock_supported = false;
             return read_single_blocks(host, first_sector, blocks, block_count);
         }
@@ -454,10 +430,8 @@ bool pf_sd_native_host_write_sector(pf_sd_native_host_t *host, uint32_t sector,
     }
     bool success = false;
     if (pf_sd_link_wire_tx_start(&host->transport, image, SDIO_DATA_WORD_COUNT, SDIO_DATA_NIBBLE_COUNT)) {
-        uint32_t profile_start = pf_sd_profile_begin();
         success = pf_sd_link_wire_tx_finish(&host->transport, SDIO_DATA_TIMEOUT_US, &token) &&
                   pf_sd_native_write_response_accepted(token);
-        pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
     }
     return pf_sd_link_wire_idle(&host->transport) && success;
 }
@@ -537,14 +511,12 @@ bool pf_sd_native_host_write_blocks(pf_sd_native_host_t *host, uint32_t first_se
             ok = false;
             break;
         }
-        uint32_t profile_start = pf_sd_profile_begin();
         if ((index + 1u < block_count) &&
             !pf_sd_native_encode_data_block(blocks + (index + 1u) * PF_SD_BLOCK_SIZE,
                                            (uint8_t *)images[(index + 1u) & 1u])) {
             ok = false;
         }
         bool finished = pf_sd_link_wire_tx_finish(&host->transport, SDIO_DATA_TIMEOUT_US, &token);
-        pf_sd_profile_end(PF_SD_PROFILE_DATA, profile_start);
         if (!ok || !finished || !pf_sd_native_write_response_accepted(token)) {
             ok = false;
             break;

@@ -182,26 +182,28 @@ operations require caller serialization because FatFs is configured without cros
 [filesystem block-device boundary](sdcard/sdcard-driver-design.md#filesystem-block-device-boundary) for authoritative layering,
 binding lifetimes, and ownership contracts.
 
-Application storage policy stays in `app/storage`: `fatfs_volume.c/.h` owns the singleton FatFs instance,
-mount registration and format telemetry; `storage_commands.c/.h` executes CDC storage commands,
-`file_benchmark.c/.h` verifies and times a dedicated file, `storage_worker.c/.h` serializes requests and owns
-automount/recovery policy, and `sd_media.c/.h` owns the application media lifecycle and firmware/USB ownership.
-SD driver dispatch, protocol, telemetry and execution-port locks remain below the application;
-retained ownership/operation diagnostics belong to `sd_media`. Its static firmware descriptor gates FatFs I/O,
-while the middleware SD adapter is explicitly raw and has no application ownership policy.
-The worker asks `sd_media` to obtain SD configuration and initialize its execution port before task startup;
-the USB task no longer configures SD. Command and worker headers do not expose SD configuration.
-The firmware build includes the SD protocol/port targets and SD block adapter. Common FatFs/logical-block middleware
-uses the SD block adapter.
+`middleware/storage/fatfs_volume.c/.h` owns the singleton FatFs instance, mount registration and format telemetry.
+`middleware/storage/storage.c/.h` is the storage service over the SD driver: it obtains SD configuration, owns the media
+lifecycle, presence debounce, paced automount, recovery and forced-USB-return policy, the last failed operation, and
+exclusive firmware/USB MSC ownership. Its static firmware descriptor gates FatFs I/O. `pf_storage_get_status()` is a
+backend-neutral snapshot (state, medium, bus and pins, presence, clock, capacity, identity, last failure); its header
+includes no driver headers so another medium can implement the same API.
+Layers above middleware treat storage as a filesystem that can be exported as USB MSC, and use only this service:
+the CLI `storage status` and the HID board/storage reports are built from that snapshot.
+Application storage stays in `app/storage`: `storage_commands.c/.h` executes CDC storage commands,
+`file_benchmark.c/.h` verifies and times a dedicated file, and `storage_worker.c/.h` is the sole FatFs executor that
+serializes requests and runs the storage policy while idle.
+The worker calls `pf_storage_setup()` before task startup; the USB task no longer configures SD. Command and worker
+headers do not expose SD configuration.
 Automatic mount failures retain SD initialization, volume and FatFs result codes and log the first or changed failure;
-identical retries remain paced and do not repeat that worker warning. Successful mounting resets warning suppression.
+identical retries remain paced and do not repeat that warning. Successful mounting resets warning suppression.
 Mount registration and format are independent atomic telemetry snapshots; neither grants filesystem access.
-Worker presence fields remain worker-owned: readers inspect them only while the kernel-protected
-`media_service_busy` gate is clear, and the worker publishes changes before releasing that gate.
+Presence and automount state is mutated only on the worker while holding the SD reservation; the worker's
+kernel-protected `media_service_busy` gate excludes admission while the policy runs.
 
 Product-specific USB behavior lives under `app/usb`: `usb_task.c/.h` owns task startup, CDC command sessions and report
 scheduling; `usb_hid.c/.h` owns the product HID protocol; `usb_msc.c/.h` owns SCSI callbacks and application handoff
-coordination; `msc_storage.h` maps MSC operations to the SD media service. `usb_descriptors.c` defines product interfaces.
+coordination; MSC block access and handoff use the `pf_storage_msc_*` export API in `storage.h`. `usb_descriptors.c` defines product interfaces.
 TinyUSB configuration remains under `integration/usb`; the pinned TinyUSB stack supplies reusable USB machinery.
 No extra middleware forwarding layer or runtime backend registry is introduced.
 

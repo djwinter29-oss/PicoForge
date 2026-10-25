@@ -57,7 +57,7 @@ Run at least five repeats per cell, alternating/reversing cell order, and retain
 all failures. Separately measure raw reads/writes, normal file and preallocated
 file reads/writes, and host MSC traffic. Existing self-test is a normal-file
 benchmark; preallocation/raw measurements need an approved harness. Use existing
-`sd profile`, `sd diagnostics` and self-test results as baseline observables;
+`storage status` and self-test results as baseline observables (driver phase profiling was removed);
 callback/lock timing, CPU and stack high-water still need a qualified target
 capture interface. Report throughput mean/spread, p95/p99/max callback and sync
 latencies, lock waits, HID/CDC service gaps, CPU and USB/worker stack minimum

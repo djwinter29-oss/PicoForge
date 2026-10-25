@@ -41,11 +41,8 @@ CR, LF, and CRLF are accepted.
 | `help` | List commands; `help <command>` displays command help. |
 | `version` | Show the PicoForge CLI and Embedded CLI version. |
 | `echo <text>` | Echo text for non-destructive transport checks. |
-| `sd status` | Show card presence, initialization, transport, capacity, clock, mounted state, and Pico/USB ownership. |
-| `sd info` | Read-only diagnostic snapshot: CID identity, OCR/CCS, RCA, CSD/capacity, SCR/version/widths, requested/actual initialization and transfer clocks, timing, detailed error/phase, init attempts/retries, bounded High-Speed fallbacks and persistent CRC/timeout/PIO stall counters. Native details remain available after failure; SPI reports native details unavailable. |
-| `sd profile [status, on, off, reset]` | Show or control optional SD-card phase profiling; changes require Pico ownership. Counters are cumulative and not a total-latency breakdown. Recovery timing/calls and attempts display `reserved` (unmetered for SPI/native); labels and field order are retained. |
-| `sd diagnostics [status, clear]` | Show the retained last facade failure, transport initialization stage, owner, and event-counter snapshot. Recovery attempts display `recoveries=reserved`, not a measured zero. Clearing requires Pico ownership. |
-| `sd recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
+| `storage status` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
+| `storage recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
 | `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
 | `fs format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
@@ -69,10 +66,9 @@ File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
 
-`sd status` and `sd info` are available while USB owns the card; neither sends
-commands to the card. Detailed errors and counters do not require `sd profile on`.
-The retry count is explicit initialization requests after the first, not runtime
-transfer replay. See the [native startup policy](../sdcard/sdcard-driver-design.md#initialization-workflow).
+`storage status` is available while USB owns the card and never sends commands to the card; `busy` means another
+storage operation held the media at the time of the snapshot. Card identity and backend details are exposed only
+through the HID dashboard.
 Every `fs` command is refused
 until the host safely ejects and disables MSC. The storage worker automatically
 attempts to mount detected cards at boot, after insertion, and after MSC returns
@@ -104,9 +100,9 @@ Use normal host eject followed by HID MSC disable whenever possible. If an I/O
 failure invalidates a still-connected card, eject/sync and normal disable may
 all fail. For that faulted state only:
 
-1. Stop host access to the drive and collect `sd diagnostics` before recovery.
+1. Stop host access to the drive and record `storage status` before recovery.
    Unsaved host data and partially accepted writes may already be lost.
-2. Enter exactly `sd recover --confirm` in the CDC CLI. This is a request, not
+2. Enter exactly `storage recover --confirm` in the CDC CLI. This is a request, not
    a successful clean eject or a promise that initialization will succeed.
 3. The request is rejected if MSC is disabled, the card is still initialized,
    removal is prevented by the host, storage work is busy, or the recovery
@@ -116,8 +112,8 @@ all fail. For that faulted state only:
    CDC/HID reconnect without MSC; reopen the same board if necessary.
    The worker attempts card initialization only. It does not retry the failed
    payload, report a successful SCSI sync/eject, mount, format, or repair.
-5. After reconnect, use `sd status` to check initialization and confirm
-   `mounted=0`; use `sd diagnostics` to inspect retained failures. Successful
+5. After reconnect, use `storage status` to check that the state is `ready`, not
+   `mounted`, and to inspect the retained `last_error`. Successful
    initialization does not erase the original I/O diagnostic. A new failed
    initialization replaces it with the latest failure.
 6. Inspect/repair the filesystem with appropriate host tools before deliberately
@@ -141,7 +137,7 @@ prevents MSC handoff until it is complete and its replies are drained.
 Read-only bring-up sequence:
 
 ```text
-sd status
+storage status
 fs mount
 fs ls /
 fs stat /existing.txt

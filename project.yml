@@ -53,14 +53,14 @@
     :compile:
       :test_sd_native_init:
         - -DPF_SD_NATIVE_HIGH_SPEED=1
-      :test_sd_media_freertos_serialization:
+      :test_storage_media_freertos_serialization:
         - -std=c11
         - -D_XOPEN_SOURCE=700
         - -pthread
-      :test_sd_media_:
+      :test_storage_media_:
         - -ffunction-sections
         - -fdata-sections
-      :/test_sd_media_.*spi/:
+      :/test_storage_media_.*spi/:
         - -DPF_CONFIG_SDCARD_TRANSPORT=1
       :test_storage_worker_automount:
         - -ffunction-sections
@@ -100,9 +100,9 @@
         - -Wl,--gc-sections
       :test_sdio_wait_freertos:
         - -pthread
-      :test_sd_media_freertos_serialization:
+      :test_storage_media_freertos_serialization:
         - -pthread
-      :test_sd_media_:
+      :test_storage_media_:
         - -Wl,--gc-sections
       :test_storage_worker_automount:
         - -Wl,--gc-sections

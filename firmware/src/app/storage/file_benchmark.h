@@ -5,7 +5,7 @@
 #define PF_FILE_BENCHMARK_H
 
 #include <stdint.h>
-#include "app/storage/fatfs_volume.h"
+#include "middleware/storage/fatfs_volume.h"
 
 /** Reserved path that must not exist before a benchmark is accepted. */
 #define PF_FILE_BENCHMARK_PATH "0:/PFTEST.BIN"

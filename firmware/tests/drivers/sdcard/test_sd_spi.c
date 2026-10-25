@@ -34,7 +34,6 @@ static pf_sd_link_result_t clock_result;
 static pf_sd_link_ops_t clock_ops;
 
 uint32_t time_us_32(void) { now += clock_step; return now; }
-static uint32_t profile_clock(void) { return now; }
 static void idle(void) { now += 25000u; }
 static uint16_t spi_fixture_crc16(const uint8_t *data, size_t size)
 {
@@ -128,17 +127,12 @@ static void reset(uint8_t response)
     clock_result = PF_SD_LINK_OK;
     clock_step = 25000u;
     memset(payload, 0, sizeof(payload));
-    pf_sd_set_profiling_enabled(false);
-    pf_sd_reset_profile();
-    pf_sd_profile_set_clock(profile_clock);
     pf_sd_set_idle_hook(idle);
 }
 
 void setUp(void) { reset(5); }
 void tearDown(void)
 {
-    pf_sd_set_profiling_enabled(false);
-    pf_sd_profile_set_clock(NULL);
     pf_sd_set_idle_hook(NULL);
 }
 
@@ -572,10 +566,9 @@ static void prepare_read(void)
     length = 3;
     queue[0] = 0xfe;
     queue[1] = queue[2] = 0;
-    pf_sd_set_profiling_enabled(true);
 }
 
-void test_spi_read_data_profiles_token_payload_and_crc(void)
+void test_spi_read_data_exchanges_token_payload_and_crc(void)
 {
     uint8_t data[512];
     prepare_read();
@@ -583,11 +576,6 @@ void test_spi_read_data_profiles_token_payload_and_crc(void)
     TEST_ASSERT_EQUAL_UINT(3, exchanges);
     TEST_ASSERT_EQUAL_UINT(1, reads);
     TEST_ASSERT_EQUAL_UINT(1, crc_calls);
-    pf_sd_profile_t profile;
-    pf_sd_get_profile(&profile);
-    TEST_ASSERT_EQUAL_UINT(1, profile.calls[PF_SD_PROFILE_DATA]);
-    TEST_ASSERT_EQUAL_UINT(1, profile.calls[PF_SD_PROFILE_CRC]);
-    TEST_ASSERT_EQUAL_UINT(130, profile.elapsed_us[PF_SD_PROFILE_DATA]);
 }
 
 void test_spi_read_short_token_or_crc_tail_never_substitutes_success_bytes(void)
@@ -600,11 +588,6 @@ void test_spi_read_short_token_or_crc_tail_never_substitutes_success_bytes(void)
         TEST_ASSERT_EQUAL_UINT(failure + 1, exchanges);
         TEST_ASSERT_EQUAL_UINT(failure != 0, reads);
         TEST_ASSERT_EQUAL_UINT(0, crc_calls);
-        pf_sd_profile_t profile;
-        pf_sd_get_profile(&profile);
-        TEST_ASSERT_EQUAL_UINT(1, profile.calls[PF_SD_PROFILE_DATA]);
-        TEST_ASSERT_EQUAL_UINT(0, profile.calls[PF_SD_PROFILE_CRC]);
-        TEST_ASSERT_EQUAL_UINT(0, profile.events[PF_SD_PROFILE_TIMEOUT]);
     }
     prepare_read();
     bool found = false;
@@ -628,15 +611,10 @@ void test_spi_read_token_timeout_invalid_token_and_short_payload_are_reported(vo
         if (failure == 1) queue[0] = 0x0b;
         if (failure == 2) short_payload = true;
         TEST_ASSERT_FALSE(read_data_block(data, sizeof(data)));
-        pf_sd_profile_t profile;
-        pf_sd_get_profile(&profile);
-        TEST_ASSERT_EQUAL_UINT(1, profile.calls[PF_SD_PROFILE_DATA]);
         TEST_ASSERT_EQUAL_UINT(0, crc_calls);
-        TEST_ASSERT_EQUAL_UINT(failure == 0, profile.events[PF_SD_PROFILE_TIMEOUT]);
         TEST_ASSERT_EQUAL_UINT(failure == 2, reads);
         if (failure == 0) {
-            TEST_ASSERT_GREATER_OR_EQUAL_UINT(SD_SPI_RESPONSE_TIMEOUT_US,
-                                            profile.elapsed_us[PF_SD_PROFILE_DATA]);
+            TEST_ASSERT_GREATER_OR_EQUAL_UINT(SD_SPI_RESPONSE_TIMEOUT_US, now);
         } else {
             TEST_ASSERT_EQUAL_UINT(1, exchanges);
         }
@@ -803,16 +781,12 @@ void test_spi_crc_mismatch_invalidates_single_and_multiblock_reads_after_success
         const uint8_t wire[] = {0xff, 0, 0xfe, 0, 1, 0xff, 0, 0xff, 0xff};
         length = sizeof(wire); memcpy(queue, wire, length);
         TEST_ASSERT_EQUAL_HEX16(0, pf_sd_crc16(payload, sizeof(payload)));
-        pf_sd_set_profiling_enabled(true);
         TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(5, data, count));
         TEST_ASSERT_EQUAL_UINT(count > 1 ? sizeof(wire) : 6, position);
         TEST_ASSERT_EQUAL_UINT(count > 1 ? 2 : 1, command_count);
         if (count > 1) TEST_ASSERT_EQUAL_UINT(12, commands[1]);
         TEST_ASSERT_EQUAL_UINT(1, reads);
         TEST_ASSERT_FALSE(selected);
-        pf_sd_profile_t metrics;
-        pf_sd_get_profile(&metrics);
-        TEST_ASSERT_EQUAL_UINT(1, metrics.events[PF_SD_PROFILE_CRC_FAILURE]);
         TEST_ASSERT_FALSE(card_initialized);
         unsigned accesses = selects + deselects + exchanges + writes + reads;
         TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(5, data, count));

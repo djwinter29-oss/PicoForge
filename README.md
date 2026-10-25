@@ -113,10 +113,9 @@ filesystem automatically. It does not format the card.
 Useful console commands:
 
 ```text
-sd status
+storage status
 fs ls /
 fs cat /example.txt
-sd diagnostics
 ```
 
 To use the card as a USB drive:

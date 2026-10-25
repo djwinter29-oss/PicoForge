@@ -43,10 +43,11 @@ static void storage_command(EmbeddedCli *instance, char *args, void *context)
 {
     (void)instance;
     const char *family = context;
-    if (strcmp(family, "sd") == 0 && args != NULL &&
+    if (strcmp(family, "storage") == 0 && args != NULL &&
         strcmp(args, "recover --confirm") == 0) {
         pf_usb_msc_request_recovery();
-        pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect before fs mount. Check UART recovery result and sd status / sd diagnostics after reconnect (selected media).");
+        pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect before fs mount. "
+                     "Check UART recovery result and storage status after reconnect.");
         return;
     }
     if (!pf_storage_worker_submit(family, args != NULL ? args : "",
@@ -113,8 +114,8 @@ static void cdc_cli_task(void)
             panic("Failed to initialize CDC CLI");
         }
         if (!pf_cli_add_binding((CliCommandBinding){
-                "sd", "sd status | sd info | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
-                "sd", storage_command
+                "storage", "storage status | storage recover --confirm", false,
+                "storage", storage_command
             }) || !pf_cli_add_binding((CliCommandBinding){
                 "fs", "fs mount|unmount|format --confirm|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
                       "fs mkdir <path>|write <path> <text>|append <path> <text>\r\n"

@@ -1,6 +1,6 @@
 #include "unity.h"
 #include <string.h>
-#include "app/storage/sd_media.h"
+#include "middleware/storage/storage.h"
 #include "drivers/sdcard/sd_port.h"
 #include "drivers/sdcard/sd_native.h"
 #define WORKER_SOURCE "app/storage/storage_worker.c"
@@ -8,10 +8,11 @@
 #define MSC_SOURCE "app/usb/usb_msc.c"
 #include WORKER_SOURCE
 #include FACADE_SOURCE
-#define MEDIA_SOURCE "app/storage/sd_media.c"
+#define MEDIA_SOURCE "middleware/storage/storage.c"
 #include MEDIA_SOURCE
 #include MSC_SOURCE
 
+uint64_t test_time_us;
 static unsigned reservation_depth, try_lock_calls;
 static bool lock_unavailable;
 static pf_sd_info_t media = { .presence_known = true, .present = true };
@@ -37,8 +38,6 @@ uint32_t pf_sd_native_block_count(void) { return 128u; }
 void pf_sd_native_get_info(pf_sd_info_t *info) { *info = media; }
 pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void)
 { return PF_SD_NATIVE_INIT_STAGE_NONE; }
-void pf_sd_get_profile(pf_sd_profile_t *profile)
-{ *profile = (pf_sd_profile_t){0}; }
 void pf_sd_native_confirm_card_removed(void)
 {
     ++removals;
@@ -68,7 +67,7 @@ pf_sd_result_t pf_sd_native_write_blocks(uint32_t first, const void *buffer, uin
 pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
 {
     TEST_ASSERT_EQUAL_PTR(&media_config, config);
-    TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_FIRMWARE, active_owner);
+    TEST_ASSERT_FALSE(usb_owned);
     TEST_ASSERT_NOT_EQUAL(0, reservation_depth);
     if (auto_mount_blocked) {
         TEST_ASSERT_NOT_EQUAL(0, disconnects);
@@ -90,11 +89,9 @@ pf_fatfs_volume_result_t pf_fatfs_volume_unmount(FRESULT *result)
     return PF_FATFS_VOLUME_OK;
 }
 void pf_fatfs_volume_forget_filesystem_format(void) { ++forget_calls; }
-static const pf_block_device_t block_device = {0};
-const pf_block_device_t *pf_sd_block_device(void) { return &block_device; }
 pf_fatfs_volume_result_t pf_fatfs_volume_mount(const pf_block_device_t *device, FRESULT *result)
 {
-    TEST_ASSERT_EQUAL_PTR(pf_sd_media_firmware_device(), device);
+    TEST_ASSERT_EQUAL_PTR(pf_storage_firmware_device(), device);
     TEST_ASSERT_TRUE(media.initialized);
     if (result != NULL) {
         *result = mount_result == PF_FATFS_VOLUME_OK ? FR_OK : FR_NO_FILESYSTEM;
@@ -120,7 +117,7 @@ bool tud_msc_set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
 bool tud_disconnect(void)
 {
     if (expect_usb_owned_disconnect) {
-        TEST_ASSERT_EQUAL(PF_SD_MEDIA_OWNER_USB_MSC, active_owner);
+        TEST_ASSERT_TRUE(usb_owned);
         expect_usb_owned_disconnect = false;
     }
     ++disconnects;

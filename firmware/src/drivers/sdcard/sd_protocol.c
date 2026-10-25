@@ -40,60 +40,6 @@ static const uint16_t crc16_table[256] = {
 };
 
 static void (*idle_hook)(void);
-static uint32_t (*profile_clock)(void);
-static bool profiling_enabled;
-static pf_sd_profile_t profile_metrics;
-
-/* Public profile operations take the recursive facade reservation; the pf_sd_profile_* hot-path helpers below do not
- * because their callers already hold it. */
-void pf_sd_set_profiling_enabled(bool enabled)
-{
-    pf_sd_lock();
-    profiling_enabled = enabled;
-    pf_sd_unlock();
-}
-
-void pf_sd_reset_profile(void)
-{
-    pf_sd_lock();
-    memset(&profile_metrics, 0, sizeof(profile_metrics));
-    pf_sd_unlock();
-}
-
-void pf_sd_get_profile(pf_sd_profile_t *profile)
-{
-    if (profile != NULL) {
-        pf_sd_lock();
-        *profile = profile_metrics;
-        pf_sd_unlock();
-    }
-}
-
-void pf_sd_profile_set_clock(uint32_t (*clock_us)(void))
-{
-    profile_clock = clock_us;
-}
-
-uint32_t pf_sd_profile_begin(void)
-{
-    return profiling_enabled && profile_clock != NULL ? profile_clock() : 0u;
-}
-
-void pf_sd_profile_end(pf_sd_profile_phase_t phase, uint32_t start)
-{
-    if (profiling_enabled && profile_clock != NULL &&
-        ((unsigned)phase < PF_SD_PROFILE_PHASE_COUNT)) {
-        profile_metrics.elapsed_us[phase] += (uint32_t)(profile_clock() - start);
-        ++profile_metrics.calls[phase];
-    }
-}
-
-void pf_sd_profile_event(pf_sd_profile_event_t event)
-{
-    if (profiling_enabled && ((unsigned)event < PF_SD_PROFILE_EVENT_COUNT)) {
-        ++profile_metrics.events[event];
-    }
-}
 
 void pf_sd_set_idle_hook(void (*hook)(void))
 {
@@ -442,8 +388,6 @@ bool pf_sd_native_encode_data_block_sized(const uint8_t *block, size_t block_siz
     if (!crc16_4bit_table_ready) {
         crc16_4bit_table_init();
     }
-
-    uint32_t profile_start = pf_sd_profile_begin();
     for (size_t index = 0u; index < block_size; index += 4u) {
         uint32_t word = load_be32(block + index);
         reg = crc16_4bit_word(reg, word);
@@ -458,7 +402,6 @@ bool pf_sd_native_encode_data_block_sized(const uint8_t *block, size_t block_siz
         uint8_t crc_byte = (uint8_t)(reg >> (56u - 8u * index));
         image[block_size + index] = crc_byte;
     }
-    pf_sd_profile_end(PF_SD_PROFILE_CRC, profile_start);
     return true;
 }
 
@@ -481,8 +424,6 @@ static bool decode_data_block(const uint8_t *image, uint8_t *block, size_t block
     if (!crc16_4bit_table_ready) {
         crc16_4bit_table_init();
     }
-
-    uint32_t profile_start = pf_sd_profile_begin();
     for (size_t index = 0u; index < block_size; index += 4u) {
         uint32_t word = load_be32(image + index);
         reg = crc16_4bit_word(reg, word);
@@ -499,10 +440,6 @@ static bool decode_data_block(const uint8_t *image, uint8_t *block, size_t block
 #endif
     for (size_t index = 0u; index < 8u; index++) {
         received = (received << 8u) | image[block_size + index];
-    }
-    pf_sd_profile_end(PF_SD_PROFILE_CRC, profile_start);
-    if (received != reg) {
-        pf_sd_profile_event(PF_SD_PROFILE_CRC_FAILURE);
     }
     return received == reg;
 }

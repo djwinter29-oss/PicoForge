@@ -13,7 +13,5 @@ typedef struct pf_sd_config {
 
 /** @brief Initialize the build-selected backend; the first accepted configuration remains locked. */
 pf_sd_result_t pf_sd_init(const pf_sd_config_t *config);
-/** @brief Query the selected driver initialization stage for diagnostics. */
-uint32_t pf_sd_get_init_stage(void);
 
 #endif

@@ -1,5 +1,5 @@
 /** @file
- * @brief Application FatFs volume instance, drive-zero binding and mount telemetry.
+ * @brief Singleton FatFs volume instance, drive-zero binding and mount telemetry.
  */
 #include "fatfs_volume.h"
 #include "middleware/storage/fatfs_disk.h"

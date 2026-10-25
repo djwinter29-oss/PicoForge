@@ -277,22 +277,20 @@ add_library(pf_storage STATIC
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
     src/middleware/storage/fatfs_disk.c
+    src/middleware/storage/fatfs_volume.c
+    src/middleware/storage/storage.c
 )
+target_link_libraries(pf_storage PUBLIC pf_sdcard pf_logging)
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
     "${CMAKE_CURRENT_LIST_DIR}/src/middleware/storage"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdcard"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
-target_sources(pf_storage PRIVATE src/middleware/storage/sd_block_device.c)
-target_link_libraries(pf_storage PUBLIC pf_sdcard)
 
 add_library(pf_app_storage STATIC
-    src/app/storage/fatfs_volume.c
     src/app/storage/storage_commands.c
     src/app/storage/file_benchmark.c
     src/app/storage/storage_worker.c
-    src/app/storage/sd_media.c
 )
 option(PF_STORAGE_SELF_TEST_PREALLOCATE "Preallocate contiguous self-test files outside write timing" OFF)
 target_compile_definitions(pf_app_storage PUBLIC
@@ -303,6 +301,7 @@ target_include_directories(pf_app_storage PUBLIC
 )
 target_link_libraries(pf_app_storage PUBLIC
     pf_storage
+    pf_sdcard
     pf_system
     embedded_cli
     FreeRTOS-Kernel-Static

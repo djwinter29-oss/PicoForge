@@ -1,5 +1,5 @@
 /** @file
- * @brief Application singleton FatFs volume over a caller-selected logical block device.
+ * @brief Singleton FatFs volume over a caller-selected logical block device.
  */
 #ifndef PF_FATFS_VOLUME_H
 #define PF_FATFS_VOLUME_H

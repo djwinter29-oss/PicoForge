@@ -16,9 +16,7 @@
 #define selected_write pf_sd_spi_write_blocks
 #define selected_sync pf_sd_spi_sync
 #define selected_info pf_sd_spi_get_info
-#define selected_stage pf_sd_spi_get_init_stage
 #define SELECTED_MODE PF_SD_LINK_SPI
-#define SELECTED_NAME "spi"
 #else
 #include "sd_native.h"
 #define selected_init pf_sd_native_init
@@ -28,9 +26,7 @@
 #define selected_write pf_sd_native_write_blocks
 #define selected_sync pf_sd_native_sync
 #define selected_info pf_sd_native_get_info
-#define selected_stage pf_sd_native_get_init_stage
 #define SELECTED_MODE PF_SD_LINK_NATIVE_SD
-#define SELECTED_NAME "sdio"
 #endif
 
 static bool transport_selected; /**< A validated configuration has reached the selected protocol. */
@@ -103,22 +99,6 @@ void pf_sd_get_info(pf_sd_info_t *info)
         }
     }
     pf_sd_unlock();
-}
-
-uint32_t pf_sd_get_init_stage(void)
-{
-    pf_sd_lock();
-    uint32_t stage = transport_selected ? (uint32_t)selected_stage() : 0u;
-    pf_sd_unlock();
-    return stage;
-}
-
-const char *pf_sd_transport_name(void)
-{
-    pf_sd_lock();
-    const char *name = transport_selected ? SELECTED_NAME : "unconfigured";
-    pf_sd_unlock();
-    return name;
 }
 
 void pf_sd_confirm_removed(void)

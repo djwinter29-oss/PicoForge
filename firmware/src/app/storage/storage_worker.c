@@ -5,9 +5,9 @@
 #include "task.h"
 #include "queue.h"
 #include "drivers/system.h"
-#include "app/storage/fatfs_volume.h"
+#include "middleware/storage/fatfs_volume.h"
+#include "middleware/storage/storage.h"
 #include "middleware/logging/logging.h"
-#include "sd_media.h"
 
 #include <string.h>
 #include <stdatomic.h>
@@ -15,8 +15,6 @@
 #define STORAGE_WORKER_STACK_SIZE 2048u
 #define STORAGE_REPLY_COUNT 8u
 #define MEDIA_SERVICE_POLL_MS 100u
-#define CARD_PRESENCE_DEBOUNCE_SAMPLES 3u
-#define MEDIA_MOUNT_RETRY_MS 5000u
 
 /** One admitted operation; only one command, benchmark or recovery may be outstanding. */
 typedef struct {
@@ -26,7 +24,7 @@ typedef struct {
     bool recover_media; /**< Selects explicit recovery instead of a command. */
     bool return_from_usb; /**< Attempt one mount after a confirmed forced USB detach. */
     bool unmount_for_usb; /**< Unregister FatFs for the pending USB ownership transition. */
-    char family[3]; /**< Command family: sd or fs. */
+    char family[8]; /**< Command family: storage or fs. */
     char arguments[PF_STORAGE_COMMAND_ARGS_SIZE]; /**< Copied command arguments. */
 } storage_request_t;
 
@@ -44,7 +42,7 @@ static uint32_t active_session;
 /* Request admission/completion and self-test publication use critical sections.
  * The worker reads cancellation while waiting for replies; atomic publication
  * avoids relying on volatile for cross-task communication. Presence/automount
- * policy is worker-owned and published while media_service_busy is reserved. */
+ * policy lives in the storage service; media_service_busy excludes admission while it runs. */
 static atomic_bool cancelled;
 static pf_file_benchmark_status_t benchmark_status;
 static bool benchmark_active;
@@ -55,19 +53,6 @@ static bool benchmark_admission_result_ready;
 static bool benchmark_admission_accepted;
 static pf_file_benchmark_error_t benchmark_admission_error;
 static bool media_service_busy;
-static bool presence_sample_valid;
-static bool presence_sample;
-static uint8_t presence_sample_count;
-static bool stable_presence_valid;
-static bool stable_card_present;
-static bool auto_mount_pending = true;
-static bool auto_mount_blocked;
-static bool mount_retry_waiting;
-static uint32_t last_mount_attempt_ms;
-static bool mount_failure_reported; /**< Suppress identical periodic mount failures until success. */
-static unsigned last_media_result; /**< Last reported SD initialization outcome. */
-static pf_fatfs_volume_result_t last_volume_result; /**< Last reported mount outcome. */
-static FRESULT last_filesystem_result; /**< Last reported FatFs mount reason. */
 
 static void refresh_benchmark_completion(void)
 {
@@ -115,48 +100,9 @@ static bool send_reply(const char *line, void *context)
     return false;
 }
 
-/** @brief Attempt one mount and retain/report changed failures without flooding paced retries. */
-static void attempt_auto_mount(void)
-{
-    unsigned media_result = 0u;
-    pf_fatfs_volume_result_t volume_result = PF_FATFS_VOLUME_OK;
-    FRESULT filesystem_result = FR_OK;
-    if (pf_fatfs_volume_is_mounted()) {
-        auto_mount_pending = false;
-    } else {
-        media_result = (unsigned)pf_sd_media_initialize();
-        bool media_ready = media_result == PF_SD_OK;
-        if (!media_ready) {
-            auto_mount_pending = true;
-        } else {
-            volume_result = pf_fatfs_volume_mount(pf_sd_media_firmware_device(), &filesystem_result);
-            auto_mount_pending = (volume_result != PF_FATFS_VOLUME_OK) &&
-                                 (volume_result != PF_FATFS_VOLUME_ALREADY_MOUNTED);
-        }
-    }
-    if (auto_mount_pending) {
-        if (!mount_failure_reported || media_result != last_media_result ||
-            volume_result != last_volume_result || filesystem_result != last_filesystem_result) {
-            PF_LOG_WARNING("storage", "Mount failed: media=%u volume=%u FatFs=%u",
-                           (unsigned)media_result, (unsigned)volume_result,
-                           (unsigned)filesystem_result);
-        }
-        mount_failure_reported = true;
-        last_media_result = media_result;
-        last_volume_result = volume_result;
-        last_filesystem_result = filesystem_result;
-    } else {
-        mount_failure_reported = false;
-    }
-    last_mount_attempt_ms = pf_system_uptime_ms();
-    mount_retry_waiting = auto_mount_pending;
-}
-
-/** @brief Service idle-only lifecycle policy while excluding worker admission and MSC transitions. */
+/** @brief Run storage policy while excluding worker admission and MSC transitions. */
 static void service_media(void)
 {
-    pf_sd_info_t info;
-
     if (!config_available) {
         return;
     }
@@ -167,117 +113,32 @@ static void service_media(void)
     }
     media_service_busy = true;
     taskEXIT_CRITICAL();
-
-    pf_sd_lock();
-    pf_sd_get_info(&info);
-    bool firmware_owned = pf_sd_media_get_owner() == PF_SD_MEDIA_OWNER_FIRMWARE;
-    bool mounted_card_uninitialized = pf_fatfs_volume_is_mounted() && !info.initialized;
-    if (firmware_owned && mounted_card_uninitialized && (!info.presence_known || info.present)) {
-        if (pf_fatfs_volume_unmount(NULL) != PF_FATFS_VOLUME_OK) {
-            goto done;
-        }
-        pf_fatfs_volume_forget_filesystem_format();
-        auto_mount_pending = true;
-        mount_retry_waiting = false;
-    }
-    if (info.presence_known) {
-        if (!presence_sample_valid || (info.present != presence_sample)) {
-            presence_sample = info.present;
-            presence_sample_count = 1u;
-            presence_sample_valid = true;
-        } else if (presence_sample_count < CARD_PRESENCE_DEBOUNCE_SAMPLES) {
-            ++presence_sample_count;
-        }
-        if (presence_sample_count < CARD_PRESENCE_DEBOUNCE_SAMPLES) {
-            goto done;
-        }
-
-        if (!stable_presence_valid || (stable_card_present != presence_sample)) {
-            stable_presence_valid = true;
-            stable_card_present = presence_sample;
-            auto_mount_pending = true;
-            mount_retry_waiting = false;
-            if (!stable_card_present) {
-                pf_sd_confirm_removed();
-                if (pf_fatfs_volume_is_mounted()) {
-                    (void)pf_fatfs_volume_unmount(NULL);
-                }
-                pf_fatfs_volume_forget_filesystem_format();
-                goto done;
-            }
-        }
-
-        if (!stable_card_present) {
-            goto done;
-        }
-    }
-    if (!firmware_owned) {
-        goto done;
-    }
-    if (auto_mount_blocked) {
-        goto done;
-    }
-    if (pf_sd_media_take_reinit_request()) {
-        auto_mount_pending = true;
-        mount_retry_waiting = false;
-    }
-    if (pf_fatfs_volume_is_mounted()) {
-        auto_mount_pending = false;
-        goto done;
-    }
-    if (!auto_mount_pending) {
-        goto done;
-    }
-    if (mount_retry_waiting &&
-        ((uint32_t)(pf_system_uptime_ms() - last_mount_attempt_ms) < MEDIA_MOUNT_RETRY_MS)) {
-        goto done;
-    }
-    attempt_auto_mount();
-
-done:
-    pf_sd_unlock();
+    pf_storage_poll();
     taskENTER_CRITICAL();
     media_service_busy = false;
+    taskEXIT_CRITICAL();
+}
+
+/** @brief Release admission after a queued media transition. */
+static void finish_media_request(void)
+{
+    taskENTER_CRITICAL();
+    busy = false;
     taskEXIT_CRITICAL();
 }
 
 /** @brief Recover only after USB handoff; leave automatic mounting blocked for explicit inspection. */
 static void recover_media(void)
 {
-    auto_mount_blocked = true;
-    auto_mount_pending = false;
-    pf_sd_lock();
-    (void)pf_sd_media_take_reinit_request();
-    pf_sd_result_t result = pf_sd_media_initialize();
-    bool recovered = result == PF_SD_OK;
-    pf_sd_unlock();
-    if (recovered) {
-        PF_LOG_INFO("storage", "Media recovery completed; volume remains unmounted pending explicit fs mount");
-    } else {
-        PF_LOG_ERROR("storage", "Media recovery failed: result=%u; volume remains unmounted", (unsigned)result);
-    }
-    taskENTER_CRITICAL();
-    busy = false;
-    taskEXIT_CRITICAL();
+    (void)pf_storage_recover();
+    finish_media_request();
 }
 
-/** @brief Hold admission and the media reservation through the single forced-return mount attempt. */
+/** @brief Hold admission through the single forced-return mount attempt. */
 static void return_from_usb(void)
 {
-    pf_sd_lock();
-    (void)pf_sd_media_take_reinit_request();
-    attempt_auto_mount();
-    auto_mount_blocked = auto_mount_pending;
-    auto_mount_pending = false;
-    if (auto_mount_blocked) {
-        PF_LOG_ERROR("storage", "Forced USB return failed; volume remains unmounted; inspect before fs mount");
-    } else {
-        PF_LOG_WARNING("storage", "Forced USB return mounted; host cache was not flushed; filesystem may be damaged");
-    }
-    pf_sd_unlock();
-    taskENTER_CRITICAL();
-    busy = false;
-    taskEXIT_CRITICAL();
+    (void)pf_storage_return_from_usb();
+    finish_media_request();
 }
 
 /** @brief Execute a command and publish completion before the USB task releases admission. */
@@ -286,13 +147,7 @@ static void execute_command(storage_request_t *request)
     bool previously_mounted = pf_fatfs_volume_is_mounted();
     pf_storage_command_execute(request->host_owned, request->family, request->arguments,
                                send_reply, request);
-    if (previously_mounted && !pf_fatfs_volume_is_mounted()) {
-        auto_mount_pending = false;
-    }
-    if (pf_fatfs_volume_is_mounted()) {
-        auto_mount_blocked = false;
-        mount_failure_reported = false;
-    }
+    pf_storage_note_command(previously_mounted);
     pf_storage_worker_reply_t reply = { .session = request->session, .done = true };
     (void)xQueueSend(replies, &reply, portMAX_DELAY);
 }
@@ -300,17 +155,8 @@ static void execute_command(storage_request_t *request)
 /** @brief Finish USB handoff preparation on the sole FatFs executor before publishing idle. */
 static void unmount_for_usb(void)
 {
-    FRESULT filesystem_result = FR_OK;
-    pf_fatfs_volume_result_t result = pf_fatfs_volume_unmount(&filesystem_result);
-    if (result == PF_FATFS_VOLUME_OK || result == PF_FATFS_VOLUME_NOT_MOUNTED) {
-        auto_mount_pending = false;
-    } else {
-        PF_LOG_ERROR("storage", "USB handoff unmount failed: volume=%u FatFs=%u",
-                     (unsigned)result, (unsigned)filesystem_result);
-    }
-    taskENTER_CRITICAL();
-    busy = false;
-    taskEXIT_CRITICAL();
+    (void)pf_storage_unmount_for_usb();
+    finish_media_request();
 }
 
 static void storage_task(void *context)
@@ -380,11 +226,11 @@ bool pf_storage_worker_init(void)
     if (requests != NULL) {
         return false;
     }
-    pf_sd_result_t setup_result = pf_sd_media_setup();
-    if (setup_result != PF_SD_OK && setup_result != PF_SD_NOT_CONFIGURED) {
+    pf_block_result_t setup_result = pf_storage_setup();
+    if (setup_result != PF_BLOCK_OK && setup_result != PF_BLOCK_NOT_READY) {
         return false;
     }
-    config_available = setup_result == PF_SD_OK;
+    config_available = setup_result == PF_BLOCK_OK;
     requests = xQueueCreateStatic(1u, sizeof(storage_request_t), request_storage, &request_control);
     replies = xQueueCreateStatic(STORAGE_REPLY_COUNT, sizeof(pf_storage_worker_reply_t),
                                  reply_storage, &reply_control);
@@ -400,11 +246,11 @@ bool pf_storage_worker_submit(const char *family, const char *arguments,
 
     refresh_benchmark_completion();
     if ((requests == NULL) || (family == NULL) || (arguments == NULL) ||
-        ((strcmp(family, "sd") != 0) && (strcmp(family, "fs") != 0)) ||
+        ((strcmp(family, "storage") != 0) && (strcmp(family, "fs") != 0)) ||
         (strlen(arguments) > sizeof(request.arguments) - 2u)) {
         return false;
     }
-    memcpy(request.family, family, 3u);
+    memcpy(request.family, family, strlen(family) + 1u);
     memcpy(request.arguments, arguments, strlen(arguments) + 1u);
     taskENTER_CRITICAL();
     if (busy || media_service_busy) {
@@ -521,15 +367,15 @@ bool pf_storage_worker_benchmark_start(uint32_t size_mib, bool host_owned)
             rejection = PF_FILE_BENCHMARK_ERROR_BUSY;
         } else if (host_owned) {
             rejection = PF_FILE_BENCHMARK_ERROR_USB_OWNER;
-        } else if (!pf_sd_try_lock()) {
-            rejection = PF_FILE_BENCHMARK_ERROR_BUSY;
         } else {
-            if (!config_available || !pf_sd_is_initialized()) {
-                rejection = PF_FILE_BENCHMARK_ERROR_MEDIA;
-            } else if (!pf_fatfs_volume_is_mounted()) {
-                rejection = PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED;
+            pf_storage_status_t storage;
+            pf_storage_get_status(&storage);
+            switch (storage.state) {
+            case PF_STORAGE_STATE_MOUNTED: break;
+            case PF_STORAGE_STATE_BUSY: rejection = PF_FILE_BENCHMARK_ERROR_BUSY; break;
+            case PF_STORAGE_STATE_READY: rejection = PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED; break;
+            default: rejection = PF_FILE_BENCHMARK_ERROR_MEDIA; break;
             }
-            pf_sd_unlock();
         }
     }
     taskENTER_CRITICAL();
@@ -606,7 +452,7 @@ bool pf_storage_worker_benchmark_admission_result(bool *accepted, pf_file_benchm
 bool pf_storage_worker_media_absent(void)
 {
     taskENTER_CRITICAL();
-    bool absent = !media_service_busy && stable_presence_valid && !stable_card_present;
+    bool service_running = media_service_busy;
     taskEXIT_CRITICAL();
-    return absent;
+    return !service_running && pf_storage_media_absent();
 }

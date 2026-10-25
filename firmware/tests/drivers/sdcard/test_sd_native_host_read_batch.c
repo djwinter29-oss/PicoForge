@@ -249,7 +249,7 @@ void test_read_batch_decode_rejects_invalid_dma_addresses_and_crc(void)
     TEST_ASSERT_EQUAL_UINT32(1u, decoded_count);
 }
 
-void test_single_read_crc_is_counted_without_profiling_and_requires_four_bit_mode(void)
+void test_single_read_crc_is_counted_and_requires_four_bit_mode(void)
 {
     pf_test_sdio_pio_t pio = {0};
     test_wire = (pf_sdio_pio_t){
@@ -270,7 +270,6 @@ void test_single_read_crc_is_counted_without_profiling_and_requires_four_bit_mod
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
     uint8_t payload[PF_SD_BLOCK_SIZE];
 
-    pf_sd_set_profiling_enabled(false);
     TEST_ASSERT_TRUE(pf_sd_native_encode_data_block(
         block, pf_test_sdio_batch_rx));
     pf_test_sdio_batch_rx_size = PF_SD_NATIVE_IMAGE_SIZE;

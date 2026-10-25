@@ -45,3 +45,15 @@ void test_board_config_binds_transport_once_and_follows_boot_speed_and_card_dete
     gpio_level = 1u;
     TEST_ASSERT_FALSE(config.transport.present(config.transport.presence_context));
 }
+
+void test_board_pins_report_sdio_order_and_card_detect(void)
+{
+    uint8_t pins[6];
+    uint8_t detect = 0u;
+
+    pf_sd_board_pins(pins, &detect);
+
+    const uint8_t expected[6] = {2u, 3u, 4u, 5u, 6u, 7u};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, pins, 6u);
+    TEST_ASSERT_EQUAL_UINT8(9u, detect);
+}
