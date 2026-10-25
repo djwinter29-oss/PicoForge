@@ -1,3 +1,6 @@
+/** @file
+ * @brief Native CMD/DAT operations implemented by SDIO-PIO; no card-command or stream policy.
+ */
 #ifndef PF_SD_LINK_WIRE_H
 #define PF_SD_LINK_WIRE_H
 
@@ -24,7 +27,7 @@ typedef enum {
 
 /** Synchronous borrowed failure callback. */
 typedef void (*pf_sd_link_wire_error_hook_t)(void *context, pf_sd_link_wire_error_t error,
-                                              pf_sd_link_wire_phase_t phase);
+                                            pf_sd_link_wire_phase_t phase);
 
 /** Physical availability and line/clock observation; no PIO/DMA ownership or response packing. */
 typedef struct {
@@ -35,68 +38,62 @@ typedef struct {
     uint32_t maximum_clock_hz; /**< Fastest clock the backend will time safely; faster requests clamp or fail. */
 } pf_sd_link_wire_state_t;
 
-/** SD CMD/DAT wire operations; no command construction, CRC policy, or device recovery.
- * RX is armed before CMD exchange; DMA buffers remain borrowed until finish/cancel.
- * The current backend accepts six transmit bytes and byte-aligned responses up to 136 bits.
+/** @name Setup and observation
+ * @{
  */
-struct pf_sd_link_wire_ops {
-    pf_sd_link_wire_state_t (*state)(void *context); /**< Observe wire availability. */
-    void (*hooks)(void *context, pf_sd_link_wire_error_hook_t error, void *error_context,
-                  void (*idle)(void)); /**< Borrow diagnostics and bounded polling callbacks. */
-    bool (*clocks)(void *context, uint32_t cycles, uint32_t timeout_us); /**< Emit requested released-line clocks. */
-    bool (*idle)(void *context); /**< Return hardware to CMD signaling, without device commands. */
-    bool (*exchange)(void *context, const uint8_t *tx, size_t tx_size, uint16_t rx_bits,
-                     uint8_t *rx, size_t capacity, size_t *received, uint32_t timeout_us); /**< Raw CMD bytes. */
-    bool (*rx_start)(void *context, uint32_t *buffer, uint32_t words,
-                     uint32_t nibbles, uint32_t blocks); /**< Arm raw DAT reception. */
-    bool (*rx_finish)(void *context, uint32_t timeout_us); /**< Bounded completion wait. */
-    void (*rx_cancel)(void *context); /**< Release RX DMA and clear completion state. */
-    bool (*rx_poll)(void *context, uint32_t start, uint32_t timeout_us, bool *complete); /**< Poll deadline/stalls. */
-    void (*rx_wait)(void *context); /**< One bounded scheduler wait. */
-    bool (*rx_progress)(void *context, const uint32_t *buffer, uint32_t capacity,
-                        uint32_t *words); /**< Acquire-barrier committed words. */
-    bool (*tx_start)(void *context, const uint32_t *buffer, uint32_t words,
-                     uint32_t nibbles); /**< Acquire TX resources and start raw DAT transfer. */
-    bool (*tx_finish)(void *context, uint32_t timeout_us, uint32_t *response); /**< Finish, return raw line token. */
-    bool (*wait_high)(void *context, uint32_t timeout_us); /**< Wait for DAT0 high; no device interpretation. */
-};
-
-/** Validate all required SD wire operations without acquiring resources. */
+/** Validate the native descriptor without acquiring resources. */
 bool pf_sd_link_wire_valid(const pf_sd_link_t *bus);
 /** Observe physical state; unavailable descriptors report ready=false, healthy=false. */
 pf_sd_link_wire_state_t pf_sd_link_wire_state(const pf_sd_link_t *bus);
 /** Borrow callbacks until deinit; the callback context must not move. */
 bool pf_sd_link_wire_hooks(const pf_sd_link_t *bus,
-                            pf_sd_link_wire_error_hook_t error, void *context, void (*idle)(void));
+                           pf_sd_link_wire_error_hook_t error, void *context, void (*idle)(void));
+/** @} */
+
+/** @name CMD signaling
+ * @{
+ */
 /** Generate caller-selected clock count at the current rate, with CMD/DAT released. */
 bool pf_sd_link_wire_clocks(const pf_sd_link_t *bus, uint32_t cycles, uint32_t timeout_us);
 /** Finish physical turnaround to CMD idle; never finish/replay a device write. */
 bool pf_sd_link_wire_idle(const pf_sd_link_t *bus);
 /** Exchange caller-framed CMD bytes; received includes partial bytes on a wire failure. */
 bool pf_sd_link_wire_exchange(const pf_sd_link_t *bus, const uint8_t *tx, size_t tx_size,
-                                uint16_t rx_bits, uint8_t *rx, size_t capacity, size_t *received,
-                                uint32_t timeout_us);
+                             uint16_t rx_bits, uint8_t *rx, size_t capacity, size_t *received,
+                             uint32_t timeout_us);
+/** @} */
+
+/** @name DAT reception
+ * Arm before CMD, then poll/progress/wait or finish. Always cancel to release RX state, even after success.
+ * @{
+ */
 /** Arm framed DAT reception before CMD; words/nibbles/blocks describe raw wire buffers. */
 bool pf_sd_link_wire_rx_start(const pf_sd_link_t *bus, uint32_t *buffer,
-                                uint32_t words, uint32_t nibbles, uint32_t blocks);
+                             uint32_t words, uint32_t nibbles, uint32_t blocks);
+/** Poll RX completion and caller-selected deadline. */
+bool pf_sd_link_wire_rx_poll(const pf_sd_link_t *bus, uint32_t start,
+                            uint32_t timeout_us, bool *complete);
+/** Report DMA-committed words with an acquire barrier. */
+bool pf_sd_link_wire_rx_progress(const pf_sd_link_t *bus,
+                                const uint32_t *buffer, uint32_t capacity, uint32_t *words);
+/** Perform one bounded scheduler wait without consuming completion. */
+void pf_sd_link_wire_rx_wait(const pf_sd_link_t *bus);
 /** Bounded RX completion wait; cancel remains required after completion or failure. */
 bool pf_sd_link_wire_rx_finish(const pf_sd_link_t *bus, uint32_t timeout_us);
 /** Stop RX DMA and clear FIFO/completion state. */
 void pf_sd_link_wire_rx_cancel(const pf_sd_link_t *bus);
-/** Poll RX completion and caller-selected deadline. */
-bool pf_sd_link_wire_rx_poll(const pf_sd_link_t *bus, uint32_t start,
-                               uint32_t timeout_us, bool *complete);
-/** Perform one bounded scheduler wait without consuming completion. */
-void pf_sd_link_wire_rx_wait(const pf_sd_link_t *bus);
-/** Report DMA-committed words with an acquire barrier. */
-bool pf_sd_link_wire_rx_progress(const pf_sd_link_t *bus,
-                                   const uint32_t *buffer, uint32_t capacity, uint32_t *words);
+/** @} */
+
+/** @name DAT transmission and busy signaling
+ * @{
+ */
 /** Start raw DAT TX, retaining physical resources across adjacent payloads. */
 bool pf_sd_link_wire_tx_start(const pf_sd_link_t *bus,
-                                const uint32_t *buffer, uint32_t words, uint32_t nibbles);
+                             const uint32_t *buffer, uint32_t words, uint32_t nibbles);
 /** Bounded TX completion, returning raw response bits without interpreting acceptance. */
 bool pf_sd_link_wire_tx_finish(const pf_sd_link_t *bus, uint32_t timeout_us, uint32_t *response);
 /** Bounded wait for DAT0 high; caller supplies device-policy deadline. */
 bool pf_sd_link_wire_wait_high(const pf_sd_link_t *bus, uint32_t timeout_us);
+/** @} */
 
 #endif

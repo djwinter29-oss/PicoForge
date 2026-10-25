@@ -2,7 +2,7 @@
 #define PF_SD_H
 
 #include "sd_block.h"
-#include "drivers/sdcard/link/sd_link.h"
+#include "drivers/sdcard/sd_link.h"
 
 /** @brief Protocol settings over a board-owned transport; its context outlives all SD access. */
 typedef struct pf_sd_config {

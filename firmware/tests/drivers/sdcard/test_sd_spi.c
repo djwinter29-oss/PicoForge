@@ -31,7 +31,8 @@ static uint8_t read_payloads[6][64];
 static uint32_t clock_request, clock_actual;
 static unsigned clock_calls, commands_at_clock;
 static pf_sd_link_result_t clock_result;
-static pf_sd_link_ops_t clock_ops;
+static bool use_test_clock, reject_select;
+static unsigned selection_attempts;
 
 uint32_t time_us_32(void) { now += clock_step; return now; }
 static void idle(void) { now += 25000u; }
@@ -125,12 +126,17 @@ static void reset(uint8_t response)
     memset(read_payloads, 0, sizeof(read_payloads));
     clock_calls = clock_request = clock_actual = commands_at_clock = 0u;
     clock_result = PF_SD_LINK_OK;
+    use_test_clock = reject_select = false;
     clock_step = 25000u;
     memset(payload, 0, sizeof(payload));
     pf_sd_set_idle_hook(idle);
 }
 
-void setUp(void) { reset(5); }
+void setUp(void)
+{
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SPI, pf_sd_backend_mode());
+    reset(5);
+}
 void tearDown(void)
 {
     pf_sd_set_idle_hook(NULL);
@@ -152,9 +158,7 @@ static void prepare_clock(void)
     reset(0u);
     physical_bus.clock_hz = SD_SPI_INIT_CLOCK_HZ;
     active_config.clock_hz = SD_SPI_HIGH_CLOCK_HZ;
-    clock_ops = *active_config.transport.ops;
-    clock_ops.set_clock = record_clock;
-    active_config.transport.ops = &clock_ops;
+    use_test_clock = true;
     scripted_reads = true;
     clock_step = 0u;
     length = 0u;
@@ -371,8 +375,6 @@ void test_spi_initialization_fails_when_crc_enable_is_rejected_or_uncertain(void
     TEST_ASSERT_GREATER_THAN_UINT(0u, failed_at_crc_enable);
 }
 
-static unsigned selection_attempts;
-
 static pf_sd_link_result_t reject_selection(void *context, bool select)
 {
     TEST_ASSERT_EQUAL_PTR(&physical_bus, context);
@@ -387,26 +389,22 @@ void test_spi_selection_failure_stops_every_command_and_transfer_without_cleanup
     uint8_t response;
     for (unsigned operation = 0u; operation < 8u; ++operation) {
         reset(0);
-        pf_sd_link_ops_t ops = *active_config.transport.ops;
-        pf_sd_link_serial_ops_t serial_ops = *ops.serial;
-        serial_ops.select = reject_selection;
-        ops.serial = &serial_ops;
-        active_config.transport.ops = &ops;
+        reject_select = true;
         selection_attempts = 0u;
         switch (operation) {
         case 0u: TEST_ASSERT_FALSE(send_command(0u, 0u, &response, NULL, 0u)); break;
         case 1u: TEST_ASSERT_FALSE(read_register(SD_CMD_SEND_CSD, data)); break;
         case 2u: TEST_ASSERT_FALSE(read_register(SD_CMD_SEND_CID, data)); break;
-        case 3u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(0u, data, 1u)); break;
-        case 4u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0u, data, 1u)); break;
-        case 5u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(0u, data, 2u)); break;
-        case 6u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0u, data, 2u)); break;
-        case 7u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_sync()); break;
+        case 3u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_read_blocks(0u, data, 1u)); break;
+        case 4u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0u, data, 1u)); break;
+        case 5u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_read_blocks(0u, data, 2u)); break;
+        case 6u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0u, data, 2u)); break;
+        case 7u: TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_sync()); break;
         }
         TEST_ASSERT_FALSE(card_initialized);
         TEST_ASSERT_EQUAL_UINT(1u, selection_attempts);
         TEST_ASSERT_EQUAL_UINT(0u, selects + deselects + exchanges + writes + reads);
-        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_sync());
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_sync());
         TEST_ASSERT_EQUAL_UINT(1u, selection_attempts);
     }
 }
@@ -442,14 +440,14 @@ void test_spi_write_response_accepts_only_the_accepted_token(void)
 void test_spi_writes_accept_success_and_explicit_rejection_without_replay(void)
 {
     uint8_t data[1024] = {0};
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_spi_write_blocks(0, data, 1));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_write_blocks(0, data, 1));
     TEST_ASSERT_TRUE(card_initialized && !selected);
     for (unsigned count = 1; count <= 2; ++count) {
         for (unsigned i = 0; i < 2; ++i) {
             reset(i ? 0x0d : 0x0b);
-            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, count));
+            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, count));
             TEST_ASSERT_TRUE(card_initialized && !selected);
-            TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_spi_sync());
+            TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_sync());
             TEST_ASSERT_EQUAL_UINT(count == 2, stops);
         }
     }
@@ -464,11 +462,11 @@ void test_spi_uncertain_write_failures_invalidate_card(void)
             reset(responses[failure]);
             busy = failure == 0 || failure == 2;
             if (failure == 4) short_size = 512;
-            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, count));
+            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, count));
             TEST_ASSERT_FALSE(card_initialized || selected);
             unsigned before = writes;
-            TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_sync());
-            TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_write_blocks(0, data, 1));
+            TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_sync());
+            TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_write_blocks(0, data, 1));
             TEST_ASSERT_EQUAL_UINT(before, writes);
         }
     }
@@ -480,17 +478,17 @@ void test_spi_short_command_crc_response_and_busy_exchanges_are_not_replayed(voi
     for (unsigned count = 1; count <= 2; ++count) {
         for (int failure = 0; failure <= 5; ++failure) {
             reset(5); short_exchange = failure;
-            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, count));
+            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, count));
             TEST_ASSERT_FALSE(card_initialized || selected);
-            TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_sync());
+            TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_sync());
         }
         for (int size = 1; size <= 6; size += 5) {
             reset(5); short_size = size;
-            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, count));
+            TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, count));
             TEST_ASSERT_FALSE(card_initialized);
         }
         reset(5); length = 1;
-        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, count));
         TEST_ASSERT_FALSE(card_initialized);
     }
 }
@@ -502,28 +500,28 @@ void test_spi_multiblock_stop_and_second_block_errors_preserve_completion_state(
         reset(5); length = 9;
         queue[5] = queue[6] = queue[7] = 0xff; queue[8] = rejection ? 0x0b : 5;
         TEST_ASSERT_EQUAL(rejection ? PF_SD_IO_ERROR : PF_SD_OK,
-                          pf_sd_spi_write_blocks(0, data, 2));
+                          pf_sd_backend_write_blocks(0, data, 2));
         TEST_ASSERT_EQUAL_UINT(1, stops);
         TEST_ASSERT_TRUE(card_initialized);
     }
     reset(0x0b); length = 6; queue[5] = 0xff; busy = true;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, 2));
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, 2));
     TEST_ASSERT_FALSE(card_initialized || selected);
     reset(5); length = 9;
     queue[5] = queue[6] = queue[7] = 0xff; queue[8] = 5; short_exchange = 10;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, 2));
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, 2));
     TEST_ASSERT_FALSE(card_initialized);
 }
 
 void test_spi_sync_failure_invalidates_and_blocks_later_io(void)
 {
     short_exchange = 0;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_sync());
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_sync());
     TEST_ASSERT_FALSE(card_initialized);
     reset(5); length = 1; queue[0] = 0; busy = true;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_sync());
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_sync());
     TEST_ASSERT_FALSE(card_initialized);
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_sync());
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_sync());
 }
 
 void test_spi_trailing_exchange_failure_never_hides_errors_or_authorizes_fallback(void)
@@ -532,28 +530,28 @@ void test_spi_trailing_exchange_failure_never_hides_errors_or_authorizes_fallbac
     for (unsigned count = 1; count <= 2; ++count) {
         reset(5); length = 9;
         queue[5] = queue[6] = queue[7] = 0xff; queue[8] = 5; fail_trailing = true;
-        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, count));
         TEST_ASSERT_FALSE(selected || card_initialized);
         unsigned before = writes;
-        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_write_blocks(0, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_write_blocks(0, data, count));
         TEST_ASSERT_EQUAL_UINT(before, writes);
     }
 
     reset(5); queue[1] = SD_R1_ILLEGAL_COMMAND; fail_trailing = true;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_write_blocks(0, data, 2));
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(0, data, 2));
     TEST_ASSERT_EQUAL_UINT(1, writes);
     TEST_ASSERT_FALSE(card_initialized || selected);
     reset(5); fail_trailing = true;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_sync());
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_sync());
     TEST_ASSERT_FALSE(selected || card_initialized);
     for (unsigned count = 1; count <= 2; ++count) {
         reset(0); length = 10;
         queue[5] = queue[6] = queue[7] = 0xff; queue[8] = 0xfe; queue[9] = 0xff;
         fail_trailing = true;
-        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(0, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_read_blocks(0, data, count));
         TEST_ASSERT_FALSE(selected || card_initialized);
         unsigned before = exchanges;
-        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(0, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_read_blocks(0, data, count));
         TEST_ASSERT_EQUAL_UINT(before, exchanges);
     }
 }
@@ -781,7 +779,7 @@ void test_spi_crc_mismatch_invalidates_single_and_multiblock_reads_after_success
         const uint8_t wire[] = {0xff, 0, 0xfe, 0, 1, 0xff, 0, 0xff, 0xff};
         length = sizeof(wire); memcpy(queue, wire, length);
         TEST_ASSERT_EQUAL_HEX16(0, pf_sd_crc16(payload, sizeof(payload)));
-        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(5, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_read_blocks(5, data, count));
         TEST_ASSERT_EQUAL_UINT(count > 1 ? sizeof(wire) : 6, position);
         TEST_ASSERT_EQUAL_UINT(count > 1 ? 2 : 1, command_count);
         if (count > 1) TEST_ASSERT_EQUAL_UINT(12, commands[1]);
@@ -789,9 +787,9 @@ void test_spi_crc_mismatch_invalidates_single_and_multiblock_reads_after_success
         TEST_ASSERT_FALSE(selected);
         TEST_ASSERT_FALSE(card_initialized);
         unsigned accesses = selects + deselects + exchanges + writes + reads;
-        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(5, data, count));
-        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_write_blocks(5, data, count));
-        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_sync());
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_read_blocks(5, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_write_blocks(5, data, count));
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_sync());
         TEST_ASSERT_EQUAL_UINT(accesses, selects + deselects + exchanges + writes + reads);
     }
 }
@@ -808,11 +806,11 @@ void test_spi_multiblock_read_error_boundaries_invalidate_without_replay(void)
             spi_test_present = false;
         }
         TEST_ASSERT_EQUAL(failure == 2 ? PF_SD_NOT_READY : PF_SD_IO_ERROR,
-                          pf_sd_spi_read_blocks(5, data, 3));
+                          pf_sd_backend_read_blocks(5, data, 3));
         TEST_ASSERT_FALSE(card_initialized || selected);
         TEST_ASSERT_EQUAL_UINT(failure == 2 ? 0 : 2, command_count);
         unsigned accesses = selects + deselects + exchanges + writes + reads;
-        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(5, data, 3));
+        TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_read_blocks(5, data, 3));
         TEST_ASSERT_EQUAL_UINT(accesses, selects + deselects + exchanges + writes + reads);
     }
 }
@@ -830,13 +828,23 @@ void test_spi_removal_between_read_blocks_stops_and_blocks_later_bus_access(void
     /* After the first block, CMD12 consumes stuff/R1, ready, trailing clock. */
     queue[5] = 0xff; queue[6] = 0; queue[7] = queue[8] = 0xff;
     active_config.transport.present = present_until_first_payload;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_spi_read_blocks(5, data, 3));
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_read_blocks(5, data, 3));
     TEST_ASSERT_EQUAL_UINT(1, reads);
     TEST_ASSERT_EQUAL_UINT(2, command_count);
     TEST_ASSERT_EQUAL_UINT(12, commands[1]);
     TEST_ASSERT_EQUAL_UINT(9, position);
     TEST_ASSERT_FALSE(card_initialized || selected);
     unsigned accesses = selects + deselects + exchanges + writes + reads;
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_spi_read_blocks(5, data, 3));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_read_blocks(5, data, 3));
     TEST_ASSERT_EQUAL_UINT(accesses, selects + deselects + exchanges + writes + reads);
+}
+
+static pf_sd_link_result_t spi_fixture_set_clock(const pf_sd_link_t *bus, uint32_t hz, uint32_t *actual)
+{
+    return use_test_clock ? record_clock(bus->context, hz, actual) : pf_sd_link_set_clock(bus, hz, actual);
+}
+
+static pf_sd_link_result_t spi_fixture_select(const pf_sd_link_t *bus, bool select)
+{
+    return reject_select ? reject_selection(bus->context, select) : pf_sd_link_serial_select(bus, select);
 }

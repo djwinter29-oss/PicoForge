@@ -2,7 +2,7 @@
 #include <string.h>
 #include "middleware/storage/storage.h"
 #include "drivers/sdcard/sd_port.h"
-#include "drivers/sdcard/sd_native.h"
+#include "drivers/sdcard/sd_backend.h"
 #define WORKER_SOURCE "app/storage/storage_worker.c"
 #define FACADE_SOURCE "drivers/sdcard/sd.c"
 #define MSC_SOURCE "app/usb/usb_msc.c"
@@ -33,22 +33,21 @@ bool pf_sd_port_try_lock(void)
 void pf_sd_port_lock(void) { ++reservation_depth; }
 void pf_sd_port_unlock(void)
 { TEST_ASSERT_NOT_EQUAL(0, reservation_depth); --reservation_depth; }
-bool pf_sd_native_is_initialized(void) { return media.initialized; }
-uint32_t pf_sd_native_block_count(void) { return 128u; }
-void pf_sd_native_get_info(pf_sd_info_t *info) { *info = media; }
-pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void)
-{ return PF_SD_NATIVE_INIT_STAGE_NONE; }
-void pf_sd_native_confirm_card_removed(void)
+bool pf_sd_backend_is_initialized(void) { return media.initialized; }
+uint32_t pf_sd_backend_block_count(void) { return 128u; }
+void pf_sd_backend_get_info(pf_sd_info_t *info) { *info = media; }
+pf_sd_link_mode_t pf_sd_backend_mode(void) { return PF_SD_LINK_NATIVE_SD; }
+void pf_sd_backend_confirm_removed(void)
 {
     ++removals;
     media.initialized = false;
 }
-pf_sd_result_t pf_sd_native_sync(void)
+pf_sd_result_t pf_sd_backend_sync(void)
 {
     ++sync_calls;
     return media.initialized && sync_ok ? PF_SD_OK : PF_SD_NOT_READY;
 }
-pf_sd_result_t pf_sd_native_read_blocks(uint32_t first, void *buffer, uint32_t count)
+pf_sd_result_t pf_sd_backend_read_blocks(uint32_t first, void *buffer, uint32_t count)
 {
     (void)first;
     (void)buffer;
@@ -56,7 +55,7 @@ pf_sd_result_t pf_sd_native_read_blocks(uint32_t first, void *buffer, uint32_t c
     TEST_FAIL_MESSAGE("Automount must not read raw sectors through the descriptor fake");
     return PF_SD_IO_ERROR;
 }
-pf_sd_result_t pf_sd_native_write_blocks(uint32_t first, const void *buffer, uint32_t count)
+pf_sd_result_t pf_sd_backend_write_blocks(uint32_t first, const void *buffer, uint32_t count)
 {
     (void)first;
     (void)buffer;
@@ -64,7 +63,7 @@ pf_sd_result_t pf_sd_native_write_blocks(uint32_t first, const void *buffer, uin
     TEST_FAIL_MESSAGE("Automount must not write raw sectors through the descriptor fake");
     return PF_SD_IO_ERROR;
 }
-pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
+pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
 {
     TEST_ASSERT_EQUAL_PTR(&media_config, config);
     TEST_ASSERT_FALSE(usb_owned);

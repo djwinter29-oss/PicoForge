@@ -3,9 +3,8 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #define PF_TEST_SDIO_WIRE_ONLY 1
 #include "sdio_sdk_stubs.h"
-#include "drivers/sdcard/sdio_pio/sdio_pio.c"
-#include "drivers/sdcard/link/sd_link.c"
-#include "drivers/sdcard/link/sd_link_wire.c"
+#include "drivers/sdcard/sdio/sdio_pio.c"
+#include "drivers/sdcard/sd_link.c"
 #include "sdio_sdk_stubs.c"
 
 #if defined(PF_SD_BLOCK_H) || defined(PF_SD_NATIVE_HOST_H) || defined(PF_NOR_H)
@@ -208,7 +207,6 @@ void test_native_descriptor_lifecycle_has_no_serial_or_device_protocol_dependenc
     pf_sdio_pio_t host = {.config = pins()};
     pf_sd_link_t bus = pf_sdio_pio_bus(&host);
     TEST_ASSERT_EQUAL(PF_SD_LINK_NATIVE_SD, bus.mode);
-    TEST_ASSERT_NULL(bus.ops->serial);
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_init(&bus));
     TEST_ASSERT_TRUE(host.dma_claimed);
     TEST_ASSERT_EQUAL(PF_SDIO_PIO_CLOCK_UNOWNED, host.clock_owner);
@@ -392,4 +390,50 @@ void test_native_raw_exchange_returns_short_long_and_partial_bytes_without_packi
     TEST_ASSERT_EQUAL_UINT(0u, received);
     TEST_ASSERT_EQUAL_UINT(calls, pf_test_sdio_command_count);
     pf_sd_link_deinit(&bus);
+}
+
+void test_unsupported_native_operations_do_not_touch_a_serial_backend(void)
+{
+    int context;
+    pf_sd_link_t bus = {.context = &context, .mode = PF_SD_LINK_SPI};
+    uint32_t words[5] = {0}, complete_words = 0u;
+    uint8_t frame[6] = {0};
+    size_t received = 5u;
+    bool complete = false;
+    TEST_ASSERT_FALSE(pf_sd_link_wire_valid(&bus));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_state(&bus).ready);
+    TEST_ASSERT_FALSE(pf_sd_link_wire_hooks(&bus, NULL, NULL, NULL));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_clocks(&bus, 80u, 100u));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_idle(&bus));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_exchange(&bus, frame, sizeof(frame), 48u,
+                                                frame, sizeof(frame), &received, 100u));
+    TEST_ASSERT_EQUAL_UINT(0u, received);
+    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_start(&bus, words, 5u, 40u, 1u));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_finish(&bus, 100u));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_poll(&bus, 0u, 100u, &complete));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_rx_progress(&bus, words, 5u, &complete_words));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_tx_start(&bus, words, 5u, 40u));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_tx_finish(&bus, 100u, words));
+    TEST_ASSERT_FALSE(pf_sd_link_wire_wait_high(&bus, 100u));
+    pf_sd_link_wire_rx_cancel(&bus);
+    pf_sd_link_wire_rx_wait(&bus);
+}
+
+void test_static_native_lifecycle_rejects_invalid_handles_without_acquiring_resources(void)
+{
+    pf_sdio_pio_t host = {.config = pins()};
+    pf_sd_link_t bus = pf_sdio_pio_bus(&host);
+    uint32_t actual = 17u;
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_init(NULL));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(NULL, 25000000u, &actual));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(&bus, 0u, &actual));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(&bus, 25000000u, NULL));
+    bus.mode = PF_SD_LINK_SPI;
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_init(&bus));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(&bus, 25000000u, &actual));
+    TEST_ASSERT_EQUAL_UINT32(17u, actual);
+    pf_sd_link_abort(NULL);
+    pf_sd_link_deinit(&bus);
+    TEST_ASSERT_FALSE(host.dma_claimed);
+    TEST_ASSERT_NULL(host.pio);
 }

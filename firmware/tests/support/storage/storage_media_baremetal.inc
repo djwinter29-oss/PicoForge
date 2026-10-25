@@ -19,18 +19,16 @@ pf_sd_link_mode_t pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio)
 { (void)bus_gpios; (void)detect_gpio; return PF_SD_LINK_NATIVE_SD; }
 
 static bool initialized;
+static pf_sd_result_t initialization_result = PF_SD_OK;
 static unsigned reads, writes, syncs;
 static uint8_t media[1024];
 pf_sd_result_t backend_init(const backend_config_t *config)
-{ (void)config; initialized = true; return PF_SD_OK; }
+{ (void)config; initialized = initialization_result == PF_SD_OK; return initialization_result; }
 bool backend_ready(void) { return initialized; }
 uint32_t backend_blocks(void) { return initialized ? 2u : 0u; }
-backend_stage_t backend_stage(void) { return (backend_stage_t)0; }
 void backend_info(pf_sd_info_t *info)
 { *info = (pf_sd_info_t){ .initialized = initialized }; }
-#if PF_CONFIG_SDCARD_TRANSPORT != PF_CONFIG_SDCARD_TRANSPORT_SPI
-void pf_sd_native_confirm_card_removed(void) { initialized = false; }
-#endif
+void pf_sd_backend_confirm_removed(void) { initialized = false; }
 pf_sd_result_t backend_read(uint32_t first, void *buffer, uint32_t count)
 {
     TEST_ASSERT_TRUE(initialized);
@@ -61,9 +59,16 @@ static void check_baremetal(void)
     TEST_ASSERT_TRUE(pf_sd_try_lock());
     pf_sd_unlock(); pf_sd_unlock(); pf_sd_unlock();
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_init(NULL));
+    TEST_ASSERT_FALSE(backend_configured);
     TEST_ASSERT_EQUAL(PF_SD_NOT_CONFIGURED, read_blocks_for_owner(false, 0, NULL, 0));
     pf_sd_config_t config = { .transport.mode = TEST_TRANSPORT };
     TEST_ASSERT_TRUE(pf_sd_port_init(&config));
+    initialization_result = PF_SD_INIT_FAILED;
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, bind_and_initialize(&config));
+    TEST_ASSERT_TRUE(backend_configured);
+    TEST_ASSERT_FALSE(pf_sd_is_initialized());
+    TEST_ASSERT_EQUAL_UINT32(0, pf_sd_block_count());
+    initialization_result = PF_SD_OK;
     TEST_ASSERT_EQUAL(PF_SD_OK, bind_and_initialize(&config));
     uint8_t input[1024], output[1024];
     memset(input, 0x5a, sizeof(input));

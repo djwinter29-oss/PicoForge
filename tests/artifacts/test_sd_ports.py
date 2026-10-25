@@ -35,7 +35,11 @@ def check_build(directory):
                    "pf_sd_sync", "pf_sd_port_try_lock"):
         if not re.search(r"\b" + symbol + r"$", symbols, re.MULTILINE):
             raise AssertionError(f"Missing {symbol} in {elf}")
-    if re.search(r"\bpf_sd_spi_read_blocks$", symbols, re.MULTILINE):
+    backends = [Path(file).relative_to(DRIVER).as_posix() for file in files
+                if Path(file).is_relative_to(DRIVER) and Path(file).name.startswith("sd_backend_")]
+    if backends not in (["spi/sd_backend_spi.c"], ["sdio/sd_backend_sdio.c"]):
+        raise AssertionError(f"Expected exactly one transport backend in {directory}: {backends}")
+    if backends == ["spi/sd_backend_spi.c"]:
         native_symbols = set(re.findall(r"\b(pf_sd_native_\w+|crc16_4bit_\w+)$", symbols, re.MULTILINE))
         shared_switch_decoders = {
             "pf_sd_native_switch_supports_high_speed",

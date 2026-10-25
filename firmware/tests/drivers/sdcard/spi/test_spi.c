@@ -51,8 +51,9 @@ void test_spi_devices_share_one_controller_and_restore_device_clock(void)
     TEST_ASSERT_EQUAL_UINT32(25000000, serial_fake.hz);
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_spi_select(&sd, false));
     const uint8_t payload[] = {0xaa, 0x55};
-    pf_sd_link_serial_phase_t phase = {.tx = payload, .bit_count = sizeof(payload) * 8u, .lanes = 1u};
-    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_transfer(&peer_bus, &phase, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_select(&peer_bus, true));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_exchange(&peer_bus, payload, NULL, sizeof(payload)));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_select(&peer_bus, false));
     const uint8_t expected[] = {0xfc, 0xaa, 0x55};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, serial_fake.bytes, sizeof(expected));
     TEST_ASSERT_EQUAL_UINT32(10000000, serial_fake.hz);
@@ -63,14 +64,15 @@ void test_spi_devices_share_one_controller_and_restore_device_clock(void)
     TEST_ASSERT_EQUAL_UINT(1, serial_fake.deinit);
 }
 
-void test_spi_fifo_timeout_releases_cs_and_only_its_controller_reference(void)
+void test_spi_fifo_timeout_can_be_deselected_and_aborted_without_releasing_a_peer(void)
 {
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_spi_init(&sd));
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_init(&peer_bus));
     serial_fake.short_io = true;
     uint8_t output = 0xa5u;
-    pf_sd_link_serial_phase_t phase = {.tx = &output, .bit_count = 8u, .lanes = 1u};
-    TEST_ASSERT_EQUAL(PF_SD_LINK_TIMEOUT, pf_sd_link_serial_transfer(&peer_bus, &phase, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_select(&peer_bus, true));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_TIMEOUT, pf_sd_link_serial_exchange(&peer_bus, &output, NULL, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_select(&peer_bus, false));
     TEST_ASSERT_FALSE(serial_fake.selected);
     pf_sd_link_abort(&peer_bus);
     TEST_ASSERT_FALSE(serial_fake.selected || peer.initialized);
@@ -132,15 +134,30 @@ void test_sdk_short_bulk_io_is_reported_without_replay_or_implicit_cs_boundary(v
 void test_invalid_or_unsupported_spi_transactions_never_assert_cs(void)
 {
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_spi_init(&sd));
-    uint8_t output = 6u;
-    pf_sd_link_serial_phase_t phases[] = {
-        {.tx = &output, .bit_count = 8u, .lanes = 1u}, {.bit_count = 8u, .lanes = 4u},
-    };
-    TEST_ASSERT_EQUAL(PF_SD_LINK_UNSUPPORTED, pf_spi_transfer(&sd, phases, 2u));
-    phases[1].lanes = 1u;
-    phases[1].bit_count = 1u;
-    TEST_ASSERT_EQUAL(PF_SD_LINK_UNSUPPORTED, pf_spi_transfer(&sd, phases, 2u));
+    pf_sd_link_t bus = pf_spi_bus(&sd);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_serial_select(NULL, true));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_serial_exchange(&bus, NULL, NULL, 1u));
+    bus.mode = PF_SD_LINK_NATIVE_SD;
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_serial_select(&bus, true));
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.cs_low);
+}
+
+void test_static_spi_lifecycle_rejects_invalid_handles_without_hardware_access(void)
+{
+    pf_sd_link_t bus = pf_spi_bus(&sd);
+    uint32_t actual = 17u;
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_init(NULL));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(NULL, 25000000u, &actual));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(&bus, 0u, &actual));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(&bus, 25000000u, NULL));
+    bus.mode = PF_SD_LINK_NATIVE_SD;
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_init(&bus));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_sd_link_set_clock(&bus, 25000000u, &actual));
+    TEST_ASSERT_EQUAL_UINT32(17u, actual);
+    pf_sd_link_abort(NULL);
+    pf_sd_link_deinit(&bus);
+    TEST_ASSERT_EQUAL_UINT(0u, serial_fake.init);
+    TEST_ASSERT_EQUAL_UINT(0u, serial_fake.cs_low);
 }
 
 void test_selected_device_prevents_another_device_from_clocking_the_bus(void)
@@ -155,8 +172,8 @@ void test_selected_device_prevents_another_device_from_clocking_the_bus(void)
     TEST_ASSERT_EQUAL(PF_SD_LINK_NOT_READY, pf_spi_init(&another));
     TEST_ASSERT_EQUAL_UINT(cs_high, serial_fake.cs_high);
     uint8_t output = 0xa5u;
-    pf_sd_link_serial_phase_t phase = {.tx = &output, .bit_count = 8u, .lanes = 1u};
-    TEST_ASSERT_EQUAL(PF_SD_LINK_NOT_READY, pf_sd_link_serial_transfer(&peer_bus, &phase, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_NOT_READY, pf_sd_link_serial_select(&peer_bus, true));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_NOT_READY, pf_sd_link_serial_exchange(&peer_bus, &output, NULL, 1u));
     TEST_ASSERT_EQUAL_UINT(0, serial_fake.length);
     TEST_ASSERT_TRUE(sd.initialized);
     TEST_ASSERT_TRUE(peer.initialized);
@@ -169,12 +186,12 @@ void test_generic_spi_dispatch_clocks_dummy_bytes_and_receives_payload(void)
     serial_fake.input = 0x91;
     uint8_t input[2];
     uint8_t output = 0x0b;
-    pf_sd_link_serial_phase_t phases[] = {
-        {.tx = &output, .bit_count = 8u, .lanes = 1u},
-        {.bit_count = 16u, .lanes = 1u},
-        {.rx = input, .bit_count = sizeof(input) * 8u, .lanes = 1u},
-    };
-    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_transfer(&bus, phases, 3u));
+    const uint8_t dummy[] = {0xffu, 0xffu};
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_select(&bus, true));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_exchange(&bus, &output, NULL, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_exchange(&bus, dummy, NULL, sizeof(dummy)));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_exchange(&bus, NULL, input, sizeof(input)));
+    TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_sd_link_serial_select(&bus, false));
     const uint8_t expected[] = {0x0b, 0xff, 0xff, 0xff, 0xff};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, serial_fake.bytes, sizeof(expected));
     TEST_ASSERT_EQUAL_HEX8(0x91, input[0]);

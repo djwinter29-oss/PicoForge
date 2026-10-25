@@ -11,10 +11,9 @@ static pf_sdio_pio_t test_wire;
 #include <stdint.h>
 #include <string.h>
 
-#include "drivers/sdcard/sdio_pio/sdio_pio.c"
-#include "drivers/sdcard/link/sd_link.c"
-#include "drivers/sdcard/link/sd_link_wire.c"
-#include "drivers/sdcard/sd_native_host.c"
+#include "drivers/sdcard/sdio/sdio_pio.c"
+#include "drivers/sdcard/sd_link.c"
+#include "drivers/sdcard/sdio/sd_native_host.c"
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
@@ -85,14 +84,6 @@ static pf_sd_native_host_t make_host(pf_test_sdio_pio_t *pio)
     return host;
 }
 
-static unsigned hook_bindings;
-
-static void count_hooks(void *context, pf_sd_link_wire_error_hook_t error, void *error_context, void (*idle)(void))
-{
-    ++hook_bindings;
-    sd_wire_hooks(context, error, error_context, idle);
-}
-
 void test_host_init_binds_callbacks_once_and_preserves_them_until_deinit(void)
 {
     test_wire = (pf_sdio_pio_t){
@@ -100,15 +91,8 @@ void test_host_init_binds_callbacks_once_and_preserves_them_until_deinit(void)
                                        .data_gpio = {2u, 3u, 4u, 5u}}},
     };
     pf_sd_config_t config = {.transport = pf_sdio_pio_bus(&test_wire)};
-    pf_sd_link_ops_t ops = *config.transport.ops;
-    pf_sd_link_wire_ops_t sd_wire = *ops.sd_wire;
-    sd_wire.hooks = count_hooks;
-    ops.sd_wire = &sd_wire;
-    config.transport.ops = &ops;
     pf_sd_native_host_t host = {0};
-    hook_bindings = 0u;
     TEST_ASSERT_TRUE(pf_sd_native_host_init(&host, &config));
-    TEST_ASSERT_EQUAL_UINT(1u, hook_bindings);
     TEST_ASSERT_EQUAL_PTR(&host, test_wire.hook_context);
     TEST_ASSERT_TRUE(test_wire.error_hook == transport_error);
     TEST_ASSERT_TRUE(test_wire.idle_hook == pf_sd_idle);
@@ -128,9 +112,8 @@ void test_host_init_binds_callbacks_once_and_preserves_them_until_deinit(void)
     TEST_ASSERT_EQUAL_UINT32(1u, host.errors.pio_timeouts);
     pf_sd_native_host_abort(&host);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_PIO_TIMEOUT, host.last_error);
-    TEST_ASSERT_EQUAL_UINT(1u, hook_bindings);
+    TEST_ASSERT_EQUAL_PTR(&host, test_wire.hook_context);
     pf_sd_native_host_deinit(&host);
-    TEST_ASSERT_EQUAL_UINT(1u, hook_bindings);
     TEST_ASSERT_NULL(test_wire.hook_context);
     TEST_ASSERT_NULL(test_wire.error_hook);
 }

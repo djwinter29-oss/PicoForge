@@ -7,7 +7,7 @@
 
 #include "sd_native.h"
 #include "sd_protocol.h"
-#include "drivers/sdcard/link/sd_link_wire.h"
+#include "drivers/sdcard/sd_link_wire.h"
 
 /** SD protocol state layered over a native wire transport. */
 typedef struct {

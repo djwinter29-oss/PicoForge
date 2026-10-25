@@ -10,11 +10,10 @@ static pf_sdio_pio_t test_wire;
 
 #include <string.h>
 
-#include "drivers/sdcard/sd_native.c"
-#include "drivers/sdcard/sdio_pio/sdio_pio.c"
-#include "drivers/sdcard/link/sd_link.c"
-#include "drivers/sdcard/link/sd_link_wire.c"
-#include "drivers/sdcard/sd_native_host.c"
+#include "drivers/sdcard/sdio/sd_backend_sdio.c"
+#include "drivers/sdcard/sdio/sdio_pio.c"
+#include "drivers/sdcard/sd_link.c"
+#include "drivers/sdcard/sdio/sd_native_host.c"
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
@@ -131,7 +130,7 @@ void test_confirm_card_removed_invalidates_card_before_forgetting_host_streams(v
     pf_test_sdio_observed_host = &native_host;
     pf_test_sdio_expect_streams_cleared = true;
 
-    pf_sd_native_confirm_card_removed();
+    pf_sd_backend_confirm_removed();
 
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_TRUE(pf_test_sdio_streams_were_cleared);

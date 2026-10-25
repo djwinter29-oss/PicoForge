@@ -1,4 +1,8 @@
+/** @file
+ * @brief Native SD implementation of the shared backend contract over the SDIO-PIO wire interface.
+ */
 #include "sd_native.h"
+#include "sd_backend.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -17,6 +21,11 @@ static uint8_t last_short_command;
 static uint32_t last_short_argument;
 static uint32_t last_short_response_argument;
 static pf_sd_info_t native_info;
+
+pf_sd_link_mode_t pf_sd_backend_mode(void)
+{
+    return PF_SD_LINK_NATIVE_SD;
+}
 
 enum {
     SD_CMD_GO_IDLE = 0, SD_CMD_ALL_SEND_CID = 2, SD_CMD_SEND_RCA = 3,
@@ -392,7 +401,7 @@ void pf_sd_native_get_last_response_words(uint32_t words[5], size_t *word_count)
     }
 }
 
-pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *config)
+pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
 {
     if (!config_is_valid(config)) {
         return PF_SD_INVALID_ARGUMENT;
@@ -452,7 +461,7 @@ failed:
     return PF_SD_INIT_FAILED;
 }
 
-bool pf_sd_native_is_initialized(void)
+bool pf_sd_backend_is_initialized(void)
 {
     if (!pf_sd_link_wire_state(&native_host.transport).healthy ||
         (configuration_set && !card_detect_present())) {
@@ -462,14 +471,14 @@ bool pf_sd_native_is_initialized(void)
     return card_initialized;
 }
 
-void pf_sd_native_confirm_card_removed(void)
+void pf_sd_backend_confirm_removed(void)
 {
     card_initialized = false;
     pf_sd_native_host_forget_removed_card(&native_host);
     protocol_failure(PF_SD_DETAIL_REMOVED);
 }
 
-uint32_t pf_sd_native_block_count(void)
+uint32_t pf_sd_backend_block_count(void)
 {
     return card_initialized ? native_info.block_count : 0u;
 }
@@ -490,7 +499,7 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
 {
     pf_sd_result_t result;
 
-    if (!pf_sd_native_is_initialized()) {
+    if (!pf_sd_backend_is_initialized()) {
         return PF_SD_NOT_READY;
     }
     if (block_count == 0u) {
@@ -498,7 +507,7 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
     }
 
     result = pf_sd_validate_transfer(first_block, read_buffer != NULL ? read_buffer : write_buffer,
-                                          block_count, pf_sd_native_block_count());
+                                          block_count, pf_sd_backend_block_count());
     if (result != PF_SD_OK) {
         return result;
     }
@@ -526,20 +535,20 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
     return PF_SD_OK;
 }
 
-pf_sd_result_t pf_sd_native_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
+pf_sd_result_t pf_sd_backend_read_blocks(uint32_t first_block, void *buffer, uint32_t block_count)
 {
     return transfer_blocks(first_block, buffer, NULL, block_count);
 }
 
-pf_sd_result_t pf_sd_native_write_blocks(uint32_t first_block, const void *buffer,
+pf_sd_result_t pf_sd_backend_write_blocks(uint32_t first_block, const void *buffer,
                                                     uint32_t block_count)
 {
     return transfer_blocks(first_block, NULL, buffer, block_count);
 }
 
-pf_sd_result_t pf_sd_native_sync(void)
+pf_sd_result_t pf_sd_backend_sync(void)
 {
-    if (!pf_sd_native_is_initialized()) {
+    if (!pf_sd_backend_is_initialized()) {
         return PF_SD_NOT_READY;
     }
     if (!pf_sd_native_host_recover(&native_host)) {
@@ -548,7 +557,7 @@ pf_sd_result_t pf_sd_native_sync(void)
     return PF_SD_OK;
 }
 
-void pf_sd_native_get_info(pf_sd_info_t *info)
+void pf_sd_backend_get_info(pf_sd_info_t *info)
 {
     if (info == NULL) {
         return;
@@ -560,11 +569,11 @@ void pf_sd_native_get_info(pf_sd_info_t *info)
     if (pf_sd_link_presence_known(&active_config.transport)) {
         info->presence_known = true;
         info->present = card_detect_present();
-    } else if (pf_sd_native_is_initialized()) {
+    } else if (pf_sd_backend_is_initialized()) {
         info->presence_known = true;
         info->present = true;
     }
-    info->initialized = pf_sd_native_is_initialized();
+    info->initialized = pf_sd_backend_is_initialized();
     info->bus_width = native_host.bus_width;
     info->actual_clock_hz = pf_sd_link_wire_state(&native_host.transport).current_clock_hz;
     info->errors = native_host.errors;

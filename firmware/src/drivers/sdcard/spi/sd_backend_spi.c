@@ -1,10 +1,24 @@
+/** @file
+ * @brief SPI implementation of the shared SD backend contract; CMake selects this or native SD.
+ */
 #include "sd_spi.h"
+#include "sd_backend.h"
 
 #include <stddef.h>
 #include <string.h>
 
 #include "sd_protocol.h"
-#include "drivers/sdcard/link/sd_link_serial.h"
+#include "drivers/sdcard/sd_link_serial.h"
+
+pf_sd_link_mode_t pf_sd_backend_mode(void)
+{
+    return PF_SD_LINK_SPI;
+}
+
+void pf_sd_backend_confirm_removed(void)
+{
+    /* SPI has no persistent native stream state to release after debounced removal. */
+}
 
 #define SD_SPI_INIT_CLOCK_HZ 400000u
 #define SD_SPI_DEFAULT_CLOCK_HZ 25000000u
@@ -64,7 +78,7 @@ static bool config_is_valid(const pf_sd_config_t *config)
     if (config == NULL || !pf_sd_link_valid(&config->transport, PF_SD_LINK_SPI)) {
         return false;
     }
-    if (!pf_sd_link_serial_raw_valid(&config->transport)) {
+    if (!pf_sd_link_valid(&config->transport, PF_SD_LINK_SPI)) {
         return false;
     }
 
@@ -545,7 +559,7 @@ transfer_done:
     return success ? PF_SD_OK : PF_SD_IO_ERROR;
 }
 
-pf_sd_result_t pf_sd_spi_init(const pf_sd_config_t *config)
+pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
 {
     if (!config_is_valid(config)) {
         return PF_SD_INVALID_ARGUMENT;
@@ -572,7 +586,7 @@ pf_sd_result_t pf_sd_spi_init(const pf_sd_config_t *config)
     return PF_SD_OK;
 }
 
-bool pf_sd_spi_is_initialized(void)
+bool pf_sd_backend_is_initialized(void)
 {
     if (card_initialized && !card_is_present()) {
         card_initialized = false;
@@ -580,16 +594,16 @@ bool pf_sd_spi_is_initialized(void)
     return card_initialized;
 }
 
-uint32_t pf_sd_spi_block_count(void)
+uint32_t pf_sd_backend_block_count(void)
 {
-    return pf_sd_spi_is_initialized() ? card_sector_count : 0u;
+    return pf_sd_backend_is_initialized() ? card_sector_count : 0u;
 }
 
 static pf_sd_result_t validate_transfer(uint32_t first_block,
                                              const void *buffer,
                                              uint32_t block_count)
 {
-    if (!pf_sd_spi_is_initialized()) {
+    if (!pf_sd_backend_is_initialized()) {
         card_initialized = false;
         return PF_SD_NOT_READY;
     }
@@ -680,24 +694,24 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
     return PF_SD_OK;
 }
 
-pf_sd_result_t pf_sd_spi_read_blocks(uint32_t first_block, void *buffer,
+pf_sd_result_t pf_sd_backend_read_blocks(uint32_t first_block, void *buffer,
                                          uint32_t block_count)
 {
     return transfer_blocks(first_block, buffer, NULL, block_count);
 }
 
-pf_sd_result_t pf_sd_spi_write_blocks(uint32_t first_block,
+pf_sd_result_t pf_sd_backend_write_blocks(uint32_t first_block,
                                           const void *buffer,
                                           uint32_t block_count)
 {
     return transfer_blocks(first_block, NULL, buffer, block_count);
 }
 
-pf_sd_result_t pf_sd_spi_sync(void)
+pf_sd_result_t pf_sd_backend_sync(void)
 {
     bool ready;
 
-    if (!pf_sd_spi_is_initialized()) {
+    if (!pf_sd_backend_is_initialized()) {
         card_initialized = false;
         return PF_SD_NOT_READY;
     }
@@ -712,7 +726,7 @@ pf_sd_result_t pf_sd_spi_sync(void)
     return ready ? PF_SD_OK : PF_SD_IO_ERROR;
 }
 
-void pf_sd_spi_get_info(pf_sd_info_t *info)
+void pf_sd_backend_get_info(pf_sd_info_t *info)
 {
     if (info == NULL) {
         return;
@@ -724,11 +738,11 @@ void pf_sd_spi_get_info(pf_sd_info_t *info)
     if (pf_sd_link_presence_known(&active_config.transport)) {
         info->presence_known = true;
         info->present = card_is_present();
-    } else if (pf_sd_spi_is_initialized()) {
+    } else if (pf_sd_backend_is_initialized()) {
         info->presence_known = true;
         info->present = true;
     }
-    info->initialized = pf_sd_spi_is_initialized();
+    info->initialized = pf_sd_backend_is_initialized();
     if (info->initialized) {
         info->cid_valid = true;
         info->bus_clock_hz = card_bus_clock_hz;

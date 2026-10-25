@@ -837,9 +837,12 @@ bool pf_sdio_pio_wait_ready(pf_sdio_pio_t *host, uint32_t timeout_us)
     return true;
 }
 
-static pf_sd_link_result_t bus_init(void *context)
+pf_sd_link_result_t pf_sd_link_init(const pf_sd_link_t *bus)
 {
-    pf_sdio_pio_t *host = context;
+    if (!pf_sd_link_valid(bus, PF_SD_LINK_NATIVE_SD)) {
+        return PF_SD_LINK_INVALID_ARGUMENT;
+    }
+    pf_sdio_pio_t *host = bus->context;
     pf_sdio_pio_config_t config = host->config;
     pf_sdio_pio_wait_hook_t wait = host->wait_hook;
     bool initialized = pf_sdio_pio_init(host, &config);
@@ -848,20 +851,32 @@ static pf_sd_link_result_t bus_init(void *context)
     return initialized ? PF_SD_LINK_OK : PF_SD_LINK_NOT_READY;
 }
 
-static void bus_deinit(void *context)
+void pf_sd_link_deinit(const pf_sd_link_t *bus)
 {
-    pf_sdio_pio_t *host = context;
+    if (!pf_sd_link_valid(bus, PF_SD_LINK_NATIVE_SD)) {
+        return;
+    }
+    pf_sdio_pio_t *host = bus->context;
     pf_sdio_pio_config_t config = host->config;
     pf_sdio_pio_wait_hook_t wait = host->wait_hook;
     pf_sdio_pio_deinit(host);
     host->config = config;
     host->wait_hook = wait;
 }
-static void bus_abort(void *context) { pf_sdio_pio_abort(context); }
 
-static pf_sd_link_result_t bus_set_clock(void *context, uint32_t requested, uint32_t *actual)
+void pf_sd_link_abort(const pf_sd_link_t *bus)
 {
-    pf_sdio_pio_t *host = context;
+    if (pf_sd_link_valid(bus, PF_SD_LINK_NATIVE_SD)) {
+        pf_sdio_pio_abort(bus->context);
+    }
+}
+
+pf_sd_link_result_t pf_sd_link_set_clock(const pf_sd_link_t *bus, uint32_t requested, uint32_t *actual)
+{
+    if (!pf_sd_link_valid(bus, PF_SD_LINK_NATIVE_SD) || requested == 0u || actual == NULL) {
+        return PF_SD_LINK_INVALID_ARGUMENT;
+    }
+    pf_sdio_pio_t *host = bus->context;
     if (!pf_sdio_pio_set_clock(host, requested)) {
         return PF_SD_LINK_IO_ERROR;
     }
@@ -869,94 +884,150 @@ static pf_sd_link_result_t bus_set_clock(void *context, uint32_t requested, uint
     return PF_SD_LINK_OK;
 }
 
-/** @brief Copy only wire status, never expose mutable DMA/PIO resources to protocol clients. */
-static pf_sd_link_wire_state_t sd_wire_state(void *context)
+uint64_t pf_sd_link_time_us(const pf_sd_link_t *bus)
 {
-    pf_sdio_pio_t *host = context;
-    pf_sd_link_wire_state_t state = {
+    (void)bus;
+    return time_us_64();
+}
+
+void pf_sd_link_delay_ms(const pf_sd_link_t *bus, uint32_t duration)
+{
+    (void)bus;
+    sleep_ms(duration);
+}
+
+bool pf_sd_link_enable_wait(const pf_sd_link_t *bus)
+{
+#if PF_CONFIG_SDCARD_INTERRUPT_WAIT
+    return pf_sd_link_valid(bus, PF_SD_LINK_NATIVE_SD) && pf_sdio_pio_enable_wait(bus->context);
+#else
+    (void)bus;
+    return false;
+#endif
+}
+
+bool pf_sd_link_wire_valid(const pf_sd_link_t *bus)
+{
+    return pf_sd_link_valid(bus, PF_SD_LINK_NATIVE_SD);
+}
+
+pf_sd_link_wire_state_t pf_sd_link_wire_state(const pf_sd_link_t *bus)
+{
+    if (!pf_sd_link_wire_valid(bus)) {
+        return (pf_sd_link_wire_state_t){0};
+    }
+    pf_sdio_pio_t *host = bus->context;
+    return (pf_sd_link_wire_state_t){
         .ready = host->pio != NULL,
         .healthy = host->pio != NULL && !host->mode_restore_failed,
         .data_high = host->pio != NULL && gpio_get(host->config.pins.data_gpio[0]) != 0u,
         .current_clock_hz = host->current_clock_hz,
         .maximum_clock_hz = maximum_clock_hz(clock_get_hz(clk_sys)),
     };
-    return state;
 }
 
-static void sd_wire_hooks(void *context, pf_sd_link_wire_error_hook_t error,
-                         void *error_context, void (*idle)(void))
+bool pf_sd_link_wire_hooks(const pf_sd_link_t *bus,
+                          pf_sd_link_wire_error_hook_t error, void *context, void (*idle)(void))
 {
-    pf_sdio_pio_t *host = context;
+    if (!pf_sd_link_wire_valid(bus)) {
+        return false;
+    }
+    pf_sdio_pio_t *host = bus->context;
     host->error_hook = error;
-    host->hook_context = error_context;
+    host->hook_context = context;
     host->idle_hook = idle;
+    return true;
 }
 
-static bool sd_wire_clocks(void *context, uint32_t cycles, uint32_t timeout_us)
+bool pf_sd_link_wire_clocks(const pf_sd_link_t *bus, uint32_t cycles, uint32_t timeout_us)
 {
-    return pf_sdio_pio_clocks(context, cycles, timeout_us);
+    return pf_sd_link_wire_valid(bus) && cycles != 0u && timeout_us != 0u &&
+           pf_sdio_pio_clocks(bus->context, cycles, timeout_us);
 }
-static bool sd_wire_restore(void *context) { return pf_sdio_pio_restore_command(context); }
-static bool sd_wire_exchange(void *context, const uint8_t *tx, size_t tx_size, uint16_t bits,
-                            uint8_t *rx, size_t capacity, size_t *received, uint32_t timeout_us)
+
+bool pf_sd_link_wire_idle(const pf_sd_link_t *bus)
 {
-    return pf_sdio_pio_exchange(context, tx, tx_size, bits, rx, capacity, received, timeout_us);
+    return pf_sd_link_wire_valid(bus) && pf_sdio_pio_restore_command(bus->context);
 }
-static bool sd_wire_rx_start(void *context, uint32_t *buffer, uint32_t words,
-                            uint32_t nibbles, uint32_t blocks)
+
+bool pf_sd_link_wire_exchange(const pf_sd_link_t *bus, const uint8_t *tx, size_t tx_size,
+                                uint16_t rx_bits, uint8_t *rx, size_t capacity, size_t *received,
+                                uint32_t timeout_us)
 {
-    return pf_sdio_pio_rx_start(context, buffer, words, nibbles, blocks);
+    if (received != NULL) {
+        *received = 0u;
+    }
+    return pf_sd_link_wire_valid(bus) && tx != NULL && tx_size != 0u &&
+           rx_bits % 8u == 0u && (rx_bits == 0u || (rx != NULL && capacity >= rx_bits / 8u)) &&
+           received != NULL && timeout_us != 0u &&
+           pf_sdio_pio_exchange(bus->context, tx, tx_size, rx_bits, rx, capacity, received, timeout_us);
 }
-static bool sd_wire_rx_finish(void *context, uint32_t timeout_us)
+
+bool pf_sd_link_wire_rx_start(const pf_sd_link_t *bus, uint32_t *buffer,
+                                uint32_t words, uint32_t nibbles, uint32_t blocks)
 {
-    return pf_sdio_pio_rx_finish(context, timeout_us);
+    return pf_sd_link_wire_valid(bus) && buffer != NULL && words != 0u && nibbles != 0u &&
+           blocks != 0u && pf_sdio_pio_rx_start(bus->context, buffer, words, nibbles, blocks);
 }
-static void sd_wire_rx_cleanup(void *context) { pf_sdio_pio_rx_cleanup(context); }
-static bool sd_wire_rx_poll(void *context, uint32_t start, uint32_t timeout_us, bool *complete)
+
+bool pf_sd_link_wire_rx_finish(const pf_sd_link_t *bus, uint32_t timeout_us)
 {
-    return pf_sdio_pio_rx_poll(context, start, timeout_us, complete);
+    return pf_sd_link_wire_valid(bus) && timeout_us != 0u &&
+           pf_sdio_pio_rx_finish(bus->context, timeout_us);
 }
-static void sd_wire_rx_wait(void *context) { pf_sdio_pio_rx_wait(context); }
-static bool sd_wire_rx_progress(void *context, const uint32_t *buffer, uint32_t capacity, uint32_t *words)
+
+void pf_sd_link_wire_rx_cancel(const pf_sd_link_t *bus)
 {
-    return pf_sdio_pio_rx_progress(context, buffer, capacity, words);
+    if (pf_sd_link_wire_valid(bus)) {
+        pf_sdio_pio_rx_cleanup(bus->context);
+    }
 }
-static bool sd_wire_tx_start(void *context, const uint32_t *buffer, uint32_t words, uint32_t nibbles)
+
+bool pf_sd_link_wire_rx_poll(const pf_sd_link_t *bus, uint32_t start,
+                               uint32_t timeout_us, bool *complete)
 {
-    pf_sdio_pio_t *host = context;
+    return pf_sd_link_wire_valid(bus) && complete != NULL && timeout_us != 0u &&
+           pf_sdio_pio_rx_poll(bus->context, start, timeout_us, complete);
+}
+
+void pf_sd_link_wire_rx_wait(const pf_sd_link_t *bus)
+{
+    if (pf_sd_link_wire_valid(bus)) {
+        pf_sdio_pio_rx_wait(bus->context);
+    }
+}
+
+bool pf_sd_link_wire_rx_progress(const pf_sd_link_t *bus,
+                                   const uint32_t *buffer, uint32_t capacity, uint32_t *words)
+{
+    return pf_sd_link_wire_valid(bus) && buffer != NULL && words != NULL && capacity != 0u &&
+           pf_sdio_pio_rx_progress(bus->context, buffer, capacity, words);
+}
+
+bool pf_sd_link_wire_tx_start(const pf_sd_link_t *bus,
+                                const uint32_t *buffer, uint32_t words, uint32_t nibbles)
+{
+    if (!pf_sd_link_wire_valid(bus) || buffer == NULL || words == 0u || nibbles == 0u) {
+        return false;
+    }
+    pf_sdio_pio_t *host = bus->context;
     return (host->clock_owner == PF_SDIO_PIO_CLOCK_DATA_TX || pf_sdio_pio_tx_prepare(host)) &&
            pf_sdio_pio_tx_start(host, buffer, words, nibbles);
 }
-static bool sd_wire_tx_finish(void *context, uint32_t timeout_us, uint32_t *response)
+
+bool pf_sd_link_wire_tx_finish(const pf_sd_link_t *bus, uint32_t timeout_us, uint32_t *response)
 {
-    return pf_sdio_pio_tx_finish(context, timeout_us, response);
+    return pf_sd_link_wire_valid(bus) && timeout_us != 0u && response != NULL &&
+           pf_sdio_pio_tx_finish(bus->context, timeout_us, response);
 }
-static bool sd_wire_wait_ready(void *context, uint32_t timeout_us)
+
+bool pf_sd_link_wire_wait_high(const pf_sd_link_t *bus, uint32_t timeout_us)
 {
-    return pf_sdio_pio_wait_ready(context, timeout_us);
-}
-static bool sd_wire_enable_wait(void *context)
-{
-#if PF_CONFIG_SDCARD_INTERRUPT_WAIT
-    return pf_sdio_pio_enable_wait(context);
-#else
-    (void)context;
-    return false;
-#endif
+    return pf_sd_link_wire_valid(bus) && timeout_us != 0u &&
+           pf_sdio_pio_wait_ready(bus->context, timeout_us);
 }
 
 pf_sd_link_t pf_sdio_pio_bus(pf_sdio_pio_t *host)
 {
-    static const pf_sd_link_wire_ops_t sd_wire = {
-        .state = sd_wire_state, .hooks = sd_wire_hooks, .clocks = sd_wire_clocks, .idle = sd_wire_restore,
-        .exchange = sd_wire_exchange, .rx_start = sd_wire_rx_start, .rx_finish = sd_wire_rx_finish,
-        .rx_cancel = sd_wire_rx_cleanup, .rx_poll = sd_wire_rx_poll, .rx_wait = sd_wire_rx_wait,
-        .rx_progress = sd_wire_rx_progress, .tx_start = sd_wire_tx_start,
-        .tx_finish = sd_wire_tx_finish, .wait_high = sd_wire_wait_ready,
-    };
-    static const pf_sd_link_ops_t ops = {
-        .init = bus_init, .deinit = bus_deinit, .abort = bus_abort, .set_clock = bus_set_clock,
-        .sd_wire = &sd_wire, .time_us = time_us_64, .delay_ms = sleep_ms, .enable_wait = sd_wire_enable_wait,
-    };
-    return (pf_sd_link_t){ .context = host, .ops = &ops, .mode = PF_SD_LINK_NATIVE_SD };
+    return (pf_sd_link_t){.context = host, .mode = PF_SD_LINK_NATIVE_SD};
 }

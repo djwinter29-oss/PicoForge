@@ -4,16 +4,15 @@ void pf_sd_unlock(void) {}
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #include "sdio_sdk_stubs.h"
-#include "drivers/sdcard/sdio_pio/sdio_pio.c"
-#include "drivers/sdcard/link/sd_link.c"
-#include "drivers/sdcard/link/sd_link_wire.c"
+#include "drivers/sdcard/sdio/sdio_pio.c"
+#include "drivers/sdcard/sd_link.c"
 
 static pf_sdio_pio_t test_wire;
 static bool test_present(const void *context) { (void)context; return pf_test_sdio_gpio_level != 0u; }
 
 #include <string.h>
 
-#include "drivers/sdcard/sd_native.c"
+#include "drivers/sdcard/sdio/sd_backend_sdio.c"
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
@@ -65,6 +64,7 @@ static uint32_t switch_selected_at_ms;
 
 void setUp(void)
 {
+    TEST_ASSERT_EQUAL(PF_SD_LINK_NATIVE_SD, pf_sd_backend_mode());
     memset(&test_wire, 0, sizeof(test_wire));
     memset(&native_host, 0, sizeof(native_host));
     memset(&active_config, 0, sizeof(active_config));
@@ -302,23 +302,23 @@ void test_transfer_routes_reads_and_single_or_batched_writes(void)
 
     TEST_ASSERT_EQUAL(PF_SD_OK, transfer_blocks(0u, NULL, NULL, 0u));
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT,
-                      pf_sd_native_read_blocks(0u, NULL, 1u));
+                      pf_sd_backend_read_blocks(0u, NULL, 1u));
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT,
-                      pf_sd_native_read_blocks(native_info.block_count, buffer, 1u));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_read_blocks(0u, buffer, 1u));
+                      pf_sd_backend_read_blocks(native_info.block_count, buffer, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_read_blocks(0u, buffer, 1u));
     TEST_ASSERT_EQUAL_UINT(1u, reads);
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
 
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_write_blocks(0u, NULL, 0u));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_write_blocks(0u, buffer, 0u));
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_write_blocks(0u, buffer, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_write_blocks(0u, NULL, 0u));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_write_blocks(0u, buffer, 0u));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_write_blocks(0u, buffer, 1u));
     TEST_ASSERT_EQUAL_UINT(1u, single_writes);
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_write_blocks(1u, buffer, 2u));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_write_blocks(1u, buffer, 2u));
     TEST_ASSERT_EQUAL_UINT(1u, batch_writes);
 
     native_host.write_stream_open = true;
     native_host.write_stream_next_sector = 3u;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_write_blocks(3u, buffer, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_write_blocks(3u, buffer, 1u));
     TEST_ASSERT_EQUAL_UINT(2u, batch_writes);
 }
 
@@ -327,29 +327,29 @@ void test_readiness_sync_card_removal_and_info_follow_card_detect(void)
     pf_sd_info_t info;
 
     active_config.transport.present = test_present;
-    pf_sd_native_get_info(&info);
+    pf_sd_backend_get_info(&info);
     TEST_ASSERT_TRUE(info.presence_known);
     TEST_ASSERT_TRUE(info.present);
     TEST_ASSERT_TRUE(info.initialized);
     TEST_ASSERT_EQUAL_UINT32(native_info.block_count, info.block_count);
     TEST_ASSERT_EQUAL_UINT32(25000000u, info.bus_clock_hz);
 
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_sync());
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_sync());
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
 
     native_host.write_stream_open = true;
     native_host.read_stream_unresolved = true;
-    pf_sd_native_confirm_card_removed();
+    pf_sd_backend_confirm_removed();
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_FALSE(native_host.write_stream_open);
     TEST_ASSERT_FALSE(native_host.read_stream_unresolved);
     TEST_ASSERT_EQUAL_UINT(1u, forget_calls);
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_sync());
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_sync());
 
     card_initialized = true;
     pf_test_sdio_gpio_level = 0u;
-    TEST_ASSERT_FALSE(pf_sd_native_is_initialized());
-    pf_sd_native_get_info(&info);
+    TEST_ASSERT_FALSE(pf_sd_backend_is_initialized());
+    pf_sd_backend_get_info(&info);
     TEST_ASSERT_FALSE(info.present);
     TEST_ASSERT_FALSE(info.initialized);
 }
@@ -367,7 +367,7 @@ void test_transfer_validation_checks_32_bit_sector_overflow(void)
 void test_card_init_validates_one_sector_without_high_speed_on_slow_cpu(void)
 {
     active_config.clock_hz = 50000000u;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
@@ -388,14 +388,14 @@ void test_requested_high_speed_uses_the_closest_safe_rate_for_each_system_clock(
         setUp();
         pf_test_sdio_system_clock_hz = system_clocks[index];
         active_config.clock_hz = 50000000u;
-        TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+        TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
         TEST_ASSERT_EQUAL_UINT(2u, switch_calls);
         TEST_ASSERT_EQUAL_UINT(3u, clock_request_count);
         TEST_ASSERT_EQUAL_UINT32(50000000u, clock_requests[2]);
         TEST_ASSERT_TRUE(native_info.high_speed);
         TEST_ASSERT_EQUAL(PF_SD_DETAIL_NONE, native_info.high_speed_error);
         pf_sd_info_t info;
-        pf_sd_native_get_info(&info);
+        pf_sd_backend_get_info(&info);
         TEST_ASSERT_EQUAL_UINT32(50000000u, info.requested_clock_hz);
         TEST_ASSERT_EQUAL_UINT32(actual_clocks[index], info.bus_clock_hz);
     }
@@ -406,7 +406,7 @@ void test_default_speed_only_config_never_negotiates_high_speed(void)
     pf_test_sdio_system_clock_hz = 250000000u;
     active_config.clock_hz = 50000000u;
     active_config.native_default_speed_only = true;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
     TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
     TEST_ASSERT_FALSE(native_info.high_speed);
@@ -419,7 +419,7 @@ void test_default_clock_request_never_negotiates_high_speed_on_a_fast_cpu(void)
         setUp();
         pf_test_sdio_system_clock_hz = 250000000u;
         active_config.clock_hz = requests[index];
-        TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+        TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
         TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
         TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
         TEST_ASSERT_FALSE(native_info.high_speed);
@@ -429,9 +429,9 @@ void test_default_clock_request_never_negotiates_high_speed_on_a_fast_cpu(void)
 void test_default_speed_accepts_a_transport_that_cannot_reach_25mhz(void)
 {
     pf_test_sdio_system_clock_hz = 80000000u;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     pf_sd_info_t info;
-    pf_sd_native_get_info(&info);
+    pf_sd_backend_get_info(&info);
     TEST_ASSERT_EQUAL_UINT32(25000000u, info.requested_clock_hz);
     TEST_ASSERT_EQUAL_UINT32(20000000u, info.bus_clock_hz);
     TEST_ASSERT_FALSE(info.high_speed);
@@ -440,7 +440,7 @@ void test_default_speed_accepts_a_transport_that_cannot_reach_25mhz(void)
 void test_card_init_failure_does_not_retry_at_other_clocks(void)
 {
     fail_command = 2u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
@@ -450,7 +450,7 @@ void test_card_init_failure_does_not_retry_at_other_clocks(void)
 void test_unsupported_clock_request_is_rejected_before_card_commands(void)
 {
     active_config.clock_hz = 50000001u;
-    TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(0u, card_init_calls);
     TEST_ASSERT_EQUAL_UINT(0u, recovery_calls);
 }
@@ -458,15 +458,15 @@ void test_unsupported_clock_request_is_rejected_before_card_commands(void)
 void test_runtime_read_failure_is_not_replayed_and_clock_stays_fixed(void)
 {
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     read_ok = false;
     read_fail_unresolved = true;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_native_read_blocks(4096u, block, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_read_blocks(4096u, block, 1u));
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(1u, reads);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, block, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_read_blocks(4096u, block, 1u));
     TEST_ASSERT_EQUAL_UINT(1u, reads);
 }
 
@@ -474,15 +474,15 @@ void test_failed_batch_write_with_closed_stream_invalidates_and_refuses_replay(v
 {
     uint8_t blocks[2u * PF_SD_BLOCK_SIZE] = {0};
     batch_write_ok = false;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_native_write_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_write_blocks(4096u, blocks, 2u));
     TEST_ASSERT_FALSE(native_host.write_stream_open);
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
     TEST_ASSERT_EQUAL_UINT(1u, batch_writes);
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_sync());
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_write_blocks(4096u, blocks, 2u));
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_sync());
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_write_blocks(4096u, blocks, 2u));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_read_blocks(4096u, blocks, 2u));
     TEST_ASSERT_EQUAL_UINT(1u, batch_writes);
     TEST_ASSERT_EQUAL_UINT(0u, reads);
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
@@ -493,7 +493,7 @@ void test_removed_media_never_attempts_read_or_reinitialization(void)
     uint8_t block[PF_SD_BLOCK_SIZE] = {0};
     active_config.transport.present = test_present;
     pf_test_sdio_gpio_level = 0u;
-    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_native_read_blocks(4096u, block, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_NOT_READY, pf_sd_backend_read_blocks(4096u, block, 1u));
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_EQUAL_UINT(0u, reads);
     TEST_ASSERT_EQUAL_UINT(0u, card_init_calls);
@@ -502,20 +502,20 @@ void test_removed_media_never_attempts_read_or_reinitialization(void)
 void test_explicit_reinitialization_after_failed_read_restores_fixed_rate(void)
 {
     uint8_t block[PF_SD_BLOCK_SIZE];
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     read_ok = false;
-    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_native_read_blocks(0u, block, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_IO_ERROR, pf_sd_backend_read_blocks(0u, block, 1u));
     read_ok = true;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(2u, card_init_calls);
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_read_blocks(0u, block, 1u));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_read_blocks(0u, block, 1u));
 }
 
 void test_card_advertising_less_than_25mhz_is_rejected_without_fallback(void)
 {
     csd_transfer_speed = 0x2au; /* 20 MHz TRAN_SPEED. */
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_FALSE(card_initialized);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
     TEST_ASSERT_EQUAL_UINT(1u, clock_request_count);
@@ -532,37 +532,37 @@ void test_modern_card_policy_rejects_bad_r7_voltage_legacy_and_ccs(void)
     for (unsigned i = 0u; i < 3u; ++i) {
         setUp();
         r7_value = invalid_r7[i];
-        TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+        TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
         TEST_ASSERT_EQUAL(errors[i], native_host.last_error);
         TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
     }
     setUp();
     ocr_value &= ~PF_SD_NATIVE_OCR_HCS;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_OCR_CCS, native_host.last_error);
 }
 
 void test_response_crc_index_status_csd_and_width_failures_are_distinct(void)
 {
     bad_crc_command = 8u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_RESPONSE_CRC, native_host.last_error);
     TEST_ASSERT_EQUAL_UINT32(1u, native_host.errors.command_crc_errors);
     setUp();
     bad_index_command = 8u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_RESPONSE_INDEX, native_host.last_error);
     setUp();
     status_value = PF_SD_NATIVE_R1_STATE_TRAN;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_CARD_STATUS, native_host.last_error);
     setUp();
     csd_structure = 0u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_LEGACY_CARD, native_host.last_error);
     setUp();
     four_bit_supported = false;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_FOUR_BIT, native_host.last_error);
 }
 
@@ -571,12 +571,12 @@ void test_default_speed_lba_zero_failure_aborts_before_high_speed_attempt(void)
     pf_test_sdio_system_clock_hz = 250000000u;
     active_config.clock_hz = 50000000u;
     fail_default_read = true;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(1u, validation_reads);
     TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
     TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
     pf_sd_info_t info;
-    pf_sd_native_get_info(&info);
+    pf_sd_backend_get_info(&info);
     TEST_ASSERT_TRUE(info.initialization_error);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_DATA_CRC, info.detail_error);
 }
@@ -585,13 +585,13 @@ void test_opt_in_high_speed_checks_support_selection_and_validates_lba_zero(void
 {
     pf_test_sdio_system_clock_hz = 250000000u;
     active_config.clock_hz = 50000000u;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(2u, switch_calls);
     TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
     TEST_ASSERT_EQUAL_UINT(3u, clock_request_count);
     TEST_ASSERT_EQUAL_UINT32(50000000u, clock_requests[2]);
     pf_sd_info_t info;
-    pf_sd_native_get_info(&info);
+    pf_sd_backend_get_info(&info);
     TEST_ASSERT_TRUE(info.high_speed);
     TEST_ASSERT_EQUAL_UINT32(50000000u, info.actual_clock_hz);
     TEST_ASSERT_EQUAL_UINT16(0x1234u, info.rca);
@@ -602,7 +602,7 @@ void test_opt_in_high_speed_checks_support_selection_and_validates_lba_zero(void
         TEST_ASSERT_EQUAL_UINT8(i + 1u, info.cid[i]);
     }
     native_host.bus_width = 1u;
-    pf_sd_native_get_info(&info);
+    pf_sd_backend_get_info(&info);
     TEST_ASSERT_EQUAL_UINT8(1u, info.bus_width);
 }
 
@@ -611,7 +611,7 @@ void test_high_speed_failure_has_one_controlled_default_timing_fallback(void)
     pf_test_sdio_system_clock_hz = 250000000u;
     active_config.clock_hz = 50000000u;
     fail_high_speed_read = true;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(3u, switch_calls);
     TEST_ASSERT_EQUAL_UINT(3u, validation_reads);
     TEST_ASSERT_EQUAL_UINT(4u, clock_request_count);
@@ -626,7 +626,7 @@ void test_unsupported_or_rejected_high_speed_is_nonfatal_at_25mhz(void)
     pf_test_sdio_system_clock_hz = 250000000u;
     active_config.clock_hz = 50000000u;
     high_speed_supported = false;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(1u, switch_calls);
     TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_HIGH_SPEED_UNSUPPORTED, native_info.high_speed_error);
@@ -634,7 +634,7 @@ void test_unsupported_or_rejected_high_speed_is_nonfatal_at_25mhz(void)
     pf_test_sdio_system_clock_hz = 250000000u;
     active_config.clock_hz = 50000000u;
     high_speed_selected = false;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
     TEST_ASSERT_FALSE(native_info.high_speed);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_HIGH_SPEED_REJECTED, native_info.high_speed_error);
@@ -644,7 +644,7 @@ void test_acmd41_uses_time_bound_and_one_cleanup_path(void)
 {
     pf_test_sdio_time_step = 500000u;
     ocr_value = 0x40ff8000u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_INIT_TIMEOUT, native_host.last_error);
     TEST_ASSERT_EQUAL_UINT(1u, card_init_calls);
     TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
@@ -653,24 +653,24 @@ void test_acmd41_uses_time_bound_and_one_cleanup_path(void)
 
 void test_selected_card_status_precedes_scr_and_host_width_follows_acmd6(void)
 {
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     const uint8_t expected[] = {0u, 8u, 55u, 41u, 2u, 3u, 9u, 7u, 13u, 55u, 6u, 13u};
     TEST_ASSERT_EQUAL_UINT(sizeof(expected), command_count);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, commands, sizeof(expected));
     setUp();
     fail_command = 6u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT8(1u, native_host.bus_width);
 }
 
 void test_r6_errors_and_zero_rca_are_rejected(void)
 {
     r6_value = 0x12348000u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_CARD_STATUS, native_host.last_error);
     setUp();
     r6_value = 0u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_CARD_STATUS, native_host.last_error);
 }
 
@@ -680,7 +680,7 @@ void test_failed_50mhz_and_25mhz_validation_aborts_without_a_second_fallback(voi
     active_config.clock_hz = 50000000u;
     fail_high_speed_read = true;
     fail_validation_read = 3u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(4u, clock_request_count);
     TEST_ASSERT_EQUAL_UINT(3u, validation_reads);
     TEST_ASSERT_EQUAL_UINT32(1u, native_info.high_speed_fallbacks);
@@ -692,7 +692,7 @@ void test_cmd6_check_crc_failure_requires_proven_default_speed_operation(void)
     pf_test_sdio_system_clock_hz = 250000000u;
     active_config.clock_hz = 50000000u;
     fail_switch_check = true;
-    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
     TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_DATA_CRC, native_info.high_speed_error);
@@ -701,6 +701,6 @@ void test_cmd6_check_crc_failure_requires_proven_default_speed_operation(void)
     active_config.clock_hz = 50000000u;
     fail_switch_check = true;
     fail_validation_read = 2u;
-    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
+    TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_backend_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(1u, abort_calls);
 }

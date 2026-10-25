@@ -182,35 +182,6 @@ pf_sd_link_result_t pf_spi_exchange(pf_spi_t *context, const uint8_t *tx,
     return PF_SD_LINK_OK;
 }
 
-pf_sd_link_result_t pf_spi_transfer(pf_spi_t *context,
-    const pf_sd_link_serial_phase_t *phases, size_t count)
-{
-    pf_sd_link_result_t result = pf_sd_link_serial_phases_valid(phases, count, 1u);
-    if (result != PF_SD_LINK_OK) {
-        return result;
-    }
-    result = pf_spi_select(context, true);
-    if (result != PF_SD_LINK_OK) {
-        return result;
-    }
-    busy_wait_us_32(1u);
-    for (size_t index = 0u; result == PF_SD_LINK_OK && index < count; ++index) {
-        const pf_sd_link_serial_phase_t *phase = &phases[index];
-        if (phase->tx != NULL || phase->rx != NULL) {
-            result = pf_spi_exchange(context, phase->tx, phase->rx, phase->bit_count / 8u);
-        } else {
-            for (size_t byte_index = 0u; result == PF_SD_LINK_OK &&
-                 byte_index < phase->bit_count / 8u; ++byte_index) {
-                uint8_t ones = 0xffu;
-                result = pf_spi_exchange(context, &ones, NULL, 1u);
-            }
-        }
-    }
-    pf_sd_link_result_t deselected = pf_spi_select(context, false);
-    busy_wait_us_32(1u);
-    return result == PF_SD_LINK_OK ? deselected : result;
-}
-
 void pf_spi_deinit(pf_spi_t *context)
 {
     if (context == NULL || !context->initialized) {
@@ -230,36 +201,61 @@ void pf_spi_deinit(pf_spi_t *context)
     context->initialized = false;
 }
 
-static pf_sd_link_result_t bus_init(void *context) { return pf_spi_init(context); }
-static void bus_deinit(void *context) { pf_spi_deinit(context); }
-static pf_sd_link_result_t bus_clock(void *context, uint32_t hz, uint32_t *actual)
+pf_sd_link_result_t pf_sd_link_init(const pf_sd_link_t *bus)
 {
-    return pf_spi_set_clock(context, hz, actual);
-}
-static pf_sd_link_result_t bus_transfer(void *context, const pf_sd_link_serial_phase_t *phases, size_t count)
-{
-    return pf_spi_transfer(context, phases, count);
+    return pf_sd_link_valid(bus, PF_SD_LINK_SPI) ? pf_spi_init(bus->context) : PF_SD_LINK_INVALID_ARGUMENT;
 }
 
-static pf_sd_link_result_t bus_select(void *context, bool selected)
+void pf_sd_link_deinit(const pf_sd_link_t *bus)
 {
-    return pf_spi_select(context, selected);
+    if (pf_sd_link_valid(bus, PF_SD_LINK_SPI)) {
+        pf_spi_deinit(bus->context);
+    }
 }
 
-static pf_sd_link_result_t bus_exchange(void *context, const uint8_t *tx, uint8_t *rx, size_t length)
+void pf_sd_link_abort(const pf_sd_link_t *bus)
 {
-    return pf_spi_exchange(context, tx, rx, length);
+    pf_sd_link_deinit(bus);
+}
+
+pf_sd_link_result_t pf_sd_link_set_clock(const pf_sd_link_t *bus, uint32_t hz, uint32_t *actual)
+{
+    return pf_sd_link_valid(bus, PF_SD_LINK_SPI) ? pf_spi_set_clock(bus->context, hz, actual) :
+                                                PF_SD_LINK_INVALID_ARGUMENT;
+}
+
+uint64_t pf_sd_link_time_us(const pf_sd_link_t *bus)
+{
+    (void)bus;
+    return time_us_64();
+}
+
+void pf_sd_link_delay_ms(const pf_sd_link_t *bus, uint32_t duration)
+{
+    (void)bus;
+    sleep_ms(duration);
+}
+
+bool pf_sd_link_enable_wait(const pf_sd_link_t *bus)
+{
+    (void)bus;
+    return false;
+}
+
+pf_sd_link_result_t pf_sd_link_serial_select(const pf_sd_link_t *transport, bool selected)
+{
+    return pf_sd_link_valid(transport, PF_SD_LINK_SPI) ? pf_spi_select(transport->context, selected) :
+                                                       PF_SD_LINK_INVALID_ARGUMENT;
+}
+
+pf_sd_link_result_t pf_sd_link_serial_exchange(const pf_sd_link_t *transport,
+                                              const uint8_t *tx, uint8_t *rx, size_t length)
+{
+    return pf_sd_link_valid(transport, PF_SD_LINK_SPI) ?
+           pf_spi_exchange(transport->context, tx, rx, length) : PF_SD_LINK_INVALID_ARGUMENT;
 }
 
 pf_sd_link_t pf_spi_bus(pf_spi_t *context)
 {
-    static const pf_sd_link_serial_ops_t serial = {
-        .transfer = bus_transfer, .select = bus_select, .exchange = bus_exchange, .lanes = 1u,
-    };
-    static const pf_sd_link_ops_t ops = {
-        .init = bus_init, .deinit = bus_deinit, .abort = bus_deinit, .set_clock = bus_clock,
-        .serial = &serial,
-        .time_us = time_us_64, .delay_ms = sleep_ms,
-    };
-    return (pf_sd_link_t){ .context = context, .ops = &ops, .mode = PF_SD_LINK_SPI };
+    return (pf_sd_link_t){.context = context, .mode = PF_SD_LINK_SPI};
 }

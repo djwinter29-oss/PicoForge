@@ -66,6 +66,10 @@ The callbacks only record dispatch, so the byte-count boundary test does not all
 Shared CRC7, command-frame, CSD and address-conversion tests live in
 [test_sd_protocol.c](drivers/sdcard/test_sd_protocol.c); native wire-codec tests remain in
 [test_sd_protocol_native.c](drivers/sdcard/test_sd_protocol_native.c).
+Production transport code lives in [sdio/](../src/drivers/sdcard/sdio/) and [spi/](../src/drivers/sdcard/spi/).
+The existing native-init and SPI behavior suites compile `sd_backend_sdio.c` and `sd_backend_spi.c` respectively;
+both implementations use the shared `sd_backend.h` contract. Physical-engine layer checks exclude the protocol and
+board-binding files even though they now share these directories.
 Both fused-copy variants compile the same consolidated protocol implementation in their
 [disabled](drivers/sdcard/test_sd_protocol_copy_fused0.c) and
 [enabled](drivers/sdcard/test_sd_protocol_copy_fused1.c) tests.
@@ -75,14 +79,20 @@ option reaches the consolidated protocol compilation.
 multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
 and preserved stream recovery. Optional wait setup is tested with
 [SD media/FreeRTOS reservation integration](middleware/storage/test_storage_media_freertos_serialization_sdio.c).
-Storage tests cover raw phase validation before CS, arbitrary released-line clock counts/deadlines, short/long native
+Storage tests cover manual CS and raw byte validation, arbitrary released-line clock counts/deadlines, short/long native
 response byte packing and partial failure capture. The SD host test retains the exact 80-clock, low-speed
 initialization check.
-Common lifecycle tests live in [test_sd_link.c](drivers/sdcard/link/test_sd_link.c), raw serial dispatch
-tests in [test_sd_link_serial.c](drivers/sdcard/link/test_sd_link_serial.c), and native dispatch tests in
-[test_sd_link_wire.c](drivers/sdcard/link/test_sd_link_wire.c). Concrete backend tests remain under their corresponding backend
-subdirectories. Cross-layer HID/card-unavailable scenarios are owned by
+Common descriptor tests live in [test_sd_link.c](drivers/sdcard/link/test_sd_link.c). Static lifecycle and raw byte/wire
+validation tests run against the concrete [SPI](drivers/sdcard/spi/test_spi.c) and
+[SDIO-PIO](drivers/sdcard/sdio_pio/test_sdio_pio.c) backends. SPI protocol tests use compile-time call substitution
+for clock and selection failures rather than mutable operation tables. Cross-layer HID/card-unavailable scenarios are
+owned by
 [test_usb_hid_sd_responsiveness.c](app/usb/test_usb_hid_sd_responsiveness.c), matching the HID source module.
+
+The SPI and native protocol suites exercise the same `pf_sd_backend_*` API with their respective implementations.
+Board suites compile shared setup with the selected SPI or SDIO binding. Storage/MSC integration fixtures implement
+the common backend contract and use `PF_TEST_SDCARD_TRANSPORT` only to choose the test scenario; production selection
+belongs entirely to CMake.
 
 Run all C behavior tests with:
 

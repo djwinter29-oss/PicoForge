@@ -15,18 +15,17 @@ void test_sdio_media_contracts_and_concurrent_reservations(void)
 static unsigned wait_calls;
 static bool wait_available;
 
-static bool enable_wait(void *context)
+bool pf_sd_link_enable_wait(const pf_sd_link_t *bus)
 {
-    TEST_ASSERT_EQUAL_PTR(&wait_calls, context);
+    TEST_ASSERT_EQUAL_PTR(&wait_calls, bus->context);
     ++wait_calls;
     return wait_available;
 }
 
 void test_port_requests_opaque_wait_setup_and_propagates_failure(void)
 {
-    const pf_sd_link_ops_t ops = {.enable_wait = enable_wait};
     pf_sd_config_t config = {
-        .transport = {.context = &wait_calls, .ops = &ops, .mode = PF_SD_LINK_NATIVE_SD},
+        .transport = {.context = &wait_calls, .mode = PF_SD_LINK_NATIVE_SD},
     };
     wait_calls = 0u;
     wait_available = false;

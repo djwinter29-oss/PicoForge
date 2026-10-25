@@ -2,7 +2,9 @@
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #define SD_BOARD_SOURCE "drivers/sdcard/sd_board.c"
+#define SD_BOARD_TRANSPORT_SOURCE "drivers/sdcard/sdio/sd_board_sdio.c"
 #include SD_BOARD_SOURCE
+#include SD_BOARD_TRANSPORT_SOURCE
 
 static pf_storage_speed_t sd_speed;
 static uint32_t gpio_level, gpio_inits, pull_disables;

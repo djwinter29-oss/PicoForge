@@ -1,7 +1,7 @@
 #ifndef PF_SPI_H
 #define PF_SPI_H
 
-#include "drivers/sdcard/link/sd_link_serial.h"
+#include "drivers/sdcard/sd_link_serial.h"
 #include "drivers/sdcard/spi/spi_pins.h"
 #include "hardware/spi.h"
 
@@ -36,10 +36,7 @@ pf_sd_link_result_t pf_spi_select(pf_spi_t *context, bool selected);
  */
 pf_sd_link_result_t pf_spi_exchange(pf_spi_t *context, const uint8_t *tx,
                                              uint8_t *rx, size_t length);
-/** Execute one command/address/dummy/payload transaction with guaranteed CS cleanup. */
-pf_sd_link_result_t pf_spi_transfer(pf_spi_t *context,
-    const pf_sd_link_serial_phase_t *phases, size_t count);
-/** Return a non-owning generic lifecycle/serial-dispatch handle. */
+/** Return a non-owning statically linked SPI handle. */
 pf_sd_link_t pf_spi_bus(pf_spi_t *context);
 
 #endif

@@ -112,8 +112,8 @@ Firmware resources that do not use header GPIOs:
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
 When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/config/board.c` aligned. Select SDIO-PIO or
-SD-SPI with `tools/firmware/build.sh --sdcard-transport SDIO_PIO` or `--sdcard-transport SPI`; CMake supplies
-the transport selection used by `firmware/src/config/config.h`. Detected cards are mounted by the worker as described in
+SD-SPI with `tools/firmware/build.sh --sdcard-transport SDIO_PIO` or `--sdcard-transport SPI`; CMake links
+the matching protocol, physical engine and board binding. Detected cards are mounted by the worker as described in
 [the mounting policy](design/usb/usb-cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline

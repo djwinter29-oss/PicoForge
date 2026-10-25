@@ -8,7 +8,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/msc")
 void setUp(void)
 {
     pf_log_write_Ignore();
-    config_available = configured = transport_selected = true;
+    config_available = configured = backend_configured = true;
     requests = (void *)1;
     media_config.transport.mode = PF_SD_LINK_NATIVE_SD;
 }

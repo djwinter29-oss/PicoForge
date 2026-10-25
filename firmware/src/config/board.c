@@ -4,7 +4,7 @@
 #include "drivers/led.h"
 #include "drivers/monitor_uart.h"
 #include "drivers/sdcard/sd_board.h"
-#include "drivers/sdcard/sdio_pio/sdio_pio_pins.h"
+#include "drivers/sdcard/sdio/sdio_pio_pins.h"
 #include "drivers/sdcard/spi/spi_pins.h"
 
 #include "pico/stdlib.h"

@@ -10,10 +10,9 @@ static pf_sdio_pio_t test_wire;
 
 #include <string.h>
 
-#include "drivers/sdcard/sdio_pio/sdio_pio.c"
-#include "drivers/sdcard/link/sd_link.c"
-#include "drivers/sdcard/link/sd_link_wire.c"
-#include "drivers/sdcard/sd_native_host.c"
+#include "drivers/sdcard/sdio/sdio_pio.c"
+#include "drivers/sdcard/sd_link.c"
+#include "drivers/sdcard/sdio/sd_native_host.c"
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 

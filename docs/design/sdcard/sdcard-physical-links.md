@@ -2,8 +2,8 @@
 
 The SD-card driver and its physical link engines for RP2040 and RP2350 live in
 [`firmware/src/drivers/sdcard/`](../../../firmware/src/drivers/sdcard/). This document is the
-reference for transport ownership, lifecycle, shared-pin wiring, and lab hardware records. The SD protocol sources at
-the top level and filesystem policy above this driver are documented elsewhere:
+reference for transport ownership, lifecycle, shared-pin wiring, and lab hardware records. Transport-specific protocol
+sources live beside their physical engines; their card policy and filesystem integration are documented elsewhere:
 
 - [SD-card design](sdcard-driver-design.md): initialization, commands, registers, CRC validation,
   addressing, and sector/stream policy.
@@ -14,22 +14,26 @@ the top level and filesystem policy above this driver are documented elsewhere:
 
 ```text
 drivers/sdcard/
-  sd*.c / sd*.h          SD initialization, registers, framing, sector and stream policy
-  link/sd_link.h / .c    common link descriptor, lifecycle, clock and platform services
-  link/sd_link_serial.*  raw serial capability
-  link/sd_link_wire.*    SD CMD/DAT capability
-  spi/spi.h / spi.c
-  sdio_pio/sdio_pio.h / sdio_pio.c / sdio_pio.pio
-  sdio_pio/sdio_wait_freertos.c
+  sd*.c / sd*.h          shared facade, contracts, board setup, protocol helpers and execution ports
+  sd_link.h / .c        common declarations, descriptor validation and presence helpers
+  sd_link_serial.h      SPI CS and byte exchange declarations
+  sd_link_wire.h        SD CMD/DAT declarations
+  spi/sd_backend_spi.c / sd_spi.h / sd_board_spi.c
+  spi/spi.h / spi.c / spi_pins.h
+  sdio/sd_backend_sdio.c / sd_native.h / sd_board_sdio.c
+  sdio/sd_native_host.h / sd_native_host.c
+  sdio/sdio_pio.h / sdio_pio.c / sdio_pio_pins.h / sdio_pio.pio
+  sdio/sdio_wait_freertos.c
 ```
 
-The [common link interface](../../../firmware/src/drivers/sdcard/link/sd_link.h) contains shared pin types, lifecycle,
-clock and platform services. Wire operations are separate SDK-independent capabilities:
-[raw serial](../../../firmware/src/drivers/sdcard/link/sd_link_serial.h) and
-[SD CMD/DAT](../../../firmware/src/drivers/sdcard/link/sd_link_wire.h).
+The [common link interface](../../../firmware/src/drivers/sdcard/sd_link.h) contains descriptor/presence helpers,
+physical lifecycle, clock and platform services. Pin types belong to the concrete engines. Wire operations are separate
+SDK-independent interfaces:
+[raw serial](../../../firmware/src/drivers/sdcard/sd_link_serial.h) and
+[SD CMD/DAT](../../../firmware/src/drivers/sdcard/sd_link_wire.h).
 `pf_sd_link_t` is a non-owning descriptor: board/storage integration owns the concrete context, and the caller
 serializes access. Protocol clients
-do not dereference backend contexts or operations, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
+do not dereference backend contexts, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
 It creates no task, queue, filesystem policy, or automatic mode-switch manager.
 Common mode tags describe SPI or native SD signaling, not the backend's PIO/SPI-controller implementation.
 Backend filenames, functions, types, and header guards use the same module name:
@@ -49,15 +53,17 @@ resource state remain private to each backend.
 | Raw serial | `pf_sd_link_serial_*` | `PF_SD_LINK_SERIAL_H` |
 | SD CMD/DAT wire | `pf_sd_link_wire_*` | `PF_SD_LINK_WIRE_H` |
 
-Backend factories are `pf_spi_bus` and `pf_sdio_pio_bus`. The common operations expose
-`serial` and `sd_wire` capabilities. The bus result/mode constants use `PF_SD_LINK_*`; SD wire diagnostics use
+Backend factories are `pf_spi_bus` and `pf_sdio_pio_bus`. CMake links exactly one backend, which directly implements
+the common link functions and its own SPI or SD CMD/DAT functions. There are no operation tables, optional capabilities,
+or runtime backend discovery. The descriptor retains context, signaling mode and optional board presence detection.
+The bus result/mode constants use `PF_SD_LINK_*`; SD wire diagnostics use
 `PF_SD_LINK_WIRE_*`. Callers must use these names; no compatibility aliases are provided.
 Device configuration members named `transport` remain unchanged.
 
 | Physical mode | Implementation | Device configurations |
 | --- | --- | --- |
 | SPI | [spi.h](../../../firmware/src/drivers/sdcard/spi/spi.h), [spi.c](../../../firmware/src/drivers/sdcard/spi/spi.c) | SD-SPI |
-| Native SD PIO | [sdio_pio.h](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.h), [sdio_pio.c](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.c), [PIO programs](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.pio) | Native four-bit SD memory cards |
+| Native SD PIO | [sdio_pio.h](../../../firmware/src/drivers/sdcard/sdio/sdio_pio.h), [sdio_pio.c](../../../firmware/src/drivers/sdcard/sdio/sdio_pio.c), [PIO programs](../../../firmware/src/drivers/sdcard/sdio/sdio_pio.pio) | Native four-bit SD memory cards |
 
 SD-SPI uses manual CS and byte exchange so response, token, busy-polling and multiblock boundaries stay unchanged.
 
@@ -77,7 +83,7 @@ SD-SPI retains SDK blocking bulk I/O with protocol-level deadlines.
 Configure and zero-initialize the concrete context, obtain its non-owning bus handle, then initialize it before
 device-protocol operations. Contexts must outlive all synchronous calls; do not copy a live context. The common
 interface exposes `pf_sd_link_init`, `pf_sd_link_set_clock`, `pf_sd_link_abort`, and
-`pf_sd_link_deinit`. Wire dispatch uses `pf_sd_link_serial_*` or `pf_sd_link_wire_*` from their capability
+`pf_sd_link_deinit`. Statically linked wire calls use `pf_sd_link_serial_*` or `pf_sd_link_wire_*` from their interface
 headers; the common lifecycle has no device-shaped transfer operation. Concrete backend headers are only for
 board/storage composition and physical-engine tests.
 
@@ -85,8 +91,8 @@ Native clients observe only availability/health, actual/maximum clock and the ra
 PIO response packing are not exposed. Legacy packed-response diagnostics are retained by the SD host, not the transport.
 Error/idle callbacks are borrowed and invoked synchronously. TX start acquires physical TX programs internally and retains
 them across adjacent payloads. Returning to CMD signaling is a hardware-only idle operation; SD recovery still decides
-when CMD12 is required and never replays an uncertain write. Wire-capability validation rejects incomplete operation sets
-before device initialization.
+when CMD12 is required and never replays an uncertain write. Descriptor, buffer, deadline and hardware-state validation
+remain; missing implementations are link errors rather than runtime capability failures.
 
 Both native TX programs park on their completion IRQ until the CPU disables the data state machine. They do not
 wrap into an empty FIFO pull after a completed payload, which would set TXSTALL and falsely report an underrun.
@@ -129,8 +135,8 @@ Host tests sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and lim
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 
-Platform time, bounded delays, and optional scheduler-wait setup are also dispatched through the descriptor.
-The [FreeRTOS wait adapter](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_wait_freertos.c) owns PIO IRQ details;
+Platform time, bounded delays, and optional scheduler-wait setup are statically linked backend functions.
+The [FreeRTOS wait adapter](../../../firmware/src/drivers/sdcard/sdio/sdio_wait_freertos.c) owns PIO IRQ details;
 SD's execution port only
 requests that the transport enable it. The backend retains its physical configuration and installed wait hook across
 common-interface initialization failures and deinitialization, so reinitialization does not need device-side pin setup.
@@ -141,18 +147,21 @@ engines. These are alternative modes of the shared pins, not permission to attac
 a board/card-presence input.
 
 [Board support](../../../firmware/src/config/board.c) supplies the immutable pins and controller selection for both
-transports. [sd_board.c](../../../firmware/src/drivers/sdcard/sd_board.c) owns the selected static SD transport context,
-applies the active boot-config clock, and
-prepares card-detect GPIO/pulls from that profile. Its descriptor carries an optional board presence callback; without one, presence is unknown and
+transports. CMake selects [sd_board_sdio.c](../../../firmware/src/drivers/sdcard/sdio/sd_board_sdio.c) or
+[sd_board_spi.c](../../../firmware/src/drivers/sdcard/spi/sd_board_spi.c), which owns the persistent transport context and
+implements the same internal board-binding header. Shared
+[sd_board.c](../../../firmware/src/drivers/sdcard/sd_board.c) applies the saved clock and prepares card-detect
+GPIO/pulls.
+Its descriptor carries an optional board presence callback; without one, presence is unknown and
 media is assumed present. Repeated configuration queries do not reset a live transport.
 
 ### Pin Allocation and Runtime State
 
-[sdio_pio_pins.h](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio_pins.h) and
+[sdio_pio_pins.h](../../../firmware/src/drivers/sdcard/sdio/sdio_pio_pins.h) and
 [spi_pins.h](../../../firmware/src/drivers/sdcard/spi/spi_pins.h) define their backend-specific signal allocations;
-[sdio_pio.h](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.h) and
+[sdio_pio.h](../../../firmware/src/drivers/sdcard/sdio/sdio_pio.h) and
 [spi.h](../../../firmware/src/drivers/sdcard/spi/spi.h) define the corresponding controller interfaces.
-[sd_link.h](../../../firmware/src/drivers/sdcard/link/sd_link.h) contains only the common runtime link interface.
+[sd_link.h](../../../firmware/src/drivers/sdcard/sd_link.h) contains only the common runtime link interface.
 Native DAT0-DAT3 are an explicit array in logical
 order, and the SDIO-PIO backend checks their ascending, consecutive mapping. The board profile describes both
 transports, alongside shared UART, LED, and card-detect resources;
@@ -358,7 +367,7 @@ cmake --build build/firmware-pico2-hs200 --parallel 4
 
 ## Tests and Qualification
 
-Host C tests cover common lifecycle dispatch and concrete transports under
+Host C tests cover descriptor helpers and statically linked lifecycle/wire calls against concrete transports under
 [firmware/tests/](../../../firmware/tests/drivers/). The assembled
 [SDIO](../../../tests/pio/test_sdio_pio_timing.py) instruction model checks wire timing assumptions;
 [storage-layer contracts](../../../tests/contracts/test_storage_layers.py) check the directory structure and

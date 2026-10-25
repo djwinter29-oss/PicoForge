@@ -32,7 +32,6 @@ static unsigned operation, contender;
 
 pf_sd_result_t backend_init(const backend_config_t *config)
 { (void)config; initialized = true; return PF_SD_OK; }
-backend_stage_t backend_stage(void) { return (backend_stage_t)99; }
 bool backend_ready(void) { ++readiness_calls; return initialized; }
 uint32_t backend_blocks(void) { return 100u; }
 static pf_sd_result_t backend_access(unsigned op, uint32_t block, void *buffer, uint32_t count)
@@ -56,9 +55,7 @@ pf_sd_result_t backend_write(uint32_t block, const void *buffer, uint32_t count)
 { return backend_access(1, block, (void *)buffer, count); }
 pf_sd_result_t backend_sync(void) { return backend_access(2, 0, NULL, 0); }
 void backend_info(pf_sd_info_t *info) { info->initialized = initialized; }
-#if PF_CONFIG_SDCARD_TRANSPORT != PF_CONFIG_SDCARD_TRANSPORT_SPI
-void pf_sd_native_confirm_card_removed(void) { initialized = false; }
-#endif
+void pf_sd_backend_confirm_removed(void) { initialized = false; }
 
 static pf_block_result_t set_owner(bool usb)
 {

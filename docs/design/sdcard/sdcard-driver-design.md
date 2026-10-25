@@ -26,38 +26,78 @@ One configured card is exposed through a transport-neutral, synchronous block
 API. Native SDIO-PIO uses four data lanes; SD-SPI uses a Pico SDK SPI controller.
 Here, SDIO means native SD memory-card signaling, not support for SDIO I/O cards.
 
-Native and SPI protocol files live at the top of `firmware/src/drivers/sdcard/`; the physical link engines live in
-its subdirectories:
+Read the driver from the public facade down to the hardware. Each boundary has one job:
+
+| Layer | Contract | Responsibility |
+| --- | --- | --- |
+| Storage integration | `middleware/storage/storage.h` | Filesystem lifecycle and exclusive firmware/USB ownership; applications stop here. |
+| Public SD facade | `sd.h`, `sd_block.h` | Configuration checks and synchronous, serialized block operations. |
+| Selected card protocol | `sd_backend.h` | Card identification, addressing, transfers and recovery; calls require serialization. |
+| Physical link | `sd_link*.h` | Resource lifecycle, clocks and raw SPI or CMD/DAT operations; no card protocol. |
+| Execution port | `sd_port.h` | Reservations and optional scheduler waits, independently selected from the transport. |
+
+Board composition supplies a persistent physical context, saved speed and card detect; it is not another transfer
+layer. CMake selects one complete transport path:
+
+| Boundary | Native SDIO-PIO | SD-SPI |
+| --- | --- | --- |
+| Board binding (`sd_board_internal.h`) | `sdio/sd_board_sdio.c` | `spi/sd_board_spi.c` |
+| Card protocol (`sd_backend.h`) | `sdio/sd_backend_sdio.c`, with `sdio/sd_native_host.c` for sequencing | `spi/sd_backend_spi.c` |
+| Raw operations | `sd_link_wire.h` | `sd_link_serial.h` |
+| Physical engine | `sdio/sdio_pio.c` and PIO programs | `spi/spi.c` |
+
+The two columns are build alternatives, not runtime branches. Root files hold shared code and contracts, including
+the `sd_link*` physical boundary declarations and descriptor helpers. Each transport directory contains its
+protocol implementation, board binding, diagnostics and physical engine:
 
 ```text
 sdcard/
-  sd.c / .h                   Serialized protocol dispatch and configuration
+  sd.c / .h                   Serialized facade and configuration
   sd_block.h                  Raw block operations and telemetry
-  sd_protocol.c / .h          Command/register helpers, native responses and data codecs
-  sd_native.c / .h            Native initialization and block operations
-  sd_native_host.c / .h       Native command/data sequencing and streams
-  sd_spi.c / .h               SPI initialization and block operations
+  sd_backend.h                Shared internal protocol contract; one implementation linked
+  sd_board.c / .h              Shared saved-speed and card-detect setup
+  sd_board_internal.h          Internal board-binding contract
+  sd_protocol.c / .h           Command/register helpers, native responses and data codecs
   sd_port.h                   Execution-environment contract
   sd_port_freertos.c           FreeRTOS reservations and optional waits
   sd_port_baremetal.c          Single-foreground-context integration
-  link/                       Common link descriptor, raw serial and SD CMD/DAT capabilities
-  sdio_pio/                   Native SD PIO/DMA engine
-  spi/                        Pico SDK SPI controller engine
+  sd_link.c / .h              Physical lifecycle contract, descriptor and presence helpers
+  sd_link_serial.h            Raw SPI contract implemented by spi/spi.c
+  sd_link_wire.h              Raw CMD/DAT contract implemented by sdio/sdio_pio.c
+  sdio/
+    sd_backend_sdio.c         Native implementation of sd_backend.h
+    sd_board_sdio.c           Native implementation of sd_board_internal.h
+    sd_native.h               Native-specific diagnostics and constants
+    sd_native_host.c / .h     Native command/data sequencing and streams
+    sdio_pio.c / .h           Native SD PIO/DMA engine
+    sdio_pio_pins.h           Native physical pin types
+    sdio_pio.pio              Generated PIO programs
+    sdio_wait_freertos.c      Optional bounded native waits
+  spi/
+    sd_backend_spi.c          SPI implementation of sd_backend.h
+    sd_board_spi.c            SPI implementation of sd_board_internal.h
+    sd_spi.h                  SPI-specific diagnostics
+    spi.c / .h                Pico SDK SPI controller engine
+    spi_pins.h                SPI physical pin types
 ```
 
 The native and SPI implementations use one protocol module but retain their distinct initialization,
 response formats, data framing, and recovery sequences. Native requires modern SDHC/SDXC; SPI retains its existing
-legacy/SDSC handling. Backend function/type prefixes are `pf_sd_native_*` and `pf_sd_spi_*`;
-backend header names are `sd_native.h` and `sd_spi.h`. PIO and DMA implementation belongs to the
-`sdio_pio/` physical link engine, not the native protocol files.
+legacy/SDSC handling. Both implement the same `pf_sd_backend_*` functions declared only in
+`sd_backend.h`; CMake links `sdio/sd_backend_sdio.c` or `spi/sd_backend_spi.c`, never both.
+Implementation filenames carry a transport suffix while shared function names remain identical.
+The transport-local `sd_native.h` and `sd_spi.h`
+contain protocol-specific diagnostics and constants, not duplicate backend APIs. PIO and DMA implementation belongs
+to the `sdio/sdio_pio.c` physical link engine, not the native protocol files.
 
 Production filenames use the short `sd` prefix, including `sd_port_freertos.c` and `sd_port_baremetal.c`.
-Facade functions/types use `pf_sd_*` and constants/header guards use `PF_SD_*`. Native protocol/host functions/types
-use `pf_sd_native_*` and constants use `PF_SD_NATIVE_*`; SPI uses `pf_sd_spi_*` / `PF_SD_SPI_*`.
+Facade functions/types use `pf_sd_*` and constants/header guards use `PF_SD_*`. Both card implementations export
+`pf_sd_backend_*`. Native-only host/diagnostic interfaces use `pf_sd_native_*` / `PF_SD_NATIVE_*`;
+SPI-only diagnostics use `pf_sd_spi_*` / `PF_SD_SPI_*`.
 The `pf_sdio_pio_*` namespace belongs to the physical PIO transport, not the SD protocol.
 `PF_SDIO_PIO_HIGH_SPEED` and `PF_SDIO_PIO_FUSED_COPY` remain CMake options and set the C definitions
 `PF_SD_NATIVE_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
-Unit-test filenames use the same source basenames, with environment-suffixed port tests alongside the other SD tests.
+Host tests retain their existing behavior-oriented names, including native-init and SPI protocol suites.
 
 Both backends use the same configuration shape, borrowing a `pf_sd_link_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
@@ -88,62 +128,51 @@ ownership or packed response words. The existing packed-response diagnostic API 
 
 ```mermaid
 flowchart TD
-    Board[Board profile and build-time transport selection] --> Config[pf_sd_board_config]
-    Config --> Gate[Storage service lifecycle, policy and ownership]
-    Gate --> Card[SD-card configuration and dispatch]
-    App[Application storage worker, commands and self-test] --> Storage[Storage mount service]
-    App --> SDAdapter
-    Storage --> FatFs[FatFs]
+    Board[Board profile and CMake-selected binding] --> Config[pf_sd_board_config]
+    Config --> Gate[Storage service: lifecycle and firmware/USB ownership]
+    App[Application storage worker and CLI] --> Gate
+    App --> FatFs[FatFs via serialized storage-owner workflow]
     FatFs --> Disk[FatFs disk-I/O adapter]
     Disk --> Block[Logical block-device interface]
     Block --> Gate
-    Gate --> SDAdapter[Raw SD block-device geometry adapter]
     MSC[USB MSC callbacks] --> Gate
-    Gate --> Card
-    Card --> Native[SDIO-PIO card lifecycle]
-    Card --> SPI[SPI card lifecycle]
+    Gate --> Card[Serialized SD facade]
+    Card --> Selected{CMake links one sd_backend implementation}
+    Selected --> Native[Native SD card lifecycle]
+    Selected --> SPI[SPI card lifecycle]
     Native --> Host[SD command/data adapter and stream policy]
     Native --> Shared[sd_protocol: commands, registers, responses and CRC codecs]
     Host --> Shared
     SPI --> Shared
-    Host --> NativeBus[storage/sdio_pio: wire operations, PIO and DMA]
+    Host --> NativeBus[sdcard/sdio: raw CMD/DAT, PIO and DMA]
     NativeBus --> PIO[PIO and DMA hardware]
-    SPI --> SerialBus[storage/spi: shared SPI engine]
+    SPI --> SerialBus[sdcard/spi: raw CS and bytes]
     SerialBus --> Peripheral[SPI peripheral and GPIO CS]
     PIO --> Media[SD memory card]
     Peripheral --> Media
 ```
 
-| Responsibility | Implementation |
-| --- | --- |
-| Application storage task, commands, and file benchmark | [app/storage/](../../../firmware/src/app/storage/) |
-| Board-approved pins and controller selection | [board.c](../../../firmware/src/config/board.c), [sd_board.c](../../../firmware/src/drivers/sdcard/sd_board.c) |
-| Serialized protocol dispatch and driver initialization stage | [sd.c](../../../firmware/src/drivers/sdcard/sd.c) |
-| Storage service: board configuration, automount/recovery policy, diagnostics, firmware/USB ownership, and the owner-gated SD block device for FatFs | [storage.c](../../../firmware/src/middleware/storage/storage.c) |
-| Execution-environment selection, reservations, and optional waits | [sd_port.h](../../../firmware/src/drivers/sdcard/sd_port.h), [FreeRTOS](../../../firmware/src/drivers/sdcard/sd_port_freertos.c), [bare-metal](../../../firmware/src/drivers/sdcard/sd_port_baremetal.c) |
-| Block operations, result codes, and telemetry | [sd_block.h](../../../firmware/src/drivers/sdcard/sd_block.h) |
-| Filesystem-independent logical sectors and geometry | [block_device.h](../../../firmware/src/middleware/storage/block_device.h) |
-| Single-volume FatFs lifecycle and format telemetry | [fatfs_volume.c](../../../firmware/src/middleware/storage/fatfs_volume.c) |
-| Storage service API, USB MSC export and owner-specific block capabilities | [storage.h](../../../firmware/src/middleware/storage/storage.h) |
-| Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../../../firmware/src/drivers/sdcard/sd_protocol.c) |
-| Native card initialization and transfer policy | [sd_native.c](../../../firmware/src/drivers/sdcard/sd_native.c) |
-| Native SD command/data adapter and stream policy | [sd_native_host.c](../../../firmware/src/drivers/sdcard/sd_native_host.c) |
-| Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.c), [sdio_pio.pio](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.pio) |
-| SPI card protocol | [sd_spi.c](../../../firmware/src/drivers/sdcard/sd_spi.c) |
-| Shared SPI hardware transport | [spi.c](../../../firmware/src/drivers/sdcard/spi/spi.c) |
-| FatFs result/status conversion and CTRL_SYNC | [fatfs_disk.c](../../../firmware/src/middleware/storage/fatfs_disk.c) |
-
 ### Filesystem Block-Device Boundary
 
+The driver layout above ends at raw sectors. Integration above it lives in these modules:
+
+| Responsibility | Implementation |
+| --- | --- |
+| Worker and file benchmark / CLI command executor | [app/storage/](../../../firmware/src/app/storage/), [cli_storage.c](../../../firmware/src/app/cli/cli_storage.c) |
+| Media lifecycle, automount/recovery, diagnostics and firmware/USB ownership | [storage.c](../../../firmware/src/middleware/storage/storage.c), [storage.h](../../../firmware/src/middleware/storage/storage.h) |
+| Filesystem-independent sectors and geometry | [block_device.h](../../../firmware/src/middleware/storage/block_device.h) |
+| FatFs lifecycle / disk-I/O binding | [fatfs_volume.c](../../../firmware/src/middleware/storage/fatfs_volume.c), [fatfs_disk.c](../../../firmware/src/middleware/storage/fatfs_disk.c) |
+
 Application policy lives in [app/storage/](../../../firmware/src/app/storage/): the sole storage-owner task handles USB
-command sessions and runs the storage service's debounce/automount and recovery policy, while command execution and the fixed-file benchmark live
-alongside it. CMake builds these as `pf_app_storage`, which depends on reusable `pf_storage`, not the reverse.
-Middleware owns logical blocks, FatFs disk callbacks, and the singleton FatFs instance with its mount/unmount state
+command sessions and runs the storage service's debounce/automount and recovery policy. The fixed-file benchmark lives
+alongside it; command execution lives in [app/cli/](../../../firmware/src/app/cli/). The worker accepts the CLI executor
+as a callback, without depending on CLI headers. CMake builds the worker and benchmark as `pf_app_storage`,
+which depends on reusable `pf_storage`, not the reverse.
+The generic volume module owns FatFs mount/unmount state
 and cached format telemetry (`middleware/storage/fatfs_volume.c/.h`, `pf_fatfs_volume_*` APIs). It has no SD
 dependency and does not include application headers or own media ownership, benchmark status, command replies or
 queues.
-The generic interface remains `block_device.c/.h`. The FatFs disk adapter exposes `pf_fatfs_disk_bind()`.
-These replace the earlier storage-prefixed volume/adapter APIs without compatibility aliases.
+The generic interface is `block_device.c/.h`. The FatFs disk adapter exposes `pf_fatfs_disk_bind()`.
 
 FatFs disk I/O uses a borrowed `pf_block_device_t`, not SD commands or the physical link. Its operations provide
 media metadata, sector reads, sector writes, and sync with device-independent results. Geometry includes sector
@@ -160,11 +189,11 @@ The project-owned adapter and binding live together as `middleware/storage/fatfs
 `diskio.h` and library configuration `ffconf.h` remain in `integration/fatfs/`. The adapter implements FatFs's required
 `disk_*` callbacks; those library-specific interfaces are not part of the generic block contract.
 
-The application initializes SD and supplies its static block descriptor to `pf_fatfs_volume_mount()`. The volume
+The storage service initializes SD and supplies its static block descriptor to `pf_fatfs_volume_mount()`. The volume
 service has no SD dependency: it binds the caller's initialized logical device before `f_mount` and unbinds after
 a successful unmount or failed mount cleanup. The borrowed descriptor, operation table, and context must remain
 valid until unbound. A failed unmount retains the binding. The storage service is the only SD block device: it reads geometry under the
-driver lock and wraps firmware I/O and sync with owner checks and retained diagnostics. The application binds
+driver lock and wraps firmware I/O and sync with owner checks and retained diagnostics. The storage service binds
 `pf_storage_firmware_device()`. Geometry remains
 queryable while USB owns initialized media, matching the previous disk-I/O behavior, but firmware reads, writes, and
 sync remain rejected by the storage service. Geometry validation does not replace the backend's checks at transfer time.
@@ -178,13 +207,13 @@ storage-owner task/reservation. `pf_fatfs_volume_is_mounted()` is an atomic snap
 transition, not physical presence. Registration and filesystem-format telemetry are independent atomic snapshots;
 reading either grants no media access and does not serialize check-and-act operations or a filesystem transaction.
 The service manages one volume over a caller-supplied logical device, not a device registry or multi-volume manager.
-The SD application initializes the card and supplies its logical block device before mounting.
+The application requests lifecycle operations through the storage service rather than binding the SD driver itself.
 
 SD telemetry, board configuration, media initialization, filesystem mounting/formatting, and USB ownership transitions
-remain outside the generic contract. SD MSC still uses its owner-specific SD API; it must not use the firmware-owned
+remain outside the generic contract. MSC uses the storage service's owner-specific block API; it must not use the firmware-owned
 descriptor to bypass those transitions.
 
-The board selects SDIO-PIO or SD-SPI transport; both modes use the consolidated protocol library. Native wire helpers
+CMake selects SDIO-PIO or SD-SPI transport; both modes use the consolidated protocol library. Native protocol helpers
 retain their `pf_sd_native_*` names; SPI also reuses its transport-independent CMD6 arguments and switch-status
 decoders.
 `PF_SDIO_PIO_FUSED_COPY` configures this library, where the data codec is compiled.
@@ -209,8 +238,10 @@ for the duration of host-requested card I/O.
 ### Transport Selection
 
 The CMake cache variable `PF_SDCARD_TRANSPORT` selects `SDIO_PIO` (default) or
-`SPI`; the build defines `PF_CONFIG_SDCARD_TRANSPORT`, which only the SD driver (`sd.c`, `sd_board.c`) reads.
-Each file selects its backend in one conditional block; shared configuration and lifecycle code remain unconditional.
+`SPI`; CMake selects the protocol implementation, physical engine and matching board binding source.
+The common facade calls `sd_backend.h` functions directly. Shared board setup calls the internal board-binding
+contract implemented by `sdio/sd_board_sdio.c` or `spi/sd_board_spi.c`. No production transport-selection macro or runtime
+operation table is needed. The backend still reports its signaling mode so the facade rejects a mismatched descriptor.
 Board data describes both transports' wiring, and the storage middleware learns the selected bus from
 `pf_sd_board_pins()`. Use `tools/firmware/build.sh --sdcard-transport SPI`
 or `-DPF_SDCARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
@@ -219,9 +250,7 @@ board support, not application code or reusable protocol helpers.
 
 | Interface | Native SDIO-PIO | SD-SPI |
 | --- | --- | --- |
-| Configuration type | `pf_sd_config_t` | `pf_sd_config_t` |
 | Physical interface | `transport` (`NATIVE_SD` mode) | `transport` (`SPI` mode) |
-| Backend API prefix | `pf_sd_native_` | `pf_sd_spi_` |
 | Zero clock request | Fixed 25 MHz transfer target | 25 MHz |
 | Requested clock bounds | 0 (default), 25 or 50 MHz; initialization at 400 kHz | 400 kHz to 50 MHz; CMD6 required above 25 MHz |
 
@@ -256,8 +285,9 @@ scheduler to be running. The existing USB startup performs this step before
 creating the storage worker. Bare-metal startup must provide the board-approved
 configuration and call `pf_sd_init()` itself.
 
-The owner gate, diagnostics, synchronous block API, checked sync, and persistent
-native CMD25 behavior are identical in both ports. Bare metal does not make a
+Driver diagnostics, the synchronous block API, checked sync, and persistent
+native CMD25 behavior are identical in both ports. Firmware/USB ownership belongs to storage middleware, not the port.
+Bare metal does not make a
 write self-contained: explicitly sync before handing off the card or shutting
 down. A no-op reservation is not multicore protection. Interrupts can run during
 I/O, but their handlers must not call the driver.
@@ -298,25 +328,16 @@ selected port. These are host/build checks, not physical-card qualification.
 
 Applications use `middleware/storage/storage.h` rather than bypassing its ownership gate with raw driver calls.
 `pf_storage_setup()` obtains the board configuration and initializes the execution port before task startup.
-This worker-context example initializes and reads without
-mounting a filesystem or writing media:
+The sole storage worker drives initialization and mounting; the storage service binds its firmware-gated
+`pf_storage_firmware_device()` to `pf_fatfs_volume_mount()`. USB uses the separate `pf_storage_msc_*` entry points.
+Both boundaries return `pf_block_result_t` and keep SD types out of application code.
 
-```c
-#include "middleware/storage/storage.h"
+Below middleware, the public driver exposes `pf_sd_init()`, `pf_sd_read_blocks()`, `pf_sd_write_blocks()`,
+`pf_sd_sync()` and `pf_sd_get_info()`. These return SD-specific results and diagnostics. A standalone driver user
+supplies board configuration and initializes the execution port before using this facade; it must also provide its own
+filesystem serialization and media-ownership policy. Never mix raw-sector writes with a mounted filesystem.
 
-pf_sd_result_t read_first_sector(uint8_t sector[PF_SD_BLOCK_SIZE])
-{
-    pf_sd_result_t result = pf_storage_initialize();
-    if (result != PF_SD_OK) {
-        return result;
-    }
-    return pf_storage_read_blocks(0u, sector, 1u);
-}
-```
-
-For filesystem access, initialize SD through the storage service, then pass `pf_storage_firmware_device()` to
-`pf_fatfs_volume_mount()` through the storage-owner workflow. Do not mix raw-sector writes with
-a mounted filesystem.
+The following rules describe this raw SD facade, not the generic logical-block API (which rejects empty batches):
 
 - Blocks are always 512 bytes, with 32-bit sector addresses and capacity.
 - Buffers are caller-owned and can have any alignment. Reserve at least
@@ -333,7 +354,8 @@ a mounted filesystem.
   `pf_sd_unlock()` where needed. Per-call locking does not serialize a
   FatFs transaction: `FF_FS_REENTRANT` is disabled, and all FatFs operations
   must remain in the storage-owner workflow with its busy/ownership reservation.
-- Use `pf_storage_sync()` after application writes (`pf_sd_sync()` is the raw driver operation).
+- Use `pf_block_sync()` on the firmware-gated device in storage integration, or `pf_storage_msc_sync()` for USB.
+  The raw driver operation is `pf_sd_sync()`.
   A successful SDIO multi-block write can
   leave a CMD25 stream open; sync ends the stream and checks stop completion.
 - On read failure, buffer contents may be partially updated or invalid. A failed
@@ -348,7 +370,7 @@ a mounted filesystem.
   not make all SDK calls nonblocking.
 
 Result codes distinguish invalid arguments, locked configuration, unconfigured
-transport, unready media/ownership, initialization failure, and I/O failure.
+backend, unready media, initialization failure, and I/O failure. Ownership rejection belongs to storage middleware.
 Neither initialization nor recovery formats media or writes card sectors.
 Native initialization diagnostics distinguish SCR failures: stage 24 is CMD55
 prefix/response validation, 25 is ACMD51 response validation, 26 is SCR data
@@ -637,11 +659,11 @@ common ground, and the breakout's required biasing.
 
 ### Current Board Profile
 
-The default CMake transport is SDIO-PIO; the board profile requests 25 MHz.
-At 150 MHz SYSCLK, the slow-mode divider produces an exact 25 MHz bus.
-The integer divider can round down for other system clocks; initialization never
-selects a lower candidate after errors. SPI's zero clock request selects 25 MHz. See
-[board.c](../../../firmware/src/config/board.c) for authoritative values
+The default CMake transport is SDIO-PIO. The saved storage-speed setting requests 25 or 50 MHz for either transport;
+it is a target, not a guaranteed bus rate. At 150 MHz SYSCLK, native Default Speed is exactly 25 MHz and a 50 MHz
+High-Speed request is limited to 37.5 MHz. Negotiation and the controlled default-speed fallback are described in
+[native transfer clock](#native-transfer-clock). SPI's zero clock request selects 25 MHz. See
+[board.c](../../../firmware/src/config/board.c) for authoritative pin/controller assignments
 and [storage wiring](sdcard-physical-links.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 
@@ -793,7 +815,7 @@ preallocated files), and card busy time before choosing further optimizations.
 
 The FreeRTOS [SD port](../../../firmware/src/drivers/sdcard/sd_port_freertos.c) requests the optional adapter through
 the common transport interface. Its physical implementation lives in
-[sdio_wait_freertos.c](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_wait_freertos.c). It reserves
+[sdio_wait_freertos.c](../../../firmware/src/drivers/sdcard/sdio/sdio_wait_freertos.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.
@@ -844,20 +866,20 @@ sequenceDiagram
     participant Host as USB host
     FW->>Card: Firmware block operations and sync
     FW->>FW: Finish work, close files, unmount filesystem
-    USB->>Card: Set owner to USB MSC after integration checks
+    USB->>Card: pf_storage_msc_acquire after integration checks
     Host->>USB: Sector read/write or synchronize
-    USB->>Card: pf_storage_usb_read/write_blocks or usb_sync
+    USB->>Card: pf_storage_msc_read / write / sync
     Note over FW,Card: Firmware block operations return NOT_READY during MSC ownership
     Host->>USB: Safely eject and allow removal
-    USB->>Card: Set owner back to firmware
+    USB->>Card: pf_storage_msc_release after checked eject/sync
     Card-->>FW: Reinitialization request available
     FW->>FW: Invalidate cached filesystem state and reinitialize before remount
 ```
 
 The raw SD driver exposes serialized card operations without application ownership policy.
-Application acquire/release, owner-specific transfers and retained diagnostics live in `middleware/storage/storage.h`;
-there is no arbitrary public owner setter. The application service checks readiness and mounted state on acquisition.
-Application USB also reserves the shared SD lock across worker-idle and mount-state checks and acquisition.
+Acquire/release, owner-specific transfers and retained diagnostics live in `middleware/storage/storage.h`;
+there is no arbitrary public owner setter. The storage service checks readiness and mounted state on acquisition.
+Application USB reserves the storage reservation across worker-idle and mount-state checks and acquisition.
 Release similarly requires checked host eject/synchronization. In the FreeRTOS
 application, a statically
 allocated FreeRTOS recursive mutex
