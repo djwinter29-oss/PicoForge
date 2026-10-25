@@ -2,6 +2,7 @@
 #define PF_SPI_H
 
 #include "drivers/storage/serial.h"
+#include "drivers/storage/spi/spi_pins.h"
 #include "hardware/spi.h"
 
 /** Caller-owned SPI device. Devices on one controller must use identical bus pins.
@@ -10,12 +11,15 @@
  */
 typedef struct {
     spi_inst_t *instance; /**< SDK controller. */
-    pf_storage_spi_pins_t pins; /**< Fixed physical signal allocation. */
+    pf_spi_pins_t pins;   /**< Fixed physical signal allocation. */
     uint32_t clock_hz;    /**< Requested device clock, updated by set_clock. */
     uint32_t timeout_us;  /**< Maximum stalled FIFO interval; zero uses SDK blocking bulk I/O. */
     bool initialized;    /**< This device holds a controller reference. */
 } pf_spi_t;
 
+/** Check controller pin roles; callers separately validate bounds and conflicts. */
+bool pf_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
+                                  uint32_t mosi_gpio, uint32_t miso_gpio);
 /** Validate controller pin routing and distinct chip select without touching hardware. */
 bool pf_spi_config_valid(const pf_spi_t *context);
 /** Acquire a mode-0 controller reference and configure idle-high CS. */

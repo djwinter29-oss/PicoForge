@@ -324,8 +324,6 @@ target_include_directories(pf_board PUBLIC
 )
 target_link_libraries(pf_board PUBLIC
     hardware_gpio
-    hardware_pio
-    hardware_spi
     pico_stdio_uart
     pf_led
     pf_boot_config

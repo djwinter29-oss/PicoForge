@@ -14,13 +14,26 @@ typedef struct {
 
 static controller_t controllers[2];
 
+bool pf_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
+                                  uint32_t mosi_gpio, uint32_t miso_gpio)
+{
+    return spi_index <= 1u && clock_gpio % 4u == 2u && mosi_gpio % 4u == 3u &&
+           miso_gpio % 4u == 0u && (clock_gpio / 8u) % 2u == spi_index &&
+           (mosi_gpio / 8u) % 2u == spi_index && (miso_gpio / 8u) % 2u == spi_index;
+}
+
 bool pf_spi_config_valid(const pf_spi_t *context)
 {
     if (context == NULL || (context->instance != spi0 && context->instance != spi1) ||
         context->clock_hz == 0u) {
         return false;
     }
-    uint32_t pins[] = {context->pins.clock_gpio, context->pins.mosi_gpio, context->pins.miso_gpio, context->pins.cs_gpio};
+    uint32_t pins[] = {
+        context->pins.clock_gpio,
+        context->pins.mosi_gpio,
+        context->pins.miso_gpio,
+        context->pins.cs_gpio,
+    };
     for (size_t index = 0u; index < 4u; index++) {
         if (pins[index] >= NUM_BANK0_GPIOS) {
             return false;
@@ -31,8 +44,8 @@ bool pf_spi_config_valid(const pf_spi_t *context)
             }
         }
     }
-    return pf_storage_spi_pins_match_controller(spi_get_index(context->instance), context->pins.clock_gpio,
-                                                context->pins.mosi_gpio, context->pins.miso_gpio);
+    return pf_spi_pins_match_controller(spi_get_index(context->instance), context->pins.clock_gpio,
+                                        context->pins.mosi_gpio, context->pins.miso_gpio);
 }
 
 pf_storage_bus_result_t pf_spi_init(pf_spi_t *context)

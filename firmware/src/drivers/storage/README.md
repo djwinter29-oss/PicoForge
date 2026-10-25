@@ -136,23 +136,23 @@ common-interface initialization failures and deinitialization, so reinitializati
 engines. These are alternative modes of the shared pins, not permission to attach multiple active devices. DET remains
 a board/card-presence input.
 
-[Board support](../../board/board_profile.c) defines the immutable SD pin profile.
+[Board support](../../board/board_profile.c) supplies the immutable pin numbers for the selected transport.
 [board.c](../../board/board.c) owns the selected static SD transport context and prepares card-detect GPIO/pulls
 from that profile. Its descriptor carries an optional board presence callback; without one, presence is unknown and
 media is assumed present. Repeated configuration queries do not reset a live transport.
 
 ### Pin Allocation and Runtime State
 
-[bus.h](bus.h) defines SDK-independent `pf_storage_spi_pins_t` and `pf_storage_sdio_pins_t`. Native DAT0-DAT3 are
-an explicit array in logical order; the physical engine validates their ascending, consecutive mapping. Pin allocation
-types do not include card detect, controller pointers, clock rates, or mutable hardware ownership.
+[sdio_pio_pins.h](sdio_pio/sdio_pio_pins.h) and [spi_pins.h](spi/spi_pins.h) define their backend-specific signal
+allocations; [sdio_pio.h](sdio_pio/sdio_pio.h) and [spi.h](spi/spi.h) define the corresponding controller interfaces.
+[bus.h](bus.h) contains only the common runtime bus interface. Native DAT0-DAT3 are an explicit array in logical
+order, and the SDIO-PIO backend checks their ascending, consecutive mapping. The board profile contains only the
+configuration for the build-selected transport, alongside shared UART, LED, and card-detect resources. DET polarity
+and pulls remain board configuration.
 
-The immutable board resource profile contains `native_pins` and `spi_pins`, derived from one connector signal
-assignment in [board_profile.c](../../board/board_profile.c). DET polarity and pulls remain board configuration.
-
-Concrete storage contexts embed the corresponding shared type as `pins`. Board integration copies that allocation
-into the selected context; mutable clock settings, controller references, PIO state machines, DMA
-channels, and initialization flags remain runtime state, never fields modified in the board profile.
+Board integration copies the selected allocation into its static transport context. Mutable clock settings,
+controller references, PIO state machines, DMA channels, and initialization flags remain runtime state, never fields
+modified in the board profile.
 
 SD configuration callers supply a persistent descriptor in `pf_sd_config_t.transport`, plus the protocol's
 transfer-clock target in `clock_hz`. Pin allocation, controller selection, and DET configuration belong to board

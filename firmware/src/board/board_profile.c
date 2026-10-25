@@ -16,54 +16,44 @@
 #endif
 
 #ifdef PICO_DEFAULT_LED_PIN
-#define PF_BOARD_LED_ENABLED true
 #define PF_BOARD_LED_GPIO PICO_DEFAULT_LED_PIN
 #else
-#define PF_BOARD_LED_ENABLED false
 #define PF_BOARD_LED_GPIO PF_BOARD_PIN_UNASSIGNED
 #endif
 
-/** Reference connector signals shared by the mutually exclusive storage modes. */
-enum {
-    STORAGE_CLK = 2u, /**< Common clock output. */
-    STORAGE_IO0 = 3u, /**< CMD or MOSI. */
-    STORAGE_IO1 = 4u, /**< DAT0 or MISO. */
-    STORAGE_IO2 = 5u, /**< DAT1. */
-    STORAGE_IO3 = 6u, /**< DAT2. */
-    STORAGE_CS = 7u,  /**< DAT3 or serial CS. */
-};
-
-/* Shared storage wiring for Pico-family reference boards. */
+/* Build-selected storage wiring for Pico-family reference boards. */
 static const pf_board_resources_t board_resources = {
-    .led_enabled = PF_BOARD_LED_ENABLED,
     .led_gpio = PF_BOARD_LED_GPIO,
     .led_active_high = !PICO_DEFAULT_LED_PIN_INVERTED,
     /* Monitor output is separate from USB CDC. */
-    .monitor_uart_enabled = true,
     .monitor_uart_index = PICO_DEFAULT_UART,
     .monitor_uart_tx_gpio = PICO_DEFAULT_UART_TX_PIN,
     .monitor_uart_rx_gpio = PICO_DEFAULT_UART_RX_PIN,
     .monitor_uart_baud_rate = 115200u,
-    .sd_card_enabled = true,
-    .native_pins.command_gpio = STORAGE_IO0,
-    .native_pins.clock_gpio = STORAGE_CLK,
-    /* Logical DAT0-DAT3 now follow consecutive GPIO order. */
-    .native_pins.data_gpio = { STORAGE_IO1, STORAGE_IO2, STORAGE_IO3, STORAGE_CS },
+#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+    /* GP2 CLK, GP3 CMD, and GP4-GP7 DAT0-DAT3. */
+    .sdio_pio_pins = {
+        .clock_gpio = 2u,
+        .command_gpio = 3u,
+        .data_gpio = {4u, 5u, 6u, 7u},
+    },
     .pio_index = 0u,
     /* Fixed transfer target; no automatic probing or lower-clock retries. */
-    .clock_hz = 25000000u,
+    .sd_clock_hz = 25000000u,
+#else
+    /* GP2 SCK, GP3 MOSI, GP4 MISO, GP7 CS. */
+    .spi_pins = {
+        .clock_gpio = 2u,
+        .mosi_gpio = 3u,
+        .miso_gpio = 4u,
+        .cs_gpio = 7u,
+    },
     .spi_index = 0u,
-    .spi_pins.clock_gpio = STORAGE_CLK,
-    .spi_pins.mosi_gpio = STORAGE_IO0,
-    .spi_pins.miso_gpio = STORAGE_IO1,
-    .spi_pins.cs_gpio = STORAGE_CS,
-    .spi_clock_hz = 50000000u,
-    /* The selected breakout provides the DET bias; do not add an MCU pull. */
-    .card_detect_enabled = true,
+    .sd_clock_hz = 50000000u,
+#endif
+    /* GP8 DET; the selected breakout provides its bias. */
     .card_detect_gpio = 8u,
     .card_detect_active_high = true,
-    .card_detect_use_pull = false,
-    .card_detect_pull_up = false,
 };
 
 const pf_board_resources_t *pf_board_resources_get(void)

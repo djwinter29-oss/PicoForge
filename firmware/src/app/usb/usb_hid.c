@@ -136,7 +136,6 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
 {
     pico_unique_board_id_t unique_id;
     pf_runtime_stats_t stats;
-    const pf_board_resources_t *topology = pf_board_resources_get();
 
     memset(report, 0, sizeof(*report));
     pico_get_unique_board_id(&unique_id);
@@ -156,7 +155,7 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
 #else
     report->capabilities |= PF_HID_CAP_SDIO;
 #endif
-    if (topology->sd_card_enabled) report->capabilities |= PF_HID_CAP_SELF_TEST;
+    report->capabilities |= PF_HID_CAP_SELF_TEST;
     report->ram_total_bytes = stats.ram_total_bytes;
     report->ram_reserved_bytes = stats.ram_used_bytes;
 }
@@ -184,25 +183,21 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     report->storage_gpios[2] = gpio_value(topology->spi_pins.miso_gpio);
     report->storage_gpios[3] = gpio_value(topology->spi_pins.cs_gpio);
 #else
-    report->storage_gpios[0] = gpio_value(topology->native_pins.clock_gpio);
-    report->storage_gpios[1] = gpio_value(topology->native_pins.command_gpio);
+    report->storage_gpios[0] = gpio_value(topology->sdio_pio_pins.clock_gpio);
+    report->storage_gpios[1] = gpio_value(topology->sdio_pio_pins.command_gpio);
     for (size_t index = 0u; index < 4u; ++index) {
-        report->storage_gpios[index + 2u] = gpio_value(topology->native_pins.data_gpio[index]);
+        report->storage_gpios[index + 2u] = gpio_value(topology->sdio_pio_pins.data_gpio[index]);
     }
 #endif
-    if (topology->card_detect_enabled) {
-        report->board_flags |= PF_HID_BOARD_FLAG_CARD_DETECT;
-        report->card_detect_gpio = gpio_value(topology->card_detect_gpio);
-    } else {
-        report->card_detect_gpio = UINT8_MAX;
-    }
-    if (topology->led_enabled) {
+    report->board_flags |= PF_HID_BOARD_FLAG_CARD_DETECT;
+    report->card_detect_gpio = gpio_value(topology->card_detect_gpio);
+    if (topology->led_gpio != PF_BOARD_PIN_UNASSIGNED) {
         report->board_flags |= PF_HID_BOARD_FLAG_LED;
         report->led_gpio = gpio_value(topology->led_gpio);
     } else {
         report->led_gpio = UINT8_MAX;
     }
-    if (topology->monitor_uart_enabled) report->board_flags |= PF_HID_BOARD_FLAG_MONITOR_UART;
+    report->board_flags |= PF_HID_BOARD_FLAG_MONITOR_UART;
     report->reset_cause = 0u;
 }
 
@@ -374,9 +369,6 @@ static void process_control_request(const pf_hid_control_request_t *request)
             error = PF_HID_ERROR_MALFORMED;
         } else if (action > 1u || (action == 0u && size_mib != 0u)) {
             error = PF_HID_ERROR_ARGUMENT;
-        } else if (!pf_board_resources_get()->sd_card_enabled) {
-            status = PF_HID_COMMAND_UNSUPPORTED;
-            error = PF_HID_ERROR_CAPABILITY;
         } else if (action == 1u && (size_mib == 0u || size_mib > 1024u)) {
             (void)pf_storage_worker_benchmark_start(size_mib, false);
             status = PF_HID_COMMAND_INVALID;

@@ -11,21 +11,17 @@ static unsigned settings_save_calls;
 static bool msc_enabled;
 static bool msc_transition_pending;
 static pf_board_resources_t test_topology = {
-    .led_enabled = true,
     .led_gpio = 25u,
     .led_active_high = true,
-    .monitor_uart_enabled = true,
     .monitor_uart_index = 0u,
     .monitor_uart_tx_gpio = 0u,
     .monitor_uart_rx_gpio = 1u,
     .monitor_uart_baud_rate = 115200u,
-    .sd_card_enabled = true,
-    .native_pins = {
+    .sdio_pio_pins = {
         .clock_gpio = 2u,
         .command_gpio = 3u,
         .data_gpio = {4u, 5u, 6u, 7u},
     },
-    .card_detect_enabled = true,
     .card_detect_gpio = 8u,
 };
 

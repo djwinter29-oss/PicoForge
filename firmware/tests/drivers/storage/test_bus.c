@@ -113,15 +113,3 @@ void test_missing_services_do_not_acquire_backend_resources(void)
     TEST_ASSERT_FALSE(pf_storage_bus_enable_wait(&transport));
     TEST_ASSERT_EQUAL_UINT(0u, init_calls);
 }
-
-void test_matches_spi_pins_to_controller_roles(void)
-{
-    TEST_ASSERT_TRUE(pf_storage_spi_pins_match_controller(0u, 2u, 3u, 4u));
-    TEST_ASSERT_TRUE(pf_storage_spi_pins_match_controller(0u, 6u, 7u, 0u));
-    TEST_ASSERT_TRUE(pf_storage_spi_pins_match_controller(1u, 10u, 11u, 8u));
-    TEST_ASSERT_TRUE(pf_storage_spi_pins_match_controller(0u, 34u, 35u, 36u));
-    TEST_ASSERT_FALSE(pf_storage_spi_pins_match_controller(1u, 2u, 3u, 4u));
-    TEST_ASSERT_FALSE(pf_storage_spi_pins_match_controller(0u, 2u, 3u, 5u));
-    TEST_ASSERT_FALSE(pf_storage_spi_pins_match_controller(0u, 2u, 11u, 4u));
-    TEST_ASSERT_FALSE(pf_storage_spi_pins_match_controller(2u, 2u, 3u, 4u));
-}

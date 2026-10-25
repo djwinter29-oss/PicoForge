@@ -31,10 +31,6 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 
 int main(void)
 {
-    pf_boot_config_t settings;
-    /* Invalid or missing settings load as complete defaults, so boot never depends on them. */
-    (void)pf_boot_config_load_early(&settings);
-    (void)pf_board_apply_boot_config(&settings);
     if (!pf_board_init()) {
         panic("Failed to initialize board pin assignments");
     }

@@ -12,6 +12,8 @@
 #define MAGIC 0x46434650u /* "PFCF" in little-endian byte order */
 #define CRC_OFFSET (PF_BOOT_CONFIG_RECORD_SIZE - 4u)
 
+static pf_boot_config_t active_config;
+
 static uint32_t get_le(const uint8_t *p, unsigned bytes)
 {
     uint32_t value = 0u;
@@ -40,6 +42,11 @@ bool pf_boot_config_valid(const pf_boot_config_t *settings)
             settings->system_clock_mhz == 200u || settings->system_clock_mhz == 250u) &&
            (settings->sdio_bus_mhz == 0u || settings->sdio_bus_mhz == 25u || settings->sdio_bus_mhz == 50u) &&
            (settings->spi_bus_mhz == 0u || settings->spi_bus_mhz == 25u || settings->spi_bus_mhz == 50u);
+}
+
+const pf_boot_config_t *pf_boot_config_active(void)
+{
+    return &active_config;
 }
 
 uint32_t pf_boot_config_crc32(const uint8_t *data, size_t size)
@@ -96,14 +103,18 @@ bool pf_boot_config_decode(const uint8_t *record, size_t size, pf_boot_config_t 
 bool pf_boot_config_load_early(pf_boot_config_t *config)
 {
     uint8_t record[PF_BOOT_CONFIG_RECORD_SIZE];
+    bool loaded;
     if (config == NULL) {
         return false;
     }
     pf_boot_config_defaults(config);
-    if (!pf_platform_boot_config_read_early(record, sizeof(record))) {
-        return false;
+    if (pf_platform_boot_config_read_early(record, sizeof(record))) {
+        loaded = pf_boot_config_decode(record, sizeof(record), config);
+    } else {
+        loaded = false;
     }
-    return pf_boot_config_decode(record, sizeof(record), config);
+    active_config = *config;
+    return loaded;
 }
 
 bool pf_boot_config_load(pf_boot_config_t *config)

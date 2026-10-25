@@ -4,14 +4,6 @@
 #include "bus.h"
 #include <assert.h>
 
-bool pf_storage_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
-                                         uint32_t mosi_gpio, uint32_t miso_gpio)
-{
-    return spi_index <= 1u && clock_gpio % 4u == 2u && mosi_gpio % 4u == 3u &&
-           miso_gpio % 4u == 0u && (clock_gpio / 8u) % 2u == spi_index &&
-           (mosi_gpio / 8u) % 2u == spi_index && (miso_gpio / 8u) % 2u == spi_index;
-}
-
 static bool bus_valid(const pf_storage_bus_t *bus)
 {
     return bus != NULL && bus->context != NULL && bus->ops != NULL &&

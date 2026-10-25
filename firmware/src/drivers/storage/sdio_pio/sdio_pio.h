@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "hardware/pio.h"
 #include "drivers/storage/sd_wire.h"
+#include "drivers/storage/sdio_pio/sdio_pio_pins.h"
 
 /** Physical clock ownership, private to this backend's resource management. */
 typedef enum {
@@ -18,10 +19,10 @@ typedef enum {
 /** Optional bounded data-wait integration; must not clear the completion IRQ. */
 typedef void (*pf_sdio_pio_wait_hook_t)(PIO pio, uint32_t completion_flag);
 
-/** Board-independent physical pin routing. */
+/** SDIO-PIO controller and board-provided pin routing. */
 typedef struct {
     PIO pio;                  /**< Reserved PIO instruction memory, pio0 or pio1. */
-    pf_storage_sdio_pins_t pins; /**< Fixed physical signal allocation. */
+    pf_sdio_pio_pins_t pins;  /**< Fixed physical signal allocation. */
 } pf_sdio_pio_config_t;
 
 /** Caller-owned physical transport. Zero initialize before first use; never copy a live context. */

@@ -28,6 +28,18 @@ void tearDown(void)
     pf_storage_bus_deinit(&peer_bus);
 }
 
+void test_spi_pin_allocation_matches_controller_roles(void)
+{
+    TEST_ASSERT_TRUE(pf_spi_pins_match_controller(0u, 2u, 3u, 4u));
+    TEST_ASSERT_TRUE(pf_spi_pins_match_controller(0u, 6u, 7u, 0u));
+    TEST_ASSERT_TRUE(pf_spi_pins_match_controller(1u, 10u, 11u, 8u));
+    TEST_ASSERT_TRUE(pf_spi_pins_match_controller(0u, 34u, 35u, 36u));
+    TEST_ASSERT_FALSE(pf_spi_pins_match_controller(1u, 2u, 3u, 4u));
+    TEST_ASSERT_FALSE(pf_spi_pins_match_controller(0u, 2u, 3u, 5u));
+    TEST_ASSERT_FALSE(pf_spi_pins_match_controller(0u, 2u, 11u, 4u));
+    TEST_ASSERT_FALSE(pf_spi_pins_match_controller(2u, 2u, 3u, 4u));
+}
+
 void test_spi_devices_share_one_controller_and_restore_device_clock(void)
 {
     TEST_ASSERT_EQUAL(PF_STORAGE_BUS_OK, pf_spi_init(&sd));

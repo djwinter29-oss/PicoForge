@@ -23,6 +23,12 @@ void pf_boot_config_defaults(pf_boot_config_t *config);
 /** Return true when every field holds a supported value. */
 bool pf_boot_config_valid(const pf_boot_config_t *config);
 
+/**
+ * @brief Return the boot configuration loaded by the most recent early load.
+ * @return Pointer to the immutable active configuration, initially all defaults.
+ */
+const pf_boot_config_t *pf_boot_config_active(void);
+
 /** IEEE 802.3 CRC-32 (reflected, init and final XOR 0xFFFFFFFF). */
 uint32_t pf_boot_config_crc32(const uint8_t *data, size_t size);
 
@@ -36,7 +42,7 @@ bool pf_boot_config_encode(const pf_boot_config_t *config, uint8_t record[PF_BOO
 bool pf_boot_config_decode(const uint8_t *record, size_t size, pf_boot_config_t *config);
 
 /**
- * @brief Read the saved configuration before the scheduler starts.
+ * @brief Read and activate the saved configuration before the scheduler starts.
  * @param config Always filled; complete defaults unless a valid record was loaded.
  * @return true if a valid record was loaded.
  */

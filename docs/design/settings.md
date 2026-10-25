@@ -51,9 +51,10 @@ Boot-applied settings live behind the driver `drivers/boot_config.c/.h`. The USB
 RP2 flash access and FreeRTOS-safe erase/program handling are isolated in the platform store
 `platform/boot_config_store.c/.h`; the boot-config driver owns the record format, validation, defaults, and public
 load/save API. This keeps hardware-specific flash operations behind the platform interface.
-Before the scheduler starts, runtime-init and `main()` use `pf_boot_config_load_early()`; `main()` passes the result to
-`pf_board_apply_boot_config()` before storage starts. Runtime reads and saves belong to the USB task; they are not a
-general multi-task settings API.
+Before the scheduler starts, the runtime-init hook uses `pf_boot_config_load_early()`, which also records the active
+boot configuration. Board setup reads that immutable active snapshot when it prepares the selected SD transport;
+there is no separate board-level boot-config application step. Runtime reads and saves belong to the USB task; they
+are not a general multi-task settings API.
 
 `pf_boot_config_save()` rejects ISR, pre-scheduler and suspended-scheduler callers, invalid settings, and re-entrant
 saves. It skips an identical record and uses `flash_safe_execute` for erase/program (interrupts off and the other

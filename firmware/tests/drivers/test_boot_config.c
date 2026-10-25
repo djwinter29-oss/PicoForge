@@ -45,10 +45,36 @@ void setUp(void)
     memset(pf_test_flash, 0xff, sizeof(pf_test_flash));
     pf_test_safe_execute_result = PICO_OK;
     pf_test_in_isr = 0;
-    scheduler_state = taskSCHEDULER_RUNNING;
+    scheduler_state = taskSCHEDULER_NOT_STARTED;
     task_count = 5u;
+    pf_boot_config_t defaults;
+    TEST_ASSERT_FALSE(pf_boot_config_load_early(&defaults));
+    scheduler_state = taskSCHEDULER_RUNNING;
 }
 void tearDown(void) {}
+
+void test_early_load_activates_the_complete_saved_configuration(void)
+{
+    const pf_boot_config_t saved = {.system_clock_mhz = 200u, .sdio_bus_mhz = 50u, .spi_bus_mhz = 25u};
+    pf_boot_config_t loaded;
+    TEST_ASSERT_TRUE(pf_boot_config_save(&saved));
+    scheduler_state = taskSCHEDULER_NOT_STARTED;
+    TEST_ASSERT_TRUE(pf_boot_config_load_early(&loaded));
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_EQUAL_MEMORY(&saved, &loaded, sizeof(saved));
+    TEST_ASSERT_EQUAL_MEMORY(&saved, pf_boot_config_active(), sizeof(saved));
+}
+
+void test_early_load_activates_defaults_when_storage_is_empty(void)
+{
+    pf_boot_config_t loaded = {.system_clock_mhz = 250u, .sdio_bus_mhz = 50u, .spi_bus_mhz = 50u};
+    scheduler_state = taskSCHEDULER_NOT_STARTED;
+    TEST_ASSERT_FALSE(pf_boot_config_load_early(&loaded));
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_EQUAL_UINT16(0u, pf_boot_config_active()->system_clock_mhz);
+    TEST_ASSERT_EQUAL_UINT8(0u, pf_boot_config_active()->sdio_bus_mhz);
+    TEST_ASSERT_EQUAL_UINT8(0u, pf_boot_config_active()->spi_bus_mhz);
+}
 
 void test_boot_config_save_and_load_use_the_platform_store(void)
 {
