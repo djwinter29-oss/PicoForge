@@ -10,8 +10,8 @@ pf_sd_link_t pf_sd_board_transport(bool bind)
 {
     if (bind) {
         sd_transport = (pf_spi_t){
-            .instance = pf_spi_board.spi_index == 0u ? spi0 : spi1,
-            .pins = pf_spi_board.pins,
+            .instance = pf_spi_board_pins.spi_index == 0u ? spi0 : spi1,
+            .pins = pf_spi_board_pins.pins,
             .clock_hz = 400000u,
         };
     }
@@ -20,9 +20,15 @@ pf_sd_link_t pf_sd_board_transport(bool bind)
 
 pf_sd_link_mode_t pf_sd_board_transport_pins(uint8_t bus_gpios[6])
 {
-    bus_gpios[0] = pf_sd_board_pin_byte(pf_spi_board.pins.clock_gpio);
-    bus_gpios[1] = pf_sd_board_pin_byte(pf_spi_board.pins.mosi_gpio);
-    bus_gpios[2] = pf_sd_board_pin_byte(pf_spi_board.pins.miso_gpio);
-    bus_gpios[3] = pf_sd_board_pin_byte(pf_spi_board.pins.cs_gpio);
+    bus_gpios[0] = pf_spi_board_pins.pins.clock_gpio;
+    bus_gpios[1] = pf_spi_board_pins.pins.mosi_gpio;
+    bus_gpios[2] = pf_spi_board_pins.pins.miso_gpio;
+    bus_gpios[3] = pf_spi_board_pins.pins.cs_gpio;
     return PF_SD_LINK_SPI;
+}
+
+uint8_t pf_sd_board_transport_detect(bool *active_high)
+{
+    *active_high = pf_spi_board_pins.card_detect_active_high;
+    return pf_spi_board_pins.card_detect_gpio;
 }

@@ -132,7 +132,6 @@ static bool validate_transfer(uint32_t card_address)
            pf_sd_sdio_host_read_sector(&native_host, 0u, block);
 }
 
-#if PF_SD_SDIO_HIGH_SPEED
 static bool select_transfer_speed(uint32_t card_address)
 {
     uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
@@ -189,8 +188,6 @@ static bool select_transfer_speed(uint32_t card_address)
     native_info.high_speed = false;
     return validate_transfer(card_address);
 }
-#endif
-
 static bool initialize_card(void)
 {
     uint8_t response[17];
@@ -364,11 +361,9 @@ static bool initialize_card(void)
     if (!validate_transfer(relative_card_address)) {
         return false;
     }
-#if PF_SD_SDIO_HIGH_SPEED
     if (!select_transfer_speed(relative_card_address)) {
         return false;
     }
-#endif
     card_init_stage = PF_SD_SDIO_INIT_STAGE_NONE;
     return true;
 }

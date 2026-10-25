@@ -9,6 +9,7 @@
 
 BaseType_t xTaskGetSchedulerState(void);
 UBaseType_t uxTaskGetNumberOfTasks(void);
+TickType_t xTaskGetTickCount(void);
 void vTaskDelay(TickType_t ticks);
 
 #endif

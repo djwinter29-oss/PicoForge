@@ -1,3 +1,15 @@
+/**
+ * @file boot_config.h
+ * @brief Boot settings loaded before scheduling, then owned by the USB task.
+ *
+ * Both profile getters and their MHz wrappers share first-use loading: normally the start of main() loads flash
+ * before scheduling; a running task can also load it. Unsafe first calls return defaults and leave loading pending.
+ *
+ * This API is not thread-safe. After boot, mutations and saves must be serialized in the USB task.
+ * This module must be the only flash_safe_execute() caller; tasks must not be created or deleted during a save
+ * or while lockout reclamation remains pending, because reclamation is detected through the task count.
+ */
+
 #ifndef PF_DRIVERS_BOOT_CONFIG_H
 #define PF_DRIVERS_BOOT_CONFIG_H
 
@@ -10,7 +22,7 @@ typedef enum {
     PF_STORAGE_SPEED_HIGH = 1, /**< 50 MHz High-Speed; SDIO falls back to 25 MHz if the card refuses. */
 } pf_storage_speed_t;
 
-/** User-selected system clock profile; the flash record and HID protocol carry it as MHz. */
+/** User-selected system clock profile; flash stores its ID, while the HID protocol carries MHz. */
 typedef enum {
     PF_SYSCLK_DEFAULT = 0, /**< Keep the SDK/build clock; used when nothing is saved. */
     PF_SYSCLK_150MHZ = 1, /**< 150 MHz. */
@@ -39,14 +51,12 @@ static inline uint8_t pf_storage_speed_mhz(pf_storage_speed_t speed)
 
 /**
  * @brief Return the configured system clock profile.
- *
- * The first call loads the saved record and must run before the scheduler starts (the boot clock hook).
  */
 pf_sysclk_profile_t pf_boot_config_sysclk(void);
 
 /**
  * @brief Change the configured system clock in RAM; persist with pf_boot_config_save(), applied at the next boot.
- * @return false (configuration unchanged) for an unknown profile.
+ * @return false (configuration unchanged) for an unknown profile or when first-use loading is unsafe.
  */
 bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile);
 
@@ -69,13 +79,17 @@ static inline uint8_t pf_get_storage_speed_mhz(void)
 
 /**
  * @brief Change the configured storage speed in RAM; persist with pf_boot_config_save(), applied at the next boot.
- * @return false (configuration unchanged) for an unknown profile.
+ * @return false (configuration unchanged) for an unknown profile or when first-use loading is unsafe.
  */
 bool pf_boot_config_set_storage_speed(pf_storage_speed_t speed);
 
 /**
  * @brief Persist the configuration to flash from a task context.
- * @return true only when the record was read back successfully.
+ *
+ * Requires the scheduler running, not an ISR; reentrant saves are rejected.
+ * @return true when unchanged or when the SDK operation succeeded and readback matched.
+ * False means unconfirmed, not necessarily unchanged: erase/program can complete before an SDK exit timeout.
+ * RAM values are not rolled back by this function; callers must not assume failure preserved the previous flash data.
  */
 bool pf_boot_config_save(void);
 

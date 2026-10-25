@@ -7,8 +7,8 @@ sources live beside their physical engines; their card policy and filesystem int
 
 - [SD-card design](sdcard-driver-design.md): initialization, commands, registers, CRC validation,
   addressing, and sector/stream policy.
-- [CDC CLI guide](../usb/usb-cdc-cli.md): filesystem commands and mounting policy.
-- [Hardware setup](../../hardware-setup.md): board selection, power, debug connections, and other GPIOs.
+- [CDC CLI guide](../../guides/usb-cdc-cli.md): filesystem commands and mounting policy.
+- [Hardware setup](../../guides/hardware-setup.md): board selection, power, debug connections, and other GPIOs.
 
 ## Physical Link
 
@@ -145,12 +145,12 @@ SD's execution port only
 requests that the transport enable it. The backend retains its physical configuration and installed wait hook across
 common-interface initialization failures and deinitialization, so reinitialization does not need device-side pin setup.
 
-[Board support](../../../firmware/src/config/board.c) remains authoritative for GP2-GP8. SD-SPI and native SD use their
+[Board support](../../../firmware/src/config/) remains authoritative for GP2-GP8. SD-SPI and native SD use their
 respective physical
 engines. These are alternative modes of the shared pins, not permission to attach multiple active devices. DET remains
 a board/card-presence input.
 
-[Board support](../../../firmware/src/config/board.c) supplies the immutable pins and controller selection for both
+[Board support](../../../firmware/src/config/) supplies the immutable pins and controller selection for both
 transports. CMake selects [sd_board_sdio.c](../../../firmware/src/drivers/sdcard/sdio/sd_board_sdio.c) or
 [sd_board_spi.c](../../../firmware/src/drivers/sdcard/spi/sd_board_spi.c), which owns the persistent transport context and
 implements the same internal board-binding header. Shared
@@ -230,7 +230,7 @@ GP7 drives CS in that mode. Board support can construct either transport configu
 signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls
 when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their
 combined strength. The storage worker initializes and mounts detected cards according to
-[the mounting policy](../usb/usb-cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
+[the mounting policy](../../guides/usb-cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
 for single sectors. Card capability negotiation and the saved storage speed target are defined by the
 [SPI transfer-clock policy](sdcard-driver-design.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
 Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power:
@@ -359,15 +359,10 @@ this does not establish signal timing at the card socket. Neither fractional tim
 proven to be the remaining cause. Do not treat a mounted 50 MHz volume, or a passing timing model, as sustained
 qualification. CRC checks, the one-time startup fallback, and runtime invalidation remain enabled.
 
-To reproduce the tested image without changing the default profile:
-
-```sh
-cmake -S firmware -B build/firmware-pico2-hs200 \
-  -DPICO_BOARD=pico2 -DPF_SYS_CLK_MHZ=200 \
-  -DPF_SDCARD_PORT=FREERTOS -DPF_SDCARD_TRANSPORT=SDIO_PIO \
-  -DPF_SDIO_PIO_HIGH_SPEED=ON -DPF_SDCARD_INTERRUPT_WAIT=OFF -DCMAKE_BUILD_TYPE=Release
-cmake --build build/firmware-pico2-hs200 --parallel 4
-```
+The tested image used the now-removed build-time clock override. Reproduce that exact historical image only from
+its recorded revision. Current builds use the SDK default clock; choose the saved 200 MHz system-clock and
+High-Speed storage profiles through [boot settings](../settings.md) to exercise those targets on current firmware.
+This does not reproduce the historical binary or qualify the current firmware.
 
 ## Tests and Qualification
 

@@ -47,14 +47,10 @@ static pf_hid_control_result_t control_result = {
     .version = PF_HID_REPORT_VERSION,
     .status = PF_HID_COMMAND_IDLE,
 };
+#if PF_ENABLE_STORAGE_BENCHMARK
 static bool self_test_result_pending;
 static pf_hid_control_request_t pending_self_test_request;
-
-static uint8_t gpio_value(uint32_t gpio)
-{
-    return (gpio > UINT8_MAX - 1u)
-        ? UINT8_MAX : (uint8_t)gpio;
-}
+#endif
 
 static bool trailing_arguments_zero(const uint8_t *arguments, size_t first)
 {
@@ -69,11 +65,13 @@ static uint16_t read_u16_le(const uint8_t *value)
     return (uint16_t)value[0] | ((uint16_t)value[1] << 8u);
 }
 
+#if PF_ENABLE_STORAGE_BENCHMARK
 static uint32_t read_u32_le(const uint8_t *value)
 {
     return (uint32_t)value[0] | ((uint32_t)value[1] << 8u) |
         ((uint32_t)value[2] << 16u) | ((uint32_t)value[3] << 24u);
 }
+#endif
 
 static void set_result(const pf_hid_control_request_t *request, uint8_t status, uint8_t error,
                        const uint8_t result_data[4])
@@ -102,6 +100,7 @@ bool pf_hid_take_reboot_request(void)
 
 void pf_hid_poll_async_commands(void)
 {
+#if PF_ENABLE_STORAGE_BENCHMARK
     if (!self_test_result_pending) return;
 
     bool accepted;
@@ -120,6 +119,7 @@ void pf_hid_poll_async_commands(void)
                    (busy ? PF_HID_COMMAND_BUSY : PF_HID_COMMAND_FAILED),
                accepted ? PF_HID_ERROR_NONE :
                    (busy ? PF_HID_ERROR_BUSY : PF_HID_ERROR_OPERATION), NULL);
+#endif
 }
 
 void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
@@ -144,7 +144,9 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     pf_storage_get_status(&storage);
     if (storage.bus == PF_STORAGE_BUS_SPI) report->capabilities |= PF_HID_CAP_SPI;
     if (storage.bus == PF_STORAGE_BUS_SDIO) report->capabilities |= PF_HID_CAP_SDIO;
+#if PF_ENABLE_STORAGE_BENCHMARK
     report->capabilities |= PF_HID_CAP_SELF_TEST;
+#endif
     report->ram_total_bytes = stats.ram_total_bytes;
     report->ram_reserved_bytes = stats.ram_used_bytes;
 }
@@ -157,8 +159,8 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     report->stored_sdcard_profile = (uint8_t)pf_boot_config_storage_speed();
     report->monitor_uart_index = pf_monitor_uart_board.uart_index <= 1u
         ? (uint8_t)pf_monitor_uart_board.uart_index : UINT8_MAX;
-    report->monitor_uart_tx_gpio = gpio_value(pf_monitor_uart_board.tx_gpio);
-    report->monitor_uart_rx_gpio = gpio_value(pf_monitor_uart_board.rx_gpio);
+    report->monitor_uart_tx_gpio = pf_monitor_uart_board.tx_gpio;
+    report->monitor_uart_rx_gpio = pf_monitor_uart_board.rx_gpio;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
     memcpy(report->storage_gpios, storage.bus_gpios, sizeof(report->storage_gpios));
@@ -166,7 +168,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     report->card_detect_gpio = storage.detect_gpio;
     if (pf_led_board.gpio != PF_LED_GPIO_NONE) {
         report->board_flags |= PF_HID_BOARD_FLAG_LED;
-        report->led_gpio = gpio_value(pf_led_board.gpio);
+        report->led_gpio = pf_led_board.gpio;
     } else {
         report->led_gpio = UINT8_MAX;
     }
@@ -253,11 +255,12 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
 
 void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t sequence)
 {
-    pf_file_benchmark_status_t status;
-    pf_storage_worker_benchmark_status(&status);
     memset(report, 0, sizeof(*report));
     report->version = PF_HID_REPORT_VERSION;
     report->sequence = sequence;
+#if PF_ENABLE_STORAGE_BENCHMARK
+    pf_file_benchmark_status_t status;
+    pf_storage_worker_benchmark_status(&status);
     report->state = (uint8_t)status.state;
     report->flags = status.flags;
     report->target_bytes = status.target_bytes;
@@ -269,6 +272,7 @@ void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t se
     report->error = (uint8_t)status.error;
     report->filesystem_result = (uint8_t)status.filesystem_result;
     report->request_error = (uint8_t)status.request_error;
+#endif
 }
 
 static void process_control_request(const pf_hid_control_request_t *request)
@@ -333,6 +337,7 @@ static void process_control_request(const pf_hid_control_request_t *request)
             }
         }
     } else if (request->opcode == PF_HID_OPCODE_SELF_TEST) {
+#if PF_ENABLE_STORAGE_BENCHMARK
         const uint8_t action = request->arguments[0];
         const uint32_t size_mib = read_u32_le(&request->arguments[1]);
         pf_file_benchmark_status_t benchmark;
@@ -378,6 +383,10 @@ static void process_control_request(const pf_hid_control_request_t *request)
                 error = PF_HID_ERROR_OPERATION;
             }
         }
+#else
+        status = PF_HID_COMMAND_UNSUPPORTED;
+        error = PF_HID_ERROR_CAPABILITY;
+#endif
     } else if (request->opcode == PF_HID_OPCODE_SAVE_SETTINGS) {
         const uint16_t system_clock_mhz = read_u16_le(request->arguments);
         const uint8_t sdcard_profile = request->arguments[2];
@@ -407,7 +416,7 @@ static void process_control_request(const pf_hid_control_request_t *request)
             reboot_requested = true;
         }
         if (status != PF_HID_COMMAND_COMPLETED) {
-            /* Keep the RAM copy equal to flash so reports never show unsaved values. */
+            /* Retain the previous session values; a failed save may already have changed flash. */
             (void)pf_boot_config_set_sysclk(old_sysclk);
             (void)pf_boot_config_set_storage_speed(old_sd_speed);
         }

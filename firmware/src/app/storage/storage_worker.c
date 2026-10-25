@@ -45,6 +45,7 @@ static uint32_t active_session;
  * avoids relying on volatile for cross-task communication. Presence/automount
  * policy lives in the storage service; media_service_busy excludes admission while it runs. */
 static atomic_bool cancelled;
+#if PF_ENABLE_STORAGE_BENCHMARK
 static pf_file_benchmark_status_t benchmark_status;
 static bool benchmark_active;
 static bool benchmark_finished;
@@ -53,10 +54,12 @@ static bool benchmark_admission_pending;
 static bool benchmark_admission_result_ready;
 static bool benchmark_admission_accepted;
 static pf_file_benchmark_error_t benchmark_admission_error;
+#endif
 static bool media_service_busy;
 
 static void refresh_benchmark_completion(void)
 {
+#if PF_ENABLE_STORAGE_BENCHMARK
     taskENTER_CRITICAL();
     if (benchmark_active && benchmark_finished) {
         benchmark_active = false;
@@ -64,8 +67,10 @@ static void refresh_benchmark_completion(void)
         busy = false;
     }
     taskEXIT_CRITICAL();
+#endif
 }
 
+#if PF_ENABLE_STORAGE_BENCHMARK
 static uint32_t benchmark_clock(void *context)
 {
     (void)context;
@@ -83,6 +88,7 @@ static bool benchmark_update(const pf_file_benchmark_status_t *status, void *con
     taskEXIT_CRITICAL();
     return keep_running;
 }
+#endif
 
 static bool send_reply(const char *line, void *context)
 {
@@ -181,6 +187,7 @@ static void storage_task(void *context)
             unmount_for_usb();
             continue;
         }
+#if PF_ENABLE_STORAGE_BENCHMARK
         if (request.test_size_mib != 0u) {
             pf_file_benchmark_error_t preflight_error =
                 pf_file_benchmark_preflight(request.test_size_mib, NULL);
@@ -209,6 +216,7 @@ static void storage_task(void *context)
             taskEXIT_CRITICAL();
             continue;
         }
+#endif
         if (request.recover_media) {
             if (request.return_from_usb) {
                 return_from_usb();
@@ -348,12 +356,17 @@ bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply)
 void pf_storage_worker_cancel(uint32_t session)
 {
     taskENTER_CRITICAL();
-    if (busy && !benchmark_active && (active_session == session)) {
+    if (busy && (active_session == session)
+#if PF_ENABLE_STORAGE_BENCHMARK
+        && !benchmark_active
+#endif
+    ) {
         cancelled = true;
     }
     taskEXIT_CRITICAL();
 }
 
+#if PF_ENABLE_STORAGE_BENCHMARK
 bool pf_storage_worker_benchmark_start(uint32_t size_mib, bool host_owned)
 {
     pf_file_benchmark_error_t rejection = PF_FILE_BENCHMARK_ERROR_NONE;
@@ -449,6 +462,8 @@ bool pf_storage_worker_benchmark_admission_result(bool *accepted, pf_file_benchm
     taskEXIT_CRITICAL();
     return ready;
 }
+
+#endif
 
 bool pf_storage_worker_media_absent(void)
 {

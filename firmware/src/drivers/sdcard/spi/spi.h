@@ -19,8 +19,8 @@ typedef struct {
 } pf_spi_t;
 
 /** Check controller pin roles; callers separately validate bounds and conflicts. */
-bool pf_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
-                                  uint32_t mosi_gpio, uint32_t miso_gpio);
+bool pf_spi_pins_match_controller(uint32_t spi_index, uint8_t clock_gpio,
+                                  uint8_t mosi_gpio, uint8_t miso_gpio);
 /** Validate controller pin routing and distinct chip select without touching hardware. */
 bool pf_spi_config_valid(const pf_spi_t *context);
 /** Acquire a mode-0 controller reference and configure idle-high CS. */

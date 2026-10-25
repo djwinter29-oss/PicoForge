@@ -12,8 +12,8 @@ static pf_test_sdio_pio_t fake_pio0;
 PIO pio0 = &fake_pio0;
 PIO pio1;
 
-const pf_sd_board_t pf_sd_board = {.card_detect_gpio = 9u, .card_detect_active_high = false};
-const pf_sdio_pio_board_t pf_sdio_pio_board = {
+const pf_sdio_pio_board_pins_t pf_sdio_pio_board_pins = {
+    .card_detect_gpio = 9u, .card_detect_active_high = false,
     .pins = {.clock_gpio = 2u, .command_gpio = 3u, .data_gpio = {4u, 5u, 6u, 7u}}, .pio_index = 0u,
 };
 

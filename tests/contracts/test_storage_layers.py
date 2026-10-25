@@ -46,6 +46,17 @@ def test_storage_application_policy_stays_out_of_middleware():
         ) for header in headers), source
 
 
+def test_storage_benchmark_is_opt_in_and_its_source_is_conditional():
+    cmake = (ROOT / "firmware/CMakeLists.txt").read_text()
+    assert re.search(r'option\(PF_ENABLE_STORAGE_BENCHMARK\s+"[^"]+"\s+OFF\)', cmake)
+    assert re.search(
+        r"if\(PF_ENABLE_STORAGE_BENCHMARK\)\s*"
+        r"target_sources\(pf_app_storage PRIVATE src/app/storage/file_benchmark\.c\)\s*endif\(\)",
+        cmake,
+    )
+    assert "PF_ENABLE_STORAGE_BENCHMARK=$<BOOL:${PF_ENABLE_STORAGE_BENCHMARK}>" in cmake
+
+
 def test_fatfs_volume_does_not_depend_on_the_sd_backend():
     middleware = ROOT / "firmware/src/middleware/storage"
     for extension in ("c", "h"):
@@ -264,8 +275,11 @@ def test_protocol_backends_implement_one_shared_contract_and_cmake_selects_board
     sdio, spi = cmake.split('if(PF_SDCARD_TRANSPORT STREQUAL "SDIO_PIO")', 1)[1].split("else()", 1)
     assert "src/drivers/sdcard/sdio/sd_backend_sdio.c" in sdio
     assert "src/drivers/sdcard/sdio/sd_board_sdio.c" in sdio
+    assert "src/config/board_sdio.c" in sdio
     spi = spi.split("endif()", 1)[0]
     assert "src/drivers/sdcard/spi/sd_backend_spi.c" in spi
+    assert "src/config/board_spi.c" in spi
+    assert "PF_BOARD_SD_SPI" not in cmake
     assert "src/drivers/sdcard/spi/sd_board_spi.c" in spi
 
 

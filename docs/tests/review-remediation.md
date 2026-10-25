@@ -36,7 +36,7 @@ publication, admission release, and disconnect cleanup. Completion is simulated 
 cancellation; this is not a scheduler or FatFs end-to-end test. Existing file producer loops close opened files
 when a reply returns false; mutation commands retain their own close/sync behavior. Worker completion remains
 queued after execution/cleanup and admission remains held until done is drained. The explicit CLI truncation
-notice and DTR reopen requirement are documented in [CDC CLI](../design/usb/usb-cdc-cli.md#stalled-output).
+notice and DTR reopen requirement are documented in [CDC CLI](../guides/usb-cdc-cli.md#stalled-output).
 
 Finding 2: DeviceMonitor reads under a device-handle lock and publishes under the snapshot lock. Commands,
 handle publication and disposal acquire the device lock first; disposal releases the snapshot lock before I/O.

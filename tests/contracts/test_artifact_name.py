@@ -9,20 +9,28 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.contracts
 
 
-@pytest.mark.parametrize(("platform", "clock", "label"), [
-    ("RP2040", 0, "rp2040_125"),
-    ("RP2350", 0, "rp2350_150"),
-    ("RP2040", 200, "rp2040_200"),
-    ("RP2350", 250, "rp2350_250"),
+def test_saved_clock_is_applied_first_in_main_before_peripheral_initialization():
+    source = (ROOT / "firmware/src/main.c").read_text()
+    body = source.split("int main(void)", 1)[1].lstrip()
+    assert body.startswith("{\n    (void)pf_system_clock_apply();")
+    assert "PICO_RUNTIME_INIT_FUNC_HW" not in source
+    cmake = (ROOT / "firmware/CMakeLists.txt").read_text()
+    assert "pico_enable_stdio_usb(pico_forge 0)" in cmake
+    assert "pico_enable_stdio_uart(pico_forge 0)" in cmake
+
+
+@pytest.mark.parametrize(("platform", "label"), [
+    ("RP2040", "rp2040_125"),
+    ("RP2350", "rp2350_150"),
 ])
 @pytest.mark.parametrize("epoch,date,timezone", [
     ("1792324800", "20261018", "Pacific/Kiritimati"),
     ("1792411200", "20261019", "America/Los_Angeles"),
 ])
-def test_artifact_name_uses_platform_clock_and_utc_date(tmp_path, platform, clock, label, epoch, date, timezone):
+def test_artifact_name_uses_platform_clock_and_utc_date(tmp_path, platform, label, epoch, date, timezone):
     script = tmp_path / "name.cmake"
     script.write_text(
-        f'set(PICO_{platform} 1)\nset(PF_SYS_CLK_MHZ {clock})\n'
+        f'set(PICO_{platform} 1)\n'
         f'include("{ROOT / "firmware/artifact_name.cmake"}")\n'
         'message("NAME=${PF_ARTIFACT_NAME}")\n'
     )

@@ -1,11 +1,25 @@
 # PicoForge Hardware Setup Options
 
 Reference hardware setup for standard Pico/Pico 2 boards and an external SD-card breakout. See the
-[SD-card driver guide](design/sdcard/sdcard-physical-links.md) for SDIO-PIO/SD-SPI wiring, card electrical
+[SD-card driver guide](../design/sdcard/sdcard-physical-links.md) for SDIO-PIO/SD-SPI wiring, card electrical
 requirements, and qualification records. Choose one SD transport at build time. Expansion GPIO examples below
 describe available hardware functions, not implemented application features.
 
 ## Board and Build Selection
+
+Board GPIO assignments use `uint8_t`; `UINT8_MAX` (`255`) means no pin. An absent LED is disabled, an absent UART
+TX/RX direction is passed to the SDK as `-1`, and absent card detect assumes a card is present without reading GPIO.
+All SPI and SDIO bus signals are required: an unassigned bus pin is rejected during initialization. SDK GPIO
+arguments and GPIO bit masks retain their SDK-defined widths.
+
+[config.h](../../firmware/src/config/config.h) keeps the SDK-derived LED selection and UART/LED fallback macros;
+[board.c](../../firmware/src/config/board.c) defines the corresponding assignment objects.
+
+[board_spi.c](../../firmware/src/config/board_spi.c) and [board_sdio.c](../../firmware/src/config/board_sdio.c) define
+the complete SPI and SDIO-PIO assignments. Each groups its bus pins, byte-sized controller index, and card-detect
+GPIO/polarity. CMake compiles only the selected assignment source alongside its matching transport binding;
+there is no separate selector macro, shared SD-board struct, or union. Reusable engines receive bus signals only;
+the SD binding manages card detection.
 
 | Item | Selection |
 | --- | --- |
@@ -13,11 +27,12 @@ describe available hardware functions, not implemented application features.
 | Alternate build target | Raspberry Pi Pico 2 (`PICO_BOARD=pico2`); the firmware build defaults to `pico` |
 | MCU | RP2040 on Pico; RP2350 on Pico 2 |
 | Reference power | USB through the board's USB connector |
-| Optional overclock | Select a supported System clock in the dashboard Configuration section; it applies at reboot. Standard firmware builds use the SDK stock clock. Frequencies above the stock clock are out of spec; the SDK raises the regulator above 150 MHz and 200 MHz. SDIO High-Speed negotiation is limited by SYSCLK/4, 50 MHz and one 25 MHz fallback; see [release configurations](deployment/release.md). |
+| Optional overclock | Select a supported System clock in the dashboard Configuration section; it applies at reboot. Standard firmware builds use the SDK stock clock. Frequencies above the stock clock are out of spec; the SDK raises the regulator above 150 MHz and 200 MHz. SDIO High-Speed negotiation is limited by SYSCLK/4, 50 MHz and one 25 MHz fallback; see [release configurations](../deployment/release.md). |
 
 ## Debug and Monitoring
 
-Serial and SWD do not overlap the [storage pins](design/sdcard/sdcard-physical-links.md#memory-and-storage-connections).
+Serial and SWD do not overlap the
+[storage pins](../design/sdcard/sdcard-physical-links.md#memory-and-storage-connections).
 Share ground with the adapter or probe; ground pins are omitted from the tables.
 
 ### Serial
@@ -49,11 +64,11 @@ Connect probe SWDIO/SWCLK to the matching board pads. Verify their labels on the
 
 ## Memory and Storage Connections
 
-The [SD-card driver guide](design/sdcard/sdcard-physical-links.md) owns:
+The [SD-card driver guide](../design/sdcard/sdcard-physical-links.md) owns:
 
-- [GP2-GP8 pin mapping and electrical requirements](design/sdcard/sdcard-physical-links.md#memory-and-storage-connections).
-- [SD-card breakout wiring and historical qualification](design/sdcard/sdcard-physical-links.md#sd-card-breakout).
-- [SDIO-PIO and SD-SPI transport architecture and lifecycle](design/sdcard/sdcard-physical-links.md#physical-link).
+- [GP2-GP8 pin mapping and electrical requirements](../design/sdcard/sdcard-physical-links.md#memory-and-storage-connections).
+- [SD-card breakout wiring and historical qualification](../design/sdcard/sdcard-physical-links.md#sd-card-breakout).
+- [SDIO-PIO and SD-SPI transport architecture and lifecycle](../design/sdcard/sdcard-physical-links.md#physical-link).
 
 ## User I/O Pin List
 
@@ -114,7 +129,7 @@ Firmware resources that do not use header GPIOs:
 When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/config/board.c` aligned. Select SDIO-PIO or
 SD-SPI with `tools/firmware/build.sh --sdcard-transport SDIO_PIO` or `--sdcard-transport SPI`; CMake links
 the matching protocol, physical engine and board binding. Detected cards are mounted by the worker as described in
-[the mounting policy](design/usb/usb-cdc-cli.md). Validate card I/O on hardware before enabling storage use.
+[the mounting policy](usb-cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

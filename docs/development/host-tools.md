@@ -29,7 +29,7 @@ tools/host/run-webhid.sh
 
 Python and .NET serve the shared dashboard at `http://127.0.0.1:5000/` by default; run only one server on that port at
 a time. WebHID serves the standalone browser app at `http://localhost:8000/`. A browser dashboard requires WebHID
-support and local USB permission. The CDC console is documented in the [CDC CLI guide](../design/usb/usb-cdc-cli.md).
+support and local USB permission. The CDC console is documented in the [CDC CLI guide](../guides/usb-cdc-cli.md).
 
 The Python launcher provisions its environment on first use. To install the package explicitly for development and
 tests:

@@ -1,10 +1,7 @@
 # USB HID Report Reference
 
-This document is the authoritative HID wire contract. For the interface overview and CDC CLI behavior, see the
-[USB documentation index](README.md).
-
-> **Status:** Implemented in firmware and Python, .NET, and WebHID clients. Host-side tests and RP2040/RP2350
-> firmware builds cover the software contract; physical USB qualification remains outstanding.
+This document is the authoritative HID wire contract. For CDC CLI behavior, see the
+[USB CDC CLI guide](../../guides/usb-cdc-cli.md).
 
 ## Report ID Allocation
 
@@ -27,7 +24,7 @@ appended as interface 3, so toggling MSC does not change the HID interface numbe
 `0xCAFE:0x4011`, not a product identity. HID uses vendor usage page `0xFF00`, usage `0x01`, with no boot protocol.
 The USB product string is `PicoForge CDC + HID`; its serial string is the Pico SDK unique board ID.
 
-CDC ACM is the [Embedded CLI console](usb-cdc-cli.md). UART debug logs use the board monitor UART, independently of
+CDC ACM is the [Embedded CLI console](../../guides/usb-cdc-cli.md). UART debug logs use the board monitor UART, independently of
 USB CDC. HID carries no CLI text, file data, or SD block data. MSC is the host-facing block interface while it owns
 the card.
 
@@ -336,7 +333,7 @@ be displayed or logged where the user needs it; do not use it as the device UID 
 Filesystem format values: `0` Unknown, `1` FAT12, `2` FAT16, `3` FAT32, `4` exFAT. This is the last successfully
 mounted filesystem, not live mounted state. It returns to Unknown when mounting/formatting starts, after successful
 unmount, on card removal, when an uninitialized card forces unmount, or when MSC ownership is acquired. A failed
-unmount leaves the cached value unchanged. Use the [CDC CLI](usb-cdc-cli.md) to query live mounted state.
+unmount leaves the cached value unchanged. Use the [CDC CLI](../../guides/usb-cdc-cli.md) to query live mounted state.
 
 ## Report ID 11: Self-Test Status
 

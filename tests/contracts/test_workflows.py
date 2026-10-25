@@ -21,8 +21,7 @@ def test_build_matrices_and_compatible_artifact_checks():
             assert removed not in workflow
         assert re.search(r"^\s+clock:\s*\[", workflow, re.MULTILINE) is None
         assert re.search(r"^\s+port:\s*\[", workflow, re.MULTILINE) is None
-        if name == "release.yml":
-            assert 'PF_SDIO_PIO_HIGH_SPEED: "ON"' in workflow
+        assert "PF_SDIO_PIO_HIGH_SPEED" not in workflow
         assert '--sdcard-transport "${{ matrix.transport }}"' in workflow
         artifact_step = workflow.split("- name: Run project tests", 1)[1]
         assert "if:" not in artifact_step.split("run:", 1)[0]
@@ -110,6 +109,8 @@ def test_host_packages_and_publishers_share_validated_artifacts():
     assert "shutil.unpack_archive(archive, directory)" in dotnet
     assert 'assert b"PicoForge Diagnostics | .NET" in response.read()' in dotnet
     assert 'assert version("picoforge") == os.environ["VERSION"]' in packages
+    assert 'web = files("picoforge").joinpath("web")' in packages
+    assert 'assert b"PicoForge Diagnostics | Python" in response.data' in packages
     for name, artifact, pattern in (
         ("pypi", "release-python", "picoforge-$version-py3-none-any.whl"),
         ("webhid", "release-webhid", "picoforge-webhid-v$version.zip"),

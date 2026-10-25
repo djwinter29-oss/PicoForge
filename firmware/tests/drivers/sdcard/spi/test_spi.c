@@ -40,6 +40,23 @@ void test_spi_pin_allocation_matches_controller_roles(void)
     TEST_ASSERT_FALSE(pf_spi_pins_match_controller(2u, 2u, 3u, 4u));
 }
 
+void test_spi_rejects_unassigned_required_pins_without_touching_hardware(void)
+{
+    const pf_spi_pins_t valid = sd.pins;
+    for (unsigned pin = 0u; pin < 4u; ++pin) {
+        sd.pins = valid;
+        switch (pin) {
+        case 0u: sd.pins.clock_gpio = UINT8_MAX; break;
+        case 1u: sd.pins.mosi_gpio = UINT8_MAX; break;
+        case 2u: sd.pins.miso_gpio = UINT8_MAX; break;
+        default: sd.pins.cs_gpio = UINT8_MAX; break;
+        }
+        TEST_ASSERT_FALSE(pf_spi_config_valid(&sd));
+        TEST_ASSERT_EQUAL(PF_SD_LINK_INVALID_ARGUMENT, pf_spi_init(&sd));
+    }
+    TEST_ASSERT_EQUAL_UINT(0u, serial_fake.init);
+}
+
 void test_spi_devices_share_one_controller_and_restore_device_clock(void)
 {
     TEST_ASSERT_EQUAL(PF_SD_LINK_OK, pf_spi_init(&sd));

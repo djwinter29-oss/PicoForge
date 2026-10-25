@@ -149,5 +149,5 @@ python3 -m pytest tests/contracts/test_tinyusb_dcd_contract.py -q
 These checks validate integration synchronization, not the real controller or an SMP-enabled firmware image.
 
 Application CLI tests compile the pinned Embedded CLI submodule, so initialize
-submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/design/usb/usb-cdc-cli.md#validation)
+submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/guides/usb-cdc-cli.md#validation)
 for the focused command and board-only checks.

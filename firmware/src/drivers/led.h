@@ -5,11 +5,11 @@
 #include <stdint.h>
 
 /** LED GPIO value for boards without a direct GPIO LED. */
-#define PF_LED_GPIO_NONE UINT32_MAX
+#define PF_LED_GPIO_NONE UINT8_MAX
 
 /** Board-supplied LED assignment. */
 typedef struct {
-    uint32_t gpio; /**< LED GPIO, or PF_LED_GPIO_NONE. */
+    uint8_t gpio; /**< LED GPIO, or PF_LED_GPIO_NONE (255). */
     bool active_high; /**< LED drive polarity. */
 } pf_led_board_t;
 
