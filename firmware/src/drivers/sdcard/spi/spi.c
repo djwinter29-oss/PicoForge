@@ -5,17 +5,17 @@
 
 /** One SDK controller's shared wiring and currently selected device. */
 typedef struct {
-    uint32_t clock_gpio;         /**< Wiring retained while references exist. */
-    uint32_t mosi_gpio;          /**< Shared output pin. */
-    uint32_t miso_gpio;          /**< Shared input pin. */
+    uint8_t clock_gpio;         /**< Wiring retained while references exist. */
+    uint8_t mosi_gpio;          /**< Shared output pin. */
+    uint8_t miso_gpio;          /**< Shared input pin. */
     size_t references;          /**< Initialized device contexts. */
     pf_spi_t *selected;  /**< Active CS owner, or NULL between transactions. */
 } controller_t;
 
 static controller_t controllers[2];
 
-bool pf_spi_pins_match_controller(uint32_t spi_index, uint32_t clock_gpio,
-                                  uint32_t mosi_gpio, uint32_t miso_gpio)
+bool pf_spi_pins_match_controller(uint32_t spi_index, uint8_t clock_gpio,
+                                  uint8_t mosi_gpio, uint8_t miso_gpio)
 {
     return spi_index <= 1u && clock_gpio % 4u == 2u && mosi_gpio % 4u == 3u &&
            miso_gpio % 4u == 0u && (clock_gpio / 8u) % 2u == spi_index &&
@@ -28,7 +28,7 @@ bool pf_spi_config_valid(const pf_spi_t *context)
         context->clock_hz == 0u) {
         return false;
     }
-    uint32_t pins[] = {
+    const uint8_t pins[] = {
         context->pins.clock_gpio,
         context->pins.mosi_gpio,
         context->pins.miso_gpio,

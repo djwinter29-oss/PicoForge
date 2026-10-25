@@ -7,6 +7,17 @@ describe available hardware functions, not implemented application features.
 
 ## Board and Build Selection
 
+Board GPIO assignments use `uint8_t`; `UINT8_MAX` (`255`) means no pin. An absent LED is disabled, an absent UART
+TX/RX direction is passed to the SDK as `-1`, and absent card detect assumes a card is present without reading GPIO.
+All SPI and SDIO bus signals are required: an unassigned bus pin is rejected during initialization. SDK GPIO
+arguments and GPIO bit masks retain their SDK-defined widths.
+
+[board.c](../../firmware/src/config/board.c) defines only the selected transport's complete assignment:
+`pf_spi_board_pins_t` for SPI or `pf_sdio_pio_board_pins_t` for SDIO-PIO. Each groups its bus pins, byte-sized controller
+index, and card-detect GPIO/polarity. CMake sets the board-only `PF_BOARD_SD_SPI` definition and links the matching
+transport binding; there is no shared SD-board struct or union. Reusable engines receive bus signals only;
+the SD binding manages card detection.
+
 | Item | Selection |
 | --- | --- |
 | Reference board | Raspberry Pi Pico, standard 40-pin header |

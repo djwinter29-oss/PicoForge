@@ -16,6 +16,8 @@ static unsigned program_calls;
 static unsigned safe_calls;
 static bool skip_program;
 static bool fail_after_program;
+static bool fail_before_task;
+static size_t program_limit;
 static TickType_t tick_count;
 static TickType_t delay_ticks;
 static BaseType_t scheduler_state;
@@ -50,7 +52,7 @@ void flash_range_program(uint32_t offset, const uint8_t *data, size_t count)
 {
     ++program_calls;
     if (!skip_program) {
-        memcpy(pf_test_flash + offset, data, count);
+        memcpy(pf_test_flash + offset, data, count < program_limit ? count : program_limit);
     }
 }
 
@@ -58,6 +60,9 @@ int flash_safe_execute(void (*func)(void *), void *param, uint32_t timeout_ms)
 {
     (void)timeout_ms;
     ++safe_calls;
+    if (fail_before_task) {
+        return pf_test_safe_execute_result;
+    }
     task_count = task_count_after_lockout + 1u;
     if (pf_test_safe_execute_result == PICO_OK || fail_after_program) {
         func(param);
@@ -114,6 +119,8 @@ void setUp(void)
     safe_calls = 0u;
     skip_program = false;
     fail_after_program = false;
+    fail_before_task = false;
+    program_limit = FLASH_PAGE_SIZE;
     tick_count = 0u;
     delay_ticks = 1u;
     pf_test_safe_execute_result = PICO_OK;
@@ -276,8 +283,57 @@ void test_unsafe_flash_state_fails_without_writing_and_write_can_retry(void)
     pf_test_safe_execute_result = -1;
     TEST_ASSERT_FALSE(pf_boot_config_save());
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_erase_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, program_calls);
+    TEST_ASSERT_EQUAL_UINT(3u, reclaim_polls);
+    TEST_ASSERT_FALSE(lockout_pending);
     pf_test_safe_execute_result = PICO_OK;
     TEST_ASSERT_TRUE(pf_boot_config_save());
+    TEST_ASSERT_EQUAL_UINT(2u, safe_calls);
+}
+
+void test_failure_before_task_creation_needs_no_reclamation_and_can_retry(void)
+{
+    store(PF_SYSCLK_150MHZ, PF_STORAGE_SPEED_HIGH);
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ));
+    fail_before_task = true;
+    pf_test_safe_execute_result = -1;
+    TEST_ASSERT_FALSE(pf_boot_config_save());
+    TEST_ASSERT_EQUAL_UINT(0u, pf_test_erase_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, program_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, reclaim_polls);
+    TEST_ASSERT_FALSE(lockout_pending);
+    TEST_ASSERT_EQUAL_UINT8(PF_SYSCLK_150MHZ, stored_bytes()[8]);
+    fail_before_task = false;
+    pf_test_safe_execute_result = PICO_OK;
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    TEST_ASSERT_EQUAL_UINT(2u, safe_calls);
+    reboot();
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, pf_boot_config_sysclk());
+}
+
+void test_partial_program_defaults_after_reboot_and_successful_save_recovers(void)
+{
+    for (size_t bytes = 1u; bytes < sizeof(record_t); ++bytes) {
+        store(PF_SYSCLK_150MHZ, PF_STORAGE_SPEED_DEFAULT);
+        reboot();
+        scheduler_state = taskSCHEDULER_RUNNING;
+        TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ));
+        TEST_ASSERT_TRUE(pf_boot_config_set_storage_speed(PF_STORAGE_SPEED_HIGH));
+        program_limit = bytes;
+        TEST_ASSERT_FALSE(pf_boot_config_save());
+        reboot();
+        TEST_ASSERT_EQUAL(PF_SYSCLK_DEFAULT, pf_boot_config_sysclk());
+        TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, pf_boot_config_storage_speed());
+        scheduler_state = taskSCHEDULER_RUNNING;
+        program_limit = FLASH_PAGE_SIZE;
+        TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ));
+        TEST_ASSERT_TRUE(pf_boot_config_set_storage_speed(PF_STORAGE_SPEED_HIGH));
+        TEST_ASSERT_TRUE(pf_boot_config_save());
+        reboot();
+        TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, pf_boot_config_sysclk());
+        TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_HIGH, pf_boot_config_storage_speed());
+    }
 }
 
 void test_failed_program_is_reported_via_readback(void)

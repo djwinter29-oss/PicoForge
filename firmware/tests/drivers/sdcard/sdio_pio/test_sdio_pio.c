@@ -73,6 +73,23 @@ void setUp(void)
 
 void tearDown(void) {}
 
+void test_sdio_rejects_unassigned_required_pins_before_allocating_programs(void)
+{
+    for (unsigned pin = 0u; pin < 6u; ++pin) {
+        pf_sdio_pio_t host = {0};
+        pf_sdio_pio_config_t config = pins();
+        if (pin == 0u) {
+            config.pins.clock_gpio = UINT8_MAX;
+        } else if (pin == 1u) {
+            config.pins.command_gpio = UINT8_MAX;
+        } else {
+            config.pins.data_gpio[pin - 2u] = UINT8_MAX;
+        }
+        TEST_ASSERT_FALSE(pf_sdio_pio_init(&host, &config));
+    }
+    TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_add_calls);
+}
+
 void test_clock_reconfiguration_allocation_failure_requires_restoration_without_rolling_back_divider(void)
 {
     pf_sdio_pio_t host = {0};

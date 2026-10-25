@@ -50,12 +50,6 @@ static pf_hid_control_result_t control_result = {
 static bool self_test_result_pending;
 static pf_hid_control_request_t pending_self_test_request;
 
-static uint8_t gpio_value(uint32_t gpio)
-{
-    return (gpio > UINT8_MAX - 1u)
-        ? UINT8_MAX : (uint8_t)gpio;
-}
-
 static bool trailing_arguments_zero(const uint8_t *arguments, size_t first)
 {
     for (size_t index = first; index < 5u; ++index) {
@@ -157,8 +151,8 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     report->stored_sdcard_profile = (uint8_t)pf_boot_config_storage_speed();
     report->monitor_uart_index = pf_monitor_uart_board.uart_index <= 1u
         ? (uint8_t)pf_monitor_uart_board.uart_index : UINT8_MAX;
-    report->monitor_uart_tx_gpio = gpio_value(pf_monitor_uart_board.tx_gpio);
-    report->monitor_uart_rx_gpio = gpio_value(pf_monitor_uart_board.rx_gpio);
+    report->monitor_uart_tx_gpio = pf_monitor_uart_board.tx_gpio;
+    report->monitor_uart_rx_gpio = pf_monitor_uart_board.rx_gpio;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
     memcpy(report->storage_gpios, storage.bus_gpios, sizeof(report->storage_gpios));
@@ -166,7 +160,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     report->card_detect_gpio = storage.detect_gpio;
     if (pf_led_board.gpio != PF_LED_GPIO_NONE) {
         report->board_flags |= PF_HID_BOARD_FLAG_LED;
-        report->led_gpio = gpio_value(pf_led_board.gpio);
+        report->led_gpio = pf_led_board.gpio;
     } else {
         report->led_gpio = UINT8_MAX;
     }

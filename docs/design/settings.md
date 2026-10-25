@@ -136,8 +136,32 @@ combination has been qualified. None of these runtime clock profiles is hardware
 
 ## Tests
 
-Host tests (`firmware/tests/drivers`, `test_sd_native_init.c`) run with `ceedling test:all`; they cover defaults, the
-CRC-32 check value, every-bit CRC coverage, each corruption class, the flash store against a host flash model (round
-trip, no redundant erase, failed program, rejected ISR/scheduler contexts, re-entrant and overlapping load/save through
-a modelled mutex, lockout-TCB reclamation) and the clock sequence against modelled clock/regulator APIs.
+Host tests run with `ceedling test:all`; the focused boot-config check is `ceedling test:test_boot_config`.
+They cover defaults, the CRC-32 check value, malformed metadata and profiles, round trips, unchanged-save detection,
+failed and partially completed programming, rejected ISR/scheduler contexts, reentrant saves, safe loading retries,
+and lockout-TCB reclamation including elapsed-tick wraparound. The SDK fake distinguishes failure before task
+creation, failure after task creation but before programming, and failure after programming during safe-zone exit.
+Partial-program tests interrupt the record at every byte boundary, check complete defaults after reboot, then verify
+recovery through a successful save. Separate system-clock tests exercise modelled clock/regulator APIs.
 Real flash erase/program, power loss, clock changes and the bus speeds on hardware are not tested here and need a board.
+
+### Board qualification (pending)
+
+This procedure has not been executed as part of the host checks. Run it on both RP2040 and RP2350 boards before
+claiming hardware qualification; use only clock profiles already qualified for the exact board.
+
+1. Record the firmware commit, SDK/FreeRTOS revisions, board/MCU/flash model, transport, build clock, selected profiles,
+   and host OS. Use expendable media and disable MSC and storage work before saves.
+2. In a temporary diagnostic build, count erase/program callback entries and observe task counts and reclamation
+   timeouts without printing inside the flash callback. Keep this module the sole safe-execute caller and keep the
+   application task population fixed.
+3. From the USB task, alternate two distinct settings for 100 saves without rebooting between saves. Verify each
+   result, no stuck reclamation state, and the task count returning to its baseline. Repeat with normal CDC/HID
+   traffic active (MSC still disabled), then reboot and verify the final profiles. Use a diagnostic caller for the
+   no-reboot loop: the normal successful HID save command intentionally requests reboot.
+4. Save identical settings 100 times. Verify every call succeeds without increasing the erase/program counters.
+5. With SD writes stopped, interrupt board power at varied points during 20 changing-setting saves. Prevent USB or
+   probe back-powering. After each restart, verify boot succeeds and settings are either a valid old/new complete
+   record or complete defaults, never an invalid mixed record. Save again to confirm recovery.
+6. Record actual counts, timings, USB disconnects/timeouts, reboot results, and any failures. Mark unexecuted or
+   interrupted steps pending; host-model passes are not substitutes for these results.

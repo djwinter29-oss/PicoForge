@@ -2,7 +2,7 @@
 
 #include "hardware/gpio.h"
 
-static uint32_t led_gpio;
+static uint8_t led_gpio;
 static bool led_active_high;
 static bool led_available;
 static bool led_on;

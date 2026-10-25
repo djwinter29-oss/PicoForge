@@ -15,7 +15,9 @@ static bool sd_board_bound; /**< Transport context and card-detect GPIO have bee
 static bool card_present(const void *context)
 {
     (void)context;
-    return (gpio_get(pf_sd_board.card_detect_gpio) != 0u) == pf_sd_board.card_detect_active_high;
+    bool active_high;
+    const uint8_t gpio = pf_sd_board_transport_detect(&active_high);
+    return gpio == UINT8_MAX || (gpio_get(gpio) != 0u) == active_high;
 }
 
 bool pf_sd_board_config(pf_sd_config_t *config)
@@ -31,8 +33,12 @@ bool pf_sd_board_config(pf_sd_config_t *config)
     };
     config->native_default_speed_only = config->transport.mode == PF_SD_LINK_NATIVE_SD && speed_hz <= 25000000u;
     if (!sd_board_bound) {
-        gpio_init(pf_sd_board.card_detect_gpio);
-        gpio_disable_pulls(pf_sd_board.card_detect_gpio);
+        bool active_high;
+        const uint8_t gpio = pf_sd_board_transport_detect(&active_high);
+        if (gpio != UINT8_MAX) {
+            gpio_init(gpio);
+            gpio_disable_pulls(gpio);
+        }
         sd_board_bound = true;
     }
     config->transport.present = card_present;
@@ -42,6 +48,7 @@ bool pf_sd_board_config(pf_sd_config_t *config)
 pf_sd_link_mode_t pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio)
 {
     memset(bus_gpios, UINT8_MAX, 6u);
-    *detect_gpio = pf_sd_board_pin_byte(pf_sd_board.card_detect_gpio);
+    bool active_high;
+    *detect_gpio = pf_sd_board_transport_detect(&active_high);
     return pf_sd_board_transport_pins(bus_gpios);
 }

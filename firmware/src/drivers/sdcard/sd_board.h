@@ -6,15 +6,6 @@
 
 #include "sd.h"
 
-/** @brief Board-supplied SD-card assignment shared by both transports. */
-typedef struct {
-    uint32_t card_detect_gpio; /**< Card-detect GPIO. */
-    bool card_detect_active_high; /**< Card-detect polarity. */
-} pf_sd_board_t;
-
-/** Board assignment, defined in config/board.c. */
-extern const pf_sd_board_t pf_sd_board;
-
 /**
  * @brief Build the SD configuration from the board assignments and the active boot config.
  *
@@ -26,7 +17,7 @@ extern const pf_sd_board_t pf_sd_board;
 bool pf_sd_board_config(pf_sd_config_t *config);
 
 /**
- * @brief Report the build-selected bus and its board pins for status; GPIOs above 254 read as UINT8_MAX.
+ * @brief Report the build-selected bus and its board pins for status; UINT8_MAX means no assignment.
  * @param bus_gpios Receives SDIO CLK, CMD, D0-D3 or SPI SCK, MOSI, MISO, CS; unused entries are UINT8_MAX.
  * @param detect_gpio Receives the card-detect GPIO.
  * @return PF_SD_LINK_NATIVE_SD for SDIO-PIO or PF_SD_LINK_SPI for SD-SPI.

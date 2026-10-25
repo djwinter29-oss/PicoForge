@@ -318,6 +318,9 @@ target_link_libraries(pf_boot_config PRIVATE
 target_link_libraries(pf_app_storage PUBLIC pf_logging)
 
 # The board config is compiled into the image so its extern assignments always resolve for every driver library.
+set_property(SOURCE src/config/board.c APPEND PROPERTY COMPILE_DEFINITIONS
+    "PF_BOARD_SD_SPI=$<STREQUAL:${PF_SDCARD_TRANSPORT},SPI>"
+)
 add_executable(pico_forge
     src/main.c
     src/config/board.c

@@ -5,9 +5,9 @@
 
 /** Board-supplied monitor UART assignment. */
 typedef struct {
-    uint32_t uart_index; /**< Hardware UART index: 0 or 1. */
-    uint32_t tx_gpio; /**< TX GPIO number. */
-    uint32_t rx_gpio; /**< RX GPIO number. */
+    uint8_t uart_index; /**< Hardware UART index: 0 or 1. */
+    uint8_t tx_gpio; /**< TX GPIO number, or UINT8_MAX for none. */
+    uint8_t rx_gpio; /**< RX GPIO number, or UINT8_MAX for none. */
     uint32_t baud_rate; /**< Line rate in baud. */
 } pf_monitor_uart_board_t;
 

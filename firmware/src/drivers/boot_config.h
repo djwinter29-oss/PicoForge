@@ -2,6 +2,9 @@
  * @file boot_config.h
  * @brief Boot settings loaded before scheduling, then owned by the USB task.
  *
+ * Both profile getters and their MHz wrappers share first-use loading: normally the boot clock hook loads flash
+ * before scheduling; a running task can also load it. Unsafe first calls return defaults and leave loading pending.
+ *
  * This API is not thread-safe. After boot, mutations and saves must be serialized in the USB task.
  * This module must be the only flash_safe_execute() caller; tasks must not be created or deleted during a save
  * or while lockout reclamation remains pending, because reclamation is detected through the task count.
@@ -48,9 +51,6 @@ static inline uint8_t pf_storage_speed_mhz(pf_storage_speed_t speed)
 
 /**
  * @brief Return the configured system clock profile.
- *
- * Normally first loaded by the boot clock hook before scheduling; a running task may also load it.
- * Unsafe first calls return defaults without consuming the loading attempt.
  */
 pf_sysclk_profile_t pf_boot_config_sysclk(void);
 
