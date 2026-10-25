@@ -1,8 +1,8 @@
 # Static SD Review Follow-up
 
-Date: 2026-10-15. Migrated unchanged from [SD-card driver design](../../sdcard-design.md). This is a source-review
+Date: 2026-10-15. Migrated unchanged from [SD-card driver design](../../design/sdcard/sdcard-driver-design.md). This is a source-review
 record; no hardware measurement was made. Current behavior is summarized in the design's
-[MSC reset sense](../../sdcard-design.md#msc-batching-and-validation-boundary) paragraph.
+[MSC reset sense](../../design/sdcard/sdcard-driver-design.md#msc-batching-and-validation-boundary) paragraph.
 
 Application READ10/WRITE10 cached sense is now invalidated after TinyUSB handles
 an accepted BOT reset at SETUP, and after its MSC driver bus-reset processing.

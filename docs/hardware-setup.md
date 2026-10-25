@@ -1,7 +1,7 @@
 # PicoForge Hardware Setup Options
 
 Reference hardware setup for standard Pico/Pico 2 boards and an external SD-card breakout. See the
-[storage transport guide](../firmware/src/drivers/storage/README.md) for SDIO-PIO/SD-SPI wiring, card electrical
+[SD-card driver guide](design/sdcard/sdcard-physical-links.md) for SDIO-PIO/SD-SPI wiring, card electrical
 requirements, and qualification records. Choose one SD transport at build time. Expansion GPIO examples below
 describe available hardware functions, not implemented application features.
 
@@ -13,11 +13,11 @@ describe available hardware functions, not implemented application features.
 | Alternate build target | Raspberry Pi Pico 2 (`PICO_BOARD=pico2`); the firmware build defaults to `pico` |
 | MCU | RP2040 on Pico; RP2350 on Pico 2 |
 | Reference power | USB through the board's USB connector |
-| Optional overclock | Select a supported System clock in the dashboard Configuration section; it applies at reboot. Standard firmware builds use the SDK stock clock. Frequencies above the stock clock are out of spec; the SDK raises the regulator above 150 MHz and 200 MHz. SDIO High-Speed negotiation is limited by SYSCLK/4, 50 MHz and one 25 MHz fallback; see [release configurations](release.md). |
+| Optional overclock | Select a supported System clock in the dashboard Configuration section; it applies at reboot. Standard firmware builds use the SDK stock clock. Frequencies above the stock clock are out of spec; the SDK raises the regulator above 150 MHz and 200 MHz. SDIO High-Speed negotiation is limited by SYSCLK/4, 50 MHz and one 25 MHz fallback; see [release configurations](deployment/release.md). |
 
 ## Debug and Monitoring
 
-Serial and SWD do not overlap the [storage pins](../firmware/src/drivers/storage/README.md#memory-and-storage-connections).
+Serial and SWD do not overlap the [storage pins](design/sdcard/sdcard-physical-links.md#memory-and-storage-connections).
 Share ground with the adapter or probe; ground pins are omitted from the tables.
 
 ### Serial
@@ -27,7 +27,16 @@ Share ground with the adapter or probe; ground pins are omitted from the tables.
 | GP0 | 1 | TX |
 | GP1 | 2 | RX |
 
-Connect MCU TX to adapter RX and MCU RX to adapter TX, and connect GND. Board support initializes the monitor UART from the selected topology; the Pico/Pico 2 profiles assign UART0 to GP0/GP1 at 115200 baud, 8-N-1. UART logging has been verified on a Pico through the Raspberry Pi Debug Probe. The firmware emits boot messages and a heartbeat each second, including uptime and system clock. On Linux the probe's UART bridge appears as a serial device (for example `/dev/ttyACM0`; device numbering can vary), while PicoForge USB CDC is a separate port (for example `/dev/ttyACM1`). Open the probe UART at 115200 baud, for example with `screen /dev/ttyACM0 115200`. Reset the Pico after opening the terminal to see boot messages. No command console or RTS/CTS flow control is implemented; text sent to UART RX is not processed. Use 3.3 V logic, never RS-232 levels. USB CDC remains a separate interface.
+Connect MCU TX to adapter RX and MCU RX to adapter TX, and connect GND. Board support uses the selected Pico SDK board's
+default UART mapping; Pico, Pico 2, and Pico 2 W assign UART0 to GP0/GP1 at 115200 baud, 8-N-1. This keeps the monitor
+wiring aligned with the [PicoUart board setup](https://github.com/djwinter29-oss/PicoUart/blob/main/docs/hardware-setup.md);
+PicoForge uses the UART only for independent debug logging. UART logging has been verified on a Pico through the
+Raspberry Pi Debug Probe. The firmware emits boot messages and a heartbeat each second, including uptime and system
+clock. On Linux the probe's UART bridge appears as a serial device (for example `/dev/ttyACM0`; device numbering can
+vary), while PicoForge USB CDC is a separate port (for example `/dev/ttyACM1`). Open the probe UART at 115200 baud,
+for example with `screen /dev/ttyACM0 115200`. Reset the Pico after opening the terminal to see boot messages. No
+command console or RTS/CTS flow control is implemented; text sent to UART RX is not processed. Use 3.3 V logic, never
+RS-232 levels. USB CDC remains a separate interface.
 
 ### SWD
 
@@ -40,11 +49,11 @@ Connect probe SWDIO/SWCLK to the matching board pads. Verify their labels on the
 
 ## Memory and Storage Connections
 
-The [storage transport guide](../firmware/src/drivers/storage/README.md) owns:
+The [SD-card driver guide](design/sdcard/sdcard-physical-links.md) owns:
 
-- [GP2-GP8 pin mapping and electrical requirements](../firmware/src/drivers/storage/README.md#memory-and-storage-connections).
-- [SD-card breakout wiring and historical qualification](../firmware/src/drivers/storage/README.md#sd-card-breakout).
-- [SDIO-PIO and SD-SPI transport architecture and lifecycle](../firmware/src/drivers/storage/README.md#physical-storage-bus).
+- [GP2-GP8 pin mapping and electrical requirements](design/sdcard/sdcard-physical-links.md#memory-and-storage-connections).
+- [SD-card breakout wiring and historical qualification](design/sdcard/sdcard-physical-links.md#sd-card-breakout).
+- [SDIO-PIO and SD-SPI transport architecture and lifecycle](design/sdcard/sdcard-physical-links.md#physical-link).
 
 ## User I/O Pin List
 
@@ -102,10 +111,10 @@ Firmware resources that do not use header GPIOs:
 | System telemetry | SDK MCU identity, system clock, and uptime | No | Exposed through HID; does not reserve GPIOs. |
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
-When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/board/` aligned. Select SDIO-PIO or
-SD-SPI with `tools/firmware/build.sh --sd-card-transport SDIO_PIO` or `--sd-card-transport SPI`; CMake supplies
-the transport selection used by `firmware/src/config/config.h`. Detected cards are mounted by the worker as described in
-[the mounting policy](cdc-cli.md). Validate card I/O on hardware before enabling storage use.
+When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/config/board.c` aligned. Select SDIO-PIO or
+SD-SPI with `tools/firmware/build.sh --sdcard-transport SDIO_PIO` or `--sdcard-transport SPI`; CMake links
+the matching protocol, physical engine and board binding. Detected cards are mounted by the worker as described in
+[the mounting policy](design/usb/usb-cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 
 ## Electrical and Power Baseline
 

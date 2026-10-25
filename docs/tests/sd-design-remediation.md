@@ -47,8 +47,8 @@ Use the same identified board/card/host, firmware source plus diff hash,
 SDK/toolchain, clock, voltage, wiring, filesystem layout, endpoint staging and
 CMD25 policy for all four cells. Record those values and ELF/UF2 hashes. Change
 only `PF_SDIO_PIO_FUSED_COPY={OFF,ON}` and
-`PF_SD_CARD_INTERRUPT_WAIT={OFF,ON}` in four separate build directories, with
-`PF_SD_CARD_TRANSPORT=SDIO_PIO` and `PF_SD_CARD_PORT=FREERTOS`.
+`PF_SDCARD_INTERRUPT_WAIT={OFF,ON}` in four separate build directories, with
+`PF_SDCARD_TRANSPORT=SDIO_PIO` and `PF_SDCARD_PORT=FREERTOS`.
 Do not select performance defaults from host builds.
 
 After authorization, use an expendable card and explicitly approved test region
@@ -57,7 +57,7 @@ Run at least five repeats per cell, alternating/reversing cell order, and retain
 all failures. Separately measure raw reads/writes, normal file and preallocated
 file reads/writes, and host MSC traffic. Existing self-test is a normal-file
 benchmark; preallocation/raw measurements need an approved harness. Use existing
-`sd profile`, `sd diagnostics` and self-test results as baseline observables;
+`storage status` and self-test results as baseline observables (driver phase profiling was removed);
 callback/lock timing, CPU and stack high-water still need a qualified target
 capture interface. Report throughput mean/spread, p95/p99/max callback and sync
 latencies, lock waits, HID/CDC service gaps, CPU and USB/worker stack minimum
@@ -113,7 +113,7 @@ Actual local verification by Codex (coordinator rerun still independent):
   `validation-pico-SPI`. Verbose logs showed respectively 552/546/558 compile
   commands and fresh ELF links. SDIO compiled native/native_host; SPI targets
   compiled sd_spi; all compiled current sd_protocol and storage commands and
-  consumed sd_block.h. Cache SHA-256 values matched before/after exactly.
+  consumed sd.h. Cache SHA-256 values matched before/after exactly.
 - `git diff --check` and staged diff checks passed; index remained empty.
   All commands ran from repository root. No dependencies installed, vendored
   sources changed, commit/push/PR, flashing, physical-media access or benchmark

@@ -1,12 +1,20 @@
 # PicoForge
 
 [![PR Check](https://github.com/djwinter29-oss/PicoForge/actions/workflows/pr-check.yml/badge.svg?branch=main)](https://github.com/djwinter29-oss/PicoForge/actions/workflows/pr-check.yml)
+[![Release](https://github.com/djwinter29-oss/PicoForge/actions/workflows/release.yml/badge.svg)](https://github.com/djwinter29-oss/PicoForge/actions/workflows/release.yml)
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
 ![Targets: RP2040 and RP2350](https://img.shields.io/badge/Targets-RP2040%20%7C%20RP2350-2674b8)
 
 PicoForge is firmware for Raspberry Pi Pico and Pico 2 boards. Connect a board
 over USB to monitor its status, control its LED, and work with files on an
 attached SD card using a dashboard or serial console.
+
+[Firmware and host downloads](https://github.com/djwinter29-oss/PicoForge/releases/latest) ·
+[WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) ·
+[Python package](https://pypi.org/project/picoforge/)
+
+Publication endpoints require the initial [release setup](docs/deployment/release.md#publishing-setup);
+links may be unavailable until the first successful publication.
 
 **Status:** under active development. Back up important card data before use.
 High-speed SD-card operation depends on the board, card, and wiring; a short
@@ -39,22 +47,26 @@ SD-card breakout. Use 3.3 V logic and a common ground, never 5 V.
 
 ### 1. Build the Firmware
 
+Prebuilt board/transport packages are available from
+[Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest); extract the matching UF2 to skip the build.
+To build from source:
+
 Clone the repository, then run these commands from its root:
 
 ```sh
 git submodule update --init --recursive
 tools/firmware/build.sh --board pico2
 ```
-tools/firmware/build.sh --board pico2 --sd-card-transport SDIO_PIO
+tools/firmware/build.sh --board pico2 --sdcard-transport SDIO_PIO
 For the original Pico, use `--board pico` instead. The build uses the Pico SDK
 included with the project.
-Choose `--board pico` or `pico2`, and `--sd-card-transport SPI` or `SDIO_PIO`.
+Choose `--board pico` or `pico2`, and `--sdcard-transport SPI` or `SDIO_PIO`.
 The four board/transport combinations build as FreeRTOS applications using the
 Pico SDK included with the project. Each combination has its own directory:
 `build/firmware-<board>-<transport>`.
 `pico_forge_rp2350_250_20261018.uf2`. The date is UTC at CMake configuration time; the build script reconfigures
 on each run. Reconfigure an existing directory before a new day's direct `cmake --build` to refresh its date.
-Release packages and tag validation are documented in the [release guide](docs/release.md).
+Release packages and tag validation are documented in the [release guide](docs/deployment/release.md).
 
 Standard builds use the SDK stock clock: 125 MHz for RP2040 and 150 MHz for RP2350. Use the dashboard's
 System clock setting to select a supported runtime clock; changes take effect after reboot.
@@ -73,6 +85,25 @@ For a Pico build, use `pico_forge_rp2040_125_<YYYYMMDD>.uf2` from `build/firmwar
 Always use the image built for your board.
 
 ### 3. Open the Dashboard
+
+Use the hosted [WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge,
+click **Connect**, and choose your board. No Python or .NET installation is needed.
+
+For the local Python dashboard, install [picoforge](https://pypi.org/project/picoforge/) in a Python 3.10+
+virtual environment:
+
+```sh
+python -m pip install picoforge
+picoforge web
+```
+
+Alternatively, download a self-contained .NET host for Windows x64, Linux x64, or macOS ARM64 from
+[Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest). Extract the entire archive and run
+`PicoForge.exe` on Windows or `./PicoForge` on Linux/macOS. It does not require the .NET SDK or runtime;
+native HID dependencies and platform permission requirements still apply. See the
+[release guide](docs/deployment/release.md#using-downloads).
+
+From a source checkout:
 
 ```sh
 tools/host/run-python.sh
@@ -102,7 +133,7 @@ Then reconnect the board and restart the dashboard.
 
 The direct browser dashboard requires a WebHID-capable browser and permission
 to access the device. For the serial console, choose the PicoForge USB port,
-not a Debug Probe's UART port. See the [console guide](docs/cdc-cli.md) for
+not a Debug Probe's UART port. See the [console guide](docs/design/usb/usb-cdc-cli.md) for
 terminal settings and available commands.
 
 ## Using an SD Card
@@ -113,10 +144,9 @@ filesystem automatically. It does not format the card.
 Useful console commands:
 
 ```text
-sd status
+storage status
 fs ls /
 fs cat /example.txt
-sd diagnostics
 ```
 
 To use the card as a USB drive:
@@ -130,31 +160,32 @@ To use the card as a USB drive:
 The computer and firmware cannot access the card's files at the same time.
 Do not unplug or remove the card during writes.
 
-The dashboard's [SD-card self-test](docs/sd-self-test.md) writes and verifies a
-temporary `/PFTEST.BIN` file and **replaces any existing file at that path**.
-Selecting Start authorizes those writes. Back up your data first; this is not a filesystem repair or a
-guarantee of card reliability.
+The dashboard's SD-card self-test writes and verifies a temporary `/PFTEST.BIN` file. It refuses to start if a file
+already exists at that path and does not replace it. Selecting Start authorizes writes to the card and contributes to
+card wear. Back up your data first; this is not a filesystem repair or a guarantee of card reliability.
 
 ## Help and Documentation
 
 **Set up and use**
 
 - [Hardware setup](docs/hardware-setup.md): wiring, supported connections, and board notes.
-- [Console guide](docs/cdc-cli.md): file commands, mounting, and recovery.
-- [SD-card self-test](docs/sd-self-test.md): running tests and understanding results.
+- [Console guide](docs/design/usb/usb-cdc-cli.md): file commands, mounting, and recovery.
+- [SD-card performance test](docs/design/sdcard/sdcard-performance-test.md): running tests and understanding results.
 
-**Design reference** (current implementation)
+**Design and implementation reference**
 
-- [Persistent settings](docs/settings.md): flash settings record, reserved sector, and API.
-- [Architecture](docs/architecture.md): application layers, runtime, and storage ownership.
-- [SD-card design](docs/sdcard-design.md): driver interfaces, initialization, and transfer policy.
-- [Physical transports](firmware/src/drivers/storage/README.md): SDIO-PIO, SD-SPI, and card wiring.
-- [USB protocol](docs/usb-protocol.md): HID reports, commands, and host compatibility.
+- [Persistent settings](docs/design/settings.md): flash settings record, reserved sector, and API.
+- [Architecture](docs/design/architecture.md): application layers, runtime, and storage ownership.
+- [SD-card documentation](docs/design/sdcard/README.md): driver design and performance-test references.
+- [SD-card driver and physical links](docs/design/sdcard/sdcard-physical-links.md): SDIO-PIO, SD-SPI, and card wiring.
+- [USB documentation](docs/design/usb/README.md): interface overview, CDC CLI, and HID protocol references.
 
 **Validation and history**
 
 - [Test records](docs/tests/records/README.md): dated measurements and reviews; not current-firmware qualification.
 - [SD remediation matrix](docs/tests/sd-design-remediation.md): current review dispositions.
+- [Firmware development and testing](docs/development/firmware-testing.md): firmware builds, test layers, and hardware limits.
+- [Host tools development](docs/development/host-tools.md): dashboard setup, host tests, and shared frontend boundaries.
 
 **Project**
 

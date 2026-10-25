@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using System.Text.Json.Serialization;
 
 namespace PicoForge;
 
@@ -6,8 +7,9 @@ internal static class StatusEndpoints
 {
     public sealed record SetLedRequest(bool? On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
-    /// <summary>Requested persistent system clock and storage bus ceilings.</summary>
-    public sealed record SetSettingsRequest(int? SystemClockMhz, int? SdioBusMhz, int? SpiBusMhz);
+    /// <summary>Requested persistent next-boot system clock and transport-neutral SD-card profile.</summary>
+    public sealed record SetSettingsRequest(int? SystemClockMhz,
+        [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile);
     /// <summary>Settings values confirmed by the device after saving.</summary>
     public sealed record SetSettingsResponse(BootSettingsResponse Settings);
     public sealed record SetMscRequest(bool? Enabled);
@@ -19,6 +21,8 @@ internal static class StatusEndpoints
     public sealed record SetSelfTestRequest(string Action, uint SizeMib = 32);
     /// <summary>Command delivery acknowledgement; completion comes from HID telemetry.</summary>
     public sealed record SelfTestAcceptedResponse(bool Accepted);
+    /// <summary>Explicit acknowledgement that the device will reboot and disconnect.</summary>
+    public sealed record RebootRequest(bool Confirm);
 
     public static IEndpointRouteBuilder MapDeviceStatus(this IEndpointRouteBuilder endpoints)
     {
@@ -43,8 +47,15 @@ internal static class StatusEndpoints
         endpoints.MapPost("/api/settings", SetSettings)
             .WithName("SetBootSettings")
             .WithSummary("Save persistent boot settings")
-            .WithDescription("Saves supported clock and bus values and verifies them by reading HID Feature report 8.")
+            .WithDescription("Saves supported boot profiles and verifies the HID command result. Firmware reboots automatically on success.")
             .Produces<SetSettingsResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+        endpoints.MapPost("/api/reboot", Reboot)
+            .WithName("RebootDevice")
+            .WithSummary("Reboot PicoForge after explicit confirmation")
+            .Produces(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
@@ -103,16 +114,19 @@ internal static class StatusEndpoints
         {
             return Results.Problem(statusCode: 503, title: "HID command delivery failed");
         }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new { error = error.Message });
+        }
     }
 
     private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard)
     {
         if (request.SystemClockMhz is not (0 or 150 or 200 or 250) ||
-            request.SdioBusMhz is not (0 or 25 or 50) ||
-            request.SpiBusMhz is not (0 or 25 or 50))
+            request.SdCardProfile is not (0 or 1))
             return Results.Problem(statusCode: 400, title: "Unsupported boot settings value");
         var settings = new BootSettingsResponse(request.SystemClockMhz.Value,
-            request.SdioBusMhz.Value, request.SpiBusMhz.Value);
+            request.SdCardProfile.Value);
         try
         {
             var saved = dashboard.SetSettings(board, settings);
@@ -134,6 +148,26 @@ internal static class StatusEndpoints
         }
     }
 
+    private static IResult Reboot(RebootRequest request, string? board, IDashboardBoards dashboard)
+    {
+        if (!request.Confirm)
+            return Results.Problem(statusCode: 400, title: "Explicit reboot confirmation is required");
+        try
+        {
+            return dashboard.Reboot(board)
+                ? Results.Accepted()
+                : Results.Conflict(new { error = "PicoForge is disconnected or storage is busy" });
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "HID reboot command delivery failed");
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new { error = error.Message });
+        }
+    }
+
     private static IResult SetMsc(SetMscRequest request, string? board, IDashboardBoards dashboard)
     {
         if (request.Enabled is not bool enabled)
@@ -148,6 +182,10 @@ internal static class StatusEndpoints
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {
             return Results.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new { error = error.Message });
         }
     }
 
@@ -169,6 +207,10 @@ internal static class StatusEndpoints
         {
             return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
         }
+        catch (InvalidOperationException error)
+        {
+            return TypedResults.Problem(statusCode: 409, title: error.Message);
+        }
     }
 
     private static Results<Accepted<SelfTestAcceptedResponse>, ProblemHttpResult> SetSelfTest(
@@ -188,6 +230,10 @@ internal static class StatusEndpoints
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {
             return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
+        catch (InvalidOperationException error)
+        {
+            return TypedResults.Problem(statusCode: 409, title: error.Message);
         }
     }
 }

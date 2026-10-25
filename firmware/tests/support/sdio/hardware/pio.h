@@ -43,7 +43,7 @@ enum {
 };
 
 bool pio_can_add_program(PIO pio, const pio_program_t *program);
-uint pio_add_program(PIO pio, const pio_program_t *program);
+int pio_add_program(PIO pio, const pio_program_t *program);
 void pio_remove_program(PIO pio, const pio_program_t *program, uint offset);
 int pio_claim_unused_sm(PIO pio, bool required);
 void pio_sm_unclaim(PIO pio, uint sm);

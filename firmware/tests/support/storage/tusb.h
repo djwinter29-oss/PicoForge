@@ -30,5 +30,6 @@ uint32_t tud_cdc_write_available(void);
 uint32_t tud_cdc_write_flush(void);
 bool tud_cdc_write_clear(void);
 void tud_task(void);
+void tud_task_ext(uint32_t timeout_ms, bool in_isr);
 bool tusb_init(void);
 #endif

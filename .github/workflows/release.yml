@@ -8,6 +8,10 @@ name: Release build packages
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate-tag:
     runs-on: ubuntu-24.04
@@ -30,6 +34,89 @@ jobs:
   host-validation:
     needs: validate-tag
     uses: ./.github/workflows/host-validation.yml
+
+  python:
+    needs: [validate-tag, host-validation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.12"
+      - name: Set release package version
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          path = Path("host/python/pyproject.toml")
+          text, count = re.subn(r'^version = "[^"]+"$', f'version = "{os.environ["VERSION"]}"',
+                                path.read_text(), flags=re.MULTILINE)
+          assert count == 1, "Expected one package version"
+          path.write_text(text)
+          PY
+      - name: Build wheel
+        run: |
+          cp LICENSE host/python/LICENSE
+          python -m pip wheel --no-deps host/python --wheel-dir dist
+      - name: Verify installed wheel and bundled dashboard
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          python -m venv build/wheel-check
+          build/wheel-check/bin/python -m pip install dist/*.whl
+          cd build
+          wheel-check/bin/python - <<'PY'
+          from importlib.metadata import version
+          from importlib.resources import files
+          import os
+          assert version("picoforge") == os.environ["VERSION"]
+          from picoforge.cli import main
+          web = files("picoforge.web")
+          for name in ("index.html", "favicon.svg", "css/dashboard.css",
+                       "js/app.mjs", "js/dashboard.mjs"):
+              assert web.joinpath(name).is_file(), name
+          PY
+          wheel-check/bin/picoforge --help
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-python
+          path: dist/*.whl
+          if-no-files-found: error
+
+  webhid:
+    needs: [validate-tag, host-validation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Package standalone WebHID
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          mkdir -p build/webhid dist
+          cp host/webhid/index.html host/webhid/favicon.svg LICENSE build/webhid/
+          cp -r host/webhid/css host/webhid/js build/webhid/
+          cd build/webhid
+          zip -r "../../dist/picoforge-webhid-v$VERSION.zip" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-webhid
+          path: dist/*.zip
+          if-no-files-found: error
+
+  dotnet:
+    needs: [validate-tag, host-validation]
+    uses: ./.github/workflows/publish-dotnet.yml
+    with:
+      version: ${{ needs.validate-tag.outputs.version }}
 
   firmware:
     needs: [validate-tag, host-validation]
@@ -75,7 +162,7 @@ jobs:
           CMAKE_BUILD_PARALLEL_LEVEL: 2
         run: >-
           tools/firmware/build.sh --board "${{ matrix.board }}"
-          --sd-card-transport "${{ matrix.transport }}" --build-dir build/firmware
+          --sdcard-transport "${{ matrix.transport }}" --build-dir build/firmware
 
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt
@@ -104,3 +191,43 @@ jobs:
           name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-${{ matrix.transport }}${{ matrix.transport == 'SDIO_PIO' && '-HS' || '' }}
           path: package/
           if-no-files-found: error
+
+  release:
+    needs: [validate-tag, firmware, python, webhid, dotnet]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: firmware-v*
+          path: firmware-packages
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Archive firmware and checksum all assets
+        run: |
+          for package in firmware-packages/*; do
+            (cd "$package" && zip -r "../../dist/$(basename "$package").zip" .)
+          done
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes \
+              --title "PicoForge $RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

@@ -94,7 +94,7 @@ MSC disabled, benchmark inactive and passed, with no benchmark file remaining.
 
 Each image lives under `build/sdio-matrix-cpu<MHz>-ds` or `build/sdio-matrix-cpu<MHz>-hs`.
 Use `PF_SYS_CLK_MHZ=150|200|250` and `PF_SDIO_PIO_HIGH_SPEED=OFF|ON`, respectively, with the fixed flags above.
-The [file benchmark procedure](../../sd-self-test.md) describes host control, cleanup and timing boundaries.
+The [performance-test procedure](../../design/sdcard/sdcard-performance-test.md) describes host control, cleanup and timing boundaries.
 
 | Image | ELF SHA-256 |
 |---|---|

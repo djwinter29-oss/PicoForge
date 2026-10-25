@@ -1,260 +1,305 @@
 #include "unity.h"
 #include <stdio.h>
+#include <string.h>
+
+TEST_INCLUDE_PATH("firmware/tests/support/runtime")
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
 TEST_INCLUDE_PATH("firmware/tests/support/config")
 #include "storage/responsiveness_fixture.inc"
+
+static void send_control(uint8_t transaction_id, uint8_t opcode, uint8_t flags, const uint8_t arguments[5])
+{
+    pf_hid_control_request_t request = {
+        .version = PF_HID_REPORT_VERSION,
+        .transaction_id = transaction_id,
+        .opcode = opcode,
+        .flags = flags,
+    };
+    if (arguments != NULL) memcpy(request.arguments, arguments, sizeof(request.arguments));
+    tud_hid_set_report_cb(0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE,
+                          (const uint8_t *)&request, sizeof(request));
+}
+
+static pf_hid_control_result_t read_control_result(void)
+{
+    pf_hid_control_result_t result;
+    TEST_ASSERT_EQUAL_UINT16(sizeof(result), tud_hid_get_report_cb(
+        0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE, (uint8_t *)&result, sizeof(result)));
+    return result;
+}
 
 void setUp(void)
 {
     config_available = true;
     requests = (void *)1;
-    cli_session = 9;
-    test_settings = (pf_settings_t){.system_clock_mhz = 200u, .sdio_bus_mhz = 25u, .spi_bus_mhz = 50u};
+    replies = (void *)2;
+    cli_session = 9u;
+    test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
+    test_sd_speed = saved_sd_speed = PF_STORAGE_SPEED_DEFAULT;
     settings_save_calls = 0u;
+    settings_save_fails = false;
     reset_requests = 0u;
-    msc_enabled = false;
-        msc_transition_pending = false;
-    busy = false;
+    led_requests = msc_requests = force_requests = 0u;
+    queries = queued = recovery_requests = normal_submissions = messages = 0u;
+    reply_count = drained_replies = 0u;
+    fake_ticks = 0u;
+    fake_connected = true;
+    reset_requests = reboot_usb_polls = 0u;
+    fake_done = false;
+    msc_enabled = msc_transition_pending = false;
+    unavailable = reserved = initialized = mounted = queue_fails = retained_cid = false;
+    busy = benchmark_active = benchmark_finished = benchmark_cancelled = false;
+    media_service_busy = false;
+    cli_connected = cli_stalled = cli_stall_reported = false;
+    cli_tx_count = 0u;
+    cli_last_progress = 0u;
+    control_result = (pf_hid_control_result_t){.version = PF_HID_REPORT_VERSION};
+    self_test_result_pending = false;
+    benchmark_admission_pending = false;
+    benchmark_admission_result_ready = false;
+    benchmark_admission_accepted = false;
+    benchmark_admission_error = PF_FILE_BENCHMARK_ERROR_NONE;
+    benchmark_status = (pf_file_benchmark_status_t){.state = PF_FILE_BENCHMARK_IDLE};
+    active_session = 0u;
+    cancelled = false;
+    (void)pf_hid_take_reboot_request();
 }
+
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
 
-void test_runtime_report_publishes_usage_with_independent_layout_and_exact_offsets(void)
+void test_feature_reports_match_wire_sizes_and_populate_identity_configuration(void)
 {
-    pf_hid_status_report_t report;
-    pf_hid_build_status_report(&report, 17u);
-    TEST_ASSERT_EQUAL_UINT(25u, sizeof(report));
-    TEST_ASSERT_EQUAL_UINT8(1u, report.version);
-    TEST_ASSERT_EQUAL_UINT8(17u, report.sequence);
-    TEST_ASSERT_EQUAL_UINT16(1234u, report.cpu_usage_core0_basis_points);
-    TEST_ASSERT_EQUAL_UINT16(5678u, report.cpu_usage_core1_basis_points);
-    TEST_ASSERT_EQUAL_UINT32(65536u, report.ram_used_bytes);
-    TEST_ASSERT_EQUAL_UINT32(532480u, report.ram_total_bytes);
-    const uint8_t *bytes = (const uint8_t *)&report;
-    const uint8_t expected[] = {0xd2u, 0x04u, 0x2eu, 0x16u, 0u, 0u, 1u, 0u, 0u, 0x20u, 8u, 0u};
-    TEST_ASSERT_EQUAL_MEMORY(expected, bytes + 13u, sizeof(expected));
-    uint8_t payload[sizeof(report)];
-    TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0u, PF_HID_STATUS_REPORT_ID,
-        HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
-    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(0u, PF_HID_STATUS_REPORT_ID,
-        HID_REPORT_TYPE_INPUT, payload, sizeof(payload) - 1u));
+    pf_hid_identity_report_t identity;
+    pf_hid_build_identity_report(&identity);
+    TEST_ASSERT_EQUAL_UINT(PF_HID_IDENTITY_PAYLOAD_SIZE, sizeof(identity));
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_REPORT_VERSION, identity.version);
+    TEST_ASSERT_EQUAL_UINT16(PF_HID_PRODUCT_ID, identity.product_id);
+    TEST_ASSERT_EQUAL_UINT8(PF_SYSTEM_MCU_RP2040, identity.mcu);
+    TEST_ASSERT_EQUAL_UINT8(0u, identity.board_model);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_CAP_LED | PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS |
+                           PF_HID_CAP_SDIO | PF_HID_CAP_SELF_TEST, identity.capabilities);
+    TEST_ASSERT_EQUAL_UINT32(532480u, identity.ram_total_bytes);
+    TEST_ASSERT_EQUAL_UINT32(65536u, identity.ram_reserved_bytes);
+
+    pf_hid_configuration_report_t configuration;
+    pf_hid_build_configuration_report(&configuration);
+    TEST_ASSERT_EQUAL_UINT(PF_HID_CONFIGURATION_PAYLOAD_SIZE, sizeof(configuration));
+    TEST_ASSERT_EQUAL_UINT16(200u, configuration.stored_sysclk_profile);
+    TEST_ASSERT_EQUAL_UINT8(0u, configuration.stored_sdcard_profile);
+    TEST_ASSERT_EQUAL_UINT8(0u, configuration.monitor_uart_index);
+    TEST_ASSERT_EQUAL_UINT8(2u, configuration.storage_gpios[0]);
+    TEST_ASSERT_EQUAL_UINT8(3u, configuration.storage_gpios[1]);
+    TEST_ASSERT_EQUAL_UINT8(4u, configuration.storage_gpios[2]);
+    TEST_ASSERT_EQUAL_UINT8(7u, configuration.storage_gpios[5]);
+    TEST_ASSERT_EQUAL_UINT8(2u, configuration.reset_cause);
+
+    uint8_t payload[PF_HID_IDENTITY_PAYLOAD_SIZE];
+    TEST_ASSERT_EQUAL_UINT16(sizeof(identity), tud_hid_get_report_cb(
+        0u, PF_HID_IDENTITY_REPORT_ID, HID_REPORT_TYPE_FEATURE, payload, sizeof(payload)));
+    TEST_ASSERT_EQUAL_MEMORY(&identity, payload, sizeof(identity));
+    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(
+        0u, PF_HID_IDENTITY_REPORT_ID, HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
 }
 
-void test_hid_identity_reports_firmware_version_without_changing_payload_size(void)
+void test_input_reports_keep_telemetry_and_storage_samples_independent(void)
 {
-    pf_hid_info_report_t report;
-    memset(&report, 0xa5, sizeof(report));
-    pf_hid_build_info_report(&report);
-    TEST_ASSERT_EQUAL_UINT(42u, sizeof(report));
-    TEST_ASSERT_EQUAL_UINT8(3u, report.version);
-    TEST_ASSERT_EQUAL_UINT8(1u, report.firmware_major);
-    TEST_ASSERT_EQUAL_UINT8(2u, report.firmware_minor);
-    TEST_ASSERT_EQUAL_UINT8(3u, report.firmware_patch);
-    TEST_ASSERT_EQUAL_UINT8(0u, report.reserved);
-    uint8_t payload[sizeof(report)];
-    TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0, PF_HID_INFO_REPORT_ID,
-        HID_REPORT_TYPE_FEATURE, payload, sizeof(payload)));
-    TEST_ASSERT_EQUAL_MEMORY(&report, payload, sizeof(report));
+    pf_hid_telemetry_report_t telemetry;
+    pf_hid_build_telemetry_report(&telemetry, 17u);
+    TEST_ASSERT_EQUAL_UINT(PF_HID_TELEMETRY_PAYLOAD_SIZE, sizeof(telemetry));
+    TEST_ASSERT_EQUAL_UINT8(17u, telemetry.sequence);
+    TEST_ASSERT_EQUAL_UINT64(1230u, telemetry.uptime_ms);
+    TEST_ASSERT_EQUAL_UINT32(125000000u, telemetry.system_clock_hz);
+    TEST_ASSERT_EQUAL_UINT16(1234u, telemetry.core0_service_load_basis_points);
+    TEST_ASSERT_EQUAL_UINT16(5678u, telemetry.core1_service_load_basis_points);
+
+    pf_hid_storage_report_t storage;
+    unavailable = true;
+    pf_hid_build_storage_report(&storage, 23u);
+    TEST_ASSERT_EQUAL_UINT(PF_HID_STORAGE_PAYLOAD_SIZE, sizeof(storage));
+    TEST_ASSERT_EQUAL_UINT8(23u, storage.sequence);
+    TEST_ASSERT_FALSE(storage.sd_flags & PF_HID_STORAGE_SAMPLE_VALID);
+    TEST_ASSERT_FALSE(reserved);
+
+    unavailable = false;
+    initialized = true;
+    retained_cid = true;
+    pf_hid_build_storage_report(&storage, 24u);
+    TEST_ASSERT_TRUE(storage.sd_flags & PF_HID_STORAGE_SAMPLE_VALID);
+    TEST_ASSERT_TRUE(storage.sd_flags & PF_HID_STORAGE_INITIALIZED);
+    TEST_ASSERT_TRUE(storage.sd_flags & PF_HID_STORAGE_CID_VALID);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, storage.bus_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(128u, storage.block_count);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_BUS_MODE_SDIO, storage.bus_mode);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_SPEED_MODE_STANDARD, storage.speed_mode);
+
+    uint8_t payload[PF_HID_STORAGE_PAYLOAD_SIZE];
+    TEST_ASSERT_EQUAL_UINT16(sizeof(storage), tud_hid_get_report_cb(
+        0u, PF_HID_STORAGE_REPORT_ID, HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
 }
 
-void test_settings_feature_report_encodes_saved_numeric_values(void)
+void test_control_feature_reports_transaction_results_and_rejects_malformed_envelopes(void)
 {
-    pf_hid_settings_report_t report;
-    pf_hid_build_settings_report(&report);
-    TEST_ASSERT_EQUAL_UINT8(PF_HID_SETTINGS_REPORT_VERSION, report.version);
-    TEST_ASSERT_EQUAL_UINT16(200u, report.system_clock_mhz);
-    TEST_ASSERT_EQUAL_UINT8(25u, report.sdio_bus_mhz);
-    TEST_ASSERT_EQUAL_UINT8(50u, report.spi_bus_mhz);
-    uint8_t payload[sizeof(report)];
-    TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0u, PF_HID_SETTINGS_REPORT_ID,
-        HID_REPORT_TYPE_FEATURE, payload, sizeof(payload)));
-    TEST_ASSERT_EQUAL_MEMORY(&report, payload, sizeof(report));
-    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(0u, PF_HID_SETTINGS_REPORT_ID,
-        HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
+    const uint8_t led_arguments[5] = {1u, 0u, 0u, 0u, 0u};
+    send_control(7u, PF_HID_OPCODE_LED, 0u, led_arguments);
+    pf_hid_control_result_t result = read_control_result();
+    TEST_ASSERT_EQUAL_UINT8(7u, result.transaction_id);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_OPCODE_LED, result.opcode);
+    TEST_ASSERT_EQUAL_UINT8(2u, result.status);
+    TEST_ASSERT_EQUAL_UINT(1u, led_requests);
+    TEST_ASSERT_TRUE(requested_state);
+
+    pf_hid_control_request_t invalid = {
+        .version = 0xffu,
+        .transaction_id = 8u,
+        .opcode = PF_HID_OPCODE_LED,
+    };
+    tud_hid_set_report_cb(0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE,
+                          (const uint8_t *)&invalid, sizeof(invalid));
+    const pf_hid_control_result_t unchanged = read_control_result();
+    TEST_ASSERT_EQUAL_MEMORY(&result, &unchanged, sizeof(result));
+
+    send_control(0u, PF_HID_OPCODE_LED, 0u, led_arguments);
+    const pf_hid_control_result_t still_unchanged = read_control_result();
+    TEST_ASSERT_EQUAL_MEMORY(&result, &still_unchanged, sizeof(result));
+    const uint8_t invalid_arguments[5] = {2u, 0u, 0u, 0u, 0u};
+    send_control(8u, PF_HID_OPCODE_LED, 0u, invalid_arguments);
+    result = read_control_result();
+    TEST_ASSERT_EQUAL_UINT8(8u, result.transaction_id);
+    TEST_ASSERT_EQUAL_UINT8(3u, result.status);
+    TEST_ASSERT_EQUAL_UINT8(3u, result.error_reason);
+    TEST_ASSERT_EQUAL_UINT(1u, led_requests);
 }
 
-void test_settings_feature_report_validates_and_saves_only_when_storage_is_idle(void)
+void test_save_settings_command_updates_next_boot_profile_and_returns_saved_values(void)
 {
-    uint8_t command[] = {PF_HID_SETTINGS_REPORT_VERSION, 250u, 0u, 50u, 25u};
-    tud_hid_set_report_cb(1u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_INPUT, command, sizeof(command));
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, NULL, sizeof(command));
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command) - 1u);
-    command[0] = 0xffu;
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    command[0] = PF_HID_SETTINGS_REPORT_VERSION;
-    command[1] = 100u;
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
-
-    command[1] = 250u;
-    msc_enabled = true;
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    msc_enabled = false;
-    busy = true;
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    busy = false;
-    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
-
-    msc_transition_pending = true;
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    msc_transition_pending = false;
-    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
-
-    tud_hid_set_report_cb(0u, PF_HID_SETTINGS_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    const uint8_t bad_profile[5] = {150u, 0u, 2u, 0u, 0u};
+    const uint8_t bad_clock[5] = {100u, 0u, 1u, 0u, 0u};
+    send_control(9u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    const pf_hid_control_result_t result = read_control_result();
+    TEST_ASSERT_EQUAL_UINT8(2u, result.status);
     TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
-    TEST_ASSERT_EQUAL_UINT16(250u, test_settings.system_clock_mhz);
-    TEST_ASSERT_EQUAL_UINT8(50u, test_settings.sdio_bus_mhz);
-    TEST_ASSERT_EQUAL_UINT8(25u, test_settings.spi_bus_mhz);
-}
-
-void test_reboot_feature_command_is_validated_and_storage_gated(void)
-{
-    const uint8_t command[] = {PF_HID_REBOOT_REPORT_VERSION, 1u};
-    uint8_t invalid[] = {0xffu, 1u};
-
-    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
-    tud_hid_set_report_cb(1u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_INPUT, command, sizeof(command));
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, invalid, sizeof(invalid));
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command) - 1u);
-    invalid[0] = PF_HID_REBOOT_REPORT_VERSION;
-    invalid[1] = 0u;
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, invalid, sizeof(invalid));
-    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
-
-    msc_enabled = true;
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    msc_enabled = false;
-    msc_transition_pending = true;
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    msc_transition_pending = false;
-    busy = true;
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    busy = false;
-    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
-
-    tud_hid_set_report_cb(0u, PF_HID_REBOOT_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_EQUAL(PF_SYSCLK_150MHZ, saved_sysclk);
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_HIGH, saved_sd_speed);
+    TEST_ASSERT_EQUAL_UINT16(150u, result.result_data[0] | ((uint16_t)result.result_data[1] << 8u));
+    TEST_ASSERT_EQUAL_UINT8(1u, result.result_data[2]);
     TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
     TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+
+    /* Rejected or failed saves leave the RAM copy equal to the saved one. */
+    test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
+    test_sd_speed = saved_sd_speed = PF_STORAGE_SPEED_DEFAULT;
+    send_control(10u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_profile);
+    TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+    send_control(13u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_clock);
+    TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+
+    settings_save_fails = true;
+    send_control(11u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(6u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+
+    busy = true;
+    send_control(12u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(5u, read_control_result().status);
+    TEST_ASSERT_EQUAL_UINT(2u, settings_save_calls);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 }
 
-void test_file_benchmark_rename_preserves_hid_report_encoding(void)
+void test_save_reboot_services_control_result_until_grace_period_expires(void)
 {
-    benchmark_active = benchmark_finished = false;
-    benchmark_status = (pf_file_benchmark_status_t){
-        .state = PF_FILE_BENCHMARK_PREPARING,
-        .error = PF_FILE_BENCHMARK_ERROR_MEDIA,
-        .request_error = PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED,
-        .flags = PF_FILE_BENCHMARK_FILE_REMAINS | PF_FILE_BENCHMARK_VOLUME_MOUNTED,
-        .target_bytes = 1048576u,
-        .filesystem_result = FR_DISK_ERR,
-    };
-    pf_hid_self_test_status_t report;
-    pf_hid_build_self_test_report(&report, 42u);
-    TEST_ASSERT_EQUAL_UINT(32u, sizeof(report));
-    TEST_ASSERT_EQUAL_UINT8(PF_HID_REPORT_VERSION, report.version);
-    TEST_ASSERT_EQUAL_UINT8(42u, report.sequence);
-    TEST_ASSERT_EQUAL_UINT8(2u, report.state);
-    TEST_ASSERT_EQUAL_UINT8(5u, report.error);
-    TEST_ASSERT_EQUAL_UINT8(11u, report.request_error);
-    TEST_ASSERT_EQUAL_UINT8(3u, report.flags);
-    TEST_ASSERT_EQUAL_UINT8(FR_DISK_ERR, report.filesystem_result);
-    TEST_ASSERT_EQUAL_UINT32(1048576u, report.target_bytes);
-    TEST_ASSERT_EQUAL_UINT8(0u, report.reserved);
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    send_control(9u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
+    reboot_usb_polls = 0u;
+    fake_ticks = (TickType_t)-10;
+    const TickType_t started = fake_ticks;
+    reboot_after_usb_flush();
+    TEST_ASSERT_EQUAL_UINT(pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS), (TickType_t)(fake_ticks - started));
+    TEST_ASSERT_GREATER_THAN_UINT(1u, reboot_usb_polls);
+    TEST_ASSERT_EQUAL_UINT8(9u, reboot_ack.transaction_id);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_OPCODE_SAVE_SETTINGS, reboot_ack.opcode);
+    TEST_ASSERT_EQUAL_UINT8(2u, reboot_ack.status);
+    TEST_ASSERT_EQUAL_UINT(1u, reset_requests);
 }
 
-void test_hid_unavailable_card_preserves_payload_and_does_not_block_usb_or_queue_work(void)
+void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)
 {
-    pf_hid_memory_report_t report, sentinel;
-    memset(&sentinel, 0xa5, sizeof(sentinel));
-    report = sentinel;
-    unavailable = true;
-    unsigned usb_iterations = 0;
-    for (unsigned attempt = 0; attempt < 1000; ++attempt) {
-        TEST_ASSERT_FALSE(pf_hid_build_memory_report(&report, 7));
-        TEST_ASSERT_EQUAL_MEMORY(&sentinel, &report, sizeof(report));
-        TEST_ASSERT_FALSE(pf_storage_worker_benchmark_start(32, false));
-        TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_BUSY, benchmark_status.request_error);
-        TEST_ASSERT_TRUE(!busy && !benchmark_active && !reserved && !queries && !queued);
-        uint8_t payload[sizeof(pf_hid_memory_report_t)];
-        memset(payload, 0xa5, sizeof(payload));
-        TEST_ASSERT_EQUAL_UINT16(0, tud_hid_get_report_cb(0, PF_HID_MEMORY_REPORT_ID,
-            HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
-        for (unsigned i = 0; i < sizeof(payload); ++i) TEST_ASSERT_EQUAL_HEX8(0xa5, payload[i]);
-        TEST_ASSERT_EQUAL_UINT16(sizeof(pf_hid_status_report_t),
-            tud_hid_get_report_cb(0, PF_HID_STATUS_REPORT_ID, HID_REPORT_TYPE_INPUT,
-                                  payload, sizeof(payload)));
-        ++usb_iterations;
-    }
-    TEST_ASSERT_EQUAL_UINT(1000, usb_iterations);
-    unavailable = false;
-    TEST_ASSERT_TRUE(pf_hid_build_memory_report(&report, 7));
-    TEST_ASSERT_TRUE(report.version == PF_HID_REPORT_VERSION && report.sequence == 7);
-    TEST_ASSERT_FALSE(report.flags & PF_HID_MEMORY_INITIALIZED);
-    TEST_ASSERT_FALSE(pf_storage_worker_benchmark_start(32, false));
-    TEST_ASSERT_TRUE(benchmark_status.request_error == PF_FILE_BENCHMARK_ERROR_MEDIA && !reserved);
-    initialized = true;
-    TEST_ASSERT_TRUE(pf_hid_build_memory_report(&report, 8));
-    TEST_ASSERT_TRUE(report.flags & PF_HID_MEMORY_INITIALIZED);
-    TEST_ASSERT_TRUE(report.bus_clock_hz == 25000000 && report.block_count == 128);
-    uint8_t payload[sizeof(report)];
-    TEST_ASSERT_EQUAL_UINT16(sizeof(report), tud_hid_get_report_cb(0, PF_HID_MEMORY_REPORT_ID,
-        HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
-    TEST_ASSERT_FALSE(pf_storage_worker_benchmark_start(32, false));
-    TEST_ASSERT_TRUE(benchmark_status.request_error == PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED && !reserved);
-    mounted = true;
-    TEST_ASSERT_FALSE(pf_storage_worker_benchmark_start(32, true));
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_USB_OWNER, benchmark_status.request_error);
-    TEST_ASSERT_FALSE(pf_storage_worker_benchmark_start(0, false));
+    initialized = mounted = true;
+    const uint8_t invalid_arguments[5] = {1u, 1u, 4u, 0u, 0u};
+    send_control(11u, PF_HID_OPCODE_SELF_TEST, 0u, invalid_arguments);
+    pf_hid_control_result_t result = read_control_result();
+    TEST_ASSERT_EQUAL_UINT8(3u, result.status);
+    TEST_ASSERT_EQUAL_UINT8(3u, result.error_reason);
+    TEST_ASSERT_EQUAL_UINT(0u, queued);
     TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SIZE, benchmark_status.request_error);
-    queue_fails = true;
-    TEST_ASSERT_FALSE(pf_storage_worker_benchmark_start(32, false));
-    TEST_ASSERT_TRUE(!busy && !benchmark_active);
-    queue_fails = false;
-    TEST_ASSERT_TRUE(pf_storage_worker_benchmark_start(32, false));
-    TEST_ASSERT_TRUE(busy && benchmark_active && queued == 1);
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_QUEUED, benchmark_status.state);
-    TEST_ASSERT_FALSE(pf_storage_worker_benchmark_start(32, false));
-    TEST_ASSERT_TRUE(benchmark_status.request_error == PF_FILE_BENCHMARK_ERROR_BUSY && queued == 1);
 
-    benchmark_finished = true;
-    char recovery[] = "recover --confirm", unconfirmed[] = "recover", status[] = "status";
-    storage_command(NULL, recovery, "sd");
-    TEST_ASSERT_TRUE(recovery_requests == 1 && normal_submissions == 0 && messages == 1);
-    storage_command(NULL, unconfirmed, "sd");
-    storage_command(NULL, status, "sd");
-    storage_command(NULL, recovery, "fs");
-    TEST_ASSERT_TRUE(recovery_requests == 1 && normal_submissions == 3 && messages == 4);
+    const uint8_t valid_arguments[5] = {1u, 32u, 0u, 0u, 0u};
+    send_control(12u, PF_HID_OPCODE_SELF_TEST, 0u, valid_arguments);
+    result = read_control_result();
+    TEST_ASSERT_EQUAL_UINT8(1u, result.status);
+    TEST_ASSERT_EQUAL_UINT(1u, queued);
+    TEST_ASSERT_TRUE(busy && benchmark_active);
+
+    benchmark_status = (pf_file_benchmark_status_t){
+        .state = PF_FILE_BENCHMARK_QUEUED,
+        .target_bytes = 32u * 1024u * 1024u,
+    };
+    benchmark_admission_pending = false;
+    benchmark_admission_result_ready = true;
+    benchmark_admission_accepted = true;
+    benchmark_admission_error = PF_FILE_BENCHMARK_ERROR_NONE;
+    pf_hid_poll_async_commands();
+    TEST_ASSERT_EQUAL_UINT8(2u, read_control_result().status);
+
+    pf_hid_self_test_report_t self_test;
+    pf_hid_build_self_test_report(&self_test, 42u);
+    TEST_ASSERT_EQUAL_UINT(PF_HID_SELF_TEST_PAYLOAD_SIZE, sizeof(self_test));
+    TEST_ASSERT_EQUAL_UINT8(42u, self_test.sequence);
+    TEST_ASSERT_EQUAL_UINT8(1u, self_test.state);
+    uint8_t payload[PF_HID_SELF_TEST_PAYLOAD_SIZE];
+    TEST_ASSERT_EQUAL_UINT16(sizeof(self_test), tud_hid_get_report_cb(
+        0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_INPUT, payload, sizeof(payload)));
 }
 
-void test_hid_retained_card_identity_is_hidden_until_initialized(void)
+void test_failed_self_test_preflight_preserves_last_test_result(void)
 {
-    unavailable = false;
-    retained_cid = true;
-    for (unsigned attempt = 0; attempt < 3; ++attempt) {
-        initialized = attempt == 1;
-        pf_hid_memory_report_t report;
-        TEST_ASSERT_TRUE(pf_hid_build_memory_report(&report, 7));
-        TEST_ASSERT_EQUAL_UINT8(initialized ? PF_HID_MEMORY_INITIALIZED | PF_HID_MEMORY_CID_VALID |
-            PF_HID_MEMORY_CAPACITY_VALID : 0, report.flags & (PF_HID_MEMORY_INITIALIZED |
-            PF_HID_MEMORY_CID_VALID | PF_HID_MEMORY_CAPACITY_VALID));
-        TEST_ASSERT_EQUAL_UINT32(initialized ? 25000000 : 0, report.bus_clock_hz);
-        TEST_ASSERT_EQUAL_UINT32(initialized ? 128 : 0, report.block_count);
-        for (unsigned i = 0; i < sizeof(report.cid); ++i) {
-            TEST_ASSERT_EQUAL_HEX8(initialized ? 0x5a : 0, report.cid[i]);
-        }
-        pf_hid_memory_report_t control_report;
-        TEST_ASSERT_EQUAL_UINT16(sizeof(control_report), tud_hid_get_report_cb(0, PF_HID_MEMORY_REPORT_ID,
-            HID_REPORT_TYPE_INPUT, (uint8_t *)&control_report, sizeof(control_report)));
-        report.sequence = 0;
-        TEST_ASSERT_EQUAL_MEMORY(&report, &control_report, sizeof(report));
-    }
-    retained_cid = false;
+    initialized = mounted = true;
+    benchmark_status = (pf_file_benchmark_status_t){
+        .state = PF_FILE_BENCHMARK_PASSED,
+        .target_bytes = 1048576u,
+        .written_bytes = 1048576u,
+        .read_bytes = 1048576u,
+    };
+    const uint8_t arguments[5] = {1u, 32u, 0u, 0u, 0u};
+    send_control(13u, PF_HID_OPCODE_SELF_TEST, 0u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(1u, read_control_result().status);
+
+    benchmark_status.request_error = PF_FILE_BENCHMARK_ERROR_SPACE;
+    benchmark_admission_pending = false;
+    benchmark_admission_result_ready = true;
+    benchmark_admission_accepted = false;
+    benchmark_admission_error = PF_FILE_BENCHMARK_ERROR_SPACE;
+    benchmark_finished = true;
+    pf_hid_poll_async_commands();
+
+    const pf_hid_control_result_t result = read_control_result();
+    TEST_ASSERT_EQUAL_UINT8(6u, result.status);
+    TEST_ASSERT_EQUAL_UINT8(6u, result.error_reason);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, benchmark_status.state);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, benchmark_status.target_bytes);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SPACE, benchmark_status.request_error);
 }
 
 void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(void)
 {
-    replies = (void *)2;
     busy = true;
     benchmark_active = false;
     active_session = cli_session;
@@ -262,110 +307,23 @@ void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(
     cli_connected = fake_connected = true;
     cli_stalled = cli_stall_reported = false;
     cli_tx_count = USB_CLI_TX_SIZE;
-    cli_last_progress = fake_ticks = 0;
-    reply_count = 8;
-    drained_replies = 0;
+    cli_last_progress = fake_ticks = 0u;
+    reply_count = 8u;
+    drained_replies = 0u;
     fake_done = false;
-    storage_request_t request = { .session = cli_session };
+    storage_request_t request = {.session = cli_session};
     TEST_ASSERT_FALSE(send_reply("blocked", &request));
     TEST_ASSERT_TRUE(cli_stalled && cancelled && busy);
-    TEST_ASSERT_EQUAL_UINT(8, drained_replies);
+    TEST_ASSERT_EQUAL_UINT(8u, drained_replies);
     TEST_ASSERT_EQUAL_UINT(USB_CLI_STALL_TIMEOUT, fake_ticks);
-    reply_count = 1;
+    reply_count = 1u;
     fake_done = true;
     cdc_cli_task();
     TEST_ASSERT_FALSE(pf_storage_worker_busy());
-    TEST_ASSERT_TRUE(pf_storage_worker_submit("sd", "status", false, cli_session));
+    TEST_ASSERT_TRUE(pf_storage_worker_submit("storage", "status", false, cli_session));
     fake_connected = false;
     cdc_cli_task();
     TEST_ASSERT_FALSE(cli_connected || cli_stalled);
-    TEST_ASSERT_EQUAL_UINT(0, cli_tx_count);
+    TEST_ASSERT_EQUAL_UINT(0u, cli_tx_count);
     fake_connected = true;
-}
-
-void test_filesystem_encoder_matches_shared_exfat_vector(void)
-{
-    FILE *fixture = fopen("tests/fixtures/hid-filesystem.csv", "r");
-    TEST_ASSERT_NOT_NULL(fixture);
-    char row[128];
-    bool found = false;
-    while (fgets(row, sizeof(row), fixture)) {
-        if (strncmp(row, "exfat,", 6) != 0) continue;
-        unsigned bytes[4];
-        TEST_ASSERT_EQUAL_INT(4, sscanf(row + 6, "%2x%2x%2x%2x", &bytes[0], &bytes[1], &bytes[2], &bytes[3]));
-        pf_hid_filesystem_report_t report;
-        pf_hid_build_filesystem_report(&report, (uint8_t)bytes[2]);
-        uint8_t expected[] = { (uint8_t)bytes[1], (uint8_t)bytes[2], (uint8_t)bytes[3] };
-        TEST_ASSERT_EQUAL_UINT8(PF_HID_FILESYSTEM_REPORT_ID, bytes[0]);
-        TEST_ASSERT_EQUAL_MEMORY(expected, &report, sizeof(expected));
-        found = true;
-    }
-    fclose(fixture);
-    TEST_ASSERT_TRUE(found);
-}
-
-void test_set_report_validates_callback_envelope_and_command_fields(void)
-{
-    led_requests = msc_requests = force_requests = 0;
-    uint8_t command[] = {PF_HID_REPORT_VERSION, 1u};
-    const uint8_t ids[] = {PF_HID_LED_COMMAND_REPORT_ID, PF_HID_MSC_COMMAND_REPORT_ID};
-    for (unsigned i = 0; i < sizeof(ids); ++i) {
-        tud_hid_set_report_cb(1u, ids[i], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_INPUT, command, sizeof(command));
-        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, NULL, sizeof(command));
-        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, 0u);
-        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, 1u);
-        command[0] = 0xffu;
-        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-        command[0] = PF_HID_REPORT_VERSION;
-        command[1] = 0xffu;
-        tud_hid_set_report_cb(0u, ids[i], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-        command[1] = 1u;
-    }
-    tud_hid_set_report_cb(0u, 0xffu, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    TEST_ASSERT_EQUAL_UINT(0u, led_requests + msc_requests + force_requests);
-    tud_hid_set_report_cb(0u, ids[0], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    TEST_ASSERT_EQUAL_UINT(1u, led_requests);
-    TEST_ASSERT_TRUE(requested_state);
-    command[1] = 0u;
-    tud_hid_set_report_cb(0u, ids[1], HID_REPORT_TYPE_FEATURE, command, sizeof(command));
-    TEST_ASSERT_EQUAL_UINT(1u, msc_requests);
-    TEST_ASSERT_FALSE(requested_state);
-    uint8_t force[] = {PF_HID_MSC_REPORT_VERSION, 2u, 0u};
-    tud_hid_set_report_cb(0u, ids[1], HID_REPORT_TYPE_FEATURE, force, sizeof(force));
-    TEST_ASSERT_EQUAL_UINT(0u, force_requests);
-    tud_hid_set_report_cb(0u, ids[1], HID_REPORT_TYPE_FEATURE, force, 2u);
-    TEST_ASSERT_EQUAL_UINT(1u, force_requests);
-}
-
-void test_set_report_self_test_requires_exact_size_and_zero_cancel_payload(void)
-{
-    unavailable = false;
-    busy = benchmark_active = benchmark_finished = benchmark_cancelled = false;
-    media_service_busy = false;
-    initialized = mounted = true;
-    queue_fails = false;
-    queued = 0;
-    uint8_t command[] = {PF_HID_REPORT_VERSION, 1u, 32u, 0u, 0u, 0u, 0u};
-    for (unsigned size = 0; size < sizeof(command); ++size) {
-        if (size == sizeof(pf_hid_self_test_command_t)) continue;
-        tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, size);
-    }
-    TEST_ASSERT_EQUAL_UINT(0u, queued);
-    command[0] = 0xffu;
-    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
-    command[0] = PF_HID_REPORT_VERSION;
-    command[1] = 2u;
-    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
-    TEST_ASSERT_EQUAL_UINT(0u, queued);
-    command[1] = 1u;
-    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
-    TEST_ASSERT_EQUAL_UINT(1u, queued);
-    command[1] = 0u;
-    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
-    TEST_ASSERT_FALSE(benchmark_cancelled);
-    command[2] = 0u;
-    tud_hid_set_report_cb(0u, PF_HID_SELF_TEST_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, 6u);
-    TEST_ASSERT_TRUE(benchmark_cancelled);
-    busy = benchmark_active = false;
 }

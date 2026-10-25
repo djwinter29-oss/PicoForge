@@ -109,7 +109,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 
 .identity {
   display: grid;
-  grid-template-columns: 1.3fr 1fr 1fr 1fr 1.2fr;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
   margin: 8px 0 20px;
   padding: 1px;
@@ -129,7 +129,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
   font: 600 14px var(--mono);
   font-variant-numeric: tabular-nums;
 }
-.metric-product strong { color: var(--teal); font-size: 14px; }
 
 .runtime { margin-top: 20px; padding: 0; background: transparent; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
@@ -153,9 +152,28 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .runtime-grid dd[data-active="true"] { color: var(--green); }
 .runtime-grid dd[data-active="false"] { color: var(--muted); }
 .runtime[aria-labelledby="runtime-title"] .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pin-map-disclosure { margin: 8px 0 20px; overflow: hidden; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+.pin-map-disclosure > summary { padding: 8px 12px; color: var(--teal-dark); font-weight: 650; cursor: pointer; }
+.pin-map-disclosure > summary:focus-visible { outline: 3px solid var(--lime); outline-offset: -3px; }
+.pin-map-disclosure[open] > summary { border-bottom: 1px solid var(--line); }
+.pin-tables { display: grid; gap: 16px; padding: 12px; overflow-x: auto; }
+.pin-tables table { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+.pin-tables caption { padding: 0 0 8px; text-align: left; color: var(--teal-dark); font-weight: 650; }
+.pin-tables th, .pin-tables td { padding: 7px 12px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.confirmation-dialog { width: min(520px, calc(100% - 32px)); padding: 24px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 16px 48px #102d2b40; }
+.confirmation-dialog::backdrop { background: #102d2b70; }
+.confirmation-dialog h2, .confirmation-dialog p { margin-bottom: 12px; }
+.configuration-warning { color: var(--muted); font-size: 13px; }
+.dialog-actions { margin-top: 20px; display: flex; justify-content: end; gap: 8px; }
+.dialog-actions .button { flex: 0 0 auto; }
+.button-cancel { background: var(--paper); border-color: #cbd6d3; color: var(--ink); }
+.button-cancel:hover:not(:disabled) { background: #e8eeeb; }
+.button-danger { background: #fff; border-color: #dbb5aa; color: var(--coral); }
+.button-danger:hover:not(:disabled) { background: #fff3ef; }
 .actions select {
   min-height: 38px;
   min-width: 0;
@@ -171,7 +189,8 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .actions #rescan-boards { min-width: auto; }
 .actions #rescan-boards::before { content: none; }
 .actions #rescan-boards::before { content: none; }
-.settings-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 8px; padding: 1px; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 3px 12px #17332e08; }
+.settings-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 8px; padding: 1px; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 3px 12px #17332e08; }
+.settings-controls > .metric { min-height: 72px; padding: 12px 14px; }
 .settings-controls label { min-height: 72px; padding: 12px 14px; display: grid; align-content: space-between; gap: 6px; color: var(--muted); background: var(--paper); font-size: 12px; }
 .settings-controls select {
   min-width: 0;
@@ -217,7 +236,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 @media (max-width: 960px) {
   .identity, .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .identity > .metric:last-child { grid-column: span 2; }
   .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 

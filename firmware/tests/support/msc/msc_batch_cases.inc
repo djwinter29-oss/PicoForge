@@ -3,7 +3,6 @@
 #include "unity.h"
 #include <stdbool.h>
 #include <pthread.h>
-#define PF_STORAGE_H
 #define PF_STORAGE_WORKER_H
 bool pf_fatfs_volume_is_mounted(void);
 static void pf_fatfs_volume_forget_filesystem_format(void);
@@ -13,29 +12,18 @@ static bool pf_storage_worker_recover_media(void);
 static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
 #include "app/usb/usb_msc.c"
-#include "drivers/sd_card/sd.h"
-#if PF_CONFIG_SD_CARD_TRANSPORT == 1
-#include "drivers/sd_card/sd_spi.h"
-#define pf_sd_native_init pf_sd_spi_init
-#define pf_sd_native_get_init_stage pf_sd_spi_get_init_stage
-#define pf_sd_native_init_stage_t pf_sd_spi_init_stage_t
-#define pf_sd_native_is_initialized pf_sd_spi_is_initialized
-#define pf_sd_native_block_count pf_sd_spi_block_count
-#define pf_sd_native_get_info pf_sd_spi_get_info
-#define pf_sd_native_confirm_card_removed pf_sd_spi_confirm_card_removed
-#define pf_sd_native_read_blocks pf_sd_spi_read_blocks
-#define pf_sd_native_write_blocks pf_sd_spi_write_blocks
-#define pf_sd_native_sync pf_sd_spi_sync
-#define TEST_TRANSPORT PF_STORAGE_BUS_SPI
+uint64_t test_time_us;
+#include "drivers/sdcard/sd_backend.h"
+#if PF_TEST_SDCARD_TRANSPORT == 1
+#define TEST_TRANSPORT PF_SD_LINK_SPI
 #else
-#include "drivers/sd_card/sd_native.h"
-#define TEST_TRANSPORT PF_STORAGE_BUS_NATIVE_SD
+#define TEST_TRANSPORT PF_SD_LINK_NATIVE_SD
 #endif
+pf_sd_link_mode_t pf_sd_backend_mode(void) { return TEST_TRANSPORT; }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */
 #include "middleware/storage/fatfs_disk.c"
 #include "middleware/storage/block_device.c"
-#include "middleware/storage/sd_block_device.c"
 #pragma GCC diagnostic pop
 pthread_mutex_t creation_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t media[8][512];
@@ -55,35 +43,31 @@ bool __real_mscd_control_xfer_cb(uint8_t p,uint8_t s,const tusb_control_request_
 { (void)p; (void)s; (void)r; return false; }
 bool tud_msc_set_sense(uint8_t l,uint8_t k,uint8_t a,uint8_t q)
 { (void)l; (void)k; (void)a; (void)q; return true; }
-pf_sd_result_t pf_sd_native_init(const pf_sd_config_t *c)
+pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *c)
 { (void)c; initialized=true; return PF_SD_OK; }
-pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void)
-{ return (pf_sd_native_init_stage_t)99; }
-bool pf_sd_native_is_initialized(void) { return initialized; }
-uint32_t pf_sd_native_block_count(void) { return capacity; }
-void pf_sd_native_get_info(pf_sd_info_t *i) { memset(i,0,sizeof(*i)); }
-void pf_sd_native_confirm_card_removed(void) { initialized=false; }
-pf_sd_result_t pf_sd_native_read_blocks(uint32_t l,void *b,uint32_t n)
+bool pf_sd_backend_is_initialized(void) { return initialized; }
+uint32_t pf_sd_backend_block_count(void) { return capacity; }
+void pf_sd_backend_get_info(pf_sd_info_t *i) { memset(i,0,sizeof(*i)); }
+void pf_sd_backend_confirm_removed(void) { initialized=false; }
+pf_sd_result_t pf_sd_backend_read_blocks(uint32_t l,void *b,uint32_t n)
 {
- TEST_ASSERT_TRUE(pf_sd_media_get_owner()==PF_SD_MEDIA_OWNER_USB_MSC);
  TEST_ASSERT_TRUE(n && l<8 && n<=8-l && b); ++reads; last_count=n;
  if(read_error) return read_error;
  memcpy(b,media[l],n*512u); return PF_SD_OK;
 }
-pf_sd_result_t pf_sd_native_write_blocks(uint32_t l,const void *b,uint32_t n)
+pf_sd_result_t pf_sd_backend_write_blocks(uint32_t l,const void *b,uint32_t n)
 {
- TEST_ASSERT_TRUE(pf_sd_media_get_owner()==PF_SD_MEDIA_OWNER_USB_MSC);
  TEST_ASSERT_TRUE(n && l<8 && n<=8-l && b); ++writes; last_count=n;
  if(write_error) { uncertain=true; return write_error; }
  memcpy(media[l],b,n*512u); return PF_SD_OK;
 }
-pf_sd_result_t pf_sd_native_sync(void)
+pf_sd_result_t pf_sd_backend_sync(void)
 { ++syncs; TEST_ASSERT_FALSE(uncertain); return sync_error; }
-void pf_sd_get_profile(pf_sd_profile_t *p) { *p=(pf_sd_profile_t){0}; }
+pf_sd_link_mode_t pf_sd_board_pins(uint8_t g[6], uint8_t *d) { memset(g,0xff,6); *d=0xff; return PF_SD_LINK_NATIVE_SD; }
 static void msc_batch_regression(void)
 {
  pf_sd_config_t c={.transport.mode=TEST_TRANSPORT};
- pf_fatfs_disk_bind(pf_sd_media_firmware_device());
+ pf_fatfs_disk_bind(pf_storage_firmware_device());
  TEST_ASSERT_TRUE(pf_sd_init(&c)==PF_SD_OK);
  pf_usb_msc_request(true); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
  uint8_t raw[1538], out[1538]; uint8_t *data=raw+1, *readback=out+1;
@@ -130,6 +114,6 @@ static void msc_batch_regression(void)
  sync_error=PF_SD_OK; write_error=PF_SD_IO_ERROR;
  TEST_ASSERT_TRUE(tud_msc_write10_cb(0,0,0,data,1024)==-1 && writes==w+2 && syncs==s+1);
  TEST_ASSERT_TRUE(uncertain && transfer_sense_asc==0x0c); /* no sync/replay after uncertain write */
- TEST_ASSERT_TRUE(pf_sd_media_release_usb()==PF_SD_OK);
+ TEST_ASSERT_TRUE(pf_storage_msc_release()==PF_BLOCK_OK);
  TEST_ASSERT_TRUE(tud_msc_read10_cb(0,0,0,readback,1024)==-1 && reads==r+1);
 }

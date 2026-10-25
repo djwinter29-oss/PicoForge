@@ -1,5 +1,6 @@
 """Build/package workflow contracts; no runner, network or hardware access."""
 from pathlib import Path
+import json
 import re
 import subprocess
 
@@ -16,28 +17,27 @@ def test_build_matrices_and_compatible_artifact_checks():
         for dimension in ("board: [pico, pico2]", "transport: [SDIO_PIO, SPI]"):
             assert dimension in workflow
         for removed in ("BAREMETAL", "matrix.clock", "matrix.port",
-                        "--sys-clk-mhz", "--sd-card-port", "Build SDK-default clock application"):
+                        "--sys-clk-mhz", "--sdcard-port", "Build SDK-default clock application"):
             assert removed not in workflow
         assert re.search(r"^\s+clock:\s*\[", workflow, re.MULTILINE) is None
         assert re.search(r"^\s+port:\s*\[", workflow, re.MULTILINE) is None
         if name == "release.yml":
             assert 'PF_SDIO_PIO_HIGH_SPEED: "ON"' in workflow
-        assert '--sd-card-transport "${{ matrix.transport }}"' in workflow
+        assert '--sdcard-transport "${{ matrix.transport }}"' in workflow
         artifact_step = workflow.split("- name: Run project tests", 1)[1]
         assert "if:" not in artifact_step.split("run:", 1)[0]
         subprocess.run(["ruby", "-ryaml", "-e", "YAML.load_file(ARGV[0])",
                         str(ROOT / ".github/workflows" / name)], check=True)
 
 
-def test_usb_protocol_documents_filesystem_input_report():
-    doc = (ROOT / "docs/usb-protocol.md").read_text()
-    section = " ".join(doc.split("## Input Report 7", 1)[1].split("\n## ", 1)[0].split())
-    for text in ("3-byte payload", "excluding the report ID", "layout version is `2`", "1000 ms", "push-only",
-                 "`GET_REPORT` is unsupported", "last successfully mounted", "not live mounted state",
-                 "no padding", "modulo 256"):
+def test_hid_report_reference_documents_filesystem_storage_field():
+    doc = (ROOT / "docs/design/usb/usb-hid-report-reference.md").read_text()
+    section = " ".join(doc.split("## Report ID 10: Storage Status", 1)[1].split("\n## ", 1)[0].split())
+    for text in ("**Total** | **34**", "`filesystem_format`",
+                 "Last successfully mounted format", "not proof that a volume is currently mounted",
+                 "nominally every 500 ms", "modulo 256"):
         assert text in section
-    for value, name in enumerate(("unknown", "FAT12", "FAT16", "FAT32", "exFAT")):
-        assert f"| {value} | {name} |" in section
+    assert "Filesystem format values: `0` Unknown, `1` FAT12, `2` FAT16, `3` FAT32, `4` exFAT" in section
 
 
 @pytest.mark.parametrize("name", ("pr-check.yml", "release.yml"))
@@ -63,14 +63,82 @@ def test_workflows_run_pio_timing_only_for_sdio(name):
     assert steps.index(build) < steps.index(common) < steps.index(timing)
 
 
-def test_release_only_packages_workflow_artifacts():
+def test_release_publishes_only_after_all_packages_succeed():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
     assert "workflow_dispatch: {}" in workflow
-    assert "contents: read" in workflow and "contents: write" not in workflow
+    assert workflow.split("jobs:", 1)[0].count("contents: read") == 1
+    assert workflow.count("contents: write") == 1
     assert "actions/upload-artifact@" in workflow
     assert "sha256sum *.elf *.uf2 > SHA256SUMS" in workflow
     assert "if-no-files-found: error" in workflow
-    assert "gh release" not in workflow and "upload-release" not in workflow
+    assert "needs: [validate-tag, firmware, python, webhid, dotnet]" in workflow
+    assert not (ROOT / ".github/workflows/package-host.yml").exists()
+    assert 'gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes' in workflow
+    assert 'gh release upload "$RELEASE_TAG" dist/* --clobber' in workflow
+    assert 'gh release edit "$RELEASE_TAG" --draft=false' in workflow
+    assert "sha256sum * > SHA256SUMS.txt" in workflow
+    assert "uses: ./.github/workflows/publish-dotnet.yml" in workflow
+    assert "gh-action-pypi-publish@" not in workflow
+    assert "publish-webhid.yml" not in workflow
+
+
+@pytest.mark.parametrize("name", ("publish-dotnet.yml", "publish-pypi.yml", "publish-webhid.yml"))
+def test_publication_workflows_have_expected_triggers_and_pinned_actions(name):
+    path = ROOT / ".github/workflows" / name
+    workflow = path.read_text()
+    subprocess.run(["ruby", "-ryaml", "-e", "YAML.load_file(ARGV[0])", str(path)], check=True)
+    if name == "publish-dotnet.yml":
+        assert "workflow_call:" in workflow
+    else:
+        assert "workflow_call:" not in workflow
+        assert "workflows: [Release build packages]" in workflow
+        assert "github.event.workflow_run.conclusion == 'success'" in workflow
+        assert "github.event.workflow_run.head_repository.full_name == github.repository" in workflow
+        assert 'test "$(git rev-parse \'FETCH_HEAD^{commit}\')" = "$SOURCE_SHA"' in workflow
+        assert "sha256sum --check SHA256SUMS.txt --ignore-missing" in workflow
+    assert "workflow_dispatch:" in workflow
+    for action in re.findall(r"uses:\s+([^\s]+)", workflow):
+        assert re.search(r"@[0-9a-f]{40}$", action), action
+
+
+def test_host_packages_and_publishers_share_validated_artifacts():
+    packages = (ROOT / ".github/workflows/release.yml").read_text()
+    dotnet = (ROOT / ".github/workflows/publish-dotnet.yml").read_text()
+    for rid in ("linux-x64", "win-x64", "osx-arm64"):
+        assert f"rid: {rid}" in dotnet
+    assert '--self-contained true' in dotnet
+    assert "shutil.unpack_archive(archive, directory)" in dotnet
+    assert 'assert b"PicoForge Diagnostics | .NET" in response.read()' in dotnet
+    assert 'assert version("picoforge") == os.environ["VERSION"]' in packages
+    for name, artifact, pattern in (
+        ("pypi", "release-python", "picoforge-$version-py3-none-any.whl"),
+        ("webhid", "release-webhid", "picoforge-webhid-v$version.zip"),
+    ):
+        publish = (ROOT / f".github/workflows/publish-{name}.yml").read_text()
+        assert f"name: {artifact}" in packages
+        assert f'--pattern "{pattern}"' in publish
+        assert "gh release download" in publish
+    assert "gh-action-pypi-publish@" in (ROOT / ".github/workflows/publish-pypi.yml").read_text()
+    assert "deploy-pages@" in (ROOT / ".github/workflows/publish-webhid.yml").read_text()
+
+
+@pytest.mark.parametrize("name", (
+    "release.yml", "publish-dotnet.yml", "publish-pypi.yml", "publish-webhid.yml",
+))
+def test_publication_embedded_scripts_compile(name):
+    path = ROOT / ".github/workflows" / name
+    result = subprocess.run(
+        ["ruby", "-ryaml", "-rjson", "-e", "puts JSON.generate(YAML.load_file(ARGV[0]))", str(path)],
+        check=True, capture_output=True, text=True,
+    )
+    workflow = json.loads(result.stdout)
+    for job in workflow["jobs"].values():
+        for step in job.get("steps", []):
+            if "run" not in step:
+                continue
+            subprocess.run(["bash", "-n"], input=step["run"], text=True, check=True)
+            for source in re.findall(r"python - <<'PY'\n(.*?)\nPY", step["run"], re.DOTALL):
+                compile(source, f"{name}:{step.get('name', 'run')}", "exec")
 
 
 def test_stack_observation_uses_current_task_and_is_paced():

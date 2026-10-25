@@ -7,7 +7,7 @@
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #if !defined(PF_TEST_SDIO_WIRE_ONLY)
-#include "sd_native_host.h"
+#include "sd_sdio_host.h"
 #endif
 
 #define PF_TEST_SDIO_MAX_RX_BATCH_BYTES (64u * 520u)
@@ -24,11 +24,13 @@ extern bool pf_test_sdio_trace_enabled;
 extern void (*pf_test_sdio_dma_poll_hook)(void);
 
 #if !defined(PF_TEST_SDIO_WIRE_ONLY)
-extern pf_sd_native_host_t *pf_test_sdio_observed_host;
+extern pf_sd_sdio_host_t *pf_test_sdio_observed_host;
 #endif
 extern bool pf_test_sdio_expect_streams_cleared;
 extern bool pf_test_sdio_streams_were_cleared;
 extern bool pf_test_sdio_can_add_program;
+extern unsigned pf_test_sdio_add_calls;
+extern unsigned pf_test_sdio_fail_add_call;
 extern unsigned pf_test_sdio_removed_programs;
 extern dma_hw_t pf_test_sdio_dma_registers;
 extern unsigned pf_test_sdio_barrier_count;

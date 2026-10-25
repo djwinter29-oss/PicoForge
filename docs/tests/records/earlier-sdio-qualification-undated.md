@@ -1,7 +1,7 @@
 # Earlier SDIO Qualification Observations (Undated)
 
 Date: not recorded. Migrated unchanged from the former "Previously Recorded Qualification" section of
-[SD-card driver design](../../sdcard-design.md); the observations pre-date the 2026-10-13 records.
+[SD-card driver design](../../design/sdcard/sdcard-driver-design.md); the observations pre-date the 2026-10-13 records.
 
 **Scope:** historical, configuration-specific observations. Earlier clocking, recovery, and qualification algorithms
 may differ from the current implementation, and these records do not qualify every compatible card or the current
@@ -22,7 +22,7 @@ firmware. Later controlled comparisons are the [2026-10-18 speed matrix](2026-10
 
 Those experiments used falling-edge RX with a fast data divider half the command/clock divider. The current RX phases
 and system-clock sampling are documented in the
-[physical transport reference](../../../firmware/src/drivers/storage/README.md#physical-storage-bus).
+[physical transport reference](../../design/sdcard/sdcard-physical-links.md#physical-link).
 High-speed TX starts the clock and data state machines together and launches at a fixed cycle offset. The slow TX
 program is not suitable for 50 MHz: its observed-edge launch left insufficient setup time and produced card CRC-error
 tokens. A 50 MHz bus needs at least 200 MHz SYSCLK; those Pico 2 overclock experiments are diagnostic, not supported
@@ -32,7 +32,7 @@ later 128 KiB probe have been replaced by a single-sector validation at each sta
 
 ## Pico 2 dual-core MSC handoff observation
 
-Migrated from [architecture](../../architecture.md). On the connected Pico 2 at 250 MHz CPU / 50 MHz SDIO, probe
+Migrated from [architecture](../../design/architecture.md). On the connected Pico 2 at 250 MHz CPU / 50 MHz SDIO, probe
 inspection confirmed the active and passive idle tasks executing on separate cores. The dashboard enable command
 completed worker-owned unmount and re-enumerated the SD card as a 119.1 GiB USB block device with its existing
 partition. Host handoff tests pass, but sustained dual-core stress remains unqualified.

@@ -1,0 +1,55 @@
+/** @file sd_port_freertos.c
+ * @brief FreeRTOS recursive reservations and optional transport waits for the SD facade.
+ */
+#include "sd_port.h"
+#include "config/config.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
+static StaticSemaphore_t card_mutex_storage; /**< Firmware-lifetime backing storage for the recursive reservation. */
+static SemaphoreHandle_t card_mutex; /**< Lazily created handle, published under the kernel critical section. */
+
+bool pf_sd_port_init(const pf_sd_config_t *config)
+{
+#if PF_CONFIG_SDCARD_INTERRUPT_WAIT
+    return config != NULL && config->transport.mode == PF_SD_LINK_NATIVE_SD &&
+           pf_sd_link_enable_wait(&config->transport);
+#else
+    (void)config;
+    return true;
+#endif
+}
+
+/** @brief Create the shared reservation before first use, including pre-initialization telemetry. */
+static void ensure_card_mutex(void)
+{
+    /* Telemetry may reserve the facade before card initialization. */
+    taskENTER_CRITICAL();
+    if (card_mutex == NULL) {
+        card_mutex = xSemaphoreCreateRecursiveMutexStatic(&card_mutex_storage);
+    }
+    taskEXIT_CRITICAL();
+}
+
+bool pf_sd_port_try_lock(void)
+{
+    ensure_card_mutex();
+    return xSemaphoreTakeRecursive(card_mutex, 0u) == pdTRUE;
+}
+
+void pf_sd_port_lock(void)
+{
+    ensure_card_mutex();
+    BaseType_t taken = xSemaphoreTakeRecursive(card_mutex, portMAX_DELAY);
+    configASSERT(taken == pdTRUE);
+    (void)taken;
+}
+
+void pf_sd_port_unlock(void)
+{
+    BaseType_t given = xSemaphoreGiveRecursive(card_mutex);
+    configASSERT(given == pdTRUE);
+    (void)given;
+}

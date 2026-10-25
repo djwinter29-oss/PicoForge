@@ -1,0 +1,77 @@
+/** @file sdio_pio_wait_freertos.c
+ * @brief Bounded FreeRTOS notification waits for the native PIO transport.
+ *
+ * Singleton binding: one PIO block and one serialized waiter, using task-notification slot 1.
+ * Install once on the startup core before transfers. The shared IRQ handler remains installed for firmware
+ * lifetime, including physical-engine deinit/reinit; task/ISR critical sections protect waiter lifetime.
+ */
+#include "sdio_pio.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "hardware/irq.h"
+#include "hardware/pio.h"
+
+static PIO wait_pio; /**< PIO bound for firmware lifetime. */
+static TaskHandle_t waiting_task; /**< Waiter lifetime protected by task/ISR kernel critical sections. */
+static uint32_t waiting_flag; /**< Active completion flag, valid only while a waiter is registered. */
+static bool handler_installed; /**< Shared IRQ ownership has been established on the startup core. */
+
+static pio_interrupt_source_t completion_source(uint32_t flag)
+{
+    return (pio_interrupt_source_t)(pis_interrupt0 + flag);
+}
+
+static void completion_irq(void)
+{
+    BaseType_t awakened = pdFALSE;
+    UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
+    if (waiting_task != NULL && pio_interrupt_get(wait_pio, waiting_flag)) {
+        pio_set_irq0_source_enabled(wait_pio, completion_source(waiting_flag), false);
+        vTaskNotifyGiveIndexedFromISR(waiting_task, 1u, &awakened);
+        waiting_task = NULL;
+    }
+    taskEXIT_CRITICAL_FROM_ISR(saved);
+    portYIELD_FROM_ISR(awakened);
+}
+
+static void wait_completion(PIO pio, uint32_t flag)
+{
+    if (pio != wait_pio || (flag != 1u && flag != 2u) ||
+        xTaskGetSchedulerState() != taskSCHEDULER_RUNNING ||
+        pio_interrupt_get(pio, flag)) {
+        return;
+    }
+    (void)ulTaskNotifyTakeIndexed(1u, pdTRUE, 0u);
+    taskENTER_CRITICAL();
+    configASSERT(waiting_task == NULL);
+    waiting_task = xTaskGetCurrentTaskHandle();
+    waiting_flag = flag;
+    pio_set_irq0_source_enabled(pio, completion_source(flag), true);
+    taskEXIT_CRITICAL();
+    (void)ulTaskNotifyTakeIndexed(1u, pdTRUE, 1u);
+    taskENTER_CRITICAL();
+    pio_set_irq0_source_enabled(pio, completion_source(flag), false);
+    waiting_task = NULL;
+    taskEXIT_CRITICAL();
+}
+bool pf_sdio_pio_enable_wait(pf_sdio_pio_t *transport)
+{
+    if (transport == NULL || (transport->config.pio != pio0 && transport->config.pio != pio1)) {
+        return false;
+    }
+    if (handler_installed && wait_pio != transport->config.pio) {
+        return false;
+    }
+    if (!handler_installed) {
+        wait_pio = transport->config.pio;
+        uint irq = (uint)pio_get_irq_num(wait_pio, 0u);
+        pio_set_irq0_source_enabled(wait_pio, pis_interrupt1, false);
+        pio_set_irq0_source_enabled(wait_pio, pis_interrupt2, false);
+        irq_add_shared_handler(irq, completion_irq, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
+        irq_set_priority(irq, PICO_DEFAULT_IRQ_PRIORITY);
+        irq_set_enabled(irq, true);
+        handler_installed = true;
+    }
+    transport->wait_hook = wait_completion;
+    return true;
+}

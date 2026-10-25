@@ -36,7 +36,7 @@ publication, admission release, and disconnect cleanup. Completion is simulated 
 cancellation; this is not a scheduler or FatFs end-to-end test. Existing file producer loops close opened files
 when a reply returns false; mutation commands retain their own close/sync behavior. Worker completion remains
 queued after execution/cleanup and admission remains held until done is drained. The explicit CLI truncation
-notice and DTR reopen requirement are documented in [CDC CLI](../cdc-cli.md#stalled-output).
+notice and DTR reopen requirement are documented in [CDC CLI](../design/usb/usb-cdc-cli.md#stalled-output).
 
 Finding 2: DeviceMonitor reads under a device-handle lock and publishes under the snapshot lock. Commands,
 handle publication and disposal acquire the device lock first; disposal releases the snapshot lock before I/O.
@@ -58,14 +58,15 @@ Finding 5: The boot-only enumeration wait is preserved with a source `ponytail:`
 
 Finding 6: Both tasks periodically log their own FreeRTOS minimum untouched stack in words. Configuration/source
 contracts pass. Sampling is observational and does not certify margin; no target measurements were taken.
-See [architecture validation limits](../architecture.md#review-remediation-software-checks) for remaining MSC,
+See [architecture validation limits](../design/architecture.md#review-remediation-software-checks) for remaining MSC,
 power-loss, dual-core stress and stack qualification gaps.
 
 ## Follow-up remediation (software checks only)
 
 Not a hardware result; the sections above remain historical.
 
-* Input Report 7 (filesystem format) is now documented in [USB protocol](../usb-protocol.md#input-report-7).
+* Input Report 7 (filesystem format in the implementation at the time of this record) is described in the
+  [HID Report Reference](../design/usb/usb-hid-report-reference.md); the implemented design combines it into report 10.
   `test_usb_protocol_documents_filesystem_input_report` was RED (no section), then GREEN.
 * `release.yml` now runs the BAREMETAL `tests/artifacts/test_sd_ports.py` check between build and package, as
   `pr-check.yml` does. `test_workflows_validate_baremetal_artifacts_after_build` is parameterized over both
@@ -79,9 +80,9 @@ Not a hardware result; the sections above remain historical.
   Card output delay is modelled as 1-2 cycles after the rising edge; 0 fails at divider 2.75 with one cycle
   of input latency (the sample lands on the next bit) and 3 or more fails at 50 MHz. Divider 2.75 needs about
   275 MHz and is not hardware-qualified (only 200 MHz / 50 MHz is).
-* The CMD18 rejection/CMD12 cleanup concern at `sd_native_host.c` is not confirmed. `test_sd_native_host_read_batch.c`
+* The CMD18 rejection/CMD12 cleanup concern at `sd_sdio_host.c` is not confirmed. `test_sd_native_host_read_batch.c`
   adds coverage that already passed on the baseline (not a RED fix): rejected CMD18 with successful CMD12 falls back
-  to single reads; failed CMD12 does not fall back, blocks later reads until `pf_sd_native_host_recover`. Dropping
+  to single reads; failed CMD12 does not fall back, blocks later reads until `pf_sd_sdio_host_recover`. Dropping
   `!stop_ok` from the return condition makes these tests fail.
 
 Commands (repository root, system Python 3 with pytest, Ceedling 1.1.10 with coverage tools on PATH):

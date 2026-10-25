@@ -17,6 +17,12 @@ uint32_t pf_system_clock_hz(void);
 uint32_t pf_system_uptime_ms(void);
 
 /**
+ * @brief Return the HID reset cause using SDK watchdog evidence.
+ * @return 2 for watchdog reset (including software-requested reboot), otherwise 0 (unknown).
+ */
+uint8_t pf_system_reset_cause(void);
+
+/**
  * @brief Apply a persisted system clock during SDK runtime init, before peripheral resets are released.
  *
  * Does nothing for 0 (keep the build clock), for a frequency the SDK cannot derive from the crystal, and when the

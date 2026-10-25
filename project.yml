@@ -52,16 +52,16 @@
   :test:
     :compile:
       :test_sd_native_init:
-        - -DPF_SD_NATIVE_HIGH_SPEED=1
-      :test_sd_media_freertos_serialization:
+        - -DPF_SD_SDIO_HIGH_SPEED=1
+      :test_storage_media_freertos_serialization:
         - -std=c11
         - -D_XOPEN_SOURCE=700
         - -pthread
-      :test_sd_media_:
+      :test_storage_media_:
         - -ffunction-sections
         - -fdata-sections
-      :/test_sd_media_.*spi/:
-        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+      :/test_storage_media_.*spi/:
+        - -DPF_TEST_SDCARD_TRANSPORT=1
       :test_storage_worker_automount:
         - -ffunction-sections
         - -fdata-sections
@@ -74,7 +74,7 @@
         - -pthread
         - -ffunction-sections
         - -fdata-sections
-      :test_sdio_wait_freertos:
+      :test_sdio_pio_wait_freertos:
         - -D_XOPEN_SOURCE=700
         - -pthread
       :test_usb_hid_sd_responsiveness:
@@ -89,20 +89,20 @@
         - -ffunction-sections
         - -fdata-sections
       :test_usb_msc_batch_sdio:
-        - -DPF_CONFIG_SD_CARD_TRANSPORT=0
+        - -DPF_TEST_SDCARD_TRANSPORT=0
       :test_usb_msc_batch_spi:
-        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+        - -DPF_TEST_SDCARD_TRANSPORT=1
     :link:
       :test_fatfs_volume:
         - -pthread
       :test_dcd_guard:
         - -pthread
         - -Wl,--gc-sections
-      :test_sdio_wait_freertos:
+      :test_sdio_pio_wait_freertos:
         - -pthread
-      :test_sd_media_freertos_serialization:
+      :test_storage_media_freertos_serialization:
         - -pthread
-      :test_sd_media_:
+      :test_storage_media_:
         - -Wl,--gc-sections
       :test_storage_worker_automount:
         - -Wl,--gc-sections

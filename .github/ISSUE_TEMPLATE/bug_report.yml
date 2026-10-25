@@ -1,0 +1,52 @@
+name: Bug Report
+description: Report unexpected behavior in firmware or host tools
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Firmware (RP2040/RP2350)
+        - SD-card storage (SPI/SDIO)
+        - Host Python
+        - Host .NET
+        - WebHID
+        - Build/CI/release tooling
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: Board and firmware version
+      description: For example, Pico 2, firmware v0.1.0
+  - type: input
+    id: environment
+    attributes:
+      label: Host environment
+      description: Operating system, browser/version, and host application/version, if relevant
+  - type: textarea
+    id: storage
+    attributes:
+      label: Storage configuration
+      description: For storage issues, include card model/capacity, SPI or SDIO, wiring, and clock settings.
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Output
+      description: Logs, storage status, browser errors, or CI output; remove sensitive information before posting.
+      render: shell

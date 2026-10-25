@@ -1,110 +1,129 @@
-import { PicoForgeWebHid } from "./device.mjs";
-import { renderStatus, renderSelfTest, storageSpeed } from "./view.mjs?v=3";
+import { PicoForgeWebHid } from "./device.mjs?v=2";
+import { renderStatus, renderSelfTest } from "./view.mjs?v=2";
 
-const connectionControl = document.querySelector("#connection-control");
-const ledControl = document.querySelector("#led-control");
-const mscControl = document.querySelector("#msc-control");
-const settingsSave = document.querySelector("#settings-save");
-const settingsClock = document.querySelector("#settings-clock");
-const settingsStorage = document.querySelector("#settings-storage");
+const element = id => document.querySelector(`#${id}`);
+const connectionControl = element("connection-control");
+const ledControl = element("led-control");
+const mscControl = element("msc-control");
+const settingsSave = element("settings-save");
+const settingsReboot = element("settings-reboot");
+const settingsClock = element("settings-clock");
+const settingsStorage = element("settings-storage");
+const configurationDialog = element("configuration-dialog");
+const rebootDialog = element("reboot-dialog");
+const returnDialog = element("return-dialog");
 let settingsDirty = false;
-let settingsStorageDirty = false;
 const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
 
 function render(state) {
   renderStatus(state);
   if (!state.connected) {
     settingsDirty = false;
-    settingsStorageDirty = false;
+    for (const dialog of [configurationDialog, rebootDialog, returnDialog]) dialog.close();
   }
   if (!settingsDirty && state.settings) {
     settingsClock.value = String(state.settings.system_clock_mhz);
+    settingsStorage.value = String(state.settings.sdcard_profile);
   }
-  if (!settingsStorageDirty && state.settings) {
-    settingsStorage.value = String(storageSpeed(state.settings, state.memory?.mode));
-  }
-  connectionControl.textContent = state.connected ? "Disconnect" : "Connect";
-  connectionControl.setAttribute("aria-label", state.connected
+  const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected;
+  const selfTestReady = !(state.hardware?.capabilities & 32)
+    || (state.freshness[11] === "fresh" && state.self_test?.valid_for_control);
+  const storageReady = state.freshness[10] === "fresh" && selfTestReady
+    && !state.msc?.transition_pending && !state.self_test?.active
+    && !state.self_test_command_pending && !state.msc_command_pending;
+  connectionControl.textContent = state.connected || state.reconnecting ? "Disconnect" : "Connect";
+  connectionControl.setAttribute("aria-label", state.connected || state.reconnecting
     ? "Disconnect from PicoForge board" : "Connect to PicoForge board");
-  connectionControl.disabled = state.busy || state.reconnecting || !navigator.hid;
-  ledControl.disabled = state.busy || !state.connected || !state.board_status?.led_available;
-  mscControl.disabled = state.busy || !state.connected || !state.msc || Boolean(state.msc.transition_pending)
-    || Boolean(state.self_test?.active) || state.self_test_command_pending
-    || Boolean(state.msc?.enabled && !state.msc.force_return_supported);
+  connectionControl.disabled = state.busy || !globalThis.isSecureContext || !navigator.hid;
+  ledControl.disabled = blocked || !state.board_status?.led_available || !(state.hardware?.capabilities & 1);
+  mscControl.disabled = blocked || !storageReady;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  const settingsReady = state.connected && state.settings_supported && state.settings !== null && Boolean(state.msc)
-    && !state.msc.enabled && !state.msc.transition_pending && !state.self_test?.active
-    && !state.self_test_command_pending;
-  for (const control of [settingsClock, settingsStorage]) {
-    control.disabled = state.busy || !settingsReady;
+  const settingsReady = !blocked && storageReady && !state.msc?.enabled;
+  for (const control of [settingsClock, settingsStorage, settingsSave]) {
+    control.disabled = !settingsReady || !state.settings_supported;
   }
-  settingsSave.disabled = state.busy || !settingsReady;
-  document.querySelector("#settings-note").textContent = state.settings_message
+  settingsSave.disabled ||= !settingsDirty;
+  settingsReboot.disabled = !settingsReady || !(state.hardware?.capabilities & 2);
+  element("settings-note").textContent = state.settings_message
     || (!state.connected ? "Connect to read the saved settings."
-      : !state.settings_supported ? "Settings are unavailable; update the device firmware."
-        : !state.msc ? "Waiting for storage ownership status."
-          : state.msc.enabled || state.msc.transition_pending ? "Disable the USB drive before saving settings."
-            : "Settings loaded.");
-  document.querySelector("#msc-note").textContent = state.reconnecting
+      : !state.settings_supported ? "Persistent settings save is unavailable."
+        : !storageReady ? "Waiting for fresh, idle storage and self-test status."
+          : state.msc?.enabled ? "Return storage to Pico before saving settings."
+            : "");
+  element("settings-note").hidden = !element("settings-note").textContent;
+  element("msc-note").textContent = state.reconnecting
     ? "USB interfaces are reconnecting; HID will resume automatically."
-    : state.msc?.enabled && !state.msc.force_return_supported
-    ? "Update firmware to disable the USB drive from Pico; this firmware requires manual host eject."
-    : state.msc?.request_rejected
-    ? (state.msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
-      : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
-    : state.msc?.transition_pending ? "Preparing storage and changing USB mode; HID reconnects automatically."
-      : "";
-  document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
+    : state.msc?.request_rejected ? "Storage request or transition failed; inspect storage and CDC diagnostics."
+      : state.msc?.transition_pending || state.msc_command_pending
+        ? "Waiting for the storage ownership transition result."
+        : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
+  element("msc-note").hidden = !element("msc-note").textContent;
 }
 
-connectionControl.addEventListener("click", () => {
-  if (client.state.connected) void client.disconnect();
-  else void client.connect();
-});
-ledControl.addEventListener("click", () => client.setLed(!client.state.board_status?.led_on));
-mscControl.addEventListener("click", () => {
+async function run(operation) {
+  try { await operation(); } catch (error) { client.update({ error: error.message }); }
+}
+
+connectionControl.addEventListener("click", () => run(() =>
+  client.state.connected || client.state.reconnecting ? client.disconnect() : client.connect()));
+ledControl.addEventListener("click", () => run(() => client.setLed(!client.state.board_status?.led_on)));
+mscControl.addEventListener("click", () => run(async () => {
+  if (mscControl.disabled) return;
   const enabled = client.state.msc?.enabled;
-  if (enabled && (!client.state.msc.force_return_supported
-    || !window.confirm("Disable USB drive and return storage to Pico? "
-      + "Cached host writes may be lost and the filesystem may be corrupted. "
-      + "Stop all host file activity first. Pico will attempt to remount without formatting or repair. Continue?"))) return;
-  void client.setMsc(!enabled, Boolean(enabled)).catch(error => client.update({ error: error.message }));
-});
-document.querySelector("#self-test-start").addEventListener("click", async () => {
-  await client.setSelfTest("start", document.querySelector("#self-test-size").valueAsNumber);
-  render(client.state);
-});
-document.querySelector("#self-test-cancel").addEventListener("click", () => client.setSelfTest("cancel"));
-document.querySelector("#self-test-size").addEventListener("input", () => renderSelfTest(client.state));
-function selectedSettings() {
-  const saved = client.state.settings;
-  const storageMhz = Number(settingsStorage.value);
-  return {
-    system_clock_mhz: Number(settingsClock.value),
-    sdio_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.sdio_bus_mhz ?? 0),
-    spi_bus_mhz: settingsStorageDirty ? storageMhz : (saved?.spi_bus_mhz ?? 0),
-  };
-}
-
-function updateSettingsDirty() {
-  const saved = client.state.settings;
-  if (!saved) return;
-  settingsStorageDirty = Number(settingsStorage.value) !== storageSpeed(saved, client.state.memory?.mode);
-  settingsDirty = Number(settingsClock.value) !== saved.system_clock_mhz || settingsStorageDirty;
-  render(client.state);
-}
-
+  if (enabled) returnDialog.showModal();
+  else await client.setMsc(true, false);
+}));
+element("self-test-start").addEventListener("click", () => run(() =>
+  client.setSelfTest("start", element("self-test-size").valueAsNumber)));
+element("self-test-cancel").addEventListener("click", () => run(() => client.setSelfTest("cancel")));
+element("self-test-size").addEventListener("input", () => renderSelfTest(client.state));
 for (const control of [settingsClock, settingsStorage]) {
   control.addEventListener("change", () => {
-    updateSettingsDirty();
+    settingsDirty = Number(settingsClock.value) !== client.state.settings?.system_clock_mhz
+      || Number(settingsStorage.value) !== client.state.settings?.sdcard_profile;
+    render(client.state);
   });
 }
-settingsSave.addEventListener("click", async () => {
-  const saved = await client.saveSettings(selectedSettings());
-  if (saved) {
-    settingsDirty = false;
-    settingsStorageDirty = false;
-  }
-  render(client.state);
+settingsSave.addEventListener("click", () => {
+  if (settingsSave.disabled) return;
+  const clock = Number(settingsClock.value);
+  element("configuration-dialog-profile").textContent =
+    `System clock: ${clock ? `${clock} MHz` : "Default"}. `
+    + `SD Card: ${Number(settingsStorage.value) === 1 ? "High-Speed" : "Standard"}.`;
+  configurationDialog.showModal();
 });
+element("confirm-configuration").addEventListener("click", () => run(async () => {
+  if (!configurationDialog.open) return;
+  configurationDialog.close();
+  if (settingsSave.disabled) return;
+  if (await client.saveSettings({ system_clock_mhz: Number(settingsClock.value),
+    sdcard_profile: Number(settingsStorage.value) })) settingsDirty = false;
+  render(client.state);
+}));
+settingsReboot.addEventListener("click", () => {
+  if (settingsReboot.disabled) return;
+  element("reboot-consequence").textContent = settingsDirty
+    ? "Unsaved dashboard changes will be lost." : "Saved next-boot settings will be applied.";
+  rebootDialog.showModal();
+});
+element("confirm-reboot").addEventListener("click", () => run(async () => {
+  if (!rebootDialog.open) return;
+  rebootDialog.close();
+  if (!settingsReboot.disabled) await client.reboot(true);
+}));
+element("confirm-return").addEventListener("click", () => run(async () => {
+  if (!returnDialog.open) return;
+  returnDialog.close();
+  if (!mscControl.disabled && client.state.msc?.enabled) await client.setMsc(false, true);
+}));
+for (const [name, dialog] of [["configuration", configurationDialog], ["reboot", rebootDialog],
+  ["return", returnDialog]]) {
+  element(`cancel-${name}`).addEventListener("click", () => dialog.close());
+  dialog.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dialog.close();
+    }
+  });
+}
 render(client.state);

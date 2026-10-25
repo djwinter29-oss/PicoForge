@@ -1,0 +1,112 @@
+name: Publish .NET Packages
+
+'on':
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag in vMAJOR.MINOR.PATCH form"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Standalone host (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            rid: linux-x64
+          - os: windows-2025
+            rid: win-x64
+          - os: macos-15
+            rid: osx-arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          persist-credentials: false
+      - name: Validate package version
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || format('v{0}', inputs.version) }}
+        run: |
+          version=$(tools/firmware/release-version.sh "$RELEASE_TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.12"
+      - name: Publish standalone host
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          RID: ${{ matrix.rid }}
+        run: >-
+          dotnet publish host/dotnet/PicoForge -c Release -r "$RID" --self-contained true
+          -p:Version="$VERSION" -o build/host-release
+      - name: Archive and smoke-test extracted host
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          RID: ${{ matrix.rid }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import socket
+          import subprocess
+          import tempfile
+          import time
+          import urllib.error
+          import urllib.request
+          version, rid = os.environ["VERSION"], os.environ["RID"]
+          root = Path("build/host-release").resolve()
+          assert f"PicoForge/{version}" in json.loads((root / "PicoForge.deps.json").read_text())["libraries"]
+          shutil.copyfile("LICENSE", root / "LICENSE")
+          Path("dist").mkdir()
+          archive = shutil.make_archive(f"dist/picoforge-host-v{version}-{rid}",
+                                        "zip" if rid.startswith("win-") else "gztar", root_dir=root)
+          with tempfile.TemporaryDirectory() as directory:
+              shutil.unpack_archive(archive, directory)
+              executable = Path(directory) / ("PicoForge.exe" if rid.startswith("win-") else "PicoForge")
+              with socket.socket() as listener:
+                  listener.bind(("127.0.0.1", 0))
+                  port = listener.getsockname()[1]
+              process = subprocess.Popen([str(executable), "--port", str(port)], cwd=directory)
+              try:
+                  for attempt in range(100):
+                      assert process.poll() is None, "Standalone host exited before readiness"
+                      try:
+                          with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as response:
+                              assert b"PicoForge Diagnostics | .NET" in response.read()
+                          break
+                      except urllib.error.URLError:
+                          time.sleep(0.1)
+                  else:
+                      raise RuntimeError("Standalone dashboard did not become ready")
+              finally:
+                  if process.poll() is None:
+                      process.terminate()
+                  process.wait(timeout=10)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-host-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error

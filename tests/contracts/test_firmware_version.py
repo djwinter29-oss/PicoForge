@@ -102,20 +102,20 @@ def test_build_script_passes_explicit_sdio_policy(tmp_path, policy):
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}",
                CMAKE_ARGUMENT_LOG=str(log), PF_SDIO_PIO_HIGH_SPEED=policy,
                FREERTOS_KERNEL_PATH=str(kernel.parents[3]))
-    subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), "--sd-card-transport", "SPI",
+    subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), "--sdcard-transport", "SPI",
                     "--pico-sdk-path", str(sdk.parent)],
                    env=env, check=True, capture_output=True, text=True)
     arguments = log.read_text().splitlines()
     assert f"-DPF_SDIO_PIO_HIGH_SPEED={policy}" in arguments
     assert "-DPF_SYS_CLK_MHZ=0" in arguments
-    assert "-DPF_SD_CARD_PORT=FREERTOS" in arguments
-    assert "-DPF_SD_CARD_TRANSPORT=SPI" in arguments
+    assert "-DPF_SDCARD_PORT=FREERTOS" in arguments
+    assert "-DPF_SDCARD_TRANSPORT=SPI" in arguments
     assert str(ROOT / "build/firmware-pico-SPI") in arguments
 
 
 @pytest.mark.parametrize(("option", "value"), [
     ("--sys-clk-mhz", "200"),
-    ("--sd-card-port", "BAREMETAL"),
+    ("--sdcard-port", "BAREMETAL"),
 ])
 def test_build_script_rejects_legacy_build_dimensions(option, value):
     result = subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), option, value],

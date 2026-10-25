@@ -1,5 +1,11 @@
-The **Board LED** toggle and Connect/Disconnect button are in Device information; USB-drive controls are beside the storage benchmark.
 # PicoForge WebHID
+
+Open the hosted [WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
+The hosted site is deployed from successful releases after the initial
+[Pages setup](../../docs/deployment/release.md#publishing-setup).
+For offline/local hosting, download the WebHID ZIP from
+[Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest), extract it, and serve the extracted directory
+on localhost. Opening `index.html` directly as a file is not supported.
 
 Serve the WebHID directory directly so its `index.html` is the site root and the browser gets a secure localhost origin:
 
@@ -7,17 +13,68 @@ Serve the WebHID directory directly so its `index.html` is the site root and the
 python3 -m http.server 8000 --directory host/webhid
 ```
 
-Open `http://localhost:8000/` in a WebHID-capable browser, connect the board, and grant access to its vendor HID interface. When MSC is enabled or disabled, USB briefly re-enumerates; the dashboard automatically reopens the same authorized HID device by board serial. **Return to Pico** requires data-loss confirmation, then asks Pico to detach and attempt a remount without OS eject commands. See the [return contract and risks](../../docs/usb-protocol.md#confirmed-force-return). The page owns its HTML, CSS, view logic, and favicon. It shares only the HID wire protocol with the Python and .NET hosts. USB serial support in a browser is not used; CDC remains available to terminal applications.
+Open `http://localhost:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
+The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or a host server API.
+Every explicit **Connect** opens the browser device chooser, including when devices were previously authorized,
+so the user selects which board to open. Cancel leaves the page disconnected. Close other clients using that board
+before connecting; the chooser cannot override another application's HID access.
 
-The [SD self-test](../../docs/sd-self-test.md) uses HID Report 6 to start/cancel
-a verified temporary-file benchmark and receive progress/timing metrics. Default
-size is 32 MiB; selecting Start authorizes temporary-file writes and replacement.
-The first summary row includes the firmware release version (`Unknown` for legacy firmware).
-Live diagnostics shows Core 0 and Core 1 CPU usage separately, plus distinct reserved and total SRAM values; system
-clock appears only in the summary row. See [runtime telemetry definitions and compatibility](../../docs/usb-protocol.md#input-report-2).
-The **Board LED** and connection controls are in Device information; USB-drive controls are beside the storage benchmark. Do not
-run a competing Python/.NET HID monitor for the same board at the same time.
+## Protocol compatibility
 
-Windows may deliver Input reports in buffers padded to the collection's maximum Input payload (32 bytes).
-The WebHID event handler decodes only each report's defined payload; transport-tail bytes are ignored.
-Payload fields, including reserved bytes, remain validated. Feature-report framing is handled separately.
+This standalone client targets layout version 1 of the authoritative
+[HID Report Reference](../../docs/design/usb/usb-hid-report-reference.md), implemented by firmware and the Python,
+.NET, shared dashboard, and direct WebHID clients. Physical USB qualification remains outstanding.
+It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
+(9), and Input 3 telemetry (22), 10 storage (34), and optionally 11 self-test (32, capability bit 5).
+Mandatory identity/configuration failures are explicit connection errors, not legacy fallbacks.
+
+WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
+from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.
+Stale measurements are removed, unavailable/stale freshness is shown per report, and disconnect clears connection caches.
+Firmware RAM reserved / total is boot-stable build accounting, not live heap or stack usage.
+
+## Dashboard layout
+
+The page follows the Python/.NET dashboard: a six-field Device information row (product, board/MCU, serial,
+system clock, firmware RAM reserved / total, firmware version) and a Board configuration row with clock, SD-card
+profile, and reset cause. Pin configuration starts collapsed and contains full-width, vertically stacked Monitor
+UART and Storage tables. Each table has signal headings above one GPIO row.
+
+Live diagnostics shows uptime, service load for Core 0 / Core 1, board temperature, then CLI port. Storage combines
+effective bus clock and timing in one field. Busy sampling retains the last valid card details without inserting
+a message or shifting the table; stale reports, disconnects, ownership transitions, and valid absent/uninitialized
+samples clear retained details. Retained values are display-only and never authorize a command.
+
+## Controls
+
+All operations serialize Feature 20 SET/GET transactions, matching both transaction ID and opcode.
+An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for
+fresh corresponding Input status. A timeout or disconnect never replays a command; uncertain results block further
+writes. Reconnecting reads the outstanding result without resubmitting it. Do not run competing HID writers.
+
+**Save and Reboot** confirms with the user, sends one settings command, and verifies its completion result.
+Firmware saves the settings and schedules the reboot; Feature 2 is reread after reconnection.
+**Reboot Board** is separate, capability-gated, and explicitly confirmed. Save, reboot, and Return to Pico use
+matching modal dialogs with Cancel and Escape support; no command is sent until confirmed, and safety gates are
+checked again at confirmation. Routine loaded-settings and fresh-report messages are hidden.
+Standard/High-Speed is a stored request;
+Storage shows the actual selected timing and effective bus clock.
+
+USB ownership transitions briefly re-enumerate. The WebHID API does not expose the USB serial string, so the
+dashboard identifies a reconnect candidate by reading Feature 1 and matching its stable device UID before
+resuming; it does not replay the prior command. **Return to Pico** is explicitly confirmed force return, not an OS eject.
+Stop host file activity and safely eject whenever possible first. See the
+[force-return risks](../../docs/design/usb/usb-hid-report-reference.md#msc-force-return-safety).
+The card is not automatically formatted or repaired, and reconnect does not prove successful remount.
+
+The optional self-test requires fresh, known self-test status and an already-mounted filesystem.
+Start authorizes temporary `/PFTEST.BIN` writes; an existing file is rejected, never replaced.
+
+## Checks
+
+```sh
+node --test host/webhid/tests/*.test.mjs
+```
+
+These are host-only protocol, transaction, freshness, and UI checks. Physical WebHID/USB behavior still requires
+compatible firmware and RP2040/RP2350 hardware qualification.

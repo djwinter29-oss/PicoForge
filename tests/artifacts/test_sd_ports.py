@@ -11,7 +11,7 @@ import pytest
 pytestmark = pytest.mark.artifacts
 
 ROOT = Path(__file__).resolve().parents[2]
-DRIVER = ROOT / "firmware/src/drivers/sd_card"
+DRIVER = ROOT / "firmware/src/drivers/sdcard"
 
 
 def check_build(directory):
@@ -25,7 +25,7 @@ def check_build(directory):
     for item in commands:
         if "FreeRTOS" in item["command"] or "FreeRTOS" in item["file"]:
             raise AssertionError(f"Kernel dependency in {directory}: {item['file']}")
-    elf = directory / "pf_sd_card_baremetal_smoke.elf"
+    elf = directory / "pf_sdcard_baremetal_smoke.elf"
     symbols = subprocess.check_output(
         [os.environ.get("ARM_NM", "arm-none-eabi-nm"), "-S", str(elf)], text=True)
     if re.search(r"\b(?:[xv]Task\w*|[xv]Queue\w*|[xv]Port\w*|pvPort\w*|vApplication\w*)$", symbols,
@@ -35,7 +35,11 @@ def check_build(directory):
                    "pf_sd_sync", "pf_sd_port_try_lock"):
         if not re.search(r"\b" + symbol + r"$", symbols, re.MULTILINE):
             raise AssertionError(f"Missing {symbol} in {elf}")
-    if re.search(r"\bpf_sd_spi_read_blocks$", symbols, re.MULTILINE):
+    backends = [Path(file).relative_to(DRIVER).as_posix() for file in files
+                if Path(file).is_relative_to(DRIVER) and Path(file).name.startswith("sd_backend_")]
+    if backends not in (["spi/sd_backend_spi.c"], ["sdio/sd_backend_sdio.c"]):
+        raise AssertionError(f"Expected exactly one transport backend in {directory}: {backends}")
+    if backends == ["spi/sd_backend_spi.c"]:
         native_symbols = set(re.findall(r"\b(pf_sd_native_\w+|crc16_4bit_\w+)$", symbols, re.MULTILINE))
         shared_switch_decoders = {
             "pf_sd_native_switch_supports_high_speed",
@@ -45,7 +49,7 @@ def check_build(directory):
         if native_symbols - shared_switch_decoders:
             raise AssertionError(f"Unused native wire code or CRC tables in SPI artifact: {elf}")
     else:
-        protocol = [item for item in commands if item["file"].endswith("/sd_card/sd_protocol.c")]
+        protocol = [item for item in commands if item["file"].endswith("/sdcard/sd_protocol.c")]
         cache = (directory / "CMakeCache.txt").read_text()
         fused = re.search(r"^PF_SDIO_PIO_FUSED_COPY:BOOL=(.+)$", cache, re.MULTILINE)
         if fused is None:

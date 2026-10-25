@@ -9,6 +9,7 @@
 #include "usb_msc.h"
 #include "usb_task.h"
 #include "app/cli/cli.h"
+#include "app/cli/cli_storage.h"
 #include "app/storage/storage_worker.h"
 
 #include <string.h>
@@ -21,17 +22,14 @@
 #define USB_CLI_STALL_TIMEOUT (pdMS_TO_TICKS(5000U))
 #define USB_RECONNECT_DETACH_MS 250U
 #define USB_HID_REPORT_INTERVAL (pdMS_TO_TICKS(250U))
-#define USB_HID_MEMORY_REPORT_INTERVAL (pdMS_TO_TICKS(1000U))
-#define USB_HID_MSC_REPORT_INTERVAL (pdMS_TO_TICKS(500U))
+#define USB_HID_STORAGE_REPORT_INTERVAL (pdMS_TO_TICKS(500U))
 #define USB_HID_SELF_TEST_INTERVAL (pdMS_TO_TICKS(500U))
-#define USB_HID_FILESYSTEM_INTERVAL (pdMS_TO_TICKS(1000U))
 
 static StaticTask_t usb_task_control_block;
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE];
 static uint8_t hid_sequence;
-static uint8_t memory_sequence;
+static uint8_t storage_sequence;
 static uint8_t self_test_sequence;
-static uint8_t filesystem_sequence;
 static char cli_tx[USB_CLI_TX_SIZE];
 static uint32_t cli_tx_head;
 static uint32_t cli_tx_tail;
@@ -46,10 +44,11 @@ static void storage_command(EmbeddedCli *instance, char *args, void *context)
 {
     (void)instance;
     const char *family = context;
-    if (strcmp(family, "sd") == 0 && args != NULL &&
+    if (strcmp(family, "storage") == 0 && args != NULL &&
         strcmp(args, "recover --confirm") == 0) {
         pf_usb_msc_request_recovery();
-        pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect before fs mount. Check UART recovery result and sd status / sd diagnostics after reconnect (selected media).");
+        pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect before fs mount. "
+                     "Check UART recovery result and storage status after reconnect.");
         return;
     }
     if (!pf_storage_worker_submit(family, args != NULL ? args : "",
@@ -116,8 +115,8 @@ static void cdc_cli_task(void)
             panic("Failed to initialize CDC CLI");
         }
         if (!pf_cli_add_binding((CliCommandBinding){
-                "sd", "sd status | sd info | sd profile [status|on|off|reset] | sd diagnostics [status|clear] | sd recover --confirm", false,
-                "sd", storage_command
+                "storage", "storage status | storage recover --confirm", false,
+                "storage", storage_command
             }) || !pf_cli_add_binding((CliCommandBinding){
                 "fs", "fs mount|unmount|format --confirm|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
                       "fs mkdir <path>|write <path> <text>|append <path> <text>\r\n"
@@ -176,14 +175,23 @@ static void cdc_cli_task(void)
     cli_drain_output();
 }
 
+/** @brief Keep control transfers serviced during the acknowledgement grace period before resetting. */
+static void reboot_after_usb_flush(void)
+{
+    const TickType_t started = xTaskGetTickCount();
+    do {
+        tud_task_ext(0u, false);
+        vTaskDelay(pdMS_TO_TICKS(1u));
+    } while ((TickType_t)(xTaskGetTickCount() - started) < pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS));
+    pf_system_reset();
+}
+
 static void usb_task(void *context)
 {
     (void)context;
     TickType_t last_hid_report = xTaskGetTickCount();
-    TickType_t last_memory_report = last_hid_report;
-    TickType_t last_msc_report = last_hid_report;
+    TickType_t last_storage_report = last_hid_report;
     TickType_t last_self_test_report = last_hid_report;
-    TickType_t last_filesystem_report = last_hid_report;
 
     TickType_t last_stack_sample = xTaskGetTickCount();
 
@@ -197,61 +205,47 @@ static void usb_task(void *context)
 
         tud_task();
         if (pf_hid_take_reboot_request()) {
-            vTaskDelay(pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS));
-            pf_system_reset();
+            reboot_after_usb_flush();
         }
         pf_usb_msc_task();
+        pf_hid_poll_async_commands();
         cdc_cli_task();
 
         if (tud_hid_ready() &&
             ((TickType_t)(now - last_hid_report) >= USB_HID_REPORT_INTERVAL)) {
-            pf_hid_status_report_t report;
+            pf_hid_telemetry_report_t report;
 
-            pf_hid_build_status_report(&report, hid_sequence);
-            if (tud_hid_report(PF_HID_STATUS_REPORT_ID, &report, sizeof(report))) {
+            pf_hid_build_telemetry_report(&report, hid_sequence);
+            if (tud_hid_report(PF_HID_TELEMETRY_REPORT_ID, &report, sizeof(report))) {
                 ++hid_sequence;
                 last_hid_report = now;
             }
         }
 
         if (tud_hid_ready() &&
-            ((TickType_t)(now - last_memory_report) >= USB_HID_MEMORY_REPORT_INTERVAL)) {
-            pf_hid_memory_report_t report;
+            ((TickType_t)(now - last_storage_report) >= USB_HID_STORAGE_REPORT_INTERVAL)) {
+            pf_hid_storage_report_t report;
 
-            if (pf_hid_build_memory_report(&report, memory_sequence) &&
-                tud_hid_report(PF_HID_MEMORY_REPORT_ID, &report, sizeof(report))) {
-                ++memory_sequence;
-                last_memory_report = now;
-            }
-        }
-
-        if (tud_hid_ready() &&
-            ((TickType_t)(now - last_msc_report) >= USB_HID_MSC_REPORT_INTERVAL)) {
-            pf_hid_msc_status_report_t report;
-
-            pf_hid_build_msc_status_report(&report);
-            if (tud_hid_report(PF_HID_MSC_COMMAND_REPORT_ID, &report, sizeof(report))) {
-                last_msc_report = now;
+            pf_hid_build_storage_report(&report, storage_sequence);
+            if (tud_hid_report(PF_HID_STORAGE_REPORT_ID, &report, sizeof(report))) {
+                ++storage_sequence;
+                last_storage_report = now;
             }
         }
 
         if (tud_hid_ready() &&
             ((TickType_t)(now - last_self_test_report) >= USB_HID_SELF_TEST_INTERVAL)) {
-            pf_hid_self_test_status_t report;
-            pf_hid_build_self_test_report(&report, self_test_sequence);
-            if (tud_hid_report(PF_HID_SELF_TEST_REPORT_ID, &report, sizeof(report))) {
-                ++self_test_sequence;
+            pf_hid_identity_report_t identity;
+            pf_hid_build_identity_report(&identity);
+            if ((identity.capabilities & PF_HID_CAP_SELF_TEST) != 0u) {
+                pf_hid_self_test_report_t report;
+                pf_hid_build_self_test_report(&report, self_test_sequence);
+                if (tud_hid_report(PF_HID_SELF_TEST_REPORT_ID, &report, sizeof(report))) {
+                    ++self_test_sequence;
+                    last_self_test_report = now;
+                }
+            } else {
                 last_self_test_report = now;
-            }
-        }
-
-        if (tud_hid_ready() &&
-            ((TickType_t)(now - last_filesystem_report) >= USB_HID_FILESYSTEM_INTERVAL)) {
-            pf_hid_filesystem_report_t report;
-            pf_hid_build_filesystem_report(&report, filesystem_sequence);
-            if (tud_hid_report(PF_HID_FILESYSTEM_REPORT_ID, &report, sizeof(report))) {
-                ++filesystem_sequence;
-                last_filesystem_report = now;
             }
         }
 
@@ -261,7 +255,7 @@ static void usb_task(void *context)
 
 void pf_usb_start(void)
 {
-    if (!pf_storage_worker_init()) {
+    if (!pf_storage_worker_init(pf_cli_storage_execute)) {
         panic("Failed to create storage worker");
     }
     if (!tusb_init()) {

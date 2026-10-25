@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using HidSharp;
 
 namespace PicoForge;
@@ -8,6 +9,9 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 {
     private readonly HidDevice device;
     private readonly HidStream stream;
+    private HardwareInfoResponse? identity;
+    private byte transactionId;
+    public bool CommandOutcomeUncertain { get; private set; }
 
     public PicoForgeHid(string? serialNumber = null, string? devicePath = null)
     {
@@ -35,46 +39,35 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     private static IEnumerable<HidDevice> MatchingDevices() =>
         DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId)
-            .Concat(DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductId + 1))
+            .Concat(DeviceList.Local.GetHidDevices(HidProtocol.VendorId, HidProtocol.ProductIdAlternate))
             .DistinctBy(candidate => candidate.DevicePath)
             .Where(HasPicoForgeUsage);
 
     public HardwareInfoResponse ReadInfo()
     {
-        var report = new byte[Math.Max(HidProtocol.InfoFeatureSize, device.GetMaxFeatureReportLength() + 1)];
-        report[0] = HidProtocol.InfoReportId;
-        stream.GetFeature(report);
-        return HidProtocol.ParseInfoReport(report);
+        var report = GetFeatureReport(HidProtocol.IdentityReportId, HidProtocol.IdentityFeatureSize);
+        identity = HidProtocol.ParseIdentityReport(report);
+        return identity;
     }
 
-    public BootSettingsResponse? ReadSettings()
+    public BoardConfigurationResponse ReadConfiguration()
     {
-        var report = new byte[Math.Max(HidProtocol.SettingsFeatureSize, device.GetMaxFeatureReportLength() + 1)];
-        report[0] = HidProtocol.SettingsReportId;
-        try
-        {
-            stream.GetFeature(report);
-            return HidProtocol.ParseSettingsReport(report);
-        }
-        catch (Exception error) when (error is IOException or InvalidOperationException
-            or NotSupportedException or TimeoutException)
-        {
-            return null;
-        }
+        identity ??= ReadInfo();
+        return HidProtocol.ParseConfigurationReport(
+            GetFeatureReport(HidProtocol.ConfigurationReportId, HidProtocol.ConfigurationFeatureSize), identity);
     }
+
+    public BootSettingsResponse ReadSettings() => HidProtocol.ToBootSettings(ReadConfiguration());
 
     public RuntimeStatusResponse? ReadStatus()
     {
-        var report = new byte[Math.Max(HidProtocol.StatusInputSize, device.GetMaxInputReportLength())];
-        try
+        var deadline = Environment.TickCount64 + 1000;
+        while (Environment.TickCount64 < deadline)
         {
-            var count = stream.Read(report, 0, report.Length);
-            return count == 0 ? null : HidProtocol.ParseStatusReport(report.AsSpan(0, count));
+            var report = ReadInputReport();
+            if (report?.Runtime is not null) return report.Runtime;
         }
-        catch (TimeoutException)
-        {
-            return null;
-        }
+        return null;
     }
 
     public InputReport? ReadInputReport()
@@ -85,14 +78,16 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             var count = stream.Read(report, 0, report.Length);
             if (count == 0) return null;
             var data = report.AsSpan(0, count);
+            identity ??= ReadInfo();
             return data[0] switch
             {
-                HidProtocol.StatusReportId => new(HidProtocol.ParseStatusReport(data), null, null),
-                HidProtocol.MemoryReportId => new(null, HidProtocol.ParseMemoryReport(data), null),
-                HidProtocol.MscCommandReportId => new(null, null, HidProtocol.ParseMscStatusReport(data)),
-                HidProtocol.SelfTestReportId => new(null, null, null, HidProtocol.ParseSelfTestReport(data)),
-                HidProtocol.FilesystemReportId => new(null, null, null, null, HidProtocol.ParseFilesystemReport(data)),
-                _ => throw new InvalidOperationException("unexpected HID input report ID")
+                HidProtocol.TelemetryReportId => new(HidProtocol.ParseTelemetryReport(data), null, null),
+                HidProtocol.StorageReportId => HidProtocol.ParseStorageReport(data, identity),
+                HidProtocol.SelfTestReportId when (identity.Capabilities & HidProtocol.CapabilitySelfTest) != 0
+                    => new(null, null, null, HidProtocol.ParseSelfTestReport(data)),
+                HidProtocol.SelfTestReportId => throw new InvalidOperationException(
+                    "firmware published self-test status without advertising the capability"),
+                _ => throw new InvalidOperationException($"unexpected HID input report ID {data[0]}")
             };
         }
         catch (TimeoutException)
@@ -103,23 +98,109 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     public void SetLed(bool on)
     {
-        stream.SetFeature(HidProtocol.BuildLedCommandReport(on));
+        EnsureCapability(HidProtocol.CapabilityLed, "LED control");
+        var arguments = new byte[5];
+        arguments[0] = on ? (byte)1 : (byte)0;
+        SendCommand(1, 0, arguments);
     }
 
-    public void SetMsc(bool enabled, bool force = false) =>
-        stream.SetFeature(HidProtocol.BuildMscCommandReport(enabled, force));
+    public void SetMsc(bool enabled, bool force = false)
+    {
+        if (force && enabled) throw new ArgumentException("Force return requires disabling MSC");
+        identity ??= ReadInfo();
+        if ((identity.Capabilities & (HidProtocol.CapabilitySpi | HidProtocol.CapabilitySdio)) == 0)
+            throw new NotSupportedException("MSC control is unavailable on this firmware");
+        var arguments = new byte[5];
+        arguments[0] = force ? (byte)2 : enabled ? (byte)1 : (byte)0;
+        SendCommand(3, force ? (byte)1 : (byte)0, arguments);
+    }
+
     public BootSettingsResponse SetSettings(BootSettingsResponse settings)
     {
-        stream.SetFeature(HidProtocol.BuildSettingsReport(settings));
-        var saved = ReadSettings();
+        EnsureCapability(HidProtocol.CapabilitySettings, "persistent settings");
+        ValidateSettings(settings);
+        var arguments = new byte[5];
+        BinaryPrimitives.WriteUInt16LittleEndian(arguments, (ushort)settings.SystemClockMhz);
+        arguments[2] = (byte)settings.SdCardProfile;
+        var result = SendCommand(6, 0, arguments);
+        var saved = new BootSettingsResponse(BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData),
+            result.ResultData[2]);
         if (saved != settings)
-            throw new InvalidOperationException("Firmware did not confirm the selected boot settings");
-        stream.SetFeature(HidProtocol.BuildRebootCommandReport());
+            throw new InvalidOperationException("Firmware did not confirm the selected next-boot settings");
         return saved;
     }
-    public void SetSelfTest(string action, uint sizeMib) => stream.SetFeature(HidProtocol.BuildSelfTestCommandReport(action, sizeMib));
+
+    public void Reboot()
+    {
+        EnsureCapability(HidProtocol.CapabilityReboot, "reboot");
+        SendCommand(2, 1, new byte[5]);
+    }
+
+    public void SetSelfTest(string action, uint sizeMib)
+    {
+        EnsureCapability(HidProtocol.CapabilitySelfTest, "SD self-test");
+        if (action is not ("start" or "cancel"))
+            throw new ArgumentException("Self-test action must be start or cancel", nameof(action));
+        if (action == "cancel") sizeMib = 0;
+        else if (sizeMib is < 1 or > 1024)
+            throw new ArgumentOutOfRangeException(nameof(sizeMib), "Self-test size must be 1..1024 MiB");
+        var arguments = new byte[5];
+        arguments[0] = action == "start" ? (byte)1 : (byte)0;
+        BinaryPrimitives.WriteUInt32LittleEndian(arguments.AsSpan(1), sizeMib);
+        SendCommand(4, 0, arguments);
+    }
 
     public void Dispose() => stream.Dispose();
+
+    private byte[] GetFeatureReport(byte reportId, int requiredSize)
+    {
+        var report = new byte[Math.Max(requiredSize, device.GetMaxFeatureReportLength() + 1)];
+        report[0] = reportId;
+        stream.GetFeature(report);
+        return report;
+    }
+
+    private ControlResult SendCommand(byte opcode, byte flags, byte[] arguments)
+    {
+        if (CommandOutcomeUncertain)
+            throw new InvalidOperationException("A prior HID command outcome is uncertain; further writes are blocked");
+        identity ??= ReadInfo();
+        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
+        if (transactionId == 0) transactionId = 1;
+        var request = HidProtocol.BuildControlRequest(transactionId, opcode, flags, arguments);
+        CommandOutcomeUncertain = true;
+        stream.SetFeature(request);
+
+        var deadline = Environment.TickCount64 + 1000;
+        while (Environment.TickCount64 < deadline)
+        {
+            var response = GetFeatureReport(HidProtocol.ControlReportId, HidProtocol.ControlFeatureSize);
+            var result = HidProtocol.ParseControlResult(response);
+            if (result.TransactionId != transactionId || result.Opcode != opcode)
+                throw new InvalidOperationException("HID control result was replaced by another transaction");
+            if (result.Status != 1)
+            {
+                CommandOutcomeUncertain = false;
+                HidProtocol.RequireCompleted(result, transactionId, opcode);
+                return result;
+            }
+            Thread.Sleep(20);
+        }
+        throw new TimeoutException($"Timed out waiting for HID command {opcode} transaction {transactionId}");
+    }
+
+    private void EnsureCapability(byte capability, string operation)
+    {
+        identity ??= ReadInfo();
+        if ((identity.Capabilities & capability) == 0)
+            throw new NotSupportedException($"{operation} is unavailable on this firmware");
+    }
+
+    private static void ValidateSettings(BootSettingsResponse settings)
+    {
+        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(settings), "Unsupported next-boot settings value");
+    }
 
     private static bool HasPicoForgeUsage(HidDevice candidate)
     {

@@ -13,6 +13,7 @@ internal interface IDashboardBoards
     bool SetLed(string? boardId, bool on);
     MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false);
     BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings);
+    bool Reboot(string? boardId);
     bool SetSelfTest(string? boardId, string action, uint sizeMib);
 }
 
@@ -76,6 +77,7 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
         Reader(boardId).SetMsc(enabled, force);
     public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings) =>
         Reader(boardId).SetSettings(settings);
+    public bool Reboot(string? boardId) => Reader(boardId).Reboot();
     public bool SetSelfTest(string? boardId, string action, uint sizeMib) =>
         Reader(boardId).SetSelfTest(action, sizeMib);
 

@@ -26,28 +26,24 @@ project(pico_forge C CXX ASM)
 set(PF_FIRMWARE_VERSION "0.0.0-dev" CACHE STRING "Firmware semantic version string")
 include("${CMAKE_CURRENT_LIST_DIR}/version.cmake")
 
-set(PF_SD_CARD_TRANSPORT "SDIO_PIO" CACHE STRING "SD-card transport: SDIO_PIO or SPI")
-set_property(CACHE PF_SD_CARD_TRANSPORT PROPERTY STRINGS SDIO_PIO SPI)
-option(PF_SD_CARD_INTERRUPT_WAIT "Enable experimental FreeRTOS native PIO completion waits" OFF)
-set(PF_SD_CARD_PORT "FREERTOS" CACHE STRING "SD-card execution environment: FREERTOS or BAREMETAL")
-set_property(CACHE PF_SD_CARD_PORT PROPERTY STRINGS FREERTOS BAREMETAL)
-if(NOT PF_SD_CARD_PORT STREQUAL "FREERTOS" AND NOT PF_SD_CARD_PORT STREQUAL "BAREMETAL")
-    message(FATAL_ERROR "PF_SD_CARD_PORT must be FREERTOS or BAREMETAL")
+set(PF_SDCARD_TRANSPORT "SDIO_PIO" CACHE STRING "SD-card transport: SDIO_PIO or SPI")
+set_property(CACHE PF_SDCARD_TRANSPORT PROPERTY STRINGS SDIO_PIO SPI)
+option(PF_SDCARD_INTERRUPT_WAIT "Enable experimental FreeRTOS native PIO completion waits" OFF)
+set(PF_SDCARD_PORT "FREERTOS" CACHE STRING "SD-card execution environment: FREERTOS or BAREMETAL")
+set_property(CACHE PF_SDCARD_PORT PROPERTY STRINGS FREERTOS BAREMETAL)
+if(NOT PF_SDCARD_PORT STREQUAL "FREERTOS" AND NOT PF_SDCARD_PORT STREQUAL "BAREMETAL")
+    message(FATAL_ERROR "PF_SDCARD_PORT must be FREERTOS or BAREMETAL")
 endif()
-if(PF_SD_CARD_INTERRUPT_WAIT AND NOT PF_SD_CARD_PORT STREQUAL "FREERTOS")
-    message(FATAL_ERROR "PF_SD_CARD_INTERRUPT_WAIT requires PF_SD_CARD_PORT=FREERTOS")
+if(PF_SDCARD_INTERRUPT_WAIT AND NOT PF_SDCARD_PORT STREQUAL "FREERTOS")
+    message(FATAL_ERROR "PF_SDCARD_INTERRUPT_WAIT requires PF_SDCARD_PORT=FREERTOS")
 endif()
-if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
-    set(PF_CONFIG_SD_CARD_TRANSPORT_VALUE 0)
-elseif(PF_SD_CARD_TRANSPORT STREQUAL "SPI")
-    set(PF_CONFIG_SD_CARD_TRANSPORT_VALUE 1)
-    if(PF_SD_CARD_INTERRUPT_WAIT)
-        message(FATAL_ERROR "PF_SD_CARD_INTERRUPT_WAIT requires PF_SD_CARD_TRANSPORT=SDIO_PIO")
+if(PF_SDCARD_TRANSPORT STREQUAL "SPI")
+    if(PF_SDCARD_INTERRUPT_WAIT)
+        message(FATAL_ERROR "PF_SDCARD_INTERRUPT_WAIT requires PF_SDCARD_TRANSPORT=SDIO_PIO")
     endif()
-else()
-    message(FATAL_ERROR "PF_SD_CARD_TRANSPORT must be SDIO_PIO or SPI")
+elseif(NOT PF_SDCARD_TRANSPORT STREQUAL "SDIO_PIO")
+    message(FATAL_ERROR "PF_SDCARD_TRANSPORT must be SDIO_PIO or SPI")
 endif()
-add_compile_definitions(PF_CONFIG_SD_CARD_TRANSPORT=${PF_CONFIG_SD_CARD_TRANSPORT_VALUE})
 
 set(PF_SYS_CLK_MHZ 0 CACHE STRING
     "Out-of-spec system clock in MHz (100-250, 12 MHz crystal); 0 keeps the SDK default")
@@ -93,56 +89,64 @@ endif()
 
 pico_sdk_init()
 
-add_library(pf_storage_bus STATIC
-    src/drivers/storage/bus.c
-    src/drivers/storage/serial.c
-    src/drivers/storage/sd_wire.c)
-target_include_directories(pf_storage_bus PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+set(PF_HID_BOARD_MODEL_VALUE 0)
+if(PICO_BOARD STREQUAL "pico")
+    set(PF_HID_BOARD_MODEL_VALUE 1)
+elseif(PICO_BOARD STREQUAL "pico2")
+    set(PF_HID_BOARD_MODEL_VALUE 2)
+elseif(PICO_BOARD STREQUAL "pico2_w")
+    set(PF_HID_BOARD_MODEL_VALUE 3)
+endif()
+add_compile_definitions(PF_HID_BOARD_MODEL=${PF_HID_BOARD_MODEL_VALUE})
 
-if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
+add_library(pf_sd_link STATIC
+    src/drivers/sdcard/sd_link.c)
+target_include_directories(pf_sd_link PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+
+if(PF_SDCARD_PORT STREQUAL "FREERTOS")
     set(FREERTOS_KERNEL_PATH "${FREERTOS_KERNEL_PATH_VALUE}" CACHE PATH "Path to the pinned FreeRTOS-Kernel checkout")
     set(FREERTOS_CONFIG_FILE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src/integration/freertos")
     include("${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
 endif()
 
-add_library(pf_sd_card_protocol STATIC
-    src/drivers/sd_card/sd_protocol.c
+add_library(pf_sdcard_protocol STATIC
+    src/drivers/sdcard/sd_protocol.c
 )
-target_include_directories(pf_sd_card_protocol PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
+target_include_directories(pf_sdcard_protocol PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdcard"
 )
 # Let SPI-only firmware discard unused native codecs and their CRC tables.
-target_compile_options(pf_sd_card_protocol PRIVATE -ffunction-sections -fdata-sections)
+target_compile_options(pf_sdcard_protocol PRIVATE -ffunction-sections -fdata-sections)
 
-if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
+if(PF_SDCARD_TRANSPORT STREQUAL "SDIO_PIO")
     add_library(pf_sdio_backend STATIC
-        src/drivers/sd_card/sd_native.c
-        src/drivers/sd_card/sd_native_host.c
-        src/drivers/storage/sdio_pio/sdio_pio.c
+        src/drivers/sdcard/sdio/sd_backend_sdio.c
+        src/drivers/sdcard/sdio/sd_sdio_host.c
+        src/drivers/sdcard/sdio/sdio_pio.c
     )
     option(PF_SDIO_PIO_FUSED_COPY "Benchmark fused native CRC and payload copy" OFF)
     option(PF_SDIO_PIO_HIGH_SPEED "Native High-Speed startup (up to 50 MHz, limited by SYSCLK/4) with one 25 MHz fallback" ON)
-    target_compile_definitions(pf_sd_card_protocol PRIVATE
+    target_compile_definitions(pf_sdcard_protocol PRIVATE
         PF_SD_NATIVE_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>)
     target_compile_definitions(pf_sdio_backend PRIVATE
-        PF_SD_NATIVE_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
-        PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
+        PF_SD_SDIO_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
+        PF_CONFIG_SDCARD_INTERRUPT_WAIT=$<BOOL:${PF_SDCARD_INTERRUPT_WAIT}>
     )
-    if(PF_SD_CARD_INTERRUPT_WAIT)
+    if(PF_SDCARD_INTERRUPT_WAIT)
         target_sources(pf_sdio_backend PRIVATE
-            src/drivers/storage/sdio_pio/sdio_wait_freertos.c)
+            src/drivers/sdcard/sdio/sdio_pio_wait_freertos.c)
         target_link_libraries(pf_sdio_backend PRIVATE FreeRTOS-Kernel-Static hardware_irq)
     endif()
     pico_generate_pio_header(pf_sdio_backend
-        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/storage/sdio_pio/sdio_pio.pio"
+        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdcard/sdio/sdio_pio.pio"
     )
     target_include_directories(pf_sdio_backend
         PUBLIC
-            "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
+            "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdcard"
     )
     target_link_libraries(pf_sdio_backend PUBLIC
-        pf_storage_bus
-        pf_sd_card_protocol
+        pf_sd_link
+        pf_sdcard_protocol
         hardware_clocks
         hardware_dma
         hardware_gpio
@@ -150,57 +154,63 @@ if(PF_SD_CARD_TRANSPORT STREQUAL "SDIO_PIO")
         hardware_sync
         pico_stdlib
     )
-    set(PF_SD_CARD_BACKEND pf_sdio_backend)
+    set(PF_SDCARD_BACKEND pf_sdio_backend)
+    set(PF_SDCARD_BOARD_SOURCE src/drivers/sdcard/sdio/sd_board_sdio.c)
 else()
     add_library(pf_sd_spi_backend STATIC
-        src/drivers/sd_card/sd_spi.c
-        src/drivers/storage/spi/spi.c
+        src/drivers/sdcard/spi/sd_backend_spi.c
+        src/drivers/sdcard/spi/spi.c
     )
     target_include_directories(pf_sd_spi_backend PUBLIC
-        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
+        "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdcard"
     )
     target_link_libraries(pf_sd_spi_backend PUBLIC
-        pf_storage_bus
-        pf_sd_card_protocol
+        pf_sd_link
+        pf_sdcard_protocol
         hardware_spi
         hardware_gpio
         pico_stdlib
     )
-    set(PF_SD_CARD_BACKEND pf_sd_spi_backend)
+    set(PF_SDCARD_BACKEND pf_sd_spi_backend)
+    set(PF_SDCARD_BOARD_SOURCE src/drivers/sdcard/spi/sd_board_spi.c)
 endif()
 
-add_library(pf_sd_card STATIC
-    src/drivers/sd_card/sd.c
+add_library(pf_sdcard STATIC
+    src/drivers/sdcard/sd.c
+    src/drivers/sdcard/sd_board.c
+    ${PF_SDCARD_BOARD_SOURCE}
 )
-target_include_directories(pf_sd_card PUBLIC
+target_include_directories(pf_sdcard PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sdcard"
 )
-target_link_libraries(pf_sd_card PUBLIC
-    pf_sd_card_protocol
-    ${PF_SD_CARD_BACKEND}
+target_link_libraries(pf_sdcard PUBLIC
+    pf_sdcard_protocol
+    ${PF_SDCARD_BACKEND}
+    hardware_gpio
+    pf_boot_config
 )
 
-if(PF_SD_CARD_PORT STREQUAL "FREERTOS")
-    target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/sd_port_freertos.c
+if(PF_SDCARD_PORT STREQUAL "FREERTOS")
+    target_sources(pf_sdcard PRIVATE
+        src/drivers/sdcard/sd_port_freertos.c
     )
-    target_compile_definitions(pf_sd_card PRIVATE
-        PF_CONFIG_SD_CARD_INTERRUPT_WAIT=$<BOOL:${PF_SD_CARD_INTERRUPT_WAIT}>
+    target_compile_definitions(pf_sdcard PRIVATE
+        PF_CONFIG_SDCARD_INTERRUPT_WAIT=$<BOOL:${PF_SDCARD_INTERRUPT_WAIT}>
     )
-    target_link_libraries(pf_sd_card PRIVATE FreeRTOS-Kernel-Static hardware_irq)
+    target_link_libraries(pf_sdcard PRIVATE FreeRTOS-Kernel-Static hardware_irq)
 else()
-    target_sources(pf_sd_card PRIVATE
-        src/drivers/sd_card/sd_port_baremetal.c
+    target_sources(pf_sdcard PRIVATE
+        src/drivers/sdcard/sd_port_baremetal.c
     )
     # The USB/storage application requires FreeRTOS; this target checks the
     # reusable driver without importing the kernel or accessing card hardware.
-    add_executable(pf_sd_card_baremetal_smoke tests/ports/sd_card_baremetal_smoke.c)
-    target_link_libraries(pf_sd_card_baremetal_smoke PRIVATE pf_sd_card)
-    pico_enable_stdio_usb(pf_sd_card_baremetal_smoke 0)
-    pico_enable_stdio_uart(pf_sd_card_baremetal_smoke 0)
-    pico_set_program_version(pf_sd_card_baremetal_smoke "${PF_FIRMWARE_VERSION}")
-    pico_add_extra_outputs(pf_sd_card_baremetal_smoke)
+    add_executable(pf_sdcard_baremetal_smoke tests/ports/sdcard_baremetal_smoke.c)
+    target_link_libraries(pf_sdcard_baremetal_smoke PRIVATE pf_sdcard)
+    pico_enable_stdio_usb(pf_sdcard_baremetal_smoke 0)
+    pico_enable_stdio_uart(pf_sdcard_baremetal_smoke 0)
+    pico_set_program_version(pf_sdcard_baremetal_smoke "${PF_FIRMWARE_VERSION}")
+    pico_add_extra_outputs(pf_sdcard_baremetal_smoke)
     return()
 endif()
 
@@ -228,6 +238,14 @@ target_include_directories(pf_led PUBLIC
 )
 target_link_libraries(pf_led PUBLIC hardware_gpio)
 
+add_library(pf_monitor_uart STATIC
+    src/drivers/monitor_uart.c
+)
+target_include_directories(pf_monitor_uart PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+)
+target_link_libraries(pf_monitor_uart PUBLIC hardware_uart pico_stdio_uart)
+
 add_library(pf_logging STATIC
     src/middleware/logging/logging.c
 )
@@ -245,33 +263,31 @@ target_include_directories(embedded_cli PUBLIC
 
 add_library(pf_cli STATIC
     src/app/cli/cli.c
+    src/app/cli/cli_storage.c
 )
 target_include_directories(pf_cli PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
 )
-target_link_libraries(pf_cli PUBLIC embedded_cli)
+target_link_libraries(pf_cli PUBLIC embedded_cli pf_storage)
 
 add_library(pf_storage STATIC
     src/middleware/storage/block_device.c
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
     src/middleware/storage/fatfs_disk.c
+    src/middleware/storage/fatfs_volume.c
+    src/middleware/storage/storage.c
 )
+target_link_libraries(pf_storage PUBLIC pf_sdcard pf_logging)
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
     "${CMAKE_CURRENT_LIST_DIR}/src/middleware/storage"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
-target_sources(pf_storage PRIVATE src/middleware/storage/sd_block_device.c)
-target_link_libraries(pf_storage PUBLIC pf_sd_card)
 
 add_library(pf_app_storage STATIC
-    src/app/storage/fatfs_volume.c
-    src/app/storage/storage_commands.c
     src/app/storage/file_benchmark.c
     src/app/storage/storage_worker.c
-    src/app/storage/sd_media.c
 )
 option(PF_STORAGE_SELF_TEST_PREALLOCATE "Preallocate contiguous self-test files outside write timing" OFF)
 target_compile_definitions(pf_app_storage PUBLIC
@@ -281,43 +297,36 @@ target_include_directories(pf_app_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/app/storage"
 )
 target_link_libraries(pf_app_storage PUBLIC
+    pf_cli
     pf_storage
+    pf_sdcard
     pf_system
     embedded_cli
     FreeRTOS-Kernel-Static
 )
-add_library(pf_settings STATIC
-    src/drivers/persistent_memory/settings.c
-    src/drivers/persistent_memory/settings_store.c
+add_library(pf_platform_boot_config_store STATIC
+    src/platform/boot_config_store.c
 )
-target_include_directories(pf_settings PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+target_include_directories(pf_platform_boot_config_store PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 # pico_flash is an INTERFACE library: flash.c compiles into this target, so it needs the FreeRTOS SMP definitions
 # (LIB_FREERTOS_KERNEL, FREE_RTOS_KERNEL_SMP, configNUMBER_OF_CORES, configUSE_CORE_AFFINITY) here.
-target_link_libraries(pf_settings PUBLIC hardware_flash pico_flash pico_sync FreeRTOS-Kernel-Static)
+target_link_libraries(pf_platform_boot_config_store PUBLIC
+    hardware_flash
+    pico_flash
+    pico_sync
+    FreeRTOS-Kernel-Static
+)
 
-add_library(pf_board STATIC
-    src/board/board.c
-    src/board/board_profile.c
-    src/board/board_resources.c
-)
-target_include_directories(pf_board PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src"
-    "${CMAKE_CURRENT_LIST_DIR}/src/board"
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/sd_card"
-)
-target_link_libraries(pf_board PUBLIC
-    hardware_gpio
-    hardware_pio
-    hardware_spi
-    pico_stdio_uart
-    pf_led
-    pf_settings
-)
-target_link_libraries(pf_board PUBLIC ${PF_SD_CARD_BACKEND})
-target_link_libraries(pf_app_storage PUBLIC pf_board pf_logging)
+add_library(pf_boot_config STATIC src/drivers/boot_config.c)
+target_include_directories(pf_boot_config PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+target_link_libraries(pf_boot_config PUBLIC pf_platform_boot_config_store)
 
+target_link_libraries(pf_app_storage PUBLIC pf_logging)
+
+# The board config is compiled into the image so its extern assignments always resolve for every driver library.
 add_executable(pico_forge
     src/main.c
+    src/config/board.c
     src/app/runtime_stats.c
     src/integration/usb/dcd_guard.c
     src/app/usb/usb_descriptors.c
@@ -343,8 +352,9 @@ target_link_libraries(pico_forge
     pf_logging
     pf_cli
     pf_app_storage
-    pf_board
-    pf_settings
+    pf_led
+    pf_monitor_uart
+    pf_boot_config
 )
 
 target_compile_definitions(pico_forge PRIVATE
@@ -380,7 +390,7 @@ else()
     set(pf_flash_size "2 * 1024 * 1024")
 endif()
 set(PF_SETTINGS_SECTOR_SIZE 4096)
-set(pf_link_dir "${CMAKE_CURRENT_BINARY_DIR}/pf_settings_link")
+set(pf_link_dir "${CMAKE_CURRENT_BINARY_DIR}/pf_boot_config_link")
 file(WRITE "${pf_link_dir}/pico_flash_region.ld"
     "FLASH(rx) : ORIGIN = 0x10000000, LENGTH = (${pf_flash_size}) - ${PF_SETTINGS_SECTOR_SIZE}\n")
 pico_add_linker_script_override_path(pico_forge "${pf_link_dir}" FILES pico_flash_region.ld)

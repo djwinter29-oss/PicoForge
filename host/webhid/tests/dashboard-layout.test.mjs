@@ -1,254 +1,152 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs";
+import { PicoForgeWebHid } from "../js/device.mjs?v=2";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
+import { identity, config, selfTest } from "./support/fixtures.mjs";
 
-for (const name of ["web", "webhid"]) {
-  test(`${name} places controls beside their reports without refresh or write-consent inputs`, () => {
-    const html = readFileSync(new URL(`../../${name}/index.html`, import.meta.url), "utf8");
-    const section = label => {
-      const markup = html.match(new RegExp(`<section[^>]*${label}[^>]*>[\\s\\S]*?</section>`));
-      assert.ok(markup, `${label} section must exist`);
-      return markup[0];
-    };
-    assert.equal((html.match(/<main>/g) ?? []).length, 1);
-    assert.equal((html.match(/<\/main>/g) ?? []).length, 1);
-    assert.match(html, /<title>PicoForge Diagnostics \|/);
-    assert.match(html, /<h1>Diagnostics<\/h1>/);
-    assert.doesNotMatch(html, /Board overview|HID STATUS \/ USB|WEBHID \/ USB/);
-    assert.doesNotMatch(html, /id="refresh"|self-test-consent|type="checkbox"/);
-    const identity = section('aria-labelledby="identity-title"');
-    assert.match(identity, /<h2 id="identity-title">Device information<\/h2>/);
-    assert.match(identity, /id="firmware-version"/);
-    assert.match(identity, /id="led-control"/);
-    assert.match(identity, /Board LED: --/);
-    assert.equal((html.match(/id="led-control"/g) ?? []).length, 1);
-    const settings = section('aria-labelledby="settings-title"');
-    assert.match(settings, /<h2 id="settings-title">Configuration<\/h2>/);
-    assert.ok(html.indexOf('aria-labelledby="settings-title"') < html.indexOf('aria-labelledby="runtime-title"'));
-    assert.match(settings, /id="settings-clock"/);
-    assert.match(settings, /<label for="settings-storage">SD Card[\s\S]*id="settings-storage"[\s\S]*25 MHz[\s\S]*50 MHz/);
-    assert.doesNotMatch(settings, /settings-sdio|settings-spi/);
-    assert.equal((settings.match(/<label for="settings-/g) ?? []).length, 2);
-    assert.match(settings, /class="section-heading"[\s\S]*id="settings-title"[\s\S]*id="settings-save"[^>]*>Save &amp; Reboot/);
-    assert.doesNotMatch(settings, /class="settings-action"|Changes take effect after reboot/);
-    assert.match(settings, /id="settings-note"/);
-    const liveReport = section('aria-labelledby="runtime-title"');
-    assert.match(liveReport, /<h2 id="runtime-title">Live diagnostics<\/h2>/);
-    assert.match(liveReport, /class="runtime-grid runtime-summary"/);
-    assert.match(liveReport, /<dt>CLI port<\/dt>/);
-    assert.doesNotMatch(liveReport, /<dt>CDC port<\/dt>/);
-    assert.doesNotMatch(liveReport, /id="sample-time"|Last report/);
-    assert.doesNotMatch(liveReport, /id="led-control"/);
-    assert.doesNotMatch(liveReport, /id="led-state"|<dt>Onboard LED<\/dt>/);
-    assert.equal((liveReport.match(/<dt>CPU Usage \(Core 1 \/ Core 2\)<\/dt>/g) ?? []).length, 1);
-    assert.doesNotMatch(liveReport, /<dt>CPU core [01] usage<\/dt>/);
-    assert.match(liveReport, /id="cpu-usage-core0"/);
-    assert.match(liveReport, /id="cpu-usage-core1"/);
-    assert.match(liveReport, /<dd><span id="cpu-usage-core0">--<\/span> \/ <span id="cpu-usage-core1">--<\/span><\/dd>/);
-    assert.equal((liveReport.match(/<dt>SRAM \(reserved \/ total\)<\/dt>/g) ?? []).length, 1);
-    assert.doesNotMatch(liveReport, /<dt>On-chip SRAM|<dt>RAM reserved|<dt>Total on-chip SRAM/);
-    assert.match(liveReport, /id="ram-reserved"/);
-    assert.match(liveReport, /id="ram-total"/);
-    assert.match(liveReport, /<dd>\s*<span id="ram-reserved"[^>]*>--<\/span>\s*\/\s*<span id="ram-total"[^>]*>--<\/span>\s*<\/dd>/);
-    assert.doesNotMatch(liveReport, /System clock|runtime-clock/);
-    assert.doesNotMatch(html, /Report sequence|id="sequence"/);
-    assert.equal((html.match(/<span>System clock<\/span>/g) ?? []).length, 1);
-    assert.doesNotMatch(liveReport, /SD presence|id="card-presence"/);
-    assert.doesNotMatch(html, /Memory type|Memory presence|id="memory-type"/);
-    assert.doesNotMatch(liveReport, /USB device|id="usb-state"/);
-    const memoryReport = section('aria-labelledby="memory-title"');
-    assert.match(memoryReport, /<h2 id="memory-title">Storage<\/h2>/);
-    assert.doesNotMatch(memoryReport, /id="memory-presence"|<dt>Presence<\/dt>/);
-    assert.doesNotMatch(memoryReport, /id="memory-type"/);
-    assert.match(memoryReport, /id="memory-filesystem"/);
-    assert.match(memoryReport, /<dt>Manufacturer<\/dt>/);
-      assert.match(memoryReport, /<dt>Serial<\/dt>/);
-    assert.match(memoryReport, /id="msc-control"/);
-    assert.match(memoryReport, /Enable USB drive/);
-    assert.match(memoryReport, /id="msc-note"/);
-    const selfTest = section('aria-labelledby="self-test-title"');
-    assert.match(selfTest, /<h2 id="self-test-title">Storage benchmark<\/h2>/);
-    assert.match(selfTest, /Test file size \(MiB\)/);
-    assert.match(selfTest, /Average write speed/);
-    assert.match(selfTest, /Average read speed/);
-    assert.match(selfTest, /Written \/ target/);
-    assert.match(selfTest, /Verified \/ target/);
-    assert.match(selfTest, /class="section-heading self-test-heading"[\s\S]*<div class="self-test-controls">/);
-    assert.doesNotMatch(selfTest, /msc-force-return|Force return to Pico/);
-    assert.doesNotMatch(selfTest, /msc-warning|Firmware owns storage|Disabling can lose/);
-    assert.match(selfTest, /id="self-test-start"/);
-    assert.match(selfTest, /id="self-test-size"[^>]*max="1024"/);
-    if (name === "webhid") {
-      assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
-      assert.match(html, /<small>WebHID<\/small>/);
-      assert.match(html, /id="connection-control"/);
-      assert.match(identity, /id="connection-control"/);
-      assert.doesNotMatch(html, /id="connect"|id="disconnect"/);
-    } else {
-      assert.match(html, /<title>PicoForge Diagnostics \| \{\{ dashboard_type \}\}<\/title>/);
-      assert.match(html, /<small>\{\{ dashboard_type \}\}<\/small>/);
-      assert.match(identity, /id="board-select"/);
-      assert.match(identity, /id="rescan-boards"/);
-    }
-  });
-
-}
-
-test("WebHID Disable confirms before sending Pico-side detach and does not send on cancellation", async () => {
-    const previousDocument = globalThis.document;
-    const previousWindow = globalThis.window;
-    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
-    const secureDescriptor = Object.getOwnPropertyDescriptor(globalThis, "isSecureContext");
-    const previousConnect = PicoForgeWebHid.prototype.connect;
-    const previousDisconnect = PicoForgeWebHid.prototype.disconnect;
-    const elements = new Map();
-    const sent = [];
-    let confirmed = false;
-    let connectedClient;
-    globalThis.document = { querySelector(selector) {
-      if (!elements.has(selector)) elements.set(selector, {
-        dataset: {}, valueAsNumber: 32, addEventListener(event, handler) { this[event] = handler; },
-        replaceChildren() { this.children = []; }, append(option) { (this.children ??= []).push(option); },
-        setAttribute(name, value) { this[name] = value; },
-      });
-      return elements.get(selector);
-    } };
-    globalThis.document.createElement = () => ({ value: "", textContent: "" });
-    globalThis.window = { confirm: () => confirmed };
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { hid: new EventTarget() } });
-    Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
-    PicoForgeWebHid.prototype.connect = async function () {
-      connectedClient = this;
-      let settingsReport = Uint8Array.from([1, 200, 0, 0, 50]);
-      this.device = {
-        sendFeatureReport: async (id, payload) => {
-          sent.push([id, ...payload]);
-          if (id === 8) settingsReport = Uint8Array.from(payload);
-        },
-        receiveFeatureReport: async () => new DataView(settingsReport.buffer),
-      };
-      this.update({ connected: true, settings_supported: true,
-        settings: { system_clock_mhz: 200, sdio_bus_mhz: 0, spi_bus_mhz: 50 },
-        msc: { enabled: true, force_return_supported: true } });
-    };
-    PicoForgeWebHid.prototype.disconnect = async function () {
-      this.update({ connected: false, busy: false });
-    };
-    try {
-      await import("../js/app.mjs");
-      const connectionControl = elements.get("#connection-control");
-      assert.equal(connectionControl.textContent, "Connect");
-      await connectionControl.click();
-      assert.equal(connectionControl.textContent, "Disconnect");
-      assert.equal(elements.get("#msc-control").textContent, "Return to Pico");
-      assert.equal(elements.get("#msc-note").hidden, true);
-      assert.equal(elements.get("#settings-clock").value, "200");
-      assert.equal(elements.get("#settings-save").disabled, true);
-      await elements.get("#msc-control").click();
-      assert.equal(sent.length, 0);
-      confirmed = true;
-      await elements.get("#msc-control").click();
-      assert.deepEqual(sent, [[5, 3, 2]]);
-      assert.equal(elements.get("#msc-control").disabled, true);
-      connectedClient.update({ msc: { enabled: false } });
-      assert.equal(elements.get("#msc-control").textContent, "Enable USB drive");
-      confirmed = false;
-      await elements.get("#msc-control").click();
-      assert.deepEqual(sent[1], [5, 2, 1]);
-      connectedClient.update({ msc: { enabled: true, force_return_supported: false } });
-      assert.equal(elements.get("#msc-control").disabled, true);
-      await elements.get("#msc-control").click();
-      assert.equal(sent.length, 2);
-      connectedClient.update({ msc: { enabled: false, transition_pending: false } });
-      elements.get("#settings-clock").value = "150";
-      elements.get("#settings-clock").change();
-      await elements.get("#settings-save").click();
-      assert.deepEqual(sent.slice(-2), [[8, 1, 150, 0, 0, 50], [9, 1, 1]]);
-      elements.get("#settings-storage").value = "25";
-      elements.get("#settings-storage").change();
-      await elements.get("#settings-save").click();
-      assert.deepEqual(sent.slice(-2), [[8, 1, 150, 0, 25, 25], [9, 1, 1]]);
-      assert.match(elements.get("#settings-note").textContent, /Rebooting now/);
-      await connectionControl.click();
-      assert.equal(connectionControl.textContent, "Connect");
-    } finally {
-      PicoForgeWebHid.prototype.connect = previousConnect;
-      PicoForgeWebHid.prototype.disconnect = previousDisconnect;
-      globalThis.document = previousDocument;
-      globalThis.window = previousWindow;
-      if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
-      else delete globalThis.navigator;
-      if (secureDescriptor) Object.defineProperty(globalThis, "isSecureContext", secureDescriptor);
-      else delete globalThis.isSecureContext;
-    }
+test("standalone dashboard labels profiles, active measurements, controls and accessible statuses", () => {
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
+  assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
+  assert.match(html, /src="js\/app\.mjs\?v=7"/);
+  const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
+  assert.match(app, /from "\.\/device\.mjs\?v=2"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=2"/);
+  assert.match(html, /<label for="settings-storage">SD Card/);
+  assert.match(html, /value="0">Standard/);
+  assert.match(html, /value="1">High-Speed/);
+  assert.match(html, /id="settings-save"[^>]*>Save and Reboot/);
+  assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
+  assert.doesNotMatch(html, /Save &amp; Reboot|25 MHz|50 MHz|Core 1 \/ Core 2/);
+  assert.match(html, /Firmware RAM reserved \/ total/);
+  assert.match(html, /Service load \(Core 0 \/ Core 1\)/);
+  assert.match(html, /<dt>Filesystem<\/dt>/);
+  assert.doesNotMatch(html, /class="eyebrow"|id="mcu"|id="memory-timing"|id="board-config"/);
+  assert.doesNotMatch(html, /metric-product/);
+  assert.match(html, /id="settings-title">Board configuration/);
+  const identity = html.split('aria-label="Hardware identity"')[1].split("</section>")[0];
+  assert.deepEqual([...identity.matchAll(/<strong id="([^"]+)"/g)].map(match => match[1]),
+    ["product-name", "board-model", "serial", "identity-clock", "ram-usage", "firmware-version"]);
+  const runtime = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
+  assert.deepEqual([...runtime.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
+    ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port"]);
+  assert.match(html, /<details class="pin-map-disclosure">/);
+  assert.match(html, /id="board-uart"[\s\S]*id="board-storage-pins"/);
+  for (const name of ["configuration", "reboot", "return"]) {
+    assert.match(html, new RegExp(`<dialog class="confirmation-dialog" id="${name}-dialog"`));
+  }
+  assert.match(html, /id="led-control"[\s\S]*?aria-pressed="false"/);
+  assert.match(html, /<progress[^>]*aria-label="Self-test progress"/);
+  for (const name of ["telemetry", "storage", "self-test"]) {
+    assert.match(html, new RegExp(`id="${name}-freshness" role="status"`));
+  }
 });
 
-test("shared Disable confirms Pico-side return while Enable needs no confirmation or host eject", async () => {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const previousFetch = globalThis.fetch;
+test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and confirms force return", async () => {
+  const saved = {
+    document: globalThis.document, window: globalThis.window,
+    navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
+    secure: Object.getOwnPropertyDescriptor(globalThis, "isSecureContext"),
+  };
+  const prototypes = new Map(["connect", "setMsc", "saveSettings", "reboot"].map(name =>
+    [name, PicoForgeWebHid.prototype[name]]));
   const elements = new Map();
-  const requests = [];
-  let confirmed = false;
-  let warning = "";
-  let poll;
-  let enabled = true;
-  let supported = true;
-  globalThis.document = { querySelector(selector) {
-    if (!elements.has(selector)) elements.set(selector, {
-      dataset: {}, valueAsNumber: 32, addEventListener(event, handler) { this[event] = handler; },
-      replaceChildren() { this.children = []; }, append(option) { (this.children ??= []).push(option); },
-        setAttribute(name, value) { this[name] = value; },
-    });
+  const el = selector => {
+    if (!elements.has(selector)) elements.set(selector, { value: "0", dataset: {}, valueAsNumber: 32,
+      open: false, showModal() { this.open = true; }, close() { this.open = false; },
+      addEventListener(type, handler) { this[type] = handler; }, setAttribute(name, value) { this[name] = value; },
+      replaceChildren(...children) { this.children = children; } });
     return elements.get(selector);
-  } };
-  globalThis.document.createElement = () => ({ value: "", textContent: "" });
-  globalThis.window = {
-    setInterval(callback) { poll = callback; },
-    confirm(message) { warning = message; return confirmed; },
   };
-  globalThis.fetch = async (url, options) => {
-    if (options?.method === "POST") requests.push([url, JSON.parse(options.body)]);
-    if (url === "/api/boards") return { ok: true, json: async () => ({
-      boards: [{ id: "board-a", product_name: "PicoForge", serial_number: "board-A", device_path: "/hid/a" }],
-      default_board_id: "board-a",
-    }) };
-    const isStatus = url === "/api/status?board=board-a";
-    const msc = { enabled, force_return_supported: supported, transition_pending: !isStatus };
-    return { ok: true, json: async () => isStatus
-      ? { connected: true, msc }
-      : url.startsWith("/api/msc") ? { msc } : { msc } };
+  let client;
+  const commands = [];
+  globalThis.document = { querySelector: el, createElement: () => ({ children: [],
+    append(...children) { this.children.push(...children); } }) };
+  globalThis.window = { confirm() { assert.fail("Use styled dialogs, not browser confirmations"); } };
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { hid: new EventTarget() } });
+  Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
+  PicoForgeWebHid.prototype.connect = async function () {
+    client = this;
+    const hardware = decodeIdentityReport(identity());
+    this.update({ connected: true, hardware, settings: decodeConfigReport(config(), hardware),
+      settings_supported: true, freshness: { 3: "fresh", 10: "fresh", 11: "fresh" },
+      msc: { enabled: false, transition_pending: false }, self_test: decodeSelfTestReport(selfTest()),
+      memory: { sample_valid: true, initialized: true } });
   };
+  PicoForgeWebHid.prototype.setMsc = async (...args) => { commands.push(["msc", ...args]); };
+  PicoForgeWebHid.prototype.saveSettings = async function (settings) {
+    commands.push(["save", settings]);
+    this.update({ settings: { ...this.state.settings, ...settings } });
+    return true;
+  };
+  PicoForgeWebHid.prototype.reboot = async confirmed => { commands.push(["reboot", confirmed]); };
   try {
-    await import("../../web/js/app.mjs");
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(elements.get("#msc-control").disabled, false);
-    assert.equal(elements.get("#msc-note").hidden, true);
-    await elements.get("#msc-control").click();
-    assert.match(warning, /writes may be lost.*filesystem may be corrupted/);
-    assert.equal(requests.length, 0);
-    confirmed = true;
-    await elements.get("#msc-control").click();
-    assert.deepEqual(requests, [["/api/msc/force-return?board=board-a", { confirm_data_loss: true }]]);
-    assert.equal(elements.get("#msc-control").disabled, true);
-    enabled = false;
-    await poll();
-    confirmed = false;
-    await elements.get("#msc-control").click();
-    assert.deepEqual(requests[1], ["/api/msc?board=board-a", { enabled: true }]);
-    assert.equal(elements.get(".status-line").dataset.error, "false");
-    enabled = true;
-    supported = false;
-    await poll();
-    assert.equal(elements.get("#msc-control").disabled, true);
-    assert.match(elements.get("#msc-note").textContent, /Update firmware/);
-    assert.equal(elements.get("#msc-note").hidden, false);
-    await elements.get("#msc-control").click();
-    assert.equal(requests.length, 2);
+    await import(`../js/app.mjs?test=${Date.now()}`);
+    await el("#connection-control").click();
+    assert.equal(el("#settings-storage").value, "1");
+    assert.equal(el("#settings-note").hidden, true);
+    assert.equal(el("#settings-save").disabled, true);
+    el("#settings-clock").value = "250"; el("#settings-clock").change();
+    client.update({ error: null });
+    assert.equal(el("#settings-clock").value, "250");
+    await el("#settings-save").click();
+    assert.deepEqual(commands, []);
+    assert.equal(el("#configuration-dialog").open, true);
+    assert.match(el("#configuration-dialog-profile").textContent, /250 MHz.*High-Speed/);
+    el("#cancel-configuration").click();
+    await el("#confirm-configuration").click();
+    assert.deepEqual(commands, []);
+    await el("#settings-save").click();
+    await el("#confirm-configuration").click();
+    assert.deepEqual(commands, [["save", { system_clock_mhz: 250, sdcard_profile: 1 }]]);
+    await el("#settings-reboot").click();
+    assert.equal(commands.length, 1);
+    assert.equal(el("#reboot-dialog").open, true);
+    el("#reboot-dialog").keydown({ key: "Escape", preventDefault() {} });
+    assert.equal(el("#reboot-dialog").open, false);
+    await el("#confirm-reboot").click();
+    assert.equal(commands.length, 1);
+    await el("#settings-reboot").click();
+    await el("#confirm-reboot").click();
+    assert.deepEqual(commands[1], ["reboot", true]);
+    await el("#msc-control").click();
+    assert.deepEqual(commands[2], ["msc", true, false]);
+    client.update({ msc: { enabled: true, transition_pending: false } });
+    await el("#msc-control").click();
+    assert.equal(commands.length, 3);
+    assert.equal(el("#return-dialog").open, true);
+    el("#cancel-return").click();
+    await el("#confirm-return").click();
+    assert.equal(commands.length, 3);
+    await el("#msc-control").click();
+    await el("#confirm-return").click();
+    assert.deepEqual(commands[3], ["msc", false, true]);
+    await el("#msc-control").click();
+    client.update({ outcome_uncertain: true });
+    assert.equal(el("#msc-control").disabled, true);
+    assert.equal(el("#settings-save").disabled, true);
+    await el("#confirm-return").click();
+    assert.equal(commands.length, 4);
+    client.update({ outcome_uncertain: false });
+    await el("#msc-control").click();
+    assert.equal(el("#return-dialog").open, true);
+    client.update({ connected: false });
+    assert.equal(el("#return-dialog").open, false);
+    await el("#confirm-return").click();
+    assert.equal(commands.length, 4);
+    client.update({ connected: true });
+    client.update({ outcome_uncertain: false, freshness: { 3: "stale", 10: "stale", 11: "stale" },
+      runtime: null, board_status: null, msc: null, self_test: null });
+    assert.equal(el("#msc-control").disabled, true);
+    assert.equal(el("#settings-save").disabled, true);
+    assert.equal(el("#self-test-start").disabled, true);
   } finally {
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-    globalThis.fetch = previousFetch;
+    for (const [name, method] of prototypes) PicoForgeWebHid.prototype[name] = method;
+    globalThis.document = saved.document; globalThis.window = saved.window;
+    if (saved.navigator) Object.defineProperty(globalThis, "navigator", saved.navigator);
+    else delete globalThis.navigator;
+    if (saved.secure) Object.defineProperty(globalThis, "isSecureContext", saved.secure);
+    else delete globalThis.isSecureContext;
   }
 });

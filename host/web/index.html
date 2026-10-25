@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>PicoForge Diagnostics | {{ dashboard_type }}</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
   <link rel="stylesheet" href="/css/dashboard.css">
   <script type="module" src="/js/app.mjs"></script>
 </head>
@@ -41,21 +41,27 @@
         </div>
       </div>
       <div class="identity" aria-label="Hardware identity">
-        <div class="metric metric-product"><span>Product</span><strong id="product-name">--</strong></div>
-        <div class="metric"><span>Microcontroller</span><strong id="mcu">--</strong></div>
-        <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
-        <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
+        <div class="metric"><span>Product</span><strong id="product-name">--</strong></div>
+        <div class="metric"><span>Board model</span><strong id="board-model">--</strong></div>
         <div class="metric"><span>Serial / UID</span><strong id="serial">--</strong></div>
+        <div class="metric"><span>System clock</span><strong id="identity-clock">--</strong></div>
+        <div class="metric">
+          <span>Firmware RAM reserved / total</span>
+          <strong id="ram-usage" title="Static data and reserved core stacks / physical SRAM; not live usage">--</strong>
+        </div>
+        <div class="metric"><span>Firmware version</span><strong id="firmware-version">--</strong></div>
       </div>
     </section>
 
     <section class="runtime" aria-labelledby="settings-title">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">BOOT CONFIGURATION</p>
-          <h2 id="settings-title">Configuration</h2>
+          <h2 id="settings-title">Board configuration</h2>
         </div>
-        <button class="button" id="settings-save" type="button" disabled>Save &amp; Reboot</button>
+        <div class="settings-actions">
+          <button class="button" id="settings-save" type="button" disabled>Save and Reboot</button>
+          <button class="button button-secondary" id="reboot-control" type="button" disabled>Reboot Board</button>
+        </div>
       </div>
       <div class="settings-controls">
         <label for="settings-clock">System clock
@@ -65,45 +71,52 @@
         </label>
         <label for="settings-storage">SD Card
           <select id="settings-storage" disabled>
-            <option value="25">25 MHz</option>
-            <option value="50">50 MHz</option>
+            <option value="0">Standard</option>
+            <option value="1">High-Speed</option>
           </select>
         </label>
+        <div class="metric">
+          <span>Reset cause</span><strong id="board-reset-cause">--</strong>
+        </div>
       </div>
       <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
         Waiting for a PicoForge connection.
       </p>
+      <details class="pin-map-disclosure">
+        <summary>Pin configuration</summary>
+        <div class="pin-tables">
+          <table>
+            <caption id="board-uart-title">Monitor UART</caption>
+            <tbody id="board-uart"></tbody>
+          </table>
+          <table>
+            <caption id="board-storage-title">Storage</caption>
+            <tbody id="board-storage-pins"></tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
     <section class="runtime" aria-labelledby="runtime-title">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">LIVE REPORT</p>
           <h2 id="runtime-title">Live diagnostics</h2>
         </div>
       </div>
       <dl class="runtime-grid runtime-summary">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
-        <div>
-          <dt>CPU Usage (Core 1 / Core 2)</dt>
+        <div title="Service-pass workload proxies, not CPU utilization">
+          <dt>Service load (Core 0 / Core 1)</dt>
           <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
         </div>
-        <div>
-          <dt>SRAM (reserved / total)</dt>
-          <dd>
-            <span id="ram-reserved" title="Static data and reserved core stacks; not live heap or stack usage">--</span> /
-            <span id="ram-total" title="Physical SRAM capacity; excludes external RAM">--</span>
-          </dd>
-        </div>
-        <div><dt>CLI port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
+        <div><dt>CLI port</dt><dd id="cdc-state">--</dd></div>
       </dl>
     </section>
 
     <section class="runtime" aria-labelledby="memory-title">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">STORAGE REPORT</p>
           <h2 id="memory-title">Storage</h2>
         </div>
         <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
@@ -144,6 +157,47 @@
       </dl>
       <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
     </section>
+
+    <dialog class="confirmation-dialog" id="configuration-dialog" aria-labelledby="configuration-dialog-title"
+      aria-describedby="configuration-dialog-profile configuration-warning">
+      <h2 id="configuration-dialog-title">Save and reboot?</h2>
+      <p id="configuration-dialog-profile"></p>
+      <p class="configuration-warning" id="configuration-warning">
+        Firmware saves boot settings, then reboots the board and briefly disconnects USB.
+        Close all CLI ports and stop external traffic first. Stop any storage test or USB drive activity before saving.
+      </p>
+      <div class="dialog-actions">
+        <button class="button button-cancel" id="cancel-configuration" type="button" autofocus>Cancel</button>
+        <button class="button button-danger" id="confirm-configuration" type="button">Save and Reboot</button>
+      </div>
+    </dialog>
+
+    <dialog class="confirmation-dialog" id="reboot-dialog" aria-labelledby="reboot-dialog-title"
+      aria-describedby="reboot-warning reboot-consequence">
+      <h2 id="reboot-dialog-title">Reboot board?</h2>
+      <p class="configuration-warning" id="reboot-warning">
+        This immediately reboots the board and briefly disconnects USB.
+        Close all CLI ports and stop external traffic first.
+      </p>
+      <p id="reboot-consequence"></p>
+      <div class="dialog-actions">
+        <button class="button button-cancel" id="cancel-reboot" type="button" autofocus>Cancel</button>
+        <button class="button button-danger" id="confirm-reboot" type="button">Reboot Board</button>
+      </div>
+    </dialog>
+
+    <dialog class="confirmation-dialog" id="return-dialog" aria-labelledby="return-dialog-title"
+      aria-describedby="return-warning">
+      <h2 id="return-dialog-title">Return storage to Pico?</h2>
+      <p class="configuration-warning" id="return-warning">
+        Cached host writes may be lost and the filesystem may be corrupted. Stop all host file activity first.
+        Pico will detach the USB drive and attempt to remount without formatting or repair.
+      </p>
+      <div class="dialog-actions">
+        <button class="button button-cancel" id="cancel-return" type="button" autofocus>Cancel</button>
+        <button class="button button-danger" id="confirm-return" type="button">Return to Pico</button>
+      </div>
+    </dialog>
 
     <footer class="status-line" role="status" aria-live="polite">
       <span class="status-mark" aria-hidden="true"></span>

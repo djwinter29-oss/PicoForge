@@ -14,6 +14,8 @@
 pf_test_sdio_event_t pf_test_sdio_events[256];
 unsigned pf_test_sdio_event_count;
 bool pf_test_sdio_trace_enabled;
+unsigned pf_test_sdio_add_calls;
+unsigned pf_test_sdio_fail_add_call;
 void (*pf_test_sdio_dma_poll_hook)(void);
 
 static void trace_event(pf_test_sdio_event_t event)
@@ -96,8 +98,13 @@ pio_sm_config pf_sdio_pio_data_tx_fast_program_get_default_config(uint offset)
 
 bool pio_can_add_program(PIO pio, const pio_program_t *program)
 { (void)pio; (void)program; return pf_test_sdio_can_add_program; }
-uint pio_add_program(PIO pio, const pio_program_t *program)
-{ (void)pio; (void)program; return 1u; }
+int pio_add_program(PIO pio, const pio_program_t *program)
+{
+    (void)pio;
+    (void)program;
+    ++pf_test_sdio_add_calls;
+    return !pf_test_sdio_can_add_program || pf_test_sdio_add_calls == pf_test_sdio_fail_add_call ? -1 : 1;
+}
 void pio_remove_program(PIO pio, const pio_program_t *program, uint offset)
 { (void)pio; (void)program; (void)offset; ++pf_test_sdio_removed_programs; }
 static uint claimed_sms[2];

@@ -64,3 +64,8 @@ void pf_system_reset(void)
 {
     watchdog_reboot(0u, 0u, 0u);
 }
+
+uint8_t pf_system_reset_cause(void)
+{
+    return watchdog_caused_reboot() ? 2u : 0u;
+}

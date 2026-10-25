@@ -6,23 +6,44 @@
 #include WORKER_SOURCE
 #include HID_SOURCE
 #include USB_TASK_SOURCE
-#include "drivers/persistent_memory/settings.c"
-
-static pf_settings_t test_settings;
+static pf_sysclk_profile_t test_sysclk, saved_sysclk;
+static pf_storage_speed_t test_sd_speed, saved_sd_speed;
 static unsigned settings_save_calls;
+static bool settings_save_fails;
 static bool msc_enabled;
 static bool msc_transition_pending;
+const pf_led_board_t pf_led_board = {.gpio = 25u, .active_high = true};
+const pf_monitor_uart_board_t pf_monitor_uart_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
 
-bool pf_settings_load(pf_settings_t *settings)
+pf_sysclk_profile_t pf_boot_config_sysclk(void) { return test_sysclk; }
+pf_storage_speed_t pf_boot_config_storage_speed(void) { return test_sd_speed; }
+
+bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile)
 {
-    *settings = test_settings;
+    if ((unsigned)profile > PF_SYSCLK_250MHZ) {
+        return false;
+    }
+    test_sysclk = profile;
     return true;
 }
 
-bool pf_settings_save(const pf_settings_t *settings)
+bool pf_boot_config_set_storage_speed(pf_storage_speed_t speed)
+{
+    if (speed != PF_STORAGE_SPEED_DEFAULT && speed != PF_STORAGE_SPEED_HIGH) {
+        return false;
+    }
+    test_sd_speed = speed;
+    return true;
+}
+
+bool pf_boot_config_save(void)
 {
     ++settings_save_calls;
-    test_settings = *settings;
+    if (settings_save_fails) {
+        return false;
+    }
+    saved_sysclk = test_sysclk;
+    saved_sd_speed = test_sd_speed;
     return true;
 }
 
@@ -32,31 +53,25 @@ static bool fake_connected = true;
 static bool fake_done;
 static unsigned reply_count, drained_replies;
 static unsigned queries, queued, recovery_requests, normal_submissions, messages;
-bool pf_sd_try_lock(void)
+bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
+void pf_storage_get_status(pf_storage_status_t *status)
 {
     TEST_ASSERT_FALSE(reserved);
-    reserved = !unavailable;
-    return reserved;
-}
-void pf_sd_unlock(void) { TEST_ASSERT_TRUE(reserved); reserved = false; }
-bool pf_sd_is_initialized(void) { TEST_ASSERT_TRUE(reserved); return initialized; }
-bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
-void pf_sd_get_info(pf_sd_info_t *info)
-{
-    TEST_ASSERT_TRUE(reserved);
-    ++queries;
-    *info = (pf_sd_info_t){
-        .initialized = initialized, .presence_known = true, .present = true,
-        .cid_valid = initialized || retained_cid, .bus_clock_hz = 25000000, .block_count = 128
+    *status = (pf_storage_status_t){
+        .medium = PF_STORAGE_MEDIUM_SDCARD, .bus = PF_STORAGE_BUS_SDIO,
+        .bus_gpios = {2u, 3u, 4u, 5u, 6u, 7u}, .detect_gpio = 8u, .state = PF_STORAGE_STATE_BUSY,
     };
-    if (info->cid_valid) {
-        memset(info->cid, 0x5a, sizeof(info->cid));
-    }
-}
-bool pf_board_get_sd_card_config(pf_sd_config_t *config)
-{
-    config->transport.mode = PF_STORAGE_BUS_NATIVE_SD;
-    return true;
+    if (unavailable) return;
+    reserved = true;
+    ++queries;
+    status->presence_known = true;
+    status->id_valid = initialized || retained_cid;
+    if (status->id_valid) memset(status->id, 0x5a, sizeof(status->id));
+    status->bus_clock_hz = 25000000u;
+    status->sector_count = 128u;
+    status->state = !initialized ? PF_STORAGE_STATE_UNINITIALIZED
+        : pf_fatfs_volume_is_mounted() ? PF_STORAGE_STATE_MOUNTED : PF_STORAGE_STATE_READY;
+    reserved = false;
 }
 BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
 {
@@ -86,10 +101,13 @@ void pf_usb_msc_request_recovery(void) { ++recovery_requests; }
 bool pf_usb_msc_is_enabled(void) { return msc_enabled; }
 bool pf_usb_msc_transition_pending(void) { return msc_transition_pending; }
 bool pf_usb_msc_request_rejected(void) { return false; }
+void pf_usb_msc_defer_for_hid_result(uint8_t transaction_id) { (void)transaction_id; }
+void pf_usb_msc_note_hid_result_read(uint8_t transaction_id) { (void)transaction_id; }
 void pf_cli_print(const char *message)
 { TEST_ASSERT_NOT_NULL(message); TEST_ASSERT_NOT_EQUAL(0, *message); ++messages; }
 uint8_t pf_system_mcu_id(void) { return PF_SYSTEM_MCU_RP2040; }
 uint32_t pf_system_clock_hz(void) { return 125000000u; }
+uint8_t pf_system_reset_cause(void) { return 2u; }
 uint32_t pf_system_uptime_ms(void) { return 123u; }
 void pf_runtime_stats_read(pf_runtime_stats_t *stats)
 {
@@ -102,8 +120,13 @@ bool pf_temperature_read_centidegrees(int16_t *temperature)
 { *temperature = 2500; return true; }
 bool pf_led_is_available(void) { return true; }
 bool pf_led_is_on(void) { return false; }
+void pico_get_unique_board_id(pico_unique_board_id_t *id)
+{ for (size_t i = 0; i < sizeof(id->id); ++i) id->id[i] = (uint8_t)i; }
 void pico_get_unique_board_id_string(char *id, size_t size)
 { memset(id, 0, size); }
+absolute_time_t get_absolute_time(void) { return 1230000u; }
+uint64_t to_ms_since_boot(absolute_time_t value) { return value / 1000u; }
+uint64_t time_us_64(void) { return 1230000u; }
 
 TickType_t xTaskGetTickCount(void) { return fake_ticks; }
 BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t timeout)
@@ -134,8 +157,20 @@ pf_fatfs_volume_filesystem_format_t pf_fatfs_volume_filesystem_format(void) { re
 
 static unsigned led_requests, msc_requests, force_requests;
 static unsigned reset_requests;
+static unsigned reboot_usb_polls;
+static pf_hid_control_result_t reboot_ack;
+void vTaskDelay(TickType_t ticks) { fake_ticks += ticks; }
+void tud_task_ext(uint32_t timeout_ms, bool in_isr)
+{
+    TEST_ASSERT_EQUAL_UINT32(0u, timeout_ms);
+    TEST_ASSERT_FALSE(in_isr);
+    TEST_ASSERT_EQUAL_UINT(0u, reset_requests);
+    ++reboot_usb_polls;
+    TEST_ASSERT_EQUAL_UINT16(sizeof(reboot_ack), tud_hid_get_report_cb(
+        0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE, (uint8_t *)&reboot_ack, sizeof(reboot_ack)));
+}
 static bool requested_state;
 bool pf_led_set(bool on) { ++led_requests; requested_state = on; return true; }
 void pf_system_reset(void) { ++reset_requests; }
-void pf_usb_msc_request(bool enabled) { ++msc_requests; requested_state = enabled; }
-void pf_usb_msc_request_force_return(void) { ++force_requests; }
+bool pf_usb_msc_request(bool enabled) { ++msc_requests; requested_state = enabled; return true; }
+bool pf_usb_msc_request_force_return(void) { ++force_requests; requested_state = false; return true; }

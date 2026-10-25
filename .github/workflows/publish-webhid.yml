@@ -1,0 +1,73 @@
+name: Publish WebHID Pages
+
+'on':
+  workflow_run:
+    workflows: [Release build packages]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release tag in vMAJOR.MINOR.PATCH form"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webhid-pages
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and verify released site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          version=$(tools/firmware/release-version.sh "$RELEASE_TAG")
+          test "$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease \
+            --jq '.isDraft == false and .isPrerelease == false')" = true
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+          if [ -n "$SOURCE_SHA" ]; then
+            test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA"
+          fi
+          mkdir incoming
+          gh release download "$RELEASE_TAG" --pattern "picoforge-webhid-v$version.zip" \
+            --pattern SHA256SUMS.txt --dir incoming
+          cd incoming
+          sha256sum --check SHA256SUMS.txt --ignore-missing
+          unzip "picoforge-webhid-v$version.zip" -d ../site
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy released WebHID
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
