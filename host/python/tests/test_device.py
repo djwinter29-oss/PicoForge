@@ -102,14 +102,13 @@ class HidDeviceTests(unittest.TestCase):
         self.assertEqual(client._device.sent, [bytes([20, 1, 1, 1, 0, 1, 0, 0, 0, 0])])
         self.assertEqual(client._device.last_get, (20, CONTROL_FEATURE_SIZE))
 
-    def test_settings_save_uses_report_20_and_returns_canonical_readback_without_reboot(self):
+    def test_settings_save_uses_one_command_and_verified_result_without_configuration_read(self):
         client = self.connection()
         client._device.feature_reports[20] = [control_result(opcode=6)]
-        client._device.feature_reports[2] = [configuration()]
         settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
         self.assertEqual(client.set_settings(settings), settings)
         self.assertEqual(client._device.sent, [bytes([20, 1, 1, 6, 0, 200, 0, 1, 0, 0])])
-        self.assertEqual(client._device.last_get, (2, 18))
+        self.assertEqual(client._device.last_get, (20, 10))
 
     def test_unavailable_capability_blocks_control_write(self):
         client = self.connection()

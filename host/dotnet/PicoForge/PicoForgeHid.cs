@@ -122,8 +122,9 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         var arguments = new byte[5];
         BinaryPrimitives.WriteUInt16LittleEndian(arguments, (ushort)settings.SystemClockMhz);
         arguments[2] = (byte)settings.SdCardProfile;
-        SendCommand(6, 0, arguments);
-        var saved = HidProtocol.ToBootSettings(ReadConfiguration());
+        var result = SendCommand(6, 0, arguments);
+        var saved = new BootSettingsResponse(BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData),
+            result.ResultData[2]);
         if (saved != settings)
             throw new InvalidOperationException("Firmware did not confirm the selected next-boot settings");
         return saved;
@@ -159,7 +160,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         return report;
     }
 
-    private void SendCommand(byte opcode, byte flags, byte[] arguments)
+    private ControlResult SendCommand(byte opcode, byte flags, byte[] arguments)
     {
         if (CommandOutcomeUncertain)
             throw new InvalidOperationException("A prior HID command outcome is uncertain; further writes are blocked");
@@ -181,7 +182,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             {
                 CommandOutcomeUncertain = false;
                 HidProtocol.RequireCompleted(result, transactionId, opcode);
-                return;
+                return result;
             }
             Thread.Sleep(20);
         }

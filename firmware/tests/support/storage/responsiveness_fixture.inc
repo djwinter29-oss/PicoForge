@@ -107,6 +107,7 @@ void pf_cli_print(const char *message)
 { TEST_ASSERT_NOT_NULL(message); TEST_ASSERT_NOT_EQUAL(0, *message); ++messages; }
 uint8_t pf_system_mcu_id(void) { return PF_SYSTEM_MCU_RP2040; }
 uint32_t pf_system_clock_hz(void) { return 125000000u; }
+uint8_t pf_system_reset_cause(void) { return 2u; }
 uint32_t pf_system_uptime_ms(void) { return 123u; }
 void pf_runtime_stats_read(pf_runtime_stats_t *stats)
 {

@@ -361,18 +361,18 @@ test("MSC-style re-enumeration reconnects by Feature 1 UID, not a non-standard s
   await client.disconnect();
 });
 
-test("settings readback remains serialized, verifies both result and config, and reports failure", async () => {
+test("settings completion remains serialized and verifies saved values without a config read", async () => {
   const { client, device, sent } = fakeConnection();
   await client.connect();
   emit(device, 3, telemetry()); emit(device, 10, storage()); emit(device, 11, selfTest());
   const normalRead = device.receiveFeatureReport;
   let release;
-  device.receiveFeatureReport = id => id === 2 ? new Promise(resolve => { release = resolve; }) : normalRead(id);
+  device.receiveFeatureReport = id => id === 20 ? new Promise(resolve => { release = resolve; }) : normalRead(id);
   const saving = client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(client.state.busy, true);
   await assert.rejects(client.setLed(true), /unavailable/);
-  const incorrect = config(); incorrect[1] = 150;
+  const incorrect = result(1, 6); incorrect[5] = 150; incorrect[7] = 1;
   release(incorrect);
   assert.equal(await saving, false);
   assert.match(client.state.settings_message, /did not confirm/);
@@ -381,13 +381,17 @@ test("settings readback remains serialized, verifies both result and config, and
   await client.disconnect();
 });
 
-test("MSC/self-test acceptance waits for fresh asynchronous status and settings save never reboots", async () => {
+test("MSC/self-test acceptance waits for fresh status and settings save queues firmware reboot", async () => {
   const { client, device, sent } = fakeConnection();
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
   assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }), true);
   assert.deepEqual(sent[0], [20, 1, 1, 6, 0, 200, 0, 1, 0, 0]);
-  assert.equal(sent.length, 1, "save does not schedule reboot");
+  assert.equal(sent.length, 1, "firmware reboot requires no second command");
+  assert.equal(client.state.reboot_pending, true);
+  await client.disconnect();
+  await client.connect();
+  emit(device, 10, storage()); emit(device, 11, selfTest());
   await assert.rejects(client.reboot(false), /confirmation/);
   await client.reboot(true);
   assert.deepEqual(sent[1].slice(0, 5), [20, 1, 2, 2, 1]);

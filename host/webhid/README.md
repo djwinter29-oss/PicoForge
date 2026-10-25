@@ -30,7 +30,8 @@ An acceptance result does not prove storage ownership changed or a self-test fin
 fresh corresponding Input status. A timeout or disconnect never replays a command; uncertain results block further
 writes. Reconnecting reads the outstanding result without resubmitting it. Do not run competing HID writers.
 
-**Save settings** verifies the result and rereads Feature 2. Profiles apply at next boot; saving does not reboot.
+**Save and Reboot** confirms with the user, sends one settings command, and verifies its completion result.
+Firmware saves the settings and schedules the reboot; Feature 2 is reread after reconnection.
 **Reboot** is separate, capability-gated, and explicitly confirmed. Standard/High-Speed is a stored request;
 Storage shows the actual selected timing and effective bus clock.
 

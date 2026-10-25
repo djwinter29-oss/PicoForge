@@ -47,7 +47,7 @@ internal static class StatusEndpoints
         endpoints.MapPost("/api/settings", SetSettings)
             .WithName("SetBootSettings")
             .WithSummary("Save persistent boot settings")
-            .WithDescription("Saves supported next-boot profiles and verifies them by reading HID Feature report 2. Reboot separately to apply.")
+            .WithDescription("Saves supported boot profiles and verifies the HID command result. Firmware reboots automatically on success.")
             .Produces<SetSettingsResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status409Conflict)

@@ -429,11 +429,7 @@ export class PicoForgeWebHid {
       this.outstanding = null;
       if (result.status !== 2) throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
       if (opcode === 6) {
-        const saved = decodeConfigReport(await withTimeout(device.receiveFeatureReport(2), this.timeout),
-          this.state.hardware);
-        if (device !== this.device || generation !== this.generation) {
-          throw new Error("Disconnected during settings readback");
-        }
+        const saved = result.settings;
         const selected = { system_clock_mhz: report[4] | report[5] << 8, sdcard_profile: report[6] };
         if (!sameSettings(saved, selected) || !sameSettings(result.settings, selected)) {
           throw new Error("Firmware did not confirm the selected values");
@@ -442,7 +438,7 @@ export class PicoForgeWebHid {
       }
       if (opcode === 3) this.update({ msc_command_pending: true });
       if (opcode === 4) this.update({ self_test_command_pending: true });
-      if (opcode === 2) this.update({ reboot_pending: true });
+      if (opcode === 2 || opcode === 6) this.update({ reboot_pending: true });
       return result;
     } catch (error) {
       // SET rejection is authoritative: do not poll or accept a prior result.
@@ -500,7 +496,7 @@ export class PicoForgeWebHid {
     try {
       await this.command(6, { args: [settings.system_clock_mhz & 255,
         settings.system_clock_mhz >> 8, settings.sdcard_profile] });
-      this.update({ settings_message: "Saved for next boot. Reboot separately to apply." });
+      this.update({ settings_message: "Settings saved. Waiting for the board to reboot." });
       return true;
     } catch (error) {
       this.update({ settings_message: `Save failed: ${error.message}` });

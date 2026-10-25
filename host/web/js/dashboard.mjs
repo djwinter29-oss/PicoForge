@@ -17,9 +17,11 @@ export function renderStatus(snapshot) {
   document.querySelector("#connection-label").textContent = snapshot.error
     ? "Attention" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
-  document.querySelector("#mcu").textContent = hardware?.mcu ?? "--";
-  document.querySelector("#board-model").textContent = ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W" })[hardware?.board_model]
-    ?? (hardware ? `Unknown (${hardware.board_model})` : "--");
+  const boardModel = typeof hardware?.board_model === "string" ? hardware.board_model
+    : ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W" })[hardware?.board_model]
+      ?? (hardware ? `Unknown (${hardware.board_model})` : "--");
+  document.querySelector("#board-model").textContent = hardware?.mcu
+    ? `${boardModel} (${hardware.mcu})` : boardModel;
   document.querySelector("#firmware-version").textContent = hardware?.firmware_version ?? "Unknown";
   const clock = runtime
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
@@ -32,11 +34,10 @@ export function renderStatus(snapshot) {
     ? "--" : `${(runtime.cpu_usage_core1_basis_points / 100).toFixed(1)}%`;
   const ramUsed = hardware?.ram_reserved_bytes;
   const ramTotal = hardware?.ram_total_bytes;
-  document.querySelector("#ram-reserved").textContent = ramTotal
-    ? `${(ramUsed / 1024).toFixed(1)} KiB (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
-    : "--";
-  document.querySelector("#ram-total").textContent = ramTotal
-    ? `${(ramTotal / 1024).toFixed(0)} KiB`
+  document.querySelector("#ram-usage").textContent = Number.isSafeInteger(ramTotal) && ramTotal > 0
+    && Number.isSafeInteger(ramUsed) && ramUsed >= 0 && ramUsed <= ramTotal
+    ? `${(ramUsed / 1024).toFixed(1)} / ${(ramTotal / 1024).toFixed(0)} KiB`
+      + ` (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
     : "--";
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime
@@ -104,7 +105,8 @@ function renderSettings(snapshot) {
   for (const selector of ["#settings-clock", "#settings-storage"]) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
-  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty;
+  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty
+    || !((snapshot.hardware?.capabilities ?? 0) & 2);
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
     || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
     || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active

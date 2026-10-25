@@ -222,7 +222,7 @@ class MonitorSettingsTests(unittest.TestCase):
         self.monitor._active_client.set_settings.assert_called_once_with(
             {"system_clock_mhz": 200, "sdcard_profile": 1}
         )
-        self.assertIn("separately", self.monitor.snapshot()["settings_message"])
+        self.assertIn("Waiting for the board to reboot", self.monitor.snapshot()["settings_message"])
 
     def test_canonical_settings_are_saved_and_returned_without_transport_fields(self):
         settings = {"system_clock_mhz": 150, "sdcard_profile": 0}

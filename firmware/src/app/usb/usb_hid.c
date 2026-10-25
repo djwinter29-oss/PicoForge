@@ -171,7 +171,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
         report->led_gpio = UINT8_MAX;
     }
     report->board_flags |= PF_HID_BOARD_FLAG_MONITOR_UART;
-    report->reset_cause = 0u;
+    report->reset_cause = pf_system_reset_cause();
 }
 
 void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t sequence)
@@ -404,6 +404,7 @@ static void process_control_request(const pf_hid_control_request_t *request)
             result_data[2] = sdcard_profile;
             status = PF_HID_COMMAND_COMPLETED;
             error = PF_HID_ERROR_NONE;
+            reboot_requested = true;
         }
         if (status != PF_HID_COMMAND_COMPLETED) {
             /* Keep the RAM copy equal to flash so reports never show unsaved values. */

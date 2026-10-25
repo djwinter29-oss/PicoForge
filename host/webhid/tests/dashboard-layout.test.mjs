@@ -11,7 +11,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed \(requested\)/);
-  assert.match(html, /id="settings-save"[^>]*>Save settings/);
+  assert.match(html, /id="settings-save"[^>]*>Save and Reboot/);
   assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
   assert.doesNotMatch(html, /Save &amp; Reboot|25 MHz|50 MHz|Core 1 \/ Core 2/);
   assert.match(html, /Firmware RAM reserved \/ total/);
@@ -71,7 +71,11 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     client.update({ error: null });
     assert.equal(el("#settings-clock").value, "150");
     await el("#settings-save").click();
+    assert.deepEqual(commands, []);
+    confirmed = true;
+    await el("#settings-save").click();
     assert.deepEqual(commands, [["save", { system_clock_mhz: 150, sdcard_profile: 1 }]]);
+    confirmed = false;
     await el("#settings-reboot").click();
     assert.equal(commands.length, 1);
     confirmed = true; await el("#settings-reboot").click();

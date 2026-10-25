@@ -11,6 +11,9 @@ static enum vreg_voltage voltage;
 static char call_log[16];
 static unsigned log_len;
 static bool derivable;
+static bool watchdog_reset;
+
+bool watchdog_caused_reboot(void) { return watchdog_reset; }
 
 uint32_t clock_get_hz(enum clock_num_rp clock) { return clock == clk_sys ? sys_hz : 0u; }
 bool check_sys_clock_khz(uint32_t khz, uint *vco, uint *pd1, uint *pd2)
@@ -59,11 +62,19 @@ void setUp(void)
     voltage = VREG_VOLTAGE_1_10;
     log_len = 0u;
     derivable = true;
+    watchdog_reset = false;
     for (unsigned i = 0u; i < sizeof(call_log); ++i) {
         call_log[i] = 0;
     }
 }
 void tearDown(void) {}
+
+void test_reset_cause_uses_watchdog_evidence_without_assuming_power_on(void)
+{
+    TEST_ASSERT_EQUAL_UINT8(0u, pf_system_reset_cause());
+    watchdog_reset = true;
+    TEST_ASSERT_EQUAL_UINT8(2u, pf_system_reset_cause());
+}
 
 void test_default_zero_keeps_the_build_clock_untouched(void)
 {

@@ -209,11 +209,7 @@ class PicoForgeHid:
         result = self._execute_control(command, 6)
         if result["status"] != "completed":
             raise RuntimeError(f"settings command {result['status']}: {result['error']}")
-        configuration = self.read_configuration()
-        saved = {
-            "system_clock_mhz": configuration["system_clock_mhz"],
-            "sdcard_profile": configuration["sdcard_profile"],
-        }
+        saved = result["saved_settings"]
         if saved != settings:
             raise RuntimeError("firmware did not confirm the selected boot settings")
         return saved

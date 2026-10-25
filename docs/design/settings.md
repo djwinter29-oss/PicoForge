@@ -46,9 +46,10 @@ profiles. The profile payload is two-byte little-endian `system_clock_mhz` follo
 (`0` Standard, `1` High-Speed). Report `2` also returns the selected board's GPIO configuration. See the exact
 offsets and validation rules in the [HID Report Reference](usb/usb-hid-report-reference.md).
 
-The Python, .NET, and WebHID dashboards map these values to select options and verify a save by reading Feature
-report `2` back. Saving does not reboot. **Save & Reboot** issues a separate confirmed reboot command through Feature
-report `20`, opcode `2`; firmware waits one second before resetting. The Python/.NET
+The Python, .NET, and WebHID dashboards map these values to select options and verify the saved values returned in
+the Feature `20` completion result. **Save and Reboot** sends only opcode `6`; firmware queues its existing deferred
+reboot after a successful save. Failed or rejected saves do not reboot. Opcode `2` remains the standalone reboot
+command. Reconnection refreshes Feature `2`. The Python/.NET
 `GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
 the system clock and `sdcard_profile`, and returns the values confirmed by the device. Unsupported values return HTTP 400;
 unsupported firmware or busy storage returns HTTP 409. Writes are rejected while MSC or storage work owns the media.

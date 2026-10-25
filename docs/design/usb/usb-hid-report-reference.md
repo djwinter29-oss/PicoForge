@@ -198,8 +198,9 @@ storage transport.
 
 The stored clock and SD-card profile values are the persisted settings for the next boot, not measured runtime
 values; report `3` carries the active system-clock frequency and report `10` carries the active SD speed mode and bus
-clock. After a successful opcode `6` save, a fresh read of report `2` returns the newly saved values immediately;
-those settings are not applied to the running system until reboot. The SD-card profile is a request applied to the
+clock. After a successful opcode `6` save, firmware returns the verified saved values in the control result and
+queues a reboot through the existing deferred USB reboot path. Hosts must not send a second reboot command or
+require a configuration read before disconnect; reread report `2` after reconnection. The SD-card profile is a request applied to the
 build-selected transport from report `1`: Standard disables High-Speed timing; High-Speed permits CMD6 negotiation
 within the transport's firmware ceiling, system-clock limit, and card capability. It does not guarantee that
 High-Speed timing was negotiated. GPIO values are GPIO numbers, not header-pin numbers; `255` means unassigned. For
@@ -223,6 +224,9 @@ record, use Standard for SDIO_PIO and High-Speed for SPI to preserve current def
 profile enum; Standard maps to the selected transport's 25 MHz setting and High-Speed to its 50 MHz setting.
 
 Reset cause is independent of clock-selection reason and may be Unknown if the platform cannot distinguish it.
+PicoForge currently reports Watchdog (`2`) when the SDK detects a watchdog reset, including software-requested
+reboots through `watchdog_reboot()`. Otherwise it reports Unknown (`0`); it does not infer power-on, software-only,
+or HardFault causes without distinguishing evidence.
 Values: `0` Unknown; `1` Power-on when reliably identified; `2` watchdog without established software-requested cause;
 `3` software-requested when supported by evidence; `4` watchdog recovery after a recorded HardFault; `5`-`255`
 unassigned. Never infer Power-on or software-requested reset from missing watchdog evidence.
@@ -421,7 +425,7 @@ the meaning of the fields.
 | `3` | MSC control | Bit 0 confirms force-return data-loss risk only; other bits zero. | Byte 0 action: `0` normal disable, `1` enable, `2` force return; bytes 1-4 zero. |
 | `4` | SD self-test | `0` | Byte 0 action: `0` cancel, `1` start; bytes 1-4 little-endian MiB size. |
 | `5` | Unassigned | - | Reject as unsupported. |
-| `6` | Save persistent settings | `0` | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); bytes 3-4 zero. |
+| `6` | Save persistent settings and reboot | `0` | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); bytes 3-4 zero. |
 | Other | Unassigned | - | Reject as unsupported. |
 
 LED Off/On are idempotent. Reboot requires explicit confirmation. MSC action `0` is the normal disable request;
@@ -572,8 +576,9 @@ The card is never automatically formatted or repaired.
 4. Use report `10` for storage/MSC state and, when capability bit 5 is set, report `11` for self-test progress and
    terminal status; SET acknowledgement is not operation completion. For MSC re-enumeration, reopen the same
    authorized device and reread reports `1` and `2`.
-5. Read persisted next-boot settings from Feature `2`. To save them, issue opcode `6`, wait for its verified
-   completion, and reread Feature `2`. Issue opcode `2` separately to reboot and apply the settings.
+5. Read persisted settings from Feature `2`. To save and apply them, confirm with the user, issue opcode `6`, and
+   verify the saved values in its completion result. Firmware reboots automatically only after a successful save.
+   Reconnect and reread Feature `2`; opcode `2` remains available for a standalone reboot.
 
 Validate report type, ID, exact length, version, reserved fields, enums, and cross-field constraints. Check that
 Report `1` selects exactly one storage transport and that its assigned board model agrees with the MCU; Report `2`'s

@@ -90,7 +90,7 @@ void test_feature_reports_match_wire_sizes_and_populate_identity_configuration(v
     TEST_ASSERT_EQUAL_UINT8(3u, configuration.storage_gpios[1]);
     TEST_ASSERT_EQUAL_UINT8(4u, configuration.storage_gpios[2]);
     TEST_ASSERT_EQUAL_UINT8(7u, configuration.storage_gpios[5]);
-    TEST_ASSERT_EQUAL_UINT8(0u, configuration.reset_cause);
+    TEST_ASSERT_EQUAL_UINT8(2u, configuration.reset_cause);
 
     uint8_t payload[PF_HID_IDENTITY_PAYLOAD_SIZE];
     TEST_ASSERT_EQUAL_UINT16(sizeof(identity), tud_hid_get_report_cb(
@@ -182,6 +182,8 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_HIGH, saved_sd_speed);
     TEST_ASSERT_EQUAL_UINT16(150u, result.result_data[0] | ((uint16_t)result.result_data[1] << 8u));
     TEST_ASSERT_EQUAL_UINT8(1u, result.result_data[2]);
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 
     /* Rejected or failed saves leave the RAM copy equal to the saved one. */
     test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
@@ -189,21 +191,25 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     send_control(10u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_profile);
     TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
     send_control(13u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_clock);
     TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
     TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 
     settings_save_fails = true;
     send_control(11u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     TEST_ASSERT_EQUAL_UINT8(6u, read_control_result().status);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
     TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 
     busy = true;
     send_control(12u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     TEST_ASSERT_EQUAL_UINT8(5u, read_control_result().status);
     TEST_ASSERT_EQUAL_UINT(2u, settings_save_calls);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 }
 
 void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)

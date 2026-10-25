@@ -108,13 +108,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 client = activeClient;
             }
             var saved = ExecuteCommand(client, () => client.SetSettings(settings));
-            var configuration = client.ReadConfiguration();
             lock (gate)
             {
                 snapshot = snapshot with
                 {
-                    Settings = saved,
-                    BoardConfiguration = configuration
+                    Settings = saved
                 };
                 return saved;
             }

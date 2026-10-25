@@ -5,6 +5,9 @@ const mscControl = document.querySelector("#msc-control");
 const boardSelect = document.querySelector("#board-select");
 const rescanBoardsButton = document.querySelector("#rescan-boards");
 const settingsSave = document.querySelector("#settings-save");
+const configurationDialog = document.querySelector("#configuration-dialog");
+const rebootDialog = document.querySelector("#reboot-dialog");
+const returnDialog = document.querySelector("#return-dialog");
 const settingsControls = ["#settings-clock", "#settings-storage"]
   .map(selector => document.querySelector(selector));
 let requestInProgress = false;
@@ -83,6 +86,9 @@ async function updateStatus() {
 function selectBoard(boardId) {
   const nextBoard = boardId || null;
   if (nextBoard === selectedBoard) return;
+  configurationDialog.close();
+  rebootDialog.close();
+  returnDialog.close();
   selectedBoard = nextBoard;
   const selected = knownBoards.find(board => board.id === selectedBoard);
   selectedBoardLabel = selected ? boardLabel(selected) : selectedBoardLabel;
@@ -148,13 +154,22 @@ async function rescanBoards() {
   }
 }
 
-async function setMsc() {
+async function setMsc(confirmReturn = false) {
+  if (confirmReturn) {
+    if (!returnDialog.open) return;
+    returnDialog.close();
+  }
   if (!currentSnapshot?.msc || mscRequestInProgress || settingsRequestInProgress) return;
   const force = currentSnapshot.msc.enabled;
-  if (force && (!currentSnapshot.msc.force_return_supported
-    || !window.confirm("Disable USB drive and return storage to Pico? "
-      + "Cached host writes may be lost and the filesystem may be corrupted. "
-      + "Stop all host file activity first. Pico will attempt to remount without formatting or repair. Continue?"))) return;
+  if (currentSnapshot.msc.transition_pending || currentSnapshot.self_test?.active
+      || selfTestPendingSequence !== null || (confirmReturn && !force)) return;
+  if (force) {
+    if (!currentSnapshot.msc.force_return_supported) return;
+    if (!confirmReturn) {
+      returnDialog.showModal();
+      return;
+    }
+  }
   mscRequestInProgress = true;
   mscError = null;
   mscControl.disabled = true;
@@ -235,59 +250,70 @@ function updateSettingsDirty() {
 }
 
 async function saveSettings() {
+  if (!configurationDialog.open) return;
+  configurationDialog.close();
   const msc = currentSnapshot?.msc;
   if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !settingsDirty
       || settingsRequestInProgress || !msc || msc.enabled || msc.transition_pending
-      || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending) return;
+      || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending
+      || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)) return;
   settingsRequestInProgress = true;
   settingsMessage = "Saving boot settings...";
+  const settings = selectedSettings();
   renderStatus(currentSnapshot);
   try {
     const response = await fetch(boardUrl("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(selectedSettings()),
+      body: JSON.stringify(settings),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? result.title ?? `Settings endpoint returned HTTP ${response.status}`);
-    if (!result.settings || typeof result.settings.system_clock_mhz !== "number") {
-      throw new Error("Settings endpoint returned invalid readback");
+    if (result.settings?.system_clock_mhz !== settings.system_clock_mhz
+        || result.settings?.sdcard_profile !== settings.sdcard_profile) {
+      throw new Error("Settings readback did not match the requested values");
     }
     currentSnapshot.settings = result.settings;
     currentSnapshot.settings_supported = true;
     settingsDirty = false;
     settingsStorageDirty = false;
-    settingsMessage = "Saved for the next boot. Reboot separately to apply.";
+    settingsMessage = "Settings saved. Reboot requested. Waiting for the device to reconnect.";
   } catch (error) {
     settingsMessage = `Save failed: ${error.message}`;
   } finally {
     settingsRequestInProgress = false;
     if (currentSnapshot) renderStatus(currentSnapshot);
   }
+}
 
-  async function rebootDevice() {
-    const consequence = settingsDirty
-      ? " Unsaved dashboard changes will be lost."
-      : " Saved next-boot settings will be applied.";
-    if (!currentSnapshot?.connected || settingsRequestInProgress
-        || !window.confirm(`Reboot PicoForge now?${consequence} Continue?`)) return;
-    settingsRequestInProgress = true;
-    settingsMessage = "Requesting reboot...";
-    renderStatus(currentSnapshot);
-    try {
-      const response = await fetch(boardUrl("/api/reboot"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm: true }),
-      });
-      if (!response.ok) throw new Error(`Reboot endpoint returned HTTP ${response.status}`);
-      settingsMessage = "Reboot requested. Waiting for the device to reconnect.";
-    } catch (error) {
-      settingsMessage = `Reboot failed: ${error.message}`;
-    } finally {
-      settingsRequestInProgress = false;
-      if (currentSnapshot) renderStatus(currentSnapshot);
-    }
+async function requestReboot() {
+  const response = await fetch(boardUrl("/api/reboot"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true }),
+  });
+  if (!response.ok) throw new Error(`Reboot endpoint returned HTTP ${response.status}`);
+}
+
+async function rebootDevice() {
+  if (!rebootDialog.open) return;
+  rebootDialog.close();
+  const msc = currentSnapshot?.msc;
+  if (!currentSnapshot?.connected || settingsRequestInProgress
+      || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)
+      || !msc || msc.enabled || msc.transition_pending
+      || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending) return;
+  settingsRequestInProgress = true;
+  settingsMessage = "Requesting reboot...";
+  renderStatus(currentSnapshot);
+  try {
+    await requestReboot();
+    settingsMessage = "Reboot requested. Waiting for the device to reconnect.";
+  } catch (error) {
+    settingsMessage = `Reboot failed: ${error.message}`;
+  } finally {
+    settingsRequestInProgress = false;
+    if (currentSnapshot) renderStatus(currentSnapshot);
   }
 }
 
@@ -317,8 +343,34 @@ document.querySelector("#self-test-size").addEventListener("input", () => render
 boardSelect.addEventListener("change", () => selectBoard(boardSelect.value));
 rescanBoardsButton.addEventListener("click", rescanBoards);
 for (const control of settingsControls) control.addEventListener("change", updateSettingsDirty);
-settingsSave.addEventListener("click", saveSettings);
-document.querySelector("#reboot-control").addEventListener("click", rebootDevice);
+settingsSave.addEventListener("click", () => {
+  if (settingsSave.disabled) return;
+  const settings = selectedSettings();
+  document.querySelector("#configuration-dialog-profile").textContent =
+    `System clock: ${settings.system_clock_mhz ? `${settings.system_clock_mhz} MHz` : "Default"}. `
+    + `SD Card: ${settings.sdcard_profile === 1 ? "High-Speed" : "Standard"}.`;
+  configurationDialog.showModal();
+});
+document.querySelector("#reboot-control").addEventListener("click", () => {
+  if (document.querySelector("#reboot-control").disabled) return;
+  document.querySelector("#reboot-consequence").textContent = settingsDirty
+    ? "Unsaved dashboard changes will be lost." : "Saved next-boot settings will be applied.";
+  rebootDialog.showModal();
+});
+document.querySelector("#cancel-configuration").addEventListener("click", () => configurationDialog.close());
+document.querySelector("#cancel-reboot").addEventListener("click", () => rebootDialog.close());
+document.querySelector("#cancel-return").addEventListener("click", () => returnDialog.close());
+document.querySelector("#confirm-return").addEventListener("click", () => setMsc(true));
+for (const dialog of [configurationDialog, rebootDialog, returnDialog]) {
+  dialog.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dialog.close();
+    }
+  });
+}
+document.querySelector("#confirm-configuration").addEventListener("click", saveSettings);
+document.querySelector("#confirm-reboot").addEventListener("click", rebootDevice);
 ledControl.addEventListener("click", setLed);
 mscControl.addEventListener("click", () => setMsc());
 void rescanBoards();

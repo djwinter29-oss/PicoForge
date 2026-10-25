@@ -42,7 +42,7 @@ function render(state) {
       : !state.settings_supported ? "Persistent settings save is unavailable."
         : !storageReady ? "Waiting for fresh, idle storage and self-test status."
           : state.msc?.enabled ? "Return storage to Pico before saving settings."
-            : "Stored profiles apply at next boot; saving does not reboot.");
+            : "Saving settings automatically reboots the board.");
   element("msc-note").textContent = state.reconnecting
     ? "USB interfaces are reconnecting; HID will resume automatically."
     : state.msc?.request_rejected ? "Storage request or transition failed; inspect storage and CDC diagnostics."
@@ -79,6 +79,7 @@ for (const control of [settingsClock, settingsStorage]) {
   });
 }
 settingsSave.addEventListener("click", () => run(async () => {
+  if (!window.confirm("Save these boot settings and reboot the board?")) return;
   if (await client.saveSettings({ system_clock_mhz: Number(settingsClock.value),
     sdcard_profile: Number(settingsStorage.value) })) settingsDirty = false;
   render(client.state);

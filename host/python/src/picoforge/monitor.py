@@ -246,7 +246,7 @@ class DeviceMonitor:
                 self._snapshot.update(
                     settings=saved,
                     board_configuration=configuration,
-                    settings_message="Saved for the next boot. Reboot separately to apply.",
+                    settings_message="Settings saved. Waiting for the board to reboot.",
                     control_result=self._active_client.last_command_result,
                 )
             return saved
