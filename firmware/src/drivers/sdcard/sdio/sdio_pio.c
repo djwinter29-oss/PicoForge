@@ -150,10 +150,12 @@ static const pio_program_t *data_tx_program(const pf_sdio_pio_t *host)
 /** @brief Claim instruction memory for bidirectional commands and command-owned CLK. */
 static bool load_command_program(pf_sdio_pio_t *host)
 {
-    if (!pio_can_add_program(host->pio, &pf_sdio_pio_command_program)) {
+    int offset = pio_add_program(host->pio, &pf_sdio_pio_command_program);
+    if (offset < 0) {
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
-    host->command_program_offset = pio_add_program(host->pio, &pf_sdio_pio_command_program);
+    host->command_program_offset = (uint)offset;
     host->command_program_loaded = true;
     pio_sm_config config = pf_sdio_pio_command_program_get_default_config(host->command_program_offset);
     sm_config_set_out_pins(&config, host->config.pins.command_gpio, 1u);
@@ -172,10 +174,12 @@ static bool load_command_program(pf_sdio_pio_t *host)
 /** @brief Claim and configure the RX program selected by the last clock request's card timing mode. */
 static bool load_data_rx_program(pf_sdio_pio_t *host)
 {
-    if (!pio_can_add_program(host->pio, data_rx_program(host))) {
+    int offset = pio_add_program(host->pio, data_rx_program(host));
+    if (offset < 0) {
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
-    host->data_rx_program_offset = pio_add_program(host->pio, data_rx_program(host));
+    host->data_rx_program_offset = (uint)offset;
     pio_sm_config config = host->data_rx_fast
         ? pf_sdio_pio_data_rx_fast_program_get_default_config(host->data_rx_program_offset)
         : pf_sdio_pio_data_rx_program_get_default_config(host->data_rx_program_offset);
@@ -207,14 +211,23 @@ bool pf_sdio_pio_tx_prepare(pf_sdio_pio_t *host)
         pio_remove_program(host->pio, &pf_sdio_pio_command_program, host->command_program_offset);
         host->command_program_loaded = false;
     }
-    if (!pio_can_add_program(host->pio, &pf_sdio_pio_clock_program) ||
-        !pio_can_add_program(host->pio, data_tx_program(host))) {
+    host->clock_owner = PF_SDIO_PIO_CLOCK_UNOWNED;
+    host->mode_restore_failed = true;
+    int offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
+    if (offset < 0) {
         wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
         return false;
     }
-    host->clock_program_offset = pio_add_program(host->pio, &pf_sdio_pio_clock_program);
+    host->clock_program_offset = (uint)offset;
     host->clock_program_loaded = true;
-    host->data_tx_program_offset = pio_add_program(host->pio, data_tx_program(host));
+    offset = pio_add_program(host->pio, data_tx_program(host));
+    if (offset < 0) {
+        pio_remove_program(host->pio, &pf_sdio_pio_clock_program, host->clock_program_offset);
+        host->clock_program_loaded = false;
+        wire_error(host, PF_SD_LINK_SDIO_ERROR_STATE, PF_SD_LINK_SDIO_PHASE_SETUP);
+        return false;
+    }
+    host->data_tx_program_offset = (uint)offset;
     host->data_tx_program_loaded = true;
     pio_sm_config config = pf_sdio_pio_clock_program_get_default_config(host->clock_program_offset);
     sm_config_set_sideset_pins(&config, host->config.pins.clock_gpio);
@@ -241,6 +254,7 @@ bool pf_sdio_pio_tx_prepare(pf_sdio_pio_t *host)
     clear_sm_fdebug(host, host->data_sm);
     pio_clkdiv_restart_sm_mask(host->pio, (1u << host->command_sm) | (1u << host->data_sm));
     host->clock_owner = PF_SDIO_PIO_CLOCK_DATA_TX;
+    host->mode_restore_failed = false;
     return true;
 }
 
@@ -435,8 +449,7 @@ bool pf_sdio_pio_init(pf_sdio_pio_t *host, const pf_sdio_pio_config_t *config)
         ((config->pio != pio0) && (config->pio != pio1)) ||
         (config->pins.command_gpio >= pin_limit) || (config->pins.clock_gpio >= pin_limit) ||
         (config->pins.data_gpio[0] > pin_limit - 4u) ||
-        (config->pins.clock_gpio != ((config->pins.data_gpio[0] + 30u) % 32u)) ||
-        !pio_can_add_program(config->pio, &pf_sdio_pio_command_program)) {
+        (config->pins.clock_gpio != ((config->pins.data_gpio[0] + 30u) % 32u))) {
         return false;
     }
     for (uint pin = 0u; pin < 4u; pin++) {

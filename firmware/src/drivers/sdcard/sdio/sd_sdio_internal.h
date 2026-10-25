@@ -7,56 +7,62 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "sd_backend.h"
+#include "sd.h"
 
 /** Default-Speed transfer target; the PIO divider rounds down when not exactly representable. */
-#define PF_SD_NATIVE_TRANSFER_CLOCK_HZ 25000000u
-/** Compatibility name for the default transfer limit. */
-#define PF_SD_NATIVE_DEFAULT_CLOCK_MAX_HZ PF_SD_NATIVE_TRANSFER_CLOCK_HZ
-
-#ifndef PF_SD_NATIVE_HIGH_SPEED
-#define PF_SD_NATIVE_HIGH_SPEED 0
+#define PF_SD_SDIO_TRANSFER_CLOCK_HZ 25000000u
+/** Permit optional card High-Speed negotiation; CMake supplies the production value. */
+#ifndef PF_SD_SDIO_HIGH_SPEED
+#define PF_SD_SDIO_HIGH_SPEED 0
 #endif
 
+/** Initialization diagnostic stages; retained numeric values include legacy coarse stages. */
 typedef enum {
-    PF_SD_NATIVE_INIT_STAGE_NONE = 0,
-    PF_SD_NATIVE_INIT_STAGE_IDLE,
-    PF_SD_NATIVE_INIT_STAGE_IF_CONDITION,
-    PF_SD_NATIVE_INIT_STAGE_OPERATING_CONDITION,
-    PF_SD_NATIVE_INIT_STAGE_CID,
-    PF_SD_NATIVE_INIT_STAGE_RCA,
-    PF_SD_NATIVE_INIT_STAGE_CSD,
-    PF_SD_NATIVE_INIT_STAGE_SELECT,
-    PF_SD_NATIVE_INIT_STAGE_BUS_WIDTH,
-    PF_SD_NATIVE_INIT_STAGE_BLOCK_LENGTH,
-    PF_SD_NATIVE_INIT_STAGE_TRANSFER_CLOCK,
-    PF_SD_NATIVE_INIT_STAGE_CMD8_RESPONSE,
-    PF_SD_NATIVE_INIT_STAGE_CMD8_CLASSIFY,
-    PF_SD_NATIVE_INIT_STAGE_CID_RESPONSE,
-    PF_SD_NATIVE_INIT_STAGE_CID_VALIDATE,
-    PF_SD_NATIVE_INIT_STAGE_SELECT_RESPONSE,
-    PF_SD_NATIVE_INIT_STAGE_SELECT_READY,
-    PF_SD_NATIVE_INIT_STAGE_SCR,
-    PF_SD_NATIVE_INIT_STAGE_BUS_WIDTH_PREFIX,
-    PF_SD_NATIVE_INIT_STAGE_SELECT_STATUS,
-    PF_SD_NATIVE_INIT_STAGE_OPERATING_PREFIX,
-    PF_SD_NATIVE_INIT_STAGE_OPERATING_RESPONSE,
-    PF_SD_NATIVE_INIT_STAGE_OPERATING_PARSE,
-    PF_SD_NATIVE_INIT_STAGE_OPERATING_READY,
-    PF_SD_NATIVE_INIT_STAGE_SCR_PREFIX,
-    PF_SD_NATIVE_INIT_STAGE_SCR_RESPONSE,
-    PF_SD_NATIVE_INIT_STAGE_SCR_DATA,
-    PF_SD_NATIVE_INIT_STAGE_SCR_CRC,
-    PF_SD_NATIVE_INIT_STAGE_SCR_BUS_WIDTH,
-} pf_sd_native_init_stage_t;
+    PF_SD_SDIO_INIT_STAGE_NONE = 0, /**< No initialization failure. */
+    PF_SD_SDIO_INIT_STAGE_IDLE, /**< CMD0 reset. */
+    PF_SD_SDIO_INIT_STAGE_IF_CONDITION, /**< Legacy coarse CMD8 stage. */
+    PF_SD_SDIO_INIT_STAGE_OPERATING_CONDITION, /**< ACMD41 setup. */
+    PF_SD_SDIO_INIT_STAGE_CID, /**< Legacy coarse CID stage. */
+    PF_SD_SDIO_INIT_STAGE_RCA, /**< CMD3 relative address assignment. */
+    PF_SD_SDIO_INIT_STAGE_CSD, /**< CMD9 register and capacity validation. */
+    PF_SD_SDIO_INIT_STAGE_SELECT, /**< Legacy coarse card selection stage. */
+    PF_SD_SDIO_INIT_STAGE_BUS_WIDTH, /**< ACMD6 four-bit selection. */
+    PF_SD_SDIO_INIT_STAGE_BLOCK_LENGTH, /**< Retained legacy block-length stage. */
+    PF_SD_SDIO_INIT_STAGE_TRANSFER_CLOCK, /**< Transfer-clock setup and validation. */
+    PF_SD_SDIO_INIT_STAGE_CMD8_RESPONSE, /**< CMD8 exchange and response validation. */
+    PF_SD_SDIO_INIT_STAGE_CMD8_CLASSIFY, /**< CMD8 voltage and card-version classification. */
+    PF_SD_SDIO_INIT_STAGE_CID_RESPONSE, /**< CMD2 long response exchange. */
+    PF_SD_SDIO_INIT_STAGE_CID_VALIDATE, /**< CID framing and CRC validation. */
+    PF_SD_SDIO_INIT_STAGE_SELECT_RESPONSE, /**< CMD7 response validation. */
+    PF_SD_SDIO_INIT_STAGE_SELECT_READY, /**< DAT0 release after selection. */
+    PF_SD_SDIO_INIT_STAGE_SCR, /**< SCR reception setup. */
+    PF_SD_SDIO_INIT_STAGE_BUS_WIDTH_PREFIX, /**< CMD55 before ACMD6. */
+    PF_SD_SDIO_INIT_STAGE_SELECT_STATUS, /**< CMD13 transfer-ready check. */
+    PF_SD_SDIO_INIT_STAGE_OPERATING_PREFIX, /**< CMD55 before ACMD41. */
+    PF_SD_SDIO_INIT_STAGE_OPERATING_RESPONSE, /**< ACMD41 response exchange. */
+    PF_SD_SDIO_INIT_STAGE_OPERATING_PARSE, /**< R3/OCR decoding. */
+    PF_SD_SDIO_INIT_STAGE_OPERATING_READY, /**< OCR power-up completion. */
+    PF_SD_SDIO_INIT_STAGE_SCR_PREFIX, /**< CMD55 before ACMD51. */
+    PF_SD_SDIO_INIT_STAGE_SCR_RESPONSE, /**< ACMD51 response validation. */
+    PF_SD_SDIO_INIT_STAGE_SCR_DATA, /**< SCR data completion. */
+    PF_SD_SDIO_INIT_STAGE_SCR_CRC, /**< SCR CRC validation. */
+    PF_SD_SDIO_INIT_STAGE_SCR_BUS_WIDTH, /**< SCR format and four-bit capability validation. */
+} pf_sd_sdio_init_stage_t;
 
+/** @name Borrowed singleton diagnostics
+ * Callers hold the SD reservation; these getters do not lock. NULL output pointers are ignored.
+ * @{
+ */
 /** Return the stage that failed in the most recent card-init attempt. */
-pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void);
+pf_sd_sdio_init_stage_t pf_sd_sdio_get_init_stage(void);
 
 /** Copy the last six-byte short response captured during card initialization. */
-void pf_sd_native_get_init_response(uint8_t response[6]);
-void pf_sd_native_get_last_short_response(uint8_t *command, uint32_t *argument,
+void pf_sd_sdio_get_init_response(uint8_t response[6]);
+/** Copy the most recently decoded short command response and its request. */
+void pf_sd_sdio_get_last_short_response(uint8_t *command, uint32_t *argument,
                                          uint32_t *response_argument);
-void pf_sd_native_get_last_response_words(uint32_t words[5], size_t *word_count);
+/** Copy all five retained response words and the number captured, including partial responses. */
+void pf_sd_sdio_get_last_response_words(uint32_t words[5], size_t *word_count);
+/** @} */
 
 #endif

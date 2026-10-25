@@ -156,6 +156,9 @@ def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
         text = source.read_text()
         for header in re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', text, re.MULTILINE):
             assert not header.startswith(("hardware/", "pico/")), f"{source}: hardware dependency {header}"
+            assert Path(header).name not in (
+                "sdio_pio.h", "sdio_pio_pins.h", "spi.h", "spi_pins.h"
+            ), f"{source}: concrete backend include {header}"
             if "sdcard/" in header:
                 assert re.fullmatch(r"drivers/sdcard/(?:sdio/|spi/)?sd_link\w*\.h", header), (
                     f"{source}: concrete backend include {header}"
@@ -163,6 +166,16 @@ def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
         assert not re.search(r"\bpf_(?:spi|sdio_pio)_\w+", text), source
         assert not re.search(r"\bpf_storage_(?:spi|sdio_pio)_\w+", text), source
         assert not re.search(r"\b(?:spi_inst_t|dma_channel_\w+|pio_sm_\w+)\b", text), source
+
+
+def test_sdio_diagnostics_depend_on_public_types_not_the_backend_contract():
+    header = (SDCARD / "sdio/sd_sdio_internal.h").read_text()
+    assert '#include "sd.h"' in header
+    assert "sd_backend.h" not in header
+
+
+def test_pio_program_acquisition_uses_results_instead_of_space_prechecks():
+    assert "pio_can_add_program" not in (SDCARD / "sdio/sdio_pio.c").read_text()
 
 
 def test_common_lifecycle_and_raw_wire_interfaces_do_not_expose_device_transactions():
@@ -275,3 +288,22 @@ def test_public_sd_api_is_declared_in_one_header():
     header = (SDCARD / "sd.h").read_text()
     for function in ("init", "lock", "read_blocks", "write_blocks", "sync", "get_info"):
         assert re.search(rf"\bpf_sd_{function}\s*\(", header), function
+
+
+def test_sdio_host_and_diagnostics_match_their_implementation_owners():
+    host_header = (SDCARD / "sdio/sd_sdio_host.h").read_text()
+    host_source = (SDCARD / "sdio/sd_sdio_host.c").read_text()
+    diagnostics = (SDCARD / "sdio/sd_sdio_internal.h").read_text()
+    backend = (SDCARD / "sdio/sd_backend_sdio.c").read_text()
+    for header, implementation in ((host_header, host_source), (diagnostics, backend)):
+        functions = set(re.findall(r"\b(pf_sd_sdio_\w+)\s*\(", header))
+        assert functions
+        for function in functions:
+            assert re.search(
+                rf"\b{function}\s*\([^;]*?\)\s*\{{", implementation + header, re.DOTALL
+            ), function
+        assert not re.search(r"\bpf_sd_native_(?:host_|get_|init_stage)", header + implementation)
+        assert not re.search(
+            r"\bPF_SD_NATIVE_(?:INIT_STAGE_|TRANSFER_CLOCK_HZ|DEFAULT_CLOCK_MAX_HZ|HIGH_SPEED)",
+            header + implementation
+        )

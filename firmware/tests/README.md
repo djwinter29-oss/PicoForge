@@ -70,6 +70,11 @@ Production transport code lives in [sdio/](../src/drivers/sdcard/sdio/) and [spi
 The existing native-init and SPI behavior suites compile `sd_backend_sdio.c` and `sd_backend_spi.c` respectively;
 both implementations use the shared `sd_backend.h` contract. Physical-engine layer checks exclude the protocol and
 board-binding files even though they now share these directories.
+The PIO allocation fake matches the SDK's signed `pio_add_program()` result and can fail a selected acquisition.
+Engine tests cover initialization rollback, partial TX acquisition, command restoration failure and subsequent retry.
+Clock-reconfiguration tests distinguish unchanged-bus planner rejection from RX allocation failure after a divider
+change, requiring an unhealthy state followed by explicit restoration at the newly selected timing.
+Native TX tests check card CRC/write rejection diagnostics, including failed cleanup, without payload replay.
 Both fused-copy variants compile the same consolidated protocol implementation in their
 [disabled](drivers/sdcard/test_sd_protocol_copy_fused0.c) and
 [enabled](drivers/sdcard/test_sd_protocol_copy_fused1.c) tests.

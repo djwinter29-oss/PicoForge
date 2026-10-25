@@ -52,7 +52,7 @@
   :test:
     :compile:
       :test_sd_native_init:
-        - -DPF_SD_NATIVE_HIGH_SPEED=1
+        - -DPF_SD_SDIO_HIGH_SPEED=1
       :test_storage_media_freertos_serialization:
         - -std=c11
         - -D_XOPEN_SOURCE=700

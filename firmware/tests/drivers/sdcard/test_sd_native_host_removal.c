@@ -17,7 +17,7 @@ static pf_sdio_pio_t test_wire;
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
-pf_sd_native_host_t *pf_test_sdio_observed_host;
+pf_sd_sdio_host_t *pf_test_sdio_observed_host;
 bool pf_test_sdio_expect_streams_cleared;
 bool pf_test_sdio_streams_were_cleared;
 bool pf_test_sdio_can_add_program;
@@ -49,7 +49,7 @@ void test_forget_removed_clears_stream_state_before_restoring_mode(void)
         .data_tx_program_loaded = true,
         .mode_restore_failed = true,
     };
-    pf_sd_native_host_t host = {
+    pf_sd_sdio_host_t host = {
         .transport = pf_sdio_pio_bus(&test_wire),
         .write_stream_open = true,
         .read_stream_unresolved = true,
@@ -58,7 +58,7 @@ void test_forget_removed_clears_stream_state_before_restoring_mode(void)
 
     pf_test_sdio_observed_host = &host;
     pf_test_sdio_expect_streams_cleared = true;
-    pf_sd_native_host_forget_removed_card(&host);
+    pf_sd_sdio_host_forget_removed_card(&host);
 
     TEST_ASSERT_TRUE(pf_test_sdio_streams_were_cleared);
     TEST_ASSERT_FALSE(host.write_stream_open);
@@ -81,7 +81,7 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
         .data_rx_program_offset = 4u,
         .data_rx_program_loaded = true,
     };
-    pf_sd_native_host_t host = {
+    pf_sd_sdio_host_t host = {
         .transport = pf_sdio_pio_bus(&test_wire),
         .write_stream_open = true,
         .read_stream_unresolved = true,
@@ -89,7 +89,7 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
     TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
     pf_test_sdio_can_add_program = false;
-    pf_sd_native_host_forget_removed_card(&host);
+    pf_sd_sdio_host_forget_removed_card(&host);
 
     TEST_ASSERT_NULL(test_wire.pio);
     TEST_ASSERT_FALSE(host.write_stream_open);
@@ -100,11 +100,11 @@ void test_forget_removed_deinitializes_when_command_mode_cannot_be_restored(void
 void test_forget_removed_ignores_null_and_uninitialized_hosts(void)
 {
     test_wire = (pf_sdio_pio_t){};
-    pf_sd_native_host_t host = { .transport = pf_sdio_pio_bus(&test_wire) };
+    pf_sd_sdio_host_t host = { .transport = pf_sdio_pio_bus(&test_wire) };
     TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
 
-    pf_sd_native_host_forget_removed_card(NULL);
-    pf_sd_native_host_forget_removed_card(&host);
+    pf_sd_sdio_host_forget_removed_card(NULL);
+    pf_sd_sdio_host_forget_removed_card(&host);
 
     TEST_ASSERT_NULL(test_wire.pio);
     TEST_ASSERT_EQUAL_UINT(0u, pf_test_sdio_removed_programs);
@@ -120,7 +120,7 @@ void test_confirm_card_removed_invalidates_card_before_forgetting_host_streams(v
         .command_program_loaded = true,
         .data_rx_program_loaded = true,
     };
-    native_host = (pf_sd_native_host_t){
+    native_host = (pf_sd_sdio_host_t){
         .transport = pf_sdio_pio_bus(&test_wire),
         .write_stream_open = true,
         .read_stream_unresolved = true,

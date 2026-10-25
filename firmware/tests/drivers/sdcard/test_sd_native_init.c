@@ -16,7 +16,7 @@ static bool test_present(const void *context) { (void)context; return pf_test_sd
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
-pf_sd_native_host_t *pf_test_sdio_observed_host;
+pf_sd_sdio_host_t *pf_test_sdio_observed_host;
 bool pf_test_sdio_expect_streams_cleared;
 bool pf_test_sdio_streams_were_cleared;
 bool pf_test_sdio_can_add_program;
@@ -72,7 +72,7 @@ void setUp(void)
     native_info.block_count = 15564800u;
     configuration_set = true;
     card_initialized = true;
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_NONE;
     active_config = (pf_sd_config_t){
         .transport = pf_sdio_pio_bus(&test_wire), .clock_hz = 25000000u
     };
@@ -113,10 +113,10 @@ void setUp(void)
 
 void tearDown(void) {}
 
-bool pf_sd_native_host_init(pf_sd_native_host_t *host, const pf_sd_config_t *config)
+bool pf_sd_sdio_host_init(pf_sd_sdio_host_t *host, const pf_sd_config_t *config)
 { host->transport = config->transport; test_wire.pio = pio0; test_wire.current_clock_hz = 400000u; return true; }
-void pf_sd_native_host_deinit(pf_sd_native_host_t *host) { (void)host; }
-bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t hz)
+void pf_sd_sdio_host_deinit(pf_sd_sdio_host_t *host) { (void)host; }
+bool pf_sd_sdio_host_set_clock(pf_sd_sdio_host_t *host, uint32_t hz)
 {
     if (hz == 50000000u) {
         TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1u, pf_test_sdio_sleep_ms_total - switch_selected_at_ms);
@@ -126,22 +126,22 @@ bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t hz)
     test_wire.system_clock_hz = pf_test_sdio_system_clock_hz;
     return pf_sdio_pio_set_clock(&test_wire, hz);
 }
-bool pf_sd_native_host_prepare_initialization(pf_sd_native_host_t *host)
+bool pf_sd_sdio_host_prepare_initialization(pf_sd_sdio_host_t *host)
 {
     host->bus_width = 1u;
-    return pf_sd_native_host_recover(host) &&
-           pf_sd_native_host_set_clock(host, 400000u);
+    return pf_sd_sdio_host_recover(host) &&
+           pf_sd_sdio_host_set_clock(host, 400000u);
 }
-bool pf_sd_native_host_set_bus_width(pf_sd_native_host_t *host, uint8_t width)
+bool pf_sd_sdio_host_set_bus_width(pf_sd_sdio_host_t *host, uint8_t width)
 {
     TEST_ASSERT_EQUAL_UINT8(4u, width);
     TEST_ASSERT_EQUAL_UINT8(6u, commands[command_count - 1u]);
     host->bus_width = width;
     return true;
 }
-void pf_sd_native_host_abort(pf_sd_native_host_t *host)
+void pf_sd_sdio_host_abort(pf_sd_sdio_host_t *host)
 { (void)host; ++abort_calls; }
-bool pf_sd_native_host_command_bytes(pf_sd_native_host_t *host, uint8_t command, uint32_t argument,
+bool pf_sd_sdio_host_command_bytes(pf_sd_sdio_host_t *host, uint8_t command, uint32_t argument,
                                     uint16_t bits, uint8_t *response, size_t capacity)
 {
     (void)host;
@@ -189,7 +189,7 @@ bool pf_sd_native_host_command_bytes(pf_sd_native_host_t *host, uint8_t command,
     if (command == bad_index_command) response[0] ^= 1u;
     return true;
 }
-bool pf_sd_native_host_read_sector(pf_sd_native_host_t *host, uint32_t sector,
+bool pf_sd_sdio_host_read_sector(pf_sd_sdio_host_t *host, uint32_t sector,
                                   uint8_t block[512])
 {
     (void)block;
@@ -201,7 +201,7 @@ bool pf_sd_native_host_read_sector(pf_sd_native_host_t *host, uint32_t sector,
     if (!ok) host->last_error = PF_SD_DETAIL_DATA_CRC;
     return ok;
 }
-bool pf_sd_native_host_read_scr(pf_sd_native_host_t *host, uint32_t address, uint8_t scr[8])
+bool pf_sd_sdio_host_read_scr(pf_sd_sdio_host_t *host, uint32_t address, uint8_t scr[8])
 {
     (void)host;
     (void)address;
@@ -210,7 +210,7 @@ bool pf_sd_native_host_read_scr(pf_sd_native_host_t *host, uint32_t address, uin
     scr[1] = four_bit_supported ? 0x05u : 0x01u;
     return true;
 }
-bool pf_sd_native_host_read_switch_status(pf_sd_native_host_t *host, uint32_t argument,
+bool pf_sd_sdio_host_read_switch_status(pf_sd_sdio_host_t *host, uint32_t argument,
                                          uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE])
 {
     (void)host;
@@ -230,7 +230,7 @@ bool pf_sd_native_host_read_switch_status(pf_sd_native_host_t *host, uint32_t ar
     }
     return true;
 }
-bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first,
+bool pf_sd_sdio_host_read_blocks(pf_sd_sdio_host_t *host, uint32_t first,
                                   uint8_t *buffer, uint32_t count)
 {
     (void)buffer;
@@ -243,12 +243,12 @@ bool pf_sd_native_host_read_blocks(pf_sd_native_host_t *host, uint32_t first,
     if (read_fail_unresolved && !read_ok) host->read_stream_unresolved = true;
     return read_ok && count > 0u;
 }
-bool pf_sd_native_host_write_sector(pf_sd_native_host_t *host, uint32_t first,
+bool pf_sd_sdio_host_write_sector(pf_sd_sdio_host_t *host, uint32_t first,
                                    const uint8_t *buffer)
 { (void)host; (void)first; (void)buffer; ++single_writes; return single_write_ok; }
-bool pf_sd_native_host_write_stream_continues(const pf_sd_native_host_t *host, uint32_t sector)
+bool pf_sd_sdio_host_write_stream_continues(const pf_sd_sdio_host_t *host, uint32_t sector)
 { return host->write_stream_open && host->write_stream_next_sector == sector; }
-bool pf_sd_native_host_write_blocks(pf_sd_native_host_t *host, uint32_t first,
+bool pf_sd_sdio_host_write_blocks(pf_sd_sdio_host_t *host, uint32_t first,
                                    const uint8_t *buffer, uint32_t count)
 {
     (void)buffer; ++batch_writes;
@@ -256,7 +256,7 @@ bool pf_sd_native_host_write_blocks(pf_sd_native_host_t *host, uint32_t first,
     host->write_stream_next_sector = first + count;
     return batch_write_ok;
 }
-bool pf_sd_native_host_recover(pf_sd_native_host_t *host)
+bool pf_sd_sdio_host_recover(pf_sd_sdio_host_t *host)
 {
     ++recovery_calls;
     if (recover_failure_call != 0u && recovery_calls == recover_failure_call) return false;
@@ -267,7 +267,7 @@ bool pf_sd_native_host_recover(pf_sd_native_host_t *host)
     }
     return recovery_ok;
 }
-void pf_sd_native_host_forget_removed_card(pf_sd_native_host_t *host)
+void pf_sd_sdio_host_forget_removed_card(pf_sd_sdio_host_t *host)
 {
     ++forget_calls;
     host->write_stream_open = false;

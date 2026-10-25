@@ -16,7 +16,7 @@ static pf_sdio_pio_t test_wire;
 #include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
-pf_sd_native_host_t *pf_test_sdio_observed_host;
+pf_sd_sdio_host_t *pf_test_sdio_observed_host;
 bool pf_test_sdio_expect_streams_cleared;
 bool pf_test_sdio_streams_were_cleared;
 bool pf_test_sdio_can_add_program;
@@ -76,16 +76,16 @@ static void set_failure(unsigned failure)
 
 void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_failures(void)
 {
-    static const pf_sd_native_init_stage_t failure_stages[] = {
-        PF_SD_NATIVE_INIT_STAGE_NONE,
-        PF_SD_NATIVE_INIT_STAGE_SCR_PREFIX,
-        PF_SD_NATIVE_INIT_STAGE_SCR_PREFIX,
-        PF_SD_NATIVE_INIT_STAGE_SCR_RESPONSE,
-        PF_SD_NATIVE_INIT_STAGE_SCR_RESPONSE,
-        PF_SD_NATIVE_INIT_STAGE_SCR_PREFIX,
-        PF_SD_NATIVE_INIT_STAGE_SCR_RESPONSE,
-        PF_SD_NATIVE_INIT_STAGE_SCR_DATA,
-        PF_SD_NATIVE_INIT_STAGE_SCR_CRC
+    static const pf_sd_sdio_init_stage_t failure_stages[] = {
+        PF_SD_SDIO_INIT_STAGE_NONE,
+        PF_SD_SDIO_INIT_STAGE_SCR_PREFIX,
+        PF_SD_SDIO_INIT_STAGE_SCR_PREFIX,
+        PF_SD_SDIO_INIT_STAGE_SCR_RESPONSE,
+        PF_SD_SDIO_INIT_STAGE_SCR_RESPONSE,
+        PF_SD_SDIO_INIT_STAGE_SCR_PREFIX,
+        PF_SD_SDIO_INIT_STAGE_SCR_RESPONSE,
+        PF_SD_SDIO_INIT_STAGE_SCR_DATA,
+        PF_SD_SDIO_INIT_STAGE_SCR_CRC
     };
     pf_test_sdio_pio_t pio = {0};
     test_wire = (pf_sdio_pio_t){
@@ -98,7 +98,7 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         .dma_claimed = true,
         .data_rx_program_loaded = true,
     };
-    pf_sd_native_host_t host = { .transport = pf_sdio_pio_bus(&test_wire) };
+    pf_sd_sdio_host_t host = { .transport = pf_sdio_pio_bus(&test_wire) };
     TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&host.transport, transport_error, &host, pf_sd_idle));
     uint8_t scr[8];
 
@@ -109,7 +109,7 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         make_scr_wire();
         set_failure(failure);
         TEST_ASSERT_EQUAL(failure == 0u,
-                          pf_sd_native_host_read_scr(&host, 0x12340000u, scr));
+                          pf_sd_sdio_host_read_scr(&host, 0x12340000u, scr));
         TEST_ASSERT_EQUAL(failure_stages[failure], host.scr_stage);
         TEST_ASSERT_EQUAL_UINT(2u, pf_test_sdio_pio_restart_calls);
         if (failure == 0u) {
@@ -125,7 +125,7 @@ void test_read_scr_returns_payload_and_reports_prefix_response_data_and_crc_fail
         }
     }
 
-    TEST_ASSERT_FALSE(pf_sd_native_host_read_scr(NULL, 0u, scr));
-    TEST_ASSERT_FALSE(pf_sd_native_host_read_scr(&host, 0u, NULL));
-    TEST_ASSERT_EQUAL(PF_SD_NATIVE_INIT_STAGE_SCR, host.scr_stage);
+    TEST_ASSERT_FALSE(pf_sd_sdio_host_read_scr(NULL, 0u, scr));
+    TEST_ASSERT_FALSE(pf_sd_sdio_host_read_scr(&host, 0u, NULL));
+    TEST_ASSERT_EQUAL(PF_SD_SDIO_INIT_STAGE_SCR, host.scr_stage);
 }

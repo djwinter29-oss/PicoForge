@@ -1,3 +1,9 @@
+/** @file
+ * @brief Concrete PIO/DMA resources and raw operations; protocol clients use sd_link_sdio.h instead.
+ *
+ * Contexts require external serialization. Board composition owns their lifetime; engine tests exercise the
+ * concrete operations directly. Common lifecycle wrappers preserve configuration/wait binding across retries.
+ */
 #ifndef PF_SDIO_PIO_H
 #define PF_SDIO_PIO_H
 
@@ -57,9 +63,11 @@ typedef struct {
     uint32_t clock_div_ticks;          /**< Command/clock divider in 1/256 units. */
 } pf_sdio_pio_t;
 
-/** Return a non-owning common lifecycle descriptor; serial transfer is unsupported. */
+/** Return a non-owning common lifecycle descriptor for native CMD/DAT operations. */
 pf_sd_link_t pf_sdio_pio_bus(pf_sdio_pio_t *transport);
-/** Enable the optional platform wait adapter for this backend. */
+/** Bind the optional FreeRTOS wait adapter before transfers; available only in interrupt-wait builds.
+ * One PIO and one serialized waiter are supported; IRQ registration lasts for firmware lifetime.
+ */
 bool pf_sdio_pio_enable_wait(pf_sdio_pio_t *transport);
 /** Acquire physical resources. Duplicate initialization leaves the live context unchanged. */
 bool pf_sdio_pio_init(pf_sdio_pio_t *transport,
@@ -67,8 +75,11 @@ bool pf_sdio_pio_init(pf_sdio_pio_t *transport,
 /** Release all physical resources and zero the context. */
 void pf_sdio_pio_deinit(pf_sdio_pio_t *transport);
 /** Set a clock no faster than requested; does not change device protocol state.
- * Requests above 25 MHz select High-Speed card timing and clamp to the fastest qualified cycle structure
- * (system clock / 4); a request that cannot be timed safely is rejected without changing the bus. */
+ * Requests above 25 MHz select physical sampling for an already negotiated High-Speed card and clamp to
+ * the fastest qualified cycle structure (system clock / 4). Invalid/unrepresentable requests leave the bus
+ * unchanged. RX program allocation can fail after the divider changes, leaving the engine unhealthy;
+ * restore command mode or deinitialize before further transfers. A failure does not roll back the clock.
+ */
 bool pf_sdio_pio_set_clock(pf_sdio_pio_t *transport, uint32_t clock_hz);
 /** Reset wire activity and emit caller-selected released-line clocks at the current rate. */
 bool pf_sdio_pio_clocks(pf_sdio_pio_t *transport, uint32_t cycles, uint32_t timeout_us);

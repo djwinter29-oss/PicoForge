@@ -7,7 +7,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 #include "drivers/sdcard/sd_link.c"
 #include "sdio_sdk_stubs.c"
 
-#if defined(PF_SD_BLOCK_H) || defined(PF_SD_NATIVE_HOST_H) || defined(PF_NOR_H)
+#if defined(PF_SD_H) || defined(PF_SD_SDIO_HOST_H) || defined(PF_NOR_H)
 #error "Native transport tests must compile and link without device protocol headers or sources"
 #endif
 
@@ -44,6 +44,8 @@ static pf_sdio_pio_config_t pins(void)
 void setUp(void)
 {
     pf_test_sdio_can_add_program = true;
+    pf_test_sdio_add_calls = 0u;
+    pf_test_sdio_fail_add_call = 0u;
     pf_test_sdio_removed_programs = 0u;
     pf_test_sdio_dma_busy = false;
     pf_test_sdio_dma_busy_delay = 0u;
@@ -70,6 +72,87 @@ void setUp(void)
 }
 
 void tearDown(void) {}
+
+void test_clock_reconfiguration_allocation_failure_requires_restoration_without_rolling_back_divider(void)
+{
+    pf_sdio_pio_t host = {0};
+    pf_sdio_pio_config_t config = pins();
+    TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+    TEST_ASSERT_TRUE(pf_sdio_pio_set_clock(&host, 25000000u));
+    pf_sd_link_t bus = pf_sdio_pio_bus(&host);
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_hooks(&bus, on_error, &host, NULL));
+    pf_test_sdio_fail_add_call = pf_test_sdio_add_calls + 1u;
+    TEST_ASSERT_FALSE(pf_sdio_pio_set_clock(&host, 50000000u));
+    TEST_ASSERT_EQUAL_UINT32(37500000u, host.current_clock_hz);
+    TEST_ASSERT_TRUE(host.data_rx_fast);
+    TEST_ASSERT_FALSE(host.data_rx_program_loaded);
+    TEST_ASSERT_TRUE(host.mode_restore_failed);
+    TEST_ASSERT_FALSE(pf_sd_link_sdio_state(&bus).healthy);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_ERROR_STATE, observed_error);
+    TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_PHASE_SETUP, observed_phase);
+    pf_test_sdio_fail_add_call = 0u;
+    TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
+    TEST_ASSERT_TRUE(pf_sd_link_sdio_state(&bus).healthy);
+    TEST_ASSERT_TRUE(host.data_rx_program_loaded);
+    TEST_ASSERT_EQUAL_UINT32(37500000u, host.current_clock_hz);
+    pf_sdio_pio_deinit(&host);
+}
+
+void test_signed_program_allocation_failures_release_only_acquired_resources_and_allow_retry(void)
+{
+    for (unsigned allocation = 1u; allocation <= 3u; ++allocation) {
+        pf_sdio_pio_t host = {0};
+        pf_sdio_pio_config_t config = pins();
+        pf_test_sdio_add_calls = 0u;
+        pf_test_sdio_removed_programs = 0u;
+        pf_test_sdio_fail_add_call = allocation;
+        TEST_ASSERT_FALSE(pf_sdio_pio_init(&host, &config));
+        TEST_ASSERT_NULL(host.pio);
+        TEST_ASSERT_EQUAL_UINT(allocation - 1u, pf_test_sdio_removed_programs);
+        pf_test_sdio_fail_add_call = 0u;
+        TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+        pf_sdio_pio_deinit(&host);
+    }
+}
+
+void test_tx_partial_allocation_rolls_back_clock_and_can_restore_command_mode(void)
+{
+    for (unsigned allocation = 1u; allocation <= 2u; ++allocation) {
+        pf_sdio_pio_t host = {0};
+        pf_sdio_pio_config_t config = pins();
+        TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+        pf_test_sdio_fail_add_call = pf_test_sdio_add_calls + allocation;
+        TEST_ASSERT_FALSE(pf_sdio_pio_tx_prepare(&host));
+        TEST_ASSERT_FALSE(host.clock_program_loaded);
+        TEST_ASSERT_FALSE(host.data_tx_program_loaded);
+        TEST_ASSERT_TRUE(host.mode_restore_failed);
+        TEST_ASSERT_EQUAL(PF_SD_LINK_SDIO_ERROR_STATE, host.last_error);
+        pf_test_sdio_fail_add_call = 0u;
+        TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
+        TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&host));
+        pf_sdio_pio_deinit(&host);
+    }
+}
+
+void test_command_restoration_allocation_failures_keep_ownership_valid_for_cleanup_and_retry(void)
+{
+    for (unsigned allocation = 1u; allocation <= 2u; ++allocation) {
+        pf_sdio_pio_t host = {0};
+        pf_sdio_pio_config_t config = pins();
+        TEST_ASSERT_TRUE(pf_sdio_pio_init(&host, &config));
+        TEST_ASSERT_TRUE(pf_sdio_pio_tx_prepare(&host));
+        pf_test_sdio_fail_add_call = pf_test_sdio_add_calls + allocation;
+        TEST_ASSERT_FALSE(pf_sdio_pio_restore_command(&host));
+        TEST_ASSERT_TRUE(host.mode_restore_failed);
+        TEST_ASSERT_EQUAL(allocation == 2u, host.command_program_loaded);
+        TEST_ASSERT_FALSE(host.data_rx_program_loaded);
+        TEST_ASSERT_FALSE(host.clock_program_loaded);
+        TEST_ASSERT_FALSE(host.data_tx_program_loaded);
+        pf_test_sdio_fail_add_call = 0u;
+        TEST_ASSERT_TRUE(pf_sdio_pio_restore_command(&host));
+        pf_sdio_pio_deinit(&host);
+    }
+}
 
 void test_rx_uses_system_clock_before_and_after_high_speed_tx(void)
 {

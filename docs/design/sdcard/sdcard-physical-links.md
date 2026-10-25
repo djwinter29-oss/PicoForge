@@ -76,7 +76,11 @@ SDIO I/O cards.
 The transport owns GPIO mux/direction, programmed clock timing, PIO/DMA resources, FIFO/IRQ state, hardware waits,
 and hardware cleanup. The SD adapter retains commands, addressing, register decoding and stream state, and translates
 physical errors into its existing public device results.
-SD-SPI retains SDK blocking bulk I/O with protocol-level deadlines.
+The production SD-SPI binding leaves `pf_spi_t.timeout_us` at zero and uses SDK blocking bulk I/O.
+Protocol polling deadlines do not interrupt a blocking exchange, so they are not hard end-to-end deadlines.
+A nonzero engine timeout selects FIFO polling and limits consecutive intervals without progress, not total
+transaction duration. This optional path does not change CS or replay bytes on failure.
+The concrete SPI engine uses SD-link results and is not an independent general-purpose SPI service.
 
 ### Lifecycle and Shared Pins
 

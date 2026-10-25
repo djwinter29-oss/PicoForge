@@ -54,17 +54,17 @@ void pf_sd_backend_confirm_removed(void)
 #define SD_OCR_VOLTAGE_WINDOW 0x00ff8000u
 #define SD_OCR_HCS (1u << 30u)
 
-static pf_sd_config_t active_config;
-static bool configuration_set;
-static bool card_initialized;
-static bool card_block_addressed;
-static uint32_t card_sector_count;
-static uint32_t card_bus_clock_hz;
-static uint8_t card_cid[16];
-static pf_sd_spi_init_stage_t card_init_stage;
-static uint8_t last_init_command;
-static uint8_t last_init_response;
-static bool last_init_response_received;
+static pf_sd_config_t active_config; /**< Configuration borrowing the board-owned physical context. */
+static bool configuration_set; /**< Configuration locked after physical initialization succeeds. */
+static bool card_initialized; /**< Current media may serve transfers; uncertain completion clears this. */
+static bool card_block_addressed; /**< Commands use sector addresses rather than byte addresses. */
+static uint32_t card_sector_count; /**< Capacity decoded from CSD; exposed only while initialized. */
+static uint32_t card_bus_clock_hz; /**< Actual SDK-selected bus rate, including identification timing. */
+static uint8_t card_cid[16]; /**< Last successfully initialized card's identification. */
+static pf_sd_spi_init_stage_t card_init_stage; /**< Current or most recent failed initialization stage. */
+static uint8_t last_init_command; /**< Command associated with the latest captured R1. */
+static uint8_t last_init_response; /**< Latest captured R1; runtime commands also update it. */
+static bool last_init_response_received; /**< Capture valid since initialization diagnostic reset. */
 
 static bool same_config(const pf_sd_config_t *left,
                         const pf_sd_config_t *right)
@@ -78,10 +78,6 @@ static bool config_is_valid(const pf_sd_config_t *config)
     if (config == NULL || !pf_sd_link_valid(&config->transport, PF_SD_LINK_SPI)) {
         return false;
     }
-    if (!pf_sd_link_valid(&config->transport, PF_SD_LINK_SPI)) {
-        return false;
-    }
-
     return (config->clock_hz == 0u) ||
            ((config->clock_hz >= SD_SPI_INIT_CLOCK_HZ) &&
             (config->clock_hz <= SD_SPI_HIGH_CLOCK_HZ));
@@ -213,7 +209,6 @@ static bool send_application_command(uint8_t command, uint32_t argument,
 static bool read_data_block(uint8_t *data, size_t size)
 {
     uint32_t start = (uint32_t)pf_sd_link_time_us(&active_config.transport);
-    /* DATA covers token wait, payload and wire CRC; CRC measures CPU validation. */
     uint8_t token, crc_high, crc_low;
     bool received = false;
 

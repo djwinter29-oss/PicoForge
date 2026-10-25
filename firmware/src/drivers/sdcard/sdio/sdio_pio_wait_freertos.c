@@ -1,5 +1,9 @@
 /** @file sdio_pio_wait_freertos.c
  * @brief Bounded FreeRTOS notification waits for the native PIO transport.
+ *
+ * Singleton binding: one PIO block and one serialized waiter, using task-notification slot 1.
+ * Install once on the startup core before transfers. The shared IRQ handler remains installed for firmware
+ * lifetime, including physical-engine deinit/reinit; task/ISR critical sections protect waiter lifetime.
  */
 #include "sdio_pio.h"
 #include "FreeRTOS.h"
@@ -7,10 +11,10 @@
 #include "hardware/irq.h"
 #include "hardware/pio.h"
 
-static PIO wait_pio;
+static PIO wait_pio; /**< PIO bound for firmware lifetime. */
 static TaskHandle_t waiting_task; /**< Waiter lifetime protected by task/ISR kernel critical sections. */
-static uint32_t waiting_flag;
-static bool handler_installed;
+static uint32_t waiting_flag; /**< Active completion flag, valid only while a waiter is registered. */
+static bool handler_installed; /**< Shared IRQ ownership has been established on the startup core. */
 
 static pio_interrupt_source_t completion_source(uint32_t flag)
 {

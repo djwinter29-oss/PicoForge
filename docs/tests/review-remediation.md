@@ -82,7 +82,7 @@ Not a hardware result; the sections above remain historical.
   275 MHz and is not hardware-qualified (only 200 MHz / 50 MHz is).
 * The CMD18 rejection/CMD12 cleanup concern at `sd_sdio_host.c` is not confirmed. `test_sd_native_host_read_batch.c`
   adds coverage that already passed on the baseline (not a RED fix): rejected CMD18 with successful CMD12 falls back
-  to single reads; failed CMD12 does not fall back, blocks later reads until `pf_sd_native_host_recover`. Dropping
+  to single reads; failed CMD12 does not fall back, blocks later reads until `pf_sd_sdio_host_recover`. Dropping
   `!stop_ok` from the return condition makes these tests fail.
 
 Commands (repository root, system Python 3 with pytest, Ceedling 1.1.10 with coverage tools on PATH):

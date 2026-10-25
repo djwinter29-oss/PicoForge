@@ -39,8 +39,9 @@ static const uint16_t crc16_table[256] = {
     0x6e17u, 0x7e36u, 0x4e55u, 0x5e74u, 0x2e93u, 0x3eb2u, 0x0ed1u, 0x1ef0u,
 };
 
-static void (*idle_hook)(void);
+static void (*idle_hook)(void); /**< Borrowed pre-transfer hook shared by both protocols' polling waits. */
 
+/* Public configuration lives beside its polling implementation; no facade forwarding layer is needed. */
 void pf_sd_set_idle_hook(void (*hook)(void))
 {
     idle_hook = hook;

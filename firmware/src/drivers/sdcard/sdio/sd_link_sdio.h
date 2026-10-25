@@ -1,5 +1,8 @@
 /** @file
  * @brief Native CMD/DAT operations implemented by SDIO-PIO; no card-command or stream policy.
+ *
+ * Calls are synchronous and require external serialization with all access to the same physical context.
+ * Descriptors and callback contexts remain borrowed until deinitialization; callbacks must not reenter the driver.
  */
 #ifndef PF_SD_LINK_SDIO_H
 #define PF_SD_LINK_SDIO_H

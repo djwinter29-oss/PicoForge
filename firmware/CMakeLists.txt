@@ -129,7 +129,7 @@ if(PF_SDCARD_TRANSPORT STREQUAL "SDIO_PIO")
     target_compile_definitions(pf_sdcard_protocol PRIVATE
         PF_SD_NATIVE_FUSED_COPY=$<BOOL:${PF_SDIO_PIO_FUSED_COPY}>)
     target_compile_definitions(pf_sdio_backend PRIVATE
-        PF_SD_NATIVE_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
+        PF_SD_SDIO_HIGH_SPEED=$<BOOL:${PF_SDIO_PIO_HIGH_SPEED}>
         PF_CONFIG_SDCARD_INTERRUPT_WAIT=$<BOOL:${PF_SDCARD_INTERRUPT_WAIT}>
     )
     if(PF_SDCARD_INTERRUPT_WAIT)

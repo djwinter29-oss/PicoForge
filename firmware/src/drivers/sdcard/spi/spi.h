@@ -8,6 +8,7 @@
 /** Caller-owned SPI device. Devices on one controller must use identical bus pins.
  * Calls are synchronous and externally serialized; contexts must initially be zero-initialized.
  * Wiring and instance must remain unchanged until deinit.
+ * This SD-card physical engine uses SD-link results; it is not an independent general-purpose SPI service.
  */
 typedef struct {
     spi_inst_t *instance; /**< SDK controller. */
@@ -33,6 +34,8 @@ pf_sd_link_result_t pf_spi_set_clock(pf_spi_t *context, uint32_t requested_hz,
 pf_sd_link_result_t pf_spi_select(pf_spi_t *context, bool selected);
 /** Exchange bytes; NULL transmit sends 0xff, NULL receive discards input.
  * CS, including error cleanup, is controlled by the caller; no bytes are replayed.
+ * With timeout_us == 0, SDK blocking I/O has no driver-enforced deadline. A nonzero timeout bounds
+ * consecutive FIFO stalls, not total exchange duration.
  */
 pf_sd_link_result_t pf_spi_exchange(pf_spi_t *context, const uint8_t *tx,
                                              uint8_t *rx, size_t length);

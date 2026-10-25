@@ -91,12 +91,47 @@ to the `sdio/sdio_pio.c` physical link engine, not the native protocol files.
 
 Production filenames use the short `sd` prefix, including `sd_port_freertos.c` and `sd_port_baremetal.c`.
 Facade functions/types use `pf_sd_*` and constants/header guards use `PF_SD_*`. Both card implementations export
-`pf_sd_backend_*`. Native-only host/diagnostic interfaces use `pf_sd_native_*` / `PF_SD_NATIVE_*`;
+`pf_sd_backend_*`. SDIO host/diagnostic interfaces use `pf_sd_sdio_*` / `PF_SD_SDIO_*`;
 SPI-only diagnostics use `pf_sd_spi_*` / `PF_SD_SPI_*`.
+Shared native-response and data-codec helpers retain `pf_sd_native_*` / `PF_SD_NATIVE_*`: these names describe
+SD signaling and register formats, not a concrete transport implementation.
 The `pf_sdio_pio_*` namespace belongs to the physical PIO transport, not the SD protocol.
 `PF_SDIO_PIO_HIGH_SPEED` and `PF_SDIO_PIO_FUSED_COPY` remain CMake options and set the C definitions
-`PF_SD_NATIVE_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
+`PF_SD_SDIO_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
 Host tests retain their existing behavior-oriented names, including native-init and SPI protocol suites.
+
+Header/implementation pairing follows ownership rather than requiring one C file per header:
+
+| Declaration | Implementation owner |
+| --- | --- |
+| `sd.h` public operations | `sd.c`; `pf_sd_set_idle_hook()` lives with shared polling state in `sd_protocol.c`. |
+| `sd_backend.h` | One CMake-selected `sd_backend_sdio.c` or `sd_backend_spi.c`. |
+| `sd_board_internal.h` | One CMake-selected board binding, plus its inline GPIO encoding helper. |
+| `sd_port.h` | One CMake-selected execution port. |
+| `sd_link.h` | Descriptor helpers in `sd_link.c`; hardware lifecycle/timing in the selected physical engine. |
+| Transport-local `sd_link_sdio.h` / `sd_link_spi.h` | `sdio_pio.c` / `spi.c`. |
+| `sd_sdio_internal.h` / `sd_spi_internal.h` diagnostics | The corresponding selected protocol backend. |
+| `sd_sdio_host.h` | `sd_sdio_host.c`, with small response-checking helpers inline in the header. |
+
+The idle hook is configured before transfers and deliberately has no facade forwarding wrapper or locking.
+It does not change transport selection, ownership or polling behavior.
+
+The SDIO host is non-reentrant even with separate host structs: its 64-sector receive scratch buffer is shared.
+All command/data, diagnostic and physical-engine access requires the SD reservation or equivalent single-context
+serialization. The optional FreeRTOS adapter binds one PIO and one waiter, reserves notification slot 1, and keeps
+its startup-core shared IRQ handler installed for firmware lifetime, including engine deinit/reinit.
+
+PIO instruction allocation uses the SDK's signed acquisition result directly, without redundant preliminary
+space queries. Failed TX setup releases a partially acquired clock program and leaves command-mode restoration
+required; loaded flags track only successful acquisitions. Resource failure never authorizes payload replay.
+The concrete engine API remains available for board composition and engine tests; protocol code uses the
+SDK-independent link contract rather than the concrete context.
+Architecture checks enforce this boundary for both qualified and short concrete header names.
+The SDIO diagnostic header depends directly on public SD types, not on the backend-operation contract.
+
+Clock-planner rejection leaves the bus unchanged. A later RX-program allocation failure can occur after the divider
+has changed: the engine becomes unhealthy and requires command-mode restoration or deinitialization. Restoration
+uses the newly selected clock/timing mode; it is not transactional rollback to the previous clock.
 
 Both backends use the same configuration shape, borrowing a `pf_sd_link_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
@@ -359,6 +394,9 @@ The following rules describe this raw SD facade, not the generic logical-block A
   leave a CMD25 stream open; sync ends the stream and checks stop completion.
 - On read failure, buffer contents may be partially updated or invalid. A failed
   write can have committed some sectors; do not blindly replay it.
+- Native card data-response rejection records `PF_SD_DETAIL_DATA_CRC` for a CRC-error token, incrementing the data
+  CRC counter; other rejected tokens record `PF_SD_DETAIL_CARD_STATUS`. Cleanup retains the original failure
+  diagnostic even if command-mode restoration or CMD12 also fails.
 - `pf_sd_get_info()` reports presence, initialization, effective clock,
   capacity, and CID. Without card detect, presence is not independently known.
 - `pf_storage_get_status()` retains the most recent failed storage operation
@@ -617,7 +655,7 @@ is known to be in command mode), but a lost R1 or any failed read data phase
 card's transfer state cannot be proven restored; failed writes follow the rules
 above. Recovery is reinitialization; failed transfers are not retried. Failed host
 restoration explicitly invalidates readiness, including after a single-block write;
-sync cannot report success. `pf_sd_native_host_recover()` resolves both pending
+sync cannot report success. `pf_sd_sdio_host_recover()` resolves both pending
 streams and host restoration failure. Its false result retains either unresolved
 stream state or the explicit unusable-host flag. Reinitialization retries restoration
 before identification, without replaying the uncertain write. Single-sector and

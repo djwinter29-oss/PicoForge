@@ -11,29 +11,37 @@
 #include "sd_sdio_host.h"
 #include "sd_protocol.h"
 
-static pf_sd_native_host_t native_host;
-static pf_sd_config_t active_config;
-static bool configuration_set;
-static bool card_initialized;
-static pf_sd_native_init_stage_t card_init_stage;
-static uint8_t card_init_response[6];
-static uint8_t last_short_command;
-static uint32_t last_short_argument;
-static uint32_t last_short_response_argument;
-static pf_sd_info_t native_info;
+static pf_sd_sdio_host_t native_host; /**< Singleton command/data state and borrowed physical context. */
+static pf_sd_config_t active_config; /**< First accepted configuration, retained across failures/removal. */
+static bool configuration_set; /**< Configuration is locked, independently of media readiness. */
+static bool card_initialized; /**< Current media is permitted to serve transfers. */
+static pf_sd_sdio_init_stage_t card_init_stage; /**< Most recent initialization failure stage. */
+static uint8_t card_init_response[6]; /**< Last captured short initialization response. */
+static uint8_t last_short_command; /**< Command associated with the last decoded short response. */
+static uint32_t last_short_argument; /**< Request argument associated with that response. */
+static uint32_t last_short_response_argument; /**< Decoded response argument. */
+static pf_sd_info_t native_info; /**< Retained media metadata, timing and initialization diagnostics. */
 
 pf_sd_link_mode_t pf_sd_backend_mode(void)
 {
     return PF_SD_LINK_NATIVE_SD;
 }
 
+/** Native command numbers, startup timing and negotiation limits. */
 enum {
-    SD_CMD_GO_IDLE = 0, SD_CMD_ALL_SEND_CID = 2, SD_CMD_SEND_RCA = 3,
-    SD_CMD_SELECT = 7, SD_CMD_IF_CONDITION = 8,
-    SD_CMD_SEND_CSD = 9, SD_CMD_STATUS = 13, SD_CMD_APP = 55,
-    SD_ACMD_BUS_WIDTH = 6, SD_ACMD_OP_COND = 41,
-    SD_INIT_CLOCK_HZ = 400000, SD_HIGH_CLOCK_HZ = 50000000,
-    SD_INIT_TIMEOUT_US = 1000000,
+    SD_CMD_GO_IDLE = 0, /**< Reset to idle. */
+    SD_CMD_ALL_SEND_CID = 2, /**< Read card identification. */
+    SD_CMD_SEND_RCA = 3, /**< Obtain relative card address. */
+    SD_CMD_SELECT = 7, /**< Select addressed card. */
+    SD_CMD_IF_CONDITION = 8, /**< Check voltage and interface version. */
+    SD_CMD_SEND_CSD = 9, /**< Read card-specific data. */
+    SD_CMD_STATUS = 13, /**< Read card state and error flags. */
+    SD_CMD_APP = 55, /**< Prefix an application command. */
+    SD_ACMD_BUS_WIDTH = 6, /**< Select data bus width. */
+    SD_ACMD_OP_COND = 41, /**< Poll power-up and capacity negotiation. */
+    SD_INIT_CLOCK_HZ = 400000, /**< Identification clock target. */
+    SD_HIGH_CLOCK_HZ = 50000000, /**< Maximum requested High-Speed clock. */
+    SD_INIT_TIMEOUT_US = 1000000, /**< Power-up polling deadline. */
 };
 
 static bool protocol_failure(pf_sd_detail_error_t error)
@@ -56,7 +64,7 @@ static bool config_is_valid(const pf_sd_config_t *config)
         return false;
     }
 
-    return config->clock_hz == 0u || config->clock_hz == PF_SD_NATIVE_TRANSFER_CLOCK_HZ ||
+    return config->clock_hz == 0u || config->clock_hz == PF_SD_SDIO_TRANSFER_CLOCK_HZ ||
            config->clock_hz == SD_HIGH_CLOCK_HZ;
 }
 
@@ -64,12 +72,12 @@ static bool command_response(uint8_t command, uint32_t argument, uint8_t respons
                              uint32_t *response_argument)
 {
     memset(card_init_response, 0, sizeof(card_init_response));
-    if (!pf_sd_native_host_command_bytes(&native_host, command, argument, 48u,
+    if (!pf_sd_sdio_host_command_bytes(&native_host, command, argument, 48u,
                                        response, 6u)) {
         return false;
     }
     memcpy(card_init_response, response, sizeof(card_init_response));
-    if (!pf_sd_native_host_parse_response(&native_host, command, response, response_argument)) {
+    if (!pf_sd_sdio_host_parse_response(&native_host, command, response, response_argument)) {
         return false;
     }
     last_short_command = command;
@@ -80,7 +88,7 @@ static bool command_response(uint8_t command, uint32_t argument, uint8_t respons
     }
     uint32_t mask = command == SD_CMD_SEND_RCA ? PF_SD_NATIVE_R6_ERROR_MASK
                                                : PF_SD_NATIVE_R1_ERROR_MASK;
-    return pf_sd_native_host_response_status_ok(&native_host, *response_argument, mask);
+    return pf_sd_sdio_host_response_status_ok(&native_host, *response_argument, mask);
 }
 
 static bool card_detect_present(void)
@@ -121,20 +129,20 @@ static bool validate_transfer(uint32_t card_address)
         return protocol_failure(PF_SD_DETAIL_REMOVED);
     }
     return transfer_ready(card_address) &&
-           pf_sd_native_host_read_sector(&native_host, 0u, block);
+           pf_sd_sdio_host_read_sector(&native_host, 0u, block);
 }
 
-#if PF_SD_NATIVE_HIGH_SPEED
+#if PF_SD_SDIO_HIGH_SPEED
 static bool select_transfer_speed(uint32_t card_address)
 {
     uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
     native_info.high_speed_error = PF_SD_DETAIL_NONE;
-    if (active_config.clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ || active_config.native_default_speed_only ||
-        pf_sd_link_sdio_state(&active_config.transport).maximum_clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
+    if (active_config.clock_hz <= PF_SD_SDIO_TRANSFER_CLOCK_HZ || active_config.native_default_speed_only ||
+        pf_sd_link_sdio_state(&active_config.transport).maximum_clock_hz <= PF_SD_SDIO_TRANSFER_CLOCK_HZ) {
         native_info.high_speed_error = PF_SD_DETAIL_HOST_STATE;
         return true;
     }
-    if (!pf_sd_native_host_read_switch_status(&native_host,
+    if (!pf_sd_sdio_host_read_switch_status(&native_host,
             PF_SD_NATIVE_CMD6_CHECK_HIGH_SPEED, status)) {
         native_info.high_speed_error = native_host.last_error;
         /* A lost CMD6 response can leave the card busy; prove continued operation. */
@@ -145,13 +153,13 @@ static bool select_transfer_speed(uint32_t card_address)
         native_info.high_speed_error = PF_SD_DETAIL_HIGH_SPEED_UNSUPPORTED;
         return true;
     }
-    bool switched = pf_sd_native_host_read_switch_status(&native_host,
+    bool switched = pf_sd_sdio_host_read_switch_status(&native_host,
         PF_SD_NATIVE_CMD6_SWITCH_HIGH_SPEED, status);
     if (!switched || !pf_sd_native_switch_selected_high_speed(status) ||
         pf_sd_native_switch_high_speed_busy(status)) {
         native_info.high_speed_error = PF_SD_DETAIL_HIGH_SPEED_REJECTED;
         return wait_card_data_ready() &&
-               pf_sd_native_host_read_switch_status(&native_host,
+               pf_sd_sdio_host_read_switch_status(&native_host,
                    PF_SD_NATIVE_CMD6_SWITCH_DEFAULT, status) &&
                (status[16] & 0x0fu) == 0u &&
                validate_transfer(card_address);
@@ -163,17 +171,17 @@ static bool select_transfer_speed(uint32_t card_address)
     pf_sd_link_delay_ms(&active_config.transport, 1u);
     native_info.high_speed = true;
     native_info.requested_clock_hz = active_config.clock_hz;
-    if (pf_sd_native_host_set_clock(&native_host, active_config.clock_hz) &&
+    if (pf_sd_sdio_host_set_clock(&native_host, active_config.clock_hz) &&
         validate_transfer(card_address)) {
         return true;
     }
     native_info.high_speed_error = native_host.last_error;
     ++native_info.high_speed_fallbacks;
-    native_info.requested_clock_hz = PF_SD_NATIVE_TRANSFER_CLOCK_HZ;
+    native_info.requested_clock_hz = PF_SD_SDIO_TRANSFER_CLOCK_HZ;
     /* Default-Speed timing requires switching the card back as well as the host. */
-    if (!pf_sd_native_host_set_clock(&native_host, PF_SD_NATIVE_TRANSFER_CLOCK_HZ) ||
+    if (!pf_sd_sdio_host_set_clock(&native_host, PF_SD_SDIO_TRANSFER_CLOCK_HZ) ||
         !wait_card_data_ready() ||
-        !pf_sd_native_host_read_switch_status(&native_host,
+        !pf_sd_sdio_host_read_switch_status(&native_host,
             PF_SD_NATIVE_CMD6_SWITCH_DEFAULT, status) ||
         (status[16] & 0x0fu) != 0u || !wait_card_data_ready()) {
         return false;
@@ -198,18 +206,18 @@ static bool initialize_card(void)
     if (!card_detect_present()) {
         return protocol_failure(PF_SD_DETAIL_REMOVED);
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_IDLE;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_IDLE;
     pf_sd_link_delay_ms(&active_config.transport, 2u);
-    if (!pf_sd_native_host_command_bytes(&native_host, SD_CMD_GO_IDLE, 0u, 0u, NULL, 0u)) {
+    if (!pf_sd_sdio_host_command_bytes(&native_host, SD_CMD_GO_IDLE, 0u, 0u, NULL, 0u)) {
         return false;
     }
 
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_CMD8_RESPONSE;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_CMD8_RESPONSE;
     if (!command_response(SD_CMD_IF_CONDITION, PF_SD_NATIVE_R7_ARGUMENT,
                           short_response, &response_argument)) {
         return false;
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_CMD8_CLASSIFY;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_CMD8_CLASSIFY;
     if ((response_argument & PF_SD_NATIVE_R1_ILLEGAL_COMMAND) != 0u) {
         return protocol_failure(PF_SD_DETAIL_LEGACY_CARD);
     }
@@ -220,28 +228,28 @@ static bool initialize_card(void)
         return protocol_failure(PF_SD_DETAIL_R7);
     }
 
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_OPERATING_CONDITION;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_OPERATING_CONDITION;
     start = (uint32_t)pf_sd_link_time_us(&active_config.transport);
     do {
-        card_init_stage = PF_SD_NATIVE_INIT_STAGE_OPERATING_PREFIX;
+        card_init_stage = PF_SD_SDIO_INIT_STAGE_OPERATING_PREFIX;
         if (!card_detect_present()) {
             return protocol_failure(PF_SD_DETAIL_REMOVED);
         }
         if (!command_response(SD_CMD_APP, 0u, short_response, &response_argument)) {
             return false;
         }
-        card_init_stage = PF_SD_NATIVE_INIT_STAGE_OPERATING_RESPONSE;
+        card_init_stage = PF_SD_SDIO_INIT_STAGE_OPERATING_RESPONSE;
         memset(card_init_response, 0, sizeof(card_init_response));
-        if (!pf_sd_native_host_command_bytes(&native_host, SD_ACMD_OP_COND, acmd41_argument,
+        if (!pf_sd_sdio_host_command_bytes(&native_host, SD_ACMD_OP_COND, acmd41_argument,
                                             48u, short_response, sizeof(short_response))) {
             return false;
         }
         memcpy(card_init_response, short_response, sizeof(card_init_response));
-        card_init_stage = PF_SD_NATIVE_INIT_STAGE_OPERATING_PARSE;
+        card_init_stage = PF_SD_SDIO_INIT_STAGE_OPERATING_PARSE;
         if (!pf_sd_native_parse_r3_response(short_response, &ocr)) {
             return protocol_failure(PF_SD_DETAIL_OCR_CCS);
         }
-        card_init_stage = PF_SD_NATIVE_INIT_STAGE_OPERATING_READY;
+        card_init_stage = PF_SD_SDIO_INIT_STAGE_OPERATING_READY;
         native_info.ocr = ocr;
         if ((ocr & PF_SD_NATIVE_OCR_READY) != 0u) {
             break;
@@ -256,12 +264,12 @@ static bool initialize_card(void)
         return protocol_failure(PF_SD_DETAIL_OCR_CCS);
     }
 
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_CID_RESPONSE;
-    if (!pf_sd_native_host_command_bytes(&native_host, SD_CMD_ALL_SEND_CID, 0u, 136u,
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_CID_RESPONSE;
+    if (!pf_sd_sdio_host_command_bytes(&native_host, SD_CMD_ALL_SEND_CID, 0u, 136u,
                                         response, sizeof(response))) {
         return false;
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_CID_VALIDATE;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_CID_VALIDATE;
     if (response[0] != 0x3fu) {
         return protocol_failure(PF_SD_DETAIL_RESPONSE_INDEX);
     }
@@ -270,7 +278,7 @@ static bool initialize_card(void)
         return protocol_failure(PF_SD_DETAIL_RESPONSE_CRC);
     }
     memcpy(native_info.cid, response + 1u, sizeof(native_info.cid));
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_RCA;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_RCA;
     if (!command_response(SD_CMD_SEND_RCA, 0u, short_response, &response_argument)) {
         return false;
     }
@@ -279,8 +287,8 @@ static bool initialize_card(void)
         return protocol_failure(PF_SD_DETAIL_CARD_STATUS);
     }
     native_info.rca = (uint16_t)(relative_card_address >> 16u);
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_CSD;
-    if (!pf_sd_native_host_command_bytes(&native_host, SD_CMD_SEND_CSD, relative_card_address,
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_CSD;
+    if (!pf_sd_sdio_host_command_bytes(&native_host, SD_CMD_SEND_CSD, relative_card_address,
                                           136u, response, sizeof(response))) {
         return false;
     }
@@ -300,28 +308,28 @@ static bool initialize_card(void)
         return protocol_failure(PF_SD_DETAIL_LEGACY_CARD);
     }
     if (!pf_sd_csd_transfer_hz(csd, &card_default_transfer_hz) ||
-        card_default_transfer_hz < PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
+        card_default_transfer_hz < PF_SD_SDIO_TRANSFER_CLOCK_HZ) {
         return protocol_failure(PF_SD_DETAIL_HOST_STATE);
     }
 
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_SELECT_RESPONSE;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_SELECT_RESPONSE;
     if (!command_response(SD_CMD_SELECT, relative_card_address, short_response, &response_argument)) {
         return false;
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_SELECT_READY;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_SELECT_READY;
     if (!wait_card_data_ready()) {
         return false;
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_SELECT_STATUS;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_SELECT_STATUS;
     if (!transfer_ready(relative_card_address)) {
         return false;
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_SCR;
-    if (!pf_sd_native_host_read_scr(&native_host, relative_card_address, scr)) {
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_SCR;
+    if (!pf_sd_sdio_host_read_scr(&native_host, relative_card_address, scr)) {
         card_init_stage = native_host.scr_stage;
         return false;
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_SCR_BUS_WIDTH;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_SCR_BUS_WIDTH;
     memcpy(native_info.scr, scr, sizeof(scr));
     native_info.sd_spec = scr[0] & 0x0fu;
     if (native_info.sd_spec == 2u && (scr[2] & 0x80u) != 0u) {
@@ -335,49 +343,49 @@ static bool initialize_card(void)
     if ((scr[0] >> 4u) != 0u || !pf_sd_scr_supports_four_bit(scr)) {
         return protocol_failure(PF_SD_DETAIL_FOUR_BIT);
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_BUS_WIDTH_PREFIX;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_BUS_WIDTH_PREFIX;
     if (!command_response(SD_CMD_APP, relative_card_address, short_response, &response_argument)) {
         return false;
     }
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_BUS_WIDTH;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_BUS_WIDTH;
     if (!command_response(SD_ACMD_BUS_WIDTH, PF_SD_NATIVE_BUS_WIDTH_FOUR_ARGUMENT,
                           short_response, &response_argument)) {
         return false;
     }
-    if (!pf_sd_native_host_set_bus_width(&native_host, 4u)) {
+    if (!pf_sd_sdio_host_set_bus_width(&native_host, 4u)) {
         return false;
     }
 
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_TRANSFER_CLOCK;
-    if (!pf_sd_native_host_set_clock(&native_host, PF_SD_NATIVE_TRANSFER_CLOCK_HZ)) {
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_TRANSFER_CLOCK;
+    if (!pf_sd_sdio_host_set_clock(&native_host, PF_SD_SDIO_TRANSFER_CLOCK_HZ)) {
         return false;
     }
     native_host.data_rx_multiblock_supported = true;
     if (!validate_transfer(relative_card_address)) {
         return false;
     }
-#if PF_SD_NATIVE_HIGH_SPEED
+#if PF_SD_SDIO_HIGH_SPEED
     if (!select_transfer_speed(relative_card_address)) {
         return false;
     }
 #endif
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_NONE;
     return true;
 }
 
-pf_sd_native_init_stage_t pf_sd_native_get_init_stage(void)
+pf_sd_sdio_init_stage_t pf_sd_sdio_get_init_stage(void)
 {
     return card_init_stage;
 }
 
-void pf_sd_native_get_init_response(uint8_t response[6])
+void pf_sd_sdio_get_init_response(uint8_t response[6])
 {
     if (response != NULL) {
         memcpy(response, card_init_response, sizeof(card_init_response));
     }
 }
 
-void pf_sd_native_get_last_short_response(uint8_t *command, uint32_t *argument,
+void pf_sd_sdio_get_last_short_response(uint8_t *command, uint32_t *argument,
                                          uint32_t *response_argument)
 {
     if (command != NULL) {
@@ -391,7 +399,7 @@ void pf_sd_native_get_last_short_response(uint8_t *command, uint32_t *argument,
     }
 }
 
-void pf_sd_native_get_last_response_words(uint32_t words[5], size_t *word_count)
+void pf_sd_sdio_get_last_response_words(uint32_t words[5], size_t *word_count)
 {
     if (words != NULL) {
         memcpy(words, native_host.last_response_words, sizeof(native_host.last_response_words));
@@ -422,7 +430,7 @@ pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
         .native_details_valid = true,
         .initialization_error = true,
         .requested_init_clock_hz = SD_INIT_CLOCK_HZ,
-        .requested_clock_hz = PF_SD_NATIVE_TRANSFER_CLOCK_HZ,
+        .requested_clock_hz = PF_SD_SDIO_TRANSFER_CLOCK_HZ,
         .init_attempts = attempts,
         .high_speed_fallbacks = fallbacks,
     };
@@ -431,10 +439,10 @@ pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
     last_short_command = 0u;
     last_short_argument = 0u;
     last_short_response_argument = 0u;
-    card_init_stage = PF_SD_NATIVE_INIT_STAGE_NONE;
+    card_init_stage = PF_SD_SDIO_INIT_STAGE_NONE;
     native_host.last_error = PF_SD_DETAIL_NONE;
     if (!pf_sd_link_sdio_state(&native_host.transport).ready) {
-        if (!pf_sd_native_host_init(&native_host, &active_config)) {
+        if (!pf_sd_sdio_host_init(&native_host, &active_config)) {
             goto failed;
         }
     }
@@ -443,7 +451,7 @@ pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
         protocol_failure(PF_SD_DETAIL_REMOVED);
         goto failed;
     }
-    if (!pf_sd_native_host_prepare_initialization(&native_host)) {
+    if (!pf_sd_sdio_host_prepare_initialization(&native_host)) {
         goto failed;
     }
     native_info.actual_init_clock_hz = pf_sd_link_sdio_state(&native_host.transport).current_clock_hz;
@@ -457,7 +465,7 @@ failed:
     if (native_host.last_error == PF_SD_DETAIL_NONE) {
         protocol_failure(PF_SD_DETAIL_HOST_STATE);
     }
-    pf_sd_native_host_abort(&native_host);
+    pf_sd_sdio_host_abort(&native_host);
     return PF_SD_INIT_FAILED;
 }
 
@@ -474,7 +482,7 @@ bool pf_sd_backend_is_initialized(void)
 void pf_sd_backend_confirm_removed(void)
 {
     card_initialized = false;
-    pf_sd_native_host_forget_removed_card(&native_host);
+    pf_sd_sdio_host_forget_removed_card(&native_host);
     protocol_failure(PF_SD_DETAIL_REMOVED);
 }
 
@@ -490,7 +498,7 @@ static pf_sd_result_t runtime_failure(void)
     if (native_host.last_error == PF_SD_DETAIL_NONE) {
         protocol_failure(PF_SD_DETAIL_HOST_STATE);
     }
-    pf_sd_native_host_abort(&native_host);
+    pf_sd_sdio_host_abort(&native_host);
     return PF_SD_IO_ERROR;
 }
 
@@ -513,20 +521,20 @@ static pf_sd_result_t transfer_blocks(uint32_t first_block, uint8_t *read_buffer
     }
 
     bool continues_write = (write_buffer != NULL) &&
-        pf_sd_native_host_write_stream_continues(&native_host, first_block);
-    if (!continues_write && !pf_sd_native_host_recover(&native_host)) {
+        pf_sd_sdio_host_write_stream_continues(&native_host, first_block);
+    if (!continues_write && !pf_sd_sdio_host_recover(&native_host)) {
         return runtime_failure();
     }
     if ((write_buffer != NULL) && (continues_write || (block_count > 1u))) {
-        bool success = pf_sd_native_host_write_blocks(&native_host, first_block, write_buffer, block_count);
+        bool success = pf_sd_sdio_host_write_blocks(&native_host, first_block, write_buffer, block_count);
         return success ? PF_SD_OK : runtime_failure();
     }
     if (read_buffer != NULL) {
-        bool success = pf_sd_native_host_read_blocks(&native_host, first_block, read_buffer, block_count);
+        bool success = pf_sd_sdio_host_read_blocks(&native_host, first_block, read_buffer, block_count);
         return success ? PF_SD_OK : runtime_failure();
     }
 
-    bool success = pf_sd_native_host_write_sector(&native_host, first_block, write_buffer);
+    bool success = pf_sd_sdio_host_write_sector(&native_host, first_block, write_buffer);
     /* A lost command/data response or busy timeout cannot prove CMD24 complete.
      * Restoration only repairs the host; require reinitialization, never replay. */
     if (!success || !pf_sd_link_sdio_state(&native_host.transport).healthy) {
@@ -551,7 +559,7 @@ pf_sd_result_t pf_sd_backend_sync(void)
     if (!pf_sd_backend_is_initialized()) {
         return PF_SD_NOT_READY;
     }
-    if (!pf_sd_native_host_recover(&native_host)) {
+    if (!pf_sd_sdio_host_recover(&native_host)) {
         return runtime_failure();
     }
     return PF_SD_OK;
