@@ -6,7 +6,8 @@ The dashboard defaults to `127.0.0.1:5000`. Use **Rescan** and the board selecto
 
 The shared Python/.NET page refreshes automatically. Its first summary row includes the firmware release version
 (`Unknown` for legacy firmware). The **Board LED** toggle is in Device identity; SD sharing is beside the self-test.
-Selecting Start authorizes self-test writes and replacement of the reserved test file without a separate checkbox.
+Selecting Start authorizes temporary self-test writes. An existing `/PFTEST.BIN` file or directory is rejected and
+never replaced.
 
 Use **Share SD card** to hand the SD card to the host. Firmware unmounts its filesystem before USB
 briefly re-enumerates with an added MSC interface, keeping the HID identity and interface stable.
@@ -15,7 +16,7 @@ briefly re-enumerates with an added MSC interface, keeping the HID identity and 
 The same command is used on Windows, Linux and macOS; the host app never runs OS eject/unmount commands and
 requires no UDisks2 or eject permissions. The button requires supporting firmware; older firmware shows an
 update message instead of silently falling back to a different behavior. See the authoritative
-[proposed force-return design and risks](../../docs/design/usb/hid-report-reference.md#msc-force-return-safety); a successful remount
+[force-return design and risks](../../docs/design/usb/hid-report-reference.md#msc-force-return-safety); a successful remount
 does not establish filesystem integrity. This is OS-independent command behavior, not physical qualification
 on every OS. Native HID access still requires the platform's usual permissions and drivers.
 

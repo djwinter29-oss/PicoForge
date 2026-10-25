@@ -2,6 +2,27 @@
 
 #include "pico/stdlib.h"
 
+#ifndef PICO_DEFAULT_UART
+#define PICO_DEFAULT_UART 0u
+#endif
+#ifndef PICO_DEFAULT_UART_TX_PIN
+#define PICO_DEFAULT_UART_TX_PIN 0u
+#endif
+#ifndef PICO_DEFAULT_UART_RX_PIN
+#define PICO_DEFAULT_UART_RX_PIN 1u
+#endif
+#ifndef PICO_DEFAULT_LED_PIN_INVERTED
+#define PICO_DEFAULT_LED_PIN_INVERTED 0
+#endif
+
+#ifdef PICO_DEFAULT_LED_PIN
+#define PF_BOARD_LED_ENABLED true
+#define PF_BOARD_LED_GPIO PICO_DEFAULT_LED_PIN
+#else
+#define PF_BOARD_LED_ENABLED false
+#define PF_BOARD_LED_GPIO PF_BOARD_PIN_UNASSIGNED
+#endif
+
 /** Reference connector signals shared by the mutually exclusive storage modes. */
 enum {
     STORAGE_CLK = 2u, /**< Common clock output. */
@@ -12,17 +33,17 @@ enum {
     STORAGE_CS = 7u,  /**< DAT3 or serial CS. */
 };
 
-/* Fixed profile for standard Pico and Pico 2 boards. */
+/* Shared storage wiring for Pico-family reference boards. */
 static const pf_board_resources_t board_resources = {
     .gpio_count = NUM_BANK0_GPIOS,
-    .led_enabled = true,
-    .led_gpio = 25u,
-    .led_active_high = true,
+    .led_enabled = PF_BOARD_LED_ENABLED,
+    .led_gpio = PF_BOARD_LED_GPIO,
+    .led_active_high = !PICO_DEFAULT_LED_PIN_INVERTED,
     /* Monitor output is separate from USB CDC. */
     .monitor_uart_enabled = true,
-    .monitor_uart_index = 0u,
-    .monitor_uart_tx_gpio = 0u,
-    .monitor_uart_rx_gpio = 1u,
+    .monitor_uart_index = PICO_DEFAULT_UART,
+    .monitor_uart_tx_gpio = PICO_DEFAULT_UART_TX_PIN,
+    .monitor_uart_rx_gpio = PICO_DEFAULT_UART_RX_PIN,
     .monitor_uart_baud_rate = 115200u,
     .sd_card_enabled = true,
     .native_pins.command_gpio = STORAGE_IO0,

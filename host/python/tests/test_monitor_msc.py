@@ -120,6 +120,55 @@ class MonitorReconnectTests(unittest.TestCase):
         self.assertIsNone(snapshot["filesystem_format"])
         self.assertEqual(set(snapshot), set(_empty_snapshot()))
 
+    def test_storage_and_self_test_reports_publish_state_and_freshness(self):
+        monitor = DeviceMonitor.__new__(DeviceMonitor)
+        monitor._device_lock = threading.RLock()
+        monitor._lock = threading.RLock()
+        monitor._active_client = None
+        monitor._stop = threading.Event()
+        storage = {
+            "filesystem_format": "fat32",
+            "msc": {"enabled": False, "transition_pending": False, "request_rejected": False},
+        }
+        self_test = {"state": "idle", "active": False}
+        client = Mock()
+        client.read_info.return_value = {
+            "product_name": "PicoForge", "settings_supported": False,
+            "storage_transport": "sdio", "self_test_supported": True,
+        }
+        client.read_configuration.return_value = {
+            "system_clock_mhz": 0,
+            "sdcard_profile": 0,
+        }
+        captured = {}
+        items = iter([
+            {"kind": "memory", "data": storage},
+            {"kind": "self_test", "data": self_test},
+            None,
+        ])
+
+        def read_input_report(timeout_ms):
+            item = next(items)
+            if item is None:
+                captured["snapshot"] = monitor.snapshot()
+                monitor._stop.set()
+            return item
+
+        client.read_input_report.side_effect = read_input_report
+        monitor._client_factory = lambda: client
+        monitor._snapshot = _empty_snapshot()
+        monitor._input_received_at = {}
+        monitor._command_outcome_uncertain = False
+        monitor._run()
+
+        snapshot = captured["snapshot"]
+        self.assertEqual(snapshot["memory"], storage)
+        self.assertEqual(snapshot["filesystem_format"], "fat32")
+        self.assertEqual(snapshot["msc"], storage["msc"])
+        self.assertEqual(snapshot["self_test"], self_test)
+        self.assertTrue(snapshot["report_freshness"]["10"]["available"])
+        self.assertTrue(snapshot["report_freshness"]["11"]["available"])
+
     def test_input_freshness_is_tracked_and_expires_per_report(self):
         monitor = DeviceMonitor.__new__(DeviceMonitor)
         monitor._lock = threading.RLock()

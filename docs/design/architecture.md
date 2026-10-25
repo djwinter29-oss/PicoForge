@@ -17,9 +17,12 @@ Feature report `1` carries stable product, MCU, board, capability, and SRAM info
 persisted profiles and board GPIO configuration. Feature report `20` handles LED, reboot, MSC, self-test, and
 settings transactions. The [HID Report Reference](usb/hid-report-reference.md) defines the wire contract and
 validation. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4.
-The fixed Pico/Pico 2 board profile in `firmware/src/board/board_profile.c` assigns the active-high LED to GPIO 25;
-it does not derive wiring from arbitrary SDK board definitions. Other board layouts require a matching board profile;
-see [hardware setup](../hardware-setup.md). Simple system, temperature, and LED drivers live flat under
+The shared Pico-family profile in `firmware/src/board/board_profile.c` uses the SDK's default UART and direct-LED
+assignments, while keeping PicoForge's storage connector wiring in one profile. Pico, Pico 2, and Pico 2 W use the
+same monitor UART pins; boards without a direct GPIO LED do not advertise one. This follows PicoUart's
+[board-configuration approach](https://github.com/djwinter29-oss/PicoUart/blob/main/docs/hardware-setup.md) without
+adopting its UART-channel map or hardware features. Other layouts require a matching board profile; see
+[hardware setup](../hardware-setup.md). Simple system, temperature, and LED drivers live flat under
 `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sd_card/`, above the physical engines
 in `drivers/storage/`. Interface roles and lifecycle are documented in the
 [USB CDC/HID overview](usb/cdc-hid-overview.md). The development VID/PID is `0xCAFE:0x4011` and is not for product

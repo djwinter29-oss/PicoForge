@@ -249,7 +249,7 @@ async function withTimeout(operation, milliseconds) {
 
 export class PicoForgeWebHid {
   constructor(hid, onChange = () => {}, { now = () => performance.now(), sleep = wait, timeout = 3000 } = {}) {
-    Object.assign(this, { hid, onChange, now, sleep, timeout, device: null, reconnectSerial: null,
+    Object.assign(this, { hid, onChange, now, sleep, timeout, device: null, reconnectUid: null,
       transaction: 0, outstanding: null, receipts: new Map(), timer: null, generation: 0 });
     this.state = { ...EMPTY, connected: false, reconnecting: false, busy: false, outcome_uncertain: false,
       error: hid ? null : "WebHID is unavailable; use a supported browser on localhost or HTTPS" };
@@ -271,12 +271,11 @@ export class PicoForgeWebHid {
     this.onDisconnect = event => {
       if (event.device !== this.device) return;
       this.clearConnection();
-      this.update({ reconnecting: Boolean(this.reconnectSerial), error: this.outstanding
+      this.update({ reconnecting: Boolean(this.reconnectUid), error: this.outstanding
         ? "Command outcome uncertain after disconnect; no request will be replayed." : null });
     };
     this.onConnect = event => {
-      if (this.reconnectSerial && event.device.serialNumber === this.reconnectSerial
-        && matchesPicoForge(event.device) && !this.device) void this.attachDevice(event.device);
+      if (this.reconnectUid && matchesPicoForge(event.device) && !this.device) void this.attachDevice(event.device);
     };
     this.onSuspend = event => { if (event.device === this.device) this.expireReports(true); };
     hid?.addEventListener("disconnect", this.onDisconnect);
@@ -334,9 +333,17 @@ export class PicoForgeWebHid {
       if (generation !== this.generation) throw new Error("Connection cancelled");
       this.device = device;
       const hardware = decodeIdentityReport(await withTimeout(device.receiveFeatureReport(1), this.timeout));
+      if (this.reconnectUid && hardware.serial_number !== this.reconnectUid) {
+        await device.close();
+        if (generation === this.generation && device === this.device) {
+          this.device = null;
+          this.update({ busy: false, reconnecting: true });
+        }
+        return;
+      }
       const settings = decodeConfigReport(await withTimeout(device.receiveFeatureReport(2), this.timeout), hardware);
       if (generation !== this.generation || device !== this.device) throw new Error("Connection cancelled");
-      this.reconnectSerial = device.serialNumber || hardware.serial_number;
+      this.reconnectUid = hardware.serial_number;
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ ...EMPTY, connected: true, reconnecting: false, busy: false, error: null,
         hardware, settings, settings_supported: Boolean(hardware.capabilities & 4) });
@@ -362,7 +369,7 @@ export class PicoForgeWebHid {
   async disconnect() {
     if (this.state.busy) return;
     const device = this.device;
-    this.reconnectSerial = null;
+    this.reconnectUid = null;
     this.clearConnection();
     this.update({ reconnecting: false, error: null });
     if (device?.opened) {

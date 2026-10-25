@@ -75,8 +75,7 @@ class ProtocolTests(unittest.TestCase):
                 parse_identity_report(invalid)
         malformed_reserved = bytearray(identity_report())
         malformed_reserved[17] = 1
-        with self.assertRaisesRegex(ValueError, "reserved"):
-            parse_identity_report(malformed_reserved)
+        self.assertEqual(parse_identity_report(malformed_reserved)["product_id"], 2)
         unknown_product = bytearray(identity_report())
         unknown_product[2:4] = struct.pack("<H", 0x1234)
         unknown = parse_identity_report(unknown_product)

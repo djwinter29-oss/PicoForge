@@ -51,7 +51,7 @@ public sealed record SelfTestStatusResponse(byte Sequence, string State, uint Ta
     uint WrittenBytes, uint ReadBytes, uint WriteElapsedMs, uint ReadElapsedMs, uint MismatchCount,
     byte Error, byte FilesystemResult, byte RequestError, bool FileRemains, bool VolumeMounted)
 {
-    public bool Active => State is "queued" or "mounting" or "writing" or "reading" or "cleanup";
+    public bool Active => State is "queued" or "preparing" or "writing" or "reading" or "cleanup";
     public double? WriteBytesPerSecond => WriteElapsedMs == 0 ? null : WrittenBytes * 1000.0 / WriteElapsedMs;
     public double? ReadBytesPerSecond => ReadElapsedMs == 0 ? null : ReadBytes * 1000.0 / ReadElapsedMs;
     public double ProgressPercent => TargetBytes == 0 ? 0 : ((double)WrittenBytes + ReadBytes) * 100 / (2.0 * TargetBytes);
@@ -67,7 +67,8 @@ public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoR
     string? FilesystemFormat = null, BootSettingsResponse? Settings = null,
     BoardConfigurationResponse? BoardConfiguration = null, DateTimeOffset? TelemetryUpdatedAt = null,
     DateTimeOffset? StorageUpdatedAt = null, DateTimeOffset? SelfTestUpdatedAt = null,
-    bool TelemetryStale = true, bool StorageStale = true, bool SelfTestStale = true)
+    bool TelemetryStale = true, bool StorageStale = true, bool SelfTestStale = true,
+    bool CommandOutcomeUncertain = false)
 {
     public bool SettingsSupported => Settings is not null;
 }
@@ -110,7 +111,6 @@ internal static class HidProtocol
         Require(payload[0] == ReportVersion, "unsupported HID identity report version");
         var productId = BinaryPrimitives.ReadUInt16LittleEndian(payload[1..]);
         Require(productId == 2, $"unsupported PicoForge product ID 0x{productId:X4}");
-        Require(payload[16] == 0, "nonzero reserved identity byte");
         var capabilities = payload[17];
         var spi = (capabilities & CapabilitySpi) != 0;
         var sdio = (capabilities & CapabilitySdio) != 0;
@@ -287,15 +287,15 @@ internal static class HidProtocol
         var written = ReadUInt32LittleEndian(payload[8..]);
         var read = ReadUInt32LittleEndian(payload[12..]);
         var mismatches = ReadUInt32LittleEndian(payload[24..]);
-        Require(payload[0] == ReportVersion && state <= 8 && (flags & ~3) == 0 && payload[31] == 0
+        Require(payload[0] == ReportVersion && (flags & ~3) == 0 && payload[31] == 0
             && payload[28] <= 11 && payload[29] <= 19 && payload[30] <= 11
             && target <= 1024u * 1024u * 1024u && written <= target && read <= written
             && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0
                 && (flags & 1) == 0 && payload[28] == 0)), "invalid HID self-test report");
         var name = state switch
         {
-            0 => "idle", 1 => "queued", 2 => "mounting", 3 => "writing", 4 => "reading",
-            5 => "cleanup", 6 => "passed", 7 => "failed", _ => "cancelled"
+            0 => "idle", 1 => "queued", 2 => "preparing", 3 => "writing", 4 => "reading",
+            5 => "cleanup", 6 => "passed", 7 => "failed", 8 => "cancelled", _ => $"unknown ({state})"
         };
         return new(payload[1], name, target, written, read, ReadUInt32LittleEndian(payload[16..]),
             ReadUInt32LittleEndian(payload[20..]), mismatches, payload[28], payload[29], payload[30],

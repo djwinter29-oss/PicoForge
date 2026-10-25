@@ -334,6 +334,33 @@ test("disconnect during GET clears caches and reconnect resolves only the origin
   await client.disconnect();
 });
 
+test("MSC-style re-enumeration reconnects by Feature 1 UID, not a non-standard serialNumber property", async () => {
+  const { client, device, hid } = fakeConnection();
+  assert.equal("serialNumber" in device, false);
+  await client.connect();
+  const uid = client.state.hardware.serial_number;
+  hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+  device.opened = false;
+  assert.equal(client.state.reconnecting, true);
+
+  const receive = device.receiveFeatureReport;
+  const otherIdentity = identity();
+  otherIdentity[3] ^= 0xff;
+  device.receiveFeatureReport = id => id === 1 ? otherIdentity : receive(id);
+  hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(client.state.connected, false, "another PicoForge device must not be attached");
+  assert.equal(client.state.reconnecting, true);
+
+  device.receiveFeatureReport = receive;
+  device.opened = false;
+  hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(client.state.connected, true);
+  assert.equal(client.state.hardware.serial_number, uid);
+  await client.disconnect();
+});
+
 test("settings readback remains serialized, verifies both result and config, and reports failure", async () => {
   const { client, device, sent } = fakeConnection();
   await client.connect();

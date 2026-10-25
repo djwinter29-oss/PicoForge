@@ -7,16 +7,15 @@ python3 -m http.server 8000 --directory host/webhid
 ```
 
 Open `http://localhost:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
-The page owns its HTML, CSS, view logic, and favicon; it does not use USB serial or a host server API.
+The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or a host server API.
 
 ## Protocol compatibility
 
 This standalone client targets layout version 1 of the authoritative
-[HID Report Reference](../../docs/design/usb/hid-report-reference.md), which remains a draft firmware design.
+[HID Report Reference](../../docs/design/usb/hid-report-reference.md), implemented by firmware and the Python,
+.NET, shared dashboard, and direct WebHID clients. Physical USB qualification remains outstanding.
 It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
 (9), and Input 3 telemetry (22), 10 storage (34), and optionally 11 self-test (32, capability bit 5).
-Firmware or Python/.NET/shared dashboard integrations still using the legacy contract are not compatible with
-this client update. This standalone change does not update firmware, descriptors, or those integrations.
 Mandatory identity/configuration failures are explicit connection errors, not legacy fallbacks.
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
@@ -35,8 +34,9 @@ writes. Reconnecting reads the outstanding result without resubmitting it. Do no
 **Reboot** is separate, capability-gated, and explicitly confirmed. Standard/High-Speed is a stored request;
 Storage shows the actual selected timing and effective bus clock.
 
-USB ownership transitions briefly re-enumerate; the dashboard reopens the same authorized device by USB serial
-and repeats mandatory Feature reads. **Return to Pico** is explicitly confirmed force return, not an OS eject.
+USB ownership transitions briefly re-enumerate. The WebHID API does not expose the USB serial string, so the
+dashboard identifies a reconnect candidate by reading Feature 1 and matching its stable device UID before
+resuming; it does not replay the prior command. **Return to Pico** is explicitly confirmed force return, not an OS eject.
 Stop host file activity and safely eject whenever possible first. See the
 [force-return risks](../../docs/design/usb/hid-report-reference.md#msc-force-return-safety).
 The card is not automatically formatted or repaired, and reconnect does not prove successful remount.

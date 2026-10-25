@@ -114,6 +114,10 @@ internal static class StatusEndpoints
         {
             return Results.Problem(statusCode: 503, title: "HID command delivery failed");
         }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new { error = error.Message });
+        }
     }
 
     private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard)
@@ -158,6 +162,10 @@ internal static class StatusEndpoints
         {
             return Results.Problem(statusCode: 503, title: "HID reboot command delivery failed");
         }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new { error = error.Message });
+        }
     }
 
     private static IResult SetMsc(SetMscRequest request, string? board, IDashboardBoards dashboard)
@@ -174,6 +182,10 @@ internal static class StatusEndpoints
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {
             return Results.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new { error = error.Message });
         }
     }
 
@@ -195,6 +207,10 @@ internal static class StatusEndpoints
         {
             return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
         }
+        catch (InvalidOperationException error)
+        {
+            return TypedResults.Problem(statusCode: 409, title: error.Message);
+        }
     }
 
     private static Results<Accepted<SelfTestAcceptedResponse>, ProblemHttpResult> SetSelfTest(
@@ -214,6 +230,10 @@ internal static class StatusEndpoints
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {
             return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
+        }
+        catch (InvalidOperationException error)
+        {
+            return TypedResults.Problem(statusCode: 409, title: error.Message);
         }
     }
 }

@@ -33,10 +33,10 @@ public sealed class ProtocolTests
     public void RejectsInvalidIdentityAndConfigurationCrossFields()
     {
         var identity = IdentityReport();
-        identity[16] = 1;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(identity));
-        identity = IdentityReport();
         identity[17] = 1;
+        Assert.Equal((ushort)2, HidProtocol.ParseIdentityReport(identity).ProductId);
+        identity = IdentityReport();
+        identity[18] = 1;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(identity));
 
         var hardware = HidProtocol.ParseIdentityReport(IdentityReport());
@@ -116,6 +116,14 @@ public sealed class ProtocolTests
         var status = HidProtocol.ParseSelfTestReport(report);
         Assert.Equal("cancelled", status.State);
         Assert.True(status.VolumeMounted);
+
+        report[3] = 2;
+        Assert.Equal("preparing", HidProtocol.ParseSelfTestReport(report).State);
+        Assert.True(HidProtocol.ParseSelfTestReport(report).Active);
+
+        report[3] = 9;
+        Assert.Equal("unknown (9)", HidProtocol.ParseSelfTestReport(report).State);
+        Assert.False(HidProtocol.ParseSelfTestReport(report).Active);
 
         report[3] = 6;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));

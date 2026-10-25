@@ -11,6 +11,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     private readonly HidStream stream;
     private HardwareInfoResponse? identity;
     private byte transactionId;
+    public bool CommandOutcomeUncertain { get; private set; }
 
     public PicoForgeHid(string? serialNumber = null, string? devicePath = null)
     {
@@ -160,10 +161,13 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     private void SendCommand(byte opcode, byte flags, byte[] arguments)
     {
+        if (CommandOutcomeUncertain)
+            throw new InvalidOperationException("A prior HID command outcome is uncertain; further writes are blocked");
         identity ??= ReadInfo();
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
         if (transactionId == 0) transactionId = 1;
         var request = HidProtocol.BuildControlRequest(transactionId, opcode, flags, arguments);
+        CommandOutcomeUncertain = true;
         stream.SetFeature(request);
 
         var deadline = Environment.TickCount64 + 1000;
@@ -175,6 +179,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 throw new InvalidOperationException("HID control result was replaced by another transaction");
             if (result.Status != 1)
             {
+                CommandOutcomeUncertain = false;
                 HidProtocol.RequireCompleted(result, transactionId, opcode);
                 return;
             }

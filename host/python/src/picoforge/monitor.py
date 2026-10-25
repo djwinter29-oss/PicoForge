@@ -311,22 +311,13 @@ class DeviceMonitor:
                                 connected=True,
                                 error=None,
                                 memory=item["data"],
-                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                            )
-                    elif item is not None and item["kind"] == "memory":
-                        data = item["data"]
-                        with self._lock:
-                            self._input_received_at[11] = time.monotonic()
-                            self._snapshot.update(
-                                connected=True,
-                                error=None,
-                                memory=data,
-                                filesystem_format=data["filesystem_format"],
-                                msc=data["msc"],
+                                filesystem_format=item["data"]["filesystem_format"],
+                                msc=item["data"]["msc"],
                                 updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                             )
                     elif item is not None and item["kind"] == "self_test":
                         with self._lock:
+                            self._input_received_at[11] = time.monotonic()
                             self._snapshot.update(
                                 connected=True, error=None, self_test=item["data"],
                                 updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),

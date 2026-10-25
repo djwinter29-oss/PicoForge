@@ -140,10 +140,8 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> dict[str, ob
         }
     uid = payload[3:11]
     firmware = tuple(payload[11:14])
-    mcu_id, board_model, reserved, capabilities = payload[14:18]
+    mcu_id, board_model, _reserved, capabilities = payload[14:18]
     ram_total, ram_reserved = struct.unpack_from("<II", payload, 18)
-    if reserved:
-        raise ValueError("nonzero reserved byte in HID identity report")
     if capabilities & ~CAP_KNOWN or bool(capabilities & CAP_SPI) == bool(capabilities & CAP_SDIO):
         raise ValueError("invalid HID identity capability flags or storage transport")
     if board_model == 1 and mcu_id != 1 or board_model in (2, 3) and mcu_id != 2:

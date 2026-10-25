@@ -15,6 +15,7 @@ internal interface IDeviceMonitor
 /// <summary>HID command writes used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
 internal interface IHidCommands
 {
+    bool CommandOutcomeUncertain { get; }
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
     BoardConfigurationResponse ReadConfiguration();
@@ -34,6 +35,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private long telemetryReceipt;
     private long storageReceipt;
     private long selfTestReceipt;
+    private bool commandOutcomeUncertain;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
     public DeviceMonitor() : this(null, null) { }
@@ -59,7 +61,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 if (activeClient is null || snapshot.BoardStatus?.LedAvailable != true) return false;
                 client = activeClient;
             }
-            client.SetLed(on);
+            ExecuteCommand(client, () => client.SetLed(on));
             lock (gate)
                 snapshot = snapshot with { BoardStatus = snapshot.BoardStatus! with { LedOn = on } };
             return true;
@@ -78,7 +80,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     { Enabled: true, TransitionPending: false, ForceReturnSupported: true })) return null;
                 client = activeClient;
             }
-            client.SetMsc(enabled, force);
+            ExecuteCommand(client, () => client.SetMsc(enabled, force));
             lock (gate)
             {
                 snapshot = snapshot with
@@ -105,7 +107,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     return null;
                 client = activeClient;
             }
-            var saved = client.SetSettings(settings);
+            var saved = ExecuteCommand(client, () => client.SetSettings(settings));
             var configuration = client.ReadConfiguration();
             lock (gate)
             {
@@ -131,7 +133,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     return false;
                 client = activeClient;
             }
-            client.Reboot();
+            ExecuteCommand(client, client.Reboot);
             return true;
         }
     }
@@ -152,8 +154,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, null, hardware, null, null, null, null, null,
-                        Settings: settings, BoardConfiguration: configuration);
+                    snapshot = new(true, commandOutcomeUncertain
+                            ? "A prior HID command outcome is uncertain; further writes are blocked" : null,
+                        hardware, null, null, null, null, null,
+                        Settings: settings, BoardConfiguration: configuration,
+                        CommandOutcomeUncertain: commandOutcomeUncertain);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
@@ -176,7 +181,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                             snapshot = snapshot with
                             {
                                 Connected = true,
-                                Error = null,
+                                Error = commandOutcomeUncertain
+                                    ? "A prior HID command outcome is uncertain; further writes are blocked" : null,
                                 Runtime = runtime,
                                 BoardStatus = runtime?.ToBoardStatus(),
                                 Memory = memory,
@@ -206,7 +212,10 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 {
                     activeClient = null;
                     telemetryReceipt = storageReceipt = selfTestReceipt = 0;
-                    snapshot = new(false, error.Message, null, null, null, null, null, null);
+                    snapshot = new(false, commandOutcomeUncertain
+                            ? "A prior HID command outcome is uncertain; further writes are blocked" : error.Message,
+                        null, null, null, null, null, null,
+                        CommandOutcomeUncertain: commandOutcomeUncertain);
                 }
             }
             finally
@@ -243,8 +252,36 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     || (snapshot.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) == 0) return false;
                 client = activeClient;
             }
-            client.SetSelfTest(action, sizeMib);
+            ExecuteCommand(client, () => client.SetSelfTest(action, sizeMib));
             return true;
+        }
+    }
+
+    private void ExecuteCommand(IHidCommands client, Action command) =>
+        ExecuteCommand(client, () => { command(); return true; });
+
+    private T ExecuteCommand<T>(IHidCommands client, Func<T> command)
+    {
+        if (commandOutcomeUncertain)
+            throw new InvalidOperationException(
+                "A prior HID command outcome is uncertain; further writes are blocked");
+        try
+        {
+            return command();
+        }
+        catch
+        {
+            if (client.CommandOutcomeUncertain)
+            {
+                commandOutcomeUncertain = true;
+                lock (gate)
+                    snapshot = snapshot with
+                    {
+                        Error = "A prior HID command outcome is uncertain; further writes are blocked",
+                        CommandOutcomeUncertain = true
+                    };
+            }
+            throw;
         }
     }
 }
