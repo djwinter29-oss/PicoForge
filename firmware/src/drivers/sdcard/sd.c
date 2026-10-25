@@ -16,6 +16,7 @@
 #define selected_write pf_sd_spi_write_blocks
 #define selected_sync pf_sd_spi_sync
 #define selected_info pf_sd_spi_get_info
+#define selected_confirm_removed() ((void)0)
 #define SELECTED_MODE PF_SD_LINK_SPI
 #else
 #include "sd_native.h"
@@ -26,6 +27,7 @@
 #define selected_write pf_sd_native_write_blocks
 #define selected_sync pf_sd_native_sync
 #define selected_info pf_sd_native_get_info
+#define selected_confirm_removed pf_sd_native_confirm_card_removed
 #define SELECTED_MODE PF_SD_LINK_NATIVE_SD
 #endif
 
@@ -104,10 +106,8 @@ void pf_sd_get_info(pf_sd_info_t *info)
 void pf_sd_confirm_removed(void)
 {
     pf_sd_lock();
-#if PF_CONFIG_SDCARD_TRANSPORT != PF_CONFIG_SDCARD_TRANSPORT_SPI
     if (transport_selected) {
-        pf_sd_native_confirm_card_removed();
+        selected_confirm_removed();
     }
-#endif
     pf_sd_unlock();
 }

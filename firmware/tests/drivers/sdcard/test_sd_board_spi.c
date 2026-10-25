@@ -25,9 +25,12 @@ void test_spi_clock_follows_the_speed_profile(void)
     TEST_ASSERT_TRUE(pf_sd_board_config(&config));
     TEST_ASSERT_EQUAL_UINT32(400000u, sd_transport.clock_hz);
     TEST_ASSERT_EQUAL_UINT32(25000000u, config.clock_hz);
+    TEST_ASSERT_FALSE(config.native_default_speed_only);
+    sd_transport.clock_hz = 12000000u;
     sd_speed = PF_STORAGE_SPEED_HIGH;
     TEST_ASSERT_TRUE(pf_sd_board_config(&config));
     TEST_ASSERT_EQUAL_UINT32(50000000u, config.clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(12000000u, sd_transport.clock_hz);
 }
 
 void test_spi_pins_fill_four_entries_and_mark_the_rest_unused(void)

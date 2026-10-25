@@ -210,6 +210,7 @@ for the duration of host-requested card I/O.
 
 The CMake cache variable `PF_SDCARD_TRANSPORT` selects `SDIO_PIO` (default) or
 `SPI`; the build defines `PF_CONFIG_SDCARD_TRANSPORT`, which only the SD driver (`sd.c`, `sd_board.c`) reads.
+Each file selects its backend in one conditional block; shared configuration and lifecycle code remain unconditional.
 Board data describes both transports' wiring, and the storage middleware learns the selected bus from
 `pf_sd_board_pins()`. Use `tools/firmware/build.sh --sdcard-transport SPI`
 or `-DPF_SDCARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
