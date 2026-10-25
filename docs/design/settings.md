@@ -33,11 +33,13 @@ pf_boot_config_save();                               /* task, scheduler running;
 The header exposes five out-of-line functions and inline configured-MHz getters. `pf_get_sysclk_mhz()` and
 `pf_get_storage_speed_mhz()` read the current RAM configuration through the profile getters; neither measures hardware.
 The inline `pf_sysclk_profile_mhz()` (`0` for Default) and `pf_storage_speed_mhz()` (`25` or `50`) conversions remain
-available for arbitrary profiles, including record encoding and HID input validation.
+available for arbitrary profiles, including HID input validation.
 The record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
 once. Setters change only the RAM copy; saved values take effect at the next boot
 because the SD drivers lock their first configuration. The HID handler restores the previous values when a save
-does not complete, so reports never show unsaved values.
+is unconfirmed, so reports retain the previous session values. A failed save does not guarantee flash was unchanged:
+an SDK safe-zone exit timeout can occur after programming. A later reboot may therefore load the new values despite
+the failed command; failed commands do not automatically reboot.
 
 ## Host dashboard settings
 
@@ -57,15 +59,14 @@ The dashboards expose one **SD Card** speed selector. High-Speed is a requested 
 is reported separately because a card or transport may remain at Standard speed. Values apply after reboot and do
 not change the active clock or bus immediately.
 
-For compatibility, the persistent settings record remains unchanged. Saving writes the profile as `25`/`50` to both
-legacy bus bytes; loading reads High-Speed when either byte is `50` and Standard otherwise, so `boot_config` does not
-depend on the build transport. Older firmware wrote only its own transport's byte and left the other `0`, which
-this rule still reads correctly. A missing record uses Default.
+The version 1 persistent record stores one byte per profile: system clock and shared SD-card speed. It does not
+store MHz or separate SPI/SDIO settings. The HID protocol's system clock field still carries MHz.
 
-Boot-applied settings live behind the driver `drivers/boot_config.c/.h`. The USB task is the only runtime writer.
-RP2 flash access and FreeRTOS-safe erase/program handling are isolated in the platform store
-`platform/boot_config_store.c/.h`; the boot-config driver owns the record format, validation, defaults, and public
-API. This keeps hardware-specific flash operations behind the platform interface.
+Boot-applied settings are exposed through the driver facade `drivers/boot_config.c/.h`. The USB task is the only
+runtime writer. The RAM copy uses the same record type as flash; save refreshes its metadata and CRC. Record
+validation and RP2 flash persistence are private static implementation details in `drivers/boot_config.c`;
+application code uses only the public facade.
+Loading reads the fixed record directly, and saving writes one padded flash page; there is no generic byte-store API.
 Before the scheduler starts, the runtime-init hook makes the first getter call, so the record is loaded through the
 lock-free early flash read. The SD board setup later reads the same RAM copy when it prepares the selected transport. Runtime reads and saves belong to the USB task; they
 are not a general multi-task settings API.
@@ -74,7 +75,9 @@ are not a general multi-task settings API.
 core held, roughly 50 ms; USB can miss frames, so do not save during MSC transfers). Unlike the PicoUart reference,
 PicoForge disables FreeRTOS dynamic allocation: the SDK reuses a static lockout task control block. Therefore the
 settings module waits for that task to be reclaimed and refuses another save if it is not; it must remain the only
-`flash_safe_execute()` caller, and tasks must not be created or deleted during a save.
+`flash_safe_execute()` caller, and tasks must not be created or deleted during a save or while reclamation is pending.
+Reclamation uses an elapsed-tick deadline with a one-tick polling delay; scheduling can delay return beyond the deadline.
+An unsafe first access leaves loading pending for a safe caller; setters reject changes until loading is possible.
 
 ## Record format
 
@@ -85,9 +88,9 @@ Little-endian, 16 bytes, padded with `0xFF` to one 256-byte page at the start of
 | 0 | 4 | magic `PFCF` |
 | 4 | 2 | format version (`1`) |
 | 6 | 2 | record size (`16`) |
-| 8 | 2 | `system_clock_mhz` |
-| 10 | 1 | SDIO bus MHz (`0`/`25` Default, `50` High) |
-| 11 | 1 | SPI bus MHz (`0`/`25` Default, `50` High) |
+| 8 | 1 | System clock profile (`0` Default, `1` 150 MHz, `2` 200 MHz, `3` 250 MHz) |
+| 9 | 1 | Shared SD-card speed profile (`0` Default, `1` High-Speed) |
+| 10 | 2 | Reserved, must be zero |
 | 12 | 4 | CRC-32 (IEEE, reflected) of bytes 0–11 |
 
 Missing, erased, short, wrong magic/version/size, CRC-invalid or out-of-range data returns the complete defaults;

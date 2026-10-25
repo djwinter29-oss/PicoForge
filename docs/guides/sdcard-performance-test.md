@@ -1,8 +1,8 @@
 # SD-Card Performance Test
 
 This guide owns the benchmark's safety rules, execution workflow, measurement boundaries, and result interpretation.
-For card-driver behavior and transport constraints, see the [SD-card driver design](sdcard-driver-design.md); for the
-full SD documentation map, see the [SD-card documentation index](README.md).
+For card-driver behavior and transport constraints, see the [SD-card driver design](../design/sdcard/sdcard-driver-design.md);
+for the full SD documentation map, see the [SD-card documentation index](../design/sdcard/README.md).
 
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
 It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
@@ -10,7 +10,7 @@ self-test. HID Input report `11` carries state and progress; Feature report `20`
 The numeric state/error values retain their documented assignments: wire state 2 (`preparing`) means the worker is
 preparing an accepted run against the existing mount, and wire error 5 (`card`) means the selected media is unavailable.
 
-Current source-review dispositions and remaining qualification: [SD remediation matrix](../../tests/sd-design-remediation.md).
+Current source-review dispositions and remaining qualification: [SD remediation matrix](../tests/sd-design-remediation.md).
 
 The firmware can write a dedicated file, read it back, verify every byte, and
 report average filesystem write/read speeds over HID. The Python and .NET
@@ -91,7 +91,8 @@ cleans up the newly created test file. Allocation time is
 excluded from write averages, so record preallocated and normal results
 separately. This mode changes allocation and wear behavior, may need contiguous
 free space, and is not a raw-driver benchmark. The driver has no phase profiling; use an external trace for
-per-phase timing, see [performance controls and status](sdcard-driver-design.md#performance-controls-and-status).
+per-phase timing, see
+[performance controls and status](../design/sdcard/sdcard-driver-design.md#performance-controls-and-status).
 
 ## CMD25 Persistence Decision
 
@@ -101,7 +102,7 @@ stream after every facade call. A non-contiguous operation, synchronization,
 error, removal, or reinitialization still performs the required checked stream
 recovery.
 
-The [2026-10-15 controlled A/B measurement](../../tests/records/2026-10-15-cmd25-persistence.md)
+The [2026-10-15 controlled A/B measurement](../tests/records/2026-10-15-cmd25-persistence.md)
 found a 40.93% median write-throughput gain from persistence across six passing
 128 MiB runs at 25 MHz SDIO with contiguous preallocation. This was well above
 the 5-10% threshold for retaining the additional stream state. See that record
@@ -136,7 +137,7 @@ Poll `/api/status` and its `self_test` object. Firmware rejection is reported by
 The HID command result reports Pending while start preflight runs, then Completed when the test is accepted or Failed
 for preflight I/O, card, space, or existing-path errors. Input report `11` retains the previous test result for
 rejected starts and carries progress after acceptance. Storage status is reported independently in Input report `10`.
-See the [HID Report Reference](../usb/usb-hid-report-reference.md) for the wire contract.
+See the [HID Report Reference](../design/usb/usb-hid-report-reference.md) for the wire contract.
 
 ## Validation
 
@@ -158,8 +159,8 @@ cleanup messages, and direct-client event handling. Run them through
 The observations below describe earlier firmware and test workflows, including older buffer sizes and unmount
 behavior. They do not override the current [running safeguards](#running) or [measurement boundaries](#measurement).
 For later card/clock comparisons, see the
-[2026-10-18 speed matrix](../../tests/records/2026-10-18-sdio-speed-matrix.md) and its
-[repeat measurement](../../tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
+[2026-10-18 speed matrix](../tests/records/2026-10-18-sdio-speed-matrix.md) and its
+[repeat measurement](../tests/records/2026-10-18-sdio-speed-matrix-repeat.md).
 
 On 2026-10-13, the same connected Pico 2 and 16 GB card passed the 32 MiB test
 before batching, after CMD25 writes, and after CMD18 reads were added, in SDIO
@@ -224,9 +225,9 @@ Final Pico 2 hardware validation at 150 MHz CPU / 12.5 MHz SDIO passed three
 128 MiB write/read/verify runs: read 4.693–4.696 MB/s, write 5.032–5.169 MB/s,
 zero mismatches and successful cleanup. These are short filesystem benchmarks,
 not a continuous acquisition guarantee. See
-[the read-throughput record](../../tests/records/2026-10-13-sdio-read-throughput.md) for artifacts and scope.
+[the read-throughput record](../tests/records/2026-10-13-sdio-read-throughput.md) for artifacts and scope.
 Run the Ceedling SDIO read-batch regressions for DMA boundary and recovery
-checks; see [firmware test guidance](../../../firmware/tests/README.md#host-behavior-regressions).
+checks; see [firmware test guidance](../../firmware/tests/README.md#host-behavior-regressions).
 At 200 MHz with SDIO fixed at 12.5 MHz, a separate run reached 2.55 MiB/s read,
 indicating some CPU-side cost, but the overclock is diagnostic only.
 
@@ -244,7 +245,7 @@ At the time of that validation, the .NET development launch encountered a static
 path issue in this workspace; its normal launch and generated OpenAPI endpoint
 test were verified. Those runs did not qualify SPI benchmark performance, physical direct-WebHID access,
 long-duration endurance, media removal, or power-loss recovery. Later SPI measurements are recorded in the
-[transport qualification notes](sdcard-physical-links.md#spi-clock-qualification-2026-10-17).
+[transport qualification notes](../design/sdcard/sdcard-physical-links.md#spi-clock-qualification-2026-10-17).
 
 For the MSC reset-sense review and its validation limits, see the
-[2026-10-15 static review record](../../tests/records/2026-10-15-static-sd-review-followup.md).
+[2026-10-15 static review record](../tests/records/2026-10-15-static-sd-review-followup.md).

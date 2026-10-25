@@ -407,7 +407,7 @@ static void process_control_request(const pf_hid_control_request_t *request)
             reboot_requested = true;
         }
         if (status != PF_HID_COMMAND_COMPLETED) {
-            /* Keep the RAM copy equal to flash so reports never show unsaved values. */
+            /* Retain the previous session values; a failed save may already have changed flash. */
             (void)pf_boot_config_set_sysclk(old_sysclk);
             (void)pf_boot_config_set_storage_speed(old_sd_speed);
         }

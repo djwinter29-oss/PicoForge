@@ -7,8 +7,8 @@ sources live beside their physical engines; their card policy and filesystem int
 
 - [SD-card design](sdcard-driver-design.md): initialization, commands, registers, CRC validation,
   addressing, and sector/stream policy.
-- [CDC CLI guide](../usb/usb-cdc-cli.md): filesystem commands and mounting policy.
-- [Hardware setup](../../hardware-setup.md): board selection, power, debug connections, and other GPIOs.
+- [CDC CLI guide](../../guides/usb-cdc-cli.md): filesystem commands and mounting policy.
+- [Hardware setup](../../guides/hardware-setup.md): board selection, power, debug connections, and other GPIOs.
 
 ## Physical Link
 
@@ -230,7 +230,7 @@ GP7 drives CS in that mode. Board support can construct either transport configu
 signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls
 when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their
 combined strength. The storage worker initializes and mounts detected cards according to
-[the mounting policy](../usb/usb-cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
+[the mounting policy](../../guides/usb-cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
 for single sectors. Card capability negotiation and the saved storage speed target are defined by the
 [SPI transfer-clock policy](sdcard-driver-design.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
 Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power:

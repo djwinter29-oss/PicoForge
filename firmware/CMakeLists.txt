@@ -304,22 +304,16 @@ target_link_libraries(pf_app_storage PUBLIC
     embedded_cli
     FreeRTOS-Kernel-Static
 )
-add_library(pf_platform_boot_config_store STATIC
-    src/platform/boot_config_store.c
-)
-target_include_directories(pf_platform_boot_config_store PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
+add_library(pf_boot_config STATIC src/drivers/boot_config.c)
+target_include_directories(pf_boot_config PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 # pico_flash is an INTERFACE library: flash.c compiles into this target, so it needs the FreeRTOS SMP definitions
 # (LIB_FREERTOS_KERNEL, FREE_RTOS_KERNEL_SMP, configNUMBER_OF_CORES, configUSE_CORE_AFFINITY) here.
-target_link_libraries(pf_platform_boot_config_store PUBLIC
+target_link_libraries(pf_boot_config PRIVATE
     hardware_flash
     pico_flash
     pico_sync
     FreeRTOS-Kernel-Static
 )
-
-add_library(pf_boot_config STATIC src/drivers/boot_config.c)
-target_include_directories(pf_boot_config PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
-target_link_libraries(pf_boot_config PUBLIC pf_platform_boot_config_store)
 
 target_link_libraries(pf_app_storage PUBLIC pf_logging)
 

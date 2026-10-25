@@ -80,7 +80,7 @@ need `pioasm` from an SDIO_PIO build. The
 ## Hardware Validation
 
 Host tests and cross-builds do not establish physical behavior. Board validation must use the intended board, card,
-breakout, wiring, and exact firmware image. Follow the [hardware setup guide](../hardware-setup.md), storage
+breakout, wiring, and exact firmware image. Follow the [hardware setup guide](../guides/hardware-setup.md), storage
 [transport and qualification notes](../design/sdcard/sdcard-driver-design.md), and the specific procedure for the behavior
 under test. Record partial runs as partial; passing tests do not imply sustained card integrity, safe power-loss
 recovery, or full MSC host compatibility.

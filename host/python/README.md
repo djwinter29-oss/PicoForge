@@ -54,7 +54,7 @@ update message instead of silently falling back to a different behavior. See the
 does not establish filesystem integrity. This is OS-independent command behavior, not physical qualification
 on every OS. Native HID access still requires the platform's usual permissions and drivers.
 
-The dashboard also controls the [SD-card self-test](../../docs/design/sdcard/sdcard-performance-test.md)
+The dashboard also controls the [SD-card self-test](../../docs/guides/sdcard-performance-test.md)
 over HID and displays progress, verified byte counts, and average MiB/s. Its
 `POST /api/self-test` accepts `{"action":"start","size_mib":32}` or
 `{"action":"cancel"}`. A 202 response acknowledges delivery; completion and

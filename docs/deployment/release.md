@@ -76,7 +76,7 @@ The wheel attached to the release can also be installed directly with pip.
 For the .NET host, extract the entire archive and run `PicoForge.exe` (Windows x64) or `./PicoForge`
 (Linux x64/macOS ARM64), then open <http://127.0.0.1:5000/>. No .NET SDK/runtime installation is required.
 Pass `--port 5001` if port 5000 is occupied. Linux still needs native HIDAPI (`libhidapi-hidraw0` on Debian/Ubuntu)
-and [HID permissions](../../tools/README.md); macOS needs HIDAPI (`brew install hidapi`).
+and [HID permissions](../development/host-tools.md); macOS needs HIDAPI (`brew install hidapi`).
 Unsigned binaries may trigger Windows SmartScreen or macOS Gatekeeper warnings; no code-signing/notarization is claimed.
 Only run trusted, verified downloads and follow local security policy.
 
