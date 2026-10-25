@@ -10,12 +10,12 @@ static pf_sdio_pio_t test_wire;
 
 #include <string.h>
 
-#include "drivers/sd_card/sd_native.c"
-#include "drivers/sd_card/sdio_pio/sdio_pio.c"
-#include "drivers/sd_card/link/sd_link.c"
-#include "drivers/sd_card/link/sd_link_wire.c"
-#include "drivers/sd_card/sd_native_host.c"
-#include "drivers/sd_card/sd_protocol.c"
+#include "drivers/sdcard/sd_native.c"
+#include "drivers/sdcard/sdio_pio/sdio_pio.c"
+#include "drivers/sdcard/link/sd_link.c"
+#include "drivers/sdcard/link/sd_link_wire.c"
+#include "drivers/sdcard/sd_native_host.c"
+#include "drivers/sdcard/sd_protocol.c"
 #include "sdio_sdk_stubs.c"
 
 pf_sd_native_host_t *pf_test_sdio_observed_host;

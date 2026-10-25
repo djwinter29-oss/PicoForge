@@ -937,7 +937,7 @@ static bool sd_wire_wait_ready(void *context, uint32_t timeout_us)
 }
 static bool sd_wire_enable_wait(void *context)
 {
-#if PF_CONFIG_SD_CARD_INTERRUPT_WAIT
+#if PF_CONFIG_SDCARD_INTERRUPT_WAIT
     return pf_sdio_pio_enable_wait(context);
 #else
     (void)context;

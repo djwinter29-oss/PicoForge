@@ -3,7 +3,7 @@
 This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
-[SD-card driver guide](../../../firmware/src/drivers/sd_card/README.md#memory-and-storage-connections); filesystem
+[SD-card driver guide](../../../firmware/src/drivers/sdcard/README.md#memory-and-storage-connections); filesystem
 commands and mounting policy remain in [the CDC CLI guide](../usb/usb-cdc-cli.md). Use the
 [SD-card documentation index](README.md) for related design and test references.
 
@@ -26,11 +26,11 @@ One configured card is exposed through a transport-neutral, synchronous block
 API. Native SDIO-PIO uses four data lanes; SD-SPI uses a Pico SDK SPI controller.
 Here, SDIO means native SD memory-card signaling, not support for SDIO I/O cards.
 
-Native and SPI protocol files live at the top of `firmware/src/drivers/sd_card/`; the physical link engines live in
+Native and SPI protocol files live at the top of `firmware/src/drivers/sdcard/`; the physical link engines live in
 its subdirectories:
 
 ```text
-sd_card/
+sdcard/
   sd.c / .h                   Serialized protocol dispatch and configuration
   sd_block.h                  Raw block operations, telemetry and profiling
   sd_protocol.c / .h          Command/register helpers, native responses and data codecs
@@ -62,7 +62,7 @@ Unit-test filenames use the same source basenames, with environment-suffixed por
 Both backends use the same configuration shape, borrowing a `pf_sd_link_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
 no GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
-See [pin allocation and runtime state](../../../firmware/src/drivers/sd_card/README.md#pin-allocation-and-runtime-state)
+See [pin allocation and runtime state](../../../firmware/src/drivers/sdcard/README.md#pin-allocation-and-runtime-state)
 for authoritative physical ownership and configuration details.
 The execution port requests optional waits through `pf_sd_link_enable_wait`, without PIO/IRQ knowledge.
 `pf_sd_port_init` returns `bool`; callers must handle failure when optional waits were requested. Application
@@ -77,7 +77,7 @@ invalidates the card and returns immediately without exchanging bytes, issuing c
 
 ### Physical Link
 
-The [SD-card driver guide](../../../firmware/src/drivers/sd_card/README.md#physical-link) owns the physical
+The [SD-card driver guide](../../../firmware/src/drivers/sdcard/README.md#physical-link) owns the physical
 engine layout, lifecycle, typed transfer interfaces, and shared-pin restrictions. This document covers the SD protocol
 and its integration above those engines.
 
@@ -117,21 +117,21 @@ flowchart TD
 | Responsibility | Implementation |
 | --- | --- |
 | Application storage task, automount, commands, and file benchmark | [app/storage/](../../../firmware/src/app/storage/) |
-| Board-approved pins and controller selection | [board.c](../../../firmware/src/config/board.c), [sd_board.c](../../../firmware/src/drivers/sd_card/sd_board.c) |
-| Serialized protocol dispatch and driver initialization stage | [sd.c](../../../firmware/src/drivers/sd_card/sd.c) |
+| Board-approved pins and controller selection | [board.c](../../../firmware/src/config/board.c), [sd_board.c](../../../firmware/src/drivers/sdcard/sd_board.c) |
+| Serialized protocol dispatch and driver initialization stage | [sd.c](../../../firmware/src/drivers/sdcard/sd.c) |
 | Application board configuration, diagnostics, firmware/USB ownership and gated FatFs access | [sd_media.c](../../../firmware/src/app/storage/sd_media.c) |
-| Execution-environment selection, reservations, and optional waits | [sd_port.h](../../../firmware/src/drivers/sd_card/sd_port.h), [FreeRTOS](../../../firmware/src/drivers/sd_card/sd_port_freertos.c), [bare-metal](../../../firmware/src/drivers/sd_card/sd_port_baremetal.c) |
-| Block operations, result codes, and telemetry | [sd_block.h](../../../firmware/src/drivers/sd_card/sd_block.h) |
+| Execution-environment selection, reservations, and optional waits | [sd_port.h](../../../firmware/src/drivers/sdcard/sd_port.h), [FreeRTOS](../../../firmware/src/drivers/sdcard/sd_port_freertos.c), [bare-metal](../../../firmware/src/drivers/sdcard/sd_port_baremetal.c) |
+| Block operations, result codes, and telemetry | [sd_block.h](../../../firmware/src/drivers/sdcard/sd_block.h) |
 | Filesystem-independent logical sectors and geometry | [block_device.h](../../../firmware/src/middleware/storage/block_device.h) |
 | Logical sectors backed by the serialized SD facade | [sd_block_device.c](../../../firmware/src/middleware/storage/sd_block_device.c) |
 | Application single-volume FatFs lifecycle and format telemetry | [fatfs_volume.c](../../../firmware/src/app/storage/fatfs_volume.c) |
 | Application USB ownership and owner-specific block capabilities | [sd_media.h](../../../firmware/src/app/storage/sd_media.h) |
-| Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../../../firmware/src/drivers/sd_card/sd_protocol.c) |
-| Native card initialization and transfer policy | [sd_native.c](../../../firmware/src/drivers/sd_card/sd_native.c) |
-| Native SD command/data adapter and stream policy | [sd_native_host.c](../../../firmware/src/drivers/sd_card/sd_native_host.c) |
-| Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../../../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.c), [sdio_pio.pio](../../../firmware/src/drivers/sd_card/sdio_pio/sdio_pio.pio) |
-| SPI card protocol | [sd_spi.c](../../../firmware/src/drivers/sd_card/sd_spi.c) |
-| Shared SPI hardware transport | [spi.c](../../../firmware/src/drivers/sd_card/spi/spi.c) |
+| Command/register helpers, transfer bounds, native responses and serial/four-lane CRC codecs | [sd_protocol.c](../../../firmware/src/drivers/sdcard/sd_protocol.c) |
+| Native card initialization and transfer policy | [sd_native.c](../../../firmware/src/drivers/sdcard/sd_native.c) |
+| Native SD command/data adapter and stream policy | [sd_native_host.c](../../../firmware/src/drivers/sdcard/sd_native_host.c) |
+| Native physical PIO/DMA engine and wire timing | [sdio_pio.c](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.c), [sdio_pio.pio](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.pio) |
+| SPI card protocol | [sd_spi.c](../../../firmware/src/drivers/sdcard/sd_spi.c) |
+| Shared SPI hardware transport | [spi.c](../../../firmware/src/drivers/sdcard/spi/spi.c) |
 | FatFs result/status conversion and CTRL_SYNC | [fatfs_disk.c](../../../firmware/src/middleware/storage/fatfs_disk.c) |
 
 ### Filesystem Block-Device Boundary
@@ -210,10 +210,10 @@ for the duration of host-requested card I/O.
 
 ### Transport Selection
 
-The CMake cache variable `PF_SD_CARD_TRANSPORT` selects `SDIO_PIO` (default) or
-`SPI`; the build defines `PF_CONFIG_SD_CARD_TRANSPORT` consistently for board,
-facade, and backend code. Use `tools/firmware/build.sh --sd-card-transport SPI`
-or `-DPF_SD_CARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
+The CMake cache variable `PF_SDCARD_TRANSPORT` selects `SDIO_PIO` (default) or
+`SPI`; the build defines `PF_CONFIG_SDCARD_TRANSPORT` consistently for board,
+facade, and backend code. Use `tools/firmware/build.sh --sdcard-transport SPI`
+or `-DPF_SDCARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
 `pf_sd_config_t.transport` and `clock_hz`; pin assignments belong in
 board support, not application code or reusable protocol helpers.
 
@@ -232,12 +232,12 @@ back to native mode can require removing card power, not just resetting the MCU.
 
 ### Execution-Environment Ports
 
-`PF_SD_CARD_PORT=FREERTOS|BAREMETAL` explicitly selects exactly one port,
+`PF_SDCARD_PORT=FREERTOS|BAREMETAL` explicitly selects exactly one port,
 independently of the transport. The default is `FREERTOS`, preserving the current
 application. There is one shared facade, protocol implementation, and selected
 transport backend, not separate RTOS and bare-metal drivers. Only
-[sd_port_freertos.c](../../../firmware/src/drivers/sd_card/sd_port_freertos.c) depends on
-FreeRTOS; [sd_port_baremetal.c](../../../firmware/src/drivers/sd_card/sd_port_baremetal.c)
+[sd_port_freertos.c](../../../firmware/src/drivers/sdcard/sd_port_freertos.c) depends on
+FreeRTOS; [sd_port_baremetal.c](../../../firmware/src/drivers/sdcard/sd_port_baremetal.c)
 uses the Pico SDK backend without importing or linking the kernel. These are
 execution-environment ports, not filesystem/application integration.
 
@@ -264,24 +264,24 @@ I/O, but their handlers must not call the driver.
 
 The USB/storage-worker application remains FreeRTOS-only. Selecting `BAREMETAL`
 in this repository builds the driver and
-[pf_sd_card_baremetal_smoke](../../../firmware/tests/ports/sd_card_baremetal_smoke.c),
+[pf_sdcard_baremetal_smoke](../../../firmware/tests/ports/sdcard_baremetal_smoke.c),
 not a replacement USB, storage-worker, or filesystem application. The smoke
 executable links the production driver and checks unconfigured API paths without
 initializing hardware or touching media.
 
 ```sh
 # Standard FreeRTOS application.
-tools/firmware/build.sh --board pico2 --sd-card-transport SDIO_PIO
+tools/firmware/build.sh --board pico2 --sdcard-transport SDIO_PIO
 
 # Developer-only driver link check; also supports pico and SPI.
 cmake -S firmware -B build/driver-smoke-pico2-sdio \
-  -DPICO_BOARD=pico2 -DPF_SD_CARD_PORT=BAREMETAL -DPF_SD_CARD_TRANSPORT=SDIO_PIO
+  -DPICO_BOARD=pico2 -DPF_SDCARD_PORT=BAREMETAL -DPF_SDCARD_TRANSPORT=SDIO_PIO
 cmake --build build/driver-smoke-pico2-sdio
 ```
 
 The standard builder supports only FreeRTOS application images. Direct CMake builds may select
-`-DPF_SD_CARD_PORT=BAREMETAL` for the driver smoke target.
-Invalid port names and bare metal with `PF_SD_CARD_INTERRUPT_WAIT=ON` are rejected;
+`-DPF_SDCARD_PORT=BAREMETAL` for the driver smoke target.
+Invalid port names and bare metal with `PF_SDCARD_INTERRUPT_WAIT=ON` are rejected;
 SPI also rejects that native-only option. There is no scheduler auto-detection
 or fallback to an unsynchronized port. `load.sh` builds the FreeRTOS application;
 it does not automatically select the bare-metal smoke target.
@@ -466,7 +466,7 @@ This option does not change SYSCLK or qualify an overclock. Historical measureme
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
 20.833 MHz. High-Speed dividers are even and limited to 3.0 so the cycle-locked TX and shortened RX programs stay valid;
-the [clock planning table](../../../firmware/src/drivers/sd_card/README.md#clock-planning) lists each rule. This deterministic divider
+the [clock planning table](../../../firmware/src/drivers/sdcard/README.md#clock-planning) lists each rule. This deterministic divider
 rounding is not adaptive speed selection.
 SYSCLK must be at least 100 MHz. Use SDK-supported clock settings and check
 effective-clock telemetry; an accepted divider does not qualify an overclock.
@@ -529,10 +529,10 @@ command that completes before a delayed poll is not reported as a timeout.
 In-PIO timeouts are not used because the command (20) and receive (12) programs
 use all 32 PIO instructions. Receive start detection qualifies DAT0 at the same
 settled edge used for payload rather than treating any asynchronous low level as
-the start bit. The [physical transport reference](../../../firmware/src/drivers/sd_card/README.md#physical-link)
+the start bit. The [physical transport reference](../../../firmware/src/drivers/sdcard/README.md#physical-link)
 defines Default-Speed and High-Speed sampling phases. Command responses retain
 falling-edge sampling and framing/CRC validation; see the historical
-[Class 4 read-only check](../../../firmware/src/drivers/sd_card/README.md#class-4-read-only-bring-up-2026-10-15).
+[Class 4 read-only check](../../../firmware/src/drivers/sdcard/README.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
 
@@ -645,7 +645,7 @@ At 150 MHz SYSCLK, the slow-mode divider produces an exact 25 MHz bus.
 The integer divider can round down for other system clocks; initialization never
 selects a lower candidate after errors. SPI's zero clock request selects 25 MHz. See
 [board.c](../../../firmware/src/config/board.c) for authoritative values
-and [storage wiring](../../../firmware/src/drivers/sd_card/README.md#memory-and-storage-connections) for header
+and [storage wiring](../../../firmware/src/drivers/sdcard/README.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 
 | Resource | SDIO-PIO | SD-SPI |
@@ -826,16 +826,16 @@ preallocated files), and card busy time before choosing further optimizations.
 | Preserve batching after transient faults | Not implemented: a runtime failure invalidates the card, aborts the host, and refuses replay; later explicit or worker initialization resolves open streams only after a successful stop |
 | Remove initialization-only payload storage | Implemented for payload storage; initialization keeps its single-sector LBA 0 validation, and transfer CRC checks are retained |
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
-| Interrupt-backed synchronous native waits | Opt-in `PF_SD_CARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
+| Interrupt-backed synchronous native waits | Opt-in `PF_SDCARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; SB128 filesystem tests qualified at 25 MHz, not 50 MHz |
 | Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](../../tests/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
 | Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD-card performance test](sdcard-performance-test.md) |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
-The FreeRTOS [SD port](../../../firmware/src/drivers/sd_card/sd_port_freertos.c) requests the optional adapter through
+The FreeRTOS [SD port](../../../firmware/src/drivers/sdcard/sd_port_freertos.c) requests the optional adapter through
 the common transport interface. Its physical implementation lives in
-[sdio_wait_freertos.c](../../../firmware/src/drivers/sd_card/sdio_pio/sdio_wait_freertos.c). It reserves
+[sdio_wait_freertos.c](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_wait_freertos.c). It reserves
 task-notification slot 1 (slot 0 remains available), enables only the active data
 completion source, and blocks for at most one RTOS tick per wait, plus scheduler
 latency. It masks the IRQ source but leaves the PIO flag for the driver to clear.
@@ -847,7 +847,7 @@ Initialization and IRQ ownership remain on the startup core; the serialized wait
 Host tests cover cross-core timeout exclusion and duplicate/early completion; target SMP scheduling remains
 unqualified. Concurrent card operations are still unsupported without the execution-port reservation.
 
-`PF_SDIO_PIO_FUSED_COPY` and `PF_SD_CARD_INTERRUPT_WAIT` are independent
+`PF_SDIO_PIO_FUSED_COPY` and `PF_SDCARD_INTERRUPT_WAIT` are independent
 compile-time axes: the former fuses CRC/payload copying in the protocol data
 path; the latter selects the FreeRTOS completion-wait policy. They are not
 alternatives and may interact through CPU, DMA, PIO and scheduler timing.
@@ -945,7 +945,7 @@ Use the existing [test guidance](../../../firmware/tests/README.md) and
 
 Host tests and timing models do not establish electrical margins or target
 hardware safety. Physical qualification is card, board, wiring, and clock
-specific; see [hardware records](../../../firmware/src/drivers/sd_card/README.md#sd-card-breakout),
+specific; see [hardware records](../../../firmware/src/drivers/sdcard/README.md#sd-card-breakout),
 [SD-card performance test](sdcard-performance-test.md), and [test records](../../tests/records).
 Read-only initialization success does not qualify high-speed writes. Power-loss
 recovery, complete MSC lifecycles, and sustained endurance require separate

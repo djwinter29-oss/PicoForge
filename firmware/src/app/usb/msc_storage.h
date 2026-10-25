@@ -6,7 +6,7 @@
 
 #include "middleware/storage/block_device.h"
 
-#include "drivers/sd_card/sd_block.h"
+#include "drivers/sdcard/sd_block.h"
 #include "app/storage/sd_media.h"
 
 /** @brief Translate SD diagnostics without depending on result-enum numeric equivalence. */

@@ -1,7 +1,7 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
-#define SD_BOARD_SOURCE "drivers/sd_card/sd_board.c"
+#define SD_BOARD_SOURCE "drivers/sdcard/sd_board.c"
 #include SD_BOARD_SOURCE
 
 static pf_sd_speed_t sd_speed;

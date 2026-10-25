@@ -22,7 +22,7 @@ firmware. Later controlled comparisons are the [2026-10-18 speed matrix](2026-10
 
 Those experiments used falling-edge RX with a fast data divider half the command/clock divider. The current RX phases
 and system-clock sampling are documented in the
-[physical transport reference](../../../firmware/src/drivers/sd_card/README.md#physical-link).
+[physical transport reference](../../../firmware/src/drivers/sdcard/README.md#physical-link).
 High-speed TX starts the clock and data state machines together and launches at a fixed cycle offset. The slow TX
 program is not suitable for 50 MHz: its observed-edge launch left insufficient setup time and produced card CRC-error
 tokens. A 50 MHz bus needs at least 200 MHz SYSCLK; those Pico 2 overclock experiments are diagnostic, not supported

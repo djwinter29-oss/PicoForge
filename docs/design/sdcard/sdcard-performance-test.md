@@ -246,7 +246,7 @@ At the time of that validation, the .NET development launch encountered a static
 path issue in this workspace; its normal launch and generated OpenAPI endpoint
 test were verified. Those runs did not qualify SPI benchmark performance, physical direct-WebHID access,
 long-duration endurance, media removal, or power-loss recovery. Later SPI measurements are recorded in the
-[transport qualification notes](../../../firmware/src/drivers/sd_card/README.md#spi-clock-qualification-2026-10-17).
+[transport qualification notes](../../../firmware/src/drivers/sdcard/README.md#spi-clock-qualification-2026-10-17).
 
 For the MSC reset-sense review and its validation limits, see the
 [2026-10-15 static review record](../../tests/records/2026-10-15-static-sd-review-followup.md).

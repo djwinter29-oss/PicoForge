@@ -13,9 +13,9 @@ static bool pf_storage_worker_recover_media(void);
 static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
 #include "app/usb/usb_msc.c"
-#include "drivers/sd_card/sd.h"
-#if PF_CONFIG_SD_CARD_TRANSPORT == 1
-#include "drivers/sd_card/sd_spi.h"
+#include "drivers/sdcard/sd.h"
+#if PF_CONFIG_SDCARD_TRANSPORT == 1
+#include "drivers/sdcard/sd_spi.h"
 #define pf_sd_native_init pf_sd_spi_init
 #define pf_sd_native_get_init_stage pf_sd_spi_get_init_stage
 #define pf_sd_native_init_stage_t pf_sd_spi_init_stage_t
@@ -28,7 +28,7 @@ static bool pf_storage_worker_unmount_for_usb(void);
 #define pf_sd_native_sync pf_sd_spi_sync
 #define TEST_TRANSPORT PF_SD_LINK_SPI
 #else
-#include "drivers/sd_card/sd_native.h"
+#include "drivers/sdcard/sd_native.h"
 #define TEST_TRANSPORT PF_SD_LINK_NATIVE_SD
 #endif
 #pragma GCC diagnostic push

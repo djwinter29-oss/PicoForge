@@ -47,8 +47,8 @@ Use the same identified board/card/host, firmware source plus diff hash,
 SDK/toolchain, clock, voltage, wiring, filesystem layout, endpoint staging and
 CMD25 policy for all four cells. Record those values and ELF/UF2 hashes. Change
 only `PF_SDIO_PIO_FUSED_COPY={OFF,ON}` and
-`PF_SD_CARD_INTERRUPT_WAIT={OFF,ON}` in four separate build directories, with
-`PF_SD_CARD_TRANSPORT=SDIO_PIO` and `PF_SD_CARD_PORT=FREERTOS`.
+`PF_SDCARD_INTERRUPT_WAIT={OFF,ON}` in four separate build directories, with
+`PF_SDCARD_TRANSPORT=SDIO_PIO` and `PF_SDCARD_PORT=FREERTOS`.
 Do not select performance defaults from host builds.
 
 After authorization, use an expendable card and explicitly approved test region

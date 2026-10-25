@@ -13,7 +13,7 @@ static SemaphoreHandle_t card_mutex;
 
 bool pf_sd_port_init(const pf_sd_config_t *config)
 {
-#if PF_CONFIG_SD_CARD_INTERRUPT_WAIT
+#if PF_CONFIG_SDCARD_INTERRUPT_WAIT
     return config != NULL && config->transport.mode == PF_SD_LINK_NATIVE_SD &&
            pf_sd_link_enable_wait(&config->transport);
 #else

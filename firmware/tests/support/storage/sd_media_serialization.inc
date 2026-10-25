@@ -5,8 +5,8 @@
 #include <unistd.h>
 #include "selected_transport.h"
 
-#define DRIVER_SOURCE "drivers/sd_card/sd.c"
-#define PORT_SOURCE "drivers/sd_card/sd_port_freertos.c"
+#define DRIVER_SOURCE "drivers/sdcard/sd.c"
+#define PORT_SOURCE "drivers/sdcard/sd_port_freertos.c"
 #include DRIVER_SOURCE
 #define MEDIA_SOURCE "app/storage/sd_media.c"
 #include MEDIA_SOURCE
@@ -54,7 +54,7 @@ pf_sd_result_t backend_write(uint32_t block, const void *buffer, uint32_t count)
 { return backend_access(1, block, (void *)buffer, count); }
 pf_sd_result_t backend_sync(void) { return backend_access(2, 0, NULL, 0); }
 void backend_info(pf_sd_info_t *info) { info->initialized = initialized; }
-#if PF_CONFIG_SD_CARD_TRANSPORT != PF_CONFIG_SD_CARD_TRANSPORT_SPI
+#if PF_CONFIG_SDCARD_TRANSPORT != PF_CONFIG_SDCARD_TRANSPORT_SPI
 void pf_sd_native_confirm_card_removed(void) { initialized = false; }
 #endif
 void pf_sd_get_profile(pf_sd_profile_t *profile)

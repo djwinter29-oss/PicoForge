@@ -8,11 +8,11 @@
 #include "config/config.h"
 #include "drivers/boot_config.h"
 #include "hardware/gpio.h"
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-#include "drivers/sd_card/sdio_pio/sdio_pio.h"
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
+#include "drivers/sdcard/sdio_pio/sdio_pio.h"
 static pf_sdio_pio_t sd_transport; /**< Selected physical context; outlives all SD access. */
 #else
-#include "drivers/sd_card/spi/spi.h"
+#include "drivers/sdcard/spi/spi.h"
 static pf_spi_t sd_transport; /**< Selected physical context; outlives all SD access. */
 #endif
 
@@ -33,7 +33,7 @@ bool pf_sd_board_config(pf_sd_config_t *config)
         return false;
     }
     if (!sd_board_bound) {
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
         sd_transport.config = (pf_sdio_pio_config_t){
             .pins = pf_sdio_pio_board.pins,
             .pio = pf_sdio_pio_board.pio_index == 0u ? pio0 : pio1,
@@ -49,7 +49,7 @@ bool pf_sd_board_config(pf_sd_config_t *config)
         gpio_disable_pulls(pf_sd_board.card_detect_gpio);
         sd_board_bound = true;
     }
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
     *config = (pf_sd_config_t){
         .transport = pf_sdio_pio_bus(&sd_transport),
         .clock_hz = pf_sd_board.clock_hz,

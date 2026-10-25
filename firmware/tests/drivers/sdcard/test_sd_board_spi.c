@@ -1,8 +1,8 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/spi")
 
-#define PF_CONFIG_SD_CARD_TRANSPORT 1
-#define SD_BOARD_SOURCE "drivers/sd_card/sd_board.c"
+#define PF_CONFIG_SDCARD_TRANSPORT 1
+#define SD_BOARD_SOURCE "drivers/sdcard/sd_board.c"
 #include SD_BOARD_SOURCE
 
 static pf_sd_speed_t sd_speed;

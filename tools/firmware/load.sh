@@ -11,7 +11,7 @@ DEBUG_PROBE_SERIAL="${PICO_DEBUG_PROBE_SERIAL:-}"
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
-SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
+SDCARD_TRANSPORT="${PF_SDCARD_TRANSPORT:-SDIO_PIO}"
 SKIP_BUILD=0
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
@@ -32,7 +32,7 @@ Options:
 --generator NAME             CMake generator
 --pico-sdk-path PATH         Override Pico SDK path
 --freertos-kernel-path PATH  Override FreeRTOS-Kernel path
---sd-card-transport NAME     SDIO_PIO or SPI (default: SDIO_PIO)
+--sdcard-transport NAME     SDIO_PIO or SPI (default: SDIO_PIO)
 --skip-build                 Flash an existing ELF without building
 --firmware-version VERSION   Firmware version for builds (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
 --help                       Show this help
@@ -81,8 +81,8 @@ while [ "$#" -gt 0 ]; do
             FREERTOS_KERNEL_PATH_VALUE="$2"
             shift 2
             ;;
-        --sd-card-transport)
-            SD_CARD_TRANSPORT="$2"
+        --sdcard-transport)
+            SDCARD_TRANSPORT="$2"
             shift 2
             ;;
         --skip-build)
@@ -120,7 +120,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 if [ -z "$BUILD_DIR" ]; then
-    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-$SD_CARD_TRANSPORT"
+    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-$SDCARD_TRANSPORT"
 elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
@@ -137,7 +137,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ -n "$FREERTOS_KERNEL_PATH_VALUE" ]; then
         set -- "$@" --freertos-kernel-path "$FREERTOS_KERNEL_PATH_VALUE"
     fi
-    set -- "$@" --sd-card-transport "$SD_CARD_TRANSPORT"
+    set -- "$@" --sdcard-transport "$SDCARD_TRANSPORT"
     "$@"
 fi
 
@@ -152,7 +152,7 @@ fi
 
 if [ -z "$ELF_PATH" ]; then
     if [ -f "$BUILD_DIR/CMakeCache.txt" ] &&
-       grep -q '^PF_SD_CARD_PORT:STRING=BAREMETAL$' "$BUILD_DIR/CMakeCache.txt"; then
+       grep -q '^PF_SDCARD_PORT:STRING=BAREMETAL$' "$BUILD_DIR/CMakeCache.txt"; then
         echo "The selected build uses the bare-metal driver smoke target, not pico_forge." >&2
         echo "Select a FreeRTOS application build directory or an explicit --elf." >&2
         exit 1

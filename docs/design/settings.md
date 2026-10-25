@@ -8,7 +8,7 @@ there is no runtime transport selector.
 | System clock (`pf_sysclk_profile_t`) | `PF_SYSCLK_DEFAULT`, `PF_SYSCLK_150MHZ`, `PF_SYSCLK_200MHZ`, `PF_SYSCLK_250MHZ` | Default: keep the build clock (`PF_SYS_CLK_MHZ`, else the SDK stock clock) | At boot |
 | SD speed (`pf_sd_speed_t`) | `PF_SD_SPEED_DEFAULT` (25 MHz), `PF_SD_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
 
-Both transports share the SD speed profile; [sd_board.c](../../firmware/src/drivers/sd_card/sd_board.c) converts it
+Both transports share the SD speed profile; [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) converts it
 to a clock. The speeds are ceilings: SPI above 25 MHz needs the card's CMD6 High-Speed support, otherwise the
 CSD-limited 25 MHz is kept, and the result never exceeds the board's SPI clock. SDIO Default stays at 25 MHz Default
 Speed; High allows the existing High-Speed negotiation, still limited by `PF_SDIO_PIO_HIGH_SPEED`, SYSCLK/4 and the

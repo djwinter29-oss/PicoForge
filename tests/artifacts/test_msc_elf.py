@@ -151,6 +151,6 @@ def test_sd_storage_build_dependencies(msc_elf_paths):
         directory = path.resolve().parent
         commands = json.loads((directory / 'compile_commands.json').read_text())
         sources = [Path(command['file']).as_posix() for command in commands]
-        sd_sources = [source for source in sources if '/src/drivers/sd_card/' in source]
+        sd_sources = [source for source in sources if '/src/drivers/sdcard/' in source]
         adapter = any(source.endswith('/middleware/storage/sd_block_device.c') for source in sources)
         assert sd_sources and adapter, f"SD build is missing its protocol or adapter: {directory}"

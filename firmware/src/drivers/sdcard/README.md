@@ -12,7 +12,7 @@ the top level and filesystem policy above this driver are documented elsewhere:
 ## Physical Link
 
 ```text
-drivers/sd_card/
+drivers/sdcard/
   sd*.c / sd*.h          SD initialization, registers, framing, sector and stream policy
   link/sd_link.h / .c    common link descriptor, lifecycle, clock and platform services
   link/sd_link_serial.*  raw serial capability
@@ -341,8 +341,8 @@ To reproduce the tested image without changing the default profile:
 ```sh
 cmake -S firmware -B build/firmware-pico2-hs200 \
   -DPICO_BOARD=pico2 -DPF_SYS_CLK_MHZ=200 \
-  -DPF_SD_CARD_PORT=FREERTOS -DPF_SD_CARD_TRANSPORT=SDIO_PIO \
-  -DPF_SDIO_PIO_HIGH_SPEED=ON -DPF_SD_CARD_INTERRUPT_WAIT=OFF -DCMAKE_BUILD_TYPE=Release
+  -DPF_SDCARD_PORT=FREERTOS -DPF_SDCARD_TRANSPORT=SDIO_PIO \
+  -DPF_SDIO_PIO_HIGH_SPEED=ON -DPF_SDCARD_INTERRUPT_WAIT=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build build/firmware-pico2-hs200 --parallel 4
 ```
 

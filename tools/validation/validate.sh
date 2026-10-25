@@ -118,7 +118,7 @@ if [ "$SKIP_FIRMWARE" -eq 0 ]; then
         board_name="$1"
         transport_name="$2"
         echo "=== $board_name / $transport_name ==="
-        set -- --board "$board_name" --sd-card-transport "$transport_name" \
+        set -- --board "$board_name" --sdcard-transport "$transport_name" \
             --build-dir "build/validation-$board_name-$transport_name" \
             --pico-sdk-path "$PICO_SDK_PATH_VALUE"
         if [ -n "$GENERATOR" ]; then

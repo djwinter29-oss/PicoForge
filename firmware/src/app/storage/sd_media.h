@@ -4,7 +4,7 @@
 #ifndef PF_SD_MEDIA_H
 #define PF_SD_MEDIA_H
 
-#include "drivers/sd_card/sd.h"
+#include "drivers/sdcard/sd.h"
 #include "middleware/storage/block_device.h"
 
 /** Exclusive application access identity; not a card protocol property. */

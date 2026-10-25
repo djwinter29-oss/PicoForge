@@ -5,8 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "hardware/pio.h"
-#include "drivers/sd_card/link/sd_link_wire.h"
-#include "drivers/sd_card/sdio_pio/sdio_pio_pins.h"
+#include "drivers/sdcard/link/sd_link_wire.h"
+#include "drivers/sdcard/sdio_pio/sdio_pio_pins.h"
 
 /** Physical clock ownership, private to this backend's resource management. */
 typedef enum {

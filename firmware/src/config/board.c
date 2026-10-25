@@ -4,11 +4,11 @@
 #include "config/config.h"
 #include "drivers/led.h"
 #include "drivers/monitor_uart.h"
-#include "drivers/sd_card/sd_board.h"
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-#include "drivers/sd_card/sdio_pio/sdio_pio_pins.h"
+#include "drivers/sdcard/sd_board.h"
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
+#include "drivers/sdcard/sdio_pio/sdio_pio_pins.h"
 #else
-#include "drivers/sd_card/spi/spi_pins.h"
+#include "drivers/sdcard/spi/spi_pins.h"
 #endif
 
 #include "pico/stdlib.h"
@@ -44,7 +44,7 @@ const pf_monitor_uart_board_t pf_monitor_uart_board = {
     .baud_rate = 115200u,
 };
 
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
 /* GP2 CLK, GP3 CMD, and GP4-GP7 DAT0-DAT3. */
 const pf_sdio_pio_board_t pf_sdio_pio_board = {
     .pins = {
@@ -68,7 +68,7 @@ const pf_spi_board_t pf_spi_board = {
 #endif
 
 const pf_sd_board_t pf_sd_board = {
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
     /* Fixed transfer target; no automatic probing or lower-clock retries. */
     .clock_hz = 25000000u,
 #else

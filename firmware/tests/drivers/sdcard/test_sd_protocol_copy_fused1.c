@@ -4,7 +4,7 @@ void pf_sd_unlock(void) {}
 
 #define PF_SD_NATIVE_FUSED_COPY 1
 
-#include "drivers/sd_card/sd_protocol.c"
+#include "drivers/sdcard/sd_protocol.c"
 
 #include <string.h>
 

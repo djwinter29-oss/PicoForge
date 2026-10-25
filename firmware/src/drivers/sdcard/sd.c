@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI
 #include "sd_spi.h"
 #define selected_init pf_sd_spi_init
 #define selected_ready pf_sd_spi_is_initialized
@@ -124,7 +124,7 @@ const char *pf_sd_transport_name(void)
 void pf_sd_confirm_removed(void)
 {
     pf_sd_lock();
-#if PF_CONFIG_SD_CARD_TRANSPORT != PF_CONFIG_SD_CARD_TRANSPORT_SPI
+#if PF_CONFIG_SDCARD_TRANSPORT != PF_CONFIG_SDCARD_TRANSPORT_SPI
     if (transport_selected) {
         pf_sd_native_confirm_card_removed();
     }

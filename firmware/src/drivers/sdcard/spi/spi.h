@@ -1,8 +1,8 @@
 #ifndef PF_SPI_H
 #define PF_SPI_H
 
-#include "drivers/sd_card/link/sd_link_serial.h"
-#include "drivers/sd_card/spi/spi_pins.h"
+#include "drivers/sdcard/link/sd_link_serial.h"
+#include "drivers/sdcard/spi/spi_pins.h"
 #include "hardware/spi.h"
 
 /** Caller-owned SPI device. Devices on one controller must use identical bus pins.

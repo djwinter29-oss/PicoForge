@@ -16,9 +16,9 @@ The source submodule is required even for Ceedling configuration validation; the
 
 The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin`
 directory to `PATH` and run it from the root. Name test files `test_<source_basename>[_<scenario>].c` beneath the matching
-source subtree. For example, [sd_protocol.c](../src/drivers/sd_card/sd_protocol.c) is covered by
-[test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c) and
-[test_sd_protocol_native.c](drivers/sd_card/test_sd_protocol_native.c). Keep related scenario tests alongside it.
+source subtree. For example, [sd_protocol.c](../src/drivers/sdcard/sd_protocol.c) is covered by
+[test_sd_protocol.c](drivers/sdcard/test_sd_protocol.c) and
+[test_sd_protocol_native.c](drivers/sdcard/test_sd_protocol_native.c). Keep related scenario tests alongside it.
 Cross-layer tests live alongside the module that owns the behavior, not the lowest-level dependency they exercise.
 SD firmware/USB ownership and reservation tests live under [app/storage](app/storage), named
 `test_sd_media_freertos_serialization_*` and `test_sd_media_baremetal_*`. These exercise the application service
@@ -36,8 +36,8 @@ protocol and middleware unit tests. Tests mirror the production source tree:
 
 | Behavior | Test directory |
 | --- | --- |
-| Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sd_card/link](drivers/sd_card/link), [sdio_pio](drivers/sd_card/sdio_pio), [spi](drivers/sd_card/spi) |
-| Physical SPI and SDIO-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/sd_card/link](drivers/sd_card/link), [sdio_pio](drivers/sd_card/sdio_pio), [spi](drivers/sd_card/spi) |
+| Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sdcard/link](drivers/sdcard/link), [sdio_pio](drivers/sdcard/sdio_pio), [spi](drivers/sdcard/spi) |
+| Physical SPI and SDIO-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/sdcard/link](drivers/sdcard/link), [sdio_pio](drivers/sdcard/sdio_pio), [spi](drivers/sdcard/spi) |
 | FreeRTOS SD reservation and application ownership integration | [app/storage](app/storage), `test_sd_media_freertos_serialization_*` |
 | SD media ownership and byte transfers with the bare-metal port | [app/storage](app/storage), `test_sd_media_baremetal_*` |
 | Media configuration, owner-gated I/O, retained diagnostics, commands, file benchmark, automount and recovery | [app/storage](app/storage) |
@@ -63,23 +63,23 @@ ceedling --mixin='={project: {build_root: build/ceedling-block32}, flags: {test:
 The callbacks only record dispatch, so the byte-count boundary test does not allocate or access gigabytes of memory.
 
 Shared CRC7, command-frame, CSD and address-conversion tests live in
-[test_sd_protocol.c](drivers/sd_card/test_sd_protocol.c); native wire-codec tests remain in
-[test_sd_protocol_native.c](drivers/sd_card/test_sd_protocol_native.c).
+[test_sd_protocol.c](drivers/sdcard/test_sd_protocol.c); native wire-codec tests remain in
+[test_sd_protocol_native.c](drivers/sdcard/test_sd_protocol_native.c).
 Both fused-copy variants compile the same consolidated protocol implementation in their
-[disabled](drivers/sd_card/test_sd_protocol_copy_fused0.c) and
-[enabled](drivers/sd_card/test_sd_protocol_copy_fused1.c) tests.
+[disabled](drivers/sdcard/test_sd_protocol_copy_fused0.c) and
+[enabled](drivers/sdcard/test_sd_protocol_copy_fused1.c) tests.
 Bare-metal artifact checks also verify that SPI links no native codecs or CRC tables, and that the native fused-copy
 option reaches the consolidated protocol compilation.
-[SPI behavior tests](drivers/sd_card/test_sd_spi.c) inject selection failures across command, register, single-block,
+[SPI behavior tests](drivers/sdcard/test_sd_spi.c) inject selection failures across command, register, single-block,
 multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
 and preserved stream recovery. Optional wait setup is tested with
 [SD media/FreeRTOS reservation integration](app/storage/test_sd_media_freertos_serialization_sdio.c).
 Storage tests cover raw phase validation before CS, arbitrary released-line clock counts/deadlines, short/long native
 response byte packing and partial failure capture. The SD host test retains the exact 80-clock, low-speed
 initialization check.
-Common lifecycle tests live in [test_sd_link.c](drivers/sd_card/link/test_sd_link.c), raw serial dispatch
-tests in [test_sd_link_serial.c](drivers/sd_card/link/test_sd_link_serial.c), and native dispatch tests in
-[test_sd_link_wire.c](drivers/sd_card/link/test_sd_link_wire.c). Concrete backend tests remain under their corresponding backend
+Common lifecycle tests live in [test_sd_link.c](drivers/sdcard/link/test_sd_link.c), raw serial dispatch
+tests in [test_sd_link_serial.c](drivers/sdcard/link/test_sd_link_serial.c), and native dispatch tests in
+[test_sd_link_wire.c](drivers/sdcard/link/test_sd_link_wire.c). Concrete backend tests remain under their corresponding backend
 subdirectories. Cross-layer HID/card-unavailable scenarios are owned by
 [test_usb_hid_sd_responsiveness.c](app/usb/test_usb_hid_sd_responsiveness.c), matching the HID source module.
 

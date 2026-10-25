@@ -1,8 +1,8 @@
 #ifndef STORAGE_TEST_SELECTED_TRANSPORT_H
 #define STORAGE_TEST_SELECTED_TRANSPORT_H
 #include "config/config.h"
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
-#include "drivers/sd_card/sd_spi.h"
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI
+#include "drivers/sdcard/sd_spi.h"
 #define backend_init pf_sd_spi_init
 #define backend_config_t pf_sd_config_t
 #define backend_stage pf_sd_spi_get_init_stage
@@ -16,7 +16,7 @@
 #define TEST_TRANSPORT PF_SD_LINK_SPI
 #define OTHER_TRANSPORT PF_SD_LINK_NATIVE_SD
 #else
-#include "drivers/sd_card/sd_native.h"
+#include "drivers/sdcard/sd_native.h"
 #define backend_init pf_sd_native_init
 #define backend_config_t pf_sd_config_t
 #define backend_stage pf_sd_native_get_init_stage

@@ -1,6 +1,6 @@
 #include "unity.h"
 #include "sd_link.h"
-#define PF_CONFIG_SD_CARD_INTERRUPT_WAIT 1
+#define PF_CONFIG_SDCARD_INTERRUPT_WAIT 1
 TEST_INCLUDE_PATH("firmware/tests/support/storage/serialization")
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
 #include "storage/sd_media_serialization.inc"

@@ -6,7 +6,7 @@ BUILD_DIR=""
 GENERATOR="${CMAKE_GENERATOR:-}"
 PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
-SD_CARD_TRANSPORT="${PF_SD_CARD_TRANSPORT:-SDIO_PIO}"
+SDCARD_TRANSPORT="${PF_SDCARD_TRANSPORT:-SDIO_PIO}"
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
 
 while [ "$#" -gt 0 ]; do
@@ -35,8 +35,8 @@ while [ "$#" -gt 0 ]; do
             FIRMWARE_VERSION="$2"
             shift 2
             ;;
-        --sd-card-transport)
-            SD_CARD_TRANSPORT="$2"
+        --sdcard-transport)
+            SDCARD_TRANSPORT="$2"
             shift 2
             ;;
         --help)
@@ -45,7 +45,7 @@ Usage: tools/firmware/build.sh [options]
 
 Options:
     --board NAME       Supported board: pico or pico2 (default: pico)
-    --sd-card-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
+    --sdcard-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
     --build-dir PATH   Build directory (default: build/firmware-NAME-TRANSPORT)
     --generator NAME   CMake generator (default: Ninja when available)
     --pico-sdk-path PATH
@@ -101,7 +101,7 @@ if [ -z "$GENERATOR" ]; then
     fi
 fi
 if [ -z "$BUILD_DIR" ]; then
-    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-$SD_CARD_TRANSPORT"
+    BUILD_DIR="$REPO_ROOT/build/firmware-$BOARD-$SDCARD_TRANSPORT"
 elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
@@ -118,6 +118,6 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DPICO_BOARD="$BOARD" \
     -DPF_FIRMWARE_VERSION="$FIRMWARE_VERSION" \
     -DPF_SYS_CLK_MHZ=0 \
-    -DPF_SD_CARD_PORT=FREERTOS \
-    -DPF_SD_CARD_TRANSPORT="$SD_CARD_TRANSPORT" "$@"
+    -DPF_SDCARD_PORT=FREERTOS \
+    -DPF_SDCARD_TRANSPORT="$SDCARD_TRANSPORT" "$@"
 cmake --build "$BUILD_DIR" --parallel ${CMAKE_BUILD_PARALLEL_LEVEL:+"$CMAKE_BUILD_PARALLEL_LEVEL"}

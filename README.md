@@ -45,10 +45,10 @@ Clone the repository, then run these commands from its root:
 git submodule update --init --recursive
 tools/firmware/build.sh --board pico2
 ```
-tools/firmware/build.sh --board pico2 --sd-card-transport SDIO_PIO
+tools/firmware/build.sh --board pico2 --sdcard-transport SDIO_PIO
 For the original Pico, use `--board pico` instead. The build uses the Pico SDK
 included with the project.
-Choose `--board pico` or `pico2`, and `--sd-card-transport SPI` or `SDIO_PIO`.
+Choose `--board pico` or `pico2`, and `--sdcard-transport SPI` or `SDIO_PIO`.
 The four board/transport combinations build as FreeRTOS applications using the
 Pico SDK included with the project. Each combination has its own directory:
 `build/firmware-<board>-<transport>`.
@@ -147,7 +147,7 @@ card wear. Back up your data first; this is not a filesystem repair or a guarant
 - [Persistent settings](docs/design/settings.md): flash settings record, reserved sector, and API.
 - [Architecture](docs/design/architecture.md): application layers, runtime, and storage ownership.
 - [SD-card documentation](docs/design/sdcard/README.md): driver design and performance-test references.
-- [SD-card driver and physical links](firmware/src/drivers/sd_card/README.md): SDIO-PIO, SD-SPI, and card wiring.
+- [SD-card driver and physical links](firmware/src/drivers/sdcard/README.md): SDIO-PIO, SD-SPI, and card wiring.
 - [USB documentation](docs/design/usb/README.md): interface overview, CDC CLI, and HID protocol references.
 
 **Validation and history**

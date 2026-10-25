@@ -5,14 +5,14 @@
 
 #include <stddef.h>
 
-#include "drivers/sd_card/sd_board.h"
-#include "drivers/sd_card/sd_port.h"
+#include "drivers/sdcard/sd_board.h"
+#include "drivers/sdcard/sd_port.h"
 #include "app/storage/fatfs_volume.h"
 #include "middleware/storage/sd_block_device.h"
 #include "middleware/logging/logging.h"
 #include "config/config.h"
 
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI
 #define PF_SELECTED_TRANSPORT PF_SD_TRANSPORT_SPI
 #else
 #define PF_SELECTED_TRANSPORT PF_SD_TRANSPORT_SDIO_PIO

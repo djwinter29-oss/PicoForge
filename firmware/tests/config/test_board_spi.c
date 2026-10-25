@@ -1,7 +1,7 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
-#define PF_CONFIG_SD_CARD_TRANSPORT 1
+#define PF_CONFIG_SDCARD_TRANSPORT 1
 #include "config/board.c"
 
 void setUp(void) {}

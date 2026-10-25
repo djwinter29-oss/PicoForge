@@ -2,8 +2,8 @@
 #include <string.h>
 #include "selected_transport.h"
 
-#define DRIVER_SOURCE "drivers/sd_card/sd.c"
-#define PORT_SOURCE "drivers/sd_card/sd_port_baremetal.c"
+#define DRIVER_SOURCE "drivers/sdcard/sd.c"
+#define PORT_SOURCE "drivers/sdcard/sd_port_baremetal.c"
 #include DRIVER_SOURCE
 #define MEDIA_SOURCE "app/storage/sd_media.c"
 #include MEDIA_SOURCE
@@ -26,7 +26,7 @@ uint32_t backend_blocks(void) { return initialized ? 2u : 0u; }
 backend_stage_t backend_stage(void) { return (backend_stage_t)0; }
 void backend_info(pf_sd_info_t *info)
 { *info = (pf_sd_info_t){ .initialized = initialized }; }
-#if PF_CONFIG_SD_CARD_TRANSPORT != PF_CONFIG_SD_CARD_TRANSPORT_SPI
+#if PF_CONFIG_SDCARD_TRANSPORT != PF_CONFIG_SDCARD_TRANSPORT_SPI
 void pf_sd_native_confirm_card_removed(void) { initialized = false; }
 #endif
 pf_sd_result_t backend_read(uint32_t first, void *buffer, uint32_t count)

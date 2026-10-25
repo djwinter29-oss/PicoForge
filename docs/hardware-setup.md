@@ -1,7 +1,7 @@
 # PicoForge Hardware Setup Options
 
 Reference hardware setup for standard Pico/Pico 2 boards and an external SD-card breakout. See the
-[SD-card driver guide](../firmware/src/drivers/sd_card/README.md) for SDIO-PIO/SD-SPI wiring, card electrical
+[SD-card driver guide](../firmware/src/drivers/sdcard/README.md) for SDIO-PIO/SD-SPI wiring, card electrical
 requirements, and qualification records. Choose one SD transport at build time. Expansion GPIO examples below
 describe available hardware functions, not implemented application features.
 
@@ -17,7 +17,7 @@ describe available hardware functions, not implemented application features.
 
 ## Debug and Monitoring
 
-Serial and SWD do not overlap the [storage pins](../firmware/src/drivers/sd_card/README.md#memory-and-storage-connections).
+Serial and SWD do not overlap the [storage pins](../firmware/src/drivers/sdcard/README.md#memory-and-storage-connections).
 Share ground with the adapter or probe; ground pins are omitted from the tables.
 
 ### Serial
@@ -49,11 +49,11 @@ Connect probe SWDIO/SWCLK to the matching board pads. Verify their labels on the
 
 ## Memory and Storage Connections
 
-The [SD-card driver guide](../firmware/src/drivers/sd_card/README.md) owns:
+The [SD-card driver guide](../firmware/src/drivers/sdcard/README.md) owns:
 
-- [GP2-GP8 pin mapping and electrical requirements](../firmware/src/drivers/sd_card/README.md#memory-and-storage-connections).
-- [SD-card breakout wiring and historical qualification](../firmware/src/drivers/sd_card/README.md#sd-card-breakout).
-- [SDIO-PIO and SD-SPI transport architecture and lifecycle](../firmware/src/drivers/sd_card/README.md#physical-link).
+- [GP2-GP8 pin mapping and electrical requirements](../firmware/src/drivers/sdcard/README.md#memory-and-storage-connections).
+- [SD-card breakout wiring and historical qualification](../firmware/src/drivers/sdcard/README.md#sd-card-breakout).
+- [SDIO-PIO and SD-SPI transport architecture and lifecycle](../firmware/src/drivers/sdcard/README.md#physical-link).
 
 ## User I/O Pin List
 
@@ -112,7 +112,7 @@ Firmware resources that do not use header GPIOs:
 | Internal temperature | On-chip temperature sensor, ADC input 4 | No | Firmware enables the internal sensor and reads ADC channel 4; this is not GPIO 4. |
 
 When changing `PICO_BOARD`, verify its pin definitions and keep `firmware/src/config/board.c` aligned. Select SDIO-PIO or
-SD-SPI with `tools/firmware/build.sh --sd-card-transport SDIO_PIO` or `--sd-card-transport SPI`; CMake supplies
+SD-SPI with `tools/firmware/build.sh --sdcard-transport SDIO_PIO` or `--sdcard-transport SPI`; CMake supplies
 the transport selection used by `firmware/src/config/config.h`. Detected cards are mounted by the worker as described in
 [the mounting policy](design/usb/usb-cdc-cli.md). Validate card I/O on hardware before enabling storage use.
 

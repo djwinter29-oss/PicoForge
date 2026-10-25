@@ -27,8 +27,8 @@ Use the project wrapper from the repository root. It selects the pinned SDK and 
 creates a separate build directory for the selected board and storage transport:
 
 ```sh
-tools/firmware/build.sh --board pico --sd-card-transport SDIO_PIO
-tools/firmware/build.sh --board pico2 --sd-card-transport SPI
+tools/firmware/build.sh --board pico --sdcard-transport SDIO_PIO
+tools/firmware/build.sh --board pico2 --sdcard-transport SPI
 ```
 
 Supported board values are `pico` and `pico2`; transports are `SDIO_PIO` and `SPI`. Use a different `--build-dir`

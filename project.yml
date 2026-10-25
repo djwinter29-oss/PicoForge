@@ -61,7 +61,7 @@
         - -ffunction-sections
         - -fdata-sections
       :/test_sd_media_.*spi/:
-        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+        - -DPF_CONFIG_SDCARD_TRANSPORT=1
       :test_storage_worker_automount:
         - -ffunction-sections
         - -fdata-sections
@@ -89,9 +89,9 @@
         - -ffunction-sections
         - -fdata-sections
       :test_usb_msc_batch_sdio:
-        - -DPF_CONFIG_SD_CARD_TRANSPORT=0
+        - -DPF_CONFIG_SDCARD_TRANSPORT=0
       :test_usb_msc_batch_spi:
-        - -DPF_CONFIG_SD_CARD_TRANSPORT=1
+        - -DPF_CONFIG_SDCARD_TRANSPORT=1
     :link:
       :test_fatfs_volume:
         - -pthread

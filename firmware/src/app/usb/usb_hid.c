@@ -9,13 +9,13 @@
 #include "config/config.h"
 #include "drivers/led.h"
 #include "drivers/monitor_uart.h"
-#include "drivers/sd_card/sd_board.h"
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SDIO_PIO
-#include "drivers/sd_card/sdio_pio/sdio_pio_pins.h"
+#include "drivers/sdcard/sd_board.h"
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
+#include "drivers/sdcard/sdio_pio/sdio_pio_pins.h"
 #else
-#include "drivers/sd_card/spi/spi_pins.h"
+#include "drivers/sdcard/spi/spi_pins.h"
 #endif
-#include "drivers/sd_card/sd_block.h"
+#include "drivers/sdcard/sd_block.h"
 #include "drivers/boot_config.h"
 #include "drivers/temperature.h"
 #include "usb_msc.h"
@@ -146,7 +146,7 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     report->board_model = board_model();
     report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS;
     if (pf_led_is_available()) report->capabilities |= PF_HID_CAP_LED;
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI
     report->capabilities |= PF_HID_CAP_SPI;
 #else
     report->capabilities |= PF_HID_CAP_SDIO;
@@ -169,7 +169,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     for (size_t index = 0u; index < sizeof(report->storage_gpios); ++index) {
         report->storage_gpios[index] = UINT8_MAX;
     }
-#if PF_CONFIG_SD_CARD_TRANSPORT == PF_CONFIG_SD_CARD_TRANSPORT_SPI
+#if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI
     report->storage_gpios[0] = gpio_value(pf_spi_board.pins.clock_gpio);
     report->storage_gpios[1] = gpio_value(pf_spi_board.pins.mosi_gpio);
     report->storage_gpios[2] = gpio_value(pf_spi_board.pins.miso_gpio);

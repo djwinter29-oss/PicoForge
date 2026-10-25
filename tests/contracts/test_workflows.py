@@ -16,13 +16,13 @@ def test_build_matrices_and_compatible_artifact_checks():
         for dimension in ("board: [pico, pico2]", "transport: [SDIO_PIO, SPI]"):
             assert dimension in workflow
         for removed in ("BAREMETAL", "matrix.clock", "matrix.port",
-                        "--sys-clk-mhz", "--sd-card-port", "Build SDK-default clock application"):
+                        "--sys-clk-mhz", "--sdcard-port", "Build SDK-default clock application"):
             assert removed not in workflow
         assert re.search(r"^\s+clock:\s*\[", workflow, re.MULTILINE) is None
         assert re.search(r"^\s+port:\s*\[", workflow, re.MULTILINE) is None
         if name == "release.yml":
             assert 'PF_SDIO_PIO_HIGH_SPEED: "ON"' in workflow
-        assert '--sd-card-transport "${{ matrix.transport }}"' in workflow
+        assert '--sdcard-transport "${{ matrix.transport }}"' in workflow
         artifact_step = workflow.split("- name: Run project tests", 1)[1]
         assert "if:" not in artifact_step.split("run:", 1)[0]
         subprocess.run(["ruby", "-ryaml", "-e", "YAML.load_file(ARGV[0])",

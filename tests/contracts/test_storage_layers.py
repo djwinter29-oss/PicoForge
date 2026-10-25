@@ -7,9 +7,9 @@ import pytest
 
 pytestmark = pytest.mark.contracts
 ROOT = Path(__file__).resolve().parents[2]
-SD_CARD = ROOT / "firmware/src/drivers/sd_card"
-LINK = SD_CARD / "link"
-PHYSICAL = (LINK, SD_CARD / "sdio_pio", SD_CARD / "spi")
+SDCARD = ROOT / "firmware/src/drivers/sdcard"
+LINK = SDCARD / "link"
+PHYSICAL = (LINK, SDCARD / "sdio_pio", SDCARD / "spi")
 
 
 def test_project_c_includes_do_not_traverse_relative_directories():
@@ -43,7 +43,7 @@ def test_fatfs_volume_does_not_depend_on_the_sd_backend():
         source = application / f"fatfs_volume.{extension}"
         assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", source.read_text()), source
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
-        assert not any("sd_card/" in header or Path(header).name in (
+        assert not any("sdcard/" in header or Path(header).name in (
             "sd.h", "sd_block.h", "sd_block_device.h"
         ) for header in headers), source
 
@@ -74,7 +74,7 @@ def test_file_benchmark_and_application_headers_do_not_expose_sd():
     for source in sources:
         text = source.read_text()
         assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", text), source
-        assert not re.search(r'#include\s*"[^"]*(?:sd_card/|sd_block\.h|sd\.h)', text), source
+        assert not re.search(r'#include\s*"[^"]*(?:sdcard/|sd_block\.h|sd\.h)', text), source
 
 
 def test_usb_product_behavior_lives_in_the_application():
@@ -88,7 +88,7 @@ def test_usb_product_behavior_lives_in_the_application():
 
 
 def test_sd_ownership_policy_stays_above_driver_and_middleware():
-    driver = ROOT / "firmware/src/drivers/sd_card"
+    driver = ROOT / "firmware/src/drivers/sdcard"
     for source in (driver / "sd.c", driver / "sd.h", driver / "sd_block.h"):
         text = source.read_text()
         assert not re.search(r"\b(?:active_owner|reinit_after_usb_owner|pf_sd_media_\w+|PF_SD_OWNER_\w+)\b", text), source
@@ -107,9 +107,9 @@ def test_sd_ownership_policy_stays_above_driver_and_middleware():
 def test_physical_engines_do_not_include_device_or_filesystem_headers():
     sources = [source for directory in PHYSICAL for source in sorted(directory.rglob("*.[ch]"))]
     assert sources
-    physical = re.compile(r"^(?:drivers/sd_card/(?:link|sdio_pio|spi)/)?(?:sd_link\w*|sdio_pio\w*|spi\w*)\.h$")
+    physical = re.compile(r"^(?:drivers/sdcard/(?:link|sdio_pio|spi)/)?(?:sd_link\w*|sdio_pio\w*|spi\w*)\.h$")
     forbidden = re.compile(
-        r"(?:sd_card|sdio_pio_protocol|sdio_pio_host|fatfs|ff\.h)"
+        r"(?:sdcard|sdio_pio_protocol|sdio_pio_host|fatfs|ff\.h)"
         r"|(?:^|/)sd(?:_[^/]*)?\.h$"
     )
     for source in sources:
@@ -122,12 +122,12 @@ def test_physical_engines_do_not_include_device_or_filesystem_headers():
 @pytest.mark.parametrize("mode", ["spi", "sdio_pio"])
 def test_each_physical_mode_has_a_concrete_driver(mode):
     for extension in ("c", "h"):
-        assert (SD_CARD / mode / f"{mode}.{extension}").is_file()
+        assert (SDCARD / mode / f"{mode}.{extension}").is_file()
     if mode != "spi":
-        assert (SD_CARD / mode / f"{mode}.pio").is_file()
+        assert (SDCARD / mode / f"{mode}.pio").is_file()
 
 
-@pytest.mark.parametrize("device", ["sd_card"])
+@pytest.mark.parametrize("device", ["sdcard"])
 def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
     directory = ROOT / "firmware/src/drivers" / device
     for source in sorted(directory.glob("*.c")) + sorted(directory.glob("*.h")):
@@ -137,8 +137,8 @@ def test_device_drivers_use_only_the_common_physical_transport_boundary(device):
         text = source.read_text()
         for header in re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', text, re.MULTILINE):
             assert not header.startswith(("hardware/", "pico/")), f"{source}: hardware dependency {header}"
-            if "sd_card/" in header:
-                assert header.startswith("drivers/sd_card/link/"), (
+            if "sdcard/" in header:
+                assert header.startswith("drivers/sdcard/link/"), (
                     f"{source}: concrete backend include {header}"
                 )
         assert not re.search(r"\bpf_(?:spi|sdio_pio)_\w+", text), source
@@ -154,18 +154,18 @@ def test_common_lifecycle_and_raw_wire_interfaces_do_not_expose_device_transacti
     assert not re.search(r"\b(?:command|address_bytes|dummy_cycles)\s*;", serial)
     native = (LINK / "sd_link_wire.h").read_text()
     assert not re.search(r"\b(?:clock_owner|last_response_words|rx_ready|mode_restore_failed)\b", native)
-    physical = (SD_CARD / "sdio_pio/sdio_pio.c").read_text()
+    physical = (SDCARD / "sdio_pio/sdio_pio.c").read_text()
     assert "prepare_80_clocks" not in physical
 
 
 @pytest.mark.parametrize("mode", ["spi", "sdio_pio"])
 def test_backend_api_and_guards_match_module_names(mode):
-    header = (SD_CARD / mode / f"{mode}.h").read_text()
+    header = (SDCARD / mode / f"{mode}.h").read_text()
     guard = f"PF_{mode.upper()}_H"
     assert re.search(rf"^#ifndef {guard}\n#define {guard}$", header, re.MULTILINE)
     assert f"pf_{mode}_t" in header
     assert f"pf_{mode}_bus(" in header
-    for source in (SD_CARD / mode).rglob("*"):
+    for source in (SDCARD / mode).rglob("*"):
         if source.suffix in (".c", ".h", ".pio"):
             assert not re.search(rf"\bpf_storage_{mode}_(?!pins_)\w+", source.read_text()), source
             assert not re.search(rf"\bPF_STORAGE_{mode.upper()}_H\b", source.read_text()), source

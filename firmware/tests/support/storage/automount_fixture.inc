@@ -1,10 +1,10 @@
 #include "unity.h"
 #include <string.h>
 #include "app/storage/sd_media.h"
-#include "drivers/sd_card/sd_port.h"
-#include "drivers/sd_card/sd_native.h"
+#include "drivers/sdcard/sd_port.h"
+#include "drivers/sdcard/sd_native.h"
 #define WORKER_SOURCE "app/storage/storage_worker.c"
-#define FACADE_SOURCE "drivers/sd_card/sd.c"
+#define FACADE_SOURCE "drivers/sdcard/sd.c"
 #define MSC_SOURCE "app/usb/usb_msc.c"
 #include WORKER_SOURCE
 #include FACADE_SOURCE
