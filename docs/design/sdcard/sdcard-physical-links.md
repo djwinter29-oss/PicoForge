@@ -1,13 +1,14 @@
 # SD-Card Driver and Physical Links
 
-This folder owns the SD-card driver and its physical link engines for RP2040 and RP2350. This document is the
+The SD-card driver and its physical link engines for RP2040 and RP2350 live in
+[`firmware/src/drivers/sdcard/`](../../../firmware/src/drivers/sdcard/). This document is the
 reference for transport ownership, lifecycle, shared-pin wiring, and lab hardware records. The SD protocol sources at
 the top level and filesystem policy above this driver are documented elsewhere:
 
-- [SD-card design](../../../../docs/design/sdcard/sdcard-driver-design.md): initialization, commands, registers, CRC validation,
+- [SD-card design](sdcard-driver-design.md): initialization, commands, registers, CRC validation,
   addressing, and sector/stream policy.
-- [CDC CLI guide](../../../../docs/design/usb/usb-cdc-cli.md): filesystem commands and mounting policy.
-- [Hardware setup](../../../../docs/hardware-setup.md): board selection, power, debug connections, and other GPIOs.
+- [CDC CLI guide](../usb/usb-cdc-cli.md): filesystem commands and mounting policy.
+- [Hardware setup](../../hardware-setup.md): board selection, power, debug connections, and other GPIOs.
 
 ## Physical Link
 
@@ -22,8 +23,10 @@ drivers/sdcard/
   sdio_pio/sdio_wait_freertos.c
 ```
 
-The [common link interface](link/sd_link.h) contains shared pin types, lifecycle, clock and platform services.
-Wire operations are separate SDK-independent capabilities: [raw serial](link/sd_link_serial.h) and [SD CMD/DAT](link/sd_link_wire.h).
+The [common link interface](../../../firmware/src/drivers/sdcard/link/sd_link.h) contains shared pin types, lifecycle,
+clock and platform services. Wire operations are separate SDK-independent capabilities:
+[raw serial](../../../firmware/src/drivers/sdcard/link/sd_link_serial.h) and
+[SD CMD/DAT](../../../firmware/src/drivers/sdcard/link/sd_link_wire.h).
 `pf_sd_link_t` is a non-owning descriptor: board/storage integration owns the concrete context, and the caller
 serializes access. Protocol clients
 do not dereference backend contexts or operations, include concrete backend/SDK headers, or own GPIO/PIO/DMA state.
@@ -53,8 +56,8 @@ Device configuration members named `transport` remain unchanged.
 
 | Physical mode | Implementation | Device configurations |
 | --- | --- | --- |
-| SPI | [spi.h](spi/spi.h), [spi.c](spi/spi.c) | SD-SPI |
-| Native SD PIO | [sdio_pio.h](sdio_pio/sdio_pio.h), [sdio_pio.c](sdio_pio/sdio_pio.c), [PIO programs](sdio_pio/sdio_pio.pio) | Native four-bit SD memory cards |
+| SPI | [spi.h](../../../firmware/src/drivers/sdcard/spi/spi.h), [spi.c](../../../firmware/src/drivers/sdcard/spi/spi.c) | SD-SPI |
+| Native SD PIO | [sdio_pio.h](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.h), [sdio_pio.c](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.c), [PIO programs](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.pio) | Native four-bit SD memory cards |
 
 SD-SPI uses manual CS and byte exchange so response, token, busy-polling and multiblock boundaries stay unchanged.
 
@@ -121,33 +124,39 @@ two system cycles per bus period, so its divider cannot be below 2.0 and the fas
   otherwise 25 MHz. The SD host attempts High Speed only when this exceeds 25 MHz.
 
 Host tests sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and limits. These checks model timing; they do not qualify hardware. Historical card measurements are listed in the
-[test records](../../../../docs/tests/records/README.md); release qualification remains configuration-specific.
+[test records](../../tests/records/README.md); release qualification remains configuration-specific.
 
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
 
 Platform time, bounded delays, and optional scheduler-wait setup are also dispatched through the descriptor.
-The [FreeRTOS wait adapter](sdio_pio/sdio_wait_freertos.c) owns PIO IRQ details; SD's execution port only
+The [FreeRTOS wait adapter](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_wait_freertos.c) owns PIO IRQ details;
+SD's execution port only
 requests that the transport enable it. The backend retains its physical configuration and installed wait hook across
 common-interface initialization failures and deinitialization, so reinitialization does not need device-side pin setup.
 
-[Board support](../../config/board.c) remains authoritative for GP2-GP8. SD-SPI and native SD use their respective physical
+[Board support](../../../firmware/src/config/board.c) remains authoritative for GP2-GP8. SD-SPI and native SD use their
+respective physical
 engines. These are alternative modes of the shared pins, not permission to attach multiple active devices. DET remains
 a board/card-presence input.
 
-[Board support](../../config/board.c) supplies the immutable pins and controller selection for both transports.
-[sd_board.c](sd_board.c) owns the selected static SD transport context, applies the active boot-config clock, and
+[Board support](../../../firmware/src/config/board.c) supplies the immutable pins and controller selection for both
+transports. [sd_board.c](../../../firmware/src/drivers/sdcard/sd_board.c) owns the selected static SD transport context,
+applies the active boot-config clock, and
 prepares card-detect GPIO/pulls from that profile. Its descriptor carries an optional board presence callback; without one, presence is unknown and
 media is assumed present. Repeated configuration queries do not reset a live transport.
 
 ### Pin Allocation and Runtime State
 
-[sdio_pio_pins.h](sdio_pio/sdio_pio_pins.h) and [spi_pins.h](spi/spi_pins.h) define their backend-specific signal
-allocations; [sdio_pio.h](sdio_pio/sdio_pio.h) and [spi.h](spi/spi.h) define the corresponding controller interfaces.
-[sd_link.h](link/sd_link.h) contains only the common runtime link interface. Native DAT0-DAT3 are an explicit array in logical
+[sdio_pio_pins.h](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio_pins.h) and
+[spi_pins.h](../../../firmware/src/drivers/sdcard/spi/spi_pins.h) define their backend-specific signal allocations;
+[sdio_pio.h](../../../firmware/src/drivers/sdcard/sdio_pio/sdio_pio.h) and
+[spi.h](../../../firmware/src/drivers/sdcard/spi/spi.h) define the corresponding controller interfaces.
+[sd_link.h](../../../firmware/src/drivers/sdcard/link/sd_link.h) contains only the common runtime link interface.
+Native DAT0-DAT3 are an explicit array in logical
 order, and the SDIO-PIO backend checks their ascending, consecutive mapping. The board profile describes both
-transports, alongside shared UART, LED, and card-detect resources; [sd_board.c](sd_board.c) uses the build-selected
-one. DET polarity
+transports, alongside shared UART, LED, and card-detect resources;
+[sd_board.c](../../../firmware/src/drivers/sdcard/sd_board.c) uses the build-selected one. DET polarity
 and pulls remain board configuration.
 
 Board integration copies the selected allocation into its static transport context. Mutable clock settings,
@@ -159,7 +168,7 @@ transfer-clock target in `clock_hz`. Pin allocation, controller selection, and D
 integration, not the SD protocol configuration. Backend integration supplies `pins.clock_gpio`, `pins.cs_gpio`, or
 all four `pins.data_gpio` entries as appropriate.
 Physical backend descriptor factories are `pf_spi_bus` and `pf_sdio_pio_bus`.
-See the [SD architecture](../../../../docs/design/sdcard/sdcard-driver-design.md#architecture) for the protocol configuration contract.
+See the [SD architecture](sdcard-driver-design.md#architecture) for the protocol configuration contract.
 
 Before switching SD transports, the caller must sync/unmount as appropriate, finish the card protocol, deinitialize
 the bus, and satisfy the card's power requirements. Bus abort/deinit never claims to finish an interrupted write or
@@ -208,9 +217,9 @@ GP7 drives CS in that mode. Board support can construct either transport configu
 signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls
 when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their
 combined strength. The storage worker initializes and mounts detected cards according to
-[the mounting policy](../../../../docs/design/usb/usb-cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
-for single sectors. Card capability negotiation and the board's 50 MHz SPI ceiling are defined by the
-[SPI transfer-clock policy](../../../../docs/design/sdcard/sdcard-driver-design.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
+[the mounting policy](../usb/usb-cdc-cli.md). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
+for single sectors. Card capability negotiation and the saved storage speed target are defined by the
+[SPI transfer-clock policy](sdcard-driver-design.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
 Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power:
 an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.
 
@@ -239,7 +248,7 @@ qualify physical 37.5/41.67/50 MHz operation; no 50 MHz SPI hardware pass is cla
 
 These records describe the firmware, cards, clocks, and wiring tested at the time. They are not qualification of the
 current transport extraction or a throughput guarantee. See the
-[SD-card validation limits](../../../../docs/design/sdcard/sdcard-driver-design.md#validation-and-limits) for current test scope.
+[SD-card validation limits](sdcard-driver-design.md#validation-and-limits) for current test scope.
 
 Pico 2 SDIO initialization was verified with the connected 16 GB card: UART reported `SD card initialized`, and HID
 reported `initialized=true`, 30,875,648 sectors (15,808,331,776 bytes), and a 12.5 MHz bus clock. The command PIO drove
@@ -350,9 +359,9 @@ cmake --build build/firmware-pico2-hs200 --parallel 4
 ## Tests and Qualification
 
 Host C tests cover common lifecycle dispatch and concrete transports under
-[firmware/tests/](../../../tests/drivers/). The assembled
-[SDIO](../../../../tests/pio/test_sdio_pio_timing.py) instruction model checks wire timing assumptions;
-[storage-layer contracts](../../../../tests/contracts/test_storage_layers.py) check the directory structure and
-physical-driver header independence. Use the existing [test guidance](../../../../tests/README.md) for commands.
+[firmware/tests/](../../../firmware/tests/drivers/). The assembled
+[SDIO](../../../tests/pio/test_sdio_pio_timing.py) instruction model checks wire timing assumptions;
+[storage-layer contracts](../../../tests/contracts/test_storage_layers.py) check the directory structure and
+physical-driver header independence. Use the existing [test guidance](../../../tests/README.md) for commands.
 Host tests, firmware builds, and PIO models do not establish electrical margins, card compatibility, sustained
 throughput, or power-loss safety.

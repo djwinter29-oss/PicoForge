@@ -1,6 +1,6 @@
 # PicoForge Architecture
 
-> **Status:** The firmware configures two-core FreeRTOS SMP for RP2040 and RP2350. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](usb/usb-cdc-cli.md). The board profile assigns card detect, so the worker debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive; dashboard Disable requests confirmed [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety), while legacy safe-disable commands require host eject. The HID contract is implemented across firmware and host clients; physical USB qualification remains outstanding. See [the hardware validation record](../../firmware/src/drivers/sdcard/README.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
+> **Status:** The firmware configures two-core FreeRTOS SMP for RP2040 and RP2350. UART logging has been verified through a Raspberry Pi Debug Probe. Basic system, internal-temperature, board-LED, SDIO-PIO and SPI SD-card transports, FatFs integration, and conditional USB MSC exist. `firmware/src/config/config.h` statically selects the transport. MSC is disabled at boot. The idle storage worker automatically initializes and mounts detected cards, with paced retries; see [the mounting policy](usb/usb-cdc-cli.md). The board profile assigns card detect, so the worker debounces removal/insertion and unmounts stale FatFs state. Recovery never formats media. MSC ownership is exclusive; dashboard Disable requests confirmed [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety), while legacy safe-disable commands require host eject. The HID contract is implemented across firmware and host clients; physical USB qualification remains outstanding. See [the hardware validation record](sdcard/sdcard-physical-links.md#sd-card-breakout) for verified SDIO and SPI filesystem CLI read/write operations; complete MSC workflows and power-loss recovery remain unverified.
 
 ## Current Firmware
 
@@ -151,7 +151,7 @@ workflows, explicitly selected FreeRTOS/bare-metal ports, and hardware resource
 inventory. The default USB/storage application remains FreeRTOS-only; the
 bare-metal configuration builds the reusable driver and its link-smoke target.
 Board wiring and physical
-qualification records remain in the [SD-card driver guide](../../firmware/src/drivers/sdcard/README.md#sd-card-breakout).
+qualification records remain in the [SD-card driver guide](sdcard/sdcard-physical-links.md#sd-card-breakout).
 
 ### Platform
 

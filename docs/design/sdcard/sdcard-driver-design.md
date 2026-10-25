@@ -3,7 +3,7 @@
 This document describes the implemented SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
-[SD-card driver guide](../../../firmware/src/drivers/sdcard/README.md#memory-and-storage-connections); filesystem
+[SD-card driver guide](sdcard-physical-links.md#memory-and-storage-connections); filesystem
 commands and mounting policy remain in [the CDC CLI guide](../usb/usb-cdc-cli.md). Use the
 [SD-card documentation index](README.md) for related design and test references.
 
@@ -62,7 +62,7 @@ Unit-test filenames use the same source basenames, with environment-suffixed por
 Both backends use the same configuration shape, borrowing a `pf_sd_link_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
 no GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
-See [pin allocation and runtime state](../../../firmware/src/drivers/sdcard/README.md#pin-allocation-and-runtime-state)
+See [pin allocation and runtime state](sdcard-physical-links.md#pin-allocation-and-runtime-state)
 for authoritative physical ownership and configuration details.
 The execution port requests optional waits through `pf_sd_link_enable_wait`, without PIO/IRQ knowledge.
 `pf_sd_port_init` returns `bool`; callers must handle failure when optional waits were requested. Application
@@ -77,7 +77,7 @@ invalidates the card and returns immediately without exchanging bytes, issuing c
 
 ### Physical Link
 
-The [SD-card driver guide](../../../firmware/src/drivers/sdcard/README.md#physical-link) owns the physical
+The [SD-card driver guide](sdcard-physical-links.md#physical-link) owns the physical
 engine layout, lifecycle, typed transfer interfaces, and shared-pin restrictions. This document covers the SD protocol
 and its integration above those engines.
 
@@ -463,7 +463,7 @@ This option does not change SYSCLK or qualify an overclock. Historical measureme
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
 20.833 MHz. High-Speed dividers are even and limited to 3.0 so the cycle-locked TX and shortened RX programs stay valid;
-the [clock planning table](../../../firmware/src/drivers/sdcard/README.md#clock-planning) lists each rule. This deterministic divider
+the [clock planning table](sdcard-physical-links.md#clock-planning) lists each rule. This deterministic divider
 rounding is not adaptive speed selection.
 Use SDK-supported clock settings and check
 effective-clock telemetry; an accepted divider does not qualify an overclock.
@@ -526,10 +526,10 @@ command that completes before a delayed poll is not reported as a timeout.
 In-PIO timeouts are not used because the command (20) and receive (12) programs
 use all 32 PIO instructions. Receive start detection qualifies DAT0 at the same
 settled edge used for payload rather than treating any asynchronous low level as
-the start bit. The [physical transport reference](../../../firmware/src/drivers/sdcard/README.md#physical-link)
+the start bit. The [physical transport reference](sdcard-physical-links.md#physical-link)
 defines Default-Speed and High-Speed sampling phases. Command responses retain
 falling-edge sampling and framing/CRC validation; see the historical
-[Class 4 read-only check](../../../firmware/src/drivers/sdcard/README.md#class-4-read-only-bring-up-2026-10-15).
+[Class 4 read-only check](sdcard-physical-links.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
 
@@ -642,7 +642,7 @@ At 150 MHz SYSCLK, the slow-mode divider produces an exact 25 MHz bus.
 The integer divider can round down for other system clocks; initialization never
 selects a lower candidate after errors. SPI's zero clock request selects 25 MHz. See
 [board.c](../../../firmware/src/config/board.c) for authoritative values
-and [storage wiring](../../../firmware/src/drivers/sdcard/README.md#memory-and-storage-connections) for header
+and [storage wiring](sdcard-physical-links.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 
 | Resource | SDIO-PIO | SD-SPI |
@@ -903,7 +903,7 @@ Use the existing [test guidance](../../../firmware/tests/README.md) and
 
 Host tests and timing models do not establish electrical margins or target
 hardware safety. Physical qualification is card, board, wiring, and clock
-specific; see [hardware records](../../../firmware/src/drivers/sdcard/README.md#sd-card-breakout),
+specific; see [hardware records](sdcard-physical-links.md#sd-card-breakout),
 [SD-card performance test](sdcard-performance-test.md), and [test records](../../tests/records).
 Read-only initialization success does not qualify high-speed writes. Power-loss
 recovery, complete MSC lifecycles, and sustained endurance require separate
