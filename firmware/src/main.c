@@ -18,7 +18,7 @@ _Static_assert(SYS_CLK_HZ == PF_IMAGE_SYS_CLK_MHZ * 1000000u,
 static void apply_saved_system_clock(void)
 {
     /* First boot-config access: loads the record before the scheduler; missing or corrupt records give 0. */
-    (void)pf_system_clock_apply(pf_sysclk_profile_mhz(pf_boot_config_sysclk()));
+    (void)pf_system_clock_apply(pf_get_sysclk_mhz());
 }
 PICO_RUNTIME_INIT_FUNC_HW(apply_saved_system_clock, "00501");
 

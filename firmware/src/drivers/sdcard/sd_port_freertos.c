@@ -8,8 +8,8 @@
 #include "task.h"
 #include "semphr.h"
 
-static StaticSemaphore_t card_mutex_storage;
-static SemaphoreHandle_t card_mutex;
+static StaticSemaphore_t card_mutex_storage; /**< Firmware-lifetime backing storage for the recursive reservation. */
+static SemaphoreHandle_t card_mutex; /**< Lazily created handle, published under the kernel critical section. */
 
 bool pf_sd_port_init(const pf_sd_config_t *config)
 {
@@ -22,6 +22,7 @@ bool pf_sd_port_init(const pf_sd_config_t *config)
 #endif
 }
 
+/** @brief Create the shared reservation before first use, including pre-initialization telemetry. */
 static void ensure_card_mutex(void)
 {
     /* Telemetry may reserve the facade before card initialization. */

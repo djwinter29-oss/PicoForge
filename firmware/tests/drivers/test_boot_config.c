@@ -87,6 +87,21 @@ void test_crc32_matches_the_standard_check_value(void)
     TEST_ASSERT_EQUAL_HEX32(0xcbf43926u, crc32((const uint8_t *)"123456789", 9u));
 }
 
+void test_configured_mhz_getters_load_defaults_saved_profiles_and_ram_updates(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(0u, pf_get_sysclk_mhz());
+    TEST_ASSERT_EQUAL_UINT8(25u, pf_get_storage_speed_mhz());
+    store(200u, 50u, 50u);
+    reboot();
+    TEST_ASSERT_EQUAL_UINT8(50u, pf_get_storage_speed_mhz());
+    TEST_ASSERT_EQUAL_UINT16(200u, pf_get_sysclk_mhz());
+    TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_150MHZ));
+    TEST_ASSERT_TRUE(pf_boot_config_set_storage_speed(PF_STORAGE_SPEED_DEFAULT));
+    TEST_ASSERT_EQUAL_UINT16(150u, pf_get_sysclk_mhz());
+    TEST_ASSERT_EQUAL_UINT8(25u, pf_get_storage_speed_mhz());
+    TEST_ASSERT_EQUAL_UINT(0u, writes);
+}
+
 void test_erased_storage_gives_sdk_clock_and_default_sd_speed(void)
 {
     TEST_ASSERT_EQUAL(PF_SYSCLK_DEFAULT, pf_boot_config_sysclk());

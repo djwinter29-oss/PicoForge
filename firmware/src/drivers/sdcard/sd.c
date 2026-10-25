@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 
-static bool backend_configured; /**< Backend accepted a configuration, even if media initialization failed. */
+static bool backend_configured; /**< Valid init attempt permits backend dispatch, not proof of lock or readiness. */
 
 bool pf_sd_try_lock(void) { return pf_sd_port_try_lock(); }
 void pf_sd_lock(void) { pf_sd_port_lock(); }

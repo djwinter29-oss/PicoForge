@@ -20,7 +20,7 @@ static bool card_present(const void *context)
 
 bool pf_sd_board_config(pf_sd_config_t *config)
 {
-    const uint32_t speed_hz = pf_storage_speed_mhz(pf_boot_config_storage_speed()) * 1000000u;
+    const uint32_t speed_hz = pf_get_storage_speed_mhz() * 1000000u;
 
     if (config == NULL) {
         return false;

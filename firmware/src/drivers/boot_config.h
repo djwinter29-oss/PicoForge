@@ -53,6 +53,20 @@ bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile);
 /** @brief Return the configured storage speed profile. */
 pf_storage_speed_t pf_boot_config_storage_speed(void);
 
+/** Return the configured system clock in MHz, or 0 to keep the SDK/build clock.
+ * Reads the boot configuration, not the currently running hardware clock; first-use loading rules apply.
+ */
+static inline uint16_t pf_get_sysclk_mhz(void)
+{
+    return pf_sysclk_profile_mhz(pf_boot_config_sysclk());
+}
+
+/** Return the configured storage target in MHz (25 or 50), not the achieved bus clock. */
+static inline uint8_t pf_get_storage_speed_mhz(void)
+{
+    return pf_storage_speed_mhz(pf_boot_config_storage_speed());
+}
+
 /**
  * @brief Change the configured storage speed in RAM; persist with pf_boot_config_save(), applied at the next boot.
  * @return false (configuration unchanged) for an unknown profile.

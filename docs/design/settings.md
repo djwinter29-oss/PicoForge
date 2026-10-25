@@ -9,7 +9,7 @@ there is no runtime transport selector.
 | Storage speed (`pf_storage_speed_t`) | `PF_STORAGE_SPEED_DEFAULT` (25 MHz), `PF_STORAGE_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
 
 Both SD transports obtain their requested clock from
-`pf_storage_speed_mhz(pf_boot_config_storage_speed())` in
+`pf_get_storage_speed_mhz()` in
 [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c). The 25/50 MHz value is a target, not a guaranteed rate:
 the hardware chooses the closest safe supported clock at or below it. Board data supplies wiring and controller
 selection, not a separate speed. SPI above 25 MHz requires card CMD6 High-Speed support; otherwise the CSD-limited
@@ -23,13 +23,18 @@ For example, a 50 MHz SDIO request at 150 MHz SYSCLK achieves 37.5 MHz. Status r
 
 pf_sysclk_profile_t clk = pf_boot_config_sysclk();   /* saved value, or PF_SYSCLK_DEFAULT */
 pf_storage_speed_t speed = pf_boot_config_storage_speed();     /* saved value, or PF_STORAGE_SPEED_DEFAULT */
+uint16_t sysclk_mhz = pf_get_sysclk_mhz();           /* configured MHz; 0 keeps the SDK/build clock */
+uint8_t storage_mhz = pf_get_storage_speed_mhz();    /* configured 25/50 MHz target, not achieved speed */
 pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ);         /* RAM copy only; false for unknown profiles */
 pf_boot_config_set_storage_speed(PF_STORAGE_SPEED_HIGH);       /* RAM copy only */
 pf_boot_config_save();                               /* task, scheduler running; true after read-back verifies */
 ```
 
-The header exposes only these five functions plus the inline `pf_sysclk_profile_mhz()` (`0` for Default) and
-`pf_storage_speed_mhz()` (`25` or `50`) conversions; the record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
+The header exposes five out-of-line functions and inline configured-MHz getters. `pf_get_sysclk_mhz()` and
+`pf_get_storage_speed_mhz()` read the current RAM configuration through the profile getters; neither measures hardware.
+The inline `pf_sysclk_profile_mhz()` (`0` for Default) and `pf_storage_speed_mhz()` (`25` or `50`) conversions remain
+available for arbitrary profiles, including record encoding and HID input validation.
+The record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
 once. Setters change only the RAM copy; saved values take effect at the next boot
 because the SD drivers lock their first configuration. The HID handler restores the previous values when a save
 does not complete, so reports never show unsaved values.
@@ -106,7 +111,7 @@ flash sizes. A board with less flash than the SDK definition is unsupported.
 A saved system clock profile is applied by a `PICO_RUNTIME_INIT_FUNC_HW` hook in [main.c](../../firmware/src/main.c) ordered
 `00501`: after the SDK clock init (`00500`) and before peripheral resets are released (`00600`), stdio and FreeRTOS, so
 the FreeRTOS port reads the new `clk_sys` for SysTick at scheduler start. The hook reads the record without writing
-(the first `pf_boot_config_sysclk()` call) and calls `pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)):
+(through `pf_get_sysclk_mhz()`) and calls `pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)):
 
 - `0`, a corrupt/missing record (which decodes as Defaults), an underivable frequency or the clock already in use change
   nothing, so Defaults keep the build clock.

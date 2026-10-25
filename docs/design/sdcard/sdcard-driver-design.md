@@ -288,8 +288,16 @@ board support, not application code or reusable protocol helpers.
 | Zero clock request | Fixed 25 MHz transfer target | 25 MHz |
 | Requested clock bounds | 0 (default), 25 or 50 MHz; initialization at 400 kHz | 400 kHz to 50 MHz; CMD6 required above 25 MHz |
 
-Transport and connection settings are locked after setup; repeating initialization
-with the same configuration retries card identification. There is no public
+Native SD locks a valid configuration before attempting physical setup. SPI locks it only after physical setup
+succeeds, so a failed SPI physical acquisition does not prevent a different configuration on retry. Once locked,
+settings survive card-identification failures and removal; repeating initialization with identical settings retries
+card identification.
+
+The facade's `backend_configured` flag only records a valid backend initialization attempt and permits later backend
+dispatch. It does not establish configuration locking or media readiness; the selected backend performs those checks.
+The legacy public `pf_sd_transport_t` enum is retained solely for source compatibility, not runtime selection.
+Its numeric values are not interchangeable with the descriptor's `pf_sd_link_mode_t`.
+There is no public
 runtime transport-switch or card-deinitialization API. Switching a card from SPI
 back to native mode can require removing card power, not just resetting the MCU.
 
