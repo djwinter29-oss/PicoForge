@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Set release package version
@@ -83,7 +83,7 @@ jobs:
               assert web.joinpath(name).is_file(), name
           PY
           wheel-check/bin/picoforge --help
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-python
           path: dist/*.whl
@@ -106,7 +106,7 @@ jobs:
           cp -r host/webhid/css host/webhid/js build/webhid/
           cd build/webhid
           zip -r "../../dist/picoforge-webhid-v$VERSION.zip" .
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-webhid
           path: dist/*.zip
@@ -186,7 +186,7 @@ jobs:
           sha256sum *.elf *.uf2 > SHA256SUMS
 
       - name: Attach build package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: firmware-v${{ needs.validate-tag.outputs.version }}-${{ matrix.board }}-${{ matrix.transport }}${{ matrix.transport == 'SDIO_PIO' && '-HS' || '' }}
           path: package/
