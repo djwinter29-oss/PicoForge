@@ -1,9 +1,8 @@
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
-#define PF_TEST_BOARD_CONFIG
-#define PF_BOARD_SD_SPI 1
-#include "sdio_board_fixture.h"
+#define SPI_ASSIGNMENT_SOURCE "config/board_spi.c"
+#include SPI_ASSIGNMENT_SOURCE
 
 #ifdef PF_SDIO_PIO_PINS_H
 #error "SPI board configuration must not include SDIO assignments"

@@ -6,7 +6,14 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#ifndef PF_ENABLE_STORAGE_BENCHMARK
+/** Include optional benchmark APIs only when enabled by the build. */
+#define PF_ENABLE_STORAGE_BENCHMARK 0
+#endif
+#if PF_ENABLE_STORAGE_BENCHMARK
 #include "file_benchmark.h"
+#endif
 
 /** Maximum command argument storage, including tokenizer terminators. */
 #define PF_STORAGE_WORKER_ARGS_SIZE 128u
@@ -77,6 +84,7 @@ bool pf_storage_worker_poll(pf_storage_worker_reply_t *reply);
  */
 void pf_storage_worker_cancel(uint32_t session);
 
+#if PF_ENABLE_STORAGE_BENCHMARK
 /** Start a verified file benchmark from the USB task. False records rejection.
  * Requires firmware ownership, initialized media, and no pending storage work.
  * Caller supplies current ownership and coordinates all USB ownership transitions.
@@ -96,5 +104,6 @@ void pf_storage_worker_benchmark_status(pf_file_benchmark_status_t *status);
  * @return True when a result was available; false while preflight is pending.
  */
 bool pf_storage_worker_benchmark_admission_result(bool *accepted, pf_file_benchmark_error_t *error);
+#endif
 
 #endif

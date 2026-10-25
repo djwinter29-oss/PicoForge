@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#define PF_ENABLE_STORAGE_BENCHMARK 1
 TEST_INCLUDE_PATH("firmware/tests/support/runtime")
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
 TEST_INCLUDE_PATH("firmware/tests/support/config")

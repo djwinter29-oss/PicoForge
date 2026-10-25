@@ -3,6 +3,8 @@
 TEST_INCLUDE_PATH("firmware/tests/support/config")
 
 #include "drivers/system.h"
+#define BOOT_CONFIG_HEADER "drivers/boot_config.h"
+#include BOOT_CONFIG_HEADER
 #include "clock_model.h"
 
 static uint32_t sys_hz, peri_hz, hstx_hz, wait_cycles;
@@ -12,6 +14,9 @@ static char call_log[16];
 static unsigned log_len;
 static bool derivable;
 static bool watchdog_reset;
+static pf_sysclk_profile_t saved_profile;
+
+pf_sysclk_profile_t pf_boot_config_sysclk(void) { return saved_profile; }
 
 bool watchdog_caused_reboot(void) { return watchdog_reset; }
 
@@ -63,6 +68,7 @@ void setUp(void)
     log_len = 0u;
     derivable = true;
     watchdog_reset = false;
+    saved_profile = PF_SYSCLK_DEFAULT;
     for (unsigned i = 0u; i < sizeof(call_log); ++i) {
         call_log[i] = 0;
     }
@@ -78,7 +84,7 @@ void test_reset_cause_uses_watchdog_evidence_without_assuming_power_on(void)
 
 void test_default_zero_keeps_the_build_clock_untouched(void)
 {
-    TEST_ASSERT_FALSE(pf_system_clock_apply(0u));
+    TEST_ASSERT_FALSE(pf_system_clock_apply());
     TEST_ASSERT_EQUAL_UINT32(125000000u, sys_hz);
     TEST_ASSERT_EQUAL_UINT(0u, log_len);
 }
@@ -86,16 +92,18 @@ void test_default_zero_keeps_the_build_clock_untouched(void)
 void test_underivable_clock_and_same_clock_change_nothing(void)
 {
     derivable = false;
-    TEST_ASSERT_FALSE(pf_system_clock_apply(200u));
+    saved_profile = PF_SYSCLK_200MHZ;
+    TEST_ASSERT_FALSE(pf_system_clock_apply());
     derivable = true;
     sys_hz = 200000000u;
-    TEST_ASSERT_FALSE(pf_system_clock_apply(200u));
+    TEST_ASSERT_FALSE(pf_system_clock_apply());
     TEST_ASSERT_EQUAL_UINT(0u, log_len);
 }
 
 void test_up_to_200mhz_raises_to_1v15_settles_then_switches_and_keeps_peri_on_sys(void)
 {
-    TEST_ASSERT_TRUE(pf_system_clock_apply(150u));
+    saved_profile = PF_SYSCLK_150MHZ;
+    TEST_ASSERT_TRUE(pf_system_clock_apply());
     TEST_ASSERT_EQUAL_STRING("vwpPH", call_log);
     TEST_ASSERT_EQUAL_INT(VREG_VOLTAGE_1_15, voltage);
     TEST_ASSERT_EQUAL_UINT32(125000u, wait_cycles); /* 1000 us at 125 MHz */
@@ -106,7 +114,8 @@ void test_up_to_200mhz_raises_to_1v15_settles_then_switches_and_keeps_peri_on_sy
 
 void test_above_200mhz_needs_1v30(void)
 {
-    TEST_ASSERT_TRUE(pf_system_clock_apply(250u));
+    saved_profile = PF_SYSCLK_250MHZ;
+    TEST_ASSERT_TRUE(pf_system_clock_apply());
     TEST_ASSERT_EQUAL_INT(VREG_VOLTAGE_1_30, voltage);
     TEST_ASSERT_EQUAL_UINT32(250000000u, peri_hz);
 }
@@ -115,7 +124,8 @@ void test_voltage_is_raised_only_when_needed_and_never_lowered(void)
 {
     voltage = VREG_VOLTAGE_1_30; /* active compile-time overclock */
     sys_hz = 250000000u;
-    TEST_ASSERT_TRUE(pf_system_clock_apply(150u));
+    saved_profile = PF_SYSCLK_150MHZ;
+    TEST_ASSERT_TRUE(pf_system_clock_apply());
     TEST_ASSERT_EQUAL_INT(VREG_VOLTAGE_1_30, voltage);
     TEST_ASSERT_EQUAL_STRING("pPH", call_log);
 }

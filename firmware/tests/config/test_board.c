@@ -2,8 +2,9 @@
 TEST_INCLUDE_PATH("firmware/tests/support/sdio")
 
 #define PF_TEST_BOARD_CONFIG
-#define PF_BOARD_SD_SPI 0
 #include "sdio_board_fixture.h"
+#define SDIO_ASSIGNMENT_SOURCE "config/board_sdio.c"
+#include SDIO_ASSIGNMENT_SOURCE
 
 #ifdef PF_SPI_PINS_H
 #error "SDIO board configuration must not include SPI assignments"

@@ -105,8 +105,8 @@ static bool record_valid(const record_t *record)
 /**
  * @brief Load the saved record into the RAM copy once.
  *
- * ponytail: lazy load on the first getter. The boot clock hook runs before the scheduler, so in firmware the first
- * call reads flash directly; task-context loading only serves hosts/tests that skip the hook. A
+ * ponytail: lazy load on the first getter. main() loads settings before the scheduler, so in firmware the first
+ * call reads flash directly; a running task can also load them if not already read. A
  * malformed record latches defaults until reboot; an unsafe context leaves loading pending for a safe caller.
  */
 static void ensure_loaded(void)

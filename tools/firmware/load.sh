@@ -20,6 +20,7 @@ usage() {
 Usage: tools/firmware/load.sh [options]
 
 Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
+Builds use build.sh, which explicitly enables the storage benchmark; --skip-build leaves the image unchanged.
 
 Options:
 --board NAME                 Supported board: pico or pico2 (default: pico)

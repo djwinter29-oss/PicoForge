@@ -21,8 +21,7 @@ def test_build_matrices_and_compatible_artifact_checks():
             assert removed not in workflow
         assert re.search(r"^\s+clock:\s*\[", workflow, re.MULTILINE) is None
         assert re.search(r"^\s+port:\s*\[", workflow, re.MULTILINE) is None
-        if name == "release.yml":
-            assert 'PF_SDIO_PIO_HIGH_SPEED: "ON"' in workflow
+        assert "PF_SDIO_PIO_HIGH_SPEED" not in workflow
         assert '--sdcard-transport "${{ matrix.transport }}"' in workflow
         artifact_step = workflow.split("- name: Run project tests", 1)[1]
         assert "if:" not in artifact_step.split("run:", 1)[0]

@@ -20,7 +20,7 @@ typedef struct {
     bool card_detect_active_high; /**< Detect input polarity. */
 } pf_spi_board_pins_t;
 
-/** Board assignment defined in config/board.c; used only by the SPI SD binding. */
+/** Board assignment defined in config/board_spi.c; used only by the SPI SD binding. */
 extern const pf_spi_board_pins_t pf_spi_board_pins;
 
 #endif

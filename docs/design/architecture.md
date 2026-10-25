@@ -19,7 +19,8 @@ persisted profiles and board GPIO configuration. Feature report `20` handles LED
 settings transactions. The [HID Report Reference](usb/usb-hid-report-reference.md) defines the wire contract and
 validation. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4.
 The shared Pico-family profile in `firmware/src/config/board.c` uses the SDK's default UART and direct-LED
-assignments, while keeping PicoForge's storage connector wiring in one profile. Pico, Pico 2, and Pico 2 W use the
+assignments; CMake selects `config/board_spi.c` or `config/board_sdio.c` for storage connector wiring.
+Pico, Pico 2, and Pico 2 W use the
 same monitor UART pins; boards without a direct GPIO LED do not advertise one. This follows PicoUart's
 [board-configuration approach](https://github.com/djwinter29-oss/PicoUart/blob/main/docs/hardware-setup.md) without
 adopting its UART-channel map or hardware features. Other layouts require a matching board profile; see
@@ -141,7 +142,7 @@ The firmware currently uses the USB device role; a USB host role is not selected
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in middleware; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: `firmware/src/config/board.c` defines one assignment object per driver, declared `extern` in that driver's header. Each driver initializes its own hardware from it (`pf_led_init()`, `pf_monitor_uart_init()`), and [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/middleware/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../guides/hardware-setup.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in middleware; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: sources in `firmware/src/config/` define assignment objects, declared `extern` in driver headers. CMake selects the storage assignment source alongside its transport binding. Each driver initializes its own hardware (`pf_led_init()`, `pf_monitor_uart_init()`), and [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/middleware/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../guides/hardware-setup.md).
 
 ### SD-Card Driver Structure
 
@@ -160,8 +161,8 @@ The board pin/peripheral profile is immutable and selected at build time; firmwa
 instead of repeating pin-range, mux, and collision validation at runtime. Wiring must agree with
 [the hardware setup baseline](../guides/hardware-setup.md) and the board schematic. Boot-applied settings and their public
 load/save API and private RP2 flash persistence with FreeRTOS-safe access live in
-`firmware/src/drivers/boot_config.c/.h`. Board pin mapping lives in `firmware/src/config/board.c` as plain data: it
-describes the storage connector's SDIO-PIO and SPI wiring, and only the SD driver selects one. Both request the saved
+`firmware/src/drivers/boot_config.c/.h`. Board pin mapping lives in `firmware/src/config/` as plain data; CMake
+selects the storage connector's SDIO-PIO or SPI assignment source. Both transports request the saved
 storage speed; card negotiation and hardware divider rounding determine the actual clock. Physical card operation
 still needs board validation.
 

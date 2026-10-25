@@ -158,7 +158,6 @@ jobs:
 
       - name: Build firmware
         env:
-          PF_SDIO_PIO_HIGH_SPEED: "ON"
           CMAKE_BUILD_PARALLEL_LEVEL: 2
         run: >-
           tools/firmware/build.sh --board "${{ matrix.board }}"

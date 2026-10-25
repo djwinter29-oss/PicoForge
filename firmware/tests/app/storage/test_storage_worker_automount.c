@@ -1,4 +1,5 @@
 #include "unity.h"
+#define PF_ENABLE_STORAGE_BENCHMARK 1
 #include "Mocklogging.h"
 #include "block_device.h"
 TEST_INCLUDE_PATH("firmware/tests/support/storage")

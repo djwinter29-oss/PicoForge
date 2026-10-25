@@ -51,7 +51,7 @@ Options:
     --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
     --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
-    Environment: PF_SDIO_PIO_HIGH_SPEED=ON|OFF overrides the cached SDIO negotiation policy.
+    This development build explicitly enables the storage benchmark (CMake default: OFF).
 EOF
             exit 0
             ;;
@@ -106,18 +106,13 @@ elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
     BUILD_DIR="$REPO_ROOT/$BUILD_DIR"
 fi
 
-set --
-if [ -n "${PF_SDIO_PIO_HIGH_SPEED:-}" ]; then
-    set -- "-DPF_SDIO_PIO_HIGH_SPEED=$PF_SDIO_PIO_HIGH_SPEED"
-fi
-
 cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" \
     -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \
     -DPICO_BOARD="$BOARD" \
     -DPF_FIRMWARE_VERSION="$FIRMWARE_VERSION" \
-    -DPF_SYS_CLK_MHZ=0 \
+    -DPF_ENABLE_STORAGE_BENCHMARK=ON \
     -DPF_SDCARD_PORT=FREERTOS \
-    -DPF_SDCARD_TRANSPORT="$SDCARD_TRANSPORT" "$@"
+    -DPF_SDCARD_TRANSPORT="$SDCARD_TRANSPORT"
 cmake --build "$BUILD_DIR" --parallel ${CMAKE_BUILD_PARALLEL_LEVEL:+"$CMAKE_BUILD_PARALLEL_LEVEL"}

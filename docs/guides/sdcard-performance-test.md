@@ -19,6 +19,15 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 
 ## Running
 
+The benchmark is optional: CMake defaults `PF_ENABLE_STORAGE_BENCHMARK` to `OFF`. The development
+`tools/firmware/build.sh` script explicitly enables it; `tools/firmware/load.sh` delegates builds to that script
+(loading with `--skip-build` does not change the existing image).
+For a benchmark-free image, configure directly with CMake using `-DPF_ENABLE_STORAGE_BENCHMARK=OFF` and build
+with `cmake --build <build-dir>`; do not rebuild that configuration through the development script.
+Disabled builds omit the benchmark implementation and its 32 KiB buffer, clear the HID self-test capability,
+reject start/cancel commands as unsupported, and do not publish self-test reports. Host interfaces use that
+capability to disable self-test controls. Normal storage, filesystem commands, and MSC remain available.
+
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
 2. Ensure the filesystem is mounted; use `fs mount` if it is not already mounted.
 3. Open one dashboard and connect to its vendor HID interface.

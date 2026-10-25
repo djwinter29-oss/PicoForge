@@ -96,8 +96,8 @@ SPI-only diagnostics use `pf_sd_spi_*` / `PF_SD_SPI_*`.
 Shared native-response and data-codec helpers retain `pf_sd_native_*` / `PF_SD_NATIVE_*`: these names describe
 SD signaling and register formats, not a concrete transport implementation.
 The `pf_sdio_pio_*` namespace belongs to the physical PIO transport, not the SD protocol.
-`PF_SDIO_PIO_HIGH_SPEED` and `PF_SDIO_PIO_FUSED_COPY` remain CMake options and set the C definitions
-`PF_SD_SDIO_HIGH_SPEED` and `PF_SD_NATIVE_FUSED_COPY`.
+`PF_SDIO_PIO_FUSED_COPY` remains a CMake option and sets the C definition `PF_SD_NATIVE_FUSED_COPY`.
+High-Speed negotiation is controlled by the saved storage speed profile, not a build option.
 Host tests retain their existing behavior-oriented names, including native-init and SPI protocol suites.
 
 Header/implementation pairing follows ownership rather than requiring one C file per header:
@@ -506,7 +506,6 @@ cards; speed class is a usage requirement, not a guarantee of electrical
 compatibility or application throughput, and is not detected/enforced by this
 driver. CSD must advertise a default transfer rate of at least 25 MHz.
 
-`PF_SDIO_PIO_HIGH_SPEED` defaults to ON for new SDIO builds, including release builds.
 The saved storage profile supplies the target for both SDIO and SPI. A 25 MHz target never negotiates High Speed.
 For a 50 MHz target at or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default
 Speed and records the host limit. Above 100 MHz it requests 50 MHz and the transport clamps to its PIO ceiling (SYSCLK / 4):
@@ -522,9 +521,8 @@ timing and repeat validation; failure of that attempt aborts initialization.
 Unsupported/rejected High Speed is nonfatal only while card operation can be
 confirmed. Runtime read/write errors never trigger speed negotiation or replay.
 
-Existing CMake caches retain their option value. Set `-DPF_SDIO_PIO_HIGH_SPEED=ON` explicitly to adopt the default,
-or `OFF` to select the safe Default-Speed policy. Release builds set ON explicitly.
-This option does not change SYSCLK or qualify an overclock. Historical measurements are in the
+Use the saved Default profile for Default-Speed operation or High-Speed to request negotiation.
+Neither profile qualifies an overclock. Historical measurements are in the
 [test records](../../tests/records/README.md).
 
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
@@ -708,7 +706,7 @@ The default CMake transport is SDIO-PIO. The saved storage-speed setting request
 it is a target, not a guaranteed bus rate. At 150 MHz SYSCLK, native Default Speed is exactly 25 MHz and a 50 MHz
 High-Speed request is limited to 37.5 MHz. Negotiation and the controlled default-speed fallback are described in
 [native transfer clock](#native-transfer-clock). SPI's zero clock request selects 25 MHz. See
-[board.c](../../../firmware/src/config/board.c) for authoritative pin/controller assignments
+[board configuration](../../../firmware/src/config/) for authoritative pin/controller assignments
 and [storage wiring](sdcard-physical-links.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 

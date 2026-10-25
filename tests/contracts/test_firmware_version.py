@@ -85,10 +85,11 @@ def test_firmware_scripts_pass_version_to_cmake(tmp_path, environment_version, a
         env=env, capture_output=True, text=True, check=True,
     )
     assert f"-DPF_FIRMWARE_VERSION={expected}" in log.read_text().splitlines()
+    assert "-DPF_ENABLE_STORAGE_BENCHMARK=ON" in log.read_text().splitlines()
 
 
 @pytest.mark.parametrize("policy", ["ON", "OFF"])
-def test_build_script_passes_explicit_sdio_policy(tmp_path, policy):
+def test_build_script_does_not_forward_removed_sdio_policy(tmp_path, policy):
     sdk = tmp_path / "sdk/external"
     sdk.mkdir(parents=True)
     (sdk / "pico_sdk_import.cmake").touch()
@@ -106,9 +107,10 @@ def test_build_script_passes_explicit_sdio_policy(tmp_path, policy):
                     "--pico-sdk-path", str(sdk.parent)],
                    env=env, check=True, capture_output=True, text=True)
     arguments = log.read_text().splitlines()
-    assert f"-DPF_SDIO_PIO_HIGH_SPEED={policy}" in arguments
-    assert "-DPF_SYS_CLK_MHZ=0" in arguments
+    assert not any(argument.startswith("-DPF_SDIO_PIO_HIGH_SPEED=") for argument in arguments)
+    assert not any(argument.startswith("-DPF_SYS_CLK_MHZ=") for argument in arguments)
     assert "-DPF_SDCARD_PORT=FREERTOS" in arguments
+    assert "-DPF_ENABLE_STORAGE_BENCHMARK=ON" in arguments
     assert "-DPF_SDCARD_TRANSPORT=SPI" in arguments
     assert str(ROOT / "build/firmware-pico-SPI") in arguments
 

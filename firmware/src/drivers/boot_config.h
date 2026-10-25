@@ -2,7 +2,7 @@
  * @file boot_config.h
  * @brief Boot settings loaded before scheduling, then owned by the USB task.
  *
- * Both profile getters and their MHz wrappers share first-use loading: normally the boot clock hook loads flash
+ * Both profile getters and their MHz wrappers share first-use loading: normally the start of main() loads flash
  * before scheduling; a running task can also load it. Unsafe first calls return defaults and leave loading pending.
  *
  * This API is not thread-safe. After boot, mutations and saves must be serialized in the USB task.

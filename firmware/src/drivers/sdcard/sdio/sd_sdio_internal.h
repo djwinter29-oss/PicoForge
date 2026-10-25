@@ -11,11 +11,6 @@
 
 /** Default-Speed transfer target; the PIO divider rounds down when not exactly representable. */
 #define PF_SD_SDIO_TRANSFER_CLOCK_HZ 25000000u
-/** Permit optional card High-Speed negotiation; CMake supplies the production value. */
-#ifndef PF_SD_SDIO_HIGH_SPEED
-#define PF_SD_SDIO_HIGH_SPEED 0
-#endif
-
 /** Initialization diagnostic stages; retained numeric values include legacy coarse stages. */
 typedef enum {
     PF_SD_SDIO_INIT_STAGE_NONE = 0, /**< No initialization failure. */

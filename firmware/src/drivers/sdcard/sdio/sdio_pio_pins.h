@@ -19,7 +19,7 @@ typedef struct {
     bool card_detect_active_high; /**< Detect input polarity. */
 } pf_sdio_pio_board_pins_t;
 
-/** Board assignment defined in config/board.c; used only by the SDIO-PIO SD binding. */
+/** Board assignment defined in config/board_sdio.c; used only by the SDIO-PIO SD binding. */
 extern const pf_sdio_pio_board_pins_t pf_sdio_pio_board_pins;
 
 #endif
