@@ -160,8 +160,10 @@ The board pin/peripheral profile is immutable and selected at build time; firmwa
 instead of repeating pin-range, mux, and collision validation at runtime. Wiring must agree with
 [the hardware setup baseline](../hardware-setup.md) and the board schematic. Boot-applied settings and their public
 load/save API live in `firmware/src/drivers/boot_config.c/.h`; RP2 flash persistence and FreeRTOS-safe access live in
-`firmware/src/platform/boot_config_store.c/.h`. Board pin mapping lives in `firmware/src/config/board.c`; each build-selected
-profile contains only its SDIO-PIO or SPI wiring. Physical card operation still needs board validation.
+`firmware/src/platform/boot_config_store.c/.h`. Board pin mapping lives in `firmware/src/config/board.c` as plain data: it
+describes the storage connector's SDIO-PIO and SPI wiring, and only the SD driver selects one. Both request the saved
+storage speed; card negotiation and hardware divider rounding determine the actual clock. Physical card operation
+still needs board validation.
 
 ## External Components
 
@@ -190,7 +192,8 @@ backend-neutral snapshot (state, medium, bus and pins, presence, clock, capacity
 includes no driver headers so another medium can implement the same API.
 Layers above middleware treat storage as a filesystem that can be exported as USB MSC, and use only this service:
 the CLI `storage status` and the HID board/storage reports are built from that snapshot.
-The CDC `storage`/`fs` commands live in `app/cli/cli_storage.c/.h` and are executed by the worker. Application storage
+The CDC `storage`/`fs` commands live in `app/cli/cli_storage.c/.h`; the USB task registers `pf_cli_storage_execute`
+with `pf_storage_worker_init()`, so the worker runs commands without depending on the CLI. Application storage
 stays in `app/storage`: `file_benchmark.c/.h` verifies and times a dedicated file, and `storage_worker.c/.h` is the sole FatFs executor that
 serializes requests and runs the storage policy while idle.
 The worker calls `pf_storage_setup()` before task startup; the USB task no longer configures SD. Command and worker

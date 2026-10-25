@@ -35,7 +35,7 @@ void setUp(void)
     replies = (void *)2;
     cli_session = 9u;
     test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
-    test_sd_speed = saved_sd_speed = PF_SD_SPEED_DEFAULT;
+    test_sd_speed = saved_sd_speed = PF_STORAGE_SPEED_DEFAULT;
     settings_save_calls = 0u;
     settings_save_fails = false;
     reset_requests = 0u;
@@ -179,25 +179,25 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     TEST_ASSERT_EQUAL_UINT8(2u, result.status);
     TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
     TEST_ASSERT_EQUAL(PF_SYSCLK_150MHZ, saved_sysclk);
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_HIGH, saved_sd_speed);
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_HIGH, saved_sd_speed);
     TEST_ASSERT_EQUAL_UINT16(150u, result.result_data[0] | ((uint16_t)result.result_data[1] << 8u));
     TEST_ASSERT_EQUAL_UINT8(1u, result.result_data[2]);
 
     /* Rejected or failed saves leave the RAM copy equal to the saved one. */
     test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
-    test_sd_speed = saved_sd_speed = PF_SD_SPEED_DEFAULT;
+    test_sd_speed = saved_sd_speed = PF_STORAGE_SPEED_DEFAULT;
     send_control(10u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_profile);
     TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
     send_control(13u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_clock);
     TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
 
     settings_save_fails = true;
     send_control(11u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     TEST_ASSERT_EQUAL_UINT8(6u, read_control_result().status);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
 
     busy = true;
     send_control(12u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);

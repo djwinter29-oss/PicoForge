@@ -4,22 +4,35 @@
 #ifndef PF_STORAGE_WORKER_H
 #define PF_STORAGE_WORKER_H
 
+#include <stdbool.h>
 #include <stdint.h>
-#include "app/cli/cli_storage.h"
 #include "file_benchmark.h"
+
+/** Maximum command argument storage, including tokenizer terminators. */
+#define PF_STORAGE_WORKER_ARGS_SIZE 128u
+/** Maximum reply line storage, including the terminator. */
+#define PF_STORAGE_WORKER_REPLY_SIZE 256u
+
+/** Emit one reply line synchronously. Return false to cancel further read-only output. */
+typedef bool (*pf_storage_worker_reply_fn_t)(const char *line, void *context);
+
+/** Command executor run on the worker task; strings and @p context are borrowed for the call. */
+typedef void (*pf_storage_worker_execute_fn_t)(bool host_owned, const char *family, const char *arguments,
+                                               pf_storage_worker_reply_fn_t reply, void *context);
 
 /** One queued command output line or completion marker. */
 typedef struct {
     uint32_t session; /**< Originating CDC session; stale output must be discarded. */
     bool done; /**< Completion marker; draining it releases command admission. */
-    char line[PF_CLI_STORAGE_REPLY_SIZE]; /**< NUL-terminated output; unused for completion. */
+    char line[PF_STORAGE_WORKER_REPLY_SIZE]; /**< NUL-terminated output; unused for completion. */
 } pf_storage_worker_reply_t;
 
 /** Create the statically allocated sole FatFs worker before the scheduler starts.
  * SD configuration and execution-port setup come from board support. Missing SD
  * configuration permits status commands but prevents mounting.
+ * @param execute Runs each submitted command on the worker; must not be NULL.
  */
-bool pf_storage_worker_init(void);
+bool pf_storage_worker_init(pf_storage_worker_execute_fn_t execute);
 
 /** Submit one command from the USB task; false means busy or invalid input.
  * Strings are copied. Caller must supply current MSC ownership and session ID.

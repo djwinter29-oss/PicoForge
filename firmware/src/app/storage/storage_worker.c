@@ -25,7 +25,7 @@ typedef struct {
     bool return_from_usb; /**< Attempt one mount after a confirmed forced USB detach. */
     bool unmount_for_usb; /**< Unregister FatFs for the pending USB ownership transition. */
     char family[8]; /**< Command family: storage or fs. */
-    char arguments[PF_CLI_STORAGE_ARGS_SIZE]; /**< Copied command arguments. */
+    char arguments[PF_STORAGE_WORKER_ARGS_SIZE]; /**< Copied command arguments. */
 } storage_request_t;
 
 static StaticTask_t worker_control;
@@ -36,6 +36,7 @@ static uint8_t request_storage[sizeof(storage_request_t)];
 static uint8_t reply_storage[STORAGE_REPLY_COUNT * sizeof(pf_storage_worker_reply_t)];
 static QueueHandle_t requests;
 static QueueHandle_t replies;
+static pf_storage_worker_execute_fn_t execute; /**< Command executor registered at init. */
 static bool config_available;
 static bool busy;
 static uint32_t active_session;
@@ -145,8 +146,7 @@ static void return_from_usb(void)
 static void execute_command(storage_request_t *request)
 {
     bool previously_mounted = pf_fatfs_volume_is_mounted();
-    pf_cli_storage_execute(request->host_owned, request->family, request->arguments,
-                           send_reply, request);
+    execute(request->host_owned, request->family, request->arguments, send_reply, request);
     pf_storage_note_command(previously_mounted);
     pf_storage_worker_reply_t reply = { .session = request->session, .done = true };
     (void)xQueueSend(replies, &reply, portMAX_DELAY);
@@ -221,11 +221,12 @@ static void storage_task(void *context)
     }
 }
 
-bool pf_storage_worker_init(void)
+bool pf_storage_worker_init(pf_storage_worker_execute_fn_t executor)
 {
-    if (requests != NULL) {
+    if ((requests != NULL) || (executor == NULL)) {
         return false;
     }
+    execute = executor;
     pf_block_result_t setup_result = pf_storage_setup();
     if (setup_result != PF_BLOCK_OK && setup_result != PF_BLOCK_NOT_READY) {
         return false;
@@ -246,7 +247,7 @@ bool pf_storage_worker_submit(const char *family, const char *arguments,
 
     refresh_benchmark_completion();
     if ((requests == NULL) || (family == NULL) || (arguments == NULL) ||
-        ((strcmp(family, "storage") != 0) && (strcmp(family, "fs") != 0)) ||
+        (strlen(family) >= sizeof(request.family)) ||
         (strlen(arguments) > sizeof(request.arguments) - 2u)) {
         return false;
     }

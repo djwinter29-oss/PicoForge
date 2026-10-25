@@ -17,7 +17,7 @@ typedef struct {
     uint32_t spi_index; /**< SPI controller. */
 } pf_spi_board_t;
 
-/** Build-selected assignment, defined in config/board.c when SD-SPI is selected. */
+/** Board assignment, defined in config/board.c; used only when the build selects SD-SPI. */
 extern const pf_spi_board_t pf_spi_board;
 
 #endif

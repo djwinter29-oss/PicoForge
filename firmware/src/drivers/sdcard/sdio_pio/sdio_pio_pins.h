@@ -16,7 +16,7 @@ typedef struct {
     uint32_t pio_index; /**< PIO block. */
 } pf_sdio_pio_board_t;
 
-/** Build-selected assignment, defined in config/board.c when SDIO-PIO is selected. */
+/** Board assignment, defined in config/board.c; used only when the build selects SDIO-PIO. */
 extern const pf_sdio_pio_board_t pf_sdio_pio_board;
 
 #endif

@@ -76,7 +76,7 @@ pf_sd_result_t pf_sd_native_write_blocks(uint32_t l,const void *b,uint32_t n)
 }
 pf_sd_result_t pf_sd_native_sync(void)
 { ++syncs; TEST_ASSERT_FALSE(uncertain); return sync_error; }
-void pf_sd_board_pins(uint8_t g[6], uint8_t *d) { memset(g,0xff,6); *d=0xff; }
+pf_sd_link_mode_t pf_sd_board_pins(uint8_t g[6], uint8_t *d) { memset(g,0xff,6); *d=0xff; return PF_SD_LINK_NATIVE_SD; }
 static void msc_batch_regression(void)
 {
  pf_sd_config_t c={.transport.mode=TEST_TRANSPORT};

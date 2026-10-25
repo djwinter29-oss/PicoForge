@@ -190,7 +190,7 @@ be serviced by the same task.
 [The static storage worker](../../../firmware/src/app/storage/storage_worker.c)
 is the sole FatFs caller for CLI operations. It uses an 8 KiB stack, a one-request
 queue, and eight 256-byte reply slots. [The command dispatcher](../../../firmware/src/app/cli/cli_storage.c)
-has no RTOS or USB dependency. The worker sends bounded lines through the queue;
+has no RTOS or USB dependency; the USB task registers it with the worker at startup. The worker sends bounded lines through the queue;
 only the USB task calls CLI print APIs. Replies carry a session ID so old output
 does not leak into a newly opened terminal. Backpressure suspends the worker,
 not the USB task. Disconnect cancellation releases read-only output backpressure;

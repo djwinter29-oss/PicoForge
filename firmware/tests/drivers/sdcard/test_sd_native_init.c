@@ -123,9 +123,8 @@ bool pf_sd_native_host_set_clock(pf_sd_native_host_t *host, uint32_t hz)
     }
     TEST_ASSERT_LESS_THAN_UINT(4u, clock_request_count);
     clock_requests[clock_request_count++] = hz;
-    if (hz > SD_HIGH_CLOCK_HZ) return false;
-    test_wire.current_clock_hz = hz;
-    return true;
+    test_wire.system_clock_hz = pf_test_sdio_system_clock_hz;
+    return pf_sdio_pio_set_clock(&test_wire, hz);
 }
 bool pf_sd_native_host_prepare_initialization(pf_sd_native_host_t *host)
 {
@@ -286,7 +285,7 @@ void test_init_config_validation_accepts_supported_clocks_and_rejects_bounds(voi
     config.clock_hz = 1000000u;
     TEST_ASSERT_FALSE(config_is_valid(&config));
     config.clock_hz = 50000000u;
-    TEST_ASSERT_FALSE(config_is_valid(&config));
+    TEST_ASSERT_TRUE(config_is_valid(&config));
     config.clock_hz = 25000000u;
     TEST_ASSERT_TRUE(config_is_valid(&config));
     config.clock_hz = 399999u;
@@ -367,7 +366,7 @@ void test_transfer_validation_checks_32_bit_sector_overflow(void)
 
 void test_card_init_validates_one_sector_without_high_speed_on_slow_cpu(void)
 {
-    active_config.clock_hz = 0u;
+    active_config.clock_hz = 50000000u;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
     TEST_ASSERT_EQUAL_UINT(1u, recovery_calls);
@@ -381,29 +380,61 @@ void test_card_init_validates_one_sector_without_high_speed_on_slow_cpu(void)
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_HOST_STATE, native_info.high_speed_error);
 }
 
-void test_high_speed_is_attempted_whenever_the_transport_can_exceed_25mhz(void)
+void test_requested_high_speed_uses_the_closest_safe_rate_for_each_system_clock(void)
 {
     const uint32_t system_clocks[] = {125000000u, 150000000u, 200000000u, 250000000u};
+    const uint32_t actual_clocks[] = {31250000u, 37500000u, 50000000u, 50000000u};
     for (unsigned index = 0u; index < sizeof(system_clocks) / sizeof(system_clocks[0]); ++index) {
         setUp();
         pf_test_sdio_system_clock_hz = system_clocks[index];
+        active_config.clock_hz = 50000000u;
         TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
         TEST_ASSERT_EQUAL_UINT(2u, switch_calls);
         TEST_ASSERT_EQUAL_UINT(3u, clock_request_count);
         TEST_ASSERT_EQUAL_UINT32(50000000u, clock_requests[2]);
         TEST_ASSERT_TRUE(native_info.high_speed);
         TEST_ASSERT_EQUAL(PF_SD_DETAIL_NONE, native_info.high_speed_error);
+        pf_sd_info_t info;
+        pf_sd_native_get_info(&info);
+        TEST_ASSERT_EQUAL_UINT32(50000000u, info.requested_clock_hz);
+        TEST_ASSERT_EQUAL_UINT32(actual_clocks[index], info.bus_clock_hz);
     }
 }
 
 void test_default_speed_only_config_never_negotiates_high_speed(void)
 {
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     active_config.native_default_speed_only = true;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
     TEST_ASSERT_EQUAL_UINT(2u, clock_request_count);
     TEST_ASSERT_FALSE(native_info.high_speed);
+}
+
+void test_default_clock_request_never_negotiates_high_speed_on_a_fast_cpu(void)
+{
+    const uint32_t requests[] = {0u, 25000000u};
+    for (unsigned index = 0u; index < sizeof(requests) / sizeof(requests[0]); ++index) {
+        setUp();
+        pf_test_sdio_system_clock_hz = 250000000u;
+        active_config.clock_hz = requests[index];
+        TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+        TEST_ASSERT_EQUAL_UINT(0u, switch_calls);
+        TEST_ASSERT_EQUAL_UINT32(25000000u, test_wire.current_clock_hz);
+        TEST_ASSERT_FALSE(native_info.high_speed);
+    }
+}
+
+void test_default_speed_accepts_a_transport_that_cannot_reach_25mhz(void)
+{
+    pf_test_sdio_system_clock_hz = 80000000u;
+    TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
+    pf_sd_info_t info;
+    pf_sd_native_get_info(&info);
+    TEST_ASSERT_EQUAL_UINT32(25000000u, info.requested_clock_hz);
+    TEST_ASSERT_EQUAL_UINT32(20000000u, info.bus_clock_hz);
+    TEST_ASSERT_FALSE(info.high_speed);
 }
 
 void test_card_init_failure_does_not_retry_at_other_clocks(void)
@@ -416,9 +447,9 @@ void test_card_init_failure_does_not_retry_at_other_clocks(void)
     TEST_ASSERT_EQUAL_UINT(0u, reads);
 }
 
-void test_fixed_clock_rejects_other_requests_before_card_commands(void)
+void test_unsupported_clock_request_is_rejected_before_card_commands(void)
 {
-    active_config.clock_hz = 50000000u;
+    active_config.clock_hz = 50000001u;
     TEST_ASSERT_EQUAL(PF_SD_INVALID_ARGUMENT, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(0u, card_init_calls);
     TEST_ASSERT_EQUAL_UINT(0u, recovery_calls);
@@ -538,6 +569,7 @@ void test_response_crc_index_status_csd_and_width_failures_are_distinct(void)
 void test_default_speed_lba_zero_failure_aborts_before_high_speed_attempt(void)
 {
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     fail_default_read = true;
     TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(1u, validation_reads);
@@ -552,6 +584,7 @@ void test_default_speed_lba_zero_failure_aborts_before_high_speed_attempt(void)
 void test_opt_in_high_speed_checks_support_selection_and_validates_lba_zero(void)
 {
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(2u, switch_calls);
     TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
@@ -576,6 +609,7 @@ void test_opt_in_high_speed_checks_support_selection_and_validates_lba_zero(void
 void test_high_speed_failure_has_one_controlled_default_timing_fallback(void)
 {
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     fail_high_speed_read = true;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(3u, switch_calls);
@@ -590,6 +624,7 @@ void test_high_speed_failure_has_one_controlled_default_timing_fallback(void)
 void test_unsupported_or_rejected_high_speed_is_nonfatal_at_25mhz(void)
 {
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     high_speed_supported = false;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(1u, switch_calls);
@@ -597,6 +632,7 @@ void test_unsupported_or_rejected_high_speed_is_nonfatal_at_25mhz(void)
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_HIGH_SPEED_UNSUPPORTED, native_info.high_speed_error);
     setUp();
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     high_speed_selected = false;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
@@ -641,6 +677,7 @@ void test_r6_errors_and_zero_rca_are_rejected(void)
 void test_failed_50mhz_and_25mhz_validation_aborts_without_a_second_fallback(void)
 {
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     fail_high_speed_read = true;
     fail_validation_read = 3u;
     TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));
@@ -653,6 +690,7 @@ void test_failed_50mhz_and_25mhz_validation_aborts_without_a_second_fallback(voi
 void test_cmd6_check_crc_failure_requires_proven_default_speed_operation(void)
 {
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     fail_switch_check = true;
     TEST_ASSERT_EQUAL(PF_SD_OK, pf_sd_native_init(&active_config));
     TEST_ASSERT_EQUAL_UINT(2u, validation_reads);
@@ -660,6 +698,7 @@ void test_cmd6_check_crc_failure_requires_proven_default_speed_operation(void)
     TEST_ASSERT_EQUAL(PF_SD_DETAIL_DATA_CRC, native_info.high_speed_error);
     setUp();
     pf_test_sdio_system_clock_hz = 250000000u;
+    active_config.clock_hz = 50000000u;
     fail_switch_check = true;
     fail_validation_read = 2u;
     TEST_ASSERT_EQUAL(PF_SD_INIT_FAILED, pf_sd_native_init(&active_config));

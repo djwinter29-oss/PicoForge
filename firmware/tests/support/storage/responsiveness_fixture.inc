@@ -7,7 +7,7 @@
 #include HID_SOURCE
 #include USB_TASK_SOURCE
 static pf_sysclk_profile_t test_sysclk, saved_sysclk;
-static pf_sd_speed_t test_sd_speed, saved_sd_speed;
+static pf_storage_speed_t test_sd_speed, saved_sd_speed;
 static unsigned settings_save_calls;
 static bool settings_save_fails;
 static bool msc_enabled;
@@ -16,7 +16,7 @@ const pf_led_board_t pf_led_board = {.gpio = 25u, .active_high = true};
 const pf_monitor_uart_board_t pf_monitor_uart_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void) { return test_sysclk; }
-pf_sd_speed_t pf_boot_config_sd_speed(void) { return test_sd_speed; }
+pf_storage_speed_t pf_boot_config_storage_speed(void) { return test_sd_speed; }
 
 bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile)
 {
@@ -27,9 +27,9 @@ bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile)
     return true;
 }
 
-bool pf_boot_config_set_sd_speed(pf_sd_speed_t speed)
+bool pf_boot_config_set_storage_speed(pf_storage_speed_t speed)
 {
-    if (speed != PF_SD_SPEED_DEFAULT && speed != PF_SD_SPEED_HIGH) {
+    if (speed != PF_STORAGE_SPEED_DEFAULT && speed != PF_STORAGE_SPEED_HIGH) {
         return false;
     }
     test_sd_speed = speed;

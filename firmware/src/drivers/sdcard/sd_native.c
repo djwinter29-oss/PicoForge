@@ -47,9 +47,8 @@ static bool config_is_valid(const pf_sd_config_t *config)
         return false;
     }
 
-    return (config->clock_hz == 0u || config->clock_hz == PF_SD_NATIVE_TRANSFER_CLOCK_HZ) &&
-           PF_SD_NATIVE_TRANSFER_CLOCK_HZ <=
-               pf_sd_link_wire_state(&config->transport).maximum_clock_hz;
+    return config->clock_hz == 0u || config->clock_hz == PF_SD_NATIVE_TRANSFER_CLOCK_HZ ||
+           config->clock_hz == SD_HIGH_CLOCK_HZ;
 }
 
 static bool command_response(uint8_t command, uint32_t argument, uint8_t response[6],
@@ -121,7 +120,7 @@ static bool select_transfer_speed(uint32_t card_address)
 {
     uint8_t status[PF_SD_NATIVE_SWITCH_STATUS_SIZE];
     native_info.high_speed_error = PF_SD_DETAIL_NONE;
-    if (active_config.native_default_speed_only ||
+    if (active_config.clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ || active_config.native_default_speed_only ||
         pf_sd_link_wire_state(&active_config.transport).maximum_clock_hz <= PF_SD_NATIVE_TRANSFER_CLOCK_HZ) {
         native_info.high_speed_error = PF_SD_DETAIL_HOST_STATE;
         return true;
@@ -154,8 +153,8 @@ static bool select_transfer_speed(uint32_t card_address)
     /* ponytail: 1 ms settling qualifies the lab card; add card-specific readiness if this ceiling is insufficient. */
     pf_sd_link_delay_ms(&active_config.transport, 1u);
     native_info.high_speed = true;
-    native_info.requested_clock_hz = SD_HIGH_CLOCK_HZ;
-    if (pf_sd_native_host_set_clock(&native_host, SD_HIGH_CLOCK_HZ) &&
+    native_info.requested_clock_hz = active_config.clock_hz;
+    if (pf_sd_native_host_set_clock(&native_host, active_config.clock_hz) &&
         validate_transfer(card_address)) {
         return true;
     }

@@ -15,7 +15,8 @@ static pf_sd_result_t bind_and_initialize(const pf_sd_config_t *config)
     media_config = *config;
     return initialize_media();
 }
-void pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio) { (void)bus_gpios; (void)detect_gpio; }
+pf_sd_link_mode_t pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio)
+{ (void)bus_gpios; (void)detect_gpio; return PF_SD_LINK_NATIVE_SD; }
 
 static bool initialized;
 static unsigned reads, writes, syncs;

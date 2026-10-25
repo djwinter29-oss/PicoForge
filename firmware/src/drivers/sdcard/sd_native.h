@@ -6,7 +6,7 @@
 
 #include "sd.h"
 
-/** Fixed transfer target; integer PIO divider rounds down when not exactly representable. */
+/** Default-Speed transfer target; the PIO divider rounds down when not exactly representable. */
 #define PF_SD_NATIVE_TRANSFER_CLOCK_HZ 25000000u
 /** Compatibility name for the default transfer limit. */
 #define PF_SD_NATIVE_DEFAULT_CLOCK_MAX_HZ PF_SD_NATIVE_TRANSFER_CLOCK_HZ
@@ -53,8 +53,8 @@ typedef enum {
  * The configuration is retained for the lifetime of the firmware and cannot be
  * changed after first use. Repeating the same call retries card initialization.
  * Legacy/SDSC cards are rejected. No user sectors are written. High Speed is
- * disabled unless PF_SD_NATIVE_HIGH_SPEED is enabled at build time; that path
- * requests up to 50 MHz (the transport clamps to its ceiling and skips High Speed
+ * disabled unless a 50 MHz target is requested and PF_SD_NATIVE_HIGH_SPEED is enabled at build time; that path
+ * requests 50 MHz (the transport clamps to its ceiling and skips High Speed
  * when that is not above 25 MHz) and permits one fallback to 25 MHz at startup,
  * never runtime transfer replay.
  */

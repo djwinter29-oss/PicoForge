@@ -158,11 +158,12 @@ static void info_stub(pf_sd_info_t *info, int calls)
 void test_status_reports_board_fields_without_blocking_and_maps_lifecycle_states(void)
 {
     pf_storage_status_t status;
-    pf_sd_board_pins_Ignore();
+    pf_sd_board_pins_IgnoreAndReturn(PF_SD_LINK_SPI);
     configured = false;
     pf_storage_get_status(&status);
     TEST_ASSERT_EQUAL(PF_STORAGE_STATE_NOT_CONFIGURED, status.state);
     TEST_ASSERT_EQUAL(PF_STORAGE_MEDIUM_SDCARD, status.medium);
+    TEST_ASSERT_EQUAL(PF_STORAGE_BUS_SPI, status.bus);
     configured = true;
     pf_sd_try_lock_ExpectAndReturn(false);
     pf_storage_get_status(&status);

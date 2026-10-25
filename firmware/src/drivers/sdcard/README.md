@@ -135,7 +135,7 @@ common-interface initialization failures and deinitialization, so reinitializati
 engines. These are alternative modes of the shared pins, not permission to attach multiple active devices. DET remains
 a board/card-presence input.
 
-[Board support](../../config/board.c) supplies the immutable pin numbers for the selected transport.
+[Board support](../../config/board.c) supplies the immutable pins and controller selection for both transports.
 [sd_board.c](sd_board.c) owns the selected static SD transport context, applies the active boot-config clock, and
 prepares card-detect GPIO/pulls from that profile. Its descriptor carries an optional board presence callback; without one, presence is unknown and
 media is assumed present. Repeated configuration queries do not reset a live transport.
@@ -145,8 +145,9 @@ media is assumed present. Repeated configuration queries do not reset a live tra
 [sdio_pio_pins.h](sdio_pio/sdio_pio_pins.h) and [spi_pins.h](spi/spi_pins.h) define their backend-specific signal
 allocations; [sdio_pio.h](sdio_pio/sdio_pio.h) and [spi.h](spi/spi.h) define the corresponding controller interfaces.
 [sd_link.h](link/sd_link.h) contains only the common runtime link interface. Native DAT0-DAT3 are an explicit array in logical
-order, and the SDIO-PIO backend checks their ascending, consecutive mapping. The board profile contains only the
-configuration for the build-selected transport, alongside shared UART, LED, and card-detect resources. DET polarity
+order, and the SDIO-PIO backend checks their ascending, consecutive mapping. The board profile describes both
+transports, alongside shared UART, LED, and card-detect resources; [sd_board.c](sd_board.c) uses the build-selected
+one. DET polarity
 and pulls remain board configuration.
 
 Board integration copies the selected allocation into its static transport context. Mutable clock settings,

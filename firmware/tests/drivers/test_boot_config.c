@@ -73,6 +73,15 @@ void setUp(void)
 
 void tearDown(void) {}
 
+void test_profile_conversions_report_mhz_and_fall_back_for_unknown_values(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(200u, pf_sysclk_profile_mhz(PF_SYSCLK_200MHZ));
+    TEST_ASSERT_EQUAL_UINT16(0u, pf_sysclk_profile_mhz((pf_sysclk_profile_t)4));
+    TEST_ASSERT_EQUAL_UINT8(25u, pf_storage_speed_mhz(PF_STORAGE_SPEED_DEFAULT));
+    TEST_ASSERT_EQUAL_UINT8(50u, pf_storage_speed_mhz(PF_STORAGE_SPEED_HIGH));
+    TEST_ASSERT_EQUAL_UINT8(25u, pf_storage_speed_mhz((pf_storage_speed_t)2));
+}
+
 void test_crc32_matches_the_standard_check_value(void)
 {
     TEST_ASSERT_EQUAL_HEX32(0xcbf43926u, crc32((const uint8_t *)"123456789", 9u));
@@ -81,30 +90,30 @@ void test_crc32_matches_the_standard_check_value(void)
 void test_erased_storage_gives_sdk_clock_and_default_sd_speed(void)
 {
     TEST_ASSERT_EQUAL(PF_SYSCLK_DEFAULT, pf_boot_config_sysclk());
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, pf_boot_config_sd_speed());
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, pf_boot_config_storage_speed());
 }
 
 void test_early_load_reads_the_saved_record(void)
 {
     store(200u, 50u, 50u);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, pf_boot_config_sysclk());
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_HIGH, pf_boot_config_sd_speed());
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_HIGH, pf_boot_config_storage_speed());
 }
 
 void test_legacy_single_transport_record_reads_high_from_either_field(void)
 {
     store(0u, 50u, 0u);
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_HIGH, pf_boot_config_sd_speed());
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_HIGH, pf_boot_config_storage_speed());
     reboot();
     store(0u, 0u, 50u);
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_HIGH, pf_boot_config_sd_speed());
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_HIGH, pf_boot_config_storage_speed());
 }
 
 void test_legacy_zero_sd_field_reads_as_default(void)
 {
     store(150u, 0u, 0u);
     TEST_ASSERT_EQUAL(PF_SYSCLK_150MHZ, pf_boot_config_sysclk());
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, pf_boot_config_sd_speed());
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, pf_boot_config_storage_speed());
 }
 
 void test_runtime_first_access_falls_back_to_the_task_read(void)
@@ -118,9 +127,9 @@ void test_setters_reject_unsupported_values_without_changing_the_configuration(v
 {
     TEST_ASSERT_FALSE(pf_boot_config_set_sysclk((pf_sysclk_profile_t)4));
     TEST_ASSERT_FALSE(pf_boot_config_set_sysclk((pf_sysclk_profile_t)-1));
-    TEST_ASSERT_FALSE(pf_boot_config_set_sd_speed((pf_sd_speed_t)2));
+    TEST_ASSERT_FALSE(pf_boot_config_set_storage_speed((pf_storage_speed_t)2));
     TEST_ASSERT_EQUAL(PF_SYSCLK_DEFAULT, pf_boot_config_sysclk());
-    TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, pf_boot_config_sd_speed());
+    TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, pf_boot_config_storage_speed());
 }
 
 void test_save_writes_the_v1_layout_and_survives_reboot(void)
@@ -131,7 +140,7 @@ void test_save_writes_the_v1_layout_and_survives_reboot(void)
             reboot();
             before_scheduler = false;
             TEST_ASSERT_TRUE(pf_boot_config_set_sysclk((pf_sysclk_profile_t)i));
-            TEST_ASSERT_TRUE(pf_boot_config_set_sd_speed((pf_sd_speed_t)speed));
+            TEST_ASSERT_TRUE(pf_boot_config_set_storage_speed((pf_storage_speed_t)speed));
             TEST_ASSERT_TRUE(pf_boot_config_save());
             const uint8_t sd_mhz = speed != 0u ? 50u : 25u;
             TEST_ASSERT_EQUAL_HEX8_ARRAY(((uint8_t[]){'P', 'F', 'C', 'F', 1, 0, 16, 0,
@@ -139,7 +148,7 @@ void test_save_writes_the_v1_layout_and_survives_reboot(void)
                                          stored_bytes, 12);
             reboot();
             TEST_ASSERT_EQUAL(i, pf_boot_config_sysclk());
-            TEST_ASSERT_EQUAL(speed, pf_boot_config_sd_speed());
+            TEST_ASSERT_EQUAL(speed, pf_boot_config_storage_speed());
         }
     }
 }
@@ -166,6 +175,6 @@ void test_corrupt_or_unknown_records_give_defaults(void)
         }
         reboot();
         TEST_ASSERT_EQUAL(PF_SYSCLK_DEFAULT, pf_boot_config_sysclk());
-        TEST_ASSERT_EQUAL(PF_SD_SPEED_DEFAULT, pf_boot_config_sd_speed());
+        TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, pf_boot_config_storage_speed());
     }
 }

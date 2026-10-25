@@ -33,7 +33,7 @@ _Static_assert(sizeof(record_t) == 16u && offsetof(record_t, crc) == 12u, "v1 re
 /** RAM copy of the configuration; all-zero is the complete default. */
 typedef struct {
     pf_sysclk_profile_t sysclk; /**< System clock profile. */
-    pf_sd_speed_t sd_speed; /**< Shared SD-card speed profile. */
+    pf_storage_speed_t sd_speed; /**< Shared SD-card speed profile. */
 } boot_config_t;
 
 static boot_config_t config; /**< Configuration returned by the getters and written by save. */
@@ -60,7 +60,7 @@ static uint32_t crc32(const void *data, size_t size)
 
 static void encode(const boot_config_t *in, record_t *record)
 {
-    const uint8_t sd_mhz = in->sd_speed == PF_SD_SPEED_HIGH ? 50u : 25u;
+    const uint8_t sd_mhz = pf_storage_speed_mhz(in->sd_speed);
     *record = (record_t){
         .magic = MAGIC,
         .version = FORMAT_VERSION,
@@ -86,7 +86,8 @@ static bool decode(const record_t *record, boot_config_t *out)
     }
     *out = (boot_config_t){
         .sysclk = sysclk,
-        .sd_speed = record->sdio_bus_mhz == 50u || record->spi_bus_mhz == 50u ? PF_SD_SPEED_HIGH : PF_SD_SPEED_DEFAULT,
+        .sd_speed = record->sdio_bus_mhz == 50u || record->spi_bus_mhz == 50u ? PF_STORAGE_SPEED_HIGH :
+                                                                               PF_STORAGE_SPEED_DEFAULT,
     };
     return true;
 }
@@ -127,16 +128,16 @@ bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile)
     return true;
 }
 
-pf_sd_speed_t pf_boot_config_sd_speed(void)
+pf_storage_speed_t pf_boot_config_storage_speed(void)
 {
     ensure_loaded();
     return config.sd_speed;
 }
 
-bool pf_boot_config_set_sd_speed(pf_sd_speed_t speed)
+bool pf_boot_config_set_storage_speed(pf_storage_speed_t speed)
 {
     ensure_loaded();
-    if (speed != PF_SD_SPEED_DEFAULT && speed != PF_SD_SPEED_HIGH) {
+    if (speed != PF_STORAGE_SPEED_DEFAULT && speed != PF_STORAGE_SPEED_HIGH) {
         return false;
     }
     config.sd_speed = speed;

@@ -28,7 +28,7 @@ static bool card_present(const void *context)
 
 bool pf_sd_board_config(pf_sd_config_t *config)
 {
-    const bool high_speed = pf_boot_config_sd_speed() == PF_SD_SPEED_HIGH;
+    const uint32_t speed_hz = pf_storage_speed_mhz(pf_boot_config_storage_speed()) * 1000000u;
 
     if (config == NULL) {
         return false;
@@ -53,14 +53,13 @@ bool pf_sd_board_config(pf_sd_config_t *config)
 #if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
     *config = (pf_sd_config_t){
         .transport = pf_sdio_pio_bus(&sd_transport),
-        .clock_hz = pf_sd_board.clock_hz,
-        .native_default_speed_only = !high_speed,
+        .clock_hz = speed_hz,
+        .native_default_speed_only = speed_hz <= 25000000u,
     };
 #else
-    const uint32_t speed_hz = high_speed ? 50000000u : 25000000u;
     *config = (pf_sd_config_t){
         .transport = pf_spi_bus(&sd_transport),
-        .clock_hz = speed_hz < pf_sd_board.clock_hz ? speed_hz : pf_sd_board.clock_hz,
+        .clock_hz = speed_hz,
     };
 #endif
     config->transport.present = card_present;
@@ -73,7 +72,7 @@ static uint8_t pin_byte(uint32_t gpio)
     return gpio > UINT8_MAX - 1u ? UINT8_MAX : (uint8_t)gpio;
 }
 
-void pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio)
+pf_sd_link_mode_t pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio)
 {
     memset(bus_gpios, UINT8_MAX, 6u);
 #if PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SDIO_PIO
@@ -82,11 +81,14 @@ void pf_sd_board_pins(uint8_t bus_gpios[6], uint8_t *detect_gpio)
     for (size_t index = 0u; index < 4u; ++index) {
         bus_gpios[index + 2u] = pin_byte(pf_sdio_pio_board.pins.data_gpio[index]);
     }
+    *detect_gpio = pin_byte(pf_sd_board.card_detect_gpio);
+    return PF_SD_LINK_NATIVE_SD;
 #else
     bus_gpios[0] = pin_byte(pf_spi_board.pins.clock_gpio);
     bus_gpios[1] = pin_byte(pf_spi_board.pins.mosi_gpio);
     bus_gpios[2] = pin_byte(pf_spi_board.pins.miso_gpio);
     bus_gpios[3] = pin_byte(pf_spi_board.pins.cs_gpio);
-#endif
     *detect_gpio = pin_byte(pf_sd_board.card_detect_gpio);
+    return PF_SD_LINK_SPI;
+#endif
 }

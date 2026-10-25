@@ -9,6 +9,7 @@
 #include "usb_msc.h"
 #include "usb_task.h"
 #include "app/cli/cli.h"
+#include "app/cli/cli_storage.h"
 #include "app/storage/storage_worker.h"
 
 #include <string.h>
@@ -244,7 +245,7 @@ static void usb_task(void *context)
 
 void pf_usb_start(void)
 {
-    if (!pf_storage_worker_init()) {
+    if (!pf_storage_worker_init(pf_cli_storage_execute)) {
         panic("Failed to create storage worker");
     }
     if (!tusb_init()) {

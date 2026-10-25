@@ -96,13 +96,20 @@ def test_sd_ownership_policy_stays_above_driver_and_middleware():
         assert not re.search(r'#include\s*"[^"]*(?:app/|middleware/)', text), source
     assert not (driver / "sd_msc.h").exists()
     # Above middleware, storage is a filesystem exported through middleware/storage/storage.h.
-    # The boot-config SD speed setting is a persisted user setting, not a backend dependency.
     for source in (ROOT / "firmware/src/app").rglob("*.[ch]"):
-        text = re.sub(r"\bpf_sd_speed_t\b|\bPF_SD_SPEED_\w+", "", source.read_text())
+        text = source.read_text()
         assert not re.search(r"\bpf_sd_\w+|\bPF_SD_\w+", text), source
         assert not re.search(r'#include\s*"[^"]*(?:sdcard/|sd_block\.h|sd\.h)', text), source
     for source in (ROOT / "firmware/src/middleware/storage").glob("*.[ch]"):
         assert not re.search(r'#include\s*"[^"]*app/', source.read_text()), source
+    # The CLI registers its executor with the worker; the worker never includes the CLI.
+    for source in (ROOT / "firmware/src/app/storage").glob("*.[ch]"):
+        assert not re.search(r'#include\s*"[^"]*cli', source.read_text()), source
+    # Only the SD driver selects the build transport; board data describes both and storage asks the driver.
+    for source in (ROOT / "firmware/src").rglob("*.[ch]"):
+        if "PF_CONFIG_SDCARD_TRANSPORT" in source.read_text():
+            allowed = source.parent == SDCARD or source == ROOT / "firmware/src/config/config.h"
+            assert allowed, source
     storage_api = (ROOT / "firmware/src/middleware/storage/storage.h").read_text()
     assert not re.search(r'#include\s*"[^"]*drivers/', storage_api)
     assert not re.search(r"\bpf_sd_\w+|\bPF_SD_\w+", storage_api)

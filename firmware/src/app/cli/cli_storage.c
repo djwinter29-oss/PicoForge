@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void report_result(FRESULT result, pf_cli_storage_reply_t reply, void *context)
+static void report_result(FRESULT result, pf_storage_worker_reply_fn_t reply, void *context)
 {
     static const char *const names[] = {
         "OK", "DISK_ERR", "INT_ERR", "NOT_READY", "NO_FILE", "NO_PATH",
@@ -58,14 +58,14 @@ static void volume_path(const char *path, char target[104])
 }
 
 /** @brief Report the backend-neutral storage status on one line. */
-static void status_command(bool host_owned, pf_cli_storage_reply_t reply, void *context)
+static void status_command(bool host_owned, pf_storage_worker_reply_fn_t reply, void *context)
 {
     static const char *const states[] = {
         "not_configured", "busy", "absent", "uninitialized", "ready", "mounted", "usb",
     };
     static const char *const operations[] = {"none", "init", "read", "write", "sync", "msc_acquire"};
     pf_storage_status_t status;
-    char line[PF_CLI_STORAGE_REPLY_SIZE];
+    char line[PF_STORAGE_WORKER_REPLY_SIZE];
 
     pf_storage_get_status(&status);
     (void)snprintf(line, sizeof(line),
@@ -81,11 +81,11 @@ static void status_command(bool host_owned, pf_cli_storage_reply_t reply, void *
     (void)reply(line, context);
 }
 
-static void list_command(const char *path, pf_cli_storage_reply_t reply, void *context)
+static void list_command(const char *path, pf_storage_worker_reply_fn_t reply, void *context)
 {
     DIR directory;
     FILINFO info;
-    char line[PF_CLI_STORAGE_REPLY_SIZE];
+    char line[PF_STORAGE_WORKER_REPLY_SIZE];
     FRESULT result = f_opendir(&directory, path);
 
     if (result != FR_OK) {
@@ -113,10 +113,10 @@ static void list_command(const char *path, pf_cli_storage_reply_t reply, void *c
     report_result(result != FR_OK ? result : close_result, reply, context);
 }
 
-static void stat_command(const char *path, pf_cli_storage_reply_t reply, void *context)
+static void stat_command(const char *path, pf_storage_worker_reply_fn_t reply, void *context)
 {
     FILINFO info;
-    char line[PF_CLI_STORAGE_REPLY_SIZE];
+    char line[PF_STORAGE_WORKER_REPLY_SIZE];
     FRESULT result = f_stat(path, &info);
 
     if (result == FR_OK) {
@@ -132,11 +132,11 @@ static void stat_command(const char *path, pf_cli_storage_reply_t reply, void *c
 }
 
 static void cat_command(const char *path, unsigned long limit,
-                        pf_cli_storage_reply_t reply, void *context)
+                        pf_storage_worker_reply_fn_t reply, void *context)
 {
     FIL file;
     unsigned char bytes[48];
-    char line[PF_CLI_STORAGE_REPLY_SIZE];
+    char line[PF_STORAGE_WORKER_REPLY_SIZE];
     FRESULT result = f_open(&file, path, FA_READ);
     unsigned long total = 0u;
 
@@ -176,7 +176,7 @@ static void cat_command(const char *path, unsigned long limit,
 }
 
 static void write_command(const char *path, const char *text, bool append,
-                          pf_cli_storage_reply_t reply, void *context)
+                          pf_storage_worker_reply_fn_t reply, void *context)
 {
     FIL file;
     UINT written = 0u;
@@ -203,9 +203,9 @@ static void write_command(const char *path, const char *text, bool append,
 }
 
 void pf_cli_storage_execute(bool host_owned, const char *family, const char *arguments,
-                            pf_cli_storage_reply_t reply, void *context)
+                            pf_storage_worker_reply_fn_t reply, void *context)
 {
-    char tokens[PF_CLI_STORAGE_ARGS_SIZE] = { 0 };
+    char tokens[PF_STORAGE_WORKER_ARGS_SIZE] = { 0 };
     char path[104];
     char target[104];
     const char *operation;
@@ -296,7 +296,7 @@ void pf_cli_storage_execute(bool host_owned, const char *family, const char *arg
         FATFS *filesystem;
         FRESULT result = f_getfree(PF_FATFS_VOLUME_PATH, &free_clusters, &filesystem);
         if (result == FR_OK) {
-            char line[PF_CLI_STORAGE_REPLY_SIZE];
+            char line[PF_STORAGE_WORKER_REPLY_SIZE];
             (void)snprintf(line, sizeof(line), "total=%llu bytes free=%llu bytes",
                            (unsigned long long)(filesystem->n_fatent - 2u) * filesystem->csize * FF_MAX_SS,
                            (unsigned long long)free_clusters * filesystem->csize * FF_MAX_SS);

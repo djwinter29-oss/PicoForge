@@ -154,7 +154,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     memset(report, 0, sizeof(*report));
     report->version = PF_HID_REPORT_VERSION;
     report->stored_sysclk_profile = pf_sysclk_profile_mhz(pf_boot_config_sysclk());
-    report->stored_sdcard_profile = (uint8_t)pf_boot_config_sd_speed();
+    report->stored_sdcard_profile = (uint8_t)pf_boot_config_storage_speed();
     report->monitor_uart_index = pf_monitor_uart_board.uart_index <= 1u
         ? (uint8_t)pf_monitor_uart_board.uart_index : UINT8_MAX;
     report->monitor_uart_tx_gpio = gpio_value(pf_monitor_uart_board.tx_gpio);
@@ -382,7 +382,7 @@ static void process_control_request(const pf_hid_control_request_t *request)
         const uint16_t system_clock_mhz = read_u16_le(request->arguments);
         const uint8_t sdcard_profile = request->arguments[2];
         const pf_sysclk_profile_t old_sysclk = pf_boot_config_sysclk();
-        const pf_sd_speed_t old_sd_speed = pf_boot_config_sd_speed();
+        const pf_storage_speed_t old_sd_speed = pf_boot_config_storage_speed();
         pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
         while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != system_clock_mhz) {
             ++sysclk;
@@ -390,7 +390,7 @@ static void process_control_request(const pf_hid_control_request_t *request)
         if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
             error = PF_HID_ERROR_MALFORMED;
         } else if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || !pf_boot_config_set_sysclk(sysclk) ||
-                   !pf_boot_config_set_sd_speed((pf_sd_speed_t)sdcard_profile)) {
+                   !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile)) {
             error = PF_HID_ERROR_ARGUMENT;
         } else if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
             status = PF_HID_COMMAND_BUSY;
@@ -408,7 +408,7 @@ static void process_control_request(const pf_hid_control_request_t *request)
         if (status != PF_HID_COMMAND_COMPLETED) {
             /* Keep the RAM copy equal to flash so reports never show unsaved values. */
             (void)pf_boot_config_set_sysclk(old_sysclk);
-            (void)pf_boot_config_set_sd_speed(old_sd_speed);
+            (void)pf_boot_config_set_storage_speed(old_sd_speed);
         }
     } else {
         status = PF_HID_COMMAND_UNSUPPORTED;

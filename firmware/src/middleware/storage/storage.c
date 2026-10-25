@@ -13,7 +13,6 @@
 #include "middleware/storage/fatfs_volume.h"
 #include "middleware/logging/logging.h"
 #include "drivers/system.h"
-#include "config/config.h"
 
 static pf_sd_config_t media_config; /**< Board transport borrowed for application lifetime. */
 static bool configured; /**< Execution-port and board configuration are available. */
@@ -90,10 +89,10 @@ void pf_storage_get_status(pf_storage_status_t *status)
     }
     *status = (pf_storage_status_t){
         .medium = PF_STORAGE_MEDIUM_SDCARD,
-        .bus = PF_CONFIG_SDCARD_TRANSPORT == PF_CONFIG_SDCARD_TRANSPORT_SPI ? PF_STORAGE_BUS_SPI : PF_STORAGE_BUS_SDIO,
         .state = PF_STORAGE_STATE_NOT_CONFIGURED,
     };
-    pf_sd_board_pins(status->bus_gpios, &status->detect_gpio);
+    status->bus = pf_sd_board_pins(status->bus_gpios, &status->detect_gpio) == PF_SD_LINK_SPI ?
+                  PF_STORAGE_BUS_SPI : PF_STORAGE_BUS_SDIO;
     if (!configured) {
         return;
     }

@@ -209,8 +209,9 @@ for the duration of host-requested card I/O.
 ### Transport Selection
 
 The CMake cache variable `PF_SDCARD_TRANSPORT` selects `SDIO_PIO` (default) or
-`SPI`; the build defines `PF_CONFIG_SDCARD_TRANSPORT` consistently for board,
-facade, and backend code. Use `tools/firmware/build.sh --sdcard-transport SPI`
+`SPI`; the build defines `PF_CONFIG_SDCARD_TRANSPORT`, which only the SD driver (`sd.c`, `sd_board.c`) reads.
+Board data describes both transports' wiring, and the storage middleware learns the selected bus from
+`pf_sd_board_pins()`. Use `tools/firmware/build.sh --sdcard-transport SPI`
 or `-DPF_SDCARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
 `pf_sd_config_t.transport` and `clock_hz`; pin assignments belong in
 board support, not application code or reusable protocol helpers.
@@ -221,7 +222,7 @@ board support, not application code or reusable protocol helpers.
 | Physical interface | `transport` (`NATIVE_SD` mode) | `transport` (`SPI` mode) |
 | Backend API prefix | `pf_sd_native_` | `pf_sd_spi_` |
 | Zero clock request | Fixed 25 MHz transfer target | 25 MHz |
-| Requested clock bounds | Only 0 or 25 MHz; initialization at 400 kHz | 400 kHz to 50 MHz; CMD6 required above 25 MHz |
+| Requested clock bounds | 0 (default), 25 or 50 MHz; initialization at 400 kHz | 400 kHz to 50 MHz; CMD6 required above 25 MHz |
 
 Transport and connection settings are locked after setup; repeating initialization
 with the same configuration retries card identification. There is no public
@@ -403,7 +404,7 @@ ready/idle responses and checks OCR power-up and voltage compatibility.
 ### SPI Transfer Clock
 
 SPI initialization sends only HCS in ACMD41 for a version-2 card (zero for a legacy card); the native-mode voltage
-window occupies reserved bits in the SPI argument. The reference board requests a 50 MHz ceiling. An API clock request
+window occupies reserved bits in the SPI argument. The saved storage profile requests 25 or 50 MHz. An API clock request
 of zero still selects 25 MHz for compatibility, and explicit requests at or below 25 MHz do not attempt CMD6.
 
 After reading CSD/CID, the driver limits Default Speed to the lesser of CSD `TRAN_SPEED`, 25 MHz, and the request.
@@ -438,8 +439,9 @@ compatibility or application throughput, and is not detected/enforced by this
 driver. CSD must advertise a default transfer rate of at least 25 MHz.
 
 `PF_SDIO_PIO_HIGH_SPEED` defaults to ON for new SDIO builds, including release builds.
-At or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default Speed and records the
-host limit. Above 100 MHz it requests up to 50 MHz and the transport clamps to its PIO ceiling (SYSCLK / 4):
+The saved storage profile supplies the target for both SDIO and SPI. A 25 MHz target never negotiates High Speed.
+For a 50 MHz target at or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default
+Speed and records the host limit. Above 100 MHz it requests 50 MHz and the transport clamps to its PIO ceiling (SYSCLK / 4):
 at most 37.5 MHz at 150 MHz CPU and up to 50 MHz at 250 MHz CPU. Negotiation and divider calculations do not
 qualify a board, card, wiring, or overclock; see [release qualification](../../deployment/release.md).
 Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
@@ -462,7 +464,7 @@ The Default-Speed clock divider is a whole number of system cycles, rounded up s
 20.833 MHz. High-Speed dividers are even and limited to 3.0 so the cycle-locked TX and shortened RX programs stay valid;
 the [clock planning table](../../../firmware/src/drivers/sdcard/README.md#clock-planning) lists each rule. This deterministic divider
 rounding is not adaptive speed selection.
-SYSCLK must be at least 100 MHz. Use SDK-supported clock settings and check
+Use SDK-supported clock settings and check
 effective-clock telemetry; an accepted divider does not qualify an overclock.
 Failures are reported rather than hidden by lower-speed reinitialization.
 Set SYSCLK before initialization; do not change it during a transfer. An idle

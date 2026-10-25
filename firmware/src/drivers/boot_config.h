@@ -4,11 +4,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/** User-selected SD-card speed profile; each transport maps it to its own bus clock. */
+/** User-selected storage bus speed profile; the storage backend maps it to its own bus clock. */
 typedef enum {
-    PF_SD_SPEED_DEFAULT = 0, /**< 25 MHz Default Speed; used when nothing is saved. */
-    PF_SD_SPEED_HIGH = 1, /**< 50 MHz High-Speed; SDIO falls back to 25 MHz if the card refuses. */
-} pf_sd_speed_t;
+    PF_STORAGE_SPEED_DEFAULT = 0, /**< 25 MHz Default Speed; used when nothing is saved. */
+    PF_STORAGE_SPEED_HIGH = 1, /**< 50 MHz High-Speed; SDIO falls back to 25 MHz if the card refuses. */
+} pf_storage_speed_t;
 
 /** User-selected system clock profile; the flash record and HID protocol carry it as MHz. */
 typedef enum {
@@ -29,6 +29,15 @@ static inline uint16_t pf_sysclk_profile_mhz(pf_sysclk_profile_t profile)
 }
 
 /**
+ * @brief Convert a storage speed profile to its requested bus clock in MHz, not the achieved rate.
+ * @return 50 for PF_STORAGE_SPEED_HIGH, otherwise 25 (Default Speed, also used for an unknown profile).
+ */
+static inline uint8_t pf_storage_speed_mhz(pf_storage_speed_t speed)
+{
+    return speed == PF_STORAGE_SPEED_HIGH ? 50u : 25u;
+}
+
+/**
  * @brief Return the configured system clock profile.
  *
  * The first call loads the saved record and must run before the scheduler starts (the boot clock hook).
@@ -41,14 +50,14 @@ pf_sysclk_profile_t pf_boot_config_sysclk(void);
  */
 bool pf_boot_config_set_sysclk(pf_sysclk_profile_t profile);
 
-/** @brief Return the configured SD-card speed profile. */
-pf_sd_speed_t pf_boot_config_sd_speed(void);
+/** @brief Return the configured storage speed profile. */
+pf_storage_speed_t pf_boot_config_storage_speed(void);
 
 /**
- * @brief Change the configured SD-card speed in RAM; persist with pf_boot_config_save(), applied at the next boot.
+ * @brief Change the configured storage speed in RAM; persist with pf_boot_config_save(), applied at the next boot.
  * @return false (configuration unchanged) for an unknown profile.
  */
-bool pf_boot_config_set_sd_speed(pf_sd_speed_t speed);
+bool pf_boot_config_set_storage_speed(pf_storage_speed_t speed);
 
 /**
  * @brief Persist the configuration to flash from a task context.

@@ -6,13 +6,15 @@ there is no runtime transport selector.
 | Setting | Values | Default | Applied |
 | --- | --- | --- | --- |
 | System clock (`pf_sysclk_profile_t`) | `PF_SYSCLK_DEFAULT`, `PF_SYSCLK_150MHZ`, `PF_SYSCLK_200MHZ`, `PF_SYSCLK_250MHZ` | Default: keep the build clock (`PF_SYS_CLK_MHZ`, else the SDK stock clock) | At boot |
-| SD speed (`pf_sd_speed_t`) | `PF_SD_SPEED_DEFAULT` (25 MHz), `PF_SD_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
+| Storage speed (`pf_storage_speed_t`) | `PF_STORAGE_SPEED_DEFAULT` (25 MHz), `PF_STORAGE_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
 
-Both transports share the SD speed profile; [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) converts it
-to a clock. The speeds are ceilings: SPI above 25 MHz needs the card's CMD6 High-Speed support, otherwise the
-CSD-limited 25 MHz is kept, and the result never exceeds the board's SPI clock. SDIO Default stays at 25 MHz Default
-Speed; High allows the existing High-Speed negotiation, still limited by `PF_SDIO_PIO_HIGH_SPEED`, SYSCLK/4 and the
-card. SPI images used to default to the 50 MHz board ceiling; they now default to 25 MHz like SDIO.
+Both SD transports obtain their requested clock from
+`pf_storage_speed_mhz(pf_boot_config_storage_speed())` in
+[sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c). The 25/50 MHz value is a target, not a guaranteed rate:
+the hardware chooses the closest safe supported clock at or below it. Board data supplies wiring and controller
+selection, not a separate speed. SPI above 25 MHz requires card CMD6 High-Speed support; otherwise the CSD-limited
+Default-Speed rate is retained. SDIO High-Speed also depends on `PF_SDIO_PIO_HIGH_SPEED`, SYSCLK/4, and the card.
+For example, a 50 MHz SDIO request at 150 MHz SYSCLK achieves 37.5 MHz. Status reports the actual bus clock separately.
 
 ## Using the API
 
@@ -20,14 +22,14 @@ card. SPI images used to default to the 50 MHz board ceiling; they now default t
 #include "drivers/boot_config.h"
 
 pf_sysclk_profile_t clk = pf_boot_config_sysclk();   /* saved value, or PF_SYSCLK_DEFAULT */
-pf_sd_speed_t speed = pf_boot_config_sd_speed();     /* saved value, or PF_SD_SPEED_DEFAULT */
+pf_storage_speed_t speed = pf_boot_config_storage_speed();     /* saved value, or PF_STORAGE_SPEED_DEFAULT */
 pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ);         /* RAM copy only; false for unknown profiles */
-pf_boot_config_set_sd_speed(PF_SD_SPEED_HIGH);       /* RAM copy only */
+pf_boot_config_set_storage_speed(PF_STORAGE_SPEED_HIGH);       /* RAM copy only */
 pf_boot_config_save();                               /* task, scheduler running; true after read-back verifies */
 ```
 
-The header exposes only these five functions plus the inline `pf_sysclk_profile_mhz()` conversion (`0` for
-Default); the record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
+The header exposes only these five functions plus the inline `pf_sysclk_profile_mhz()` (`0` for Default) and
+`pf_storage_speed_mhz()` (`25` or `50`) conversions; the record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
 once. Setters change only the RAM copy; saved values take effect at the next boot
 because the SD drivers lock their first configuration. The HID handler restores the previous values when a save
 does not complete, so reports never show unsaved values.
