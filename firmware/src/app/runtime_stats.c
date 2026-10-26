@@ -13,8 +13,7 @@ extern char __end__[], __scratch_x_start__[], __scratch_x_end__[];
 extern char __scratch_y_start__[], __scratch_y_end__[];
 extern char __StackTop[], __StackBottom[], __StackOneTop[], __StackOneBottom[];
 
-/* Idle run-time and the wall clock must share units: FreeRTOSConfig.h sets portGET_RUN_TIME_COUNTER_VALUE() to
- * time_us_64(). Change both together. */
+/* Every FreeRTOS core needs a reported slot. */
 _Static_assert(configNUMBER_OF_CORES == PF_RUNTIME_CORE_COUNT, "runtime stats report every FreeRTOS core");
 
 #define RUNTIME_STATS_MIN_INTERVAL_US 250000u /**< Shorter reads return the cached result of the last full interval. */
@@ -25,7 +24,11 @@ static bool sampled; /**< Whether an interval baseline exists. */
 /** Cached per-core interval results. */
 static uint16_t cpu_usage[PF_RUNTIME_CORE_COUNT] = {PF_RUNTIME_CPU_UNAVAILABLE, PF_RUNTIME_CPU_UNAVAILABLE};
 
-/** @brief Idle-task run time of one core in microseconds. */
+/** @brief Idle-task run time of one core in microseconds.
+ *
+ * Must share units with time_us_64(): FreeRTOSConfig.h sets portGET_RUN_TIME_COUNTER_VALUE() to it. Change both
+ * together.
+ */
 static uint64_t idle_time_us(unsigned core)
 {
     return ulTaskGetRunTimeCounter(xTaskGetIdleTaskHandleForCore((BaseType_t)core));
@@ -36,7 +39,8 @@ void pf_runtime_stats_read(pf_runtime_stats_t *stats)
     configASSERT(stats != NULL);
     taskENTER_CRITICAL();
     uint64_t now = time_us_64();
-    if (!sampled || now - previous_time >= RUNTIME_STATS_MIN_INTERVAL_US) {
+    /* A clock that went backwards (not expected from the 64-bit timer) keeps the cached result. */
+    if (!sampled || (now >= previous_time && now - previous_time >= RUNTIME_STATS_MIN_INTERVAL_US)) {
         uint64_t elapsed = now - previous_time;
         for (unsigned core = 0u; core < PF_RUNTIME_CORE_COUNT; ++core) {
             uint64_t idle = idle_time_us(core);

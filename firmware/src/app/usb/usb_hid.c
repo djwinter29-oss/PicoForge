@@ -203,6 +203,7 @@ void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t se
     report->sequence = sequence;
     report->uptime_ms = pf_system_uptime_ms();
     report->system_clock_hz = pf_system_clock_hz();
+    /* PF_RUNTIME_CPU_UNAVAILABLE (0xFFFF) is passed through as the wire value for "not sampled yet". */
     report->core0_service_load_basis_points = stats.cpu_usage_basis_points[0];
     report->core1_service_load_basis_points = stats.cpu_usage_basis_points[1];
     if (pf_led_is_available()) {

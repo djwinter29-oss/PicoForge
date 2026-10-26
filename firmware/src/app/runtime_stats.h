@@ -12,7 +12,8 @@
 /** Value reported for a core's CPU usage until one full sampling interval has elapsed. */
 #define PF_RUNTIME_CPU_UNAVAILABLE UINT16_MAX
 
-/** Per-core CPU interval estimates and static SRAM reservation; no live heap or stack occupancy. */
+/** Per-core CPU interval estimates and static SRAM reservation; no live heap or stack occupancy, and no
+ * runtime-allocated memory beyond what the linker reserved. */
 typedef struct {
     /** Per-core non-idle fraction, 0..10000; PF_RUNTIME_CPU_UNAVAILABLE until sampled. */
     uint16_t cpu_usage_basis_points[PF_RUNTIME_CORE_COUNT];
