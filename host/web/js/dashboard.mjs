@@ -21,7 +21,7 @@ export function renderStatus(snapshot) {
     ? "Attention" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
   const boardModel = typeof hardware?.board_model === "string" ? hardware.board_model
-    : ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W" })[hardware?.board_model]
+    : ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W", 4: "Pico W" })[hardware?.board_model]
       ?? (hardware ? `Unknown (${hardware.board_model})` : "--");
   document.querySelector("#board-model").textContent = hardware?.mcu
     ? `${boardModel} (${hardware.mcu})` : boardModel;

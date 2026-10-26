@@ -31,7 +31,7 @@ CONTROL_FEATURE_SIZE = CONTROL_PAYLOAD_SIZE + 1
 REPORT_VERSION = 1
 
 MCU_NAMES = {1: "RP2040", 2: "RP2350"}
-BOARD_NAMES = {0: "Unknown / unspecified", 1: "Pico", 2: "Pico 2", 3: "Pico 2 W"}
+BOARD_NAMES = {0: "Unknown / unspecified", 1: "Pico", 2: "Pico 2", 3: "Pico 2 W", 4: "Pico W"}
 PRODUCT_NAMES = {0: "Unspecified", 1: "PicoUart", 2: "PicoForge"}
 CAP_LED = 1 << 0
 CAP_REBOOT = 1 << 1
@@ -144,7 +144,7 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> dict[str, ob
     ram_total, ram_reserved = struct.unpack_from("<II", payload, 18)
     if capabilities & ~CAP_KNOWN or bool(capabilities & CAP_SPI) == bool(capabilities & CAP_SDIO):
         raise ValueError("invalid HID identity capability flags or storage transport")
-    if board_model == 1 and mcu_id != 1 or board_model in (2, 3) and mcu_id != 2:
+    if board_model in (1, 4) and mcu_id != 1 or board_model in (2, 3) and mcu_id != 2:
         raise ValueError("board model and MCU disagree in HID identity report")
     if not ram_total or ram_reserved > ram_total:
         raise ValueError("invalid SRAM accounting in HID identity report")
@@ -218,7 +218,7 @@ def parse_configuration_report(
     board_model = identity["board_model_id"]
     mcu_id = identity["mcu_id"]
     if mcu_id in (1, 2):
-        max_gpio = 29 if mcu_id == 1 or board_model in (1, 2, 3) else 47
+        max_gpio = 29 if mcu_id == 1 or board_model in (1, 2, 3, 4) else 47
         assigned = [gpio for gpio in (uart_tx, uart_rx, led_gpio, card_detect_gpio, *storage_gpios)
                     if gpio != 255]
         if any(gpio > max_gpio for gpio in assigned):

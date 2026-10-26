@@ -44,7 +44,7 @@ while [ "$#" -gt 0 ]; do
 Usage: tools/firmware/build.sh [options]
 
 Options:
-    --board NAME       Supported board: pico or pico2 (default: pico)
+    --board NAME       Supported board: pico, pico_w, pico2 or pico2_w (default: pico)
     --sdcard-transport NAME  SDIO_PIO or SPI (default: SDIO_PIO)
     --build-dir PATH   Build directory (default: build/firmware-NAME-TRANSPORT)
     --generator NAME   CMake generator (default: Ninja when available)

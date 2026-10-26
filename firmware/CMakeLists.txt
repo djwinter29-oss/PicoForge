@@ -63,6 +63,8 @@ elseif(PICO_BOARD STREQUAL "pico2")
     set(PF_HID_BOARD_MODEL_VALUE 2)
 elseif(PICO_BOARD STREQUAL "pico2_w")
     set(PF_HID_BOARD_MODEL_VALUE 3)
+elseif(PICO_BOARD STREQUAL "pico_w")
+    set(PF_HID_BOARD_MODEL_VALUE 4)
 endif()
 add_compile_definitions(PF_HID_BOARD_MODEL=${PF_HID_BOARD_MODEL_VALUE})
 
