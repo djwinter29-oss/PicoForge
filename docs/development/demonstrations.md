@@ -24,8 +24,14 @@ This image documents the visible interface and reported state, not performance o
 | --- | --- | --- |
 | **First-use walkthrough** | Flash firmware, connect a host, inspect the board, and change a supported setting. | Record the current workflow and relevant setup dependencies. |
 | **Storage workflow demonstration** | File access and ownership handoff, including safe eject, return, and visible failure outcomes. | Use backed-up or expendable media and document the host/card configuration. |
-| **Sensor-to-host example** | Read a documented peripheral from Python and C#, with wiring and transaction errors explained. | Implement the peripheral bridge and supported host APIs first. |
-| **Developer extension example** | A supported custom build connecting an application-specific capability through firmware, protocol, host code, and tests. | Provide a runnable extension and document its supported build configuration. |
+| **Lead I²C sensor example** | Configure one documented sensor and read equivalent measurements from Python and C#, with setup and transaction errors explained. | Select the sensor and wiring; implement the I²C bridge and supported host APIs first. |
+| **Device-side recording example** | Configure a bounded acquisition from the host, record locally to SD, then retrieve and inspect the data. | Implement a defined acquisition workload with measured buffer limits and explicit overflow reporting. |
+| **Developer extension example** | An application task using the shared dual-core FreeRTOS runtime and existing platform services, with host interaction and tests. | Document the supported build, resource ownership, synchronization, and observed service responsiveness; do not imply dedicated-core isolation. |
+
+The I²C example is the lead developer demonstration, with the acceptance workflow defined in the
+[project vision](../design/vision.md). Recording and task-based extensions are
+optional follow-ons, not prerequisites for a successful sensor evaluation. Reuse the reference peripheral where
+practical so developers can see what carries forward instead of assembling unrelated demonstrations.
 
 ## Evidence Requirements
 

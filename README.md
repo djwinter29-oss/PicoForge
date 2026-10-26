@@ -5,14 +5,13 @@
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
 ![Targets: RP2040 and RP2350](https://img.shields.io/badge/Targets-RP2040%20%7C%20RP2350-2674b8)
 
-**Low-cost Pico hardware. Less embedded integration work.**
+**Bring sensors and peripherals into your host application—with less embedded development.**
 
-PicoForge is an integrated firmware-and-host platform for Raspberry Pi Pico-family boards, unifying device
-monitoring, configuration, and control through a single management interface. It delivers practical
-board-management capabilities today while providing an extensible foundation for embedded diagnostics, automation,
-and future device integrations.
+PicoForge is a firmware-and-host platform for Raspberry Pi Pico-family boards. Its goal is to let developers evaluate
+hardware from Python or C#, then add custom embedded behavior without rebuilding the surrounding management and
+communication system.
 
-Board management and SD storage establish the foundation; host-controlled peripheral access is the next direction.
+**Today:** board management and SD storage. **Next:** host-accessible peripheral bridges and Python/C# peripheral APIs.
 
 [Firmware and host downloads](https://github.com/djwinter29-oss/PicoForge/releases/latest) ·
 [WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) ·
@@ -24,20 +23,23 @@ source setup.
 
 ## Why PicoForge?
 
-A Pico provides hardware interfaces for sensors and peripherals, but using them from a computer takes additional
-work: toolchain setup, firmware development, flashing, device communication, and host integration. That work can
-take longer than the experiment itself.
+A sensor experiment can require toolchain setup, custom firmware, and host communication before the first useful
+measurement. PicoForge aims to reduce that repeated integration work on low-cost hardware, with host tools for
+Linux, Windows, and macOS.
 
-PicoForge combines low-cost Pico hardware with an integrated firmware-and-host system to reduce that repeated work.
-Its goal is to bring sensors and peripherals into Python or C# applications on Linux, Windows, and macOS without
-custom embedded firmware for every experiment. Board management and storage are available today; peripheral bridges
-and public host APIs are planned.
+**Start as a host-controlled tool. Grow into your own embedded application.**
+
+The intended advantage is continuity: keep useful discovery, configuration, diagnostics, and storage services as
+your project grows. Host-side evaluation should be useful on its own; local recording and custom tasks are optional.
 
 ## Use It or Extend It
 
 - **Use it:** flash firmware and manage the board and attached storage through a dashboard or USB console.
 - **Extend it:** build on the Pico SDK, FreeRTOS, and existing firmware/host interfaces for a specialized application.
   SD transport is selectable today; broader capability selection and peripheral host libraries are future goals.
+
+FreeRTOS SMP manages both cores, allowing application tasks alongside platform services. This does not imply
+dedicated-core isolation or hard real-time guarantees; see the [architecture](docs/design/architecture.md).
 
 ## Available Today
 
@@ -65,13 +67,14 @@ See the [capture details](docs/development/demonstrations.md#captured-dashboard)
 
 ## Project Direction
 
-The next intended enabler is one host-accessible I²C master and one SPI master, supported by Python and C# libraries.
-PWM is a candidate extension, and broader selectable builds would let developers retain only the capabilities they
-need. Wireless access remains an optional future direction, not a committed feature.
+The lead use case is **evaluate one I²C sensor from Python or C#**: follow documented wiring, configure the sensor,
+read measurements, and diagnose transaction errors without custom firmware. This workflow is planned.
+
+SPI access is also planned. Recording, PWM, broader build selection, and wireless are optional future extensions,
+not prerequisites. Sensor-specific logic belongs in host examples or application extensions.
 
 See the [project vision](docs/design/vision.md) for intended workflows and scope, and the
 [demonstration plan](docs/development/demonstrations.md) for walkthroughs and examples still to add.
-These planned capabilities are not presented as implemented.
 
 ## Get Started
 
