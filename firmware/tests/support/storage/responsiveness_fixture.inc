@@ -52,6 +52,7 @@ static TickType_t fake_ticks;
 static bool fake_connected = true;
 static bool fake_done;
 static unsigned reply_count, drained_replies;
+static uint32_t reply_session_skew;
 static unsigned queries, queued, recovery_requests, normal_submissions, messages;
 bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
 void pf_storage_get_status(pf_storage_status_t *status)
@@ -135,7 +136,7 @@ BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t timeout)
     TEST_ASSERT_EQUAL_UINT(0u, timeout);
     if (!reply_count) return 0;
     pf_storage_worker_reply_t *reply = item;
-    *reply = (pf_storage_worker_reply_t){ .session = cli_session };
+    *reply = (pf_storage_worker_reply_t){ .session = cli_session + reply_session_skew, .line = "reply" };
     --reply_count;
     ++drained_replies;
     reply->done = fake_done && reply_count == 0;

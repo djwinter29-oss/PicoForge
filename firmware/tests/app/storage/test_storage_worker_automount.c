@@ -327,6 +327,14 @@ void test_forced_sd_return_detaches_before_release_and_attempts_mount_once(void)
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(busy && remount_pending && transition_pending && !msc_enabled);
  TEST_ASSERT_EQUAL_UINT(before_disconnects+1u,disconnects);
+ /* The reconnect is a deadline, not a sleep: nothing reconnects early, then exactly once. */
+ unsigned before_connects=connects;
+ pf_usb_msc_task();
+ TEST_ASSERT_EQUAL_UINT(before_connects,connects);
+ test_time_us+=250000u;
+ pf_usb_msc_task();
+ pf_usb_msc_task();
+ TEST_ASSERT_EQUAL_UINT(before_connects+1u,connects);
  TEST_ASSERT_FALSE(usb_owned);
  return_from_usb();
  pf_usb_msc_task();

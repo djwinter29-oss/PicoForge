@@ -210,6 +210,7 @@ add_library(pf_logging STATIC
     src/platform/logging.c
 )
 target_include_directories(pf_logging PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/src"
     "${CMAKE_CURRENT_LIST_DIR}/src/platform"
 )
 target_link_libraries(pf_logging PUBLIC hardware_uart pico_stdio_uart pico_stdlib)

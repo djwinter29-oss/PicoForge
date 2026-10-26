@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Vendor HID wire protocol: report IDs, payload layouts, command codes and report builders.
+ * @note These values are shared with host tools; changing them breaks the wire protocol.
+ */
 #ifndef PF_USB_HID_H
 #define PF_USB_HID_H
 
@@ -7,15 +12,22 @@
 #include "pico/unique_id.h"
 #include "platform/system.h"
 
+/** @name Report IDs @{ */
 #define PF_HID_IDENTITY_REPORT_ID 1u
 #define PF_HID_CONFIGURATION_REPORT_ID 2u
 #define PF_HID_TELEMETRY_REPORT_ID 3u
 #define PF_HID_STORAGE_REPORT_ID 10u
 #define PF_HID_SELF_TEST_REPORT_ID 11u
 #define PF_HID_CONTROL_REPORT_ID 20u
+/** @} */
+
+/** @name Protocol constants @{ */
 #define PF_HID_REPORT_VERSION 1u
 #define PF_HID_PRODUCT_ID 2u
-#define PF_HID_REBOOT_DELAY_MS 1000u
+#define PF_HID_REBOOT_DELAY_MS 1000u /**< Grace period for the host to read the reboot result before reset. */
+/** @} */
+
+/** @name Payload sizes in bytes, excluding the report ID @{ */
 
 #define PF_HID_IDENTITY_PAYLOAD_SIZE 26u
 #define PF_HID_CONFIGURATION_PAYLOAD_SIZE 17u
@@ -24,6 +36,9 @@
 #define PF_HID_SELF_TEST_PAYLOAD_SIZE 32u
 #define PF_HID_CONTROL_PAYLOAD_SIZE 9u
 
+/** @} */
+
+/** @name Identity capability bits (PF_HID_CAP_*) @{ */
 #define PF_HID_CAP_LED (1u << 0)
 #define PF_HID_CAP_REBOOT (1u << 1)
 #define PF_HID_CAP_SETTINGS (1u << 2)
@@ -31,11 +46,17 @@
 #define PF_HID_CAP_SDIO (1u << 4)
 #define PF_HID_CAP_SELF_TEST (1u << 5)
 
+/** @} */
+
+/** @name Telemetry flag bits (PF_HID_TELEMETRY_*) @{ */
 #define PF_HID_TELEMETRY_USB_MOUNTED (1u << 0)
 #define PF_HID_TELEMETRY_CDC_OPEN (1u << 1)
 #define PF_HID_TELEMETRY_TEMPERATURE_VALID (1u << 2)
 #define PF_HID_TELEMETRY_LED_AVAILABLE (1u << 3)
 
+/** @} */
+
+/** @name Storage report flag bits (PF_HID_STORAGE_*) @{ */
 #define PF_HID_STORAGE_CONFIGURED (1u << 0)
 #define PF_HID_STORAGE_PRESENCE_KNOWN (1u << 1)
 #define PF_HID_STORAGE_PRESENT (1u << 2)
@@ -44,6 +65,11 @@
 #define PF_HID_STORAGE_CAPACITY_VALID (1u << 5)
 #define PF_HID_STORAGE_SAMPLE_VALID (1u << 6)
 
+/** @} */
+
+/** @name Storage report bus, speed and filesystem values @{ */
+#define PF_HID_COMPONENT_NONE 0u /**< Storage component type: unavailable. */
+#define PF_HID_COMPONENT_SDCARD 1u /**< Storage component type: SD card. */
 #define PF_HID_BUS_MODE_UNKNOWN 0u
 #define PF_HID_BUS_MODE_SDIO 1u
 #define PF_HID_BUS_MODE_SPI 2u
@@ -57,11 +83,42 @@
 #define PF_HID_FILESYSTEM_FAT32 3u
 #define PF_HID_FILESYSTEM_EXFAT 4u
 
+/** @} */
+
+/** @name Feature 20 opcodes @{ */
 #define PF_HID_OPCODE_LED 1u
 #define PF_HID_OPCODE_REBOOT 2u
 #define PF_HID_OPCODE_MSC 3u
 #define PF_HID_OPCODE_SELF_TEST 4u
 #define PF_HID_OPCODE_SAVE_SETTINGS 6u
+/** @} */
+
+/** @name Feature 20 result status (control result @c status) @{ */
+#define PF_HID_COMMAND_IDLE 0u /**< No command has completed since startup. */
+#define PF_HID_COMMAND_PENDING 1u /**< Accepted; the result is published later. */
+#define PF_HID_COMMAND_COMPLETED 2u /**< Executed successfully. */
+#define PF_HID_COMMAND_INVALID 3u /**< Malformed or out-of-range request. */
+#define PF_HID_COMMAND_UNSUPPORTED 4u /**< Opcode or capability not available in this build. */
+#define PF_HID_COMMAND_BUSY 5u /**< Device state does not allow the command now. */
+#define PF_HID_COMMAND_FAILED 6u /**< Accepted but the operation failed. */
+/** @} */
+
+/** @name Feature 20 result error reason (control result @c error_reason) @{ */
+#define PF_HID_ERROR_NONE 0u /**< Success. */
+#define PF_HID_ERROR_MALFORMED 1u /**< Reserved bits, flags or trailing arguments are invalid. */
+#define PF_HID_ERROR_CONFIRMATION 2u /**< A required confirmation flag is missing. */
+#define PF_HID_ERROR_ARGUMENT 3u /**< An argument is out of range or not applicable. */
+#define PF_HID_ERROR_CAPABILITY 4u /**< The device lacks the capability. */
+#define PF_HID_ERROR_BUSY 5u /**< Storage, MSC or benchmark activity blocks the command. */
+#define PF_HID_ERROR_OPERATION 6u /**< The device operation failed. */
+#define PF_HID_ERROR_OPCODE 7u /**< Unknown opcode. */
+/** @} */
+
+/** @name MSC opcode actions (first argument byte) @{ */
+#define PF_HID_MSC_ACTION_DISABLE 0u /**< Return the card to firmware after a clean eject. */
+#define PF_HID_MSC_ACTION_ENABLE 1u /**< Give the card to the USB host. */
+#define PF_HID_MSC_ACTION_FORCE_RETURN 2u /**< Confirmed unsafe return; requires the confirmation flag. */
+/** @} */
 
 /** @brief Feature 1 device identity, build capabilities, and SRAM reservation. */
 typedef struct __attribute__((packed)) {
@@ -112,7 +169,7 @@ typedef struct __attribute__((packed)) {
     uint8_t version; /**< Report layout version. */
     uint8_t sequence; /**< Accepted publication sequence. */
     uint8_t sd_flags; /**< PF_HID_STORAGE_* state and validity bits. */
-    uint8_t component_type; /**< Zero unavailable; one SD card. */
+    uint8_t component_type; /**< PF_HID_COMPONENT_* value. */
     uint8_t bus_mode; /**< PF_HID_BUS_MODE_* value. */
     uint32_t bus_clock_hz; /**< Effective bus clock when sample is valid and initialized. */
     uint8_t speed_mode; /**< PF_HID_SPEED_MODE_* active card timing. */
@@ -171,17 +228,53 @@ _Static_assert(sizeof(pf_hid_self_test_report_t) == PF_HID_SELF_TEST_PAYLOAD_SIZ
 _Static_assert(sizeof(pf_hid_control_request_t) == PF_HID_CONTROL_PAYLOAD_SIZE, "control request size changed");
 _Static_assert(sizeof(pf_hid_control_result_t) == PF_HID_CONTROL_PAYLOAD_SIZE, "control result size changed");
 
-/** Build read-only report payloads with their current device snapshots. */
+/**
+ * @brief Build the Feature 1 identity report.
+ * @param report Receives the payload; fully overwritten.
+ */
 void pf_hid_build_identity_report(pf_hid_identity_report_t *report);
+
+/**
+ * @brief Build the Feature 2 configuration report.
+ * @param report Receives the payload; fully overwritten.
+ */
 void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report);
+
+/**
+ * @brief Build the Input 3 telemetry report.
+ * @param report Receives the payload; fully overwritten.
+ * @param sequence Publication sequence number.
+ */
 void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t sequence);
+
+/**
+ * @brief Build the Input 10 storage and MSC report.
+ * @param report Receives the payload; fully overwritten.
+ * @param sequence Publication sequence number.
+ */
 void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequence);
+
+/**
+ * @brief Build the Input 11 benchmark report; all zero when the benchmark is not built in.
+ * @param report Receives the payload; fully overwritten.
+ * @param sequence Publication sequence number.
+ */
 void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t sequence);
 
-/** Consume a validated reboot request from the USB task. */
+/** @return True when this build includes the file benchmark and reports PF_HID_CAP_SELF_TEST. */
+bool pf_hid_self_test_supported(void);
+
+/**
+ * @brief Consume a validated reboot request.
+ * @return True once per accepted reboot or settings-save command.
+ * @note USB task only.
+ */
 bool pf_hid_take_reboot_request(void);
 
-/** Publish completion of an asynchronous command preflight when the worker resolves it. */
+/**
+ * @brief Publish completion of an asynchronous command preflight when the worker resolves it.
+ * @note USB task only; call every cycle.
+ */
 void pf_hid_poll_async_commands(void);
 
 #endif

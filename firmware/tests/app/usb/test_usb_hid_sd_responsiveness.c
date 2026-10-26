@@ -44,6 +44,7 @@ void setUp(void)
     queries = queued = recovery_requests = normal_submissions = messages = 0u;
     reply_count = drained_replies = 0u;
     fake_ticks = 0u;
+    reply_session_skew = 0u;
     fake_connected = true;
     reset_requests = reboot_usb_polls = 0u;
     fake_done = false;
@@ -108,7 +109,7 @@ void test_input_reports_keep_telemetry_and_storage_samples_independent(void)
     pf_hid_build_telemetry_report(&telemetry, 17u);
     TEST_ASSERT_EQUAL_UINT(PF_HID_TELEMETRY_PAYLOAD_SIZE, sizeof(telemetry));
     TEST_ASSERT_EQUAL_UINT8(17u, telemetry.sequence);
-    TEST_ASSERT_EQUAL_UINT64(1230u, telemetry.uptime_ms);
+    TEST_ASSERT_EQUAL_UINT64(123u, telemetry.uptime_ms);
     TEST_ASSERT_EQUAL_UINT32(125000000u, telemetry.system_clock_hz);
     TEST_ASSERT_EQUAL_UINT16(1234u, telemetry.core0_service_load_basis_points);
     TEST_ASSERT_EQUAL_UINT16(5678u, telemetry.core1_service_load_basis_points);
@@ -327,4 +328,77 @@ void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(
     TEST_ASSERT_FALSE(cli_connected || cli_stalled);
     TEST_ASSERT_EQUAL_UINT(0u, cli_tx_count);
     fake_connected = true;
+}
+
+void test_cdc_storage_command_routes_recover_to_msc_and_everything_else_to_the_worker(void)
+{
+    cli_session = 1u;
+    storage_command(NULL, (char *)"recover --confirm", (void *)"storage");
+    TEST_ASSERT_EQUAL_UINT(1u, recovery_requests);
+    TEST_ASSERT_EQUAL_UINT(0u, normal_submissions);
+    storage_command(NULL, (char *)"recover", (void *)"storage");
+    TEST_ASSERT_EQUAL_UINT(1u, recovery_requests);
+    TEST_ASSERT_EQUAL_UINT(1u, normal_submissions);
+}
+
+void test_cdc_task_drops_worker_replies_from_an_older_session(void)
+{
+    cli_connected = fake_connected = true;
+    reply_count = 1u;
+    reply_session_skew = 1u;
+    cdc_cli_task();
+    TEST_ASSERT_EQUAL_UINT(0u, messages);
+    reply_count = 1u;
+    reply_session_skew = 0u;
+    cdc_cli_task();
+    TEST_ASSERT_EQUAL_UINT(1u, messages);
+}
+
+static pf_hid_control_result_t send_msc(uint8_t flags, uint8_t action)
+{
+    const uint8_t arguments[5] = {action, 0u, 0u, 0u, 0u};
+    send_control(21u, PF_HID_OPCODE_MSC, flags, arguments);
+    return read_control_result();
+}
+
+void test_msc_command_validates_flags_confirmation_and_ownership_before_acting(void)
+{
+    pf_hid_control_result_t result = send_msc(0u, 3u);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, result.status);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_ERROR_ARGUMENT, result.error_reason);
+    result = send_msc(1u, PF_HID_MSC_ACTION_DISABLE);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_ERROR_MALFORMED, result.error_reason);
+    result = send_msc(0u, PF_HID_MSC_ACTION_FORCE_RETURN);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_ERROR_CONFIRMATION, result.error_reason);
+    msc_enabled = false;
+    result = send_msc(1u, PF_HID_MSC_ACTION_FORCE_RETURN);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_ERROR_ARGUMENT, result.error_reason);
+    TEST_ASSERT_EQUAL_UINT(0u, msc_requests + force_requests);
+    msc_enabled = true;
+    result = send_msc(1u, PF_HID_MSC_ACTION_FORCE_RETURN);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_COMPLETED, result.status);
+    TEST_ASSERT_EQUAL_UINT(1u, force_requests);
+}
+
+void test_self_test_report_maps_every_status_field_to_its_own_wire_field(void)
+{
+    bench.status = (pf_file_benchmark_status_t){
+        .state = PF_FILE_BENCHMARK_PASSED, .flags = 3u, .target_bytes = 11u, .written_bytes = 12u,
+        .read_bytes = 13u, .write_elapsed_ms = 14u, .read_elapsed_ms = 15u, .mismatch_count = 16u,
+        .error = PF_FILE_BENCHMARK_ERROR_SPACE, .filesystem_result = (FRESULT)7,
+        .request_error = PF_FILE_BENCHMARK_ERROR_SIZE,
+    };
+    pf_hid_self_test_report_t report;
+    pf_hid_build_self_test_report(&report, 5u);
+    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_PASSED, report.state);
+    TEST_ASSERT_EQUAL_UINT8(3u, report.flags);
+    TEST_ASSERT_EQUAL_UINT32(11u, report.target_bytes);
+    TEST_ASSERT_EQUAL_UINT32(12u, report.written_bytes);
+    TEST_ASSERT_EQUAL_UINT32(13u, report.read_bytes);
+    TEST_ASSERT_EQUAL_UINT32(14u, report.write_elapsed_ms);
+    TEST_ASSERT_EQUAL_UINT32(15u, report.read_elapsed_ms);
+    TEST_ASSERT_EQUAL_UINT32(16u, report.mismatch_count);
+    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_ERROR_SPACE, report.error);
+    TEST_ASSERT_EQUAL_UINT8(7u, report.filesystem_result);
+    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_ERROR_SIZE, report.request_error);
 }

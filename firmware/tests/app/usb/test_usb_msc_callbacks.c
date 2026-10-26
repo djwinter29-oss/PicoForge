@@ -462,3 +462,52 @@ void test_prevent_disconnect_allows_absent_disable_and_unavailable_recovery(void
  TEST_ASSERT_FALSE(msc_enabled || request_rejected);
  TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 }
+
+void test_request_during_the_reconnect_window_restarts_the_deadline_and_umount_keeps_it(void)
+{
+ msc_enabled=false;
+ owner=OWNER_FIRMWARE;
+ mounted=false;
+ pf_usb_msc_request(true);
+ pf_usb_msc_task();
+ worker_busy=false;
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(msc_enabled && reconnect_pending);
+ test_time_us=100000u;
+ msc_ejected=true;
+ pf_usb_msc_request(false);
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(msc_enabled);
+ TEST_ASSERT_TRUE(reconnect_pending);
+ TEST_ASSERT_EQUAL_UINT64(100000u+MSC_RECONNECT_DETACH_US,reconnect_at_us);
+ tud_umount_cb();
+ test_time_us=reconnect_at_us-1u;
+ pf_usb_msc_task();
+ TEST_ASSERT_TRUE(reconnect_pending);
+ test_time_us=reconnect_at_us;
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(reconnect_pending);
+}
+
+void test_inquiry_fields_are_fixed_width_and_space_padded(void)
+{
+ uint8_t vendor[8], product[16], revision[4];
+ memset(vendor,0xAA,sizeof(vendor)); memset(product,0xAA,sizeof(product)); memset(revision,0xAA,sizeof(revision));
+ tud_msc_inquiry_cb(0,vendor,product,revision);
+ TEST_ASSERT_EQUAL_MEMORY("PicoForg",vendor,8);
+ TEST_ASSERT_EQUAL_MEMORY("SD Card         ",product,16);
+ TEST_ASSERT_EQUAL_MEMORY("1.0 ",revision,4);
+}
+
+void test_failed_recovery_release_reconnects_through_the_deadline_path(void)
+{
+ msc_enabled=true; owner=OWNER_USB; initialized=false; mounted=false; worker_busy=false;
+ recover_accepted=true; owner_result=PF_BLOCK_NOT_READY;
+ test_time_us=1000u;
+ pf_usb_msc_request_recovery(); pf_usb_msc_task();
+ TEST_ASSERT_TRUE(request_rejected && msc_enabled && reconnect_pending);
+ TEST_ASSERT_EQUAL_UINT64(1000u,reconnect_at_us);
+ pf_usb_msc_task();
+ TEST_ASSERT_FALSE(reconnect_pending);
+ owner_result=PF_BLOCK_OK;
+}
