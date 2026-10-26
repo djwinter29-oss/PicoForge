@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_build_matrices_and_compatible_artifact_checks():
     for name in ("pr-check.yml", "release.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text()
-        for dimension in ("board: [pico, pico2]", "transport: [SDIO_PIO, SPI]"):
+        for dimension in ("board: [pico, pico_w, pico2, pico2_w]", "transport: [SDIO_PIO, SPI]"):
             assert dimension in workflow
         for removed in ("BAREMETAL", "matrix.clock", "matrix.port",
                         "--sys-clk-mhz", "--sdcard-port", "Build SDK-default clock application"):
