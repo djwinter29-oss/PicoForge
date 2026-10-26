@@ -2,6 +2,5 @@
 #define CLOCK_MODEL_H
 
 #include "hardware/clocks.h"
-#include "hardware/vreg.h"
 
 #endif

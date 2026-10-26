@@ -1,3 +1,7 @@
+/**
+ * @file led.h
+ * @brief Board LED driver.
+ */
 #ifndef PF_LED_H
 #define PF_LED_H
 
@@ -25,7 +29,11 @@ bool pf_led_init(void);
 /** Return whether a board LED has been configured. */
 bool pf_led_is_available(void);
 
-/** Set the logical LED state; returns false when the board has no LED. */
+/**
+ * @brief Set the logical LED state.
+ * @param on true to light the LED, regardless of the board polarity.
+ * @return false when the board has no LED.
+ */
 bool pf_led_set(bool on);
 
 /** Return the logical LED state, or false when unavailable/off. */

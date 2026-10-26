@@ -1,3 +1,7 @@
+/**
+ * @file logging.c
+ * @brief Board-configured, output-only severity logging over the monitor UART.
+ */
 #include "logging.h"
 
 #include <limits.h>
@@ -16,8 +20,8 @@
 #error "The logging driver requires Pico SDK stdout serialization"
 #endif
 
-_Static_assert(PF_LOG_LINE_BUFFER_SIZE >= sizeof("[ERROR] picoforge: ..."),
-               "Log line buffer must fit the default error prefix and ellipsis");
+_Static_assert(PF_LOG_LINE_BUFFER_SIZE >= sizeof("[ERROR] 0123456789abcdef: ..."),
+               "Log line buffer must fit the longest error prefix and ellipsis");
 _Static_assert(PF_LOG_LINE_BUFFER_SIZE <= INT_MAX, "Log line buffer must fit stdio_put_string length");
 
 static bool logging_initialized;
@@ -67,15 +71,15 @@ bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *for
     size_t line_length;
     va_list arguments;
 
-    if (!logging_initialized || (format == NULL) ||
-        (level < PF_LOGGING_LEVEL_INFO) || (level > PF_LOGGING_LEVEL_ERROR)) {
+    if (!logging_initialized || (format == NULL) || ((int)level < (int)PF_LOGGING_LEVEL_INFO) ||
+        ((int)level > (int)PF_LOGGING_LEVEL_ERROR)) {
         return false;
     }
     if ((uint8_t)level < pf_logging_board.default_level) {
         return false;
     }
 
-    prefix_length = snprintf(line, sizeof(line), "[%s] %s: ", level_names[level],
+    prefix_length = snprintf(line, sizeof(line), "[%s] %.*s: ", level_names[(int)level], PF_LOGGING_TAG_MAX,
                              (tag != NULL) ? tag : "picoforge");
     if ((prefix_length < 0) || ((size_t)prefix_length >= sizeof(line) - 3u)) {
         return false;

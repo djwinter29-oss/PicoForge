@@ -46,7 +46,7 @@
 :files:
   :source:
     - -:firmware/src/main.c
-    - -:firmware/src/drivers/temperature.c
+    - -:firmware/src/platform/temperature.c
 
 :flags:
   :test:

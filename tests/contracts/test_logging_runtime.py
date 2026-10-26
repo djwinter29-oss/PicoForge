@@ -26,7 +26,7 @@ def test_logging_filter_format_truncation_and_output_result(tmp_path):
             str(ROOT / "tests/fixtures/logging-sdk"),
             "-I",
             str(ROOT / "firmware/src"),
-            str(ROOT / "firmware/src/drivers/logging.c"),
+            str(ROOT / "firmware/src/platform/logging.c"),
             str(ROOT / "tests/fixtures/logging-runtime.c"),
             "-o",
             str(binary),
@@ -39,20 +39,20 @@ def test_logging_filter_format_truncation_and_output_result(tmp_path):
         [
             compiler,
             "-std=c11",
-            "-DPF_LOG_LINE_BUFFER_SIZE=22u",
+            "-DPF_LOG_LINE_BUFFER_SIZE=29u",
             "-I",
             str(ROOT / "tests/fixtures/logging-sdk"),
             "-I",
             str(ROOT / "firmware/src"),
             "-fsyntax-only",
-            str(ROOT / "firmware/src/drivers/logging.c"),
+            str(ROOT / "firmware/src/platform/logging.c"),
         ],
         capture_output=True,
         text=True,
         check=False,
     )
     assert too_small.returncode != 0
-    assert "Log line buffer must fit the default error prefix and ellipsis" in too_small.stderr
+    assert "Log line buffer must fit the longest error prefix and ellipsis" in too_small.stderr
 
     invalid_level_binary = tmp_path / "logging-invalid-level"
     subprocess.run(
@@ -64,7 +64,7 @@ def test_logging_filter_format_truncation_and_output_result(tmp_path):
             str(ROOT / "tests/fixtures/logging-sdk"),
             "-I",
             str(ROOT / "firmware/src"),
-            str(ROOT / "firmware/src/drivers/logging.c"),
+            str(ROOT / "firmware/src/platform/logging.c"),
             str(ROOT / "tests/fixtures/logging-runtime.c"),
             "-o",
             str(invalid_level_binary),
@@ -92,7 +92,7 @@ def test_logging_filter_format_truncation_and_output_result(tmp_path):
                 str(ROOT / "tests/fixtures/logging-sdk"),
                 "-I",
                 str(ROOT / "firmware/src"),
-                str(ROOT / "firmware/src/drivers/logging.c"),
+                str(ROOT / "firmware/src/platform/logging.c"),
                 str(ROOT / "tests/fixtures/logging-runtime.c"),
                 "-o",
                 str(invalid_config_binary),
@@ -115,7 +115,7 @@ def test_logging_filter_format_truncation_and_output_result(tmp_path):
             "-I",
             str(ROOT / "firmware/src"),
             "-fsyntax-only",
-            str(ROOT / "firmware/src/drivers/logging.c"),
+            str(ROOT / "firmware/src/platform/logging.c"),
         ],
         capture_output=True,
         text=True,

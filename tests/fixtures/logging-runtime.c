@@ -6,7 +6,7 @@
 #include <string.h>
 
 #include "config/config.h"
-#include "drivers/logging.h"
+#include "platform/logging.h"
 #include "pico/stdio.h"
 #include "pico/stdio_uart.h"
 
@@ -84,6 +84,7 @@ int stdio_put_string(const char *text, int length, bool newline, bool cr_transla
     if (newline) {
         output[output_length++] = '\n';
     }
+    output[output_length] = '\0';
     return output_result >= 0 ? output_result : length;
 }
 
@@ -121,6 +122,9 @@ int main(void)
     assert(strcmp(output, "[ERROR] picoforge: fallback\n") == 0);
     assert(!pf_logging_write((pf_logging_level_t)99, "test", "invalid"));
     assert(!pf_logging_write(PF_LOGGING_LEVEL_ERROR, "test", NULL));
+
+    assert(PF_LOGGING_WARNING("0123456789abcdefTRUNCATED", "m"));
+    assert(strcmp(output, "[WARN] 0123456789abcdef: m\n") == 0);
 
     char long_message[PF_LOG_LINE_BUFFER_SIZE + 32u];
     memset(long_message, 'x', sizeof(long_message) - 1u);

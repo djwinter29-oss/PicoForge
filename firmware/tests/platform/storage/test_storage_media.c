@@ -1,5 +1,5 @@
 #include "unity.h"
-#define MEDIA_SOURCE "middleware/storage/storage.c"
+#define MEDIA_SOURCE "platform/storage/storage.c"
 #include MEDIA_SOURCE
 #include "block_device.h"
 #include "Mocksd.h"

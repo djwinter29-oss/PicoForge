@@ -1,10 +1,10 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "pico/stdlib.h"
-#include "drivers/led.h"
-#include "drivers/logging.h"
-#include "drivers/system.h"
-#include "drivers/temperature.h"
+#include "platform/led.h"
+#include "platform/logging.h"
+#include "platform/system.h"
+#include "platform/temperature.h"
 #include "app/usb/usb_task.h"
 
 /* SYS_CLK_HZ and the artifact label are the BUILD clock; a saved system clock may replace it at runtime. */

@@ -2,7 +2,7 @@
  * @brief Singleton FatFs volume instance, drive-zero binding and mount telemetry.
  */
 #include "fatfs_volume.h"
-#include "middleware/storage/fatfs_disk.h"
+#include "platform/storage/fatfs_disk.h"
 
 #include <stdatomic.h>
 #include <stddef.h>

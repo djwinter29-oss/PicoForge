@@ -4,10 +4,10 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
-#include "drivers/system.h"
-#include "middleware/storage/fatfs_volume.h"
-#include "middleware/storage/storage.h"
-#include "drivers/logging.h"
+#include "platform/system.h"
+#include "platform/storage/fatfs_volume.h"
+#include "platform/storage/storage.h"
+#include "platform/logging.h"
 
 #include <string.h>
 #include <stdatomic.h>

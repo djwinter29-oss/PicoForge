@@ -46,7 +46,7 @@ int main(void) {
     }
 }
 ''')
-    storage = ROOT / 'firmware/src/middleware/storage'
+    storage = ROOT / 'firmware/src/platform/storage'
     binary = tmp_path / 'sector_sizes'
     subprocess.run(['gcc', '-std=c11', '-I', str(tmp_path),
                     '-I', str(ROOT / 'firmware/third_party/fatfs/source'),

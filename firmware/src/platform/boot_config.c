@@ -2,7 +2,7 @@
  * @file boot_config.c
  * @brief Boot configuration: one RAM record, validation, and private flash persistence.
  */
-#include "drivers/boot_config.h"
+#include "platform/boot_config.h"
 
 #include <stddef.h>
 #include <string.h>

@@ -3,9 +3,9 @@
 #include "pico/stdlib.h"
 #include "tusb.h"
 
-#include "drivers/system.h"
+#include "platform/system.h"
 #include "usb_hid.h"
-#include "drivers/logging.h"
+#include "platform/logging.h"
 #include "usb_msc.h"
 #include "usb_task.h"
 #include "app/cli/cli.h"

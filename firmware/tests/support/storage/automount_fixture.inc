@@ -1,6 +1,6 @@
 #include "unity.h"
 #include <string.h>
-#include "middleware/storage/storage.h"
+#include "platform/storage/storage.h"
 #include "drivers/sdcard/sd_port.h"
 #include "drivers/sdcard/sd_backend.h"
 #define WORKER_SOURCE "app/storage/storage_worker.c"
@@ -8,7 +8,7 @@
 #define MSC_SOURCE "app/usb/usb_msc.c"
 #include WORKER_SOURCE
 #include FACADE_SOURCE
-#define MEDIA_SOURCE "middleware/storage/storage.c"
+#define MEDIA_SOURCE "platform/storage/storage.c"
 #include MEDIA_SOURCE
 #include MSC_SOURCE
 

@@ -25,7 +25,7 @@ For example, a 50 MHz SDIO request at 150 MHz SYSCLK achieves 37.5 MHz. Status r
 ## Using the API
 
 ```c
-#include "drivers/boot_config.h"
+#include "platform/boot_config.h"
 
 pf_sysclk_profile_t clk = pf_boot_config_sysclk();   /* saved value, or PF_SYSCLK_DEFAULT */
 pf_storage_speed_t speed = pf_boot_config_storage_speed();     /* saved value, or PF_STORAGE_SPEED_DEFAULT */
@@ -68,9 +68,9 @@ not change the active clock or bus immediately.
 The version 1 persistent record stores one byte per profile: system clock and shared SD-card speed. It does not
 store MHz or separate SPI/SDIO settings. The HID protocol's system clock field still carries MHz.
 
-Boot-applied settings are exposed through the driver facade `drivers/boot_config.c/.h`. The USB task is the only
+Boot-applied settings are exposed through the platform facade `platform/boot_config.c/.h`. The USB task is the only
 runtime writer. The RAM copy uses the same record type as flash; save refreshes its metadata and CRC. Record
-validation and RP2 flash persistence are private static implementation details in `drivers/boot_config.c`;
+validation and RP2 flash persistence are private static implementation details in `platform/boot_config.c`;
 application code uses only the public facade.
 Loading reads the fixed record directly, and saving writes one padded flash page; there is no generic byte-store API.
 At the start of `main()`, before the scheduler starts, the clock-setting call makes the first getter call, loading
@@ -121,14 +121,13 @@ flash sizes. A board with less flash than the SDK definition is unsupported.
 A saved system clock profile is applied as the first statement of `main()` in
 [main.c](../../firmware/src/main.c), after SDK startup and before monitor UART, application peripherals, USB, and
 FreeRTOS start. The FreeRTOS port reads the new `clk_sys` for SysTick at scheduler start.
-`pf_system_clock_apply()` ([system.c](../../firmware/src/drivers/system.c)) takes no arguments: it reads the saved
+`pf_system_clock_apply()` ([system.c](../../firmware/src/platform/system.c)) takes no arguments: it reads the saved
 setting through `pf_get_sysclk_mhz()` without writing flash, then applies it:
 
 - `0`, a corrupt/missing record (which decodes as Defaults), an underivable frequency or the clock already in use change
   nothing, so Defaults keep the build clock.
-- Voltage is raised only when the target is above the current clock and the regulator is below the need (1.15 V up to
-  200 MHz, 1.30 V above), settled with `busy_wait_at_least_cycles()` for the SDK's 1000 µs at the current clock.
-  Voltage is never lowered by this call.
+- The core voltage is never changed by this call, so profiles above the SDK default clock (including 250 MHz) run at
+  whatever voltage the SDK already set.
 - The PLL comes from `check_sys_clock_khz()` and `set_sys_clock_pll()`. The SDK moves `clk_peri` to 48 MHz there, which
   would cap SPI at 24 MHz, so `clk_peri` is reconfigured back to `clk_sys` (the SDK boot behavior; a 50 MHz SPI
   ceiling needs at least 100 MHz). On RP2350, `clk_hstx` is reconfigured so its recorded frequency matches. Ticks run

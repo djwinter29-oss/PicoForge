@@ -1,8 +1,8 @@
 /** @file
  * @brief Build-selected board assignments; each object is declared extern in its driver header.
  */
-#include "drivers/led.h"
-#include "drivers/logging.h"
+#include "platform/led.h"
+#include "platform/logging.h"
 #include "config/config.h"
 
 const pf_led_board_t pf_led_board = {

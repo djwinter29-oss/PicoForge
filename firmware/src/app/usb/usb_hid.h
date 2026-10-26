@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "pico/unique_id.h"
-#include "drivers/system.h"
+#include "platform/system.h"
 
 #define PF_HID_IDENTITY_REPORT_ID 1u
 #define PF_HID_CONFIGURATION_REPORT_ID 2u

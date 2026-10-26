@@ -1,17 +1,17 @@
 /** @file
- * @brief Storage service: the single middleware boundary for the filesystem-backing medium.
+ * @brief Storage service: the single platform boundary for the filesystem-backing medium.
  *
- * Layers above middleware see storage only as a mountable filesystem that can be exported to a USB host.
+ * Layers above platform storage see storage only as a mountable filesystem that can be exported to a USB host.
  * The service owns media lifecycle, presence debounce, paced automount, recovery, and exclusive firmware/USB MSC
  * ownership. Backend types (SD today) never appear in this header.
  */
-#ifndef PF_MIDDLEWARE_STORAGE_H
-#define PF_MIDDLEWARE_STORAGE_H
+#ifndef PF_PLATFORM_STORAGE_H
+#define PF_PLATFORM_STORAGE_H
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "middleware/storage/block_device.h"
+#include "platform/storage/block_device.h"
 
 /** Physical medium behind the filesystem. */
 typedef enum {

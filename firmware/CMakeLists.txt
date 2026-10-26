@@ -182,35 +182,35 @@ else()
 endif()
 
 add_library(pf_system STATIC
-    src/drivers/system.c
+    src/platform/system.c
 )
 target_include_directories(pf_system PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+    "${CMAKE_CURRENT_LIST_DIR}/src/platform"
 )
 target_link_libraries(pf_system PUBLIC hardware_clocks hardware_vreg pico_stdlib)
 target_link_libraries(pf_system PRIVATE pf_boot_config)
 
 add_library(pf_temperature STATIC
-    src/drivers/temperature.c
+    src/platform/temperature.c
 )
 target_include_directories(pf_temperature PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+    "${CMAKE_CURRENT_LIST_DIR}/src/platform"
 )
 target_link_libraries(pf_temperature PUBLIC hardware_adc)
 
 add_library(pf_led STATIC
-    src/drivers/led.c
+    src/platform/led.c
 )
 target_include_directories(pf_led PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+    "${CMAKE_CURRENT_LIST_DIR}/src/platform"
 )
 target_link_libraries(pf_led PUBLIC hardware_gpio)
 
 add_library(pf_logging STATIC
-    src/drivers/logging.c
+    src/platform/logging.c
 )
 target_include_directories(pf_logging PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
+    "${CMAKE_CURRENT_LIST_DIR}/src/platform"
 )
 target_link_libraries(pf_logging PUBLIC hardware_uart pico_stdio_uart pico_stdlib)
 
@@ -231,17 +231,17 @@ target_include_directories(pf_cli PUBLIC
 target_link_libraries(pf_cli PUBLIC embedded_cli pf_storage)
 
 add_library(pf_storage STATIC
-    src/middleware/storage/block_device.c
+    src/platform/storage/block_device.c
     third_party/fatfs/source/ff.c
     third_party/fatfs/source/ffunicode.c
-    src/middleware/storage/fatfs_disk.c
-    src/middleware/storage/fatfs_volume.c
-    src/middleware/storage/storage.c
+    src/platform/storage/fatfs_disk.c
+    src/platform/storage/fatfs_volume.c
+    src/platform/storage/storage.c
 )
 target_link_libraries(pf_storage PUBLIC pf_sdcard pf_logging)
 target_include_directories(pf_storage PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src/integration/fatfs"
-    "${CMAKE_CURRENT_LIST_DIR}/src/middleware/storage"
+    "${CMAKE_CURRENT_LIST_DIR}/src/platform/storage"
     "${CMAKE_CURRENT_LIST_DIR}/third_party/fatfs/source"
 )
 
@@ -266,7 +266,7 @@ target_link_libraries(pf_app_storage PUBLIC
     embedded_cli
     FreeRTOS-Kernel-Static
 )
-add_library(pf_boot_config STATIC src/drivers/boot_config.c)
+add_library(pf_boot_config STATIC src/platform/boot_config.c)
 target_include_directories(pf_boot_config PUBLIC "${CMAKE_CURRENT_LIST_DIR}/src")
 # pico_flash is an INTERFACE library: flash.c compiles into this target, so it needs the FreeRTOS SMP definitions
 # (LIB_FREERTOS_KERNEL, FREE_RTOS_KERNEL_SMP, configNUMBER_OF_CORES, configUSE_CORE_AFFINITY) here.

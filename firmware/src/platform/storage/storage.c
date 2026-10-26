@@ -1,7 +1,7 @@
 /** @file
  * @brief Storage service over the SD driver: lifecycle, presence/automount policy, owner gates and status.
  */
-#include "middleware/storage/storage.h"
+#include "platform/storage/storage.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -9,9 +9,9 @@
 #include "drivers/sdcard/sd.h"
 #include "drivers/sdcard/sd_board.h"
 #include "drivers/sdcard/sd_port.h"
-#include "middleware/storage/fatfs_volume.h"
-#include "drivers/logging.h"
-#include "drivers/system.h"
+#include "platform/storage/fatfs_volume.h"
+#include "platform/logging.h"
+#include "platform/system.h"
 
 static pf_sd_config_t media_config; /**< Board transport borrowed for application lifetime. */
 static bool configured; /**< Execution-port and board configuration are available. */

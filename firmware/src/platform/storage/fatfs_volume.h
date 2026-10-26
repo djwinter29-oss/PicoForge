@@ -7,7 +7,7 @@
 #include <stdbool.h>
 
 #include "ff.h"
-#include "middleware/storage/block_device.h"
+#include "platform/storage/block_device.h"
 
 /** FatFs logical volume managed by this service. */
 #define PF_FATFS_VOLUME_PATH "0:"

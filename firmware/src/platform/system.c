@@ -1,14 +1,12 @@
-#include "system.h"
 /**
  * @file system.c
  * @brief System information and runtime clock control.
  */
 #include "system.h"
 
-#include "drivers/boot_config.h"
+#include "platform/boot_config.h"
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
-#include "hardware/vreg.h"
 #include "pico/stdlib.h"
 
 uint8_t pf_system_mcu_id(void)
@@ -43,15 +41,7 @@ bool pf_system_clock_apply(void)
         !check_sys_clock_khz((uint32_t)system_clock_mhz * 1000u, &vco_hz, &post_div1, &post_div2)) {
         return false;
     }
-    if (target_hz > current_hz) {
-        const enum vreg_voltage needed = system_clock_mhz > 200u ? VREG_VOLTAGE_1_30 : VREG_VOLTAGE_1_15;
-        if (vreg_get_voltage() < needed) {
-            vreg_set_voltage(needed);
-            /* Settle at the current clock before switching the PLL. */
-            busy_wait_at_least_cycles(
-                (uint32_t)((SYS_CLK_VREG_VOLTAGE_AUTO_ADJUST_DELAY_US * (uint64_t)current_hz) / 1000000u));
-        }
-    }
+    /* The core voltage is deliberately left as the SDK set it; this driver never changes it. */
     set_sys_clock_pll(vco_hz, post_div1, post_div2);
     /* set_sys_clock_pll() moves clk_peri to 48 MHz; restore the SDK-boot behavior (clk_peri = clk_sys). */
     clock_configure_undivided(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS, target_hz);
@@ -69,5 +59,5 @@ void pf_system_reset(void)
 
 uint8_t pf_system_reset_cause(void)
 {
-    return watchdog_caused_reboot() ? 2u : 0u;
+    return watchdog_caused_reboot() ? PF_SYSTEM_RESET_CAUSE_WATCHDOG : PF_SYSTEM_RESET_CAUSE_UNKNOWN;
 }

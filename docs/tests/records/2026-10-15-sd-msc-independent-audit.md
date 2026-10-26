@@ -99,7 +99,7 @@ Changed paths:
 - `firmware/src/board/board_profile.c`
 - `firmware/src/drivers/sd_card/spi/sd_spi.c`
 - `firmware/src/usb/msc.c`
-- `firmware/tests/middleware/storage/test_self_test.c`
+- `firmware/tests/platform/storage/test_self_test.c`
 - `tools/validation/check-sd-spi-transfer.py`
 - `tools/validation/check-storage-automount.py`
 - `tools/validation/host/regression_msc.c`

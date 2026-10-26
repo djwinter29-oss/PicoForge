@@ -103,8 +103,8 @@ tags; local builds can set the same variable explicitly. Without it, local filen
 This stabilizes the date input, not a guarantee of bit-for-bit reproducibility across toolchains or build paths.
 
 The SDK defaults are 125 MHz on RP2040 and 150 MHz on RP2350. The dashboard can apply supported runtime clocks;
-150 MHz is an overclock on RP2040, and 250 MHz is an overclock on both MCUs. Accepted SDK clock configuration
-does not establish hardware safety.
+150 MHz is an overclock on RP2040, and 250 MHz is an overclock on both MCUs; runtime clock changes never
+alter the core voltage. Accepted SDK clock configuration does not establish hardware safety.
 SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON in release builds. It requests the
 highest supported safe planned rate up to 50 MHz, clamped by the PIO ceiling of SYSCLK/4: at most 37.5 MHz at
 150 MHz CPU, and up to 50 MHz at 250 MHz CPU. Unsupported High Speed or failed faster-bus validation retains the

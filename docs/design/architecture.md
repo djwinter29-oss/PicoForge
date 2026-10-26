@@ -7,7 +7,7 @@ platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected
 [artifact naming](../../README.md#1-build-the-firmware). The TinyUSB configuration lives under
 `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live
 under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID
-interface. Board startup passes its monitor UART assignment to `drivers/logging`, which initializes and selects
+interface. Board startup passes its monitor UART assignment to `platform/logging`, which initializes and selects
 it for stdio and emits serialized, severity-tagged lines at the board-configured default severity. USB stdio stays disabled so
 log messages remain separate from CDC. The USB task services the [CDC CLI](../guides/usb-cdc-cli.md) and publishes HID Input
 report `3` telemetry every 250 ms, plus storage and capability-gated self-test reports `10` and `11` every 500 ms.
@@ -21,9 +21,9 @@ Pico, Pico 2, and Pico 2 W use the
 same monitor UART pins; boards without a direct GPIO LED do not advertise one. This follows PicoUart's
 [board-configuration approach](https://github.com/djwinter29-oss/PicoUart/blob/main/docs/hardware-setup.md) without
 adopting its UART-channel map or hardware features. Other layouts require a matching board profile; see
-[hardware setup](../guides/hardware-setup.md). Simple system, temperature, and LED drivers live flat under
-`firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sdcard/`, above the physical engines
-in `drivers/sdcard/`. USB interface roles, descriptors, and lifecycle are documented in the
+[hardware setup](../guides/hardware-setup.md). Platform services (system, temperature, LED, logging, boot config)
+live flat under `firmware/src/platform/`; native and SPI SD protocols live together under `drivers/sdcard/`, above
+the physical engines in `drivers/sdcard/`. USB interface roles, descriptors, and lifecycle are documented in the
 [HID Report Reference](usb/usb-hid-report-reference.md). The development VID/PID is `0xCAFE:0x4011` and is not for product
 release. `firmware/src/main.c` initializes logging output, temperature, and an available board LED, starts the USB
 task, and launches the scheduler.
@@ -46,7 +46,7 @@ are closed before command completion, and enabling MSC automatically queues file
 unmount on the worker before acquiring USB ownership. See [the CDC CLI guide](../guides/usb-cdc-cli.md) for commands, safeguards,
 resource budgets, and validation limits.
 
-The firmware separates application policy, middleware, reusable drivers, and platform integration as described below.
+The firmware separates application policy, reusable drivers, and the platform (services and storage) as described below.
 New modules should preserve these boundaries as hardware and application behavior grows.
 
 Feature Report `20` and Input report `11` implement the [SD self-test](../guides/sdcard-performance-test.md). Its RTOS-independent engine lives
@@ -110,20 +110,18 @@ The example uses static allocation for its application task and the port-provide
 
 ## Intended Dependency Direction
 
-Application code orchestrates middleware and platform services. Middleware composes reusable drivers and platform services. Drivers and platform services adapt Pico SDK and board-specific hardware details.
+Application code orchestrates platform services. The platform, which includes storage, composes reusable drivers. Drivers and platform services adapt Pico SDK and board-specific hardware details.
 
 ```mermaid
 flowchart TD
-    App["Firmware application"] --> Middleware["Middleware services"]
-    App --> Platform["Platform services"]
-    Middleware --> Drivers["Reusable drivers"]
-    Middleware --> Platform
+    App["Firmware application"] --> Platform["Platform services"]
+    Platform --> Drivers["Reusable drivers"]
     Drivers --> SDK["Pico SDK"]
     Platform --> SDK
     SDK --> Hardware["RP2040 / RP2350 hardware"]
 ```
 
-Dependencies should flow toward the hardware-facing layers. Avoid circular dependencies between middleware, drivers, and platform services; use explicit interfaces when a lower layer needs an application-provided callback.
+Dependencies should flow toward the hardware-facing layers. Avoid circular dependencies between drivers and platform services; use explicit interfaces when a lower layer needs an application-provided callback.
 
 ## Layer Responsibilities
 
@@ -131,15 +129,15 @@ Dependencies should flow toward the hardware-facing layers. Avoid circular depen
 
 Own product behavior, startup, and composition of the services needed by a firmware target. Keep policy and hardware register details out of application code where a reusable service or driver is appropriate.
 
-### Middleware
+### Platform storage
 
-Provide reusable application-facing services. Storage middleware adapts FatFs disk I/O to the logical block-device
+PicoForge is a platform that forks reuse, so `firmware/src/platform/storage/` is part of it. Storage adapts FatFs disk I/O to the logical block-device
 API; the application owns the FatFs volume, SD-card configuration, ownership, and mounting policy.
 The firmware currently uses the USB device role; a USB host role is not selected.
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in middleware; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: sources in `firmware/src/config/` define assignment objects, declared `extern` in driver headers. CMake selects the storage assignment source alongside its transport binding. Each driver initializes its own hardware (`pf_led_init()`, `pf_logging_init()`), and [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/middleware/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../guides/hardware-setup.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Multi-file drivers are grouped by subsystem under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in platform storage; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: sources in `firmware/src/config/` define assignment objects, declared `extern` in driver headers. CMake selects the storage assignment source alongside its transport binding. Each driver initializes its own hardware (`pf_led_init()`, `pf_logging_init()`), and [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/platform/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../guides/hardware-setup.md).
 
 ### SD-Card Driver Structure
 
@@ -158,7 +156,7 @@ The board pin/peripheral profile is immutable and selected at build time; firmwa
 instead of repeating pin-range, mux, and collision validation at runtime. Wiring must agree with
 [the hardware setup baseline](../guides/hardware-setup.md) and the board schematic. Boot-applied settings and their public
 load/save API and private RP2 flash persistence with FreeRTOS-safe access live in
-`firmware/src/drivers/boot_config.c/.h`. Board pin mapping lives in `firmware/src/config/` as plain data; CMake
+`firmware/src/platform/boot_config.c/.h`. Board pin mapping lives in `firmware/src/config/` as plain data; CMake
 selects the storage connector's SDIO-PIO or SPI assignment source. Both transports request the saved
 storage speed; card negotiation and hardware divider rounding determine the actual clock. Physical card operation
 still needs board validation.
@@ -167,7 +165,7 @@ still needs board validation.
 
 Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The SD memory-card protocols are implemented in `firmware/src/drivers/sdcard/`; their reusable SPI and PIO engines live in `firmware/src/drivers/sdcard/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/` and compiled into the firmware.
 Its upstream disk interface and configuration live under `firmware/src/integration/fatfs/`; project-owned disk
-adaptation lives under `firmware/src/middleware/storage/`, while the singleton volume lifecycle lives in
+adaptation lives under `firmware/src/platform/storage/`, while the singleton volume lifecycle lives in
 `firmware/src/app/storage/`.
 
 Embedded CLI is also pinned as a Git submodule. Its application session module is independent
@@ -182,13 +180,13 @@ operations require caller serialization because FatFs is configured without cros
 [filesystem block-device boundary](sdcard/sdcard-driver-design.md#filesystem-block-device-boundary) for authoritative layering,
 binding lifetimes, and ownership contracts.
 
-`middleware/storage/fatfs_volume.c/.h` owns the singleton FatFs instance, mount registration and format telemetry.
-`middleware/storage/storage.c/.h` is the storage service over the SD driver: it obtains SD configuration, owns the media
+`platform/storage/fatfs_volume.c/.h` owns the singleton FatFs instance, mount registration and format telemetry.
+`platform/storage/storage.c/.h` is the storage service over the SD driver: it obtains SD configuration, owns the media
 lifecycle, presence debounce, paced automount, recovery and forced-USB-return policy, the last failed operation, and
 exclusive firmware/USB MSC ownership. Its static firmware descriptor gates FatFs I/O. `pf_storage_get_status()` is a
 backend-neutral snapshot (state, medium, bus and pins, presence, clock, capacity, identity, last failure); its header
 includes no driver headers so another medium can implement the same API.
-Layers above middleware treat storage as a filesystem that can be exported as USB MSC, and use only this service:
+Layers above platform storage treat storage as a filesystem that can be exported as USB MSC, and use only this service:
 the CLI `storage status` and the HID board/storage reports are built from that snapshot.
 The CDC `storage`/`fs` commands live in `app/cli/cli_storage.c/.h`; the USB task registers `pf_cli_storage_execute`
 with `pf_storage_worker_init()`, so the worker runs commands without depending on the CLI. Application storage
@@ -206,12 +204,12 @@ Product-specific USB behavior lives under `app/usb`: `usb_task.c/.h` owns task s
 scheduling; `usb_hid.c/.h` owns the product HID protocol; `usb_msc.c/.h` owns SCSI callbacks and application handoff
 coordination; MSC block access and handoff use the `pf_storage_msc_*` export API in `storage.h`. `usb_descriptors.c` defines product interfaces.
 TinyUSB configuration remains under `integration/usb`; the pinned TinyUSB stack supplies reusable USB machinery.
-No extra middleware forwarding layer or runtime backend registry is introduced.
+No extra storage forwarding layer or runtime backend registry is introduced.
 
 The product CLI instance, prompt, built-in commands and buffer/history settings live in `app/cli`, using Embedded
-CLI directly. USB owns CDC transport and connection sessions. Middleware storage retains only logical block dispatch,
+CLI directly. USB owns CDC transport and connection sessions. Platform storage retains only logical block dispatch,
 device adapters and FatFs disk callbacks. The logging driver owns severity filtering, formatting, and stdio output
-selection. Neither middleware service depends on application headers.
+selection. Neither platform storage service depends on application headers.
 
 ### Storage Handoff Invariants
 
@@ -282,7 +280,7 @@ Per-block reservations alone never authorize USB takeover while file cleanup or 
 ## Testing and Validation
 
 Ceedling is configured by the repository-root `project.yml`. Host unit tests belong under `firmware/tests/` and mirror
-host-testable application, board, driver, integration and middleware modules. The configuration excludes `main.c`;
+host-testable application, board, driver, integration and platform modules. The configuration excludes `main.c`;
 board tests use scoped SDK fakes.
 
 `host/python/tests/`, `host/dotnet/PicoForge.Tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.

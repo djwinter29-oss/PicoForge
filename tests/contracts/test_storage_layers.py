@@ -29,17 +29,17 @@ def test_project_c_includes_do_not_traverse_relative_directories():
             ), source
 
 
-def test_storage_application_policy_stays_out_of_middleware():
-    middleware = ROOT / "firmware/src/middleware/storage"
+def test_storage_application_policy_stays_out_of_platform_storage():
+    storage_dir = ROOT / "firmware/src/platform/storage"
     application = ROOT / "firmware/src/app/storage"
     for module in ("file_benchmark", "storage_worker"):
         for extension in ("c", "h"):
             assert (application / f"{module}.{extension}").is_file()
-            assert not (middleware / f"{module}.{extension}").exists()
+            assert not (storage_dir / f"{module}.{extension}").exists()
     for extension in ("c", "h"):
         assert (ROOT / f"firmware/src/app/cli/cli_storage.{extension}").is_file()
         assert not (application / f"storage_commands.{extension}").exists()
-    for source in sorted(middleware.glob("*.c")) + sorted(middleware.glob("*.h")):
+    for source in sorted(storage_dir.glob("*.c")) + sorted(storage_dir.glob("*.h")):
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
         assert not any(header.startswith("app/") or Path(header).name in (
             "cli_storage.h", "file_benchmark.h", "storage_worker.h", "cli.h"
@@ -58,9 +58,9 @@ def test_storage_benchmark_is_opt_in_and_its_source_is_conditional():
 
 
 def test_fatfs_volume_does_not_depend_on_the_sd_backend():
-    middleware = ROOT / "firmware/src/middleware/storage"
+    storage_dir = ROOT / "firmware/src/platform/storage"
     for extension in ("c", "h"):
-        source = middleware / f"fatfs_volume.{extension}"
+        source = storage_dir / f"fatfs_volume.{extension}"
         assert not re.search(r"\b(?:pf_sd_\w+|PF_SD_\w+)\b", source.read_text()), source
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', source.read_text(), re.MULTILINE)
         assert not any("sdcard/" in header or Path(header).name in (
@@ -71,14 +71,14 @@ def test_fatfs_volume_does_not_depend_on_the_sd_backend():
 def test_product_cli_is_application_owned_and_logging_driver_owns_output():
     for extension in ("c", "h"):
         assert (ROOT / f"firmware/src/app/cli/cli.{extension}").is_file()
-        assert not (ROOT / f"firmware/src/middleware/cli/cli.{extension}").exists()
-    for source in (ROOT / "firmware/src/middleware").rglob("*.[ch]"):
+        assert not (ROOT / f"firmware/src/platform/cli/cli.{extension}").exists()
+    for source in (ROOT / "firmware/src/platform").rglob("*.[ch]"):
         text = source.read_text()
         headers = re.findall(r'^\s*#include\s*[<"]([^>"]+)[>"]', text, re.MULTILINE)
         assert not any(header.startswith("app/") or Path(header).name in (
             "cli.h",
         ) for header in headers), source
-    logging = (ROOT / "firmware/src/drivers/logging.c").read_text()
+    logging = (ROOT / "firmware/src/platform/logging.c").read_text()
     assert logging.index("stdio_uart_init_full(") < logging.index("stdio_filter_driver(&stdio_uart)")
     assert "stdio_put_string(line, (int)line_length, true, true)" in logging
     assert "pf_logging_write(" in logging
@@ -89,7 +89,7 @@ def test_product_cli_is_application_owned_and_logging_driver_owns_output():
     cmake = (ROOT / "firmware/CMakeLists.txt").read_text()
     assert "add_library(pf_logging STATIC" in cmake
     assert "pf_monitor_uart" not in cmake
-    header = (ROOT / "firmware/src/drivers/logging.h").read_text()
+    header = (ROOT / "firmware/src/platform/logging.h").read_text()
     assert "pf_logging_level_t" in header
     assert "pf_logging_write(" in header
     assert "pf_logging_set_minimum_level" not in header
@@ -129,19 +129,19 @@ def test_usb_product_behavior_lives_in_the_application():
     assert not list((ROOT / "firmware/src/usb").glob("*.[ch]"))
 
 
-def test_sd_ownership_policy_stays_above_driver_and_middleware():
+def test_sd_ownership_policy_stays_above_driver_and_platform_storage():
     driver = ROOT / "firmware/src/drivers/sdcard"
     for source in (driver / "sd.c", driver / "sd.h"):
         text = source.read_text()
         assert not re.search(r"\b(?:active_owner|reinit_after_usb_owner|pf_storage_\w+|PF_SD_OWNER_\w+)\b", text), source
-        assert not re.search(r'#include\s*"[^"]*(?:app/|middleware/)', text), source
+        assert not re.search(r'#include\s*"[^"]*app/', text), source
     assert not (driver / "sd_msc.h").exists()
-    # Above middleware, storage is a filesystem exported through middleware/storage/storage.h.
+    # Above platform storage, storage is a filesystem exported through platform/storage/storage.h.
     for source in (ROOT / "firmware/src/app").rglob("*.[ch]"):
         text = source.read_text()
         assert not re.search(r"\bpf_sd_\w+|\bPF_SD_\w+", text), source
         assert not re.search(r'#include\s*"[^"]*(?:sdcard/|sd_block\.h|sd\.h)', text), source
-    for source in (ROOT / "firmware/src/middleware/storage").glob("*.[ch]"):
+    for source in (ROOT / "firmware/src/platform/storage").glob("*.[ch]"):
         assert not re.search(r'#include\s*"[^"]*app/', source.read_text()), source
     # The CLI registers its executor with the worker; the worker never includes the CLI.
     for source in (ROOT / "firmware/src/app/storage").glob("*.[ch]"):
@@ -149,7 +149,7 @@ def test_sd_ownership_policy_stays_above_driver_and_middleware():
     # CMake selects implementations; no source file selects the transport with a preprocessor branch.
     for source in (ROOT / "firmware/src").rglob("*.[ch]"):
         assert "PF_CONFIG_SDCARD_TRANSPORT" not in source.read_text(), source
-    storage_api = (ROOT / "firmware/src/middleware/storage/storage.h").read_text()
+    storage_api = (ROOT / "firmware/src/platform/storage/storage.h").read_text()
     assert not re.search(r'#include\s*"[^"]*drivers/', storage_api)
     assert not re.search(r"\bpf_sd_\w+|\bPF_SD_\w+", storage_api)
 

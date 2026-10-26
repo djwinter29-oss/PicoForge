@@ -8,7 +8,7 @@
 #define DRIVER_SOURCE "drivers/sdcard/sd.c"
 #define PORT_SOURCE "drivers/sdcard/sd_port_freertos.c"
 #include DRIVER_SOURCE
-#define MEDIA_SOURCE "middleware/storage/storage.c"
+#define MEDIA_SOURCE "platform/storage/storage.c"
 #include MEDIA_SOURCE
 #include PORT_SOURCE
 bool pf_fatfs_volume_is_mounted(void) { return false; }

@@ -1,8 +1,15 @@
+/**
+ * @file logging.h
+ * @brief Board-configured, output-only severity logging over the monitor UART.
+ */
 #ifndef PF_LOGGING_H
 #define PF_LOGGING_H
 
 #include <stdbool.h>
 #include <stdint.h>
+
+/** Longest subsystem tag emitted; longer tags are truncated so the message is never dropped. */
+#define PF_LOGGING_TAG_MAX 16
 
 /** Log severity levels, ordered from least to most severe. */
 typedef enum {
@@ -33,7 +40,7 @@ void pf_logging_init(void);
 /**
  * @brief Emit one serialized log line to the initialized monitor UART.
  * @param level Severity to emit.
- * @param tag Short subsystem name; NULL uses "picoforge".
+ * @param tag Short subsystem name; NULL uses "picoforge". Truncated to PF_LOGGING_TAG_MAX characters.
  * @param format printf-style message format.
  * @return true if the line was accepted by stdio; false if filtered, invalid, uninitialized, or dropped.
  * @note This blocking API is not safe to call from an ISR. A line takes about 87 us per character

@@ -1,5 +1,5 @@
 /** @file
- * @brief Middleware binding of a logical block device to FatFs drive zero.
+ * @brief Platform binding of a logical block device to FatFs drive zero.
  */
 #ifndef PF_FATFS_DISK_H
 #define PF_FATFS_DISK_H

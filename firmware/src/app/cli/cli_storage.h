@@ -1,5 +1,5 @@
 /** @file
- * @brief CLI `storage` and `fs` command execution over the storage middleware.
+ * @brief CLI `storage` and `fs` command execution over the platform storage service.
  */
 #ifndef PF_CLI_STORAGE_H
 #define PF_CLI_STORAGE_H

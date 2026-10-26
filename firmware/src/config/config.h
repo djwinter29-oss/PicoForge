@@ -7,7 +7,8 @@
 
 /**
  * Maximum formatted log-line buffer, including its terminating NUL.
- * Must fit a default error prefix and ellipsis, and be no greater than INT_MAX; larger values increase task stack use.
+ * Must fit the longest error prefix and ellipsis, and be no greater than INT_MAX; larger values increase task
+ * stack use.
  * 128 fits the longest current message; the smallest logging task (USB, 1024 words) has ample headroom.
  */
 #ifndef PF_LOG_LINE_BUFFER_SIZE

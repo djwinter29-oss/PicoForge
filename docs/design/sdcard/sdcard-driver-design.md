@@ -29,7 +29,7 @@ Read the driver from the public facade down to the hardware. Each boundary has o
 
 | Layer | Contract | Responsibility |
 | --- | --- | --- |
-| Storage integration | `middleware/storage/storage.h` | Filesystem lifecycle and exclusive firmware/USB ownership; applications stop here. |
+| Storage integration | `platform/storage/storage.h` | Filesystem lifecycle and exclusive firmware/USB ownership; applications stop here. |
 | Public SD facade | `sd.h` | Configuration, reservations, serialized block operations and diagnostics. |
 | Selected card protocol | `sd_backend.h` | Card identification, addressing, transfers and recovery; calls require serialization. |
 | Physical link | `sd_link.h`, `sdio/sd_link_sdio.h`, `spi/sd_link_spi.h` | Resource lifecycle, clocks and raw SPI or CMD/DAT operations; no card protocol. |
@@ -192,9 +192,9 @@ The driver layout above ends at raw sectors. Integration above it lives in these
 | Responsibility | Implementation |
 | --- | --- |
 | Worker and file benchmark / CLI command executor | [app/storage/](../../../firmware/src/app/storage/), [cli_storage.c](../../../firmware/src/app/cli/cli_storage.c) |
-| Media lifecycle, automount/recovery, diagnostics and firmware/USB ownership | [storage.c](../../../firmware/src/middleware/storage/storage.c), [storage.h](../../../firmware/src/middleware/storage/storage.h) |
-| Filesystem-independent sectors and geometry | [block_device.h](../../../firmware/src/middleware/storage/block_device.h) |
-| FatFs lifecycle / disk-I/O binding | [fatfs_volume.c](../../../firmware/src/middleware/storage/fatfs_volume.c), [fatfs_disk.c](../../../firmware/src/middleware/storage/fatfs_disk.c) |
+| Media lifecycle, automount/recovery, diagnostics and firmware/USB ownership | [storage.c](../../../firmware/src/platform/storage/storage.c), [storage.h](../../../firmware/src/platform/storage/storage.h) |
+| Filesystem-independent sectors and geometry | [block_device.h](../../../firmware/src/platform/storage/block_device.h) |
+| FatFs lifecycle / disk-I/O binding | [fatfs_volume.c](../../../firmware/src/platform/storage/fatfs_volume.c), [fatfs_disk.c](../../../firmware/src/platform/storage/fatfs_disk.c) |
 
 Application policy lives in [app/storage/](../../../firmware/src/app/storage/): the sole storage-owner task handles USB
 command sessions and runs the storage service's debounce/automount and recovery policy. The fixed-file benchmark lives
@@ -202,7 +202,7 @@ alongside it; command execution lives in [app/cli/](../../../firmware/src/app/cl
 as a callback, without depending on CLI headers. CMake builds the worker and benchmark as `pf_app_storage`,
 which depends on reusable `pf_storage`, not the reverse.
 The generic volume module owns FatFs mount/unmount state
-and cached format telemetry (`middleware/storage/fatfs_volume.c/.h`, `pf_fatfs_volume_*` APIs). It has no SD
+and cached format telemetry (`platform/storage/fatfs_volume.c/.h`, `pf_fatfs_volume_*` APIs). It has no SD
 dependency and does not include application headers or own media ownership, benchmark status, command replies or
 queues.
 The generic interface is `block_device.c/.h`. The FatFs disk adapter exposes `pf_fatfs_disk_bind()`.
@@ -213,12 +213,12 @@ count, byte size, erase granularity, and write protection. Shared dispatch rejec
 geometry, empty or overflowing batches, and out-of-range sectors before data transfer. Read-only media still permits
 reads and sync. Backend errors propagate without retries, uncertain-write replay, or success-shaped substitutions.
 
-The [FatFs binding](../../../firmware/src/middleware/storage/fatfs_disk.h) selects drive zero explicitly. Its borrowed
+The [FatFs binding](../../../firmware/src/platform/storage/fatfs_disk.h) selects drive zero explicitly. Its borrowed
 descriptor, operation table, and context must outlive the binding. Bind only before mounting or after unmounting,
 serialized with FatFs calls; there is no runtime device registry or automatic discovery. Unbound drives report
 `STA_NOINIT`/`RES_NOTRDY`. The current fixed-sector FatFs configuration accepts only its configured sector size;
 incompatible geometry is not mounted. Write protection maps to `STA_PROTECT` and `RES_WRPRT`.
-The project-owned adapter and binding live together as `middleware/storage/fatfs_disk.c/.h`. The upstream-named
+The project-owned adapter and binding live together as `platform/storage/fatfs_disk.c/.h`. The upstream-named
 `diskio.h` and library configuration `ffconf.h` remain in `integration/fatfs/`. The adapter implements FatFs's required
 `disk_*` callbacks; those library-specific interfaces are not part of the generic block contract.
 
@@ -275,7 +275,7 @@ The CMake cache variable `PF_SDCARD_TRANSPORT` selects `SDIO_PIO` (default) or
 The common facade calls `sd_backend.h` functions directly. Shared board setup calls the internal board-binding
 contract implemented by `sdio/sd_board_sdio.c` or `spi/sd_board_spi.c`. No production transport-selection macro or runtime
 operation table is needed. The backend still reports its signaling mode so the facade rejects a mismatched descriptor.
-Board data describes both transports' wiring, and the storage middleware learns the selected bus from
+Board data describes both transports' wiring, and the platform storage learns the selected bus from
 `pf_sd_board_pins()`. Use `tools/firmware/build.sh --sdcard-transport SPI`
 or `-DPF_SDCARD_TRANSPORT=SPI` for a direct CMake build. Board support fills
 `pf_sd_config_t.transport` and `clock_hz`; pin assignments belong in
@@ -327,7 +327,7 @@ creating the storage worker. Bare-metal startup must provide the board-approved
 configuration and call `pf_sd_init()` itself.
 
 Driver diagnostics, the synchronous block API, checked sync, and persistent
-native CMD25 behavior are identical in both ports. Firmware/USB ownership belongs to storage middleware, not the port.
+native CMD25 behavior are identical in both ports. Firmware/USB ownership belongs to platform storage, not the port.
 Bare metal does not make a
 write self-contained: explicitly sync before handing off the card or shutting
 down. A no-op reservation is not multicore protection. Interrupts can run during
@@ -367,13 +367,13 @@ selected port. These are host/build checks, not physical-card qualification.
 
 ### Block API
 
-Applications use `middleware/storage/storage.h` rather than bypassing its ownership gate with raw driver calls.
+Applications use `platform/storage/storage.h` rather than bypassing its ownership gate with raw driver calls.
 `pf_storage_setup()` obtains the board configuration and initializes the execution port before task startup.
 The sole storage worker drives initialization and mounting; the storage service binds its firmware-gated
 `pf_storage_firmware_device()` to `pf_fatfs_volume_mount()`. USB uses the separate `pf_storage_msc_*` entry points.
 Both boundaries return `pf_block_result_t` and keep SD types out of application code.
 
-Below middleware, the public driver exposes `pf_sd_init()`, `pf_sd_read_blocks()`, `pf_sd_write_blocks()`,
+Below platform storage, the public driver exposes `pf_sd_init()`, `pf_sd_read_blocks()`, `pf_sd_write_blocks()`,
 `pf_sd_sync()` and `pf_sd_get_info()`. These return SD-specific results and diagnostics. A standalone driver user
 supplies board configuration and initializes the execution port before using this facade; it must also provide its own
 filesystem serialization and media-ownership policy. Never mix raw-sector writes with a mounted filesystem.
@@ -414,7 +414,7 @@ The following rules describe this raw SD facade, not the generic logical-block A
   not make all SDK calls nonblocking.
 
 Result codes distinguish invalid arguments, locked configuration, unconfigured
-backend, unready media, initialization failure, and I/O failure. Ownership rejection belongs to storage middleware.
+backend, unready media, initialization failure, and I/O failure. Ownership rejection belongs to platform storage.
 Neither initialization nor recovery formats media or writes card sectors.
 Native initialization diagnostics distinguish SCR failures: stage 24 is CMD55
 prefix/response validation, 25 is ACMD51 response validation, 26 is SCR data
@@ -771,7 +771,7 @@ this active-transport table.
 ## Performance Controls And Status
 
 The driver has no phase-profiling instrumentation. Above the driver, `pf_storage_get_status()` in
-`middleware/storage/storage.h` reports a backend-neutral snapshot: state, medium, bus and pins, presence,
+`platform/storage/storage.h` reports a backend-neutral snapshot: state, medium, bus and pins, presence,
 negotiated High-Speed timing, effective bus clock, capacity, CID, and the last failed storage operation with its block
 result. Both SPI and native SD report negotiated timing independently of the achieved clock; a clamped clock does
 not imply Default-Speed timing. SPI clears this status when media is not initialized. The CLI
@@ -925,7 +925,7 @@ sequenceDiagram
 ```
 
 The raw SD driver exposes serialized card operations without application ownership policy.
-Acquire/release, owner-specific transfers and retained diagnostics live in `middleware/storage/storage.h`;
+Acquire/release, owner-specific transfers and retained diagnostics live in `platform/storage/storage.h`;
 there is no arbitrary public owner setter. The storage service checks readiness and mounted state on acquisition.
 Application USB reserves the storage reservation across worker-idle and mount-state checks and acquisition.
 Release similarly requires checked host eject/synchronization. In the FreeRTOS

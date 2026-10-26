@@ -1,7 +1,7 @@
 /** @file CLI storage-status and filesystem command execution and replies. */
 #include "cli_storage.h"
-#include "middleware/storage/fatfs_volume.h"
-#include "middleware/storage/storage.h"
+#include "platform/storage/fatfs_volume.h"
+#include "platform/storage/storage.h"
 #include "embedded_cli.h"
 
 #include <stdio.h>

@@ -74,7 +74,7 @@ int flash_safe_execute(void (*func)(void *), void *param, uint32_t timeout_ms)
     return pf_test_safe_execute_result;
 }
 
-#define BOOT_CONFIG_SOURCE "drivers/boot_config.c"
+#define BOOT_CONFIG_SOURCE "platform/boot_config.c"
 #include BOOT_CONFIG_SOURCE
 
 static uint8_t *stored_bytes(void)
