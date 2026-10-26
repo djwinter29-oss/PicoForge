@@ -1,6 +1,7 @@
 #include "unity.h"
 
 TEST_INCLUDE_PATH("firmware/tests/support/adc")
+TEST_INCLUDE_PATH("firmware/tests/support/adc/hardware")
 
 #include "hardware/adc.h"
 #include "temperature.h"

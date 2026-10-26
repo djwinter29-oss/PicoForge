@@ -13,7 +13,7 @@ static bool settings_save_fails;
 static bool msc_enabled;
 static bool msc_transition_pending;
 const pf_led_board_t pf_led_board = {.gpio = 25u, .active_high = true};
-const pf_monitor_uart_board_t pf_monitor_uart_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
+const pf_logging_board_t pf_logging_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void) { return test_sysclk; }
 pf_storage_speed_t pf_boot_config_storage_speed(void) { return test_sd_speed; }

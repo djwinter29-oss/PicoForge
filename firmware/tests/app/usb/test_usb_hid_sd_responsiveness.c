@@ -49,18 +49,18 @@ void setUp(void)
     fake_done = false;
     msc_enabled = msc_transition_pending = false;
     unavailable = reserved = initialized = mounted = queue_fails = retained_cid = false;
-    busy = benchmark_active = benchmark_finished = benchmark_cancelled = false;
+    busy = bench.active = bench.finished = bench.cancelled = false;
     media_service_busy = false;
     cli_connected = cli_stalled = cli_stall_reported = false;
     cli_tx_count = 0u;
     cli_last_progress = 0u;
     control_result = (pf_hid_control_result_t){.version = PF_HID_REPORT_VERSION};
     self_test_result_pending = false;
-    benchmark_admission_pending = false;
-    benchmark_admission_result_ready = false;
-    benchmark_admission_accepted = false;
-    benchmark_admission_error = PF_FILE_BENCHMARK_ERROR_NONE;
-    benchmark_status = (pf_file_benchmark_status_t){.state = PF_FILE_BENCHMARK_IDLE};
+    bench.admission_pending = false;
+    bench.admission_result_ready = false;
+    bench.admission_accepted = false;
+    bench.admission_error = PF_FILE_BENCHMARK_ERROR_NONE;
+    bench.status = (pf_file_benchmark_status_t){.state = PF_FILE_BENCHMARK_IDLE};
     active_session = 0u;
     cancelled = false;
     (void)pf_hid_take_reboot_request();
@@ -240,23 +240,23 @@ void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)
     TEST_ASSERT_EQUAL_UINT8(3u, result.status);
     TEST_ASSERT_EQUAL_UINT8(3u, result.error_reason);
     TEST_ASSERT_EQUAL_UINT(0u, queued);
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SIZE, benchmark_status.request_error);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SIZE, bench.status.request_error);
 
     const uint8_t valid_arguments[5] = {1u, 32u, 0u, 0u, 0u};
     send_control(12u, PF_HID_OPCODE_SELF_TEST, 0u, valid_arguments);
     result = read_control_result();
     TEST_ASSERT_EQUAL_UINT8(1u, result.status);
     TEST_ASSERT_EQUAL_UINT(1u, queued);
-    TEST_ASSERT_TRUE(busy && benchmark_active);
+    TEST_ASSERT_TRUE(busy && bench.active);
 
-    benchmark_status = (pf_file_benchmark_status_t){
+    bench.status = (pf_file_benchmark_status_t){
         .state = PF_FILE_BENCHMARK_QUEUED,
         .target_bytes = 32u * 1024u * 1024u,
     };
-    benchmark_admission_pending = false;
-    benchmark_admission_result_ready = true;
-    benchmark_admission_accepted = true;
-    benchmark_admission_error = PF_FILE_BENCHMARK_ERROR_NONE;
+    bench.admission_pending = false;
+    bench.admission_result_ready = true;
+    bench.admission_accepted = true;
+    bench.admission_error = PF_FILE_BENCHMARK_ERROR_NONE;
     pf_hid_poll_async_commands();
     TEST_ASSERT_EQUAL_UINT8(2u, read_control_result().status);
 
@@ -273,7 +273,7 @@ void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)
 void test_failed_self_test_preflight_preserves_last_test_result(void)
 {
     initialized = mounted = true;
-    benchmark_status = (pf_file_benchmark_status_t){
+    bench.status = (pf_file_benchmark_status_t){
         .state = PF_FILE_BENCHMARK_PASSED,
         .target_bytes = 1048576u,
         .written_bytes = 1048576u,
@@ -283,26 +283,26 @@ void test_failed_self_test_preflight_preserves_last_test_result(void)
     send_control(13u, PF_HID_OPCODE_SELF_TEST, 0u, arguments);
     TEST_ASSERT_EQUAL_UINT8(1u, read_control_result().status);
 
-    benchmark_status.request_error = PF_FILE_BENCHMARK_ERROR_SPACE;
-    benchmark_admission_pending = false;
-    benchmark_admission_result_ready = true;
-    benchmark_admission_accepted = false;
-    benchmark_admission_error = PF_FILE_BENCHMARK_ERROR_SPACE;
-    benchmark_finished = true;
+    bench.status.request_error = PF_FILE_BENCHMARK_ERROR_SPACE;
+    bench.admission_pending = false;
+    bench.admission_result_ready = true;
+    bench.admission_accepted = false;
+    bench.admission_error = PF_FILE_BENCHMARK_ERROR_SPACE;
+    bench.finished = true;
     pf_hid_poll_async_commands();
 
     const pf_hid_control_result_t result = read_control_result();
     TEST_ASSERT_EQUAL_UINT8(6u, result.status);
     TEST_ASSERT_EQUAL_UINT8(6u, result.error_reason);
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, benchmark_status.state);
-    TEST_ASSERT_EQUAL_UINT32(1048576u, benchmark_status.target_bytes);
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SPACE, benchmark_status.request_error);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_PASSED, bench.status.state);
+    TEST_ASSERT_EQUAL_UINT32(1048576u, bench.status.target_bytes);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SPACE, bench.status.request_error);
 }
 
 void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(void)
 {
     busy = true;
-    benchmark_active = false;
+    bench.active = false;
     active_session = cli_session;
     cancelled = false;
     cli_connected = fake_connected = true;

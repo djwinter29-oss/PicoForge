@@ -385,3 +385,85 @@ void test_rejects_long_arguments_without_truncation(void)
     run(arguments);
     TEST_ASSERT_NOT_NULL(strstr(output, "Arguments too long"));
 }
+void test_argument_count_boundaries_are_rejected(void)
+{
+    const char *const invalid[] = { "stat", "stat /a x", "mkdir", "cat", "cat /a 1 x", "write /a", "write /a b c",
+                                    "append /a", "mv /a", "mv /a /b /c", "rm /a", "ls /a /b" };
+
+    for (size_t index = 0u; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+        output[0] = '\0';
+        pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+        run(invalid[index]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(strstr(output, "Invalid arguments"), invalid[index]);
+    }
+}
+
+void test_out_of_range_status_values_print_unknown(void)
+{
+    pf_storage_status_t status = { .state = (pf_storage_state_t)99, .last_failure = (pf_storage_operation_t)99 };
+
+    pf_storage_get_status_ExpectAnyArgs();
+    pf_storage_get_status_ReturnThruPtr_status(&status);
+    pf_cli_storage_execute(false, "storage", "status", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "state=unknown"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "last_error=unknown:"));
+}
+
+static FRESULT read_full_chunk(FIL *file, void *buffer, UINT size, UINT *received, int calls)
+{
+    (void)file;
+    TEST_ASSERT_EQUAL_UINT(48u, size);
+    memset(buffer, 0x01, size);
+    *received = size;
+    return calls == 0 ? FR_OK : FR_DISK_ERR;
+}
+
+void test_cat_of_all_control_bytes_fits_one_reply_line(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_open_StubWithCallback(open_file);
+    f_read_StubWithCallback(read_full_chunk);
+    f_close_ExpectAnyArgsAndReturn(FR_OK);
+    run("cat /a 48");
+    TEST_ASSERT_NOT_NULL(strstr(output, "\\x01\\x01"));
+    TEST_ASSERT_EQUAL_UINT(48u * 4u + 1u, (unsigned)(strchr(output, '\n') - output) + 1u);
+}
+
+void test_move_rejects_an_invalid_destination_path(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    run("mv /a /b/../c");
+    TEST_ASSERT_NOT_NULL(strstr(output, "Invalid path"));
+}
+
+void test_cat_limit_accepts_4096_and_rejects_4097(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    run("cat /a 4097");
+    TEST_ASSERT_NOT_NULL(strstr(output, "1..4096"));
+    output[0] = '\0';
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_open_StubWithCallback(open_file);
+    f_read_ExpectAnyArgsAndReturn(FR_DISK_ERR);
+    f_close_ExpectAnyArgsAndReturn(FR_OK);
+    run("cat /a 4096");
+    TEST_ASSERT_NULL(strstr(output, "1..4096"));
+}
+
+static FRESULT open_directory_root(DIR *directory, const TCHAR *path, int calls)
+{
+    (void)directory;
+    (void)calls;
+    TEST_ASSERT_EQUAL_STRING("0:/", path);
+    return FR_OK;
+}
+
+void test_ls_without_a_path_lists_the_volume_root(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_opendir_StubWithCallback(open_directory_root);
+    f_readdir_StubWithCallback(read_directory);
+    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
+    run("ls");
+    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
+}

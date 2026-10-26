@@ -77,12 +77,12 @@ void test_setup_reports_unavailable_configuration_and_port_failure_then_borrows_
     configured = false;
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_storage_initialize());
     pf_sd_board_config_ExpectAnyArgsAndReturn(false);
-    pf_logging_write_ExpectAnyArgs();
+    pf_logging_write_ExpectAnyArgsAndReturn(true);
     TEST_ASSERT_EQUAL(PF_BLOCK_NOT_READY, pf_storage_setup());
     pf_sd_board_config_ExpectAnyArgsAndReturn(true);
     pf_sd_board_config_ReturnThruPtr_config(&config);
     pf_sd_port_init_ExpectAnyArgsAndReturn(false);
-    pf_logging_write_ExpectAnyArgs();
+    pf_logging_write_ExpectAnyArgsAndReturn(true);
     TEST_ASSERT_EQUAL(PF_BLOCK_IO_ERROR, pf_storage_setup());
     pf_sd_board_config_ExpectAnyArgsAndReturn(true);
     pf_sd_board_config_ReturnThruPtr_config(&config);
@@ -211,7 +211,7 @@ void test_removal_unmount_failure_is_reported_and_retried_until_binding_is_relea
     pf_sd_confirm_removed_Expect();
     pf_fatfs_volume_forget_filesystem_format_Expect();
     pf_fatfs_volume_unmount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
-    pf_logging_write_ExpectAnyArgs();
+    pf_logging_write_ExpectAnyArgsAndReturn(true);
     pf_storage_poll();
     TEST_ASSERT_TRUE(mounted);
     TEST_ASSERT_FALSE(pf_storage_msc_acquire() == PF_BLOCK_OK);
