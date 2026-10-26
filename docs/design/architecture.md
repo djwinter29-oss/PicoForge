@@ -4,7 +4,7 @@
 
 `firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the
 platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected `PICO_BOARD`; see
-[artifact naming](../../README.md#1-build-the-firmware). The TinyUSB configuration lives under
+[artifact naming](../guides/getting-started.md#1-get-or-build-the-firmware). The TinyUSB configuration lives under
 `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live
 under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID
 interface. Board startup passes its monitor UART assignment to `platform/logging`, which initializes and selects
