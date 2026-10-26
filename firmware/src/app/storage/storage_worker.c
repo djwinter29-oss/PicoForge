@@ -7,7 +7,7 @@
 #include "drivers/system.h"
 #include "middleware/storage/fatfs_volume.h"
 #include "middleware/storage/storage.h"
-#include "middleware/logging/logging.h"
+#include "drivers/logging.h"
 
 #include <string.h>
 #include <stdatomic.h>
@@ -174,7 +174,7 @@ static void storage_task(void *context)
 
     for (;;) {
         if ((TickType_t)(xTaskGetTickCount() - last_stack_sample) >= pdMS_TO_TICKS(30000u)) {
-            PF_LOG_INFO("stack", "Storage minimum free stack: %u words",
+            PF_LOGGING_INFO("stack", "Storage minimum free stack: %u words",
                         (unsigned)uxTaskGetStackHighWaterMark(NULL));
             last_stack_sample = xTaskGetTickCount();
         }

@@ -7,10 +7,9 @@ platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected
 [artifact naming](../../README.md#1-build-the-firmware). The TinyUSB configuration lives under
 `firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live
 under `firmware/src/app/usb`. The composite device exposes one CDC ACM interface and one vendor-defined HID
-interface. Board startup passes its monitor UART assignment to `drivers/monitor_uart`, which initializes and selects
-it for stdio before the logger is enabled; USB stdio stays disabled so log messages remain separate from CDC. The
-`middleware/logging` library provides serialized severity-tagged lines. The USB task services the
-[CDC CLI](../guides/usb-cdc-cli.md) and publishes HID Input
+interface. Board startup passes its monitor UART assignment to `drivers/logging`, which initializes and selects
+it for stdio and emits serialized, severity-tagged lines at the board-configured default severity. USB stdio stays disabled so
+log messages remain separate from CDC. The USB task services the [CDC CLI](../guides/usb-cdc-cli.md) and publishes HID Input
 report `3` telemetry every 250 ms, plus storage and capability-gated self-test reports `10` and `11` every 500 ms.
 Feature report `1` carries stable product, MCU, board, capability, and SRAM information; Feature report `2` carries
 persisted profiles and board GPIO configuration. Feature report `20` handles LED, reboot, MSC, self-test, and
@@ -26,8 +25,8 @@ adopting its UART-channel map or hardware features. Other layouts require a matc
 `firmware/src/drivers/`; native and SPI SD protocols live together under `drivers/sdcard/`, above the physical engines
 in `drivers/sdcard/`. USB interface roles, descriptors, and lifecycle are documented in the
 [HID Report Reference](usb/usb-hid-report-reference.md). The development VID/PID is `0xCAFE:0x4011` and is not for product
-release. `firmware/src/main.c` initializes board UART
-and logging, temperature, and an available board LED, starts the USB task, and launches the scheduler.
+release. `firmware/src/main.c` initializes logging output, temperature, and an available board LED, starts the USB
+task, and launches the scheduler.
 The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` targets; physical HID, temperature,
 and LED behavior still require board validation.
 
@@ -140,7 +139,7 @@ The firmware currently uses the USB device role; a USB host role is not selected
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in middleware; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: sources in `firmware/src/config/` define assignment objects, declared `extern` in driver headers. CMake selects the storage assignment source alongside its transport binding. Each driver initializes its own hardware (`pf_led_init()`, `pf_monitor_uart_init()`), and [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/middleware/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../guides/hardware-setup.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Simple system, temperature, and LED drivers are flat under `firmware/src/drivers/`; multi-file drivers are grouped by subsystem under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in middleware; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: sources in `firmware/src/config/` define assignment objects, declared `extern` in driver headers. CMake selects the storage assignment source alongside its transport binding. Each driver initializes its own hardware (`pf_led_init()`, `pf_logging_init()`), and [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/middleware/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../guides/hardware-setup.md).
 
 ### SD-Card Driver Structure
 
@@ -211,8 +210,8 @@ No extra middleware forwarding layer or runtime backend registry is introduced.
 
 The product CLI instance, prompt, built-in commands and buffer/history settings live in `app/cli`, using Embedded
 CLI directly. USB owns CDC transport and connection sessions. Middleware storage retains only logical block dispatch,
-device adapters and FatFs disk callbacks; middleware logging retains formatting and severity filtering, with stdio
-output selection performed by board startup. Neither middleware service depends on application headers.
+device adapters and FatFs disk callbacks. The logging driver owns severity filtering, formatting, and stdio output
+selection. Neither middleware service depends on application headers.
 
 ### Storage Handoff Invariants
 

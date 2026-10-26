@@ -68,7 +68,7 @@ def test_fatfs_volume_does_not_depend_on_the_sd_backend():
         ) for header in headers), source
 
 
-def test_product_cli_is_application_owned_and_logging_does_not_select_uart():
+def test_product_cli_is_application_owned_and_logging_driver_owns_output():
     for extension in ("c", "h"):
         assert (ROOT / f"firmware/src/app/cli/cli.{extension}").is_file()
         assert not (ROOT / f"firmware/src/middleware/cli/cli.{extension}").exists()
@@ -78,12 +78,36 @@ def test_product_cli_is_application_owned_and_logging_does_not_select_uart():
         assert not any(header.startswith("app/") or Path(header).name in (
             "cli.h",
         ) for header in headers), source
-    logging = (ROOT / "firmware/src/middleware/logging/logging.c").read_text()
-    assert "stdio_filter_driver" not in logging
-    assert "stdio_uart" not in logging
-    monitor = (ROOT / "firmware/src/drivers/monitor_uart.c").read_text()
-    assert monitor.index("stdio_uart_init_full(") < monitor.index("stdio_filter_driver(&stdio_uart)")
-    assert "pf_monitor_uart_init(" in (ROOT / "firmware/src/main.c").read_text()
+    logging = (ROOT / "firmware/src/drivers/logging.c").read_text()
+    assert logging.index("stdio_uart_init_full(") < logging.index("stdio_filter_driver(&stdio_uart)")
+    assert "stdio_put_string(line, (int)line_length, true, true)" in logging
+    assert "pf_logging_write(" in logging
+    assert "pf_logging_init(" in (ROOT / "firmware/src/main.c").read_text()
+    assert "pf_monitor_uart_init" not in "\n".join(
+        source.read_text() for source in (ROOT / "firmware/src").rglob("*.[ch]")
+    )
+    cmake = (ROOT / "firmware/CMakeLists.txt").read_text()
+    assert "add_library(pf_logging STATIC" in cmake
+    assert "pf_monitor_uart" not in cmake
+    header = (ROOT / "firmware/src/drivers/logging.h").read_text()
+    assert "pf_logging_level_t" in header
+    assert "pf_logging_write(" in header
+    assert "pf_logging_set_minimum_level" not in header
+    assert "PF_LOGGING_INFO" in header
+    assert "pf_logging_board_t" in header
+    assert "pf_logging_board.default_level" in logging
+    config = (ROOT / "firmware/src/config/config.h").read_text()
+    assert "#ifndef PF_LOG_LINE_BUFFER_SIZE" in config
+    assert "#define PF_LOG_LINE_BUFFER_SIZE 128u" in config
+    assert '#include "config/config.h"' in logging
+    assert "_Static_assert(PF_LOG_LINE_BUFFER_SIZE >= sizeof(" in logging
+    assert "char line[PF_LOG_LINE_BUFFER_SIZE]" in logging
+    assert "Invalid logging default severity" in logging
+    assert 'format(printf, format_index, first_argument)' in header
+    assert 'line[line_length - 3u] =' in logging
+    assert "longer messages end with an ellipsis" in header
+    assert "requires PICO_STDOUT_MUTEX" in header
+    assert "about 11 ms for a maximum-length line" in header
 
 
 def test_file_benchmark_and_application_headers_do_not_expose_sd():

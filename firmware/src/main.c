@@ -2,10 +2,9 @@
 #include "task.h"
 #include "pico/stdlib.h"
 #include "drivers/led.h"
-#include "drivers/monitor_uart.h"
+#include "drivers/logging.h"
 #include "drivers/system.h"
 #include "drivers/temperature.h"
-#include "middleware/logging/logging.h"
 #include "app/usb/usb_task.h"
 
 /* SYS_CLK_HZ and the artifact label are the BUILD clock; a saved system clock may replace it at runtime. */
@@ -21,17 +20,16 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 int main(void)
 {
     (void)pf_system_clock_apply();
-    pf_monitor_uart_init();
+    pf_logging_init();
     if (!pf_led_init()) {
         panic("Failed to initialize board LED");
     }
-    pf_log_init();
-    PF_LOG_INFO("boot", "Firmware initialization started");
+    PF_LOGGING_INFO("boot", "Firmware initialization started");
 
     pf_temperature_init();
 
     pf_usb_start();
-    PF_LOG_INFO("usb", "CDC and HID interfaces initialized");
+    PF_LOGGING_INFO("usb", "CDC and HID interfaces initialized");
 
     vTaskStartScheduler();
     panic("FreeRTOS scheduler returned");

@@ -10,7 +10,7 @@
 #include "drivers/sdcard/sd_board.h"
 #include "drivers/sdcard/sd_port.h"
 #include "middleware/storage/fatfs_volume.h"
-#include "middleware/logging/logging.h"
+#include "drivers/logging.h"
 #include "drivers/system.h"
 
 static pf_sd_config_t media_config; /**< Board transport borrowed for application lifetime. */
@@ -48,11 +48,11 @@ pf_block_result_t pf_storage_setup(void)
         return PF_BLOCK_OK;
     }
     if (!pf_sd_board_config(&media_config)) {
-        PF_LOG_WARNING("storage", "SD board configuration unavailable");
+        PF_LOGGING_WARNING("storage", "SD board configuration unavailable");
         return PF_BLOCK_NOT_READY;
     }
     if (!pf_sd_port_init(&media_config)) {
-        PF_LOG_ERROR("storage", "SD execution-port initialization failed");
+        PF_LOGGING_ERROR("storage", "SD execution-port initialization failed");
         return PF_BLOCK_IO_ERROR;
     }
     configured = true;
@@ -286,7 +286,7 @@ static void attempt_auto_mount(void)
     if (auto_mount_pending) {
         if (!mount_failure_reported || media_result != last_media_result ||
             volume_result != last_volume_result || filesystem_result != last_filesystem_result) {
-            PF_LOG_WARNING("storage", "Mount failed: media=%u volume=%u FatFs=%u",
+            PF_LOGGING_WARNING("storage", "Mount failed: media=%u volume=%u FatFs=%u",
                            (unsigned)media_result, (unsigned)volume_result,
                            (unsigned)filesystem_result);
         }
@@ -342,7 +342,7 @@ static void poll_locked(void)
                 FRESULT filesystem_result = FR_OK;
                 pf_fatfs_volume_result_t result = pf_fatfs_volume_unmount(&filesystem_result);
                 if (result != PF_FATFS_VOLUME_OK && result != PF_FATFS_VOLUME_NOT_MOUNTED) {
-                    PF_LOG_ERROR("storage", "Removed media unmount failed: volume=%u FatFs=%u; retrying next poll",
+                    PF_LOGGING_ERROR("storage", "Removed media unmount failed: volume=%u FatFs=%u; retrying next poll",
                                  (unsigned)result, (unsigned)filesystem_result);
                 }
             }
@@ -388,9 +388,9 @@ bool pf_storage_recover(void)
     pf_sd_result_t result = initialize_media();
     pf_sd_unlock();
     if (result == PF_SD_OK) {
-        PF_LOG_INFO("storage", "Media recovery completed; volume remains unmounted pending explicit fs mount");
+        PF_LOGGING_INFO("storage", "Media recovery completed; volume remains unmounted pending explicit fs mount");
     } else {
-        PF_LOG_ERROR("storage", "Media recovery failed: result=%u; volume remains unmounted", (unsigned)result);
+        PF_LOGGING_ERROR("storage", "Media recovery failed: result=%u; volume remains unmounted", (unsigned)result);
     }
     return result == PF_SD_OK;
 }
@@ -403,9 +403,9 @@ bool pf_storage_return_from_usb(void)
     auto_mount_blocked = auto_mount_pending;
     auto_mount_pending = false;
     if (auto_mount_blocked) {
-        PF_LOG_ERROR("storage", "Forced USB return failed; volume remains unmounted; inspect before fs mount");
+        PF_LOGGING_ERROR("storage", "Forced USB return failed; volume remains unmounted; inspect before fs mount");
     } else {
-        PF_LOG_WARNING("storage", "Forced USB return mounted; host cache was not flushed; filesystem may be damaged");
+        PF_LOGGING_WARNING("storage", "Forced USB return mounted; host cache was not flushed; filesystem may be damaged");
     }
     bool mounted = !auto_mount_blocked;
     pf_sd_unlock();
@@ -423,7 +423,7 @@ bool pf_storage_unmount_for_usb(void)
     }
     pf_sd_unlock();
     if (!unmounted) {
-        PF_LOG_ERROR("storage", "USB handoff unmount failed: volume=%u FatFs=%u",
+        PF_LOGGING_ERROR("storage", "USB handoff unmount failed: volume=%u FatFs=%u",
                      (unsigned)result, (unsigned)filesystem_result);
     }
     return unmounted;

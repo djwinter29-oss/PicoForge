@@ -206,21 +206,13 @@ target_include_directories(pf_led PUBLIC
 )
 target_link_libraries(pf_led PUBLIC hardware_gpio)
 
-add_library(pf_monitor_uart STATIC
-    src/drivers/monitor_uart.c
-)
-target_include_directories(pf_monitor_uart PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
-)
-target_link_libraries(pf_monitor_uart PUBLIC hardware_uart pico_stdio_uart)
-
 add_library(pf_logging STATIC
-    src/middleware/logging/logging.c
+    src/drivers/logging.c
 )
 target_include_directories(pf_logging PUBLIC
-    "${CMAKE_CURRENT_LIST_DIR}/src"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers"
 )
-target_link_libraries(pf_logging PUBLIC pico_stdlib)
+target_link_libraries(pf_logging PUBLIC hardware_uart pico_stdio_uart pico_stdlib)
 
 add_library(embedded_cli STATIC
     third_party/embedded-cli/lib/src/embedded_cli.c
@@ -285,8 +277,6 @@ target_link_libraries(pf_boot_config PRIVATE
     FreeRTOS-Kernel-Static
 )
 
-target_link_libraries(pf_app_storage PUBLIC pf_logging)
-
 # The board config is compiled into the image so its extern assignments always resolve for every driver library.
 add_executable(pico_forge
     src/main.c
@@ -318,7 +308,6 @@ target_link_libraries(pico_forge
     pf_cli
     pf_app_storage
     pf_led
-    pf_monitor_uart
     pf_boot_config
 )
 

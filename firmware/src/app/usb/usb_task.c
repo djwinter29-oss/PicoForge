@@ -5,7 +5,7 @@
 
 #include "drivers/system.h"
 #include "usb_hid.h"
-#include "middleware/logging/logging.h"
+#include "drivers/logging.h"
 #include "usb_msc.h"
 #include "usb_task.h"
 #include "app/cli/cli.h"
@@ -197,7 +197,7 @@ static void usb_task(void *context)
 
     while (true) {
         if ((TickType_t)(xTaskGetTickCount() - last_stack_sample) >= pdMS_TO_TICKS(30000u)) {
-            PF_LOG_INFO("stack", "USB minimum free stack: %u words",
+            PF_LOGGING_INFO("stack", "USB minimum free stack: %u words",
                         (unsigned)uxTaskGetStackHighWaterMark(NULL));
             last_stack_sample = xTaskGetTickCount();
         }

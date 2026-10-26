@@ -8,7 +8,7 @@
 #include "usb_hid.h"
 #include "config/config.h"
 #include "drivers/led.h"
-#include "drivers/monitor_uart.h"
+#include "drivers/logging.h"
 #include "middleware/storage/storage.h"
 #include "drivers/boot_config.h"
 #include "drivers/temperature.h"
@@ -157,10 +157,10 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     report->version = PF_HID_REPORT_VERSION;
     report->stored_sysclk_profile = pf_get_sysclk_mhz();
     report->stored_sdcard_profile = (uint8_t)pf_boot_config_storage_speed();
-    report->monitor_uart_index = pf_monitor_uart_board.uart_index <= 1u
-        ? (uint8_t)pf_monitor_uart_board.uart_index : UINT8_MAX;
-    report->monitor_uart_tx_gpio = pf_monitor_uart_board.tx_gpio;
-    report->monitor_uart_rx_gpio = pf_monitor_uart_board.rx_gpio;
+    report->monitor_uart_index = pf_logging_board.uart_index <= 1u
+        ? (uint8_t)pf_logging_board.uart_index : UINT8_MAX;
+    report->monitor_uart_tx_gpio = pf_logging_board.tx_gpio;
+    report->monitor_uart_rx_gpio = pf_logging_board.rx_gpio;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
     memcpy(report->storage_gpios, storage.bus_gpios, sizeof(report->storage_gpios));
