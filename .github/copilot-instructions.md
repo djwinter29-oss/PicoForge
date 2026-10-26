@@ -3,9 +3,10 @@
 - Keep changes small, focused, and consistent with the existing project structure.
 - Do not repeat the README; use it as the project overview and documentation index.
 - Target RP2040 and RP2350 through Pico SDK-supported interfaces. Avoid assuming a specific board when the SDK or board-support layer can provide the information.
-- Keep board-specific assignments in `firmware/src/config/board.c`; keep reusable drivers and middleware independent of application-specific board details.
-- Keep platform services, drivers, and middleware in their respective directories. Prefer explicit interfaces and avoid unnecessary cross-layer dependencies.
+- Keep board-specific assignments in `firmware/src/config/board.c`; keep reusable drivers independent of application-specific board details.
+- Keep platform services (including storage) and drivers in their respective directories. Prefer explicit interfaces and avoid unnecessary cross-layer dependencies.
 - Keep simple reusable drivers flat under `firmware/src/drivers`; group complex drivers with multiple implementation files in a named subdirectory such as `sdio/`.
+- Keep platform services (logging, system, LED, temperature, boot config) flat under `firmware/src/platform`.
 - Use the Pico SDK submodule pinned by the superproject. Do not add a second SDK checkout mechanism or duplicate components already provided by the SDK.
 - Pin third-party dependencies to reviewed versions or commits, keep vendor code separate from PicoForge integration code, and preserve applicable license notices.
 - Preserve existing public APIs and hardware behavior unless the task explicitly requires a change. Update focused documentation when behavior or configuration changes.

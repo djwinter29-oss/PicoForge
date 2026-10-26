@@ -4,7 +4,7 @@ This directory structure separates firmware unit tests, repository-level contrac
 
 ## Firmware Unit Tests
 
-[firmware/tests/](../firmware/tests/) is the home for Ceedling tests of C modules under `firmware/src/`, including board profiles, drivers, middleware and USB callbacks.
+[firmware/tests/](../firmware/tests/) is the home for Ceedling tests of C modules under `firmware/src/`, including board profiles, drivers, platform services and USB callbacks.
 
 - Name test files `test_*.c`.
 - Use Unity assertions and CMock for hardware-facing collaborators.

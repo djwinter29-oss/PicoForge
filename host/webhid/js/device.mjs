@@ -38,13 +38,13 @@ export function decodeIdentityReport(report) {
   const reserved = view.getUint32(22, true);
   requireValid(!(capabilities & 0xc0) && [8, 16].includes(capabilities & 24)
     && total > 0 && reserved <= total
-    && (board !== 1 || mcu === 1) && (![2, 3].includes(board) || mcu === 2), "identity");
+    && (![1, 4].includes(board) || mcu === 1) && (![2, 3].includes(board) || mcu === 2), "identity");
   return {
     version: 1, product_id: product, product_name: "PicoForge",
     serial_number: [...bytesAt(view, 3, 8)].map(byte => byte.toString(16).padStart(2, "0")).join("").toUpperCase(),
     firmware_version: [11, 12, 13].map(offset => view.getUint8(offset)).join("."),
     mcu_id: mcu, mcu: ({ 1: "RP2040", 2: "RP2350" })[mcu] ?? `Unknown MCU (${mcu})`,
-    board_model: board, board_name: ({ 0: "Unspecified", 1: "Pico", 2: "Pico 2", 3: "Pico 2 W" })[board]
+    board_model: board, board_name: ({ 0: "Unspecified", 1: "Pico", 2: "Pico 2", 3: "Pico 2 W", 4: "Pico W" })[board]
       ?? `Unknown board (${board})`,
     capabilities, transport: capabilities & 8 ? "spi" : "sdio",
     ram_total_bytes: total, ram_reserved_bytes: reserved,
@@ -61,7 +61,7 @@ export function decodeConfigReport(report, identity) {
   const led = view.getUint8(15);
   const detect = view.getUint8(16);
   const settings = { system_clock_mhz: view.getUint16(1, true), sdcard_profile: view.getUint8(3) };
-  const maxGpio = [1, 2, 3].includes(identity.board_model) || identity.mcu_id === 1 ? 29
+  const maxGpio = [1, 2, 3, 4].includes(identity.board_model) || identity.mcu_id === 1 ? 29
     : identity.mcu_id === 2 ? 47 : -1;
   requireValid(validSettings(settings) && !(flags & ~7) && [0, 1, 255].includes(uart)
     && (tx === 255) === (rx === 255) && (!(flags & 4) || (uart !== 255 && tx !== 255))

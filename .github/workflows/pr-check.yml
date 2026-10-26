@@ -19,9 +19,9 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix:
-        board: [pico, pico2]
+        board: [pico, pico_w, pico2, pico2_w]
         transport: [SDIO_PIO, SPI]
     steps:
       - name: Checkout

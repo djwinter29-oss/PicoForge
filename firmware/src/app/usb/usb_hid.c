@@ -1,3 +1,10 @@
+/**
+ * @file
+ * @brief Vendor HID reports and the Feature 20 control channel (LED, reboot, MSC, benchmark, boot settings).
+ *
+ * Runs on the USB task. Control requests are validated completely before any side effect, and every request ends in
+ * exactly one published result.
+ */
 #include <limits.h>
 #include <string.h>
 
@@ -7,13 +14,13 @@
 #include "tusb.h"
 #include "usb_hid.h"
 #include "config/config.h"
-#include "drivers/led.h"
-#include "drivers/monitor_uart.h"
-#include "middleware/storage/storage.h"
-#include "drivers/boot_config.h"
-#include "drivers/temperature.h"
+#include "platform/led.h"
+#include "platform/logging.h"
+#include "platform/storage/storage.h"
+#include "platform/boot_config.h"
+#include "platform/temperature.h"
 #include "usb_msc.h"
-#include "middleware/storage/fatfs_volume.h"
+#include "platform/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
 #include "app/runtime_stats.h"
 
@@ -25,31 +32,15 @@
 #define PF_HID_BOARD_FLAG_LED (1u << 1)
 #define PF_HID_BOARD_FLAG_MONITOR_UART (1u << 2)
 
-#define PF_HID_COMMAND_IDLE 0u
-#define PF_HID_COMMAND_PENDING 1u
-#define PF_HID_COMMAND_COMPLETED 2u
-#define PF_HID_COMMAND_INVALID 3u
-#define PF_HID_COMMAND_UNSUPPORTED 4u
-#define PF_HID_COMMAND_BUSY 5u
-#define PF_HID_COMMAND_FAILED 6u
-
-#define PF_HID_ERROR_NONE 0u
-#define PF_HID_ERROR_MALFORMED 1u
-#define PF_HID_ERROR_CONFIRMATION 2u
-#define PF_HID_ERROR_ARGUMENT 3u
-#define PF_HID_ERROR_CAPABILITY 4u
-#define PF_HID_ERROR_BUSY 5u
-#define PF_HID_ERROR_OPERATION 6u
-#define PF_HID_ERROR_OPCODE 7u
-
-static bool reboot_requested;
+static bool reboot_requested; /**< A reboot or settings save awaits the USB task. */
+/** Latest Feature 20 result returned by GET. */
 static pf_hid_control_result_t control_result = {
     .version = PF_HID_REPORT_VERSION,
     .status = PF_HID_COMMAND_IDLE,
 };
 #if PF_ENABLE_STORAGE_BENCHMARK
-static bool self_test_result_pending;
-static pf_hid_control_request_t pending_self_test_request;
+static bool self_test_result_pending; /**< A benchmark start awaits its worker preflight result. */
+static pf_hid_control_request_t pending_self_test_request; /**< Request to complete once preflight resolves. */
 #endif
 
 static bool trailing_arguments_zero(const uint8_t *arguments, size_t first)
@@ -91,6 +82,32 @@ static uint8_t board_model(void)
     return (uint8_t)PF_HID_BOARD_MODEL;
 }
 
+/** Outcome of one control command before it is published as the Feature 20 result. */
+typedef struct {
+    uint8_t status; /**< PF_HID_COMMAND_* value. */
+    uint8_t error; /**< PF_HID_ERROR_* value. */
+    uint8_t data[4]; /**< Opcode-specific result bytes, zero otherwise. */
+} outcome_t;
+
+static outcome_t outcome(uint8_t status, uint8_t error)
+{
+    return (outcome_t){ .status = status, .error = error };
+}
+
+static outcome_t completed(void) { return outcome(PF_HID_COMMAND_COMPLETED, PF_HID_ERROR_NONE); }
+static outcome_t busy_outcome(void) { return outcome(PF_HID_COMMAND_BUSY, PF_HID_ERROR_BUSY); }
+static outcome_t failed(void) { return outcome(PF_HID_COMMAND_FAILED, PF_HID_ERROR_OPERATION); }
+static outcome_t invalid(uint8_t error) { return outcome(PF_HID_COMMAND_INVALID, error); }
+
+#if PF_ENABLE_STORAGE_BENCHMARK
+/** @brief Map a rejected benchmark admission to the busy or failed outcome. */
+static outcome_t benchmark_rejection(pf_file_benchmark_error_t error)
+{
+    return (error == PF_FILE_BENCHMARK_ERROR_BUSY || error == PF_FILE_BENCHMARK_ERROR_USB_OWNER)
+               ? busy_outcome() : failed();
+}
+#endif
+
 bool pf_hid_take_reboot_request(void)
 {
     const bool requested = reboot_requested;
@@ -112,14 +129,14 @@ void pf_hid_poll_async_commands(void)
         (control_result.opcode != pending_self_test_request.opcode)) {
         return;
     }
-    bool busy = (error == PF_FILE_BENCHMARK_ERROR_BUSY) ||
-                (error == PF_FILE_BENCHMARK_ERROR_USB_OWNER);
-    set_result(&pending_self_test_request,
-               accepted ? PF_HID_COMMAND_COMPLETED :
-                   (busy ? PF_HID_COMMAND_BUSY : PF_HID_COMMAND_FAILED),
-               accepted ? PF_HID_ERROR_NONE :
-                   (busy ? PF_HID_ERROR_BUSY : PF_HID_ERROR_OPERATION), NULL);
+    const outcome_t result = accepted ? completed() : benchmark_rejection(error);
+    set_result(&pending_self_test_request, result.status, result.error, NULL);
 #endif
+}
+
+bool pf_hid_self_test_supported(void)
+{
+    return PF_ENABLE_STORAGE_BENCHMARK != 0;
 }
 
 void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
@@ -144,9 +161,7 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     pf_storage_get_status(&storage);
     if (storage.bus == PF_STORAGE_BUS_SPI) report->capabilities |= PF_HID_CAP_SPI;
     if (storage.bus == PF_STORAGE_BUS_SDIO) report->capabilities |= PF_HID_CAP_SDIO;
-#if PF_ENABLE_STORAGE_BENCHMARK
-    report->capabilities |= PF_HID_CAP_SELF_TEST;
-#endif
+    if (pf_hid_self_test_supported()) report->capabilities |= PF_HID_CAP_SELF_TEST;
     report->ram_total_bytes = stats.ram_total_bytes;
     report->ram_reserved_bytes = stats.ram_used_bytes;
 }
@@ -157,10 +172,10 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     report->version = PF_HID_REPORT_VERSION;
     report->stored_sysclk_profile = pf_get_sysclk_mhz();
     report->stored_sdcard_profile = (uint8_t)pf_boot_config_storage_speed();
-    report->monitor_uart_index = pf_monitor_uart_board.uart_index <= 1u
-        ? (uint8_t)pf_monitor_uart_board.uart_index : UINT8_MAX;
-    report->monitor_uart_tx_gpio = pf_monitor_uart_board.tx_gpio;
-    report->monitor_uart_rx_gpio = pf_monitor_uart_board.rx_gpio;
+    report->monitor_uart_index = pf_logging_board.uart_index <= 1u
+        ? (uint8_t)pf_logging_board.uart_index : UINT8_MAX;
+    report->monitor_uart_tx_gpio = pf_logging_board.tx_gpio;
+    report->monitor_uart_rx_gpio = pf_logging_board.rx_gpio;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
     memcpy(report->storage_gpios, storage.bus_gpios, sizeof(report->storage_gpios));
@@ -172,6 +187,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     } else {
         report->led_gpio = UINT8_MAX;
     }
+    /* The logging UART is always configured by the board, so unlike the LED and card detect it has no absent case. */
     report->board_flags |= PF_HID_BOARD_FLAG_MONITOR_UART;
     report->reset_cause = pf_system_reset_cause();
 }
@@ -185,8 +201,9 @@ void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t se
     pf_runtime_stats_read(&stats);
     report->version = PF_HID_REPORT_VERSION;
     report->sequence = sequence;
-    report->uptime_ms = to_ms_since_boot(get_absolute_time());
+    report->uptime_ms = pf_system_uptime_ms();
     report->system_clock_hz = pf_system_clock_hz();
+    /* PF_RUNTIME_CPU_UNAVAILABLE (0xFFFF) is passed through as the wire value for "not sampled yet". */
     report->core0_service_load_basis_points = stats.cpu_usage_basis_points[0];
     report->core1_service_load_basis_points = stats.cpu_usage_basis_points[1];
     if (pf_led_is_available()) {
@@ -198,6 +215,18 @@ void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t se
     if (pf_temperature_read_centidegrees(&temperature)) {
         report->picoforge_flags |= PF_HID_TELEMETRY_TEMPERATURE_VALID;
         report->temperature_centidegrees_celsius = temperature;
+    }
+}
+
+/** @brief Map the mounted volume's filesystem to its wire code. */
+static uint8_t filesystem_code(pf_fatfs_volume_filesystem_format_t format)
+{
+    switch (format) {
+    case PF_FATFS_VOLUME_FILESYSTEM_FAT12: return PF_HID_FILESYSTEM_FAT12;
+    case PF_FATFS_VOLUME_FILESYSTEM_FAT16: return PF_HID_FILESYSTEM_FAT16;
+    case PF_FATFS_VOLUME_FILESYSTEM_FAT32: return PF_HID_FILESYSTEM_FAT32;
+    case PF_FATFS_VOLUME_FILESYSTEM_EXFAT: return PF_HID_FILESYSTEM_EXFAT;
+    default: return PF_HID_FILESYSTEM_UNKNOWN;
     }
 }
 
@@ -220,17 +249,13 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
     }
     if (storage.state != PF_STORAGE_STATE_NOT_CONFIGURED) report->sd_flags |= PF_HID_STORAGE_CONFIGURED;
 
-    switch (pf_fatfs_volume_filesystem_format()) {
-    case PF_FATFS_VOLUME_FILESYSTEM_FAT12: report->filesystem_format = PF_HID_FILESYSTEM_FAT12; break;
-    case PF_FATFS_VOLUME_FILESYSTEM_FAT16: report->filesystem_format = PF_HID_FILESYSTEM_FAT16; break;
-    case PF_FATFS_VOLUME_FILESYSTEM_FAT32: report->filesystem_format = PF_HID_FILESYSTEM_FAT32; break;
-    case PF_FATFS_VOLUME_FILESYSTEM_EXFAT: report->filesystem_format = PF_HID_FILESYSTEM_EXFAT; break;
-    default: report->filesystem_format = PF_HID_FILESYSTEM_UNKNOWN; break;
-    }
+    /* Sampled separately from the status; across a remount one report may mix the two and the next corrects it. */
+    report->filesystem_format = filesystem_code(pf_fatfs_volume_filesystem_format());
 
     if (storage.state < PF_STORAGE_STATE_ABSENT || storage.state == PF_STORAGE_STATE_USB) return;
     report->sd_flags |= PF_HID_STORAGE_SAMPLE_VALID;
-    report->component_type = storage.medium == PF_STORAGE_MEDIUM_SDCARD ? 1u : 0u;
+    report->component_type = storage.medium == PF_STORAGE_MEDIUM_SDCARD ? PF_HID_COMPONENT_SDCARD
+                                                                      : PF_HID_COMPONENT_NONE;
     report->bus_mode = storage.bus == PF_STORAGE_BUS_SPI ? PF_HID_BUS_MODE_SPI : PF_HID_BUS_MODE_SDIO;
     if (storage.state == PF_STORAGE_STATE_ABSENT) {
         report->sd_flags |= PF_HID_STORAGE_PRESENCE_KNOWN;
@@ -275,157 +300,183 @@ void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t se
 #endif
 }
 
+static outcome_t handle_led(const pf_hid_control_request_t *request)
+{
+    if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 1u)) {
+        return invalid(PF_HID_ERROR_MALFORMED);
+    }
+    if (request->arguments[0] > 1u) {
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+    if (!pf_led_is_available()) {
+        return outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
+    }
+    return pf_led_set(request->arguments[0] != 0u) ? completed() : failed();
+}
+
+static outcome_t handle_reboot(const pf_hid_control_request_t *request)
+{
+    if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 0u)) {
+        return invalid(PF_HID_ERROR_MALFORMED);
+    }
+    if ((request->flags & 1u) == 0u) {
+        return invalid(PF_HID_ERROR_CONFIRMATION);
+    }
+    if (pf_storage_worker_busy() || pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
+        return busy_outcome();
+    }
+    reboot_requested = true;
+    return completed();
+}
+
+static outcome_t handle_msc(const pf_hid_control_request_t *request)
+{
+    const uint8_t action = request->arguments[0];
+    const bool force = action == PF_HID_MSC_ACTION_FORCE_RETURN;
+
+    if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 1u)) {
+        return invalid(PF_HID_ERROR_MALFORMED);
+    }
+    if (action > PF_HID_MSC_ACTION_FORCE_RETURN) {
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+    if (force && (request->flags & 1u) == 0u) {
+        return invalid(PF_HID_ERROR_CONFIRMATION);
+    }
+    if (!force && request->flags != 0u) {
+        return invalid(PF_HID_ERROR_MALFORMED);
+    }
+    if (force && !pf_usb_msc_is_enabled()) {
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+    if (pf_storage_worker_busy()) {
+        return busy_outcome();
+    }
+    const bool accepted = force ? pf_usb_msc_request_force_return()
+                                : pf_usb_msc_request(action == PF_HID_MSC_ACTION_ENABLE);
+    if (!accepted) {
+        return busy_outcome();
+    }
+    pf_usb_msc_defer_for_hid_result(request->transaction_id);
+    return completed();
+}
+
+#if PF_ENABLE_STORAGE_BENCHMARK
+/** @brief Cancel a running benchmark; completes trivially when none is running. */
+static outcome_t cancel_self_test(void)
+{
+    pf_file_benchmark_status_t benchmark;
+
+    pf_storage_worker_benchmark_status(&benchmark);
+    if (benchmark.state >= PF_FILE_BENCHMARK_QUEUED && benchmark.state <= PF_FILE_BENCHMARK_READING &&
+        !pf_storage_worker_benchmark_cancel()) {
+        return busy_outcome();
+    }
+    return completed();
+}
+
+/** @brief Start a benchmark; the result stays pending until the worker resolves its preflight. */
+static outcome_t start_self_test(const pf_hid_control_request_t *request, uint32_t size_mib)
+{
+    pf_file_benchmark_status_t benchmark;
+
+    if (pf_storage_worker_benchmark_start(size_mib, false)) {
+        pending_self_test_request = *request;
+        self_test_result_pending = true;
+        return outcome(PF_HID_COMMAND_PENDING, PF_HID_ERROR_NONE);
+    }
+    pf_storage_worker_benchmark_status(&benchmark);
+    return benchmark_rejection(benchmark.request_error);
+}
+
+static outcome_t handle_self_test(const pf_hid_control_request_t *request)
+{
+    const uint8_t action = request->arguments[0];
+    const uint32_t size_mib = read_u32_le(&request->arguments[1]);
+
+    if (request->flags != 0u) {
+        return invalid(PF_HID_ERROR_MALFORMED);
+    }
+    if (action > 1u || (action == 0u && size_mib != 0u)) {
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+    if (action == 1u && (size_mib == 0u || size_mib > PF_FILE_BENCHMARK_MAX_MIB)) {
+        /* Not a real start: the rejected call records the size error in the benchmark status for Input 11. */
+        (void)pf_storage_worker_benchmark_start(size_mib, false);
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+    if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
+        return busy_outcome();
+    }
+    return action == 0u ? cancel_self_test() : start_self_test(request, size_mib);
+}
+#endif
+
+/** @brief Validate and stage new boot settings; the caller restores the session values unless this completes. */
+static outcome_t save_settings(const pf_hid_control_request_t *request)
+{
+    const uint16_t system_clock_mhz = read_u16_le(request->arguments);
+    const uint8_t sdcard_profile = request->arguments[2];
+    pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
+    outcome_t result;
+
+    while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != system_clock_mhz) {
+        ++sysclk;
+    }
+    if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
+        return invalid(PF_HID_ERROR_MALFORMED);
+    }
+    if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || !pf_boot_config_set_sysclk(sysclk) ||
+        !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile)) {
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+    if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
+        return busy_outcome();
+    }
+    if (!pf_boot_config_save()) {
+        return failed();
+    }
+    result = completed();
+    result.data[0] = (uint8_t)system_clock_mhz;
+    result.data[1] = (uint8_t)(system_clock_mhz >> 8u);
+    result.data[2] = sdcard_profile;
+    reboot_requested = true;
+    return result;
+}
+
+static outcome_t handle_save_settings(const pf_hid_control_request_t *request)
+{
+    const pf_sysclk_profile_t old_sysclk = pf_boot_config_sysclk();
+    const pf_storage_speed_t old_sd_speed = pf_boot_config_storage_speed();
+    outcome_t result = save_settings(request);
+
+    if (result.status != PF_HID_COMMAND_COMPLETED) {
+        /* Retain the previous session values; a failed save may already have changed flash. */
+        (void)pf_boot_config_set_sysclk(old_sysclk);
+        (void)pf_boot_config_set_storage_speed(old_sd_speed);
+    }
+    return result;
+}
+
 static void process_control_request(const pf_hid_control_request_t *request)
 {
-    uint8_t result_data[4] = {0};
-    uint8_t status = PF_HID_COMMAND_INVALID;
-    uint8_t error = PF_HID_ERROR_MALFORMED;
+    outcome_t result;
 
-    if (request->opcode == PF_HID_OPCODE_LED) {
-        if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 1u)) {
-            error = PF_HID_ERROR_MALFORMED;
-        } else if (request->arguments[0] > 1u) {
-            error = PF_HID_ERROR_ARGUMENT;
-        } else if (!pf_led_is_available()) {
-            status = PF_HID_COMMAND_UNSUPPORTED;
-            error = PF_HID_ERROR_CAPABILITY;
-        } else if (!pf_led_set(request->arguments[0] != 0u)) {
-            status = PF_HID_COMMAND_FAILED;
-            error = PF_HID_ERROR_OPERATION;
-        } else {
-            status = PF_HID_COMMAND_COMPLETED;
-            error = PF_HID_ERROR_NONE;
-        }
-    } else if (request->opcode == PF_HID_OPCODE_REBOOT) {
-        if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 0u)) {
-            error = PF_HID_ERROR_MALFORMED;
-        } else if ((request->flags & 1u) == 0u) {
-            error = PF_HID_ERROR_CONFIRMATION;
-        } else if (pf_storage_worker_busy() || pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
-            status = PF_HID_COMMAND_BUSY;
-            error = PF_HID_ERROR_BUSY;
-        } else {
-            reboot_requested = true;
-            status = PF_HID_COMMAND_COMPLETED;
-            error = PF_HID_ERROR_NONE;
-        }
-    } else if (request->opcode == PF_HID_OPCODE_MSC) {
-        const uint8_t action = request->arguments[0];
-        if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 1u)) {
-            error = PF_HID_ERROR_MALFORMED;
-        } else if (action > 2u) {
-            error = PF_HID_ERROR_ARGUMENT;
-        } else if (action == 2u && (request->flags & 1u) == 0u) {
-            error = PF_HID_ERROR_CONFIRMATION;
-        } else if ((action != 2u) && request->flags != 0u) {
-            error = PF_HID_ERROR_MALFORMED;
-        } else if (action == 2u && !pf_usb_msc_is_enabled()) {
-            error = PF_HID_ERROR_ARGUMENT;
-        } else if (pf_storage_worker_busy()) {
-            status = PF_HID_COMMAND_BUSY;
-            error = PF_HID_ERROR_BUSY;
-        } else {
-            bool accepted = (action == 2u) ? pf_usb_msc_request_force_return()
-                                            : pf_usb_msc_request(action == 1u);
-            if (!accepted) {
-                status = PF_HID_COMMAND_BUSY;
-                error = PF_HID_ERROR_BUSY;
-            } else {
-                pf_usb_msc_defer_for_hid_result(request->transaction_id);
-                status = PF_HID_COMMAND_COMPLETED;
-                error = PF_HID_ERROR_NONE;
-            }
-        }
-    } else if (request->opcode == PF_HID_OPCODE_SELF_TEST) {
+    switch (request->opcode) {
+    case PF_HID_OPCODE_LED: result = handle_led(request); break;
+    case PF_HID_OPCODE_REBOOT: result = handle_reboot(request); break;
+    case PF_HID_OPCODE_MSC: result = handle_msc(request); break;
+    case PF_HID_OPCODE_SELF_TEST:
 #if PF_ENABLE_STORAGE_BENCHMARK
-        const uint8_t action = request->arguments[0];
-        const uint32_t size_mib = read_u32_le(&request->arguments[1]);
-        pf_file_benchmark_status_t benchmark;
-        if (request->flags != 0u) {
-            error = PF_HID_ERROR_MALFORMED;
-        } else if (action > 1u || (action == 0u && size_mib != 0u)) {
-            error = PF_HID_ERROR_ARGUMENT;
-        } else if (action == 1u && (size_mib == 0u || size_mib > 1024u)) {
-            (void)pf_storage_worker_benchmark_start(size_mib, false);
-            status = PF_HID_COMMAND_INVALID;
-            error = PF_HID_ERROR_ARGUMENT;
-        } else if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
-            status = PF_HID_COMMAND_BUSY;
-            error = PF_HID_ERROR_BUSY;
-        } else if (action == 0u) {
-            pf_storage_worker_benchmark_status(&benchmark);
-            if (benchmark.state >= PF_FILE_BENCHMARK_QUEUED &&
-                benchmark.state <= PF_FILE_BENCHMARK_READING) {
-                if (!pf_storage_worker_benchmark_cancel()) {
-                    status = PF_HID_COMMAND_BUSY;
-                    error = PF_HID_ERROR_BUSY;
-                } else {
-                    status = PF_HID_COMMAND_COMPLETED;
-                    error = PF_HID_ERROR_NONE;
-                }
-            } else {
-                status = PF_HID_COMMAND_COMPLETED;
-                error = PF_HID_ERROR_NONE;
-            }
-        } else if (pf_storage_worker_benchmark_start(size_mib, false)) {
-            pending_self_test_request = *request;
-            self_test_result_pending = true;
-            status = PF_HID_COMMAND_PENDING;
-            error = PF_HID_ERROR_NONE;
-        } else {
-            pf_storage_worker_benchmark_status(&benchmark);
-            if (benchmark.request_error == PF_FILE_BENCHMARK_ERROR_BUSY ||
-                benchmark.request_error == PF_FILE_BENCHMARK_ERROR_USB_OWNER) {
-                status = PF_HID_COMMAND_BUSY;
-                error = PF_HID_ERROR_BUSY;
-            } else {
-                status = PF_HID_COMMAND_FAILED;
-                error = PF_HID_ERROR_OPERATION;
-            }
-        }
+        result = handle_self_test(request);
 #else
-        status = PF_HID_COMMAND_UNSUPPORTED;
-        error = PF_HID_ERROR_CAPABILITY;
+        result = outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
 #endif
-    } else if (request->opcode == PF_HID_OPCODE_SAVE_SETTINGS) {
-        const uint16_t system_clock_mhz = read_u16_le(request->arguments);
-        const uint8_t sdcard_profile = request->arguments[2];
-        const pf_sysclk_profile_t old_sysclk = pf_boot_config_sysclk();
-        const pf_storage_speed_t old_sd_speed = pf_boot_config_storage_speed();
-        pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
-        while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != system_clock_mhz) {
-            ++sysclk;
-        }
-        if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
-            error = PF_HID_ERROR_MALFORMED;
-        } else if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || !pf_boot_config_set_sysclk(sysclk) ||
-                   !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile)) {
-            error = PF_HID_ERROR_ARGUMENT;
-        } else if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
-            status = PF_HID_COMMAND_BUSY;
-            error = PF_HID_ERROR_BUSY;
-        } else if (!pf_boot_config_save()) {
-            status = PF_HID_COMMAND_FAILED;
-            error = PF_HID_ERROR_OPERATION;
-        } else {
-            result_data[0] = (uint8_t)system_clock_mhz;
-            result_data[1] = (uint8_t)(system_clock_mhz >> 8u);
-            result_data[2] = sdcard_profile;
-            status = PF_HID_COMMAND_COMPLETED;
-            error = PF_HID_ERROR_NONE;
-            reboot_requested = true;
-        }
-        if (status != PF_HID_COMMAND_COMPLETED) {
-            /* Retain the previous session values; a failed save may already have changed flash. */
-            (void)pf_boot_config_set_sysclk(old_sysclk);
-            (void)pf_boot_config_set_storage_speed(old_sd_speed);
-        }
-    } else {
-        status = PF_HID_COMMAND_UNSUPPORTED;
-        error = PF_HID_ERROR_OPCODE;
+        break;
+    case PF_HID_OPCODE_SAVE_SETTINGS: result = handle_save_settings(request); break;
+    default: result = outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_OPCODE); break;
     }
-
-    set_result(request, status, error, result_data);
+    set_result(request, result.status, result.error, result.data);
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
@@ -467,9 +518,7 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
             return sizeof(report);
         }
         if (report_id == PF_HID_SELF_TEST_REPORT_ID && reqlen >= sizeof(pf_hid_self_test_report_t)) {
-            pf_hid_identity_report_t identity;
-            pf_hid_build_identity_report(&identity);
-            if ((identity.capabilities & PF_HID_CAP_SELF_TEST) == 0u) return 0u;
+            if (!pf_hid_self_test_supported()) return 0u;
             pf_hid_self_test_report_t report;
             pf_hid_build_self_test_report(&report, 0u);
             memcpy(buffer, &report, sizeof(report));
@@ -489,6 +538,8 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
 
     pf_hid_control_request_t request;
     memcpy(&request, buffer, sizeof(request));
+    /* Intentionally silent: an unversioned or zero-transaction envelope has no transaction to answer, so the last
+     * result stays readable and is never overwritten by an unattributable request. */
     if (request.version != PF_HID_REPORT_VERSION || request.transaction_id == 0u) return;
     process_control_request(&request);
 }

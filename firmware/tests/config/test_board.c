@@ -17,9 +17,11 @@ void test_board_gpio_assignments_are_bytes_and_none_is_255(void)
 {
     TEST_ASSERT_EQUAL_UINT8(255u, PF_LED_GPIO_NONE);
     TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_led_board.gpio));
-    TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_monitor_uart_board.uart_index));
-    TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_monitor_uart_board.tx_gpio));
-    TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_monitor_uart_board.rx_gpio));
+    TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_logging_board.uart_index));
+    TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_logging_board.tx_gpio));
+    TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_logging_board.rx_gpio));
+    TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_logging_board.default_level));
+    TEST_ASSERT_EQUAL_UINT(8u, sizeof(pf_logging_board));
     TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_sdio_pio_board_pins.card_detect_gpio));
     TEST_ASSERT_EQUAL_UINT(6u, sizeof(pf_sdio_pio_board_pins.pins));
     TEST_ASSERT_EQUAL_UINT(1u, sizeof(pf_sdio_pio_board_pins.pio_index));
@@ -28,10 +30,12 @@ void test_board_gpio_assignments_are_bytes_and_none_is_255(void)
 
 void test_board_config_describes_uart_led_and_sdio_socket_assignment(void)
 {
-    TEST_ASSERT_EQUAL_UINT32(PICO_DEFAULT_UART, pf_monitor_uart_board.uart_index);
-    TEST_ASSERT_EQUAL_UINT32(PICO_DEFAULT_UART_TX_PIN, pf_monitor_uart_board.tx_gpio);
-    TEST_ASSERT_EQUAL_UINT32(PICO_DEFAULT_UART_RX_PIN, pf_monitor_uart_board.rx_gpio);
-    TEST_ASSERT_EQUAL_UINT32(115200u, pf_monitor_uart_board.baud_rate);
+    TEST_ASSERT_EQUAL_UINT32(PICO_DEFAULT_UART, pf_logging_board.uart_index);
+    TEST_ASSERT_EQUAL_UINT32(PICO_DEFAULT_UART_TX_PIN, pf_logging_board.tx_gpio);
+    TEST_ASSERT_EQUAL_UINT32(PICO_DEFAULT_UART_RX_PIN, pf_logging_board.rx_gpio);
+    TEST_ASSERT_EQUAL_UINT32(115200u, pf_logging_board.baud_rate);
+    TEST_ASSERT_EQUAL(PF_LOGGING_LEVEL_INFO, pf_logging_board.default_level);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT8(PF_LOGGING_LEVEL_ERROR, pf_logging_board.default_level);
 #ifdef PICO_DEFAULT_LED_PIN
     TEST_ASSERT_EQUAL_UINT32(PICO_DEFAULT_LED_PIN, pf_led_board.gpio);
     TEST_ASSERT_EQUAL(PICO_DEFAULT_LED_PIN_INVERTED == 0, pf_led_board.active_high);

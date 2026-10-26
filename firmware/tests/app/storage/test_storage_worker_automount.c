@@ -8,7 +8,7 @@ TEST_INCLUDE_PATH("firmware/tests/support/msc")
 
 void setUp(void)
 {
-    pf_log_write_Ignore();
+    pf_logging_write_IgnoreAndReturn(true);
     config_available = configured = backend_configured = true;
     requests = (void *)1;
     media_config.transport.mode = PF_SD_LINK_NATIVE_SD;
@@ -276,26 +276,26 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
 
 void test_command_cancellation_keeps_reservation_until_completion(void)
 {
- busy=true; active_session=42; cancelled=false; benchmark_active=false;
+ busy=true; active_session=42; cancelled=false; bench.active=false;
  pf_storage_worker_cancel(41);
  TEST_ASSERT_FALSE(cancelled);
  pf_storage_worker_cancel(42);
  TEST_ASSERT_TRUE(cancelled);
  TEST_ASSERT_TRUE(pf_storage_worker_busy());
- cancelled=false; benchmark_active=true;
+ cancelled=false; bench.active=true;
  pf_storage_worker_cancel(42);
  TEST_ASSERT_FALSE(cancelled);
- benchmark_finished=true;
+ bench.finished=true;
  TEST_ASSERT_FALSE(pf_storage_worker_busy());
- TEST_ASSERT_FALSE(benchmark_active);
- TEST_ASSERT_FALSE(benchmark_finished);
+ TEST_ASSERT_FALSE(bench.active);
+ TEST_ASSERT_FALSE(bench.finished);
  pf_storage_worker_cancel(42);
  TEST_ASSERT_FALSE(cancelled);
 }
 
 void test_forced_sd_return_detaches_before_release_and_attempts_mount_once(void)
 {
- busy=media_service_busy=benchmark_active=benchmark_finished=false;
+ busy=media_service_busy=bench.active=bench.finished=false;
  mounted=false;
  media=(pf_sd_info_t){.present=true,.presence_known=true,.initialized=true};
  usb_owned = true;
@@ -327,6 +327,14 @@ void test_forced_sd_return_detaches_before_release_and_attempts_mount_once(void)
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(busy && remount_pending && transition_pending && !msc_enabled);
  TEST_ASSERT_EQUAL_UINT(before_disconnects+1u,disconnects);
+ /* The reconnect is a deadline, not a sleep: nothing reconnects early, then exactly once. */
+ unsigned before_connects=connects;
+ pf_usb_msc_task();
+ TEST_ASSERT_EQUAL_UINT(before_connects,connects);
+ test_time_us+=250000u;
+ pf_usb_msc_task();
+ pf_usb_msc_task();
+ TEST_ASSERT_EQUAL_UINT(before_connects+1u,connects);
  TEST_ASSERT_FALSE(usb_owned);
  return_from_usb();
  pf_usb_msc_task();

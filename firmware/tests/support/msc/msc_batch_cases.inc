@@ -22,8 +22,8 @@ uint64_t test_time_us;
 pf_sd_link_mode_t pf_sd_backend_mode(void) { return TEST_TRANSPORT; }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wtype-limits" /* Existing diskio uint32 width guards. */
-#include "middleware/storage/fatfs_disk.c"
-#include "middleware/storage/block_device.c"
+#include "platform/storage/fatfs_disk.c"
+#include "platform/storage/block_device.c"
 #pragma GCC diagnostic pop
 pthread_mutex_t creation_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t media[8][512];

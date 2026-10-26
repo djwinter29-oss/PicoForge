@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "drivers/boot_config.h"
+#include "platform/boot_config.h"
 #include "hardware/gpio.h"
 
 static bool sd_board_bound; /**< Transport context and card-detect GPIO have been prepared. */

@@ -13,7 +13,7 @@
  * FreeRTOS: recursive, task-context only with a running scheduler.
  * Bare metal: no-op, single foreground context only; no ISR/second-core calls.
  * Pair every lock with unlock. Never hold across reply/USB waits.
- * Application storage access must use the owner-gated storage service (middleware/storage/storage.h).
+ * Application storage access must use the owner-gated storage service (platform/storage/storage.h).
  * Raw driver calls do not enforce ownership.
  */
 void pf_sd_lock(void);

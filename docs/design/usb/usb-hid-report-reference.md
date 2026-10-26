@@ -93,7 +93,7 @@ Read after connection. Identity and capabilities remain stable for that boot.
 | 12 | 1 | `firmware_minor` | Firmware semantic-version minor. |
 | 13 | 1 | `firmware_patch` | Firmware semantic-version patch. |
 | 14 | 1 | `mcu` | `1` RP2040; `2` RP2350. |
-| 15 | 1 | `board_model` | Configured target: `1` Pico; `2` Pico 2; `3` Pico 2 W. |
+| 15 | 1 | `board_model` | Configured target: `1` Pico; `2` Pico 2; `3` Pico 2 W; `4` Pico W. |
 | 16 | 1 | Reserved | Zero; hosts must ignore this byte. |
 | 17 | 1 | `capabilities` | Static device and storage-transport capabilities. |
 | 18 | 4 | `ram_total_bytes` | Total on-chip SRAM for the MCU/linker layout; not free memory. |
@@ -157,7 +157,8 @@ capabilities from the version.
 | `1` | Pico | RP2040 | Configured Pico target. |
 | `2` | Pico 2 | RP2350 | Configured Pico 2 target. |
 | `3` | Pico 2 W (`pico2_w`) | RP2350 | Configured Pico 2 W target; UART0 uses GP0/GP1, matching Pico. |
-| `4`-`255` | Unassigned | - | Reserved. |
+| `4` | Pico W (`pico_w`) | RP2040 | Configured Pico W target; UART0 uses GP0/GP1, matching Pico. |
+| `5`-`255` | Unassigned | - | Reserved. |
 
 Board model is the configured build target, not automatic hardware detection.
 

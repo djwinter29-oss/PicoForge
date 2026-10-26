@@ -200,7 +200,7 @@ filesystem clients must also be routed through this worker, not a second task.
 
 ## Validation
 
-Run the hardware-independent middleware tests:
+Run the hardware-independent platform tests:
 
 ```sh
 tools/validation/setup-ceedling-testing.sh test:test_cli

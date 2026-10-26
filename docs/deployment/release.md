@@ -4,7 +4,9 @@ After review and software validation, tag the intended commit as `vX.Y.Z` and pu
 publication process. Annotated (`git tag -a v1.2.3 -m 'Release 1.2.3'`) and lightweight (`git tag v1.2.3`) tags
 are supported. Each component must be decimal 0–255, without leading zeros except `0`. Prerelease suffixes are
 not accepted. GitHub's tag glob is broad; an early validation job rejects anything outside this exact format
-before any build runs. Manual dispatch must select a tag with the same format; branch dispatch fails closed.
+before any build runs. Manual dispatch is artifact-only preflight: select the branch or tag to test and supply a
+base `tag` input with the same version format. The input sets package versions; it does not change the selected
+source ref, create a tag, or publish a release.
 The stripped `X.Y.Z` supplies `PF_FIRMWARE_VERSION` to every build, including HID identity and SDK program metadata.
 Local developer builds retain `0.0.0-dev` unless overridden.
 
@@ -27,16 +29,24 @@ The release also includes:
 - `SHA256SUMS.txt`: SHA-256 checksums for all attached packages.
 
 The release workflow builds the Python wheel and WebHID archive directly and calls `publish-dotnet.yml` to build
-standalone hosts. The release job uploads all files to a draft before making it public. A failed upload leaves a draft that can be
-completed by rerunning that job; an already public release is not overwritten. Builds and uploads alone do not deploy
-anything. After release publication, separate jobs publish the same tested wheel to PyPI using Trusted Publishing
+standalone hosts. Like [PicoUart](https://github.com/djwinter29-oss/PicoUart/blob/main/.github/workflows/release.yml),
+tag pushes publish with the pinned `softprops/action-gh-release` action after all required builds and tests pass.
+The action creates or updates the tag's public release, including one created through GitHub's release editor.
+Rerunning the publication job can replace matching assets; do not move a published tag or use it for changed packages.
+Prefer pushing a tag and letting the workflow create the release so downloads are not announced before builds pass.
+Manual preflight produces Actions artifacts only and never publishes to GitHub Releases, PyPI, or Pages.
+After tag-driven release publication, separate jobs publish the same tested wheel to PyPI using Trusted Publishing
 and deploy the same WebHID archive to GitHub Pages. They do not rebuild packages from a moving branch.
 `publish-pypi.yml` and `publish-webhid.yml` run independently when **Release build packages** completes successfully
-in this repository. Both require a public, stable release, match its tag to the originating workflow commit,
-and verify the downloaded asset against the release checksums. A failure in either workflow does not remove the release.
+in this repository for a tag push, not a manual preflight. Both require a public, stable release, match its tag to
+the originating workflow commit, and verify the downloaded asset against the release checksums.
+A failure in either workflow does not remove the release.
 They also accept an existing published release tag through manual dispatch for retries; neither rebuilds the asset.
 `publish-dotnet.yml` supports manual packaging of an existing tag as Actions artifacts without modifying a release.
 Rerun only failed jobs after fixing external configuration; PyPI versions are immutable.
+
+An existing empty public release does not need to be returned to draft. If publication fails, rerun only the failed
+job to complete uploads. Publish corrections to distributed packages under a new version; PyPI cannot replace versions.
 
 Packaging is gated on the reusable host-validation workflow: Ceedling firmware tests, Python host tests on
 3.10 and 3.12, and WebHID and .NET host tests. Each PR/release matrix entry performs one firmware build; runtime
@@ -55,7 +65,8 @@ Before pushing the first release tag:
    The package name must be available or owned by the maintainer; do not assume it is reserved.
 4. Create the GitHub `pypi` environment, restrict it to the default branch, and configure any required reviewer approval.
    No PyPI API-token secret is needed. Only publication jobs receive OIDC token permissions.
-5. Review and push a valid release tag. Manual **Release build packages** dispatch must select an existing valid tag.
+5. Optionally run **Release build packages** manually on the intended source ref with a valid base `tag` input
+   for artifact-only preflight. Review and push a valid release tag to publish.
    Monitor the release, PyPI, and Pages jobs separately before announcing downloads.
 
 These workflows configure publication; they do not provision PyPI ownership, change repository settings, sign host
@@ -92,8 +103,8 @@ tags; local builds can set the same variable explicitly. Without it, local filen
 This stabilizes the date input, not a guarantee of bit-for-bit reproducibility across toolchains or build paths.
 
 The SDK defaults are 125 MHz on RP2040 and 150 MHz on RP2350. The dashboard can apply supported runtime clocks;
-150 MHz is an overclock on RP2040, and 250 MHz is an overclock on both MCUs. Accepted SDK clock configuration
-does not establish hardware safety.
+150 MHz is an overclock on RP2040, and 250 MHz is an overclock on both MCUs; runtime clock changes never
+alter the core voltage. Accepted SDK clock configuration does not establish hardware safety.
 SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON in release builds. It requests the
 highest supported safe planned rate up to 50 MHz, clamped by the PIO ceiling of SYSCLK/4: at most 37.5 MHz at
 150 MHz CPU, and up to 50 MHz at 250 MHz CPU. Unsupported High Speed or failed faster-bus validation retains the

@@ -1,0 +1,6 @@
+#ifndef PF_TEST_HARDWARE_GPIO_H
+#define PF_TEST_HARDWARE_GPIO_H
+
+#define NUM_BANK0_GPIOS 30u
+
+#endif

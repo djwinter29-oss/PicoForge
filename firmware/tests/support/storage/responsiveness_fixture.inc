@@ -13,7 +13,7 @@ static bool settings_save_fails;
 static bool msc_enabled;
 static bool msc_transition_pending;
 const pf_led_board_t pf_led_board = {.gpio = 25u, .active_high = true};
-const pf_monitor_uart_board_t pf_monitor_uart_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
+const pf_logging_board_t pf_logging_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void) { return test_sysclk; }
 pf_storage_speed_t pf_boot_config_storage_speed(void) { return test_sd_speed; }
@@ -52,6 +52,7 @@ static TickType_t fake_ticks;
 static bool fake_connected = true;
 static bool fake_done;
 static unsigned reply_count, drained_replies;
+static uint32_t reply_session_skew;
 static unsigned queries, queued, recovery_requests, normal_submissions, messages;
 bool pf_fatfs_volume_is_mounted(void) { TEST_ASSERT_TRUE(reserved); return mounted; }
 void pf_storage_get_status(pf_storage_status_t *status)
@@ -135,7 +136,7 @@ BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t timeout)
     TEST_ASSERT_EQUAL_UINT(0u, timeout);
     if (!reply_count) return 0;
     pf_storage_worker_reply_t *reply = item;
-    *reply = (pf_storage_worker_reply_t){ .session = cli_session };
+    *reply = (pf_storage_worker_reply_t){ .session = cli_session + reply_session_skew, .line = "reply" };
     --reply_count;
     ++drained_replies;
     reply->done = fake_done && reply_count == 0;

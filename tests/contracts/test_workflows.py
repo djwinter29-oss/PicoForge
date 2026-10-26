@@ -1,6 +1,7 @@
 """Build/package workflow contracts; no runner, network or hardware access."""
 from pathlib import Path
 import json
+import os
 import re
 import subprocess
 
@@ -14,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_build_matrices_and_compatible_artifact_checks():
     for name in ("pr-check.yml", "release.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text()
-        for dimension in ("board: [pico, pico2]", "transport: [SDIO_PIO, SPI]"):
+        for dimension in ("board: [pico, pico_w, pico2, pico2_w]", "transport: [SDIO_PIO, SPI]"):
             assert dimension in workflow
         for removed in ("BAREMETAL", "matrix.clock", "matrix.port",
                         "--sys-clk-mhz", "--sdcard-port", "Build SDK-default clock application"):
@@ -64,7 +65,7 @@ def test_workflows_run_pio_timing_only_for_sdio(name):
 
 def test_release_publishes_only_after_all_packages_succeed():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
-    assert "workflow_dispatch: {}" in workflow
+    assert "preflight does not create a tag or release" in workflow
     assert workflow.split("jobs:", 1)[0].count("contents: read") == 1
     assert workflow.count("contents: write") == 1
     assert "actions/upload-artifact@" in workflow
@@ -72,13 +73,58 @@ def test_release_publishes_only_after_all_packages_succeed():
     assert "if-no-files-found: error" in workflow
     assert "needs: [validate-tag, firmware, python, webhid, dotnet]" in workflow
     assert not (ROOT / ".github/workflows/package-host.yml").exists()
-    assert 'gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes' in workflow
-    assert 'gh release upload "$RELEASE_TAG" dist/* --clobber' in workflow
-    assert 'gh release edit "$RELEASE_TAG" --draft=false' in workflow
+    assert "softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64" in workflow
     assert "sha256sum * > SHA256SUMS.txt" in workflow
     assert "uses: ./.github/workflows/publish-dotnet.yml" in workflow
     assert "gh-action-pypi-publish@" not in workflow
     assert "publish-webhid.yml" not in workflow
+
+
+@pytest.mark.parametrize("event,ref_type,ref_name,input_tag,expected", (
+    ("push", "tag", "v1.2.3", "", "1.2.3"),
+    ("push", "branch", "main", "", None),
+    ("push", "tag", "v01.2.3", "", None),
+    ("workflow_dispatch", "branch", "main", "v2.3.4", "2.3.4"),
+    ("workflow_dispatch", "tag", "v1.2.3", "v2.3.4", "2.3.4"),
+    ("workflow_dispatch", "branch", "main", "", None),
+    ("workflow_dispatch", "branch", "main", "v256.0.0", None),
+))
+def test_release_preflight_resolves_version_without_publishing(
+    event, ref_type, ref_name, input_tag, expected, tmp_path,
+):
+    result = subprocess.run(
+        ["ruby", "-ryaml", "-rjson", "-e", "puts JSON.generate(YAML.load_file(ARGV[0]))",
+         str(ROOT / ".github/workflows/release.yml")],
+        check=True, capture_output=True, text=True,
+    )
+    workflow = json.loads(result.stdout)
+    jobs = workflow["jobs"]
+    assert jobs["release"]["if"] == "github.event_name == 'push'"
+    assert workflow["on"]["workflow_dispatch"]["inputs"]["tag"]["required"] is True
+    steps = jobs["validate-tag"]["steps"]
+    script = next(step["run"] for step in steps if step.get("id") == "version")
+    output = tmp_path / "output"
+    result = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=ROOT, capture_output=True, text=True,
+        env={**os.environ, "EVENT_NAME": event, "RELEASE_REF_TYPE": ref_type, "RELEASE_TAG": ref_name,
+             "INPUT_TAG": input_tag, "GITHUB_OUTPUT": str(output)},
+    )
+    if expected is not None:
+        assert result.returncode == 0, result.stderr
+        assert output.read_text() == f"version={expected}\n"
+    else:
+        assert result.returncode != 0
+        assert not output.exists()
+    publish = next(step for step in jobs["release"]["steps"] if step.get("name") == "Publish GitHub release")
+    assert publish["with"] == {
+        "tag_name": "${{ github.ref_name }}",
+        "name": "PicoForge ${{ github.ref_name }}",
+        "generate_release_notes": True,
+        "draft": False,
+        "prerelease": False,
+        "files": "dist/*",
+        "fail_on_unmatched_files": True,
+    }
 
 
 @pytest.mark.parametrize("name", ("publish-dotnet.yml", "publish-pypi.yml", "publish-webhid.yml"))
@@ -92,6 +138,7 @@ def test_publication_workflows_have_expected_triggers_and_pinned_actions(name):
         assert "workflow_call:" not in workflow
         assert "workflows: [Release build packages]" in workflow
         assert "github.event.workflow_run.conclusion == 'success'" in workflow
+        assert "github.event.workflow_run.event == 'push'" in workflow
         assert "github.event.workflow_run.head_repository.full_name == github.repository" in workflow
         assert 'test "$(git rev-parse \'FETCH_HEAD^{commit}\')" = "$SOURCE_SHA"' in workflow
         assert "sha256sum --check SHA256SUMS.txt --ignore-missing" in workflow

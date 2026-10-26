@@ -20,8 +20,8 @@ def formatter(tmp_path_factory):
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "middleware/storage/fatfs_volume.h"
-#include "middleware/storage/fatfs_disk.h"
+#include "platform/storage/fatfs_volume.h"
+#include "platform/storage/fatfs_disk.h"
 
 static FILE *image;
 static uint32_t sectors;
@@ -105,8 +105,8 @@ int main(int argc, char **argv)
     subprocess.run([
         "gcc", "-std=c11", "-Wall", "-Wextra",
         "-I", str(source), "-I", str(source / "integration/fatfs"), "-I", str(vendor),
-        str(harness), str(source / "middleware/storage/fatfs_volume.c"),
-        str(source / "middleware/storage/fatfs_disk.c"), str(source / "middleware/storage/block_device.c"),
+        str(harness), str(source / "platform/storage/fatfs_volume.c"),
+        str(source / "platform/storage/fatfs_disk.c"), str(source / "platform/storage/block_device.c"),
         str(vendor / "ff.c"), str(vendor / "ffunicode.c"), "-o", str(binary),
     ], check=True)
     return binary

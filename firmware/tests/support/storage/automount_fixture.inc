@@ -1,6 +1,6 @@
 #include "unity.h"
 #include <string.h>
-#include "middleware/storage/storage.h"
+#include "platform/storage/storage.h"
 #include "drivers/sdcard/sd_port.h"
 #include "drivers/sdcard/sd_backend.h"
 #define WORKER_SOURCE "app/storage/storage_worker.c"
@@ -8,7 +8,7 @@
 #define MSC_SOURCE "app/usb/usb_msc.c"
 #include WORKER_SOURCE
 #include FACADE_SOURCE
-#define MEDIA_SOURCE "middleware/storage/storage.c"
+#define MEDIA_SOURCE "platform/storage/storage.c"
 #include MEDIA_SOURCE
 #include MSC_SOURCE
 
@@ -19,7 +19,7 @@ static pf_sd_info_t media = { .presence_known = true, .present = true };
 static uint32_t now;
 static bool mounted, queue_fails, queued_recovery, queued_unmount, sync_ok = true, init_fails;
 static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
-static unsigned sync_calls, disconnects, init_calls;
+static unsigned sync_calls, disconnects, connects, init_calls;
 static bool expect_usb_owned_disconnect, disconnect_fails;
 static pf_fatfs_volume_result_t mount_result = PF_FATFS_VOLUME_OK;
 
@@ -122,7 +122,11 @@ bool tud_disconnect(void)
     ++disconnects;
     return !disconnect_fails;
 }
-bool tud_connect(void) { return true; }
+bool tud_connect(void)
+{
+    ++connects;
+    return true;
+}
 void sleep_ms(uint32_t ms) { (void)ms; }
 
 static void poll(unsigned count)

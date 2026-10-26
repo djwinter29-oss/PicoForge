@@ -46,7 +46,7 @@ void test_cli_emits_prompt_and_builtin_help(void)
 void test_cli_executes_version_and_echo(void)
 {
     send_command("version\r\necho hello CDC\r");
-    TEST_ASSERT_NOT_NULL(strstr(captured, "PicoForge CLI (Embedded CLI v0.1.4)"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "PicoForge CLI (Embedded CLI)"));
     TEST_ASSERT_NOT_NULL(strstr(captured, "hello CDC"));
 }
 
@@ -77,9 +77,9 @@ void test_cli_rejects_missing_output_callback(void)
 void test_cli_supports_tab_completion_and_history(void)
 {
     send_command("ver\t\r\x1b[A\r");
-    const char *first = strstr(captured, "PicoForge CLI (Embedded CLI v0.1.4)");
+    const char *first = strstr(captured, "PicoForge CLI (Embedded CLI)");
     TEST_ASSERT_NOT_NULL(first);
-    TEST_ASSERT_NOT_NULL(strstr(first + 1u, "PicoForge CLI (Embedded CLI v0.1.4)"));
+    TEST_ASSERT_NOT_NULL(strstr(first + 1u, "PicoForge CLI (Embedded CLI)"));
     TEST_ASSERT_NULL(strstr(captured, "Unknown command"));
 }
 
@@ -111,4 +111,30 @@ void test_cli_registers_async_command_and_preserves_raw_arguments(void)
     TEST_ASSERT_NOT_NULL(strstr(captured, "Command queued."));
     pf_cli_print("FatFs: OK");
     TEST_ASSERT_NOT_NULL(strstr(captured, "FatFs: OK"));
+}
+static void noop_command(EmbeddedCli *cli, char *args, void *context)
+{
+    (void)cli;
+    (void)args;
+    (void)context;
+}
+
+void test_cli_binding_table_holds_six_application_commands_and_rejects_more(void)
+{
+    static const char *const names[] = { "a1", "a2", "a3", "a4", "a5", "a6", "a7" };
+
+    for (size_t index = 0u; index < 6u; ++index) {
+        TEST_ASSERT_TRUE(pf_cli_add_binding((CliCommandBinding){ names[index], "x", false, NULL, noop_command }));
+    }
+    TEST_ASSERT_FALSE(pf_cli_add_binding((CliCommandBinding){ names[6], "x", false, NULL, noop_command }));
+}
+
+void test_cli_reinit_switches_output_and_drops_history(void)
+{
+    send_command("echo old\r");
+    TEST_ASSERT_TRUE(pf_cli_init(NULL, NULL) == false);
+    TEST_ASSERT_TRUE(pf_cli_init(capture_character, captured));
+    captured_size = 0u;
+    send_command("echo new\r");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "new"));
 }

@@ -1,7 +1,7 @@
 # Firmware Unit Tests
 
 Ceedling 1.1.10 with Unity and CMock is configured by the repository-root `project.yml`. Tests target host-testable
-application, board, driver, integration and middleware code, and mirror the corresponding subtree under
+application, board, driver, integration and platform code, and mirror the corresponding subtree under
 `firmware/src/`. The source/include root is `firmware/src/`; the Pico SDK-bound `main.c` is explicitly excluded from
 host source collection.
 
@@ -20,7 +20,7 @@ source subtree. For example, [sd_protocol.c](../src/drivers/sdcard/sd_protocol.c
 [test_sd_protocol.c](drivers/sdcard/test_sd_protocol.c) and
 [test_sd_protocol_native.c](drivers/sdcard/test_sd_protocol_native.c). Keep related scenario tests alongside it.
 Cross-layer tests live alongside the module that owns the behavior, not the lowest-level dependency they exercise.
-SD firmware/USB ownership and reservation tests live under [middleware/storage](middleware/storage), named
+SD firmware/USB ownership and reservation tests live under [platform/storage](platform/storage), named
 `test_storage_media_freertos_serialization_*` and `test_storage_media_baremetal_*`. These exercise the storage service
 together with the raw driver and execution port for both SPI and SDIO; they are not standalone driver-port tests.
 The layout contract in [test_validation_integrity.py](../../tests/test_validation_integrity.py) checks every Ceedling
@@ -32,28 +32,28 @@ Run `tools/validation/coverage-firmware.sh` to execute `gcov:all` and generate H
 ## Host Behavior Regressions
 
 C behavior regressions run through Ceedling/Unity, alongside the existing
-protocol and middleware unit tests. Tests mirror the production source tree:
+protocol and platform unit tests. Tests mirror the production source tree:
 
 | Behavior | Test directory |
 | --- | --- |
 | Native/SPI initialization, transfers, CRC faults and recovery | [drivers/sdcard/link](drivers/sdcard/link), [sdio_pio](drivers/sdcard/sdio_pio), [spi](drivers/sdcard/spi) |
 | Physical SPI and SDIO-PIO lifecycle, dispatch, wire operations and interrupt-wait races | [drivers/sdcard/link](drivers/sdcard/link), [sdio_pio](drivers/sdcard/sdio_pio), [spi](drivers/sdcard/spi) |
-| FreeRTOS SD reservation and storage ownership integration | [middleware/storage](middleware/storage), `test_storage_media_freertos_serialization_*` |
-| SD media ownership and byte transfers with the bare-metal port | [middleware/storage](middleware/storage), `test_storage_media_baremetal_*` |
-| Media configuration, owner-gated I/O and neutral status | [middleware/storage](middleware/storage) |
+| FreeRTOS SD reservation and storage ownership integration | [platform/storage](platform/storage), `test_storage_media_freertos_serialization_*` |
+| SD media ownership and byte transfers with the bare-metal port | [platform/storage](platform/storage), `test_storage_media_baremetal_*` |
+| Media configuration, owner-gated I/O and neutral status | [platform/storage](platform/storage) |
 | File benchmark, automount and recovery through the worker | [app/storage](app/storage) |
-| Singleton volume lifecycle and format telemetry | [middleware/storage](middleware/storage) |
+| Singleton volume lifecycle and format telemetry | [platform/storage](platform/storage) |
 | Product CLI prompt, built-ins, completion, history and `storage`/`fs` commands | [app/cli](app/cli) |
 | Boot-config record validation and platform flash persistence | [config](config), [platform](platform) |
-| Logical blocks, FatFs disk results/geometry/protection, and volume lifecycle | [middleware/storage](middleware/storage) |
+| Logical blocks, FatFs disk results/geometry/protection, and volume lifecycle | [platform/storage](platform/storage) |
 | USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |
 | Interval CPU accounting, first-sample availability and 64-bit runtime deltas | [integration/freertos](integration/freertos) |
 
-The volume lifecycle test is [test_fatfs_volume.c](middleware/storage/test_fatfs_volume.c), matching
-[fatfs_volume.c](../src/middleware/storage/fatfs_volume.c). It binds a caller-supplied block device through
+The volume lifecycle test is [test_fatfs_volume.c](platform/storage/test_fatfs_volume.c), matching
+[fatfs_volume.c](../src/platform/storage/fatfs_volume.c). It binds a caller-supplied block device through
 `pf_fatfs_volume_*` APIs without SD initialization or driver mocks. Application command/automount tests cover
 SD initialization failure before binding, and already-mounted commands avoid reinitializing live media.
-[Block-device tests](middleware/storage/test_block_device.c) reject each missing callback and test the transfer-byte
+[Block-device tests](platform/storage/test_block_device.c) reject each missing callback and test the transfer-byte
 ceiling on a real 32-bit host build. The latter is explicitly ignored on 64-bit hosts. On x86 Linux with GCC multilib
 and 32-bit libc development support installed, run it without changing the normal Ceedling configuration:
 
@@ -83,7 +83,7 @@ option reaches the consolidated protocol compilation.
 [SPI behavior tests](drivers/sdcard/test_sd_spi.c) inject selection failures across command, register, single-block,
 multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
 and preserved stream recovery. Optional wait setup is tested with
-[SD media/FreeRTOS reservation integration](middleware/storage/test_storage_media_freertos_serialization_sdio.c).
+[SD media/FreeRTOS reservation integration](platform/storage/test_storage_media_freertos_serialization_sdio.c).
 Storage tests cover manual CS and raw byte validation, arbitrary released-line clock counts/deadlines, short/long native
 response byte packing and partial failure capture. The SD host test retains the exact 80-clock, low-speed
 initialization check.
