@@ -31,6 +31,7 @@
 #define ASCQ_REMOVAL_PREVENTED 0x02u /**< ASCQ paired with ASC_REMOVAL_PREVENTED. */
 /** @} */
 /** SPC fixed-format sense data layout. */
+#define SCSI_CMD_SYNCHRONIZE_CACHE_10 0x35u /**< Opcode handled by tud_msc_scsi_cb. */
 #define SCSI_SENSE_FIXED_SIZE 18u
 #define SCSI_SENSE_KEY_OFFSET 2u
 #define SCSI_SENSE_ASC_OFFSET 12u
@@ -48,6 +49,8 @@ static bool removal_prevented; /**< Host holds PREVENT MEDIUM REMOVAL (volatile,
 static bool request_pending; /**< An ownership request awaits pf_usb_msc_task(). */
 static bool requested_enabled; /**< Target owner of the pending request: true for USB. */
 static bool transition_pending; /**< Reported to the host through HID: an ownership change is in progress. */
+/* Ownership flow: request -> [unmount_pending] -> apply_* -> [remount_pending] -> detach, then
+ * reconnect_pending until the deadline. transition_pending covers the whole span. */
 static bool request_rejected; /**< The last valid request failed; reported through HID. */
 static bool recovery_requested; /**< Pending request is a faulted-media detach, not a clean eject. */
 static bool unmount_pending; /**< Worker handoff preparation must finish before ownership changes. */
@@ -64,6 +67,8 @@ static uint64_t hid_result_settle_us; /**< Earliest change time after the result
  * Keep only that transfer's sense until REQUEST SENSE. It is dropped when any
  * later command callback runs, on unmount, and on handled BOT/bus reset.
  * USB callbacks run on the USB task (single LUN). */
+/** Shared sector scratch for partial-sector read-modify-write; only used under the storage lock. */
+static uint8_t sector_buffer[MSC_SECTOR_SIZE] __attribute__((aligned(4)));
 static bool transfer_sense_pending; /**< A transfer error sense awaits REQUEST SENSE. */
 static uint8_t transfer_sense_key; /**< Sense key to report. */
 static uint8_t transfer_sense_asc; /**< Additional sense code to report. */
@@ -154,7 +159,12 @@ int32_t tud_msc_request_sense_cb(uint8_t lun, void *buffer, uint16_t bufsize)
     return SCSI_SENSE_FIXED_SIZE;
 }
 
-static uint8_t sector_buffer[MSC_SECTOR_SIZE] __attribute__((aligned(4)));
+/** @brief Drop any pending HID-result deferral. */
+static void clear_hid_deferral(void)
+{
+    hid_result_deferred = false;
+    hid_result_read = false;
+}
 
 bool pf_usb_msc_is_enabled(void)
 {
@@ -184,8 +194,7 @@ bool pf_usb_msc_request(bool enabled)
     }
     force_return_requested = false;
     recovery_requested = false;
-    hid_result_deferred = false;
-    hid_result_read = false;
+    clear_hid_deferral();
     requested_enabled = enabled;
     request_pending = true;
     transition_pending = enabled != msc_enabled;
@@ -196,10 +205,10 @@ bool pf_usb_msc_request(bool enabled)
 void pf_usb_msc_request_recovery(void)
 {
     if (remount_pending) {
+        request_rejected = true;
         return;
     }
-    hid_result_deferred = false;
-    hid_result_read = false;
+    clear_hid_deferral();
     force_return_requested = false;
     recovery_requested = true;
     request_pending = true;
@@ -210,7 +219,9 @@ void pf_usb_msc_request_recovery(void)
 bool pf_usb_msc_request_force_return(void)
 {
     const bool accepted = pf_usb_msc_request(false);
-    if (accepted) force_return_requested = true;
+    if (accepted) {
+        force_return_requested = true;
+    }
     return accepted;
 }
 
@@ -380,13 +391,14 @@ void pf_usb_msc_task(void)
             (hid_result_read && now_us < hid_result_settle_us)) {
             return;
         }
-        hid_result_deferred = false;
+        clear_hid_deferral();
     }
     if (remount_pending) {
         if (!pf_storage_worker_busy()) {
             remount_pending = false;
             transition_pending = false;
-            request_rejected = !pf_fatfs_volume_is_mounted();
+            /* Keep a rejection recorded for a request made during the remount. */
+            request_rejected = request_rejected || !pf_fatfs_volume_is_mounted();
         }
         return;
     }
@@ -636,7 +648,7 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
     /* SYNCHRONIZE CACHE(10): synchronous only; reject IMMED and reserved
      * bits rather than promising an asynchronous operation we cannot provide.
      * LBA/count are safely covered by syncing the entire device. */
-    if (scsi_cmd[0] == 0x35u) {
+    if (scsi_cmd[0] == SCSI_CMD_SYNCHRONIZE_CACHE_10) {
         if ((scsi_cmd[1] != 0u) || (scsi_cmd[6] != 0u) ||
             (scsi_cmd[9] != 0u) || (bufsize != 0u)) {
             set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, ASC_INVALID_CDB_FIELD, 0x00u);
@@ -645,6 +657,7 @@ int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const scsi_cmd[16], void *buffer,
         if (!media_ready(lun)) {
             return -1;
         }
+        /* CDB: [1] flags (IMMED), [2..5] big-endian LBA, [6] group, [7..8] big-endian count, [9] control. */
         uint32_t lba = ((uint32_t)scsi_cmd[2] << 24u) |
                        ((uint32_t)scsi_cmd[3] << 16u) |
                        ((uint32_t)scsi_cmd[4] << 8u) | scsi_cmd[5];

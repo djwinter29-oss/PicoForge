@@ -107,39 +107,57 @@ static void cli_drain_output(void)
     (void)tud_cdc_write_flush();
 }
 
+/** @brief Drop every queued worker reply; used when the session is closed or its output is truncated. */
+static void discard_worker_replies(void)
+{
+    pf_storage_worker_reply_t reply;
+    while (pf_storage_worker_poll(&reply)) {
+    }
+}
+
+/** @brief Close the CLI session: cancel worker output, discard replies and reset the CDC buffers. */
+static void cdc_cli_reset(void)
+{
+    pf_storage_worker_cancel(cli_session);
+    discard_worker_replies();
+    cli_connected = false;
+    cli_stalled = cli_stall_reported = false;
+    cli_tx_head = 0u;
+    cli_tx_tail = 0u;
+    cli_tx_count = 0u;
+    tud_cdc_read_flush();
+    tud_cdc_write_clear();
+}
+
+/** @brief Open a new CLI session: initialize the CLI, register the storage commands and bump the session. */
+static void cdc_cli_connect(void)
+{
+    if (!pf_cli_init(cli_write_character, NULL)) {
+        panic("Failed to initialize CDC CLI");
+    }
+    if (!pf_cli_add_binding((CliCommandBinding){
+            "storage", USB_CLI_STORAGE_HELP, false,
+            "storage", storage_command
+        }) || !pf_cli_add_binding((CliCommandBinding){
+            "fs", USB_CLI_FS_HELP, false,
+            "fs", storage_command
+        })) {
+        panic("Failed to register storage CLI commands");
+    }
+    ++cli_session;
+    cli_connected = true;
+    cli_last_progress = xTaskGetTickCount();
+    pf_cli_process();
+}
+
 static void cdc_cli_task(void)
 {
     if (!tud_cdc_connected()) {
-        pf_storage_worker_cancel(cli_session);
-        pf_storage_worker_reply_t reply;
-        while (pf_storage_worker_poll(&reply)) {
-        }
-        cli_connected = false;
-        cli_stalled = cli_stall_reported = false;
-        cli_tx_head = 0u;
-        cli_tx_tail = 0u;
-        cli_tx_count = 0u;
-        tud_cdc_read_flush();
-        tud_cdc_write_clear();
+        cdc_cli_reset();
         return;
     }
     if (!cli_connected) {
-        if (!pf_cli_init(cli_write_character, NULL)) {
-            panic("Failed to initialize CDC CLI");
-        }
-        if (!pf_cli_add_binding((CliCommandBinding){
-                "storage", USB_CLI_STORAGE_HELP, false,
-                "storage", storage_command
-            }) || !pf_cli_add_binding((CliCommandBinding){
-                "fs", USB_CLI_FS_HELP, false,
-                "fs", storage_command
-            })) {
-            panic("Failed to register storage CLI commands");
-        }
-        ++cli_session;
-        cli_connected = true;
-        cli_last_progress = xTaskGetTickCount();
-        pf_cli_process();
+        cdc_cli_connect();
     }
 
     cli_drain_output();
@@ -149,9 +167,7 @@ static void cdc_cli_task(void)
         pf_storage_worker_cancel(cli_session);
     }
     if (cli_stalled) {
-        pf_storage_worker_reply_t reply;
-        while (pf_storage_worker_poll(&reply)) {
-        }
+        discard_worker_replies();
         if (!cli_stall_reported && (USB_CLI_TX_SIZE - cli_tx_count) >= USB_CLI_OUTPUT_RESERVE) {
             pf_cli_print("CDC output timed out; command output truncated. Changes may have completed. "
                          "Close/reopen DTR; inspect before retrying.");
@@ -278,7 +294,10 @@ void pf_usb_start(void)
     tud_disconnect();
     /* The scheduler is not running yet; do not depend on alarm/RTOS wakeups here. */
     busy_wait_ms(USB_RECONNECT_DETACH_MS);
-    tud_connect();
+    const bool connected = tud_connect();
+    if (!connected) {
+        panic("Failed to connect USB");
+    }
 
     if (xTaskCreateStatic(usb_task,
                           "USB",

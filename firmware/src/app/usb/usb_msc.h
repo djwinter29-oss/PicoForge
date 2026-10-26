@@ -52,7 +52,8 @@ void pf_usb_msc_note_hid_result_read(uint8_t transaction_id);
 
 /**
  * @brief Request a faulted-media detach so the worker can reinitialize the card; not a clean eject.
- * @note Completion or rejection is exposed through the status queries above.
+ * @note Completion or rejection is exposed through the status queries above; a pending forced-return remount
+ *       rejects it.
  */
 void pf_usb_msc_request_recovery(void);
 

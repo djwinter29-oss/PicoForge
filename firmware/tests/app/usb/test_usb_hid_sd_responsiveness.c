@@ -330,6 +330,25 @@ void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(
     fake_connected = true;
 }
 
+void test_stalled_cdc_session_reports_truncation_once_when_buffer_space_returns(void)
+{
+    cli_connected = fake_connected = true;
+    cli_stalled = true;
+    cli_stall_reported = false;
+    cli_tx_head = cli_tx_tail = 0u;
+    cli_tx_count = USB_CLI_TX_SIZE;
+    messages = 0u;
+    cdc_cli_task();
+    TEST_ASSERT_EQUAL_UINT(0u, messages);
+    cli_tx_count = 0u;
+    cdc_cli_task();
+    cdc_cli_task();
+    TEST_ASSERT_EQUAL_UINT(1u, messages);
+    TEST_ASSERT_TRUE(cli_stall_reported);
+    cli_stalled = cli_stall_reported = false;
+    cli_tx_count = 0u;
+}
+
 void test_cdc_storage_command_routes_recover_to_msc_and_everything_else_to_the_worker(void)
 {
     cli_session = 1u;

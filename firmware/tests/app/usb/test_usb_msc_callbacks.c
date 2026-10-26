@@ -305,7 +305,8 @@ void test_force_return_bypasses_only_host_eject_and_waits_for_worker_mount(void)
  mounted=true;
  worker_busy=false;
  pf_usb_msc_task();
- TEST_ASSERT_FALSE(remount_pending || transition_pending || request_rejected);
+ TEST_ASSERT_FALSE(remount_pending || transition_pending);
+ TEST_ASSERT_TRUE(request_rejected); /* the request made during the remount stays reported */
 }
 
 void test_force_return_rejects_busy_or_failed_device_sync_without_releasing_sd(void)
@@ -510,4 +511,27 @@ void test_failed_recovery_release_reconnects_through_the_deadline_path(void)
  pf_usb_msc_task();
  TEST_ASSERT_FALSE(reconnect_pending);
  owner_result=PF_BLOCK_OK;
+}
+
+void test_sync_cache_rejects_reserved_cdb_fields_and_data_without_syncing(void)
+{
+ msc_enabled=true;
+ unsigned before=syncs;
+ for (unsigned field=0; field<3; ++field) {
+  uint8_t cmd[16]={0x35};
+  cmd[field==0 ? 1 : (field==1 ? 6 : 9)]=1;
+  TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,0)==-1 && asc==0x24);
+ }
+ uint8_t cmd[16]={0x35};
+ TEST_ASSERT_TRUE(tud_msc_scsi_cb(0,cmd,NULL,1)==-1 && asc==0x24);
+ TEST_ASSERT_EQUAL_UINT(before,syncs);
+}
+
+void test_recovery_request_during_a_forced_return_remount_is_reported_rejected(void)
+{
+ remount_pending=true;
+ request_rejected=false;
+ pf_usb_msc_request_recovery();
+ TEST_ASSERT_TRUE(request_rejected && !recovery_requested && !request_pending);
+ remount_pending=false;
 }
