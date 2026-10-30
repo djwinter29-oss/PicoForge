@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=2";
+import { PicoForgeWebHid } from "../js/device.mjs?v=3";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -9,15 +9,20 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /src="js\/app\.mjs\?v=7"/);
+  assert.match(html, /src="js\/app\.mjs\?v=8"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
-  assert.match(app, /from "\.\/device\.mjs\?v=2"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=2"/);
+  assert.match(app, /from "\.\/device\.mjs\?v=3"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=3"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
   assert.match(html, /id="settings-save"[^>]*>Save and Reboot/);
   assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
+  for (const path of ["../index.html", "../../web/index.html"]) {
+    const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
+    assert.match(dashboard, /id="self-test-start"[^>]*>Start benchmark<\/button>/);
+    assert.doesNotMatch(dashboard, />Start self-test<\/button>/);
+  }
   assert.doesNotMatch(html, /Save &amp; Reboot|25 MHz|50 MHz|Core 1 \/ Core 2/);
   assert.match(html, /Firmware RAM reserved \/ total/);
   assert.match(html, /Service load \(Core 0 \/ Core 1\)/);
@@ -75,8 +80,9 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
       memory: { sample_valid: true, initialized: true } });
   };
   PicoForgeWebHid.prototype.setMsc = async (...args) => { commands.push(["msc", ...args]); };
-  PicoForgeWebHid.prototype.saveSettings = async function (settings) {
+  PicoForgeWebHid.prototype.saveSettings = async function (settings, force = false) {
     commands.push(["save", settings]);
+    this.testForceSave = force;
     this.update({ settings: { ...this.state.settings, ...settings } });
     return true;
   };
@@ -87,6 +93,15 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     assert.equal(el("#settings-storage").value, "1");
     assert.equal(el("#settings-note").hidden, true);
     assert.equal(el("#settings-save").disabled, true);
+    client.update({ self_test_command_pending: true });
+    assert.equal(el("#settings-note").hidden, true);
+    client.update({ self_test_command_pending: false, self_test: decodeSelfTestReport(selfTest(1)) });
+    assert.equal(el("#settings-note").hidden, true);
+    client.update({ self_test: decodeSelfTestReport(selfTest()) });
+    client.update({ msc_command_pending: true });
+    assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
+    client.update({ msc_command_pending: false });
+    assert.equal(el('[aria-labelledby="self-test-title"]').hidden, false);
     el("#settings-clock").value = "250"; el("#settings-clock").change();
     client.update({ error: null });
     assert.equal(el("#settings-clock").value, "250");
@@ -129,6 +144,19 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     await el("#confirm-share").click();
     assert.deepEqual(commands[2], ["msc", true, false]);
     client.update({ msc: { enabled: true, transition_pending: false } });
+    el("#settings-clock").value = "200"; el("#settings-clock").change();
+    assert.equal(el("#settings-clock").disabled, false);
+    assert.equal(el("#settings-save").disabled, true);
+    client.update({ hardware: { ...client.state.hardware, capabilities: client.state.hardware.capabilities | 64 } });
+    await el("#settings-save").click();
+    assert.equal(el("#configuration-force-warning").hidden, false);
+    el("#cancel-configuration").click();
+    await el("#confirm-configuration").click();
+    assert.equal(commands.length, 3);
+    await el("#settings-save").click();
+    await el("#confirm-configuration").click();
+    assert.equal(client.testForceSave, true);
+    commands.pop();
     await el("#msc-control").click();
     assert.equal(commands.length, 3);
     assert.equal(el("#return-dialog").open, true);

@@ -44,6 +44,11 @@ queues its own reboot only on success; the host verifies the saved values in the
 a separate reboot command. **Reboot Board** confirms a reboot using the
 already saved settings and warns when unsaved dashboard changes will be lost. Both use Pico UART-style modal
 dialogs with Cancel and explicit action buttons; Escape cancels without sending a command.
+Local settings edits are also available while USB owns the card. Supporting firmware enables **Save and Reboot**
+with an additional host-cache data-loss warning and explicit forced-save confirmation. Device sync and USB detach
+must succeed before saving; self-tests and transitions still block saving. See the
+[forced-save safety policy](../../docs/design/settings.md#forced-save-and-reboot). Older firmware requires returning
+storage first; host commands are never silently downgraded or replayed after reconnection.
 
 Use **Enable USB drive** and confirm the storage-handoff dialog to hand the SD card to the host.
 Cancel or Escape sends no command. Firmware unmounts its filesystem before USB

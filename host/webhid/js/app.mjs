@@ -1,5 +1,5 @@
-import { PicoForgeWebHid } from "./device.mjs?v=2";
-import { renderStatus, renderSelfTest } from "./view.mjs?v=2";
+import { PicoForgeWebHid } from "./device.mjs?v=3";
+import { renderStatus, renderSelfTest } from "./view.mjs?v=3";
 
 const element = id => document.querySelector(`#${id}`);
 const connectionControl = element("connection-control");
@@ -14,6 +14,7 @@ const rebootDialog = element("reboot-dialog");
 const returnDialog = element("return-dialog");
 const shareDialog = element("share-dialog");
 let settingsDirty = false;
+let configurationForceSave = false;
 const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
 
 function render(state) {
@@ -39,17 +40,20 @@ function render(state) {
   ledControl.disabled = blocked || !state.board_status?.led_available || !(state.hardware?.capabilities & 1);
   mscControl.disabled = blocked || !storageReady;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  const settingsReady = !blocked && storageReady && !state.msc?.enabled;
+  const settingsReady = !blocked && storageReady;
   for (const control of [settingsClock, settingsStorage, settingsSave]) {
     control.disabled = !settingsReady || !state.settings_supported;
   }
   settingsSave.disabled ||= !settingsDirty;
-  settingsReboot.disabled = !settingsReady || !(state.hardware?.capabilities & 2);
+  settingsSave.disabled ||= Boolean(state.msc?.enabled && !(state.hardware?.capabilities & 64));
+  settingsReboot.disabled = !settingsReady || state.msc?.enabled || !(state.hardware?.capabilities & 2);
   element("settings-note").textContent = state.settings_message
     || (!state.connected ? "Connect to read the saved settings."
       : !state.settings_supported ? "Persistent settings save is unavailable."
-        : !storageReady ? "Waiting for fresh, idle storage and self-test status."
-          : state.msc?.enabled ? "Return storage to Pico before saving settings."
+        : !storageReady ? (state.self_test?.active || state.self_test_command_pending
+          ? "" : "Waiting for fresh, idle storage status.")
+          : state.msc?.enabled && !(state.hardware?.capabilities & 64)
+            ? "Update firmware or return storage to Pico before saving settings."
             : "");
   element("settings-note").hidden = !element("settings-note").textContent;
   element("msc-note").textContent = state.reconnecting
@@ -87,6 +91,8 @@ for (const control of [settingsClock, settingsStorage]) {
 }
 settingsSave.addEventListener("click", () => {
   if (settingsSave.disabled) return;
+  configurationForceSave = Boolean(client.state.msc?.enabled);
+  element("configuration-force-warning").hidden = !configurationForceSave;
   const clock = Number(settingsClock.value);
   element("configuration-dialog-profile").textContent =
     `System clock: ${clock ? `${clock} MHz` : "Default"}. `
@@ -97,8 +103,9 @@ element("confirm-configuration").addEventListener("click", () => run(async () =>
   if (!configurationDialog.open) return;
   configurationDialog.close();
   if (settingsSave.disabled) return;
+  if (Boolean(client.state.msc?.enabled) !== configurationForceSave) return;
   if (await client.saveSettings({ system_clock_mhz: Number(settingsClock.value),
-    sdcard_profile: Number(settingsStorage.value) })) settingsDirty = false;
+    sdcard_profile: Number(settingsStorage.value) }, configurationForceSave)) settingsDirty = false;
   render(client.state);
 }));
 settingsReboot.addEventListener("click", () => {

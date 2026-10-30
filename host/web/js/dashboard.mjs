@@ -93,7 +93,7 @@ function renderSettings(snapshot) {
   const settings = snapshot.settings;
   const supported = Boolean(snapshot.connected && snapshot.settings_supported && settings);
   const msc = snapshot.msc;
-  const storageBusy = snapshot.msc_command_pending || !msc || msc.enabled || msc.transition_pending
+  const storageBusy = snapshot.msc_command_pending || !msc || msc.transition_pending
     || snapshot.self_test?.active || snapshot.self_test_command_pending;
   const ready = supported && !storageBusy;
   const storageControl = document.querySelector("#settings-storage");
@@ -109,7 +109,8 @@ function renderSettings(snapshot) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty
-    || !((snapshot.hardware?.capabilities ?? 0) & 2);
+    || !((snapshot.hardware?.capabilities ?? 0) & 2)
+    || Boolean(msc?.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64));
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
     || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
     || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
@@ -118,7 +119,9 @@ function renderSettings(snapshot) {
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
         : !msc ? "Waiting for storage ownership status."
-          : msc.enabled || msc.transition_pending ? "Disable the USB drive before saving settings."
+          : msc.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64)
+            ? "Update firmware or return storage to Pico before saving settings."
+          : msc.transition_pending ? "Wait for the USB storage transition before saving settings."
             : "");
   document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
 }

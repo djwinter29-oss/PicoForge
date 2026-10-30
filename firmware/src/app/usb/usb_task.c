@@ -211,6 +211,7 @@ static void reboot_after_usb_flush(void)
     const TickType_t started = xTaskGetTickCount();
     do {
         tud_task_ext(0u, false);
+        pf_usb_msc_task();
         vTaskDelay(pdMS_TO_TICKS(1u));
     } while ((TickType_t)(xTaskGetTickCount() - started) < pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS));
     pf_system_reset();

@@ -190,6 +190,8 @@ void setUp(void)
  read_result=write_result=sync_result=owner_result=PF_BLOCK_OK;
  owner=OWNER_USB;
  msc_enabled=true;
+ save_detached = false;
+ reconnect_pending = false;
  msc_ejected=removal_prevented=request_pending=requested_enabled=false;
  transition_pending=request_rejected=recovery_requested=false;
  transfer_sense_pending=false;
@@ -205,6 +207,36 @@ void setUp(void)
 void tearDown(void)
 {
  TEST_ASSERT_EQUAL_UINT(0, locks);
+}
+
+void test_confirmed_save_detaches_after_sync_and_keeps_owner_until_reboot(void)
+{
+ TEST_ASSERT_TRUE(pf_usb_msc_prepare_save());
+ TEST_ASSERT_EQUAL_UINT(1u, syncs);
+ TEST_ASSERT_TRUE(save_detached && transition_pending);
+ TEST_ASSERT_EQUAL(OWNER_USB, owner);
+ pf_usb_msc_finish_save(true);
+ TEST_ASSERT_FALSE(msc_enabled);
+ TEST_ASSERT_TRUE(transition_pending && reconnect_pending);
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+ TEST_ASSERT_EQUAL(OWNER_USB, owner);
+}
+
+void test_confirmed_save_failure_restores_host_and_busy_or_sync_failure_keeps_it(void)
+{
+ worker_busy = true;
+ TEST_ASSERT_FALSE(pf_usb_msc_prepare_save());
+ TEST_ASSERT_EQUAL_UINT(0u, syncs);
+ worker_busy = false;
+ sync_result = PF_BLOCK_IO_ERROR;
+ TEST_ASSERT_FALSE(pf_usb_msc_prepare_save());
+ TEST_ASSERT_FALSE(save_detached);
+ TEST_ASSERT_TRUE(msc_enabled);
+ sync_result = PF_BLOCK_OK;
+ TEST_ASSERT_TRUE(pf_usb_msc_prepare_save());
+ pf_usb_msc_finish_save(false);
+ TEST_ASSERT_TRUE(msc_enabled && !transition_pending && reconnect_pending);
+ TEST_ASSERT_EQUAL(OWNER_USB, owner);
 }
 
 void test_transfer_errors_survive_tinyusb_sense_overwrite(void)

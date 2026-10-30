@@ -7,7 +7,7 @@ internal interface IDeviceMonitor
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
     MscStatusResponse? SetMsc(bool enabled, bool force = false);
-    BootSettingsResponse? SetSettings(BootSettingsResponse settings);
+    BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false);
     bool Reboot();
     bool SetSelfTest(string action, uint sizeMib);
 }
@@ -20,7 +20,7 @@ internal interface IHidCommands
     void SetMsc(bool enabled, bool force = false);
     BoardConfigurationResponse ReadConfiguration();
     BootSettingsResponse ReadSettings();
-    BootSettingsResponse SetSettings(BootSettingsResponse settings);
+    BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false);
     void Reboot();
     void SetSelfTest(string action, uint sizeMib);
 }
@@ -93,7 +93,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         }
     }
 
-    public BootSettingsResponse? SetSettings(BootSettingsResponse settings)
+    public BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false)
     {
         if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1)
             throw new ArgumentOutOfRangeException(nameof(settings));
@@ -103,16 +103,20 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             lock (gate)
             {
                 if (activeClient is null || snapshot.Settings is null || snapshot.Msc is null ||
-                    snapshot.Msc.Enabled || snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true)
+                    snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true ||
+                    (force ? !snapshot.Connected || !snapshot.Msc.Enabled ||
+                        (snapshot.Hardware?.Capabilities & HidProtocol.CapabilityForcedSave) !=
+                            HidProtocol.CapabilityForcedSave : snapshot.Msc.Enabled))
                     return null;
                 client = activeClient;
             }
-            var saved = ExecuteCommand(client, () => client.SetSettings(settings));
+            var saved = ExecuteCommand(client, () => client.SetSettings(settings, force));
             lock (gate)
             {
                 snapshot = snapshot with
                 {
-                    Settings = saved
+                    Settings = saved,
+                    Msc = force ? snapshot.Msc! with { Enabled = false } : snapshot.Msc
                 };
                 return saved;
             }

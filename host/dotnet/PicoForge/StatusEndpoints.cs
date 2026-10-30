@@ -9,7 +9,7 @@ internal static class StatusEndpoints
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
     /// <summary>Requested persistent next-boot system clock and transport-neutral SD-card profile.</summary>
     public sealed record SetSettingsRequest(int? SystemClockMhz,
-        [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile);
+        [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile, bool ConfirmDataLoss = false);
     /// <summary>Settings values confirmed by the device after saving.</summary>
     public sealed record SetSettingsResponse(BootSettingsResponse Settings);
     public sealed record SetMscRequest(bool? Enabled);
@@ -129,18 +129,31 @@ internal static class StatusEndpoints
             request.SdCardProfile.Value);
         try
         {
-            var saved = dashboard.SetSettings(board, settings);
+            if (request.ConfirmDataLoss)
+            {
+                var status = dashboard.Snapshot(board);
+                if (!status.Connected || status.CommandOutcomeUncertain ||
+                    (status.Hardware?.Capabilities & HidProtocol.CapabilityForcedSave) !=
+                        HidProtocol.CapabilityForcedSave ||
+                    status.Msc is not { Enabled: true, TransitionPending: false } || status.SelfTest?.Active == true)
+                    return Results.Conflict(new { error = "Forced save is unavailable or storage is busy" });
+            }
+            var saved = dashboard.SetSettings(board, settings, request.ConfirmDataLoss);
             return saved is null
                 ? Results.Conflict(new { error = "Boot settings are unavailable or storage is busy" })
                 : Results.Ok(new SetSettingsResponse(saved));
         }
         catch (InvalidOperationException error)
         {
-            return Results.Conflict(new { error = error.Message });
+            return Results.Conflict(new { error = request.ConfirmDataLoss &&
+                dashboard.Snapshot(board).CommandOutcomeUncertain
+                    ? $"Forced save outcome is uncertain: {error.Message}" : error.Message });
         }
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {
-            return Results.Problem(statusCode: 503, title: "HID settings command delivery failed");
+            return Results.Problem(statusCode: 503, title: request.ConfirmDataLoss
+                ? "Forced save outcome is uncertain; the command was not resent"
+                : "HID settings command delivery failed");
         }
         catch (NotSupportedException)
         {

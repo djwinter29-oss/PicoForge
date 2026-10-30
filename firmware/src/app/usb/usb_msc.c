@@ -44,6 +44,7 @@
 #define MSC_HID_RESULT_SETTLE_US 10000u
 
 static bool msc_enabled; /**< USB host owns the card. */
+static bool save_detached; /**< Confirmed save detached USB; card remains reserved for shutdown. */
 static bool msc_ejected; /**< Host ejected the medium. */
 static bool removal_prevented; /**< Host holds PREVENT MEDIUM REMOVAL (volatile, cleared on bus reset). */
 static bool request_pending; /**< An ownership request awaits pf_usb_msc_task(). */
@@ -72,6 +73,8 @@ static uint8_t sector_buffer[MSC_SECTOR_SIZE] __attribute__((aligned(4)));
 static bool transfer_sense_pending; /**< A transfer error sense awaits REQUEST SENSE. */
 static uint8_t transfer_sense_key; /**< Sense key to report. */
 static uint8_t transfer_sense_asc; /**< Additional sense code to report. */
+
+static void schedule_reconnect(uint64_t delay_us);
 
 static void set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
 {
@@ -169,6 +172,33 @@ static void clear_hid_deferral(void)
 bool pf_usb_msc_is_enabled(void)
 {
     return msc_enabled;
+}
+
+/** @copydoc pf_usb_msc_prepare_save */
+bool pf_usb_msc_prepare_save(void)
+{
+    if (!msc_enabled || transition_pending || reconnect_pending || pf_storage_worker_busy()) {
+        return false;
+    }
+    if (!pf_storage_try_lock()) return false;
+    bool prepared = pf_storage_msc_sync() == PF_BLOCK_OK && tud_disconnect();
+    if (prepared) {
+        save_detached = true;
+        transition_pending = true;
+    }
+    pf_storage_unlock();
+    return prepared;
+}
+
+/** @copydoc pf_usb_msc_finish_save */
+void pf_usb_msc_finish_save(bool saved)
+{
+    if (!save_detached) return;
+    save_detached = false;
+    msc_enabled = !saved;
+    transition_pending = saved;
+    /* Ownership remains USB-held: no worker mount or host block access during successful shutdown. */
+    schedule_reconnect(MSC_RECONNECT_DETACH_US);
 }
 
 bool pf_usb_msc_is_ejected(void)

@@ -113,6 +113,12 @@ Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS p
    ownership-return event restores normal use. Exercise fault recovery only with an appropriate fault fixture;
    confirm it remains unmounted for inspection and does not replay failed writes or clear its recovery block on
    insertion/normal return.
+8. On expendable media, stop host writes and safely eject while MSC remains enabled. Edit settings locally and
+   verify the forced-save risk warning appears before Save and Reboot. Cancel/Escape must send no command.
+   Confirm once; verify sync/detach precede flash programming, the original result is checked after HID reconnect
+   without SET replay, no card I/O resumes before reset, and boot returns to automatic firmware mounting.
+   Use controlled sync/detach/flash-failure fixtures to verify no reboot on failure and explicit diagnostics.
+   Older firmware must not receive a forced-save request, and self-test/transition busy gates must still apply.
 
 Record preparation/status visibility gaps separately from storage correctness. Richer mounting/checking UI labels
 remain a design requirement until implemented and tested; existing wire states must not be reinterpreted to fake

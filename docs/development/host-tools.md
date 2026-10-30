@@ -85,8 +85,10 @@ USB sharing keeps the benchmark hidden and conflicting controls disabled from re
 re-enumeration until telemetry confirms the requested owner with no transition pending, or reports rejection.
 Intermediate disconnected or old firmware-owned snapshots must not briefly restore the benchmark.
 Enable USB drive opens the same styled confirmation pattern as reboot and return on both dashboard frontends.
-The dialog explains exclusive host ownership, USB reconnection, unavailable self-test/settings save, and safe eject.
+The dialog explains exclusive host ownership, USB reconnection, unavailable self-test, confirmed forced saving, and safe eject.
 Cancel, Escape, or disconnect sends no enable request; confirmation rechecks current storage safety gates.
+Local settings edits remain available while shared. Supporting firmware permits Save and Reboot only through the
+[forced-save confirmation](../design/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
 
 Current host behavior follows the firmware's implemented HID reports. The
 [HID Report Reference](../design/usb/usb-hid-report-reference.md) is the authoritative protocol contract; host

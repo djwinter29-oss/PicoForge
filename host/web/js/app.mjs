@@ -9,6 +9,7 @@ const configurationDialog = document.querySelector("#configuration-dialog");
 const rebootDialog = document.querySelector("#reboot-dialog");
 const returnDialog = document.querySelector("#return-dialog");
 const shareDialog = document.querySelector("#share-dialog");
+let configurationForceSave = false;
 const settingsControls = ["#settings-clock", "#settings-storage"]
   .map(selector => document.querySelector(selector));
 let requestInProgress = false;
@@ -281,8 +282,10 @@ async function saveSettings() {
   if (!configurationDialog.open) return;
   configurationDialog.close();
   const msc = currentSnapshot?.msc;
+  const force = configurationForceSave;
   if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !settingsDirty
-      || settingsRequestInProgress || !msc || msc.enabled || msc.transition_pending
+      || settingsRequestInProgress || mscRequestInProgress || mscPendingEnabled !== null || !msc
+      || msc.enabled !== force || msc.transition_pending || (force && !(currentSnapshot.hardware?.capabilities & 64))
       || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)) return;
   settingsRequestInProgress = true;
@@ -293,7 +296,7 @@ async function saveSettings() {
     const response = await fetch(boardUrl("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify(force ? { ...settings, confirm_data_loss: true } : settings),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? result.title ?? `Settings endpoint returned HTTP ${response.status}`);
@@ -381,6 +384,8 @@ rescanBoardsButton.addEventListener("click", rescanBoards);
 for (const control of settingsControls) control.addEventListener("change", updateSettingsDirty);
 settingsSave.addEventListener("click", () => {
   if (settingsSave.disabled) return;
+  configurationForceSave = Boolean(currentSnapshot?.msc?.enabled);
+  document.querySelector("#configuration-force-warning").hidden = !configurationForceSave;
   const settings = selectedSettings();
   document.querySelector("#configuration-dialog-profile").textContent =
     `System clock: ${settings.system_clock_mhz ? `${settings.system_clock_mhz} MHz` : "Default"}. `

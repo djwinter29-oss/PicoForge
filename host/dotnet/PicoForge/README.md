@@ -14,6 +14,16 @@ one-attempt remount policy and host-cache risks. The legacy safe-disable API rem
 If a HID write times out or its result cannot be matched, the dashboard marks the command outcome uncertain and blocks
 further writes rather than replaying or overwriting the result.
 **Enable USB drive** also opens a storage-handoff confirmation dialog; Cancel or Escape sends no command.
+Local settings edits are permitted while shared. Capability bit 6 enables confirmed forced **Save and Reboot**,
+including a host-cache data-loss warning; `POST /api/settings` requests it only with `confirm_data_loss:true`.
+Device sync and detach must succeed before saving, and the original result is verified after reconnect without
+SET replay. See the [forced-save policy](../../../docs/design/settings.md#forced-save-and-reboot).
+Self-tests and transitions still block saving; standalone reboot remains blocked while USB owns storage.
+Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
+not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
+The shared dashboard and HID/API checks run with
+`dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
+These host tests do not validate physical USB detach/reconnect or storage durability.
 
 The [storage lifecycle](../../../docs/design/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
 startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.

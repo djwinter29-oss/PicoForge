@@ -59,7 +59,7 @@ export function renderStatus(snapshot) {
   renderLinkState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   const memory = snapshot.memory;
   const cardAbsent = memory?.presence_known === true && memory.present === false;
-  const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending;
+  const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending || snapshot.msc_command_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
   document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared
     || !(hardware?.capabilities & 32);

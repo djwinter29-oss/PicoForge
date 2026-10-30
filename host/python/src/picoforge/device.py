@@ -200,17 +200,20 @@ class PicoForgeHid:
             raise RuntimeError("board identification LED is unavailable")
         return self._execute_control(build_led_command_report(on, self._next_transaction_id()), 1)
 
-    def set_settings(self, settings: dict[str, object]) -> dict[str, object]:
+    def set_settings(self, settings: dict[str, object], *, force: bool = False) -> dict[str, object]:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & CAP_SAVE_SETTINGS:
             raise RuntimeError("persistent settings are unavailable on this firmware")
-        command = build_settings_command_report(settings, self._next_transaction_id())
-        result = self._execute_control(command, 6)
+        if force and not identity["capabilities"] & (1 << 6):
+            raise RuntimeError("Update firmware for confirmed settings save while USB owns storage")
+        command = build_settings_command_report(settings, self._next_transaction_id(), force=force)
+        result = self._execute_control(command, 6, reconnect=force)
         if result["status"] != "completed":
             raise RuntimeError(f"settings command {result['status']}: {result['error']}")
         saved = result["saved_settings"]
         if saved != settings:
+            self._command_uncertain = True
             raise RuntimeError("firmware did not confirm the selected boot settings")
         return saved
 
@@ -248,7 +251,7 @@ class PicoForgeHid:
         self._transaction_id = self._transaction_id % 255 + 1
         return self._transaction_id
 
-    def _execute_control(self, command: bytes, opcode: int) -> dict[str, object]:
+    def _execute_control(self, command: bytes, opcode: int, *, reconnect: bool = False) -> dict[str, object]:
         if self._command_uncertain:
             raise RuntimeError("a prior HID command has an uncertain outcome; reconnect and inspect device state")
         sent = self._device.send_feature_report(list(command))
@@ -260,11 +263,19 @@ class PicoForgeHid:
             try:
                 report = self._device.get_feature_report(CONTROL_REPORT_ID, CONTROL_FEATURE_SIZE)
                 result = parse_control_result_report(report, self.identity)
-            except (OSError, ValueError):
+            except OSError as error:
+                if reconnect and monotonic() < deadline:
+                    self._command_uncertain = True
+                    self._reopen_for_result(deadline, error)
+                    continue
+                self._command_uncertain = True
+                raise
+            except ValueError:
                 self._command_uncertain = True
                 raise
             if result["transaction_id"] == transaction_id and result["opcode"] == opcode:
                 if result["status"] != "pending":
+                    self._command_uncertain = False
                     self.last_command_result = result
                     return result
             if monotonic() >= deadline:
@@ -273,6 +284,42 @@ class PicoForgeHid:
                     f"timed out waiting for HID control transaction {transaction_id}; outcome is uncertain"
                 )
             sleep(0.05)
+
+    def _reopen_for_result(self, deadline: float, disconnect_error: OSError) -> None:
+        """Reopen only the original UID to read its outstanding result; never replay SET."""
+        expected_uid = self.identity["serial_number"]
+        self._device.close()
+        self.closed = True
+        while monotonic() < deadline:
+            sleep(0.05)
+            candidates = [info for info in _matching_devices()
+                          if str(info.get("serial_number", "")).upper() == expected_uid]
+            if not candidates:
+                continue
+            if len(candidates) != 1:
+                self._command_uncertain = True
+                raise RuntimeError("Multiple HID devices matched the original board UID")
+            device = _require_hid().device()
+            try:
+                device.open_path(candidates[0]["path"])
+                identity = parse_device_identity_report(
+                    device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE))
+            except OSError:
+                device.close()
+                continue
+            except ValueError:
+                device.close()
+                self._command_uncertain = True
+                raise
+            if identity["serial_number"] != expected_uid:
+                device.close()
+                self._command_uncertain = True
+                raise RuntimeError("Reconnected HID identity does not match the original board")
+            self._device = device
+            self.closed = False
+            return
+        self._command_uncertain = True
+        raise TimeoutError("Forced save result unavailable after USB detach; outcome is uncertain") from disconnect_error
 
     def _require_open(self) -> None:
         if self.closed:

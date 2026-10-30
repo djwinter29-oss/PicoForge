@@ -38,7 +38,7 @@ capability to disable self-test controls. Normal storage, filesystem commands, a
    The test streams through its fixed buffer, not a file-sized RAM allocation. Larger tests take longer and
    write more data; sufficient free space and (when enabled) contiguous preallocation are still required.
    Update firmware and host software together to use sizes above the previous 128 MiB limit.
-5. Select **Start self-test** once. The firmware checks the reserved path and free space before accepting the write;
+5. Select **Start benchmark** once. The firmware checks the reserved path and free space before accepting the write;
    no existing file is replaced and no mount-only step occurs. Free-space scanning can delay acceptance and byte
    progress, particularly on large filesystems; do not submit a second Start while its command result is pending.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and

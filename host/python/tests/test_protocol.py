@@ -54,6 +54,16 @@ class ProtocolTests(unittest.TestCase):
     def setUp(self):
         self.identity = parse_identity_report(identity_report())
 
+    def test_forced_save_capability_and_confirmation_flag(self):
+        info = parse_identity_report(identity_report(capabilities=0x75))
+        self.assertTrue(info["capabilities"] & 64)
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        self.assertEqual(build_settings_command_report(settings, 3, force=True),
+                         bytes([20, 1, 3, 6, 1, 200, 0, 1, 0, 0]))
+        self.assertEqual(build_settings_command_report(settings, 3)[4], 0)
+        with self.assertRaises(ValueError):
+            build_settings_command_report(settings, force="yes")
+
     def test_identity_and_board_configuration_decode(self):
         self.assertEqual(self.identity["device_uid"], "0123456789ABCDEF")
         self.assertEqual(self.identity["product_id"], 2)

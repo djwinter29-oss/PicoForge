@@ -138,10 +138,13 @@ Capability bits:
 | 3 | SPI storage transport selected for this firmware build. |
 | 4 | SDIO-PIO storage transport selected for this firmware build. |
 | 5 | SD self-test control and status available. |
-| 6-7 | Reserved; zero. |
+| 6 | Explicitly confirmed settings save/reboot while USB owns storage. |
+| 7 | Reserved; zero. |
 
-For bit 1, the host must explicitly confirm the reboot request. Bit 2 advertises saving persistent boot settings;
-reboot remains a separate operation governed by bit 1. Exactly one of bits 3 and 4 is set, identifying the transport
+For bit 1, the host must explicitly confirm the standalone reboot request. Bit 2 advertises saving persistent boot
+settings with a firmware-scheduled reboot; bit 6 adds the forced host-owned save path and does not replace bit 2.
+Clients must not send a forced save without bit 6 or silently fall back to normal save/reboot. Older clients that
+reject the previously reserved bit require an update alongside this firmware. Exactly one of bits 3 and 4 is set, identifying the transport
 selected at build time. Either selected storage transport implies that MSC control is supported; MSC has no separate
 capability bit. Use the transport bit to interpret report `2`'s storage GPIO layout. Bit 5 makes self-test control
 and status available together; when clear, Report `11` is unavailable and must not be published, and opcode `4`
@@ -427,15 +430,17 @@ the meaning of the fields.
 | `3` | MSC control | Bit 0 confirms force-return data-loss risk only; other bits zero. | Byte 0 action: `0` normal disable, `1` enable, `2` force return; bytes 1-4 zero. |
 | `4` | SD self-test | `0` | Byte 0 action: `0` cancel, `1` start; bytes 1-4 little-endian MiB size. |
 | `5` | Unassigned | - | Reject as unsupported. |
-| `6` | Save persistent settings and reboot | `0` | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); bytes 3-4 zero. |
+| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); bytes 3-4 zero. |
 | Other | Unassigned | - | Reject as unsupported. |
 
 LED Off/On are idempotent. Reboot requires explicit confirmation. MSC action `0` is the normal disable request;
-the host application is responsible for safely ejecting first, and the device does not verify that precondition.
+the host application is responsible for safely ejecting first, and the device checks its SCSI eject indication
+(unless media removal is confirmed), removal prevention, and device sync without claiming host-cache durability.
 Action `2` is force return without a safe-eject guarantee and requires explicit data-loss confirmation. Self-test
 start accepts 1-1024 MiB; cancel requires zero size. System-clock values are `0`, `150`,
-`200`, or `250` MHz; SD-card profile values are `0` Standard and `1` High-Speed. Saving settings does not reboot
-automatically; read back Feature report `2`, then submit a separate confirmed reboot operation.
+`200`, or `250` MHz; SD-card profile values are `0` Standard and `1` High-Speed. A successful settings save schedules
+reboot automatically; verify the saved values in the matching Feature `20` result, then refresh Feature `2` after
+reboot. Do not submit a second reboot command.
 
 ### GET Result
 
@@ -508,6 +513,30 @@ and match both transaction ID and opcode in GET. IDs do not provide multi-client
 timeout/disconnect makes outcome uncertain; do not automatically replay reboot, save, or force-return requests, and
 do not send another command while an earlier request's outcome remains uncertain. GET is non-destructive and never
 extends or restarts a pending operation.
+
+### Confirmed Save and Reboot While Shared
+
+Opcode `6`, flags `0`, retains the normal firmware-owned storage requirement. Flags `1` is only valid with MSC
+enabled and requires capability bit 6 plus an explicit host data-loss confirmation. Both paths reject outstanding
+worker work and ownership transitions. Standalone opcode `2` still rejects MSC ownership.
+
+The forced path first returns Pending with zero result data. The USB task waits for the host to fetch Pending
+and a 10 ms control-transfer settle interval, or a 500 ms fallback deadline, then rechecks safety gates. It reserves
+storage through successful device-side sync and USB detach before flash programming. A failed sync/detach causes
+Failed/error `6`, with no flash save or reboot. A flash-save failure restores the prior RAM profiles, reconnects host
+access, and reports Failed without reboot; flash may nevertheless have partially changed.
+
+After verified saving, reconnect HID without usable MSC and keep media USB-reserved until reset so neither the host
+nor the worker starts new card I/O. Publish Completed with the original transaction and verified settings.
+Reboot waits for that result GET, or a five-second fallback deadline, followed by the existing one-second USB result
+grace period. Boot then follows the [default-mounted storage lifecycle](../architecture.md#storage-ownership-lifecycle).
+Additional control writes while the forced transaction is outstanding are ignored with a UART warning to preserve
+its result slot; hosts must serialize writes. GET never replays a save.
+
+Clients reconnect only to the same verified device UID and poll the original opcode/transaction result. Never replay
+SET or infer completion from reconnection. Timeout, mismatched identity, or invalid result leaves outcome uncertain
+and blocks further writes. The [settings safety policy](../settings.md#forced-save-and-reboot) explains confirmation
+and host-cache risks. This workflow has host/model coverage, not physical USB/power-loss qualification.
 
 ### Cross-Interface Resource Arbitration
 

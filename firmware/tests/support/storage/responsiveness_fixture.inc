@@ -12,6 +12,13 @@ static unsigned settings_save_calls;
 static bool settings_save_fails;
 static bool msc_enabled;
 static bool msc_transition_pending;
+static bool prepare_save_fails;
+static unsigned prepare_save_calls;
+bool pf_usb_msc_prepare_save(void) { ++prepare_save_calls; return !prepare_save_fails; }
+void pf_usb_msc_finish_save(bool saved) { msc_enabled = !saved; }
+void pf_usb_msc_task(void) {}
+bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *format, ...)
+{ (void)level; (void)tag; (void)format; return true; }
 const pf_led_board_t pf_led_board = {.gpio = 25u, .active_high = true};
 const pf_logging_board_t pf_logging_board = {.uart_index = 0u, .tx_gpio = 0u, .rx_gpio = 1u};
 
@@ -127,7 +134,7 @@ void pico_get_unique_board_id_string(char *id, size_t size)
 { memset(id, 0, size); }
 absolute_time_t get_absolute_time(void) { return 1230000u; }
 uint64_t to_ms_since_boot(absolute_time_t value) { return value / 1000u; }
-uint64_t time_us_64(void) { return 1230000u; }
+uint64_t time_us_64(void) { return 1230000u + (uint64_t)fake_ticks * 1000u; }
 
 TickType_t xTaskGetTickCount(void) { return fake_ticks; }
 BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t timeout)

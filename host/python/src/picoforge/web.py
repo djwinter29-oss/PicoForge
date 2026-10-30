@@ -92,6 +92,9 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected boot settings JSON"}), 400
         board_id = request.args.get("board")
+        force = payload.get("confirm_data_loss", False)
+        if type(force) is not bool:
+            return jsonify({"error": "confirm_data_loss must be boolean"}), 400
         if "sdcard_profile" in payload:
             settings = {key: payload.get(key) for key in ("system_clock_mhz", "sdcard_profile")}
             validator = build_settings_command_report
@@ -121,7 +124,8 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             except RuntimeError as error:
                 return jsonify({"error": str(error)}), 409
         try:
-            saved = dashboard.set_settings(board_id, settings)
+            saved = (dashboard.set_settings(board_id, settings, force=True) if force
+                     else dashboard.set_settings(board_id, settings))
             snapshot = dashboard.snapshot(board_id)
             return jsonify({"settings": saved, "control_result": snapshot.get("control_result")}), 200
         except RuntimeError as error:

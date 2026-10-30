@@ -21,10 +21,11 @@ Usage: tools/firmware/load.sh [options]
 
 Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
 Builds use build.sh, which explicitly enables the storage benchmark; --skip-build leaves the image unchanged.
+Rebuilding clears retired clock/speed CMake options; clock and SD speed now use saved dashboard profiles.
 
 Options:
 --board NAME                 Supported board: pico or pico2 (default: pico)
---build-dir PATH             Build directory (default: build/firmware-NAME)
+--build-dir PATH             Build directory (default: build/firmware-NAME-TRANSPORT)
 --elf PATH                   ELF to flash (default: generated pico_forge_elf.txt path in build dir)
 --openocd-exe PATH           OpenOCD executable (default: openocd)
 --openocd-target PATH        OpenOCD target config (default: inferred from board)

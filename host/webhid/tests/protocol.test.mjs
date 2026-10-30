@@ -439,7 +439,8 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   assert.deepEqual(sent[2], [20, 1, 3, 4, 0, 1, 32, 0, 0, 0]);
   assert.equal(client.state.self_test.state, "idle", "acceptance doesn't invent progress");
   await assert.rejects(client.setMsc(true), /Fresh idle/);
-  emit(device, 11, selfTest(6));
+  const completed = selfTest(6); completed[1] = 1;
+  emit(device, 11, completed);
   await client.setMsc(true);
   assert.equal(client.state.msc.enabled, false, "acceptance doesn't invent ownership");
   assert.equal(client.state.msc_command_pending, true);
@@ -449,6 +450,156 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   await client.setMsc(false, true);
   assert.deepEqual(sent.at(-1).slice(0, 6), [20, 1, 5, 3, 1, 2]);
   await client.disconnect();
+});
+
+test("confirmed forced settings save reconnects to the original result without replay", async () => {
+  for (const incorrect of [false, true]) {
+    const { client, device, hid, sent } = fakeConnection({ capabilities: 119,
+      sleep: async () => new Promise(resolve => setTimeout(resolve, 1)) });
+    await client.connect();
+    const shared = storage(); shared[2] = 1; shared.fill(0, 3, 31); shared[31] = 1;
+    emit(device, 10, shared); emit(device, 11, selfTest());
+    const receive = device.receiveFeatureReport;
+    let detached = false;
+    device.receiveFeatureReport = async id => {
+      if (id === 20 && !detached) {
+        detached = true;
+        hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+        device.opened = false;
+        setTimeout(() => hid.dispatchEvent(Object.assign(new Event("connect"), { device })), 1);
+        throw new Error("USB disconnected for forced save");
+      }
+      const response = await receive(id);
+      if (incorrect && id === 20) response[5] = 150;
+      return response;
+    };
+    assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }, true), !incorrect);
+    assert.deepEqual(sent, [[20, 1, 1, 6, 1, 200, 0, 1, 0, 0]]);
+    assert.equal(client.state.outcome_uncertain, incorrect);
+    assert.equal(Boolean(client.state.reboot_pending), !incorrect);
+    if (incorrect) {
+      assert.match(client.state.settings_message, /did not confirm/);
+      await assert.rejects(client.command(1, { args: [1] }), /uncertain/);
+    }
+    await client.disconnect();
+  }
+});
+
+test("forced save never falls back on firmware without its capability", async () => {
+  const { client, device, sent } = fakeConnection();
+  await client.connect();
+  const shared = storage(); shared[2] = 1; shared.fill(0, 3, 31); shared[31] = 1;
+  emit(device, 10, shared); emit(device, 11, selfTest());
+  assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }, true), false);
+  assert.equal(sent.length, 0);
+  await client.disconnect();
+});
+
+test("USB sharing stays pending through delivery, old reports, reconnect and ownership transitions", async () => {
+  const { client, device, hid } = fakeConnection();
+  await client.connect();
+  emit(device, 10, storage()); emit(device, 11, selfTest());
+  const send = device.sendFeatureReport;
+  let release;
+  device.sendFeatureReport = async (...args) => {
+    await new Promise(resolve => { release = resolve; });
+    return send(...args);
+  };
+  const sharing = client.setMsc(true);
+  assert.equal(client.state.msc_command_pending, true, "submission hides benchmark immediately");
+  emit(device, 10, storage());
+  assert.equal(client.state.msc_command_pending, true);
+  release();
+  await sharing;
+  emit(device, 10, storage());
+  assert.equal(client.state.msc_command_pending, true, "old firmware ownership cannot release latch");
+  hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+  device.opened = false;
+  hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(client.state.msc_command_pending, true, "reconnect cannot release latch");
+  emit(device, 10, storage());
+  assert.equal(client.state.msc_command_pending, true);
+  const host = storage(); host[2] = 1; host.fill(0, 3, 31); host[31] = 1; host[32] = 1;
+  emit(device, 10, host);
+  assert.equal(client.state.msc_command_pending, true, "transition must finish");
+  host[32] = 0; emit(device, 10, host);
+  emit(device, 11, selfTest());
+  assert.equal(client.state.msc_command_pending, false);
+  device.sendFeatureReport = send;
+  await client.setMsc(false, true);
+  emit(device, 10, host);
+  assert.equal(client.state.msc_command_pending, true, "return waits for firmware ownership");
+  emit(device, 10, storage());
+  assert.equal(client.state.msc_command_pending, false);
+  await client.disconnect();
+});
+
+test("rejected USB sharing releases pending state without inventing ownership", async () => {
+  for (const commandRejected of [false, true]) {
+    const { client, device } = fakeConnection();
+    await client.connect();
+    emit(device, 10, storage()); emit(device, 11, selfTest());
+    const receive = device.receiveFeatureReport;
+    if (commandRejected) device.receiveFeatureReport = id =>
+      id === 20 ? result(1, 3, 5, 5) : receive(id);
+    if (commandRejected) await assert.rejects(client.setMsc(true), /status 5/);
+    else {
+      await client.setMsc(true);
+      const rejected = storage(); rejected[33] = 1;
+      emit(device, 10, rejected);
+    }
+    assert.equal(client.state.msc_command_pending, false);
+    assert.equal(client.state.msc.enabled, false);
+    await client.disconnect();
+  }
+});
+
+test("self-test acceptance keeps controls pending until a newer report, including sequence rollover", async () => {
+  const { client, device } = fakeConnection();
+  await client.connect();
+  emit(device, 10, storage());
+  const idle = selfTest(); idle[1] = 254;
+  emit(device, 11, idle);
+  const send = device.sendFeatureReport;
+  let release;
+  device.sendFeatureReport = async (...args) => {
+    await new Promise(resolve => { release = resolve; });
+    return send(...args);
+  };
+  const starting = client.setSelfTest("start", 32);
+  idle[1] = 255;
+  emit(device, 11, idle);
+  assert.equal(client.state.busy, true, "new telemetry cannot release controls during delivery");
+  await assert.rejects(client.setSelfTest("start", 32), /unavailable/);
+  release();
+  await starting;
+  emit(device, 11, idle);
+  assert.equal(client.state.self_test_command_pending, true);
+  await assert.rejects(client.setSelfTest("start", 32), /Fresh|unavailable/);
+  const running = selfTest(1); running[1] = 0;
+  emit(device, 11, running);
+  assert.equal(client.state.self_test_command_pending, false);
+  assert.equal(client.state.self_test.active, true);
+  await client.disconnect();
+});
+
+test("normal and forced saves keep writes blocked when returned settings differ without disconnect", async () => {
+  for (const flags of [0, 1]) {
+    const { client, device, sent } = fakeConnection({ capabilities: 119 });
+    await client.connect();
+    const receive = device.receiveFeatureReport;
+    device.receiveFeatureReport = async id => {
+      const response = await receive(id);
+      if (id === 20) response[5] = 150;
+      return response;
+    };
+    await assert.rejects(client.command(6, { flags, args: [200, 0, 1] }), /did not confirm/);
+    assert.equal(client.state.outcome_uncertain, true);
+    await assert.rejects(client.command(1, { args: [1] }), /uncertain/);
+    assert.equal(sent.length, 1);
+    await client.disconnect();
+  }
 });
 
 test("development HID filter uses authorized vendor collection and both USB configurations", () => {

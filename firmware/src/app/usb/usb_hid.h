@@ -45,6 +45,7 @@
 #define PF_HID_CAP_SPI (1u << 3)
 #define PF_HID_CAP_SDIO (1u << 4)
 #define PF_HID_CAP_SELF_TEST (1u << 5)
+#define PF_HID_CAP_FORCE_SAVE (1u << 6) /**< Confirmed settings save/reboot while MSC owns media. */
 
 /** @} */
 

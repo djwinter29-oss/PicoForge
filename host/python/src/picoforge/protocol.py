@@ -39,7 +39,8 @@ CAP_SAVE_SETTINGS = 1 << 2
 CAP_SPI = 1 << 3
 CAP_SDIO = 1 << 4
 CAP_SELF_TEST = 1 << 5
-CAP_KNOWN = CAP_LED | CAP_REBOOT | CAP_SAVE_SETTINGS | CAP_SPI | CAP_SDIO | CAP_SELF_TEST
+CAP_FORCE_SAVE = 1 << 6
+CAP_KNOWN = CAP_LED | CAP_REBOOT | CAP_SAVE_SETTINGS | CAP_SPI | CAP_SDIO | CAP_SELF_TEST | CAP_FORCE_SAVE
 
 TELEMETRY_USB_MOUNTED = 1 << 0
 TELEMETRY_CDC_OPEN = 1 << 1
@@ -299,11 +300,14 @@ def validate_legacy_settings(settings: dict[str, object]) -> None:
 
 
 def build_settings_command_report(
-    settings: dict[str, object], transaction_id: int = 1
+    settings: dict[str, object], transaction_id: int = 1, *, force: bool = False
 ) -> bytes:
     """Build Feature report 20 opcode 6 to save persistent settings."""
     clock, profile = _validate_settings(settings)
-    return build_control_command_report(transaction_id, 6, arguments=struct.pack("<HB", clock, profile) + b"\0\0")
+    if type(force) is not bool:
+        raise ValueError("Forced settings save confirmation must be boolean")
+    return build_control_command_report(transaction_id, 6, flags=int(force),
+                                        arguments=struct.pack("<HB", clock, profile) + b"\0\0")
 
 
 def build_control_command_report(
@@ -340,7 +344,7 @@ def build_control_command_report(
             raise ValueError("invalid self-test command fields")
     if opcode == 6:
         clock, profile = struct.unpack_from("<HB", args)
-        if flags or any(args[3:]) or clock not in (0, 150, 200, 250) or profile not in (0, 1):
+        if flags & ~1 or any(args[3:]) or clock not in (0, 150, 200, 250) or profile not in (0, 1):
             raise ValueError("invalid persistent settings command fields")
     if opcode not in (1, 2, 3, 4, 6):
         raise ValueError("control opcode is unsupported")

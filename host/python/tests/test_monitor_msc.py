@@ -16,6 +16,31 @@ class MonitorMscTests(unittest.TestCase):
         self.monitor._active_client.set_led.return_value = {"status": "completed", "error": "none"}
         self.monitor._snapshot = {"msc": {"enabled": True, "force_return_supported": True}}
 
+    def test_forced_settings_require_confirmed_capable_idle_host_ownership(self):
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        snapshot = {"connected": True, "settings_supported": True,
+                    "hardware": {"capabilities": 68, "storage_transport": "sdio"},
+                    "msc": {"enabled": True, "transition_pending": False},
+                    "self_test": {"active": False}}
+        self.monitor._snapshot = snapshot
+        self.monitor._active_client.set_settings.return_value = settings
+        self.assertEqual(self.monitor.set_settings(settings, force=True), settings)
+        self.monitor._active_client.set_settings.assert_called_once_with(settings, force=True)
+        for mutate in [
+            {"hardware": {"capabilities": 4, "storage_transport": "sdio"}},
+            {"msc": {"enabled": False, "transition_pending": False}},
+            {"msc": {"enabled": True, "transition_pending": True}},
+            {"self_test": {"active": True}},
+        ]:
+            self.monitor._snapshot = {**snapshot, **mutate}
+            self.monitor._active_client.reset_mock()
+            with self.assertRaises(RuntimeError):
+                self.monitor.set_settings(settings, force=True)
+            self.monitor._active_client.set_settings.assert_not_called()
+        self.monitor._snapshot = snapshot
+        with self.assertRaisesRegex(RuntimeError, "Disable"):
+            self.monitor.set_settings(settings)
+
     def test_led_disconnect_after_command_preserves_disconnected_snapshot(self):
         self.monitor._snapshot = {**_empty_snapshot(), "connected": True,
                                   "hardware": {"led_available": True},

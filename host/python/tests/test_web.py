@@ -78,8 +78,9 @@ class FakeMonitor:
         self.last_msc = (enabled, force)
         return {"enabled": enabled, "transition_pending": True, "request_rejected": False}
 
-    def set_settings(self, board_id, settings):
+    def set_settings(self, board_id, settings, *, force=False):
         self.last_board_id = board_id
+        self.last_force_save = force
         if "sdcard_profile" in settings:
             result = settings
         else:
@@ -100,6 +101,18 @@ class FakeMonitor:
 
 
 class WebTests(unittest.TestCase):
+    def test_settings_force_confirmation_is_explicit_boolean(self):
+        monitor = FakeMonitor()
+        client = create_app(monitor).test_client()
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        for invalid in ["yes", 1, None]:
+            response = client.post("/api/settings", json={**settings, "confirm_data_loss": invalid},
+                                   base_url="http://127.0.0.1")
+            self.assertEqual(response.status_code, 400)
+        response = client.post("/api/settings", json={**settings, "confirm_data_loss": True},
+                               base_url="http://127.0.0.1")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(monitor.last_force_save)
     def test_dashboard_port_defaults_to_5000_and_can_be_overridden(self):
         self.assertEqual(parse_args(["web"]).port, 5000)
         self.assertEqual(parse_args(["web", "--port", "5001"]).port, 5001)

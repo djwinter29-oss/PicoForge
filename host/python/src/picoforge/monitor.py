@@ -201,7 +201,7 @@ class DeviceMonitor:
                 raise RuntimeError(f"reboot command {result['status']}: {result['error']}")
             return result
 
-    def set_settings(self, settings: dict[str, object]) -> dict[str, object]:
+    def set_settings(self, settings: dict[str, object], *, force: bool = False) -> dict[str, object]:
         if not isinstance(settings, dict):
             raise ValueError("boot settings must be an object")
         with self._device_lock:
@@ -229,12 +229,17 @@ class DeviceMonitor:
             msc = snapshot.get("msc")
             if not isinstance(msc, dict):
                 raise RuntimeError("Waiting for storage ownership status")
-            if msc.get("enabled") or msc.get("transition_pending"):
+            if type(force) is not bool:
+                raise ValueError("Forced save confirmation must be boolean")
+            if force and (not hardware["capabilities"] & 64 or not msc.get("enabled")):
+                raise RuntimeError("Forced save requires USB ownership and supporting firmware")
+            if msc.get("transition_pending") or (msc.get("enabled") and not force):
                 raise RuntimeError("Disable the USB drive before saving boot settings")
             if isinstance(snapshot.get("self_test"), dict) and snapshot["self_test"].get("active"):
                 raise RuntimeError("Wait for the storage self-test to finish before saving boot settings")
             try:
-                saved = self._send_control(self._active_client.set_settings, command_settings)
+                saved = (self._send_control(self._active_client.set_settings, command_settings, force=True) if force
+                         else self._send_control(self._active_client.set_settings, command_settings))
             except (OSError, RuntimeError, ValueError):
                 result = self._active_client.last_command_result
                 if result is not None:
@@ -414,8 +419,10 @@ class DashboardBoards:
     def set_led(self, board_id: str | None, on: bool) -> dict[str, object]:
         return self._monitor(board_id).set_led(on)
 
-    def set_settings(self, board_id: str | None, settings: dict[str, object]) -> dict[str, object]:
-        return self._monitor(board_id).set_settings(settings)
+    def set_settings(self, board_id: str | None, settings: dict[str, object], *,
+                     force: bool = False) -> dict[str, object]:
+        monitor = self._monitor(board_id)
+        return monitor.set_settings(settings, force=force) if force else monitor.set_settings(settings)
 
     def set_msc(self, board_id: str | None, enabled: bool, *, force: bool = False) -> dict[str, object]:
         return self._monitor(board_id).set_msc(enabled, force=force)

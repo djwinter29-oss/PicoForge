@@ -47,6 +47,16 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void IdentityAcceptsForcedSaveCapabilityButKeepsBitSevenReserved()
+    {
+        var report = IdentityReport();
+        report[18] |= HidProtocol.CapabilityForcedSave;
+        Assert.Equal((byte)0x77, HidProtocol.ParseIdentityReport(report).Capabilities);
+        report[18] |= 0x80;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(report));
+    }
+
+    [Fact]
     public void ParsesTelemetryAndValidatesSentinels()
     {
         var report = new byte[HidProtocol.TelemetryPayloadSize + 1];
@@ -256,7 +266,7 @@ public sealed class ProtocolTests
         public bool SetLed(string? boardId, bool on) => true;
         public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
             new(enabled, false, false);
-        public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings)
+        public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false)
         {
             LastSettings = settings;
             return settings;

@@ -7,7 +7,7 @@
   <title>PicoForge Diagnostics | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
   <link rel="stylesheet" href="css/webhid.css?v=4">
-  <script type="module" src="js/app.mjs?v=7"></script>
+  <script type="module" src="js/app.mjs?v=8"></script>
 </head>
 <body>
   <header class="topbar">
@@ -139,7 +139,7 @@
         <h2 id="self-test-title">Storage benchmark</h2>
         <div class="self-test-controls">
           <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
-          <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
+          <button class="button" id="self-test-start" type="button" disabled>Start benchmark</button>
           <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
         </div>
       </div>
@@ -159,12 +159,17 @@
     </section>
 
     <dialog class="confirmation-dialog" id="configuration-dialog" aria-labelledby="configuration-dialog-title"
-      aria-describedby="configuration-dialog-profile configuration-warning">
+      aria-describedby="configuration-dialog-profile configuration-warning configuration-force-warning">
       <h2 id="configuration-dialog-title">Save and reboot?</h2>
       <p id="configuration-dialog-profile"></p>
       <p class="configuration-warning" id="configuration-warning">
         Firmware saves boot settings, then reboots the board and briefly disconnects USB.
         Close all CLI ports and stop external traffic first. Stop any storage test or USB drive activity before saving.
+      </p>
+      <p class="configuration-warning" id="configuration-force-warning" hidden>
+        Your computer owns the SD card. Rebooting disconnects the drive; cached host writes may be lost and the
+        filesystem may be corrupted. Safely eject first. Confirming forces USB detach before saving and rebooting.
+        A successful device sync does not flush your computer's cached writes.
       </p>
       <div class="dialog-actions">
         <button class="button button-cancel" id="cancel-configuration" type="button" autofocus>Cancel</button>
@@ -191,7 +196,8 @@
       <h2 id="share-dialog-title">Enable USB drive?</h2>
       <p class="configuration-warning" id="share-warning">
         Pico will unmount its filesystem and give your computer exclusive access to the SD card.
-        USB briefly reconnects. Self-test and Save and Reboot are unavailable while the drive is shared.
+        USB briefly reconnects. Self-test is unavailable while shared; Save and Reboot requires a data-loss confirmation
+        on supporting firmware.
         Safely eject the drive on your computer before returning storage to Pico.
       </p>
       <div class="dialog-actions">

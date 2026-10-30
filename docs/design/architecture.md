@@ -222,6 +222,8 @@ selection. Neither platform storage service depends on application headers.
   worker recovery without claiming a clean eject. Recovery logs its result and never mounts automatically.
 - Confirmed force return disconnects before normal owner release and holds worker admission through one mount
   attempt; failure leaves the volume unmounted and blocks automatic retries. It never claims host-cache durability.
+- [Confirmed forced settings save/reboot](settings.md#forced-save-and-reboot) syncs and detaches before flash save,
+  keeping media USB-reserved and unavailable until successful reset; failures do not schedule reboot.
 - Uncertain failed writes are not replayed. Host tests cover exclusion, failed sync retention, no-replay and recovery
   rejection/completion; they do not establish physical USB BOT or power-loss qualification.
 
@@ -253,7 +255,7 @@ leave automatic mounting blocked for inspection until an explicit successful mou
 are not persistent boot settings. A safe return does not clear an existing fault-recovery block.
 
 The UI design should distinguish mounting/unavailable storage from a usable mounted filesystem, and enable Start
-only after fresh mounted-state telemetry and idle firmware ownership. One **Start self-test** action must start the
+only after fresh mounted-state telemetry and idle firmware ownership. One **Start benchmark** action must start the
 test after preflight, not perform a mount-only step. Free-space scanning can take time before acceptance, so the UI
 should show a pending/checking indication rather than imply that mounting is underway.
 The current protocol has no distinct mounting or free-space-checking state: use pending transaction and storage
@@ -275,6 +277,9 @@ stateDiagram-v2
     ToHost --> FirmwareUnmounted: acquisition rejected after unmount
     HostOwned --> ToFirmware: safe-eject then normal disable
     HostOwned --> ForcedReturn: confirmed unsafe force return
+    HostOwned --> SavingAndRebooting: confirmed forced save / sync and detach succeed
+    SavingAndRebooting --> Mounting: verified save and reset / MSC defaults off
+    SavingAndRebooting --> HostOwned: save fails / host access restored without reset
     HostOwned --> FaultedHostOwned: card/media I/O fault
     FaultedHostOwned --> Recovering: confirmed fault recovery / USB detached
     ToFirmware --> Mounting: ownership returned / automatic reinitialize and remount

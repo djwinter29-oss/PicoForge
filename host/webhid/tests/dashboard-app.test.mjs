@@ -60,7 +60,9 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       return { ok: true, json: async () => structuredClone(connected) };
     }
     if (url.startsWith("/api/settings?board=")) {
-      const settings = JSON.parse(options.body);
+      const { confirm_data_loss, ...settings } = JSON.parse(options.body);
+      if (confirm_data_loss !== undefined) assert.equal(confirm_data_loss, true);
+      assert.equal(Boolean(confirm_data_loss), Boolean(connected.msc.enabled));
       savedSettings.push(settings);
       return { ok: !saveFails, json: async () => ({ error: "save rejected",
         settings: readbackMismatch ? { ...settings, sdcard_profile: 99 } : settings }) };
@@ -368,6 +370,21 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     statusFails = false;
     connected.msc = { enabled: true, force_return_supported: true, transition_pending: false };
     await tick();
+    assert.equal(elements.get("#settings-clock").disabled, false, "local editing is safe during host ownership");
+    assert.equal(elements.get("#settings-save").disabled, true, "old firmware cannot force save");
+    connected.hardware.capabilities |= 64;
+    await tick();
+    elements.get("#settings-clock").value = "250";
+    handlers.get("#settings-clock:change")();
+    await handlers.get("#settings-save:click")();
+    assert.equal(elements.get("#configuration-force-warning").hidden, false);
+    const beforeForcedSave = savedSettings.length;
+    handlers.get("#cancel-configuration:click")();
+    await handlers.get("#confirm-configuration:click")();
+    assert.equal(savedSettings.length, beforeForcedSave);
+    await saveAndConfirm();
+    assert.equal(savedSettings.length, beforeForcedSave + 1);
+    assert.equal(elements.get("#reboot-control").disabled, true, "standalone reboot stays safe");
     const beforeReturn = requestedUrls.length;
     await handlers.get("#msc-control:click")();
     assert.equal(elements.get("#return-dialog").open, true);

@@ -51,6 +51,10 @@ All operations serialize Feature 20 SET/GET transactions, matching both transact
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for
 fresh corresponding Input status. A timeout or disconnect never replays a command; uncertain results block further
 writes. Reconnecting reads the outstanding result without resubmitting it. Do not run competing HID writers.
+USB sharing hides the benchmark from submission through reconnect until fresh status confirms the requested
+ownership and a finished transition, or an explicit rejection. Self-test acceptance keeps controls pending until
+a newer status report, including sequence rollover. Active/pending tests disable settings controls without a
+routine waiting notice; Save availability indicates edited settings without a redundant unsaved-changes notice.
 
 **Save and Reboot** confirms with the user, sends one settings command, and verifies its completion result.
 Firmware saves the settings and schedules the reboot; Feature 2 is reread after reconnection.
@@ -59,6 +63,11 @@ matching modal dialogs with Cancel and Escape support; no command is sent until 
 checked again at confirmation. Routine loaded-settings and fresh-report messages are hidden.
 Standard/High-Speed is a stored request;
 Storage shows the actual selected timing and effective bus clock.
+While shared, local settings editing remains available. Supporting firmware permits **Save and Reboot** with
+an additional explicit host-cache data-loss confirmation; sync/detach must succeed before flash programming.
+The reconnect path verifies the original transaction and saved values without replaying SET. See the
+[forced-save policy](../../docs/design/settings.md#forced-save-and-reboot). Older firmware keeps saving blocked
+until storage returns to Pico; self-test and transition gates still apply.
 
 USB ownership transitions briefly re-enumerate. The WebHID API does not expose the USB serial string, so the
 dashboard identifies a reconnect candidate by reading Feature 1 and matching its stable device UID before

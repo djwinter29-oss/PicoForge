@@ -33,6 +33,12 @@
 #define PF_HID_BOARD_FLAG_MONITOR_UART (1u << 2)
 
 static bool reboot_requested; /**< A reboot or settings save awaits the USB task. */
+static bool force_save_pending; /**< Confirmed save waits for Pending GET before USB detach. */
+static bool force_save_result_read; /**< Host fetched the forced-save Pending result. */
+static uint64_t force_save_at_us; /**< Earliest detach, or deadline if no Pending GET arrives. */
+static bool force_save_reboot_waiting; /**< Completed forced save waits for result GET before reboot. */
+static uint64_t force_save_reboot_deadline_us; /**< Bounded wait for reconnect and result GET. */
+static pf_hid_control_request_t force_save_request; /**< Original transaction; never replayed. */
 /** Latest Feature 20 result returned by GET. */
 static pf_hid_control_result_t control_result = {
     .version = PF_HID_REPORT_VERSION,
@@ -89,6 +95,8 @@ typedef struct {
     uint8_t data[4]; /**< Opcode-specific result bytes, zero otherwise. */
 } outcome_t;
 
+static outcome_t handle_save_settings(const pf_hid_control_request_t *request);
+
 static outcome_t outcome(uint8_t status, uint8_t error)
 {
     return (outcome_t){ .status = status, .error = error };
@@ -110,6 +118,10 @@ static outcome_t benchmark_rejection(pf_file_benchmark_error_t error)
 
 bool pf_hid_take_reboot_request(void)
 {
+    if (force_save_reboot_waiting) {
+        if (time_us_64() < force_save_reboot_deadline_us) return false;
+        force_save_reboot_waiting = false;
+    }
     const bool requested = reboot_requested;
     reboot_requested = false;
     return requested;
@@ -117,6 +129,16 @@ bool pf_hid_take_reboot_request(void)
 
 void pf_hid_poll_async_commands(void)
 {
+    if (force_save_pending && time_us_64() >= force_save_at_us) {
+        force_save_pending = false;
+        force_save_result_read = true;
+        outcome_t result = handle_save_settings(&force_save_request);
+        set_result(&force_save_request, result.status, result.error, result.data);
+        if (result.status == PF_HID_COMMAND_COMPLETED) {
+            force_save_reboot_waiting = true;
+            force_save_reboot_deadline_us = time_us_64() + 5000000u;
+        }
+    }
 #if PF_ENABLE_STORAGE_BENCHMARK
     if (!self_test_result_pending) return;
 
@@ -155,7 +177,7 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     report->firmware_patch = PF_FIRMWARE_VERSION_PATCH;
     report->mcu = pf_system_mcu_id();
     report->board_model = board_model();
-    report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS;
+    report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS | PF_HID_CAP_FORCE_SAVE;
     if (pf_led_is_available()) report->capabilities |= PF_HID_CAP_LED;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
@@ -423,17 +445,33 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
     while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != system_clock_mhz) {
         ++sysclk;
     }
-    if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
+    const bool force = request->flags == 1u;
+    if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
     if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || !pf_boot_config_set_sysclk(sysclk) ||
         !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile)) {
         return invalid(PF_HID_ERROR_ARGUMENT);
     }
-    if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
+    if (pf_usb_msc_transition_pending() || pf_storage_worker_busy() ||
+        (pf_usb_msc_is_enabled() && !force)) {
         return busy_outcome();
     }
-    if (!pf_boot_config_save()) {
+    if (force && !pf_usb_msc_is_enabled()) return invalid(PF_HID_ERROR_ARGUMENT);
+    if (force && !force_save_pending && !force_save_result_read) {
+        force_save_request = *request;
+        force_save_pending = true;
+        force_save_at_us = time_us_64() + 500000u;
+        return outcome(PF_HID_COMMAND_PENDING, PF_HID_ERROR_NONE);
+    }
+    if (force && !pf_usb_msc_prepare_save()) {
+        PF_LOGGING_ERROR("settings", "Forced save refused: storage sync or USB detach failed");
+        return failed();
+    }
+    bool saved = pf_boot_config_save();
+    if (force) pf_usb_msc_finish_save(saved);
+    if (!saved) {
+        PF_LOGGING_ERROR("settings", "Boot settings save failed; reboot not scheduled");
         return failed();
     }
     result = completed();
@@ -461,6 +499,12 @@ static outcome_t handle_save_settings(const pf_hid_control_request_t *request)
 static void process_control_request(const pf_hid_control_request_t *request)
 {
     outcome_t result;
+    if (force_save_pending || force_save_reboot_waiting) {
+        /* Preserve the outstanding transaction for reconnect result verification. */
+        PF_LOGGING_WARNING("settings", "Control write ignored while forced-save result is outstanding");
+        return;
+    }
+    force_save_result_read = false;
 
     switch (request->opcode) {
     case PF_HID_OPCODE_LED: result = handle_led(request); break;
@@ -500,6 +544,13 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
             return sizeof(report);
         }
         if (report_id == PF_HID_CONTROL_REPORT_ID && reqlen >= sizeof(control_result)) {
+            if (force_save_pending && !force_save_result_read) {
+                force_save_result_read = true;
+                force_save_at_us = time_us_64() + 10000u;
+            }
+            if (force_save_reboot_waiting) {
+                force_save_reboot_deadline_us = time_us_64();
+            }
             pf_usb_msc_note_hid_result_read(control_result.transaction_id);
             memcpy(buffer, &control_result, sizeof(control_result));
             return sizeof(control_result);

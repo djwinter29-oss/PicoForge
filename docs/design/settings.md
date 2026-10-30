@@ -9,7 +9,9 @@ there is no runtime transport selector.
 | Storage speed (`pf_storage_speed_t`) | `PF_STORAGE_SPEED_DEFAULT` (25 MHz), `PF_STORAGE_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
 
 Builds use the SDK stock clock; select a different clock through the saved system-clock profile, not a CMake
-override. The former `PF_SYS_CLK_MHZ` option is rejected, including in existing caches. Clear it once with
+override. The former `PF_SYS_CLK_MHZ` option is rejected, including in existing caches. The build/load scripts clear
+retired clock and SD-speed options automatically when rebuilding; `load.sh --skip-build` leaves the image unchanged.
+For direct CMake use, clear it once with
 `cmake -U PF_SYS_CLK_MHZ -S firmware -B <build-dir>`, then use the normal build command.
 
 Both SD transports obtain their requested clock from
@@ -60,10 +62,33 @@ reboot after a successful save. Failed or rejected saves do not reboot. Opcode `
 command. Reconnection refreshes Feature `2`. The Python/.NET
 `GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
 the system clock and `sdcard_profile`, and returns the values confirmed by the device. Unsupported values return HTTP 400;
-unsupported firmware or busy storage returns HTTP 409. Writes are rejected while MSC or storage work owns the media.
+unsupported firmware or busy storage returns HTTP 409. Normal writes are rejected while MSC or storage work owns
+the media; confirmed forced saving is the exception below.
 The dashboards expose one **SD Card** speed selector. High-Speed is a requested profile; the active negotiated timing
 is reported separately because a card or transport may remain at Standard speed. Values apply after reboot and do
 not change the active clock or bus immediately.
+
+### Forced Save and Reboot
+
+Local profile editing is permitted while the computer owns the USB drive. Normal saving and standalone reboot
+remain blocked then. Supporting firmware advertises forced-save capability bit 6; **Save and Reboot** becomes
+available after an edit, and its confirmation dialog additionally warns that rebooting disconnects host storage,
+may lose cached host writes, and may corrupt the filesystem. Safely eject through the host OS first whenever possible.
+Cancel or Escape sends no command. Confirmation rechecks ownership, capability, and idle storage, and requires
+the same shared ownership state that was shown in the warning; it never silently changes the operation.
+
+`POST /api/settings` accepts optional boolean `confirm_data_loss`, default `false`, alongside the existing profile
+fields. Only explicit `true` requests the forced path. Firmware must successfully sync device-side storage and
+detach USB before programming flash; confirmation does not bypass busy work, self-tests, transitions, sync failures,
+or detach failures. Saving success reconnects HID for verification while card I/O remains blocked until reset.
+Failure does not schedule reboot. Host clients verify the original transaction after reconnect without resending
+the save. See the [wire lifecycle](usb/usb-hid-report-reference.md#confirmed-save-and-reboot-while-shared).
+
+Device sync cannot flush the computer's cached writes. This is an explicitly accepted unsafe interruption, not a
+safe-eject guarantee or filesystem repair. After successful reboot, MSC defaults off and automatic mounting resumes.
+Older firmware keeps Save disabled during sharing and displays an update/return-to-Pico instruction.
+
+## Persistence and flash safety
 
 The version 1 persistent record stores one byte per profile: system clock and shared SD-card speed. It does not
 store MHz or separate SPI/SDIO settings. The HID protocol's system clock field still carries MHz.
@@ -78,7 +103,8 @@ the record through the lock-free early flash read. The SD board setup later read
 the selected transport. Runtime reads and saves belong to the USB task; they are not a general multi-task settings API.
 
 `pf_boot_config_save()` rejects ISR, pre-scheduler and suspended-scheduler callers and re-entrant saves. It skips an identical record and uses `flash_safe_execute` for erase/program (interrupts off and the other
-core held, roughly 50 ms; USB can miss frames, so do not save during MSC transfers). Unlike the PicoUart reference,
+core held, roughly 50 ms; USB can miss frames, so active MSC access must stop and USB must detach before a forced save).
+Unlike the PicoUart reference,
 PicoForge disables FreeRTOS dynamic allocation: the SDK reuses a static lockout task control block. Therefore the
 settings module waits for that task to be reclaimed and refuses another save if it is not; it must remain the only
 `flash_safe_execute()` caller, and tasks must not be created or deleted during a save or while reclamation is pending.

@@ -104,6 +104,7 @@ internal static class HidProtocol
     public const byte CapabilitySpi = 1 << 3;
     public const byte CapabilitySdio = 1 << 4;
     public const byte CapabilitySelfTest = 1 << 5;
+    public const byte CapabilityForcedSave = 1 << 6;
 
     public static HardwareInfoResponse ParseIdentityReport(ReadOnlySpan<byte> report)
     {
@@ -114,7 +115,7 @@ internal static class HidProtocol
         var capabilities = payload[17];
         var spi = (capabilities & CapabilitySpi) != 0;
         var sdio = (capabilities & CapabilitySdio) != 0;
-        Require((capabilities & 0xc0) == 0 && spi != sdio, "invalid HID capability flags");
+        Require((capabilities & 0x80) == 0 && spi != sdio, "invalid HID capability flags");
         var mcuId = payload[14];
         var boardModel = payload[15];
         Require(boardModel switch
@@ -306,6 +307,7 @@ internal static class HidProtocol
     {
         Require(transactionId != 0, "transaction ID must be nonzero");
         Require(arguments.Length == 5, "control command requires five argument bytes");
+        Require(opcode != 6 || (flags & ~1) == 0, "invalid saved-settings command flags");
         var report = new byte[ControlFeatureSize];
         report[0] = ControlReportId;
         report[1] = ReportVersion;
@@ -338,6 +340,8 @@ internal static class HidProtocol
             6 => result.ErrorReason == 6,
             _ => false
         }, "invalid control status/error combination");
+        Require(result.Opcode != 6 || result.Status != 3 || result.ErrorReason != 2,
+            "invalid saved-settings control error");
         Require(result.Opcode is 1 or 2 or 3 or 4 or 6
             || (result.Opcode is not 0 && result.Status == 4 && result.ErrorReason == 7),
             "control result has an unsupported opcode/status combination");
