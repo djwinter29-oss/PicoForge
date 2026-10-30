@@ -33,8 +33,11 @@ During benchmark I/O, the storage status sampler may be unable to acquire the dr
 the table, keeping the layout stable during I/O.
 Retained details are cleared on disconnect, board selection changes, stale reports, ownership transitions, or a
 fresh sample showing absent or uninitialized media.
-Selecting Start authorizes temporary self-test writes. An existing `/PFTEST.BIN` file or directory is rejected and
-never replaced.
+The [storage lifecycle](../../docs/design/architecture.md#storage-ownership-lifecycle) mounts at startup and keeps
+healthy firmware-owned media mounted; normal safe USB return remounts automatically. Wait for fresh mounted status.
+Selecting Start authorizes temporary self-test writes, not a mount-only step. Preflight free-space scanning can
+delay acceptance before progress appears; wait for its command result rather than clicking again.
+An existing `/PFTEST.BIN` file or directory is rejected and never replaced. Test cleanup leaves storage mounted.
 
 **Save and Reboot** asks for confirmation and sends one HID settings command. Firmware saves the settings and
 queues its own reboot only on success; the host verifies the saved values in the command result without sending
@@ -42,8 +45,10 @@ a separate reboot command. **Reboot Board** confirms a reboot using the
 already saved settings and warns when unsaved dashboard changes will be lost. Both use Pico UART-style modal
 dialogs with Cancel and explicit action buttons; Escape cancels without sending a command.
 
-Use **Share SD card** to hand the SD card to the host. Firmware unmounts its filesystem before USB
+Use **Enable USB drive** and confirm the storage-handoff dialog to hand the SD card to the host.
+Cancel or Escape sends no command. Firmware unmounts its filesystem before USB
 briefly re-enumerates with an added MSC interface, keeping the HID identity and interface stable.
+Firmware file operations and self-test remain unavailable until USB ownership returns and mounting succeeds.
 
 **Return to Pico** requires data-loss confirmation, then requests Pico-side detach and remount over HID.
 It uses the same styled confirmation dialog as reboot, with Cancel and Escape sending no command.

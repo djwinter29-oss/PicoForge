@@ -24,9 +24,9 @@ peripheral access and hardware experimentation.
 | --- | --- |
 | **Board status at a glance** | Board identity, uptime, system clock, temperature, runtime metrics, and SD-card state. |
 | **Configuration and control** | Board LED control, reboot, and persistent system-clock and storage-speed settings. |
-| **Storage without removing the card** | Browse and manage FAT/exFAT files through the USB console. |
+| **Storage without removing the card** | Automatically mount existing FAT/exFAT storage at startup for file access through the USB console. |
 | **Use the card from your computer** | Temporarily share an attached card as a USB mass-storage drive, with explicit ownership handoff. |
-| **Check card I/O** | On supporting firmware, run a dashboard self-test that writes a temporary file, verifies its contents, and reports measured speeds. |
+| **Check card I/O** | On supporting firmware, test the mounted filesystem by writing and verifying a temporary file, with measured speeds. |
 | **Choose your interface** | Use the hosted WebHID dashboard, local Python or .NET dashboard, or USB serial console. |
 
 SD storage uses either SDIO-PIO or SPI, selected when building firmware. An external SD-card breakout is required for

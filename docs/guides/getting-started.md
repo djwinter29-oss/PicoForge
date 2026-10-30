@@ -99,8 +99,10 @@ dashboard connection per board at a time. On Linux, if HID access is denied, run
 
 ## 5. Try SD-Card Storage
 
-With a correctly wired card, firmware attempts to mount its existing FAT/exFAT filesystem automatically.
-It does not format the card on mount. Use the USB serial console for file operations:
+With a correctly wired card, firmware attempts to mount its existing FAT/exFAT filesystem automatically at startup,
+without opening a dashboard or starting a self-test. It stays mounted for firmware use unless explicitly unmounted
+or shared over USB; see the [storage lifecycle](../design/architecture.md#storage-ownership-lifecycle).
+Mounting never formats the card. Wait for `storage status` to report `mounted` before file operations:
 
 ```text
 storage status
@@ -117,8 +119,11 @@ To share the card with your computer:
    [HID reference](../design/usb/usb-hid-report-reference.md). The dashboard's **Return to Pico** action requests a
    confirmed Pico-side detach/remount, not an OS eject; read the
    [force-return risks](../design/usb/usb-hid-report-reference.md#msc-force-return-safety) before using it.
+5. Wait for fresh mounted status before using files or starting a self-test. Normal safe return remounts automatically;
+   do not click Start to mount the card. A failed forced-return mount requires inspection and deliberate `fs mount`.
 
 On supporting firmware, the dashboard self-test writes and verifies `/PFTEST.BIN`; it refuses to overwrite an
 existing file at that path. Starting a test authorizes card writes and contributes to card wear. Back up important
-data first. The test is not filesystem repair or a guarantee of card reliability.
+data first. Start runs the test against the existing mount, leaving it mounted afterward; checking free space can
+delay acceptance before write progress appears. The test is not filesystem repair or a guarantee of card reliability.
 Read the [self-test guide](sdcard-performance-test.md) for safeguards and result interpretation.

@@ -379,8 +379,10 @@ error `10` (cleanup), it contains the FatFs result only when the cleanup failure
 otherwise it is zero. It is zero for every other execution error and in all states other than Failed. Unknown enum
 values must be retained and displayed as unknown, but treated as invalid for state transitions and safety decisions.
 
-The self-test requires an already-mounted filesystem; it never mounts or unmounts it. A start request is accepted
-only after preflight checks succeed and storage is reserved; acceptance publishes Queued, after which the operation
+The self-test uses the [default-mounted filesystem](../architecture.md#storage-ownership-lifecycle); startup and
+normal USB return trigger mounting independently of opcode `4`. The test never mounts or unmounts it.
+A start request is accepted only after preflight checks succeed and storage is reserved; acceptance publishes Queued,
+after which the operation
 may advance through Preparing and execution. Before acceptance, size, ownership, card, space, existing-file, and
 file-check errors reject the start: no test run is queued, and Report `11` retains the prior test result while
 updating `self_test_request_error`. Error `11` reports that the required filesystem is not mounted; error `3` is
@@ -526,8 +528,10 @@ originating from CDC.
 
 ### MSC Force-Return Safety
 
-MSC is disabled at boot. For opcode `3`, action `1` enables MSC only when the SD card is initialized and no storage
-command or reply is outstanding. If firmware has mounted the filesystem, the storage worker unmounts it before
+MSC is disabled at boot; firmware automatically mounts configured media according to the
+[storage lifecycle](../architecture.md#storage-ownership-lifecycle). Only explicit USB enable transfers ownership;
+starting a self-test or opening a dashboard does not. For opcode `3`, action `1` enables MSC only when the SD card is
+initialized and no storage command or reply is outstanding. If firmware has mounted the filesystem, the storage worker unmounts it before
 ownership transfer. A successful unmount pauses automount before USB ownership moves to the host. An unmount failure
 rejects the request, leaves firmware ownership intact, and does not format the card. Both enable and disable requests
 are rejected while unrelated storage work or replies are outstanding. Repeating action `1` while MSC is already
@@ -537,17 +541,23 @@ operation argument. A successful ownership transition briefly disconnects USB an
 during that interval.
 
 Action `0` is the normal disable request, intended after the user safely ejects the volume through the host operating
-system. This precondition is the host application's responsibility; the device cannot verify host eject state or
-flush host-cached writes. The HID client only delivers the request and must not invoke OS eject/unmount commands.
+system. Firmware requires its SCSI eject indication (unless removal is confirmed) and rejects host removal prevention
+or failed device-side sync. These checks cannot establish host-cache durability or flush host-cached writes.
+The HID client only delivers the request and must not invoke OS eject/unmount commands.
 Action `2` is force return and requires both the report's confirmation flag and the dashboard's explicit data-loss
 warning/confirmation. It does not synthesize a successful SCSI eject. For either disable action, firmware rejects a
 busy transition or failed device-side sync before detach; in that case MSC remains enabled and host-owned.
 
-After a disable request passes pre-detach checks, the device disconnects USB before releasing SD ownership. The
-storage worker makes one initialization and mount attempt, and `msc_transition_pending` remains set until that
-attempt finishes; pending is clear in either terminal outcome. On success, MSC is disabled and firmware owns the
-mounted storage. On initialization or mount failure, MSC remains disabled, `msc_request_rejected` is set, and
-storage remains unmounted with automatic retries blocked until an explicit successful `fs mount`. No automatic
+After action `0` passes eject/sync checks, ownership returns to firmware and USB re-enumerates without MSC.
+The storage worker automatically reinitializes and remounts under the normal lifecycle policy, including paced
+retries on mount failure unless an earlier recovery block remains active. The transition flag can clear before this
+background mount completes; hosts must verify fresh mounted storage status before allowing file operations or Start.
+
+Action `2` disconnects USB before releasing SD ownership. The storage worker makes one initialization and mount
+attempt, and `msc_transition_pending` remains set until that attempt finishes; pending is clear in either terminal
+outcome. On success, MSC is disabled and firmware owns the mounted storage. On initialization or mount failure,
+MSC remains disabled, `msc_request_rejected` is set, and storage remains unmounted with automatic retries blocked
+until an explicit successful `fs mount`. No automatic
 formatting, filesystem repair, or failed-write replay is performed. A connected HID device after re-enumeration does
 not prove that the filesystem remounted; hosts wait for pending to clear, inspect rejection, and verify storage
 state. Faulted-media recovery is a separate explicit workflow and is not a clean eject.
@@ -571,7 +581,8 @@ The card is never automatically formatted or repaired.
 3. Submit all writable operations through report `20` with a fresh nonzero transaction ID. Read GET until the matching
    result is terminal. For opcode `3`, `Completed` means the transition was accepted/queued, not that ownership
    changed: after any USB re-enumeration, reopen the same authorized HID device and monitor report `10` until
-   `msc_transition_pending` clears, then inspect `msc_enabled` and `msc_request_rejected`. Do not retry an uncertain
+   `msc_transition_pending` clears, then inspect `msc_enabled` and `msc_request_rejected`. After return, also verify
+   fresh mounted filesystem status; normal-disable completion can precede background remount. Do not retry an uncertain
    non-idempotent operation.
 4. Use report `10` for storage/MSC state and, when capability bit 5 is set, report `11` for self-test progress and
    terminal status; SET acknowledgement is not operation completion. For MSC re-enumeration, reopen the same

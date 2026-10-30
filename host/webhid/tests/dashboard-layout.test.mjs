@@ -33,7 +33,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port"]);
   assert.match(html, /<details class="pin-map-disclosure">/);
   assert.match(html, /id="board-uart"[\s\S]*id="board-storage-pins"/);
-  for (const name of ["configuration", "reboot", "return"]) {
+  for (const name of ["configuration", "reboot", "return", "share"]) {
     assert.match(html, new RegExp(`<dialog class="confirmation-dialog" id="${name}-dialog"`));
   }
   assert.match(html, /id="led-control"[\s\S]*?aria-pressed="false"/);
@@ -111,6 +111,22 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     await el("#confirm-reboot").click();
     assert.deepEqual(commands[1], ["reboot", true]);
     await el("#msc-control").click();
+    assert.equal(el("#share-dialog").open, true);
+    assert.equal(commands.length, 2);
+    el("#cancel-share").click();
+    await el("#confirm-share").click();
+    assert.equal(commands.length, 2);
+    await el("#msc-control").click();
+    el("#share-dialog").keydown({ key: "Escape", preventDefault() {} });
+    await el("#confirm-share").click();
+    assert.equal(commands.length, 2);
+    await el("#msc-control").click();
+    client.update({ self_test_command_pending: true });
+    await el("#confirm-share").click();
+    assert.equal(commands.length, 2);
+    client.update({ self_test_command_pending: false });
+    await el("#msc-control").click();
+    await el("#confirm-share").click();
     assert.deepEqual(commands[2], ["msc", true, false]);
     client.update({ msc: { enabled: true, transition_pending: false } });
     await el("#msc-control").click();

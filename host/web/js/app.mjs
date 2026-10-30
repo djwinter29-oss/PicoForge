@@ -8,12 +8,15 @@ const settingsSave = document.querySelector("#settings-save");
 const configurationDialog = document.querySelector("#configuration-dialog");
 const rebootDialog = document.querySelector("#reboot-dialog");
 const returnDialog = document.querySelector("#return-dialog");
+const shareDialog = document.querySelector("#share-dialog");
 const settingsControls = ["#settings-clock", "#settings-storage"]
   .map(selector => document.querySelector(selector));
 let requestInProgress = false;
 let currentSnapshot = null;
 let selfTestPendingSequence = null;
+let selfTestRequestInProgress = false;
 let mscRequestInProgress = false;
+let mscPendingEnabled = null;
 let settingsRequestInProgress = false;
 let settingsDirty = false;
 let settingsStorageDirty = false;
@@ -36,6 +39,7 @@ function boardLabel(board) {
 
 function renderStatus(snapshot) {
   if (!snapshot.connected) {
+    shareDialog.close();
     settingsDirty = false;
     settingsStorageDirty = false;
     settingsMessage = null;
@@ -47,6 +51,7 @@ function renderStatus(snapshot) {
     settings_dirty: settingsDirty,
     settings_storage_dirty: settingsStorageDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
+    msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
   });
 }
 
@@ -61,8 +66,14 @@ async function updateStatus() {
     if (version !== selectionVersion) return;
     if (mscRequestInProgress) return;
     currentSnapshot = snapshot;
+    if (currentSnapshot.connected && currentSnapshot.msc && !currentSnapshot.msc.transition_pending
+      && (currentSnapshot.msc.enabled === mscPendingEnabled || currentSnapshot.msc.request_rejected)) {
+      mscPendingEnabled = null;
+    }
     currentSnapshot.error = mscError ?? currentSnapshot.error;
-    if (currentSnapshot.self_test?.sequence !== selfTestPendingSequence) selfTestPendingSequence = null;
+    if (!selfTestRequestInProgress && currentSnapshot.self_test?.sequence !== selfTestPendingSequence) {
+      selfTestPendingSequence = null;
+    }
     currentSnapshot.self_test_command_pending = selfTestPendingSequence !== null;
     renderStatus(currentSnapshot);
   } catch (error) {
@@ -76,7 +87,8 @@ async function updateStatus() {
     rescanBoardsButton.disabled = scanningBoards;
     ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
     mscControl.disabled = mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
-      || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
+      || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
+      || Boolean(currentSnapshot.self_test?.active)
       || selfTestPendingSequence !== null
       || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
     if (version !== selectionVersion) void updateStatus();
@@ -89,6 +101,7 @@ function selectBoard(boardId) {
   configurationDialog.close();
   rebootDialog.close();
   returnDialog.close();
+  shareDialog.close();
   selectedBoard = nextBoard;
   const selected = knownBoards.find(board => board.id === selectedBoard);
   selectedBoardLabel = selected ? boardLabel(selected) : selectedBoardLabel;
@@ -98,6 +111,7 @@ function selectBoard(boardId) {
   settingsStorageDirty = false;
   settingsMessage = null;
   selfTestPendingSequence = null;
+  mscPendingEnabled = null;
   renderStatus({ connected: false });
   void updateStatus();
 }
@@ -141,6 +155,7 @@ async function rescanBoards() {
       settingsDirty = false;
       settingsStorageDirty = false;
       selfTestPendingSequence = null;
+      mscPendingEnabled = null;
       renderStatus({ connected: false });
     }
     await updateStatus();
@@ -154,24 +169,34 @@ async function rescanBoards() {
   }
 }
 
-async function setMsc(confirmReturn = false) {
+async function setMsc(confirmReturn = false, confirmShare = false) {
+  if (confirmShare) {
+    if (!shareDialog.open) return;
+    shareDialog.close();
+  }
   if (confirmReturn) {
     if (!returnDialog.open) return;
     returnDialog.close();
   }
-  if (!currentSnapshot?.msc || mscRequestInProgress || settingsRequestInProgress) return;
+  if (!currentSnapshot?.msc || mscRequestInProgress || mscPendingEnabled !== null
+    || settingsRequestInProgress) return;
   const force = currentSnapshot.msc.enabled;
   if (currentSnapshot.msc.transition_pending || currentSnapshot.self_test?.active
-      || selfTestPendingSequence !== null || (confirmReturn && !force)) return;
+      || selfTestPendingSequence !== null || (confirmReturn && !force) || (confirmShare && force)) return;
   if (force) {
     if (!currentSnapshot.msc.force_return_supported) return;
     if (!confirmReturn) {
       returnDialog.showModal();
       return;
     }
+  } else if (!confirmShare) {
+    shareDialog.showModal();
+    return;
   }
   mscRequestInProgress = true;
+  mscPendingEnabled = !force;
   mscError = null;
+  renderStatus(currentSnapshot);
   mscControl.disabled = true;
   document.querySelector("#msc-note").textContent = force ? "Detaching USB drive on Pico and attempting remount..."
     : "Preparing storage for USB...";
@@ -192,6 +217,7 @@ async function setMsc(confirmReturn = false) {
       renderStatus(currentSnapshot);
     }
   } catch (error) {
+    mscPendingEnabled = null;
     mscError = error.message;
     if (currentSnapshot) {
       currentSnapshot.error = mscError;
@@ -199,8 +225,10 @@ async function setMsc(confirmReturn = false) {
     }
   } finally {
     mscRequestInProgress = false;
+    if (currentSnapshot) renderStatus(currentSnapshot);
     mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
-      || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
+      || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
+      || Boolean(currentSnapshot.self_test?.active)
       || selfTestPendingSequence !== null
       || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
   }
@@ -318,7 +346,10 @@ async function rebootDevice() {
 }
 
 async function selfTest(action) {
-  if (!currentSnapshot?.connected || settingsRequestInProgress) return;
+  if (!currentSnapshot?.connected || settingsRequestInProgress || selfTestRequestInProgress
+    || selfTestPendingSequence !== null) return;
+  const version = selectionVersion;
+  selfTestRequestInProgress = true;
   selfTestPendingSequence = currentSnapshot.self_test?.sequence ?? 0;
   currentSnapshot.self_test_command_pending = true;
   renderStatus(currentSnapshot);
@@ -328,13 +359,18 @@ async function selfTest(action) {
       body: JSON.stringify({ action, size_mib: document.querySelector("#self-test-size").valueAsNumber }),
     });
     if (!response.ok) throw new Error(`Self-test endpoint returned HTTP ${response.status}`);
+    if (version !== selectionVersion) return;
+    selfTestPendingSequence = currentSnapshot?.self_test?.sequence ?? selfTestPendingSequence;
   } catch (error) {
+    if (version !== selectionVersion) return;
     selfTestPendingSequence = null;
     if (currentSnapshot) {
       currentSnapshot.self_test_command_pending = false;
       currentSnapshot.error = error.message;
       renderStatus(currentSnapshot);
     }
+  } finally {
+    selfTestRequestInProgress = false;
   }
 }
 document.querySelector("#self-test-start").addEventListener("click", () => selfTest("start"));
@@ -360,8 +396,10 @@ document.querySelector("#reboot-control").addEventListener("click", () => {
 document.querySelector("#cancel-configuration").addEventListener("click", () => configurationDialog.close());
 document.querySelector("#cancel-reboot").addEventListener("click", () => rebootDialog.close());
 document.querySelector("#cancel-return").addEventListener("click", () => returnDialog.close());
+document.querySelector("#cancel-share").addEventListener("click", () => shareDialog.close());
+document.querySelector("#confirm-share").addEventListener("click", () => setMsc(false, true));
 document.querySelector("#confirm-return").addEventListener("click", () => setMsc(true));
-for (const dialog of [configurationDialog, rebootDialog, returnDialog]) {
+for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) {
   dialog.addEventListener("keydown", event => {
     if (event.key === "Escape") {
       event.preventDefault();

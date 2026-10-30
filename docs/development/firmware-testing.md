@@ -84,3 +84,36 @@ breakout, wiring, and exact firmware image. Follow the [hardware setup guide](..
 [transport and qualification notes](../design/sdcard/sdcard-driver-design.md), and the specific procedure for the behavior
 under test. Record partial runs as partial; passing tests do not imply sustained card integrity, safe power-loss
 recovery, or full MSC host compatibility.
+
+### Storage Lifecycle Board Checks
+
+This is the hardware acceptance procedure for the
+[default-mounted storage design](../design/architecture.md#storage-ownership-lifecycle), not a record of passing tests.
+Use backed-up or expendable FAT/exFAT media and record the board, card, transport, firmware image, host OS, and client.
+Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS pass does not qualify the others.
+
+1. Boot with a valid card and no dashboard/CDC session. Connect afterward and verify fresh `mounted` storage status
+   without sending `fs mount` or Start. Read an existing file, then create/read/delete a disposable file via CDC.
+2. Start one small self-test from mounted idle status. Verify that the first click runs write/verify/cleanup rather
+   than only mounting, and that storage remains mounted afterward. Record command-acceptance delay separately from
+   write/read timing; free-space scanning is outside the measured transfer phases.
+3. Enable USB sharing directly from mounted idle status without manual unmount. Verify worker unmount precedes host
+   block access, the host can use the card, and firmware file access/self-test are refused throughout host ownership.
+   Check rejection while a storage command or self-test is outstanding; do not interrupt live card writes.
+4. Safely eject through the host OS, then use normal disable (opcode `3`, action `0`) and verify automatic remount
+   without Start or `fs mount`. Read a disposable file changed by the host to check that stale filesystem state
+   was discarded. Do not treat HID reconnection or transition completion as mounted readiness.
+5. Separately test the dashboard's confirmed force-return action using expendable media with host writes stopped.
+   Verify its one-attempt remount result and failure block; it is not a substitute for the normal safe-return check.
+   Cancel its dialog and verify no command is sent.
+6. Boot without a card and with unsupported/unmountable expendable media. Verify USB management remains responsive,
+   unavailable/error status is explicit, Start remains disabled, and no formatting occurs. Check paced retries and,
+   where card detect is wired, insertion/removal while idle. Never remove media during a write.
+7. Explicitly unmount and verify idle polling does not immediately remount. Verify a deliberate mount or normal
+   ownership-return event restores normal use. Exercise fault recovery only with an appropriate fault fixture;
+   confirm it remains unmounted for inspection and does not replay failed writes or clear its recovery block on
+   insertion/normal return.
+
+Record preparation/status visibility gaps separately from storage correctness. Richer mounting/checking UI labels
+remain a design requirement until implemented and tested; existing wire states must not be reinterpreted to fake
+those phases. Host mocks cannot establish real flush/eject behavior or filesystem integrity after forced return.

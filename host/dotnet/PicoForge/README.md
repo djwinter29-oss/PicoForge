@@ -13,3 +13,11 @@ detach/remount without any host OS eject command. See the
 one-attempt remount policy and host-cache risks. The legacy safe-disable API remains available for manual-eject clients.
 If a HID write times out or its result cannot be matched, the dashboard marks the command outcome uncertain and blocks
 further writes rather than replaying or overwriting the result.
+**Enable USB drive** also opens a storage-handoff confirmation dialog; Cancel or Escape sends no command.
+
+The [storage lifecycle](../../../docs/design/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
+startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
+USB sharing temporarily grants the host exclusive access; firmware file operations and self-test are unavailable.
+Wait for fresh mounted status after return, not merely HID reconnection. Start uses the existing mount and checks
+free space before accepting temporary writes; that scan can delay progress, but is not a mount-only action.
+Wait for its command result rather than clicking again. Self-test cleanup leaves the filesystem mounted.

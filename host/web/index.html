@@ -186,6 +186,20 @@
       </div>
     </dialog>
 
+    <dialog class="confirmation-dialog" id="share-dialog" aria-labelledby="share-dialog-title"
+      aria-describedby="share-warning">
+      <h2 id="share-dialog-title">Enable USB drive?</h2>
+      <p class="configuration-warning" id="share-warning">
+        Pico will unmount its filesystem and give your computer exclusive access to the SD card.
+        USB briefly reconnects. Self-test and Save and Reboot are unavailable while the drive is shared.
+        Safely eject the drive on your computer before returning storage to Pico.
+      </p>
+      <div class="dialog-actions">
+        <button class="button button-cancel" id="cancel-share" type="button" autofocus>Cancel</button>
+        <button class="button" id="confirm-share" type="button">Enable USB drive</button>
+      </div>
+    </dialog>
+
     <dialog class="confirmation-dialog" id="return-dialog" aria-labelledby="return-dialog-title"
       aria-describedby="return-warning">
       <h2 id="return-dialog-title">Return storage to Pico?</h2>

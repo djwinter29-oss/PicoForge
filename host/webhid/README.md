@@ -63,12 +63,19 @@ Storage shows the actual selected timing and effective bus clock.
 USB ownership transitions briefly re-enumerate. The WebHID API does not expose the USB serial string, so the
 dashboard identifies a reconnect candidate by reading Feature 1 and matching its stable device UID before
 resuming; it does not replay the prior command. **Return to Pico** is explicitly confirmed force return, not an OS eject.
+**Enable USB drive** first opens a matching storage-handoff dialog explaining exclusive host access and safe eject;
+Cancel or Escape sends no command, and confirmation rechecks the current safety gates.
 Stop host file activity and safely eject whenever possible first. See the
 [force-return risks](../../docs/design/usb/usb-hid-report-reference.md#msc-force-return-safety).
 The card is not automatically formatted or repaired, and reconnect does not prove successful remount.
 
+Firmware mounts at startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal
+safe USB return; see the [storage lifecycle](../../docs/design/architecture.md#storage-ownership-lifecycle).
+Sharing transfers exclusive access to the host; neither firmware files nor self-test are available then.
 The optional self-test requires fresh, known self-test status and an already-mounted filesystem.
-Start authorizes temporary `/PFTEST.BIN` writes; an existing file is rejected, never replaced.
+Start authorizes temporary `/PFTEST.BIN` writes, not mounting; an existing file is rejected, never replaced.
+Preflight free-space scanning can delay acceptance before progress appears. Wait for the matching command result
+instead of clicking Start again. Cleanup leaves the filesystem mounted.
 
 ## Checks
 

@@ -227,29 +227,66 @@ selection. Neither platform storage service depends on application headers.
 
 ### Storage Ownership Lifecycle
 
-This is the product-level lifecycle; worker admission and operation completion details are in
-[Storage Worker State](#storage-worker-state), and transition rules are in the
-[SD-card ownership workflow](sdcard/sdcard-driver-design.md#ownership-workflow).
+This section owns the product's default-mounted storage policy. Worker admission and operation completion details
+are in [Storage Worker State](#storage-worker-state); the
+[HID report reference](usb/usb-hid-report-reference.md#msc-force-return-safety) owns USB command semantics.
+
+- **Startup:** MSC is disabled. The storage worker asynchronously initializes the configured card and mounts its
+  existing FAT/exFAT filesystem without requiring a dashboard connection, CDC session, or self-test click.
+  Startup does not wait for a usable card; absent, unsupported, or damaged media must not block USB management.
+- **Firmware use:** keep the filesystem mounted and ready for serialized reads/writes whenever firmware owns healthy
+  media. Self-test operates on this existing mount, checks the reserved path and free space, then writes and verifies
+  its temporary file. It never mounts or unmounts; cleanup leaves the filesystem mounted.
+- **USB sharing:** only an explicit user request exports the card. Finish storage work and close/sync files before
+  the worker unmounts; transfer exclusive ownership only after successful unmount. Reject conflicting work as busy
+  rather than interrupting it. Firmware file access is unavailable while the USB host owns the card.
+- **Safe return:** after host safe eject and normal MSC disable, release USB ownership, discard host-invalidated
+  filesystem state, reinitialize, and automatically remount. No second user action or self-test click is required.
+  USB reconnection or cleared transition flags alone do not establish mounted readiness.
+- **Mount failure or insertion:** startup, insertion, and normal-return mount failures remain visible and retry at
+  the existing five-second interval after each failed attempt completes. With board-provided card detect, debounce
+  presence before acting. Never format, repair, or replay a failed write automatically.
+
+Explicit maintenance is an exception to the default: `fs unmount` suppresses automatic mounting until an insertion
+or normal USB return; `fs mount` permits deliberate manual mounting. Faulted-MSC recovery and failed forced return
+leave automatic mounting blocked for inspection until an explicit successful mount. These runtime-only safeguards
+are not persistent boot settings. A safe return does not clear an existing fault-recovery block.
+
+The UI design should distinguish mounting/unavailable storage from a usable mounted filesystem, and enable Start
+only after fresh mounted-state telemetry and idle firmware ownership. One **Start self-test** action must start the
+test after preflight, not perform a mount-only step. Free-space scanning can take time before acceptance, so the UI
+should show a pending/checking indication rather than imply that mounting is underway.
+The current protocol has no distinct mounting or free-space-checking state: use pending transaction and storage
+status without assigning new wire enums. Richer UI labels are a design requirement, not a claim that every dashboard
+already displays them. Current dashboard **Return to Pico** uses confirmed force return; it is not host safe eject.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> FirmwareOwned: boot / MSC disabled
-    FirmwareOwned --> FirmwareOwned: mount, commands, self-test
+    [*] --> Mounting: boot / MSC disabled
+    Mounting --> FirmwareOwned: initialization and mount succeed
+    Mounting --> FirmwareUnavailable: card absent or initialization/mount fails
+    FirmwareOwned --> FirmwareOwned: commands, self-test / keep mounted
+    FirmwareOwned --> FirmwareUnmounted: explicit fs unmount
+    FirmwareUnmounted --> Mounting: explicit fs mount or card insertion
+    FirmwareUnmounted --> ToHost: admitted MSC enable
     FirmwareOwned --> ToHost: admitted MSC enable / worker unmount
     ToHost --> HostOwned: USB re-enumerates with MSC
-    ToHost --> FirmwareOwned: acquisition rejected before ownership transfer
+    ToHost --> FirmwareOwned: unmount rejected / existing mount retained
+    ToHost --> FirmwareUnmounted: acquisition rejected after unmount
     HostOwned --> ToFirmware: safe-eject then normal disable
-    HostOwned --> ToFirmware: confirmed force return
+    HostOwned --> ForcedReturn: confirmed unsafe force return
     HostOwned --> FaultedHostOwned: card/media I/O fault
     FaultedHostOwned --> Recovering: confirmed fault recovery / USB detached
-    ToFirmware --> Recovering: ownership returned / reinitialize
-    Recovering --> FirmwareOwned: initialization and one permitted mount succeed
-    Recovering --> FirmwareUnavailable: initialization or mount fails
-    FirmwareUnavailable --> Recovering: explicit recovery or mount retry
-    FirmwareUnavailable --> FirmwareOwned: card insertion / lifecycle retry succeeds
+    ToFirmware --> Mounting: ownership returned / automatic reinitialize and remount
+    ForcedReturn --> FirmwareOwned: single mount attempt succeeds
+    ForcedReturn --> FirmwareBlocked: single mount attempt fails
+    Recovering --> FirmwareBlocked: initialization only / no automatic mount
+    FirmwareBlocked --> FirmwareOwned: explicit fs mount succeeds
+    FirmwareUnavailable --> Mounting: paced retry or card insertion
 ```
 
-The diagram shows ownership and recovery, not every request state. Worker admission remains held through file cleanup,
+The diagram shows ownership and mount policy, not every request state; normal return retains a pre-existing recovery
+block even though that exceptional path is omitted. Worker admission remains held through file cleanup,
 command reply draining, and the relevant ownership transition. A failed force-return mount leaves firmware owning the
 card but the volume unmounted; it must not be interpreted as a successful return to a usable filesystem. Fault recovery
 is distinct: it detaches faulted host-owned media and reinitializes without claiming a clean eject or automatically

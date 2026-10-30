@@ -31,6 +31,8 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   let saveFails = false;
   let readbackMismatch = false;
   let rebootFails = false;
+  let selfTestSucceeds = false;
+  let mscSucceeds = false;
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
   globalThis.document = {
     querySelector: element,
@@ -71,6 +73,14 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       assert.deepEqual(JSON.parse(options.body), { confirm_data_loss: true });
       return { ok: true, json: async () => ({ msc: { enabled: false } }) };
     }
+    if (url.startsWith("/api/self-test") && selfTestSucceeds) {
+      await gate;
+      return { ok: true, status: 202 };
+    }
+    if (url.startsWith("/api/msc?") && mscSucceeds) {
+      await gate;
+      return { ok: true, json: async () => ({ msc: { enabled: false, transition_pending: true } }) };
+    }
     await gate;
     return { ok: false, status: 503, json: async () => ({ error: "HID command delivery failed" }) };
   };
@@ -83,6 +93,127 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#connection-label").textContent, "Connected");
     assert.equal(elements.get("#settings-note").textContent, "");
     assert.equal(elements.get("#settings-note").hidden, true);
+    for (const testState of [
+      { self_test: { active: true, state: "writing" } },
+      { self_test_command_pending: true },
+    ]) {
+      renderStatus({ ...connected, ...testState });
+      assert.equal(elements.get("#settings-note").textContent, "");
+      assert.equal(elements.get("#settings-note").hidden, true);
+      for (const selector of ["#settings-clock", "#settings-storage", "#settings-save", "#reboot-control"]) {
+        assert.equal(elements.get(selector).disabled, true);
+      }
+      renderStatus({ ...connected, ...testState, settings_dirty: true });
+      assert.equal(elements.get("#settings-save").disabled, true);
+      assert.equal(elements.get("#settings-note").textContent, "");
+      assert.equal(elements.get("#settings-note").hidden, true);
+      renderStatus({ ...connected, ...testState, settings_message: "Save failed: device busy" });
+      assert.equal(elements.get("#settings-note").textContent, "Save failed: device busy");
+      assert.equal(elements.get("#settings-note").hidden, false);
+    }
+    renderStatus(connected);
+    assert.equal(elements.get("#settings-clock").disabled, false);
+    assert.equal(elements.get("#settings-storage").disabled, false);
+    assert.equal(Boolean(elements.get("#reboot-control").disabled), false);
+    renderStatus({ ...connected, settings_dirty: true });
+    assert.equal(elements.get("#settings-save").disabled, false);
+    assert.equal(elements.get("#settings-note").textContent, "");
+    assert.equal(elements.get("#settings-note").hidden, true);
+    selfTestSucceeds = true;
+    connected.filesystem_format = "exfat";
+    connected.memory = { initialized: true };
+    connected.self_test = { sequence: 254, active: false, state: "idle" };
+    await tick();
+    const gatedControls = ["#self-test-start", "#self-test-size", "#settings-clock",
+      "#settings-storage", "#settings-save", "#reboot-control", "#msc-control"];
+    assert.equal(elements.get("#self-test-start").disabled, false);
+    gate = new Promise(resolve => { release = resolve; });
+    const starting = handlers.get("#self-test-start:click")();
+    for (const sequence of [255, 0, 1]) {
+      connected.self_test.sequence = sequence;
+      await tick();
+      for (const selector of gatedControls) {
+        assert.equal(elements.get(selector).disabled, true, `${selector} must stay disabled during Start delivery`);
+      }
+    }
+    const startsSent = requestedUrls.filter(url => url.startsWith("/api/self-test")).length;
+    await handlers.get("#self-test-start:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, startsSent);
+    release();
+    await starting;
+    await tick();
+    assert.equal(elements.get("#self-test-start").disabled, true, "wait for a newer report after delivery");
+    connected.self_test = { sequence: 2, active: true, state: "writing" };
+    await tick();
+    for (const selector of gatedControls) {
+      assert.equal(elements.get(selector).disabled, true, `${selector} must stay disabled during execution`);
+    }
+    assert.equal(elements.get("#self-test-cancel").disabled, false);
+    connected.self_test = { sequence: 3, active: false, state: "passed" };
+    await tick();
+    assert.equal(elements.get("#self-test-start").disabled, false);
+    assert.equal(elements.get("#settings-clock").disabled, false);
+    assert.equal(elements.get("#reboot-control").disabled, false);
+    mscSucceeds = true;
+    for (const rejected of [true, false]) {
+      connected.msc = { enabled: false, transition_pending: false };
+      await tick();
+      const benchmark = elements.get('[aria-labelledby="self-test-title"]');
+      assert.equal(Boolean(benchmark.hidden), false);
+      gate = new Promise(resolve => { release = resolve; });
+      const beforeShare = requestedUrls.length;
+      await handlers.get("#msc-control:click")();
+      assert.equal(elements.get("#share-dialog").open, true);
+      assert.equal(requestedUrls.length, beforeShare);
+      assert.equal(Boolean(benchmark.hidden), false);
+      handlers.get("#cancel-share:click")();
+      await handlers.get("#confirm-share:click")();
+      assert.equal(requestedUrls.length, beforeShare);
+      await handlers.get("#msc-control:click")();
+      handlers.get("#share-dialog:keydown")({ key: "Escape", preventDefault() {} });
+      await handlers.get("#confirm-share:click")();
+      assert.equal(requestedUrls.length, beforeShare);
+      await handlers.get("#msc-control:click")();
+      connected.self_test.active = true;
+      await tick();
+      await handlers.get("#confirm-share:click")();
+      assert.equal(requestedUrls.length, beforeShare + 1, "only status polling, no USB command");
+      connected.self_test.active = false;
+      await tick();
+      await handlers.get("#msc-control:click")();
+      const sharing = handlers.get("#confirm-share:click")();
+      assert.equal(benchmark.hidden, true, "hide benchmark immediately on USB enable");
+      release();
+      await sharing;
+      for (const snapshot of [
+        { connected: false, msc: null },
+        { connected: true, msc: { enabled: false, transition_pending: false } },
+        { connected: true, msc: { enabled: true, transition_pending: true } },
+      ]) {
+        Object.assign(connected, snapshot);
+        await tick();
+        assert.equal(benchmark.hidden, true, "intermediate status must not restore benchmark");
+        assert.equal(elements.get("#msc-control").disabled, true);
+        assert.equal(elements.get("#self-test-start").disabled, true);
+      }
+      connected.msc = { enabled: !rejected, transition_pending: false, request_rejected: rejected };
+      await tick();
+      assert.equal(benchmark.hidden, !rejected);
+      if (!rejected) {
+        connected.msc.force_return_supported = true;
+        await handlers.get("#msc-control:click")();
+        await handlers.get("#confirm-return:click")();
+        assert.equal(benchmark.hidden, true, "return must wait for ownership telemetry");
+        connected.msc = { enabled: false, transition_pending: false };
+        await tick();
+        assert.equal(Boolean(benchmark.hidden), false);
+      }
+    }
+    mscSucceeds = false;
+    selfTestSucceeds = false;
+    connected.memory = { mode: "spi" };
+    connected.self_test = null;
+    delete connected.filesystem_format;
     renderStatus({ ...connected, memory: { configured: true, sample_valid: false, initialized: false } });
     assert.equal(elements.get("#memory-state").textContent, "Busy");
     assert.equal(elements.get("#memory-note").textContent, "");
@@ -222,7 +353,11 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       statusFails = false;
       tick();
       await new Promise(resolve => setImmediate(resolve));
-      const pending = handlers.get(name)?.();
+      let pending = handlers.get(name)?.();
+      if (name === "#msc-control:click") {
+        await pending;
+        pending = handlers.get("#confirm-share:click")();
+      }
       statusFails = true;
       tick();
       await new Promise(resolve => setImmediate(resolve));

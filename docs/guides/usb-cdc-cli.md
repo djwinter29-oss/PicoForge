@@ -43,8 +43,8 @@ CR, LF, and CRLF are accepted.
 | `echo <text>` | Echo text for non-destructive transport checks. |
 | `storage status` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
 | `storage recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
-| `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
-| `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
+| `fs mount` | Manually initialize/mount the existing FAT/exFAT volume after inspection or explicit unmount; normally startup/return mounting is automatic. Never format. |
+| `fs unmount` | Explicit maintenance unmount; suppress automatic mounting until insertion or normal MSC return. USB enable also unmounts automatically. |
 | `fs format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
 | `fs stat <path>` | Show size, attributes, and filesystem timestamps. |
@@ -70,9 +70,11 @@ Long directory names are clipped in listings.
 storage operation held the media at the time of the snapshot. Card identity and backend details are exposed only
 through the HID dashboard.
 Every `fs` command is refused
-until the host safely ejects and disables MSC. The storage worker automatically
-attempts to mount detected cards at boot, after insertion, and after MSC returns
-ownership. Failed attempts are retried five seconds after each attempt finishes.
+until the host safely ejects and disables MSC. Follow the authoritative
+[default-mounted storage lifecycle](../design/architecture.md#storage-ownership-lifecycle):
+mounting happens at startup, after insertion, and after normal MSC return, not on a self-test click or CDC connection.
+Wait for `mounted` status before reading/writing; `ready` means initialized but unmounted.
+Normal mount failures are retried five seconds after each attempt finishes, except when recovery blocks retries.
 Enabling MSC from the dashboard automatically queues `fs` volume unregistration on the sole storage worker;
 manual `fs unmount` is optional. A successful unmount pauses
 automatic mounting until the next insertion or return from MSC. `fs mount`
@@ -195,7 +197,7 @@ only the USB task calls CLI print APIs. Replies carry a session ID so old output
 does not leak into a newly opened terminal. Backpressure suspends the worker,
 not the USB task. Disconnect cancellation releases read-only output backpressure;
 accepted mutations are not abandoned midway. MSC transitions are rejected while
-the worker is busy and enabling is rejected while FatFs is mounted. New application
+the worker is busy; enabling from a mounted filesystem queues worker unmount before ownership transfer. New application
 filesystem clients must also be routed through this worker, not a second task.
 
 ## Validation
@@ -220,9 +222,9 @@ fresh prompt, and check that HID reports continue during commands. Stop reading
 CDC briefly, resume, and confirm output arrives without a board reset. No
 formatting or card writes are needed for the read-only check. Verify the storage
 commands first using an existing file and `fs unmount`; only test mutations on a
-disposable file after backing up the card. Verify that MSC enable is rejected
-while mounted or busy and allowed after unmount; after host eject/disable, confirm
-that `fs mount` works again. Do not reset while a filesystem command is in progress.
+disposable file after backing up the card. Follow the
+[storage lifecycle board checks](../development/firmware-testing.md#storage-lifecycle-board-checks) for startup mounting,
+automatic USB handoff/remount, busy rejection, and failure cases. Do not reset while a filesystem command is in progress.
 ### Stalled output
 
 USB tracks successful transfers from the CLI ring to TinyUSB. After five seconds with buffered output and no

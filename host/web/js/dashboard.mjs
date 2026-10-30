@@ -48,7 +48,7 @@ export function renderStatus(snapshot) {
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   const memory = snapshot.storage_stale ? null : snapshot.memory;
   const cardAbsent = memory?.presence_known === true && memory.present === false;
-  const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending;
+  const storageShared = snapshot.msc_command_pending || snapshot.msc?.enabled || snapshot.msc?.transition_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
   document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared;
   const board = snapshot.board_status;
@@ -64,7 +64,7 @@ export function renderStatus(snapshot) {
   const msc = snapshot.msc;
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  mscControl.disabled = snapshot.settings_busy || !connected || !msc || Boolean(msc.transition_pending)
+  mscControl.disabled = snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
     || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
     || Boolean(msc?.enabled && !msc.force_return_supported);
   document.querySelector("#msc-note").textContent = msc?.enabled && !msc.force_return_supported
@@ -93,7 +93,7 @@ function renderSettings(snapshot) {
   const settings = snapshot.settings;
   const supported = Boolean(snapshot.connected && snapshot.settings_supported && settings);
   const msc = snapshot.msc;
-  const storageBusy = !msc || msc.enabled || msc.transition_pending
+  const storageBusy = snapshot.msc_command_pending || !msc || msc.enabled || msc.transition_pending
     || snapshot.self_test?.active || snapshot.self_test_command_pending;
   const ready = supported && !storageBusy;
   const storageControl = document.querySelector("#settings-storage");
@@ -113,16 +113,13 @@ function renderSettings(snapshot) {
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
     || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
     || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
-    || snapshot.self_test_command_pending;
+    || snapshot.self_test_command_pending || snapshot.msc_command_pending;
   document.querySelector("#settings-note").textContent = snapshot.settings_message
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
         : !msc ? "Waiting for storage ownership status."
           : msc.enabled || msc.transition_pending ? "Disable the USB drive before saving settings."
-            : snapshot.self_test?.active || snapshot.self_test_command_pending
-              ? "Wait for the storage test to finish before saving settings."
-              : snapshot.settings_dirty ? "Unsaved changes."
-                : "");
+            : "");
   document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
 }
 
@@ -288,7 +285,8 @@ export function renderSelfTest(snapshot) {
   const size = document.querySelector("#self-test-size");
   const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 1024;
   document.querySelector("#self-test-start").disabled = !ready || status.active || pending || Boolean(snapshot.busy)
-    || !validSize || Boolean(snapshot.msc?.transition_pending);
-  document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup" || pending || Boolean(snapshot.busy);
-  size.disabled = !snapshot.connected || Boolean(status?.active) || pending;
+    || !validSize || Boolean(snapshot.msc?.transition_pending) || Boolean(snapshot.msc_command_pending);
+  document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup"
+    || pending || Boolean(snapshot.busy) || Boolean(snapshot.msc_command_pending);
+  size.disabled = !snapshot.connected || Boolean(status?.active) || pending || Boolean(snapshot.msc_command_pending);
 }

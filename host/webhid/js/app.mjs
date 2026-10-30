@@ -12,6 +12,7 @@ const settingsStorage = element("settings-storage");
 const configurationDialog = element("configuration-dialog");
 const rebootDialog = element("reboot-dialog");
 const returnDialog = element("return-dialog");
+const shareDialog = element("share-dialog");
 let settingsDirty = false;
 const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
 
@@ -19,7 +20,7 @@ function render(state) {
   renderStatus(state);
   if (!state.connected) {
     settingsDirty = false;
-    for (const dialog of [configurationDialog, rebootDialog, returnDialog]) dialog.close();
+    for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
   }
   if (!settingsDirty && state.settings) {
     settingsClock.value = String(state.settings.system_clock_mhz);
@@ -71,7 +72,7 @@ mscControl.addEventListener("click", () => run(async () => {
   if (mscControl.disabled) return;
   const enabled = client.state.msc?.enabled;
   if (enabled) returnDialog.showModal();
-  else await client.setMsc(true, false);
+  else shareDialog.showModal();
 }));
 element("self-test-start").addEventListener("click", () => run(() =>
   client.setSelfTest("start", element("self-test-size").valueAsNumber)));
@@ -116,8 +117,13 @@ element("confirm-return").addEventListener("click", () => run(async () => {
   returnDialog.close();
   if (!mscControl.disabled && client.state.msc?.enabled) await client.setMsc(false, true);
 }));
+element("confirm-share").addEventListener("click", () => run(async () => {
+  if (!shareDialog.open) return;
+  shareDialog.close();
+  if (!mscControl.disabled && !client.state.msc?.enabled) await client.setMsc(true, false);
+}));
 for (const [name, dialog] of [["configuration", configurationDialog], ["reboot", rebootDialog],
-  ["return", returnDialog]]) {
+  ["return", returnDialog], ["share", shareDialog]]) {
   element(`cancel-${name}`).addEventListener("click", () => dialog.close());
   dialog.addEventListener("keydown", event => {
     if (event.key === "Escape") {
