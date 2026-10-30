@@ -31,12 +31,13 @@ const wirelessForm = bindWirelessForm({
   load: async () => decodeWireless(await client.device.receiveFeatureReport(30)),
   save: settings => saveWireless(client, settings),
 });
-let wirelessLoaded = false;
+let wirelessLoadedAt = 0;
 
 function render(state) {
   renderStatus(state);
   if (!state.connected) {
-    wirelessLoaded = false;
+    wirelessLoadedAt = 0;
+    wirelessForm.reset();
     settingsDirty = false;
     for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
   }
@@ -84,9 +85,9 @@ function render(state) {
         : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
   element("msc-note").hidden = !element("msc-note").textContent;
   wirelessForm.update();
-  if (!wirelessLoaded && state.connected && storageReady && !state.busy && !bluetooth &&
+  if (Date.now() - wirelessLoadedAt >= 2000 && state.connected && storageReady && !state.busy && !bluetooth &&
     (state.hardware?.capabilities & 128)) {
-    wirelessLoaded = true;
+    wirelessLoadedAt = Date.now();
     void wirelessForm.load();
   }
 }

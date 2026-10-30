@@ -243,7 +243,8 @@ class PicoForgeHid:
         command = build_wireless_configuration_report(settings, self._next_transaction_id())
         if self._command_uncertain:
             raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
-        if self.read_wireless()["status"] in ("pending", "busy"):
+        previous = self.read_wireless()
+        if previous["status"] in ("pending", "busy"):
             raise RuntimeError("Wireless provisioning is busy")
         self._command_uncertain = True
         try:
@@ -254,6 +255,15 @@ class PicoForgeHid:
                 result = self.read_wireless()
                 if result["transaction_id"] == command[2] and result["status"] != "pending":
                     if result["status"] == "completed":
+                        expected = {
+                            "wifi_enabled": bool(command[3] & 1),
+                            "ble_enabled": bool(command[3] & 2),
+                            "ssid": command[5:38].split(b"\0", 1)[0].decode("utf-8"),
+                            "password_configured": previous["password_configured"] if command[4] & 1 else True,
+                            "ble_key_configured": previous["ble_key_configured"] if command[4] & 2 else True,
+                        }
+                        if any(result[key] != value for key, value in expected.items()):
+                            raise RuntimeError("Wireless saved configuration was not confirmed; outcome is uncertain")
                         self._command_uncertain = False
                         return result
                     if result["status"] in ("invalid", "unsupported", "busy", "failed"):

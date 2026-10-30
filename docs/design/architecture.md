@@ -56,6 +56,10 @@ before accepting a run; existing files are left untouched. See the
 [performance-test safeguards](../guides/sdcard-performance-test.md#running). Browser, Python, and
 .NET dashboards expose the controls and calculate average read/write metrics.
 
+W-board images also provide optional [Wi-Fi and BLE](wireless.md), default off. SDK poll-mode radio work runs on the
+USB owner task; authenticated BLE LED/benchmark commands reuse existing admission with separate result slots.
+USB-only credential provisioning and existing storage ownership rules remain in force.
+
 ## Core and Runtime Policy
 
 Before starting the scheduler, USB startup disconnects for 250 ms using the SDK busy wait, then reconnects.
@@ -69,7 +73,9 @@ starts on core 0; applications must not launch a second independent core entry p
  tasks use the kernel's all-core affinity default and may migrate. Idle tasks are pinned to their corresponding
 physical cores (`configIDLE_AFFINITY=1`) so idle-runtime CPU telemetry remains per-core. Different priorities may execute
 simultaneously. Affinity capability remains enabled for Pico SDK boot-flash-safe execution, which temporarily uses a
-core-specific lockout task; application tasks are not pinned. Task/ISR kernel critical sections exclude both cores,
+core-specific lockout task. With an enabled W-board radio, the USB/radio owner task is pinned to its startup core
+because SDK poll contexts and CYW43 IRQ setup require it; other application tasks are not pinned.
+Task/ISR kernel critical sections exclude both cores,
 while existing media reservations serialize physical storage operations. FatFs retains one executor.
 SMP schedules tasks, not arbitrary hardware resources: board setup and IRQ installation still occur before scheduler
 startup, and IRQ routing stays on its initialization core. Peripheral ownership remains explicit rather than being

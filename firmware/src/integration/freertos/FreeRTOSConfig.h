@@ -26,7 +26,7 @@ uint64_t time_us_64(void);
 #define configUSE_TIME_SLICING 1
 
 #define configNUMBER_OF_CORES 2
-/* SDK flash-safe execution needs affinity support; application tasks keep the all-core default. */
+/* SDK flash-safe execution and enabled W-board radio ownership need affinity support. */
 #define configUSE_CORE_AFFINITY 1
 /* Keep each idle-task runtime counter tied to its physical core for CPU telemetry. */
 #define configIDLE_AFFINITY 1

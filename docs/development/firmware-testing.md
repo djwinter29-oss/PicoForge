@@ -6,6 +6,8 @@ hardware limits are in [firmware test guidance](../../firmware/tests/README.md) 
 [architecture guide](../design/architecture.md); the software HID protocol is implemented across firmware and host
 clients, while physical USB behavior remains a hardware-qualification item. The
 [HID Report Reference](../design/usb/usb-hid-report-reference.md) is authoritative for the current contract.
+W-board host checks and target builds do not qualify physical Wi-Fi/BLE; the
+[wireless acceptance scope](../design/wireless.md#qualification) lists the required hardware checks.
 
 ## Prerequisites
 

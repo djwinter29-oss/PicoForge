@@ -2,7 +2,7 @@ import { bindWirelessForm } from "./wireless-form.mjs";
 
 let snapshot = null;
 let board = null;
-let loaded = false;
+let loadedAt = 0;
 const url = () => `/api/wireless${board ? `?board=${encodeURIComponent(board)}` : ""}`;
 const request = async options => {
   const response = await fetch(url(), { cache: "no-store", ...options });
@@ -18,20 +18,32 @@ const form = bindWirelessForm({
   supported: () => Boolean(snapshot?.hardware?.capabilities & 128),
   ready,
   load: () => request(),
-  save: config => request({ method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config) }),
+  async save(config) {
+    let reboot = false;
+    document.dispatchEvent(new CustomEvent("picoforge-wireless-operation", { detail: { busy: true } }));
+    try {
+      const saved = await request({ method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config) });
+      reboot = true;
+      return saved;
+    } finally {
+      document.dispatchEvent(new CustomEvent("picoforge-wireless-operation", {
+        detail: { busy: false, reboot_pending: reboot },
+      }));
+    }
+  },
 });
 document.addEventListener("picoforge-status", event => {
   const selected = event.detail.board;
   if (selected !== board || !event.detail.snapshot?.connected) {
-    loaded = false;
+    loadedAt = 0;
     form.reset();
   }
   board = selected;
   snapshot = event.detail.snapshot;
   form.update();
-  if (!loaded && ready() && (snapshot.hardware?.capabilities & 128)) {
-    loaded = true;
+  if (Date.now() - loadedAt >= 2000 && ready() && (snapshot.hardware?.capabilities & 128)) {
+    loadedAt = Date.now();
     void form.load();
   }
 });

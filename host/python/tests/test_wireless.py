@@ -115,6 +115,37 @@ class WirelessTests(unittest.TestCase):
             client.set_wireless(settings())
         self.assertTrue(client._command_uncertain)
 
+    def test_completed_mismatch_remains_uncertain_and_never_marks_reboot_pending(self):
+        for offset, value in ((2, 1), (2, 2), (10, ord("X")), (43, 0), (44, 0)):
+            for credentials in ({}, {"password": "secret12", "ble_key": "ab" * 32}):
+                report = bytearray(status())
+                report[offset] = value
+                client = self.client([status(0, 0), bytes(report)])
+                monitor = self.monitor()
+                monitor._active_client = client
+                with self.subTest(offset=offset, credentials=bool(credentials)):
+                    with self.assertRaisesRegex(RuntimeError, "uncertain") as caught:
+                        monitor.set_wireless(settings(**credentials))
+                    self.assertNotIn("secret12", str(caught.exception))
+                    self.assertTrue(client._command_uncertain)
+                    self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
+                    self.assertFalse(monitor.snapshot().get("reboot_pending", False))
+                    with self.assertRaisesRegex(RuntimeError, "uncertain"):
+                        monitor.set_wireless(settings())
+                    client._device.send_feature_report.assert_called_once()
+
+    def test_omitted_credentials_must_preserve_absent_configuration(self):
+        before = bytearray(status(0, 0))
+        before[43:45] = bytes(2)
+        for offset in (43, 44):
+            after = bytearray(before)
+            after[3:5] = bytes([2, 1])
+            after[offset] = 1
+            client = self.client([bytes(before), bytes(after)])
+            with self.subTest(offset=offset), self.assertRaisesRegex(RuntimeError, "uncertain"):
+                client.set_wireless(settings())
+            self.assertTrue(client._command_uncertain)
+
     def monitor(self):
         monitor = DeviceMonitor.__new__(DeviceMonitor)
         monitor._device_lock = threading.RLock()

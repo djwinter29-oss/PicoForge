@@ -54,6 +54,7 @@ export async function saveWireless(client, settings) {
   client.update({ busy: true, error: null });
   let attempted = false;
   try {
+    const previous = decodeWireless(await withTimeout(client.device.receiveFeatureReport(30), 1000));
     attempted = true;
     await withTimeout(client.device.sendFeatureReport(31, report), 5000);
     const deadline = Date.now() + 5000;
@@ -63,6 +64,12 @@ export async function saveWireless(client, settings) {
         if (saved.status !== 2) {
           attempted = false;
           throw new Error(`Wireless configuration rejected: status ${saved.status}`);
+        }
+        if (saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled ||
+          saved.ssid !== settings.ssid ||
+          saved.password_configured !== (settings.password !== undefined || previous.password_configured) ||
+          saved.ble_key_configured !== (settings.ble_key !== undefined || previous.ble_key_configured)) {
+          throw new Error("Wireless save did not confirm the requested configuration.");
         }
         client.update({ reboot_pending: true });
         return saved;

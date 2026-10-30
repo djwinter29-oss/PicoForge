@@ -96,6 +96,10 @@ and recovery behavior.
 
 ### Connection Troubleshooting
 
+For Pico W/Pico 2 W wireless enablement and the browser Bluetooth connection, see the
+[wireless guide and limits](../design/wireless.md#configuration-and-operation). USB remains the configuration
+and recovery path; wireless radios default off.
+
 Python and .NET dashboards both default to port 5000; run one at a time or choose another port. Use only one
 dashboard connection per board at a time. On Linux, if HID access is denied, run
 `tools/host/hid-permissions-setup.sh`, then reconnect the board and restart the dashboard.

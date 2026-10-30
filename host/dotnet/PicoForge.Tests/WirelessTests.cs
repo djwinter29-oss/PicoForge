@@ -135,6 +135,55 @@ public sealed class WirelessTests
     }
 
     [Theory]
+    [InlineData(2, 1)]
+    [InlineData(2, 2)]
+    [InlineData(10, 88)]
+    [InlineData(43, 0)]
+    [InlineData(44, 0)]
+    public void CompletedMismatchRemainsUncertainAndBlocksFurtherWrites(int offset, byte value)
+    {
+        foreach (var supplied in new[] { false, true })
+        {
+            var report = Report();
+            report[offset] = value;
+            var reads = 0;
+            var writes = 0;
+            var settings = Settings();
+            if (supplied)
+            {
+                settings.Password = "secret12";
+                settings.BleKey = new string('a', 64);
+            }
+            using var hid = new PicoForgeHid(Hardware(), (_, _) => ++reads == 1 ? Report(0, 0) : report,
+                _ => writes++, _ => Assert.Fail("No reconnect"));
+            var error = Assert.Throws<InvalidOperationException>(() => hid.SetWireless(settings));
+            Assert.Contains("uncertain", error.Message);
+            Assert.DoesNotContain("secret12", error.Message);
+            Assert.True(hid.CommandOutcomeUncertain);
+            Assert.Throws<InvalidOperationException>(() => hid.SetWireless(Settings()));
+            Assert.Equal(1, writes);
+        }
+    }
+
+    [Theory]
+    [InlineData(43)]
+    [InlineData(44)]
+    public void OmittedCredentialsMustPreserveAbsentConfiguration(int offset)
+    {
+        var before = Report(0, 0);
+        before[43] = before[44] = 0;
+        var after = (byte[])before.Clone();
+        after[3] = 2;
+        after[4] = 1;
+        after[offset] = 1;
+        var reads = 0;
+        using var hid = new PicoForgeHid(Hardware(), (_, _) => ++reads == 1 ? before : after,
+            _ => { }, _ => Assert.Fail("No reconnect"));
+        Assert.Throws<InvalidOperationException>(() => hid.SetWireless(Settings()));
+        Assert.True(hid.CommandOutcomeUncertain);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public void DisconnectOrTimeoutBlocksFurtherWritesWithoutReplay(bool disconnect)

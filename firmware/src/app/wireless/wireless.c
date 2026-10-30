@@ -6,7 +6,11 @@
 
 #include <string.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
 #include "btstack.h"
+#include "btstack_tlv_none.h"
+#include "btstack_tlv_flash_bank.h"
 #include "app/wireless/wireless_auth.h"
 #include "pico/cyw43_arch.h"
 #include "pico/rand.h"
@@ -47,6 +51,22 @@ static uint16_t read_handle; /**< Characteristic owning the frozen read buffer. 
 static uint16_t read_length; /**< Valid frozen payload length. */
 static uint8_t report_sequence; /**< Sequence for BLE-polled diagnostic snapshots. */
 static btstack_packet_callback_registration_t events; /**< Static HCI state/disconnect registration. */
+
+/**
+ * @brief Keep the SDK Bluetooth TLV nonpersistent: application authorization does not use OS pairing/bonding.
+ *
+ * The SDK default initializes two flash sectors, overlapping the Pico W settings sector. Interpose before any bank
+ * access; only boot_config may write flash. A future bonded-pairing implementation must reserve and arbitrate storage.
+ */
+const btstack_tlv_t *__wrap_btstack_tlv_flash_bank_init_instance(btstack_tlv_flash_bank_t *context,
+                                                               const hal_flash_bank_t *bank, void *bank_context)
+{
+    (void)context;
+    (void)bank;
+    (void)bank_context;
+    PF_LOGGING_INFO("ble", "BLE uses application proofs; persistent OS bonding is disabled");
+    return btstack_tlv_none_init_instance();
+}
 
 /** @brief Begin an asynchronous WPA2 connection; retries are paced after explicit failures. */
 static void connect_wifi(void)
@@ -169,6 +189,8 @@ void pf_wireless_start(void)
 {
     pf_boot_config_wireless(&settings);
     if (settings.flags == 0u) return;
+    /* SDK poll contexts and CYW43 IRQ setup must remain on their initialization core. */
+    vTaskCoreAffinitySet(NULL, (UBaseType_t)1u << get_core_num());
     int rc = cyw43_arch_init();
     if (rc != 0) {
         wifi_state = settings.flags & PF_WIRELESS_WIFI ? 3u : 0u;
@@ -194,7 +216,11 @@ void pf_wireless_start(void)
         bd_addr_t empty = {0};
         gap_advertisements_set_params(800, 800, 0, 0, empty, 7, 0);
         gap_advertisements_set_data(sizeof(advertising), (uint8_t *)advertising);
-        hci_power_control(HCI_POWER_ON);
+        rc = hci_power_control(HCI_POWER_ON);
+        if (rc != 0) {
+            error_code = 1u;
+            PF_LOGGING_ERROR("wireless", "BLE initialization failed: %d", rc);
+        }
     }
 }
 

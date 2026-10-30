@@ -165,7 +165,8 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     {
         if (CommandOutcomeUncertain)
             throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
-        if (ReadWireless().Status is "pending" or "busy")
+        var previous = ReadWireless();
+        if (previous.Status is "pending" or "busy")
             throw new InvalidOperationException("Wireless provisioning is busy");
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
         var request = HidProtocol.BuildWirelessRequest(settings, transactionId);
@@ -179,6 +180,12 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             {
                 if (result.Status == "completed")
                 {
+                    if (result.WifiEnabled != settings.WifiEnabled || result.BleEnabled != settings.BleEnabled ||
+                        result.Ssid != settings.Ssid ||
+                        result.PasswordConfigured != (settings.Password is not null || previous.PasswordConfigured) ||
+                        result.BleKeyConfigured != (settings.BleKey is not null || previous.BleKeyConfigured))
+                        throw new InvalidOperationException(
+                            "Wireless saved configuration was not confirmed; outcome is uncertain");
                     CommandOutcomeUncertain = false;
                     return result;
                 }

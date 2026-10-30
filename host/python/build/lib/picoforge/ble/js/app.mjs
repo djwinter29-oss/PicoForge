@@ -37,6 +37,7 @@ function render(state) {
   renderStatus(state);
   if (!state.connected) {
     wirelessLoaded = false;
+    wirelessForm.reset();
     settingsDirty = false;
     for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
   }

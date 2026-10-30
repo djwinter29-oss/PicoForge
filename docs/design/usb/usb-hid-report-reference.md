@@ -12,7 +12,7 @@ Report ID `0` is unused. Unassigned IDs have no payload and require no padding.
 | `1`-`9` | Device information and telemetry | `1` Identity; `2` Board Configuration; `3` Telemetry. |
 | `10`-`19` | Application status | `10` Storage Status; `11` Self-Test Status. |
 | `20`-`29` | Device and application control | `20` Control Command & Result. |
-| `30`-`39` | Application diagnostics | Unassigned. |
+| `30`-`39` | Wireless management | `30` Sanitized wireless status; `31` USB-only provisioning. |
 | `40`-`255` | Expansion | Unassigned. |
 
 Report ranges group responsibilities; the descriptor and firmware define each report's type, length, and permitted
@@ -57,6 +57,8 @@ These are logical groups, not separate HID usage pages or mandatory dashboard ta
 | `10` | Storage Status | Input | Device publishes / host reads | 34 bytes | SD, filesystem, and MSC status. |
 | `11` | Self-Test Status | Input | Device publishes / host reads | 32 bytes | Self-test state and progress. |
 | `20` | Control Command & Result | Feature | Host writes/reads | 9 bytes | LED, reboot, MSC, self-test, and settings operations. |
+| `30` | Wireless status | Feature | Host reads | 48 bytes | W boards, capability bit 7; sanitized status. |
+| `31` | Wireless provisioning | Feature | Host writes | 136 bytes | W boards, capability bit 7; private USB-only configuration, no readback. |
 
 Names are documentation labels, not additional wire fields.
 
@@ -67,8 +69,11 @@ payload in its data buffer. A .NET or other host adapter must follow its library
 normalize to the payload defined here before decoding. Some Feature-report APIs add a transport framing byte or
 fixed-size padding; remove only framing explicitly documented by that API, never a payload byte based only on its
 value. Validate the exact payload length after normalization. Multi-byte integers are little-endian; signed integers
-use two's complement. All reports fit within 64 bytes including report ID. The layouts use version `1`, independent
+use two's complement. Existing reports fit within 64 bytes including report ID; wireless provisioning uses a
+137-byte HIDAPI buffer over control transfers, not an oversized interrupt endpoint. The layouts use version `1`, independent
 of firmware semantic version.
+
+The [wireless design](../wireless.md#usb-contract) owns Feature 30/31 layouts and the restricted BLE transport.
 
 ### Connection and Read Flow
 
@@ -139,7 +144,7 @@ Capability bits:
 | 4 | SDIO-PIO storage transport selected for this firmware build. |
 | 5 | SD self-test control and status available. |
 | 6 | Explicitly confirmed settings save/reboot while USB owns storage. |
-| 7 | Reserved; zero. |
+| 7 | W-board Wi-Fi/BLE support and USB-only wireless provisioning. |
 
 For bit 1, the host must explicitly confirm the standalone reboot request. Bit 2 advertises saving persistent boot
 settings with a firmware-scheduled reboot; bit 6 adds the forced host-owned save path and does not replace bit 2.

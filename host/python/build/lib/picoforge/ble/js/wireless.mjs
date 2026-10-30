@@ -64,6 +64,11 @@ export async function saveWireless(client, settings) {
           attempted = false;
           throw new Error(`Wireless configuration rejected: status ${saved.status}`);
         }
+        if (saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled ||
+          saved.ssid !== settings.ssid || (settings.password !== undefined && !saved.password_configured) ||
+          (settings.ble_key !== undefined && !saved.ble_key_configured)) {
+          throw new Error("Wireless save did not confirm the requested configuration.");
+        }
         client.update({ reboot_pending: true });
         return saved;
       }

@@ -41,7 +41,8 @@ function boardLabel(board) {
 function renderStatus(snapshot) {
   if (document.dispatchEvent && typeof CustomEvent !== "undefined") {
     document.dispatchEvent(new CustomEvent("picoforge-status", {
-      detail: { board: selectedBoard, snapshot: { ...snapshot, settings_busy: settingsRequestInProgress,
+      detail: { board: selectedBoard, snapshot: { ...snapshot, settings_busy: settingsRequestInProgress ||
+        snapshot.reboot_pending || snapshot.outcome_uncertain,
         msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null } },
     }));
   }
@@ -53,14 +54,23 @@ function renderStatus(snapshot) {
   }
   renderDashboardStatus({
     ...snapshot,
+    busy: snapshot.busy || settingsRequestInProgress || snapshot.reboot_pending || snapshot.outcome_uncertain,
     no_board_selected: !selectedBoard,
-    settings_busy: settingsRequestInProgress,
+    settings_busy: settingsRequestInProgress || snapshot.reboot_pending || snapshot.outcome_uncertain,
     settings_dirty: settingsDirty,
     settings_storage_dirty: settingsStorageDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
     msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
   });
 }
+
+document.addEventListener?.("picoforge-wireless-operation", event => {
+  settingsRequestInProgress = event.detail.busy;
+  boardSelect.disabled = settingsRequestInProgress || scanningBoards || knownBoards.length === 0;
+  if (currentSnapshot && event.detail.reboot_pending) currentSnapshot.reboot_pending = true;
+  if (currentSnapshot) renderStatus(currentSnapshot);
+  if (!settingsRequestInProgress) void updateStatus();
+});
 
 async function updateStatus() {
   if (requestInProgress || mscRequestInProgress || settingsRequestInProgress) return;
@@ -92,8 +102,11 @@ async function updateStatus() {
     boardSelect.disabled = scanningBoards || knownBoards.length === 0
       || mscRequestInProgress || settingsRequestInProgress;
     rescanBoardsButton.disabled = scanningBoards;
-    ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
-    mscControl.disabled = mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
+    ledControl.disabled = settingsRequestInProgress || currentSnapshot?.reboot_pending ||
+      currentSnapshot?.outcome_uncertain || !currentSnapshot?.connected ||
+      !currentSnapshot?.board_status?.led_available;
+    mscControl.disabled = settingsRequestInProgress || currentSnapshot?.reboot_pending ||
+      currentSnapshot?.outcome_uncertain || mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
       || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
       || Boolean(currentSnapshot.self_test?.active)
       || selfTestPendingSequence !== null

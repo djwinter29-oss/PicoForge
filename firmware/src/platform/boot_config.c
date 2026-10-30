@@ -122,6 +122,20 @@ static bool wireless_settings_valid(const pf_wireless_config_t *settings)
     if ((settings->flags & ~3u) != 0u ||
         memchr(settings->ssid, '\0', sizeof(settings->ssid)) == NULL ||
         memchr(settings->password, '\0', sizeof(settings->password)) == NULL) return false;
+    const unsigned char *text = (const unsigned char *)settings->ssid;
+    for (size_t i = 0u; text[i] != 0u;) {
+        uint32_t code = text[i++];
+        unsigned extra = code < 0x80u ? 0u : code >= 0xc2u && code <= 0xdfu ? 1u :
+            code >= 0xe0u && code <= 0xefu ? 2u : code >= 0xf0u && code <= 0xf4u ? 3u : 4u;
+        if (extra == 4u || i + extra > 32u) return false;
+        const uint32_t minimum = extra == 0u ? 0u : extra == 1u ? 0x80u : extra == 2u ? 0x800u : 0x10000u;
+        if (extra != 0u) code &= (1u << (6u - extra)) - 1u;
+        for (unsigned j = 0u; j < extra; ++j) {
+            if ((text[i] & 0xc0u) != 0x80u) return false;
+            code = (code << 6u) | (text[i++] & 0x3fu);
+        }
+        if (code < minimum || code > 0x10ffffu || (code >= 0xd800u && code <= 0xdfffu)) return false;
+    }
     if ((settings->flags & PF_WIRELESS_WIFI) &&
         (settings->ssid[0] == '\0' || strlen(settings->password) < 8u)) return false;
     for (size_t i = 0u; settings->password[i] != '\0'; ++i) {

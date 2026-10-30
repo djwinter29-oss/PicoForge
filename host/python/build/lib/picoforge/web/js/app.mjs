@@ -53,6 +53,7 @@ function renderStatus(snapshot) {
   }
   renderDashboardStatus({
     ...snapshot,
+    busy: snapshot.busy || settingsRequestInProgress,
     no_board_selected: !selectedBoard,
     settings_busy: settingsRequestInProgress,
     settings_dirty: settingsDirty,
@@ -61,6 +62,13 @@ function renderStatus(snapshot) {
     msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
   });
 }
+
+document.addEventListener?.("picoforge-wireless-operation", event => {
+  settingsRequestInProgress = event.detail.busy;
+  if (currentSnapshot && event.detail.reboot_pending) currentSnapshot.reboot_pending = true;
+  if (currentSnapshot) renderStatus(currentSnapshot);
+  if (!settingsRequestInProgress) void updateStatus();
+});
 
 async function updateStatus() {
   if (requestInProgress || mscRequestInProgress || settingsRequestInProgress) return;
@@ -92,7 +100,8 @@ async function updateStatus() {
     boardSelect.disabled = scanningBoards || knownBoards.length === 0
       || mscRequestInProgress || settingsRequestInProgress;
     rescanBoardsButton.disabled = scanningBoards;
-    ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
+    ledControl.disabled = settingsRequestInProgress || !currentSnapshot?.connected ||
+      !currentSnapshot?.board_status?.led_available;
     mscControl.disabled = mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
       || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
       || Boolean(currentSnapshot.self_test?.active)

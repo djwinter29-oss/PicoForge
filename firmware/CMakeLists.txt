@@ -322,6 +322,7 @@ if(PICO_CYW43_SUPPORTED)
     target_link_libraries(pico_forge pico_cyw43_arch_lwip_poll pico_btstack_ble pico_btstack_cyw43
                           pico_mbedtls pico_rand)
     pico_btstack_make_gatt_header(pico_forge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/app/wireless/picoforge.gatt")
+    target_link_options(pico_forge PRIVATE "LINKER:--wrap=btstack_tlv_flash_bank_init_instance")
 endif()
 
 target_compile_definitions(pico_forge PRIVATE

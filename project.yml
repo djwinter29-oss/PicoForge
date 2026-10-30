@@ -86,6 +86,9 @@
         - -DPF_FIRMWARE_VERSION_PATCH=3u
         - -ffunction-sections
         - -fdata-sections
+      :test_usb_hid_wireless:
+        - -ffunction-sections
+        - -fdata-sections
       :test_usb_msc_batch:
         - -D_XOPEN_SOURCE=700
         - -pthread
@@ -112,6 +115,8 @@
       :test_usb_hid_sd_responsiveness:
         - -Wl,--gc-sections
       :test_usb_hid_benchmark_disabled:
+        - -Wl,--gc-sections
+      :test_usb_hid_wireless:
         - -Wl,--gc-sections
       :test_usb_msc_callbacks:
         - -Wl,--wrap=mscd_reset

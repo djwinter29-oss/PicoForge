@@ -7,6 +7,10 @@ there is no runtime transport selector.
 | --- | --- | --- | --- |
 | System clock (`pf_sysclk_profile_t`) | `PF_SYSCLK_DEFAULT`, `PF_SYSCLK_150MHZ`, `PF_SYSCLK_200MHZ`, `PF_SYSCLK_250MHZ` | Default: keep the SDK stock clock | At boot |
 | Storage speed (`pf_storage_speed_t`) | `PF_STORAGE_SPEED_DEFAULT` (25 MHz), `PF_STORAGE_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
+| W-board Wi-Fi/BLE | Enable flags, SSID, private passphrase and BLE control key | Both radios off | At boot |
+
+Wireless provisioning, private credential storage, BLE authorization and client support are defined in the
+[wireless design](wireless.md).
 
 Builds use the SDK stock clock; select a different clock through the saved system-clock profile, not a CMake
 override. The former `PF_SYS_CLK_MHZ` option is rejected, including in existing caches. The build/load scripts clear
@@ -38,7 +42,7 @@ pf_boot_config_set_storage_speed(PF_STORAGE_SPEED_HIGH);       /* RAM copy only 
 pf_boot_config_save();                               /* task, scheduler running; true after read-back verifies */
 ```
 
-The header exposes five out-of-line functions and inline configured-MHz getters. `pf_get_sysclk_mhz()` and
+The header exposes profile and private wireless accessors plus inline configured-MHz getters. `pf_get_sysclk_mhz()` and
 `pf_get_storage_speed_mhz()` read the current RAM configuration through the profile getters; neither measures hardware.
 The inline `pf_sysclk_profile_mhz()` (`0` for Default) and `pf_storage_speed_mhz()` (`25` or `50`) conversions remain
 available for arbitrary profiles, including HID input validation.
@@ -90,8 +94,10 @@ Older firmware keeps Save disabled during sharing and displays an update/return-
 
 ## Persistence and flash safety
 
-The version 1 persistent record stores one byte per profile: system clock and shared SD-card speed. It does not
+The version 1 profile record stores one byte per profile: system clock and shared SD-card speed. It does not
 store MHz or separate SPI/SDIO settings. The HID protocol's system clock field still carries MHz.
+An independently checked wireless extension follows that unchanged record within the same flash page; see
+[wireless persistence](wireless.md#execution-and-storage-safety).
 
 Boot-applied settings are exposed through the platform facade `platform/boot_config.c/.h`. The USB task is the only
 runtime writer. The RAM copy uses the same record type as flash; save refreshes its metadata and CRC. Record

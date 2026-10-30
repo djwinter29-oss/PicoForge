@@ -4,8 +4,10 @@ export function bindWirelessForm({ load, save, ready, supported }) {
   const panel = el("wireless-panel");
   if (!panel) return { update() {} };
   let busy = false;
+  let loading = false;
   let dirty = false;
   let status = null;
+  let generation = 0;
   let message = "";
   const fields = ["wifi-enabled", "ble-enabled", "wifi-ssid", "wifi-password", "ble-secret"];
   const refresh = () => {
@@ -62,6 +64,7 @@ export function bindWirelessForm({ load, save, ready, supported }) {
   });
   return {
     reset() {
+      generation++;
       status = null;
       dirty = false;
       message = "";
@@ -72,17 +75,20 @@ export function bindWirelessForm({ load, save, ready, supported }) {
     },
     update() { if (!ready()) el("wireless-dialog").close(); refresh(); },
     async load() {
-      if (busy || !supported() || !ready()) return;
-      busy = true;
+      if (busy || loading || !supported() || !ready()) return;
+      loading = true;
+      const current = generation;
       try {
-        status = await load();
+        const fresh = await load();
+        if (generation !== current || busy) return;
+        status = fresh;
         if (!dirty) {
           el("wifi-enabled").checked = status.wifi_enabled;
           el("ble-enabled").checked = status.ble_enabled;
           el("wifi-ssid").value = status.ssid;
         }
-      } catch (error) { message = error.message; }
-      finally { busy = false; refresh(); }
+      } catch (error) { if (generation === current) message = error.message; }
+      finally { loading = false; refresh(); }
     },
   };
 }

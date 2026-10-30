@@ -11,6 +11,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     this.characteristics = new Map();
     this.pollTimer = null;
     this.bleKey = null;
+    this.state = { ...this.state, error: bluetooth ? null : "Web Bluetooth is unavailable in this browser." };
   }
 
   async connect() {
@@ -38,8 +39,8 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
         sendFeatureReport: async (id, report) => {
           if (id !== 20 || ![1, 4].includes(report[2])) throw new Error("This operation requires USB.");
           if (!this.bleKey) throw new Error("Enter the USB-provisioned BLE control key first.");
-          const nonce = new Uint8Array(await this.characteristics.get(32).readValue().then(value =>
-            value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)));
+          const value = await this.characteristics.get(32).readValue();
+          const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
           if (nonce.length !== 16) throw new Error("Invalid BLE authorization challenge");
           const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
           const message = new Uint8Array([...nonce, ...uid, ...report]);
@@ -63,6 +64,11 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     const bytes = Uint8Array.from(hex.match(/../g), byte => parseInt(byte, 16));
     try { this.bleKey = await crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); }
     finally { bytes.fill(0); }
+  }
+
+  async command(opcode, options) {
+    if (![1, 4].includes(opcode)) throw new Error("This operation requires USB.");
+    return super.command(opcode, options);
   }
 
   async pollReports() {

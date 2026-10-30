@@ -104,7 +104,8 @@ class WebTests(unittest.TestCase):
     def test_browser_bluetooth_assets_are_available_under_ble(self):
         client = create_app(FakeMonitor()).test_client()
         for path in ("/ble/", "/ble/index.html", "/ble/favicon.svg", "/ble/css/webhid.css",
-                     "/ble/js/app.mjs", "/ble/js/bluetooth.mjs", "/ble/js/wireless.mjs"):
+                     "/ble/js/app.mjs", "/ble/js/bluetooth.mjs", "/ble/js/wireless.mjs",
+                     "/ble/js/native-wireless.mjs", "/ble/js/wireless-form.mjs"):
             with self.subTest(path=path):
                 response = client.get(path)
                 self.assertEqual(response.status_code, 200)

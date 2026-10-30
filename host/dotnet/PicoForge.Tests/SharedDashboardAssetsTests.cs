@@ -11,6 +11,8 @@ public sealed class SharedDashboardAssetsTests
     [InlineData("js/app.mjs")]
     [InlineData("js/bluetooth.mjs")]
     [InlineData("js/wireless.mjs")]
+    [InlineData("js/native-wireless.mjs")]
+    [InlineData("js/wireless-form.mjs")]
     public void OutputContainsCurrentBrowserBluetoothAsset(string relativePath)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

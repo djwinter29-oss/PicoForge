@@ -324,6 +324,13 @@ void test_wireless_extension_rejects_invalid_flags_unterminated_strings_and_miss
     TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
     radios.ble_key[0] = 1u;
     TEST_ASSERT_TRUE(pf_boot_config_set_wireless(&radios));
+    const char *invalid_ssids[] = {"\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82", "\xff"};
+    for (unsigned i = 0u; i < sizeof(invalid_ssids) / sizeof(invalid_ssids[0]); ++i) {
+        strcpy(radios.ssid, invalid_ssids[i]);
+        TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
+    }
+    strcpy(radios.ssid, "wifi-\xe2\x82\xac");
+    TEST_ASSERT_TRUE(pf_boot_config_set_wireless(&radios));
 }
 
 void test_unchanged_write_does_not_erase_again(void)

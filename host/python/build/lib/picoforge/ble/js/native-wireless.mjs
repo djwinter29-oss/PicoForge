@@ -18,8 +18,20 @@ const form = bindWirelessForm({
   supported: () => Boolean(snapshot?.hardware?.capabilities & 128),
   ready,
   load: () => request(),
-  save: config => request({ method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config) }),
+  async save(config) {
+    let reboot = false;
+    document.dispatchEvent(new CustomEvent("picoforge-wireless-operation", { detail: { busy: true } }));
+    try {
+      const saved = await request({ method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config) });
+      reboot = true;
+      return saved;
+    } finally {
+      document.dispatchEvent(new CustomEvent("picoforge-wireless-operation", {
+        detail: { busy: false, reboot_pending: reboot },
+      }));
+    }
+  },
 });
 document.addEventListener("picoforge-status", event => {
   const selected = event.detail.board;

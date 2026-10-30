@@ -47,6 +47,10 @@ samples clear retained details. Retained values are display-only and never autho
 
 ## Controls
 
+Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/design/wireless.md).
+Use USB to provision radio settings and a random BLE key, then select Bluetooth LE for public diagnostics and
+key-authorized LED/benchmark controls. Privileged management remains USB-only. Radios default off.
+
 All operations serialize Feature 20 SET/GET transactions, matching both transaction ID and opcode.
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for
 fresh corresponding Input status. A timeout or disconnect never replays a command; uncertain results block further

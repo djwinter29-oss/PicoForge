@@ -1,4 +1,4 @@
-"""Keep application scheduling unrestricted while retaining SDK flash-safe execution support."""
+"""Keep scheduling unrestricted except for the SDK radio owner's initialization-core requirement."""
 from pathlib import Path
 import re
 import subprocess
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
     assert failed.returncode == (73 if ndebug else -6)
 
 
-def test_two_core_configuration_has_one_authority_and_no_application_affinity():
+def test_two_core_configuration_has_one_authority_and_only_sdk_radio_affinity():
     config = (ROOT / "firmware/src/integration/freertos/FreeRTOSConfig.h").read_text()
     for key, value in (
         ("configNUMBER_OF_CORES", 2),
@@ -54,5 +54,13 @@ def test_two_core_configuration_has_one_authority_and_no_application_affinity():
     kernel = (ROOT / "firmware/third_party/FreeRTOS-Kernel/include/FreeRTOS.h").read_text()
     assert re.search(r"#define configTASK_DEFAULT_CORE_AFFINITY\s+tskNO_AFFINITY", kernel)
     for path in (ROOT / "firmware/src").rglob("*.c"):
+        if path == ROOT / "firmware/src/app/wireless/wireless.c":
+            source = path.read_text()
+            start = source[source.index("void pf_wireless_start(void)"):]
+            assert start.index("if (settings.flags == 0u) return;") < start.index("vTaskCoreAffinitySet(")
+            assert start.index("vTaskCoreAffinitySet(") < start.index("cyw43_arch_init(")
+            assert source.count("vTaskCoreAffinitySet(") == 1
+            assert "vTaskCoreAffinitySet(NULL, (UBaseType_t)1u << get_core_num());" in start
+            continue
         assert not re.search(r"\b(?:vTaskCoreAffinitySet|xTaskCreateStaticAffinitySet|"
                              r"xTaskCreateAffinitySet|multicore_launch_core1)\s*\(", path.read_text()), path
