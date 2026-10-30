@@ -1,5 +1,8 @@
-import { PicoForgeWebHid } from "./device.mjs?v=3";
+import { PicoForgeWebHid } from "./device.mjs?v=4";
 import { renderStatus, renderSelfTest } from "./view.mjs?v=3";
+import { PicoForgeBluetooth } from "./bluetooth.mjs";
+import { bindWirelessForm } from "./wireless-form.mjs";
+import { decodeWireless, saveWireless } from "./wireless.mjs";
 
 const element = id => document.querySelector(`#${id}`);
 const connectionControl = element("connection-control");
@@ -15,11 +18,25 @@ const returnDialog = element("return-dialog");
 const shareDialog = element("share-dialog");
 let settingsDirty = false;
 let configurationForceSave = false;
-const client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
+let client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
+const wirelessForm = bindWirelessForm({
+  supported: () => Boolean(client.state.hardware?.capabilities & 128),
+  ready: () => client.state.connected && client.state.transport !== "ble" && !client.state.busy &&
+    !client.state.outcome_uncertain && !client.state.reboot_pending &&
+    client.state.freshness[10] === "fresh" && client.state.msc && !client.state.msc.enabled &&
+    !client.state.msc.transition_pending && !client.state.msc_command_pending &&
+    !client.state.self_test_command_pending && !client.state.self_test?.active &&
+    (!(client.state.hardware?.capabilities & 32) ||
+      (client.state.freshness[11] === "fresh" && client.state.self_test?.valid_for_control)),
+  load: async () => decodeWireless(await client.device.receiveFeatureReport(30)),
+  save: settings => saveWireless(client, settings),
+});
+let wirelessLoaded = false;
 
 function render(state) {
   renderStatus(state);
   if (!state.connected) {
+    wirelessLoaded = false;
     settingsDirty = false;
     for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
   }
@@ -28,6 +45,7 @@ function render(state) {
     settingsStorage.value = String(state.settings.sdcard_profile);
   }
   const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected;
+  const bluetooth = state.transport === "ble";
   const selfTestReady = !(state.hardware?.capabilities & 32)
     || (state.freshness[11] === "fresh" && state.self_test?.valid_for_control);
   const storageReady = state.freshness[10] === "fresh" && selfTestReady
@@ -36,11 +54,13 @@ function render(state) {
   connectionControl.textContent = state.connected || state.reconnecting ? "Disconnect" : "Connect";
   connectionControl.setAttribute("aria-label", state.connected || state.reconnecting
     ? "Disconnect from PicoForge board" : "Connect to PicoForge board");
-  connectionControl.disabled = state.busy || !globalThis.isSecureContext || !navigator.hid;
+  connectionControl.disabled = state.busy || !globalThis.isSecureContext ||
+    (element("connection-transport").value === "ble" ? !navigator.bluetooth : !navigator.hid);
+  element("connection-transport").disabled = state.connected || state.busy;
   ledControl.disabled = blocked || !state.board_status?.led_available || !(state.hardware?.capabilities & 1);
-  mscControl.disabled = blocked || !storageReady;
+  mscControl.disabled = blocked || !storageReady || bluetooth;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  const settingsReady = !blocked && storageReady;
+  const settingsReady = !blocked && storageReady && !bluetooth;
   for (const control of [settingsClock, settingsStorage, settingsSave]) {
     control.disabled = !settingsReady || !state.settings_supported;
   }
@@ -63,6 +83,12 @@ function render(state) {
         ? "Waiting for the storage ownership transition result."
         : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
   element("msc-note").hidden = !element("msc-note").textContent;
+  wirelessForm.update();
+  if (!wirelessLoaded && state.connected && storageReady && !state.busy && !bluetooth &&
+    (state.hardware?.capabilities & 128)) {
+    wirelessLoaded = true;
+    void wirelessForm.load();
+  }
 }
 
 async function run(operation) {
@@ -71,6 +97,18 @@ async function run(operation) {
 
 connectionControl.addEventListener("click", () => run(() =>
   client.state.connected || client.state.reconnecting ? client.disconnect() : client.connect()));
+element("connection-transport").addEventListener("change", () => {
+  if (client.state.connected || client.state.busy || client.outstanding) return;
+  client = element("connection-transport").value === "ble"
+    ? new PicoForgeBluetooth(navigator.bluetooth, render)
+    : new PicoForgeWebHid(navigator.hid, render);
+  render(client.state);
+});
+element("ble-authorize").addEventListener("click", () => run(async () => {
+  if (!(client instanceof PicoForgeBluetooth)) throw new Error("Select Bluetooth LE first.");
+  try { await client.setControlKey(element("ble-control-key").value); }
+  finally { element("ble-control-key").value = ""; }
+}));
 ledControl.addEventListener("click", () => run(() => client.setLed(!client.state.board_status?.led_on)));
 mscControl.addEventListener("click", () => run(async () => {
   if (mscControl.disabled) return;

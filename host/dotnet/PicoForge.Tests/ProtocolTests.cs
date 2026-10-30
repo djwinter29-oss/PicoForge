@@ -47,12 +47,14 @@ public sealed class ProtocolTests
     }
 
     [Fact]
-    public void IdentityAcceptsForcedSaveCapabilityButKeepsBitSevenReserved()
+    public void IdentityAcceptsForcedSaveAndWirelessCapabilities()
     {
         var report = IdentityReport();
         report[18] |= HidProtocol.CapabilityForcedSave;
         Assert.Equal((byte)0x77, HidProtocol.ParseIdentityReport(report).Capabilities);
         report[18] |= 0x80;
+        Assert.True(HidProtocol.ParseIdentityReport(report).WirelessSupported);
+        report[18] |= HidProtocol.CapabilitySpi | HidProtocol.CapabilitySdio;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(report));
     }
 

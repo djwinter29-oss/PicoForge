@@ -15,6 +15,9 @@ internal interface IDashboardBoards
     BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false);
     bool Reboot(string? boardId);
     bool SetSelfTest(string? boardId, string action, uint sizeMib);
+    WirelessResponse ReadWireless(string? boardId) => throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessResponse SetWireless(string? boardId, WirelessRequest settings) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 internal sealed class DashboardBoards : IDisposable, IDashboardBoards
@@ -72,6 +75,8 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
         : Reader(boardId).Snapshot;
 
     public bool SetLed(string? boardId, bool on) => Reader(boardId).SetLed(on);
+    public WirelessResponse ReadWireless(string? boardId) => Reader(boardId).ReadWireless();
+    public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => Reader(boardId).SetWireless(settings);
 
     public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
         Reader(boardId).SetMsc(enabled, force);

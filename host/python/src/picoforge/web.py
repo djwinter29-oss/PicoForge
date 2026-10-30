@@ -10,6 +10,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .monitor import DashboardBoards
 from .protocol import (
+    build_wireless_configuration_report,
     build_self_test_command_report,
     build_settings_command_report,
     normalize_legacy_settings,
@@ -21,6 +22,8 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     """Create a testable status app; hardware monitoring starts only by default."""
     installed = Path(__file__).with_name("web")  # packaged from host/web; source checkouts use host/web directly
     root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[3] / "web")
+    installed_ble = Path(__file__).with_name("ble")
+    ble_root = installed_ble if installed_ble.is_dir() else Path(__file__).resolve().parents[3] / "webhid"
     dashboard = monitor or DashboardBoards()
     app = Flask(__name__, template_folder=str(root), static_folder=None)
     app.config.update(
@@ -47,6 +50,11 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     @app.get("/favicon.svg")
     def favicon():
         return send_from_directory(root, "favicon.svg", mimetype="image/svg+xml")
+
+    @app.get("/ble/")
+    @app.get("/ble/<path:filename>")
+    def bluetooth(filename: str = "index.html"):
+        return send_from_directory(ble_root, filename)
 
     @app.get("/css/<path:filename>")
     def css(filename: str):
@@ -85,6 +93,29 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             return jsonify({"error": str(error)}), 409
         except OSError as error:
             return jsonify({"error": str(error)}), 503
+
+    @app.get("/api/wireless")
+    def wireless():
+        try:
+            return jsonify(dashboard.read_wireless(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless status unavailable"}), 503
+
+    @app.post("/api/wireless")
+    def set_wireless():
+        payload = request.get_json(silent=True)
+        try:
+            build_wireless_configuration_report(payload)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        try:
+            return jsonify(dashboard.set_wireless(request.args.get("board"), payload))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless provisioning outcome is uncertain; command was not resent"}), 503
 
     @app.post("/api/settings")
     def set_settings():

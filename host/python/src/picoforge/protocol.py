@@ -40,7 +40,11 @@ CAP_SPI = 1 << 3
 CAP_SDIO = 1 << 4
 CAP_SELF_TEST = 1 << 5
 CAP_FORCE_SAVE = 1 << 6
-CAP_KNOWN = CAP_LED | CAP_REBOOT | CAP_SAVE_SETTINGS | CAP_SPI | CAP_SDIO | CAP_SELF_TEST | CAP_FORCE_SAVE
+CAP_WIRELESS = 1 << 7
+CAP_KNOWN = 255
+WIRELESS_REPORT_ID = 30
+WIRELESS_FEATURE_SIZE = 49
+WIRELESS_CONFIGURATION_REPORT_ID = 31
 
 TELEMETRY_USB_MOUNTED = 1 << 0
 TELEMETRY_CDC_OPEN = 1 << 1
@@ -138,6 +142,7 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> dict[str, ob
             "reboot_available": False,
             "settings_supported": False,
             "self_test_supported": False,
+            "wireless_supported": False,
         }
     uid = payload[3:11]
     firmware = tuple(payload[11:14])
@@ -170,8 +175,77 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> dict[str, ob
         "settings_supported": bool(capabilities & CAP_SAVE_SETTINGS),
         "storage_transport": "spi" if capabilities & CAP_SPI else "sdio",
         "self_test_supported": bool(capabilities & CAP_SELF_TEST),
+        "wireless_supported": bool(capabilities & CAP_WIRELESS),
         "ram_total_bytes": ram_total,
         "ram_reserved_bytes": ram_reserved,
+    }
+
+
+def build_wireless_configuration_report(settings: dict[str, object], transaction_id: int = 1) -> bytes:
+    """Validate provisioning input and build Feature 31 without exposing credentials."""
+    if not isinstance(settings, dict):
+        raise ValueError("Expected wireless configuration JSON")
+    if settings.get("confirm_reboot") is not True:
+        raise ValueError("Explicit confirm_reboot: true is required")
+    if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "password", "ble_key", "confirm_reboot"}:
+        raise ValueError("Unknown wireless configuration field")
+    if type(settings.get("wifi_enabled")) is not bool or type(settings.get("ble_enabled")) is not bool:
+        raise ValueError("wifi_enabled and ble_enabled must be boolean")
+    ssid = settings.get("ssid")
+    try:
+        encoded = ssid.encode("utf-8") if isinstance(ssid, str) else None
+    except UnicodeError:
+        encoded = None
+    if encoded is None or b"\0" in encoded or len(encoded) > 32 or (settings["wifi_enabled"] and not encoded):
+        raise ValueError("SSID must be UTF-8, at most 32 bytes, and nonempty when Wi-Fi is enabled")
+    if type(transaction_id) is not int or not 1 <= transaction_id <= 255:
+        raise ValueError("Wireless transaction must be 1..255")
+    payload = bytearray(137)
+    payload[:5] = bytes([31, 1, transaction_id,
+                         int(settings["wifi_enabled"]) | int(settings["ble_enabled"]) << 1, 0])
+    payload[5:5 + len(encoded)] = encoded
+    if "password" not in settings:
+        payload[4] |= 1
+    else:
+        password = settings["password"]
+        if not isinstance(password, str) or not 8 <= len(password) <= 63 or any(
+                not 32 <= ord(char) <= 126 for char in password):
+            raise ValueError("Password must contain 8..63 printable ASCII characters")
+        payload[38:38 + len(password)] = password.encode("ascii")
+    if "ble_key" not in settings:
+        payload[4] |= 2
+    else:
+        key = settings["ble_key"]
+        if not isinstance(key, str) or len(key) != 64 or any(char not in "0123456789abcdefABCDEF" for char in key):
+            raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+        decoded = bytes.fromhex(key)
+        if not any(decoded):
+            raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+        payload[102:134] = decoded
+    return bytes(payload)
+
+
+def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
+    """Decode sanitized Feature 30; credentials are never present in this report."""
+    payload = _feature_payload(report, WIRELESS_REPORT_ID, 48)
+    if (payload[0] != 1 or payload[1] & ~3 or payload[2] > 6 or payload[4] > 3
+            or payload[42] > 1 or payload[43] > 1 or payload[44] > 3 or any(payload[45:])):
+        raise ValueError("Invalid wireless status report")
+    ssid = payload[9:42]
+    nul = ssid.find(b"\0")
+    if nul < 0 or any(ssid[nul:]):
+        raise ValueError("Invalid wireless SSID encoding")
+    try:
+        name = ssid[:nul].decode("utf-8")
+    except UnicodeError:
+        raise ValueError("Invalid wireless SSID encoding") from None
+    return {
+        "wifi_enabled": bool(payload[1] & 1), "ble_enabled": bool(payload[1] & 2),
+        "status": CONTROL_STATUS_NAMES[payload[2]], "transaction_id": payload[3],
+        "wifi_state": ("disabled", "connecting", "connected", "failed")[payload[4]],
+        "ipv4": ".".join(map(str, payload[5:9])), "ssid": name,
+        "password_configured": bool(payload[42]), "ble_key_configured": bool(payload[43]),
+        "error": payload[44],
     }
 
 

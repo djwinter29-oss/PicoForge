@@ -39,6 +39,12 @@ function boardLabel(board) {
 }
 
 function renderStatus(snapshot) {
+  if (document.dispatchEvent && typeof CustomEvent !== "undefined") {
+    document.dispatchEvent(new CustomEvent("picoforge-status", {
+      detail: { board: selectedBoard, snapshot: { ...snapshot, settings_busy: settingsRequestInProgress,
+        msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null } },
+    }));
+  }
   if (!snapshot.connected) {
     shareDialog.close();
     settingsDirty = false;

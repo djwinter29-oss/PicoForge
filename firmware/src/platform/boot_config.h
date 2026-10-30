@@ -16,6 +16,23 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/** Wi-Fi enable flag in pf_wireless_config_t. */
+#define PF_WIRELESS_WIFI 1u
+/** BLE enable flag in pf_wireless_config_t. */
+#define PF_WIRELESS_BLE 2u
+/** Saved wireless configuration; credentials are private and must never be returned in diagnostic reports. */
+typedef struct {
+    uint8_t flags; /**< Enabled radios; only PF_WIRELESS_WIFI and PF_WIRELESS_BLE are valid. */
+    char ssid[33]; /**< NUL-terminated SSID, up to 32 bytes. */
+    char password[64]; /**< NUL-terminated WPA2 passphrase, 8-63 bytes when Wi-Fi is enabled. */
+    uint8_t ble_key[32]; /**< USB-provisioned HMAC-SHA256 key; nonzero when BLE is enabled. */
+} pf_wireless_config_t;
+
+/** @brief Copy private wireless settings; USB owner task only, never expose credentials to a host read. */
+void pf_boot_config_wireless(pf_wireless_config_t *settings);
+/** @brief Validate and stage wireless settings in RAM; false leaves the configuration unchanged. */
+bool pf_boot_config_set_wireless(const pf_wireless_config_t *settings);
+
 /** User-selected storage bus speed profile; the storage backend maps it to its own bus clock. */
 typedef enum {
     PF_STORAGE_SPEED_DEFAULT = 0, /**< 25 MHz Default Speed; used when nothing is saved. */

@@ -10,6 +10,8 @@ internal interface IDeviceMonitor
     BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false);
     bool Reboot();
     bool SetSelfTest(string action, uint sizeMib);
+    WirelessResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 /// <summary>HID command writes used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
@@ -23,6 +25,8 @@ internal interface IHidCommands
     BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false);
     void Reboot();
     void SetSelfTest(string action, uint sizeMib);
+    WirelessStatusResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
@@ -116,10 +120,38 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 snapshot = snapshot with
                 {
                     Settings = saved,
+                    RebootPending = true,
                     Msc = force ? snapshot.Msc! with { Enabled = false } : snapshot.Msc
                 };
                 return saved;
             }
+        }
+    }
+
+    public WirelessResponse ReadWireless()
+    {
+        lock (deviceGate)
+        {
+            if (activeClient is null) throw new InvalidOperationException("PicoForge HID is not connected");
+            return new(activeClient.ReadWireless(), Snapshot.RebootPending);
+        }
+    }
+
+    public WirelessResponse SetWireless(WirelessRequest settings)
+    {
+        HidProtocol.BuildWirelessRequest(settings, 1);
+        lock (deviceGate)
+        {
+            var current = Snapshot;
+            if (activeClient is null || !current.Connected || current.Hardware?.WirelessSupported != true)
+                throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
+            if (current.CommandOutcomeUncertain || current.Msc is not { Enabled: false, TransitionPending: false } ||
+                current.RebootPending || current.SelfTest?.Active == true ||
+                ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
+                throw new InvalidOperationException("Wireless provisioning is unavailable while storage or the board is busy");
+            var saved = ExecuteCommand(activeClient, () => activeClient.SetWireless(settings));
+            lock (gate) snapshot = snapshot with { RebootPending = true };
+            return new(saved, true);
         }
     }
 

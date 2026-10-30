@@ -7,7 +7,10 @@ namespace PicoForge;
 /// <summary>Device identity and capabilities from HID Feature report 1.</summary>
 public sealed record HardwareInfoResponse(string ProductName, string Mcu, byte McuId,
     string SerialNumber, string? FirmwareVersion = null, ushort ProductId = 0,
-    byte BoardModel = 0, byte Capabilities = 0, uint RamTotalBytes = 0, uint RamReservedBytes = 0);
+    byte BoardModel = 0, byte Capabilities = 0, uint RamTotalBytes = 0, uint RamReservedBytes = 0)
+{
+    public bool WirelessSupported => (Capabilities & HidProtocol.CapabilityWireless) != 0;
+}
 
 /// <summary>Persisted next-boot clock and selected transport speed profile.</summary>
 public sealed record BootSettingsResponse(int SystemClockMhz,
@@ -68,7 +71,7 @@ public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoR
     BoardConfigurationResponse? BoardConfiguration = null, DateTimeOffset? TelemetryUpdatedAt = null,
     DateTimeOffset? StorageUpdatedAt = null, DateTimeOffset? SelfTestUpdatedAt = null,
     bool TelemetryStale = true, bool StorageStale = true, bool SelfTestStale = true,
-    bool CommandOutcomeUncertain = false)
+    bool CommandOutcomeUncertain = false, bool RebootPending = false)
 {
     public bool SettingsSupported => Settings is not null;
 }
@@ -76,7 +79,7 @@ public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoR
 internal sealed record ControlResult(byte TransactionId, byte Opcode, byte Status, byte ErrorReason,
     byte[] ResultData);
 
-internal static class HidProtocol
+internal static partial class HidProtocol
 {
     public const int VendorId = 0xCAFE;
     public const int ProductId = 0x4011;
@@ -105,6 +108,7 @@ internal static class HidProtocol
     public const byte CapabilitySdio = 1 << 4;
     public const byte CapabilitySelfTest = 1 << 5;
     public const byte CapabilityForcedSave = 1 << 6;
+    public const byte CapabilityWireless = 1 << 7;
 
     public static HardwareInfoResponse ParseIdentityReport(ReadOnlySpan<byte> report)
     {
@@ -115,12 +119,12 @@ internal static class HidProtocol
         var capabilities = payload[17];
         var spi = (capabilities & CapabilitySpi) != 0;
         var sdio = (capabilities & CapabilitySdio) != 0;
-        Require((capabilities & 0x80) == 0 && spi != sdio, "invalid HID capability flags");
+        Require(spi != sdio, "invalid HID capability flags");
         var mcuId = payload[14];
         var boardModel = payload[15];
         Require(boardModel switch
         {
-            1 => mcuId == 1,
+            1 or 4 => mcuId == 1,
             2 or 3 => mcuId == 2,
             _ => true
         }, "board model and MCU do not match");

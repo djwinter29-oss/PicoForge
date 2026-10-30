@@ -20,7 +20,11 @@
 #define CFG_TUD_CDC_EP_BUFSIZE 64
 
 #define CFG_TUD_HID 1
+#if PF_ENABLE_WIRELESS
+#define CFG_TUD_HID_EP_BUFSIZE 256
+#else
 #define CFG_TUD_HID_EP_BUFSIZE 64
+#endif
 
 #define CFG_TUD_MSC 1
 #define CFG_TUD_MSC_EP_BUFSIZE 512

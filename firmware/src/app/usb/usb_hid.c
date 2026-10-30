@@ -23,6 +23,12 @@
 #include "platform/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
 #include "app/runtime_stats.h"
+#if PF_ENABLE_WIRELESS
+#include "app/wireless/wireless.h"
+static bool ble_dispatch; /**< Current synchronous dispatcher targets the BLE-specific result slot. */
+static bool self_test_from_ble; /**< Pending benchmark admission belongs to the BLE result slot. */
+static pf_hid_control_result_t ble_result = { .version = PF_HID_REPORT_VERSION };
+#endif
 
 #ifndef PF_HID_BOARD_MODEL
 #define PF_HID_BOARD_MODEL 0u
@@ -73,14 +79,18 @@ static uint32_t read_u32_le(const uint8_t *value)
 static void set_result(const pf_hid_control_request_t *request, uint8_t status, uint8_t error,
                        const uint8_t result_data[4])
 {
-    control_result = (pf_hid_control_result_t){
+    pf_hid_control_result_t *target = &control_result;
+#if PF_ENABLE_WIRELESS
+    if (ble_dispatch) target = &ble_result;
+#endif
+    *target = (pf_hid_control_result_t){
         .version = PF_HID_REPORT_VERSION,
         .transaction_id = request->transaction_id,
         .opcode = request->opcode,
         .status = status,
         .error_reason = error,
     };
-    if (result_data != NULL) memcpy(control_result.result_data, result_data, sizeof(control_result.result_data));
+    if (result_data != NULL) memcpy(target->result_data, result_data, sizeof(target->result_data));
 }
 
 static uint8_t board_model(void)
@@ -147,12 +157,22 @@ void pf_hid_poll_async_commands(void)
     if (!pf_storage_worker_benchmark_admission_result(&accepted, &error)) return;
 
     self_test_result_pending = false;
-    if ((control_result.transaction_id != pending_self_test_request.transaction_id) ||
-        (control_result.opcode != pending_self_test_request.opcode)) {
+    pf_hid_control_result_t *target = &control_result;
+#if PF_ENABLE_WIRELESS
+    if (self_test_from_ble) target = &ble_result;
+#endif
+    if ((target->transaction_id != pending_self_test_request.transaction_id) ||
+        (target->opcode != pending_self_test_request.opcode)) {
         return;
     }
     const outcome_t result = accepted ? completed() : benchmark_rejection(error);
+#if PF_ENABLE_WIRELESS
+    ble_dispatch = self_test_from_ble;
+#endif
     set_result(&pending_self_test_request, result.status, result.error, NULL);
+#if PF_ENABLE_WIRELESS
+    ble_dispatch = false;
+#endif
 #endif
 }
 
@@ -178,6 +198,9 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     report->mcu = pf_system_mcu_id();
     report->board_model = board_model();
     report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS | PF_HID_CAP_FORCE_SAVE;
+#if PF_ENABLE_WIRELESS
+    report->capabilities |= PF_HID_CAP_WIRELESS;
+#endif
     if (pf_led_is_available()) report->capabilities |= PF_HID_CAP_LED;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
@@ -405,6 +428,9 @@ static outcome_t start_self_test(const pf_hid_control_request_t *request, uint32
     if (pf_storage_worker_benchmark_start(size_mib, false)) {
         pending_self_test_request = *request;
         self_test_result_pending = true;
+#if PF_ENABLE_WIRELESS
+        self_test_from_ble = ble_dispatch;
+#endif
         return outcome(PF_HID_COMMAND_PENDING, PF_HID_ERROR_NONE);
     }
     pf_storage_worker_benchmark_status(&benchmark);
@@ -431,6 +457,39 @@ static outcome_t handle_self_test(const pf_hid_control_request_t *request)
         return busy_outcome();
     }
     return action == 0u ? cancel_self_test() : start_self_test(request, size_mib);
+}
+#endif
+
+#if PF_ENABLE_WIRELESS
+/** @copydoc pf_hid_ble_control */
+bool pf_hid_ble_control(const pf_hid_control_request_t *request)
+{
+    if (request->version != PF_HID_REPORT_VERSION || request->transaction_id == 0u ||
+        (request->opcode != PF_HID_OPCODE_LED && request->opcode != PF_HID_OPCODE_SELF_TEST)) return false;
+    outcome_t result = busy_outcome();
+    if (!reboot_requested && !force_save_pending && !force_save_reboot_waiting
+#if PF_ENABLE_STORAGE_BENCHMARK
+        && !self_test_result_pending
+#endif
+    ) {
+        ble_dispatch = true;
+        result = request->opcode == PF_HID_OPCODE_LED ? handle_led(request)
+#if PF_ENABLE_STORAGE_BENCHMARK
+            : handle_self_test(request);
+#else
+            : outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
+#endif
+    }
+    ble_dispatch = true;
+    set_result(request, result.status, result.error, result.data);
+    ble_dispatch = false;
+    return true;
+}
+
+/** @copydoc pf_hid_ble_result */
+void pf_hid_ble_result(pf_hid_control_result_t *report)
+{
+    *report = ble_result;
 }
 #endif
 
@@ -530,6 +589,12 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
     if (instance != 0u || buffer == NULL) return 0u;
 
     if (report_type == HID_REPORT_TYPE_FEATURE) {
+#if PF_ENABLE_WIRELESS
+        if (report_id == PF_WIRELESS_REPORT_ID && reqlen >= PF_WIRELESS_STATUS_SIZE) {
+            pf_wireless_status(buffer);
+            return PF_WIRELESS_STATUS_SIZE;
+        }
+#endif
         if (report_id == PF_HID_IDENTITY_REPORT_ID && reqlen >= sizeof(pf_hid_identity_report_t)) {
             pf_hid_identity_report_t report;
             pf_hid_build_identity_report(&report);
@@ -583,6 +648,15 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            hid_report_type_t report_type, uint8_t const *buffer,
                            uint16_t bufsize)
 {
+#if PF_ENABLE_WIRELESS
+    if (instance == 0u && report_id == PF_WIRELESS_CONFIG_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
+        buffer != NULL && bufsize == PF_WIRELESS_REQUEST_SIZE) {
+        if (force_save_pending || force_save_reboot_waiting || reboot_requested) {
+            PF_LOGGING_WARNING("wireless", "Provisioning ignored during outstanding reboot/save");
+        } else if (pf_wireless_configure(buffer)) reboot_requested = true;
+        return;
+    }
+#endif
     if (instance != 0u || report_id != PF_HID_CONTROL_REPORT_ID ||
         report_type != HID_REPORT_TYPE_FEATURE || buffer == NULL ||
         bufsize != sizeof(pf_hid_control_request_t)) return;

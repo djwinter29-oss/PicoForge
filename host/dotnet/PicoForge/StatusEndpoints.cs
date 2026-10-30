@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace PicoForge;
 
@@ -26,6 +27,8 @@ internal static class StatusEndpoints
 
     public static IEndpointRouteBuilder MapDeviceStatus(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/wireless", GetWireless);
+        endpoints.MapPost("/api/wireless", SetWireless);
         endpoints.MapGet("/api/boards", GetBoards)
             .WithName("GetBoards")
             .WithSummary("Discover attached PicoForge boards")
@@ -83,6 +86,31 @@ internal static class StatusEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
         return endpoints;
+    }
+
+    private static IResult GetWireless(string? board, IDashboardBoards dashboard)
+    {
+        try { return Results.Ok(dashboard.ReadWireless(board)); }
+        catch (NotSupportedException) { return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" }); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "Wireless status unavailable");
+        }
+    }
+
+    private static IResult SetWireless(JsonElement request, string? board, IDashboardBoards dashboard)
+    {
+        WirelessRequest settings;
+        try { settings = WirelessRequest.Parse(request); }
+        catch (ArgumentException error) { return Results.Problem(statusCode: 400, title: error.Message); }
+        try { return Results.Ok(dashboard.SetWireless(board, settings)); }
+        catch (NotSupportedException) { return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" }); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "Wireless provisioning outcome is uncertain; command was not resent");
+        }
     }
 
     private static IResult GetBoards(IDashboardBoards dashboard)

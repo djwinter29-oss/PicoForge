@@ -7,6 +7,9 @@
 #include "tusb.h"
 #include "usb_hid.h"
 #include "usb_msc.h"
+#if PF_ENABLE_WIRELESS
+#include "app/wireless/wireless.h"
+#endif
 
 /* ponytail: development IDs; replace with an allocated VID/PID before distributing devices. The identity report's
  * PF_HID_PRODUCT_ID is an independent firmware-product field, not this USB PID. */
@@ -78,6 +81,16 @@ static uint8_t const hid_report_descriptor[] = {
     0x95, PF_HID_CONTROL_PAYLOAD_SIZE,
     0x09, 0x14,
     0xB1, 0x02,
+#if PF_ENABLE_WIRELESS
+    0x85, PF_WIRELESS_REPORT_ID,
+    0x95, PF_WIRELESS_STATUS_SIZE,
+    0x09, 0x1E,
+    0xB1, 0x02,
+    0x85, PF_WIRELESS_CONFIG_REPORT_ID,
+    0x95, PF_WIRELESS_REQUEST_SIZE,
+    0x09, 0x1F,
+    0xB1, 0x02,
+#endif
     0xC0,
 };
 
@@ -108,7 +121,7 @@ uint8_t const *tud_descriptor_device_cb(void)
 #define CDC_HID_DESCRIPTORS \
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64), \
     TUD_HID_DESCRIPTOR(ITF_NUM_HID, STRID_HID, HID_ITF_PROTOCOL_NONE, sizeof(hid_report_descriptor), \
-                       EPNUM_HID_IN, CFG_TUD_HID_EP_BUFSIZE, 10)
+                       EPNUM_HID_IN, 64, 10)
 
 /** Configuration while firmware owns the card. */
 static uint8_t const desc_configuration_no_msc[] = {

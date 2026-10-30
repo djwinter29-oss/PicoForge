@@ -263,11 +263,67 @@ void test_save_only_touches_the_reserved_sector_and_pads_the_page(void)
     TEST_ASSERT_TRUE(pf_boot_config_save());
     TEST_ASSERT_TRUE(record_valid((const record_t *)stored_bytes()));
     TEST_ASSERT_EQUAL_UINT8(0x5au, pf_test_flash[BOOT_CONFIG_FLASH_OFFSET - 1u]);
-    for (size_t i = sizeof(record_t); i < FLASH_SECTOR_SIZE; ++i) {
+    for (size_t i = sizeof(record_t) + sizeof(wireless_record_t); i < FLASH_SECTOR_SIZE; ++i) {
         TEST_ASSERT_EQUAL_HEX8(0xffu, stored_bytes()[i]);
     }
     TEST_ASSERT_EQUAL_UINT(1u, pf_test_erase_calls);
     TEST_ASSERT_EQUAL_UINT(1u, program_calls);
+}
+
+void test_wireless_extension_defaults_disabled_migrates_v1_and_survives_profile_updates(void)
+{
+    store(PF_SYSCLK_200MHZ, PF_STORAGE_SPEED_HIGH);
+    pf_wireless_config_t radios;
+    pf_boot_config_wireless(&radios);
+    TEST_ASSERT_EQUAL_UINT8(0u, radios.flags);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, pf_boot_config_sysclk());
+    radios.flags = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+    strcpy(radios.ssid, "test network");
+    strcpy(radios.password, "test-passphrase");
+    memset(radios.ble_key, 0x5a, sizeof(radios.ble_key));
+    TEST_ASSERT_TRUE(pf_boot_config_set_wireless(&radios));
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    reboot();
+    pf_wireless_config_t readback;
+    pf_boot_config_wireless(&readback);
+    TEST_ASSERT_EQUAL_MEMORY(&radios, &readback, sizeof(radios));
+    TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_250MHZ));
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    reboot();
+    pf_boot_config_wireless(&readback);
+    TEST_ASSERT_EQUAL_MEMORY(&radios, &readback, sizeof(radios));
+    TEST_ASSERT_EQUAL(PF_SYSCLK_250MHZ, pf_boot_config_sysclk());
+    stored_bytes()[sizeof(record_t) + offsetof(wireless_record_t, settings)] ^= 1u;
+    reboot();
+    pf_boot_config_wireless(&readback);
+    TEST_ASSERT_EQUAL_UINT8(0u, readback.flags);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_250MHZ, pf_boot_config_sysclk());
+}
+
+void test_wireless_extension_rejects_invalid_flags_unterminated_strings_and_missing_credentials(void)
+{
+    pf_wireless_config_t radios = {0};
+    radios.flags = 4u;
+    TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
+    radios.flags = PF_WIRELESS_WIFI;
+    TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
+    memset(radios.ssid, 'a', sizeof(radios.ssid));
+    strcpy(radios.password, "test-passphrase");
+    TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
+    radios.ssid[32] = '\0';
+    memset(radios.password, 'p', sizeof(radios.password));
+    TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
+    radios.password[63] = '\0';
+    TEST_ASSERT_TRUE(pf_boot_config_set_wireless(&radios));
+    radios.password[0] = '\x01';
+    TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
+    radios.flags = PF_WIRELESS_BLE;
+    radios.password[0] = '\0';
+    TEST_ASSERT_FALSE(pf_boot_config_set_wireless(&radios));
+    radios.ble_key[0] = 1u;
+    TEST_ASSERT_TRUE(pf_boot_config_set_wireless(&radios));
 }
 
 void test_unchanged_write_does_not_erase_again(void)

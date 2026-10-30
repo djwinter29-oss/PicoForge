@@ -36,7 +36,7 @@ export function decodeIdentityReport(report) {
   const capabilities = view.getUint8(17);
   const total = view.getUint32(18, true);
   const reserved = view.getUint32(22, true);
-  requireValid(!(capabilities & 0x80) && [8, 16].includes(capabilities & 24)
+  requireValid([8, 16].includes(capabilities & 24)
     && total > 0 && reserved <= total
     && (![1, 4].includes(board) || mcu === 1) && (![2, 3].includes(board) || mcu === 2), "identity");
   return {
@@ -237,7 +237,7 @@ const EMPTY = {
 const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile;
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-async function withTimeout(operation, milliseconds) {
+export async function withTimeout(operation, milliseconds) {
   let timer;
   try {
     return await Promise.race([operation, new Promise((resolve, reject) => {

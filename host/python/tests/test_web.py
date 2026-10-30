@@ -101,6 +101,17 @@ class FakeMonitor:
 
 
 class WebTests(unittest.TestCase):
+    def test_browser_bluetooth_assets_are_available_under_ble(self):
+        client = create_app(FakeMonitor()).test_client()
+        for path in ("/ble/", "/ble/index.html", "/ble/favicon.svg", "/ble/css/webhid.css",
+                     "/ble/js/app.mjs", "/ble/js/bluetooth.mjs", "/ble/js/wireless.mjs"):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertGreater(len(response.data), 0)
+                response.close()
+        self.assertEqual(client.get("/ble/../../pyproject.toml").status_code, 404)
+
     def test_settings_force_confirmation_is_explicit_boolean(self):
         monitor = FakeMonitor()
         client = create_app(monitor).test_client()

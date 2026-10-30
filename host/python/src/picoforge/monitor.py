@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from .device import PicoForgeHid, enumerate_devices
 from .protocol import (
+    build_wireless_configuration_report,
     build_settings_command_report,
     normalize_legacy_settings,
     validate_legacy_settings,
@@ -34,6 +35,7 @@ def _empty_snapshot() -> dict[str, object]:
         "settings_message": None,
         "control_result": None,
         "command_outcome_uncertain": False,
+        "reboot_pending": False,
         "report_freshness": {
             "3": {"supported": None, "available": False, "stale": False, "age_ms": None},
             "10": {"supported": None, "available": False, "stale": False, "age_ms": None},
@@ -252,9 +254,39 @@ class DeviceMonitor:
                     settings=saved,
                     board_configuration=configuration,
                     settings_message="Settings saved. Waiting for the board to reboot.",
+                    reboot_pending=True,
                     control_result=self._active_client.last_command_result,
                 )
             return saved
+
+    def read_wireless(self) -> dict[str, object]:
+        with self._device_lock:
+            if self._active_client is None:
+                raise RuntimeError("PicoForge HID is not connected")
+            return {"wireless": self._active_client.read_wireless(),
+                    "reboot_pending": self.snapshot().get("reboot_pending", False)}
+
+    def set_wireless(self, settings: dict[str, object]) -> dict[str, object]:
+        build_wireless_configuration_report(settings)
+        with self._device_lock:
+            snapshot = self.snapshot()
+            hardware = snapshot.get("hardware") or {}
+            msc = snapshot.get("msc")
+            self_test = snapshot.get("self_test")
+            if (self._active_client is None or not snapshot.get("connected")
+                    or not hardware.get("wireless_supported")):
+                raise RuntimeError("Wireless provisioning is unavailable on this firmware")
+            if (not isinstance(msc, dict) or msc.get("enabled") or msc.get("transition_pending")
+                    or snapshot.get("reboot_pending")
+                    or (snapshot.get("control_result") or {}).get("status") in ("pending", "busy")
+                    or (hardware.get("self_test_supported") and not isinstance(self_test, dict))
+                    or isinstance(self_test, dict) and self_test.get("active")):
+                raise RuntimeError("Wireless provisioning is unavailable while storage or the board is busy")
+            result = self._send_control(self._active_client.set_wireless, settings)
+            with self._lock:
+                self._snapshot.update(reboot_pending=True,
+                                      settings_message="Settings saved. Waiting for the board to reboot.")
+            return {"wireless": result, "reboot_pending": True}
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -418,6 +450,12 @@ class DashboardBoards:
 
     def set_led(self, board_id: str | None, on: bool) -> dict[str, object]:
         return self._monitor(board_id).set_led(on)
+
+    def read_wireless(self, board_id: str | None) -> dict[str, object]:
+        return self._monitor(board_id).read_wireless()
+
+    def set_wireless(self, board_id: str | None, settings: dict[str, object]) -> dict[str, object]:
+        return self._monitor(board_id).set_wireless(settings)
 
     def set_settings(self, board_id: str | None, settings: dict[str, object], *,
                      force: bool = False) -> dict[str, object]:

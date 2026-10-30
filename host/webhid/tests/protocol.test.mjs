@@ -51,10 +51,11 @@ test("identity validates exact WebHID payload, product, layout, capabilities, bo
   for (const bytes of [report.slice(0, 25), Uint8Array.from([1, ...report]), new Uint8Array(42)]) {
     assert.throws(() => decodeIdentityReport(bytes));
   }
-  for (const [offset, value] of [[0, 2], [1, 1], [17, 0], [17, 24], [17, 0x90], [14, 1]]) {
+  for (const [offset, value] of [[0, 2], [1, 1], [17, 0], [17, 24], [14, 1]]) {
     const bad = report.slice(); bad[offset] = value;
     assert.throws(() => decodeIdentityReport(bad), `${offset}: ${value}`);
   }
+  assert.equal(decodeIdentityReport(identity(0x90)).capabilities, 0x90);
   const reserved = report.slice(); reserved[16] = 255;
   assert.equal(decodeIdentityReport(reserved).product_name, "PicoForge", "identity reserved byte is ignored");
   const unknown = report.slice(); unknown[14] = 99; unknown[15] = 99;

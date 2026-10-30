@@ -41,6 +41,20 @@ typedef struct {
 _Static_assert(sizeof(record_t) == 16u && offsetof(record_t, crc) == 12u, "v1 record layout");
 
 static record_t config; /**< RAM record; zero profiles select defaults, and save refreshes metadata and CRC. */
+/** Private extension after the unchanged v1 profile record, within the same flash page. */
+typedef struct {
+    uint32_t magic; /**< "PFWL", distinct from the profile record. */
+    uint16_t version; /**< Extension version 1. */
+    uint16_t size; /**< Complete extension size. */
+    pf_wireless_config_t settings; /**< Private saved radio configuration. */
+    uint16_t reserved; /**< Zero padding before the CRC. */
+    uint32_t crc; /**< CRC-32 of all preceding extension bytes. */
+} wireless_record_t;
+
+_Static_assert(sizeof(pf_wireless_config_t) == 130u && sizeof(wireless_record_t) == 144u,
+               "wireless extension layout");
+_Static_assert(sizeof(record_t) + sizeof(wireless_record_t) <= FLASH_PAGE_SIZE, "settings fit one flash page");
+static wireless_record_t wireless; /**< Private extension; erased/invalid settings leave both radios disabled. */
 static bool loaded; /**< The saved record has been read once. */
 /** Prevents access while flash_safe_execute is active. */
 static bool save_in_progress;
@@ -102,6 +116,22 @@ static bool record_valid(const record_t *record)
            record->sdcard_profile <= PF_STORAGE_SPEED_HIGH && record->reserved == 0u;
 }
 
+/** @brief Validate radio flags, bounded strings and required credentials before changing RAM or enabling a radio. */
+static bool wireless_settings_valid(const pf_wireless_config_t *settings)
+{
+    if ((settings->flags & ~3u) != 0u ||
+        memchr(settings->ssid, '\0', sizeof(settings->ssid)) == NULL ||
+        memchr(settings->password, '\0', sizeof(settings->password)) == NULL) return false;
+    if ((settings->flags & PF_WIRELESS_WIFI) &&
+        (settings->ssid[0] == '\0' || strlen(settings->password) < 8u)) return false;
+    for (size_t i = 0u; settings->password[i] != '\0'; ++i) {
+        if ((unsigned char)settings->password[i] < 32u || (unsigned char)settings->password[i] > 126u) return false;
+    }
+    uint8_t key_bits = 0u;
+    for (size_t i = 0u; i < sizeof(settings->ble_key); ++i) key_bits |= settings->ble_key[i];
+    return !(settings->flags & PF_WIRELESS_BLE) || key_bits != 0u;
+}
+
 /**
  * @brief Load the saved record into the RAM copy once.
  *
@@ -123,7 +153,32 @@ static void ensure_loaded(void)
     if (record_valid(&record)) {
         config = record;
     }
+    wireless_record_t extension;
+    memset(&wireless, 0, sizeof(wireless));
+    memcpy(&extension, stored_data() + sizeof(record), sizeof(extension));
+    if (record_valid(&record) && extension.magic == 0x4c574650u && extension.version == 1u &&
+        extension.size == sizeof(extension) && extension.reserved == 0u &&
+        extension.crc == crc32(&extension, offsetof(wireless_record_t, crc)) &&
+        wireless_settings_valid(&extension.settings)) {
+        wireless = extension;
+    }
     loaded = true;
+}
+
+/** @copydoc pf_boot_config_wireless */
+void pf_boot_config_wireless(pf_wireless_config_t *settings)
+{
+    ensure_loaded();
+    *settings = wireless.settings;
+}
+
+/** @copydoc pf_boot_config_set_wireless */
+bool pf_boot_config_set_wireless(const pf_wireless_config_t *settings)
+{
+    ensure_loaded();
+    if (!loaded || !wireless_settings_valid(settings)) return false;
+    wireless.settings = *settings;
+    return true;
 }
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void)
@@ -171,15 +226,19 @@ bool pf_boot_config_save(void)
     config.size = sizeof(config);
     config.reserved = 0u;
     config.crc = crc32(&config, offsetof(record_t, crc));
-    if (memcmp(stored_data(), &config, sizeof(config)) == 0) {
-        return true;
-    }
+    wireless.magic = 0x4c574650u;
+    wireless.version = 1u;
+    wireless.size = sizeof(wireless);
+    wireless.reserved = 0u;
+    wireless.crc = crc32(&wireless, offsetof(wireless_record_t, crc));
     memset(page, 0xff, sizeof(page));
     memcpy(page, &config, sizeof(config));
+    memcpy(page + sizeof(config), &wireless, sizeof(wireless));
+    if (memcmp(stored_data(), page, sizeof(config) + sizeof(wireless)) == 0) return true;
     save_in_progress = true;
     tasks_before_lockout = uxTaskGetNumberOfTasks();
     int rc = flash_safe_execute(erase_and_program, page, SAVE_TIMEOUT_MS);
     lockout_pending = !lockout_reclaimed(LOCKOUT_RECLAIM_TIMEOUT_MS);
     save_in_progress = false;
-    return rc == PICO_OK && memcmp(stored_data(), page, sizeof(config)) == 0;
+    return rc == PICO_OK && memcmp(stored_data(), page, sizeof(config) + sizeof(wireless)) == 0;
 }

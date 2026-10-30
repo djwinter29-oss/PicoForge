@@ -35,6 +35,7 @@ app.Use(async (context, next) =>
 var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 var files = new PhysicalFileProvider(webRoot);
 app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+app.MapGet("/ble/", () => Results.File(Path.Combine(webRoot, "ble", "index.html"), "text/html; charset=utf-8"));
 var indexHtml = await File.ReadAllTextAsync(Path.Combine(webRoot, "index.html"));
 app.MapGet("/", () => Results.Content(
     indexHtml.Replace("{{ dashboard_type }}", ".NET"), "text/html; charset=utf-8"));

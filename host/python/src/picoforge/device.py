@@ -7,6 +7,11 @@ from time import monotonic, sleep
 from typing import Any
 
 from .protocol import (
+    CAP_WIRELESS,
+    WIRELESS_REPORT_ID,
+    WIRELESS_FEATURE_SIZE,
+    build_wireless_configuration_report,
+    parse_wireless_status_report,
     CAP_LED,
     CAP_REBOOT,
     CAP_SAVE_SETTINGS,
@@ -224,6 +229,41 @@ class PicoForgeHid:
             raise RuntimeError("standalone reboot is unavailable on this firmware")
         command = build_control_command_report(self._next_transaction_id(), 2, flags=1)
         return self._execute_control(command, 2)
+
+    def read_wireless(self) -> dict[str, object]:
+        self._require_open()
+        identity = self.identity or self.read_info()
+        if not identity.get("capabilities", 0) & CAP_WIRELESS:
+            raise RuntimeError("Wireless provisioning is unavailable on this firmware")
+        return parse_wireless_status_report(
+            self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE))
+
+    def set_wireless(self, settings: dict[str, object]) -> dict[str, object]:
+        self._require_open()
+        command = build_wireless_configuration_report(settings, self._next_transaction_id())
+        if self._command_uncertain:
+            raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
+        if self.read_wireless()["status"] in ("pending", "busy"):
+            raise RuntimeError("Wireless provisioning is busy")
+        self._command_uncertain = True
+        try:
+            if self._device.send_feature_report(list(command)) != len(command):
+                raise OSError("Wireless provisioning delivery failed; outcome is uncertain")
+            deadline = monotonic() + 5.0
+            while True:
+                result = self.read_wireless()
+                if result["transaction_id"] == command[2] and result["status"] != "pending":
+                    if result["status"] == "completed":
+                        self._command_uncertain = False
+                        return result
+                    if result["status"] in ("invalid", "unsupported", "busy", "failed"):
+                        self._command_uncertain = False
+                        raise RuntimeError(f"Wireless provisioning {result['status']}")
+                if monotonic() >= deadline:
+                    raise TimeoutError("Wireless provisioning timed out; outcome is uncertain; command was not resent")
+                sleep(0.05)
+        except OSError:
+            raise OSError("Wireless provisioning delivery failed; outcome is uncertain; command was not resent") from None
 
     def set_msc(self, enable: bool, *, force: bool = False) -> dict[str, object]:
         self._require_open()

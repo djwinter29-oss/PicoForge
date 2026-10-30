@@ -155,6 +155,44 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         SendCommand(2, 1, new byte[5]);
     }
 
+    public WirelessStatusResponse ReadWireless()
+    {
+        EnsureCapability(HidProtocol.CapabilityWireless, "wireless provisioning");
+        return HidProtocol.ParseWirelessStatus(readFeature(HidProtocol.WirelessReportId, HidProtocol.WirelessFeatureSize));
+    }
+
+    public WirelessStatusResponse SetWireless(WirelessRequest settings)
+    {
+        if (CommandOutcomeUncertain)
+            throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
+        if (ReadWireless().Status is "pending" or "busy")
+            throw new InvalidOperationException("Wireless provisioning is busy");
+        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
+        var request = HidProtocol.BuildWirelessRequest(settings, transactionId);
+        CommandOutcomeUncertain = true;
+        writeFeature(request);
+        var deadline = Environment.TickCount64 + 5000;
+        while (Environment.TickCount64 < deadline)
+        {
+            var result = ReadWireless();
+            if (result.TransactionId == transactionId)
+            {
+                if (result.Status == "completed")
+                {
+                    CommandOutcomeUncertain = false;
+                    return result;
+                }
+                if (result.Status is "invalid" or "unsupported" or "busy" or "failed")
+                {
+                    CommandOutcomeUncertain = false;
+                    throw new InvalidOperationException($"Wireless provisioning {result.Status}");
+                }
+            }
+            Thread.Sleep(20);
+        }
+        throw new TimeoutException("Wireless provisioning outcome is uncertain; command was not resent");
+    }
+
     public void SetSelfTest(string action, uint sizeMib)
     {
         EnsureCapability(HidProtocol.CapabilitySelfTest, "SD self-test");

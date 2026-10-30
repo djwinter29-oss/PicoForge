@@ -15,10 +15,17 @@
 #include "app/cli/cli.h"
 #include "app/cli/cli_storage.h"
 #include "app/storage/storage_worker.h"
+#if PF_ENABLE_WIRELESS
+#include "app/wireless/wireless.h"
+#endif
 
 #include <string.h>
 
+#if PF_ENABLE_WIRELESS
+#define USB_TASK_STACK_SIZE (2048U) /**< Radio-enabled owner task stack in words. */
+#else
 #define USB_TASK_STACK_SIZE (1024U) /**< USB task stack in words. */
+#endif
 #define USB_TASK_PRIORITY (tskIDLE_PRIORITY + 1U) /**< One above idle; the storage worker does the slow work. */
 #define USB_CLI_TX_SIZE 2048U /**< CDC output ring size in bytes. */
 #define USB_CLI_OUTPUT_RESERVE 1024U /**< Free ring space required before accepting input or worker replies. */
@@ -225,6 +232,9 @@ static void usb_task(void *context)
     TickType_t last_self_test_report = last_hid_report;
 
     TickType_t last_stack_sample = xTaskGetTickCount();
+#if PF_ENABLE_WIRELESS
+    pf_wireless_start();
+#endif
 
     while (true) {
         if ((TickType_t)(xTaskGetTickCount() - last_stack_sample) >= USB_STACK_SAMPLE_INTERVAL) {
@@ -238,6 +248,9 @@ static void usb_task(void *context)
         }
         pf_usb_msc_task();
         pf_hid_poll_async_commands();
+#if PF_ENABLE_WIRELESS
+        pf_wireless_poll();
+#endif
         cdc_cli_task();
 
         const TickType_t now = xTaskGetTickCount();

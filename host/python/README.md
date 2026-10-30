@@ -70,6 +70,16 @@ over HID and displays progress, verified byte counts, and average MiB/s. Its
 `{"action":"cancel"}`. A 202 response acknowledges delivery; completion and
 firmware rejection come from `self_test` in `/api/status`.
 
+USB wireless-capable firmware exposes sanitized configuration through `GET /api/wireless?board=ID`.
+`POST /api/wireless?board=ID` requires boolean `wifi_enabled`, `ble_enabled`, `confirm_reboot: true`,
+and `ssid` (at most 32 UTF-8 bytes; nonempty when Wi-Fi is enabled). Optional `password` must contain
+8..63 printable ASCII characters; optional `ble_key` must contain 64 hexadecimal characters and be nonzero.
+Omitting either credential preserves its stored value. Responses never contain credentials.
+Saving requires idle, firmware-owned storage and no active self-test or outstanding command.
+The host sends Feature 31 once and verifies its transaction using Feature 30 before marking reboot pending.
+Timeouts or disconnects leave the outcome uncertain and block further writes; commands are not replayed.
+Both local dashboards also serve the shared browser Bluetooth diagnostics page at `/ble/`, without native BLE dependencies.
+
 Run all hardware-free host unit suites from the repository root (install this package first):
 
 ```sh

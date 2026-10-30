@@ -79,7 +79,7 @@ class ProtocolTests(unittest.TestCase):
             parse_identity_report(raw + bytes(3) + b"\x01")
 
     def test_identity_and_configuration_reject_invalid_contract_fields(self):
-        for invalid in (identity_report(capabilities=0), identity_report(capabilities=0xF5),
+        for invalid in (identity_report(capabilities=0), identity_report(capabilities=0xFD),
                         identity_report(mcu=1, board=2)):
             with self.subTest(report=invalid), self.assertRaises(ValueError):
                 parse_identity_report(invalid)
