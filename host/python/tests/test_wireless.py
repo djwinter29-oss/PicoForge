@@ -26,6 +26,18 @@ def status(status_code=2, transaction=1):
 
 
 class WirelessTests(unittest.TestCase):
+    def test_dashboard_serves_the_shared_wireless_form_without_a_ble_dashboard(self):
+        client = create_app(Mock()).test_client()
+        page = client.get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('id="wifi-ssid"', page.text)
+        self.assertIn('id="wifi-password"', page.text)
+        self.assertIn('id="ble-secret"', page.text)
+        form = client.get("/webhid/js/wireless-form.mjs")
+        self.assertEqual(form.status_code, 200)
+        self.assertIn("export function bindWirelessForm", form.text)
+        self.assertEqual(client.get("/ble").status_code, 404)
+
     def test_identity_accepts_wireless_without_relaxing_transport_validation(self):
         self.assertTrue(parse_identity_report(identity_report(capabilities=0xF5))["wireless_supported"])
         self.assertFalse(parse_identity_report(identity_report())["wireless_supported"])

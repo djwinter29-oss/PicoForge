@@ -57,6 +57,13 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     def javascript(filename: str):
         return send_from_directory(root / "js", filename)
 
+    @app.get("/webhid/js/wireless-form.mjs")
+    def wireless_form():
+        installed_form = Path(__file__).with_name("wireless_ui")
+        form_root = (installed_form if installed_form.is_dir()
+                     else Path(__file__).resolve().parents[3] / "webhid" / "js")
+        return send_from_directory(form_root, "wireless-form.mjs")
+
     @app.get("/api/status")
     def status():
         try:

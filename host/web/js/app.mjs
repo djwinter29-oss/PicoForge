@@ -1,4 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
+import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -28,6 +29,81 @@ let selectedBoardLabel = "";
 let knownBoards = [];
 let scanningBoards = false;
 let selectionVersion = 0;
+let wirelessLoadedAt = 0;
+let wirelessOutcomeUncertain = false;
+const wirelessForm = bindWirelessForm({
+  supported: () => Boolean(currentSnapshot?.hardware?.capabilities & 128),
+  ready: wirelessReady,
+  load: async () => {
+    const response = await fetch(boardUrl("/api/wireless"), { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`);
+    }
+    if (!result.wireless || typeof result.wireless.ssid !== "string") {
+      throw new Error("Wireless endpoint returned invalid status");
+    }
+    return result.wireless;
+  },
+  save: saveWirelessSettings,
+});
+
+function wirelessReady() {
+  const snapshot = currentSnapshot;
+  return snapshot?.connected && Boolean(snapshot.hardware?.capabilities & 128)
+    && !settingsRequestInProgress && !snapshot.busy && !snapshot.reboot_pending
+    && !snapshot.outcome_uncertain && !snapshot.command_outcome_uncertain && !wirelessOutcomeUncertain
+    && !mscRequestInProgress && mscPendingEnabled === null && snapshot.storage_stale === false
+    && snapshot.msc && !snapshot.msc.enabled && !snapshot.msc.transition_pending
+    && !selfTestRequestInProgress && selfTestPendingSequence === null
+    && !snapshot.self_test_command_pending && !snapshot.self_test?.active
+    && !["pending", "busy"].includes(snapshot.control_result?.status)
+    && (!(snapshot.hardware.capabilities & 32) || (snapshot.self_test && snapshot.self_test_stale === false));
+}
+
+async function saveWirelessSettings(settings) {
+  if (!wirelessReady()) {
+    throw new Error("Wireless configuration requires fresh idle USB storage, with sharing disabled.");
+  }
+  settingsRequestInProgress = true;
+  boardSelect.disabled = true;
+  rescanBoardsButton.disabled = true;
+  ledControl.disabled = true;
+  renderStatus(currentSnapshot);
+  let rejected = false;
+  try {
+    const response = await fetch(boardUrl("/api/wireless"), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      const message = result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`;
+      rejected = response.status >= 400 && response.status < 500 && !/uncertain/i.test(message);
+      throw new Error(message);
+    }
+    const saved = result.wireless;
+    if (result.reboot_pending !== true || saved?.ssid !== settings.ssid
+      || saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled
+      || (settings.password !== undefined && saved.password_configured !== true)
+      || (settings.ble_key !== undefined && saved.ble_key_configured !== true)) {
+      throw new Error("Wireless readback did not match the requested values");
+    }
+    if (currentSnapshot) currentSnapshot.reboot_pending = true;
+    return saved;
+  } catch (error) {
+    if (!rejected) {
+      wirelessOutcomeUncertain = true;
+      if (currentSnapshot) currentSnapshot.outcome_uncertain = true;
+      throw new Error("Wireless provisioning outcome is uncertain; command was not resent. Reload before retrying.");
+    }
+    throw error;
+  } finally {
+    settingsRequestInProgress = false;
+    boardSelect.disabled = scanningBoards || knownBoards.length === 0;
+    rescanBoardsButton.disabled = scanningBoards;
+    if (currentSnapshot) renderStatus(currentSnapshot);
+  }
+}
 
 function boardUrl(path, boardId = selectedBoard) {
   if (!boardId) return path;
@@ -41,6 +117,8 @@ function boardLabel(board) {
 function renderStatus(snapshot) {
   if (!snapshot.connected) {
     shareDialog.close();
+    wirelessLoadedAt = 0;
+    wirelessForm.reset();
     settingsDirty = false;
     settingsStorageDirty = false;
     settingsMessage = null;
@@ -55,6 +133,11 @@ function renderStatus(snapshot) {
     settings_message: settingsMessage ?? snapshot.settings_message,
     msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
   });
+  wirelessForm.update();
+  if (wirelessReady() && Date.now() - wirelessLoadedAt >= 2000) {
+    wirelessLoadedAt = Date.now();
+    void wirelessForm.load();
+  }
 }
 
 async function updateStatus() {
@@ -66,8 +149,9 @@ async function updateStatus() {
     if (!response.ok) throw new Error(`Status endpoint returned HTTP ${response.status}`);
     const snapshot = await response.json();
     if (version !== selectionVersion) return;
-    if (mscRequestInProgress) return;
+    if (mscRequestInProgress || settingsRequestInProgress) return;
     currentSnapshot = snapshot;
+    currentSnapshot.outcome_uncertain ||= wirelessOutcomeUncertain || currentSnapshot.command_outcome_uncertain;
     if (currentSnapshot.connected && currentSnapshot.msc && !currentSnapshot.msc.transition_pending
       && (currentSnapshot.msc.enabled === mscPendingEnabled || currentSnapshot.msc.request_rejected)) {
       mscPendingEnabled = null;
@@ -80,13 +164,13 @@ async function updateStatus() {
     renderStatus(currentSnapshot);
   } catch (error) {
     if (version !== selectionVersion) return;
-    renderStatus({ connected: false, error: error.message });
     currentSnapshot = null;
+    renderStatus({ connected: false, error: error.message });
   } finally {
     requestInProgress = false;
     boardSelect.disabled = scanningBoards || knownBoards.length === 0
       || mscRequestInProgress || settingsRequestInProgress;
-    rescanBoardsButton.disabled = scanningBoards;
+    rescanBoardsButton.disabled = scanningBoards || settingsRequestInProgress;
     ledControl.disabled = settingsRequestInProgress || currentSnapshot?.reboot_pending ||
       currentSnapshot?.outcome_uncertain || !currentSnapshot?.connected ||
       !currentSnapshot?.board_status?.led_available;
@@ -101,6 +185,7 @@ async function updateStatus() {
 }
 
 function selectBoard(boardId) {
+  if (settingsRequestInProgress) return;
   const nextBoard = boardId || null;
   if (nextBoard === selectedBoard) return;
   configurationDialog.close();
@@ -115,6 +200,7 @@ function selectBoard(boardId) {
   settingsDirty = false;
   settingsStorageDirty = false;
   settingsMessage = null;
+  wirelessOutcomeUncertain = false;
   selfTestPendingSequence = null;
   mscPendingEnabled = null;
   renderStatus({ connected: false });
@@ -122,7 +208,7 @@ function selectBoard(boardId) {
 }
 
 async function rescanBoards() {
-  if (scanningBoards) return;
+  if (scanningBoards || settingsRequestInProgress) return;
   scanningBoards = true;
   boardSelect.disabled = true;
   rescanBoardsButton.disabled = true;
@@ -159,6 +245,7 @@ async function rescanBoards() {
       currentSnapshot = null;
       settingsDirty = false;
       settingsStorageDirty = false;
+      wirelessOutcomeUncertain = false;
       selfTestPendingSequence = null;
       mscPendingEnabled = null;
       renderStatus({ connected: false });

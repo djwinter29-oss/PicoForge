@@ -7,7 +7,9 @@ This implementation has host checks and target builds, not physical radio qualif
 
 ## Configuration and operation
 
-Connect through USB on the standalone WebHID page and open **Wi-Fi and Bluetooth**. Set the SSID and WPA2 passphrase.
+Connect through USB and open **Wi-Fi and Bluetooth** on the standalone WebHID or Python/.NET dashboard.
+The server dashboard provisions its selected USB-attached board; the browser does not need Bluetooth access.
+Set the SSID and WPA2 passphrase.
 SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters. Blank password/key fields
 preserve the existing secret. Generate a random BLE control key and copy it to a password manager before saving:
 the board never returns it. Explicit **Save wireless and reboot** confirmation is required.
@@ -21,14 +23,16 @@ Wi-Fi joins an existing 2.4 GHz WPA2 network and obtains an IPv4 address through
 30-second deadline; failures and dropped connections are reported and retried after five seconds. This does not
 provide a web server, network filesystem, Bluetooth Classic, internet management API or Wi-Fi dashboard transport.
 
-The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE or a wireless
-settings panel; their `/api/wireless` endpoint remains available. Bluetooth LE is available only from the
+The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE connections.
+Their wireless settings panel uses `/api/wireless`; it shares the standalone page's form implementation.
+Bluetooth LE connections are available only from the
 standalone WebHID page: select **Bluetooth LE** there. The browser must be within radio range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.
 
 BLE diagnostics are public. To control the LED or start/cancel a benchmark, enter the USB-provisioned control key
 and select **Use BLE key**. It is held only as a non-exportable browser CryptoKey and forgotten on disconnect.
+This generated 32-byte key authenticates commands; it is not a Bluetooth pairing password and does not encrypt the link.
 BLE cannot save configuration, provision credentials, reboot, or transfer USB storage ownership.
 Only one BLE connection is supported; disconnects never replay a command or reconnect automatically.
 
@@ -48,8 +52,9 @@ writes flash. Any future persistent bonding needs explicitly reserved, coordinat
 
 The unchanged 16-byte version-1 clock/speed record is followed by a 144-byte wireless extension in the same page:
 little-endian magic `0x4c574650`, version `1`, size `144`, flags/SSID[33]/password[64]/key[32], two reserved zero
-bytes, and CRC-32 over its first 140 bytes. Old records load unchanged with radios disabled. A bad extension
-disables radios without discarding valid clock/speed profiles. Profile saves preserve the extension.
+bytes, and CRC-32 over its first 140 bytes. Old records retain default-enabled master switches but have no
+provisioned credentials, so neither radio starts.
+A bad extension clears provisioning without discarding valid clock/speed profiles. Profile saves preserve the extension.
 Downgrading to firmware that predates wireless support can erase the extension on its next settings save;
 reprovision wireless credentials after upgrading again.
 Flash remains **unencrypted**: physical/debug access can recover credentials. Erasing settings clears them.

@@ -83,8 +83,10 @@ Saving requires idle, firmware-owned storage and no active self-test or outstand
 The host sends Feature 31 once and verifies its transaction, saved flags, SSID, and credential-presence booleans
 using Feature 30 before marking reboot pending. A mismatched saved configuration leaves the outcome uncertain.
 Timeouts or disconnects leave the outcome uncertain and block further writes; commands are not replayed.
-The local dashboards do not expose a wireless settings panel yet; use this API or the standalone WebHID page. Bluetooth
-LE diagnostics are available only from the standalone WebHID page.
+The local dashboards expose **Wi-Fi and Bluetooth** settings for the selected USB-attached W board, including
+SSID, password and a generated BLE control key. See the
+[wireless configuration and security policy](../../docs/design/wireless.md).
+Bluetooth LE connections remain available only from the standalone WebHID page.
 
 Run all hardware-free host unit suites from the repository root (install this package first):
 

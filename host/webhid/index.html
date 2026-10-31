@@ -157,11 +157,12 @@
         <label for="wifi-ssid">SSID<input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
         <label for="wifi-password">New Wi-Fi password (blank keeps saved)
           <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
-        <label for="ble-secret">New BLE key (blank keeps saved)
+        <label for="ble-secret">New BLE control key (blank keeps saved)
           <input id="ble-secret" type="password" maxlength="64" autocomplete="new-password"></label>
         <button class="button button-secondary" id="wireless-generate" type="button">Generate BLE key</button>
         <button class="button" id="wireless-save" type="button" disabled>Save wireless and reboot</button>
       </div>
+      <p>The BLE key authenticates control commands; diagnostics remain public. It does not encrypt the connection.</p>
       <p id="wireless-status" role="status" aria-live="polite"></p>
     </section>
     <dialog class="confirmation-dialog" id="wireless-dialog" aria-labelledby="wireless-dialog-title">

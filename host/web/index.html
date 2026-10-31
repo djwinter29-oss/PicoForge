@@ -144,6 +144,32 @@
       </dl>
     </section>
 
+    <section class="runtime" id="wireless-panel" aria-labelledby="wireless-title" hidden>
+      <h2 id="wireless-title">Wi-Fi and Bluetooth</h2>
+      <p>Provision the selected USB-attached board. After reboot, saved credentials are used only when the
+        corresponding Board configuration switch is enabled. Credentials are stored in unencrypted flash.</p>
+      <div class="settings-controls">
+        <label for="wifi-ssid">SSID<input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
+        <label for="wifi-password">New Wi-Fi password (blank keeps saved)
+          <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
+        <label for="ble-secret">New BLE control key (blank keeps saved)
+          <input id="ble-secret" type="password" maxlength="64" autocomplete="new-password"></label>
+        <button class="button button-secondary" id="wireless-generate" type="button">Generate BLE key</button>
+        <button class="button" id="wireless-save" type="button" disabled>Save wireless and reboot</button>
+      </div>
+      <p>The BLE key authenticates control commands; diagnostics remain public. It does not encrypt the connection.</p>
+      <p id="wireless-status" role="status" aria-live="polite"></p>
+    </section>
+    <dialog class="confirmation-dialog" id="wireless-dialog" aria-labelledby="wireless-dialog-title">
+      <h2 id="wireless-dialog-title">Save wireless settings and reboot?</h2>
+      <p>USB will disconnect. Keep a copy of the BLE key; it cannot be read back.
+        Flash credentials are not encrypted.</p>
+      <div class="dialog-actions">
+        <button class="button button-cancel" id="wireless-cancel" type="button" autofocus>Cancel</button>
+        <button class="button button-danger" id="wireless-confirm" type="button">Save and reboot</button>
+      </div>
+    </dialog>
+
     <section class="runtime self-test self-test-meter" id="self-test-meter" aria-labelledby="self-test-title">
       <details class="pin-map-disclosure self-test-disclosure" id="self-test-disclosure">
         <summary>
