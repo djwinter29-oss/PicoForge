@@ -9,10 +9,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
+  assert.match(html, /href="css\/webhid\.css\?v=5"/);
   assert.match(html, /src="js\/app\.mjs\?v=9"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=4"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=3"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=4"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
@@ -35,7 +36,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     ["product-name", "board-model", "serial", "identity-clock", "ram-usage", "firmware-version"]);
   const runtime = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
   assert.deepEqual([...runtime.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
-    ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port"]);
+    ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
+  const storage = html.split('aria-labelledby="memory-title"')[1].split("</section>")[0];
+  assert.deepEqual([...storage.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
+    ["Memory state", "Capacity", "Filesystem", "Manufacturer", "Product", "Serial"]);
+  assert.doesNotMatch(html, /id="memory-mode"/);
   assert.match(html, /<details class="pin-map-disclosure">/);
   assert.match(html, /id="board-uart"[\s\S]*id="board-storage-pins"/);
   for (const name of ["configuration", "reboot", "return", "share"]) {

@@ -133,10 +133,10 @@ test("busy storage retains card details without a message, but stale or replaced
         manufacture_year: 2020, manufacture_month: 1, serial_number: 4089330880 } };
     const busy = { ...state, memory: { configured: true, sample_valid: false } };
     renderStatus(state);
-    const ids = ["#memory-mode", "#memory-speed", "#memory-size", "#memory-filesystem",
+    const ids = ["#memory-speed", "#memory-size", "#memory-filesystem",
       "#memory-manufacturer", "#memory-product", "#memory-serial"];
     const details = ids.map(id => el(id).textContent);
-    assert.equal(el("#memory-speed").textContent, "50 MHz (High-Speed)");
+    assert.equal(el("#memory-speed").textContent, "50 MHz");
     assert.equal(el("#storage-freshness").hidden, true);
     for (let sample = 0; sample < 3; sample++) {
       renderStatus(busy);
@@ -148,8 +148,8 @@ test("busy storage retains card details without a message, but stale or replaced
       { ...state, connected: false, memory: null },
       { ...state, memory: null, freshness: { 10: "stale" } },
       { ...state, memory: { configured: true, sample_valid: true, initialized: false, present: false } },
-      { ...state, msc: { enabled: true }, memory: { configured: true, sample_valid: false } },
-      { ...state, msc: { transition_pending: true }, memory: { configured: true, sample_valid: false } },
+      { ...state, msc: { enabled: true } },
+      { ...state, msc: { transition_pending: true } },
     ]) {
       renderStatus(state);
       renderStatus(invalidation);
@@ -164,6 +164,7 @@ test("SPI pin table has two rows and keeps card detect after the four bus signal
   state.settings = decodeConfigReport(config("spi"), state.hardware);
   state.settings.card_detect_gpio = 255;
   renderStatus(state);
+  assert.equal(el("#product-name").textContent, "PicoForge (SPI)");
   assert.equal(el("#board-storage-title").textContent, "Storage (SPI)");
   const rows = el("#board-storage-pins").children;
   assert.equal(rows.length, 2);

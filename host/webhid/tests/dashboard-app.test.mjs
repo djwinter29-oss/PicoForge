@@ -19,7 +19,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     return elements.get(selector);
   };
   const connected = { connected: true, error: null, board_status: { led_available: true, led_on: false },
-    hardware: { board_model: "Pico 2", mcu: "RP2350", capabilities: 2,
+    hardware: { board_model: "Pico 2", mcu: "RP2350", capabilities: 2 | 16,
       ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
     settings_supported: true, settings: { system_clock_mhz: 200, sdcard_profile: 0 },
     memory: { mode: "spi" }, msc: { enabled: false, transition_pending: false }, self_test: null };
@@ -114,6 +114,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       assert.equal(elements.get("#settings-note").hidden, false);
     }
     renderStatus(connected);
+    assert.equal(elements.get("#product-name").textContent, "PicoForge (SDIO)");
     assert.equal(elements.get("#settings-clock").disabled, false);
     assert.equal(elements.get("#settings-storage").disabled, false);
     assert.equal(Boolean(elements.get("#reboot-control").disabled), false);
@@ -224,7 +225,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       renderStatus({ ...connected, memory: { configured: true, sample_valid: true, initialized: true,
         present: true, bus_clock_hz: 50000000, speed_mode: speedMode } });
       assert.equal(elements.get("#memory-state").textContent, "Ready");
-      assert.equal(elements.get("#memory-speed").textContent, "50 MHz (High-Speed)");
+      assert.equal(elements.get("#memory-speed").textContent, "50 MHz");
     }
     const validStorage = { ...connected, filesystem_format: "exfat", memory: {
       configured: true, sample_valid: true, initialized: true, present: true, mode: "sdio",
@@ -234,7 +235,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     } };
     const busyStorage = { ...connected, memory: { configured: true, sample_valid: false } };
     renderStatus(validStorage);
-    const detailIds = ["#memory-mode", "#memory-speed", "#memory-size", "#memory-filesystem",
+    const detailIds = ["#memory-speed", "#memory-size", "#memory-filesystem",
       "#memory-manufacturer", "#memory-product", "#memory-serial"];
     const details = detailIds.map(id => elements.get(id).textContent);
     for (let sample = 0; sample < 3; sample++) {
@@ -248,8 +249,8 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       { ...connected, storage_stale: true },
       { ...connected, memory: { configured: true, sample_valid: true, presence_known: true, present: false } },
       { ...connected, memory: { configured: true, sample_valid: true, present: true, initialized: false } },
-      { ...connected, msc: { enabled: true } },
-      { ...connected, msc: { transition_pending: true } },
+      { ...validStorage, msc: { enabled: true } },
+      { ...validStorage, msc: { transition_pending: true } },
     ]) {
       renderStatus(validStorage);
       renderStatus(invalidation);
@@ -258,10 +259,13 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     }
     renderStatus(connected);
     for (const transport of ["sdio", "spi"]) {
+      connected.hardware.capabilities = 2 | (transport === "spi" ? 8 : 16);
       renderStatus({ ...connected, board_configuration: {
         storage_transport: transport, storage_gpios: [2, 3, 4, 5, 6, 7], card_detect_gpio: 8,
         monitor_uart_index: 0, monitor_uart_tx_gpio: 0, monitor_uart_rx_gpio: 255, reset_cause: 2,
       } });
+      assert.equal(elements.get("#product-name").textContent,
+        `PicoForge (${transport === "spi" ? "SPI" : "SDIO"})`);
       const rows = id => elements.get(id).children.map(row => row.children.map(cell => cell.textContent));
       assert.deepEqual(rows("#board-uart"), [["TX", "RX"], ["GP0", "Unassigned"]]);
       assert.deepEqual(rows("#board-storage-pins"), transport === "spi"
@@ -286,7 +290,11 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.doesNotMatch(html, /metric-product/);
     const diagnostics = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
     assert.deepEqual([...diagnostics.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
-      ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port"]);
+      ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
+    const storage = html.split('aria-labelledby="memory-title"')[1].split("</section>")[0];
+    assert.deepEqual([...storage.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
+      ["Memory state", "Capacity", "Filesystem", "Manufacturer", "Product", "Serial"]);
+    assert.doesNotMatch(html, /id="memory-mode"/);
     const pins = html.match(/<details class="pin-map-disclosure"([^>]*)>([\s\S]*?)<\/details>/);
     assert.ok(pins);
     assert.doesNotMatch(pins[1], /\bopen\b/);

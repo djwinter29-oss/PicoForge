@@ -19,7 +19,8 @@ export function renderStatus(snapshot) {
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
   document.querySelector("#connection-label").textContent = snapshot.error
     ? "Attention" : connected ? "Connected" : "Disconnected";
-  document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
+  document.querySelector("#product-name").textContent = hardware
+    ? `${hardware.product_name} (${hardware.capabilities & 8 ? "SPI" : "SDIO"})` : "--";
   const boardModel = typeof hardware?.board_model === "string" ? hardware.board_model
     : ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W", 4: "Pico W" })[hardware?.board_model]
       ?? (hardware ? `Unknown (${hardware.board_model})` : "--");
@@ -175,7 +176,7 @@ function renderBoardConfiguration(snapshot) {
     });
     document.querySelector(selector).replaceChildren(headings, values);
   };
-  const spi = configuration?.storage_transport === "spi";
+  const spi = Boolean(snapshot.hardware?.capabilities & 8);
   const labels = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
   set("#board-uart-title", configuration && configuration.monitor_uart_index !== 255
     ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
@@ -197,14 +198,14 @@ function renderMemory(memory, filesystemFormat, stale, msc) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const busy = !stale && memory?.configured && memory.sample_valid === false
     && !msc?.enabled && !msc?.transition_pending;
-  if (!stale && memory?.sample_valid && memory.initialized) {
+  if (!stale && memory?.sample_valid && memory.initialized && !msc?.enabled && !msc?.transition_pending) {
     lastStorageDetails = { memory, filesystemFormat };
   } else if (!busy) {
     lastStorageDetails = null;
   }
   if (stale) {
     set("#memory-note", "Storage status is stale; waiting for a fresh report.");
-    for (const id of ["#memory-state", "#memory-mode", "#memory-speed", "#memory-size",
+    for (const id of ["#memory-state", "#memory-speed", "#memory-size",
       "#memory-filesystem", "#memory-manufacturer", "#memory-product", "#memory-serial"]) set(id, "--");
     return;
   }
@@ -225,9 +226,9 @@ function renderMemory(memory, filesystemFormat, stale, msc) {
     ({ memory, filesystemFormat } = lastStorageDetails);
   }
   const manufacturer = memory?.manufacturer;
-  set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
-  set("#memory-speed", memory?.bus_clock_hz
-    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz (${memory.speed_mode === 2 || memory.speed_mode === "high-speed" ? "High-Speed" : "Standard"})`
+  set("#memory-speed", memory?.sample_valid !== false && memory?.initialized
+    && !msc?.enabled && !msc?.transition_pending && memory?.bus_clock_hz
+    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
