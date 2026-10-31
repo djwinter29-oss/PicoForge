@@ -7,9 +7,9 @@ import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 test("standalone dashboard labels profiles, active measurements, controls and accessible statuses", () => {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-  assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
+  assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=6"/);
+  assert.match(html, /href="css\/webhid\.css\?v=8"/);
   assert.match(html, /src="js\/app\.mjs\?v=10"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=4"/);
@@ -23,7 +23,8 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
     assert.match(dashboard, /id="self-test-start"[^>]*>Start benchmark<\/button>/);
     assert.doesNotMatch(dashboard, />Start self-test<\/button>/);
-    assert.match(dashboard, /id="self-test-meter">\s*<span[^>]*id="self-test-state"[^>]*>[^<]*<\/span>\s*<progress/);
+    assert.match(dashboard, /class="self-test-heading-copy">\s*<h2[^>]*>Storage benchmark<\/h2>\s*<span[^>]*id="self-test-state"/);
+    assert.match(dashboard, /<\/button>\s*<\/div>\s*<\/div>\s*<progress id="self-test-progress"/);
     const benchmark = dashboard.split('aria-labelledby="self-test-title"')[1].split("</section>")[0];
     assert.deepEqual([...benchmark.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
       ["Written / target", "Write duration", "Average write speed", "Verified / target", "Read duration",
@@ -41,7 +42,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     ["product-name", "board-model", "serial", "identity-clock", "ram-usage", "firmware-version"]);
   const runtime = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
   assert.deepEqual([...runtime.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
-    ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
+    ["Uptime", "Reset cause", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
   const storage = html.split('aria-labelledby="memory-title"')[1].split("</section>")[0];
   assert.deepEqual([...storage.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
     ["Memory state", "Capacity", "Filesystem", "Manufacturer", "Product", "Serial"]);

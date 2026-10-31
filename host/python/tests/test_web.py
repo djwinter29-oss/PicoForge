@@ -131,7 +131,7 @@ class WebTests(unittest.TestCase):
             "/", base_url="http://127.0.0.1"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"<title>PicoForge Diagnostics | Python</title>", response.data)
+        self.assertIn(b"<title>PicoForge Dashboard | Python</title>", response.data)
         self.assertIn(b"<small>Python</small>", response.data)
 
     def test_status_route_returns_snapshot_and_security_headers(self):

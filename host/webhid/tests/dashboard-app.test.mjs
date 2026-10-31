@@ -290,7 +290,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.doesNotMatch(html, /metric-product/);
     const diagnostics = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
     assert.deepEqual([...diagnostics.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
-      ["Uptime", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
+      ["Uptime", "Reset cause", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
     const storage = html.split('aria-labelledby="memory-title"')[1].split("</section>")[0];
     assert.deepEqual([...storage.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
       ["Memory state", "Capacity", "Filesystem", "Manufacturer", "Product", "Serial"]);
@@ -300,7 +300,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.doesNotMatch(pins[1], /\bopen\b/);
     assert.match(pins[2], /<summary>Pin configuration<\/summary>/);
     assert.doesNotMatch(pins[2], /board-reset-cause/);
-    assert.match(html, /class="settings-controls"[\s\S]*?id="board-reset-cause"[\s\S]*?id="settings-note"/);
+    assert.match(diagnostics, /<dt>Reset cause<\/dt><dd id="board-reset-cause">/);
     for (const id of ["board-uart", "board-storage-pins"]) {
       assert.ok(pins[2].includes(`id="${id}"`));
     }

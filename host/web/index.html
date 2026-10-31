@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>PicoForge Diagnostics | {{ dashboard_type }}</title>
+  <title>PicoForge Dashboard | {{ dashboard_type }}</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
   <link rel="stylesheet" href="/css/dashboard.css">
   <script type="module" src="/js/app.mjs"></script>
@@ -24,7 +24,7 @@
   <main>
     <section class="page-heading">
       <div>
-        <h1>Diagnostics</h1>
+        <h1>Dashboard</h1>
       </div>
     </section>
 
@@ -75,9 +75,6 @@
             <option value="1">High-Speed</option>
           </select>
         </label>
-        <div class="metric">
-          <span>Reset cause</span><strong id="board-reset-cause">--</strong>
-        </div>
       </div>
       <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
         Waiting for a PicoForge connection.
@@ -105,6 +102,7 @@
       </div>
       <dl class="runtime-grid runtime-summary">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
+        <div><dt>Reset cause</dt><dd id="board-reset-cause">--</dd></div>
         <div title="Service-pass workload proxies, not CPU utilization">
           <dt>Service load (Core 0 / Core 1)</dt>
           <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
@@ -134,19 +132,19 @@
       </dl>
     </section>
 
-    <section class="runtime self-test" aria-labelledby="self-test-title">
+    <section class="runtime self-test self-test-meter" id="self-test-meter" aria-labelledby="self-test-title">
       <div class="section-heading self-test-heading">
-        <h2 id="self-test-title">Storage benchmark</h2>
+        <div class="self-test-heading-copy">
+          <h2 id="self-test-title">Storage benchmark</h2>
+          <span class="self-test-label" id="self-test-state">Unavailable</span>
+        </div>
         <div class="self-test-controls">
           <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
           <button class="button" id="self-test-start" type="button" disabled>Start benchmark</button>
           <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
         </div>
       </div>
-      <div class="self-test-meter" id="self-test-meter">
-        <span class="self-test-label" id="self-test-state">Unavailable</span>
-        <progress id="self-test-progress" value="0" max="100" aria-label="Benchmark progress"></progress>
-      </div>
+      <progress id="self-test-progress" value="0" max="100" aria-label="Benchmark progress"></progress>
       <dl class="runtime-grid">
         <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
         <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
