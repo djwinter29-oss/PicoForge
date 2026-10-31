@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light">
   <title>PicoForge Dashboard | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
-  <link rel="stylesheet" href="css/webhid.css?v=9">
-  <script type="module" src="js/app.mjs?v=13"></script>
+  <link rel="stylesheet" href="css/webhid.css?v=10">
+  <script type="module" src="js/app.mjs?v=14"></script>
 </head>
 <body>
   <header class="topbar">
@@ -78,24 +78,25 @@
             <option value="1">High-Speed</option>
           </select>
         </label>
+        <label for="settings-wifi" hidden>Wi-Fi
+          <select id="settings-wifi" disabled>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </label>
+        <label for="settings-ble" hidden>Bluetooth
+          <select id="settings-ble" disabled>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </label>
       </div>
       <details class="pin-map-disclosure" id="wireless-panel" hidden>
         <summary>Wi-Fi and Bluetooth</summary>
-        <p>A radio starts after reboot only when enabled and provisioned. Board configuration saves these
-          fields together. Credentials are stored in unencrypted flash.</p>
+        <p>A radio starts after reboot only when its Board configuration switch is enabled and it is
+          provisioned. Save and Reboot saves these fields with the board settings. Credentials are stored in
+          unencrypted flash.</p>
         <div class="settings-controls">
-          <label for="settings-wifi">Wi-Fi
-            <select id="settings-wifi" disabled>
-              <option value="1">Enabled</option>
-              <option value="0">Disabled</option>
-            </select>
-          </label>
-          <label for="settings-ble">Bluetooth
-            <select id="settings-ble" disabled>
-              <option value="1">Enabled</option>
-              <option value="0">Disabled</option>
-            </select>
-          </label>
           <label for="wifi-ssid">SSID<input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
           <label for="wifi-password">New Wi-Fi password (blank keeps saved)
             <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>

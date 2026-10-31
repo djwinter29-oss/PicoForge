@@ -66,6 +66,9 @@ function render(state) {
   mscControl.disabled = blocked || !storageReady || bluetooth;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
   const settingsReady = !blocked && storageReady && !bluetooth;
+  for (const id of ["settings-wifi", "settings-ble"]) {
+    document.querySelector(`label[for="${id}"]`).hidden = !(state.hardware?.capabilities & 128);
+  }
   for (const control of [settingsClock, settingsStorage, ...settingsRadios, settingsSave]) {
     control.disabled = !settingsReady || !state.settings_supported;
   }

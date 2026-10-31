@@ -9,8 +9,8 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=9"/);
-  assert.match(html, /src="js\/app\.mjs\?v=13"/);
+  assert.match(html, /href="css\/webhid\.css\?v=10"/);
+  assert.match(html, /src="js\/app\.mjs\?v=14"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=4"/);
   assert.match(app, /from "\.\/view\.mjs\?v=6"/);
@@ -27,7 +27,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     assert.match(settings, /<details[^>]*id="wireless-panel" hidden>\s*<summary>Wi-Fi and Bluetooth<\/summary>[\s\S]*/);
     assert.match(settings, /id="wireless-panel"[\s\S]*<summary>Pin configuration<\/summary>/);
     const wireless = settings.split('id="wireless-panel"')[1].split("</details>")[0];
-    assert.match(wireless, /id="settings-wifi"[\s\S]*id="settings-ble"[\s\S]*id="wifi-ssid"/);
+    const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
+    assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
+      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble"]);
+    assert.match(board, /<label for="settings-wifi" hidden>[\s\S]*<label for="settings-ble" hidden>/);
+    assert.doesNotMatch(wireless, /id="settings-wifi"|id="settings-ble"/);
     assert.doesNotMatch(dashboard, /id="wireless-save"|id="wireless-dialog"/);
     assert.match(dashboard, /id="configuration-wireless-warning" hidden/);
     assert.match(footer, /role="status" aria-live="polite"/);

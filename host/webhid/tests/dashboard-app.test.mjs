@@ -464,6 +464,8 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     await tick();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#wireless-panel").hidden, false);
+    assert.equal(elements.get('label[for="settings-wifi"]').hidden, false);
+    assert.equal(elements.get('label[for="settings-ble"]').hidden, false);
     assert.equal(elements.get("#settings-wifi").value, "1");
     assert.equal(elements.get("#settings-ble").value, "1");
     assert.equal(elements.get("#wifi-ssid").value, "saved");

@@ -155,6 +155,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .runtime[aria-labelledby="runtime-title"] .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .runtime[aria-labelledby="settings-title"] .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -253,7 +254,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
   .identity, .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -273,5 +274,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 
 @media (max-width: 420px) {
   h1 { font-size: 26px; }
-  .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls { grid-template-columns: minmax(0, 1fr); }
+  .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls,
+  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: minmax(0, 1fr); }
 }

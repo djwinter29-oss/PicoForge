@@ -8,7 +8,8 @@ This implementation has host checks and target builds, not physical radio qualif
 ## Configuration and operation
 
 Connect through USB and expand **Board configuration > Wi-Fi and Bluetooth** on the standalone WebHID or Python/.NET
-dashboard. The section holds the Wi-Fi and Bluetooth switches and the credentials.
+dashboard. The Wi-Fi and Bluetooth switches sit beside System clock and SD Card on W boards; the collapsed section
+holds the credentials.
 The server dashboard provisions its selected USB-attached board; the browser does not need Bluetooth access.
 Set the SSID and WPA2 passphrase.
 SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters. Blank password/key fields
