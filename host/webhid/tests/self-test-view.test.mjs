@@ -66,7 +66,8 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   state.self_test = decodeSelfTestReport(selfTest(6));
   state.self_test.request_error = 11;
   renderSelfTest(state);
-  assert.equal(el("#self-test-state").textContent, "Passed");
+  assert.equal(el("#self-test-state").textContent, "Passed · 100%");
+  assert.equal(el("#self-test-meter").dataset.result, "passed");
   assert.equal(el("#self-test-write-speed").textContent, "2.00 MiB/s");
   assert.equal(el("#self-test-read-speed").textContent, "4.00 MiB/s");
   assert.equal(el("#self-test-progress").value, 100);
@@ -74,7 +75,8 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   state.self_test = decodeSelfTestReport(selfTest(99));
   state.self_test.request_error = 255;
   renderSelfTest(state);
-  assert.equal(el("#self-test-state").textContent, "Unknown state (99)");
+  assert.match(el("#self-test-state").textContent, /^Unknown state \(99\) · \d+%$/);
+  assert.equal(el("#self-test-meter").dataset.result, "");
   assert.match(el("#self-test-message").textContent, /Unknown error \(255\)/);
   assert.equal(el("#self-test-start").disabled, true);
 }));

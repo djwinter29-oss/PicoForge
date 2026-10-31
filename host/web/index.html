@@ -143,16 +143,17 @@
           <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
         </div>
       </div>
-      <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
+      <div class="self-test-meter" id="self-test-meter">
+        <span class="self-test-label" id="self-test-state">Unavailable</span>
+        <progress id="self-test-progress" value="0" max="100" aria-label="Benchmark progress"></progress>
+      </div>
       <dl class="runtime-grid">
-        <div><dt>Test status</dt><dd id="self-test-state">Unavailable</dd></div>
-        <div><dt>Overall progress</dt><dd id="self-test-percent">0%</dd></div>
-        <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
-        <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
         <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
-        <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
         <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
+        <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
+        <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
         <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
+        <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
       </dl>
       <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
     </section>

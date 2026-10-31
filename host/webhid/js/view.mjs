@@ -206,9 +206,11 @@ export function renderSelfTest(snapshot) {
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", preparing: "Preparing", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
   const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
-  set("#self-test-state", labels[status?.state] ?? status?.state ?? "Unavailable");
-  set("#self-test-percent", `${Math.floor(status?.progress_percent ?? 0)}%`);
+  set("#self-test-state", status ? `${labels[status.state] ?? status.state} · ${Math.floor(status.progress_percent ?? 0)}%`
+    : "Unavailable");
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;
+  document.querySelector("#self-test-meter").dataset.result = ["passed", "failed"].includes(status?.state)
+    ? status.state : "";
   set("#self-test-write-speed", speed(status?.write_bytes_per_second));
   set("#self-test-read-speed", speed(status?.read_bytes_per_second));
   set("#self-test-written", status ? `${count(status.written_bytes)} / ${count(status.target_bytes)}` : "--");

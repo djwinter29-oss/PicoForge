@@ -9,11 +9,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Diagnostics \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=5"/);
-  assert.match(html, /src="js\/app\.mjs\?v=9"/);
+  assert.match(html, /href="css\/webhid\.css\?v=6"/);
+  assert.match(html, /src="js\/app\.mjs\?v=10"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=4"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=4"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=5"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
@@ -23,6 +23,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
     assert.match(dashboard, /id="self-test-start"[^>]*>Start benchmark<\/button>/);
     assert.doesNotMatch(dashboard, />Start self-test<\/button>/);
+    assert.match(dashboard, /id="self-test-meter">\s*<span[^>]*id="self-test-state"[^>]*>[^<]*<\/span>\s*<progress/);
+    const benchmark = dashboard.split('aria-labelledby="self-test-title"')[1].split("</section>")[0];
+    assert.deepEqual([...benchmark.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
+      ["Written / target", "Write duration", "Average write speed", "Verified / target", "Read duration",
+        "Average read speed"]);
   }
   assert.doesNotMatch(html, /Save &amp; Reboot|25 MHz|50 MHz|Core 1 \/ Core 2/);
   assert.match(html, /Firmware RAM reserved \/ total/);
@@ -47,7 +52,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     assert.match(html, new RegExp(`<dialog class="confirmation-dialog" id="${name}-dialog"`));
   }
   assert.match(html, /id="led-control"[\s\S]*?aria-pressed="false"/);
-  assert.match(html, /<progress[^>]*aria-label="Self-test progress"/);
+  assert.match(html, /<progress[^>]*aria-label="Benchmark progress"/);
   for (const name of ["telemetry", "storage", "self-test"]) {
     assert.match(html, new RegExp(`id="${name}-freshness" role="status"`));
   }

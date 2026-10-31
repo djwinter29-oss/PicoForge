@@ -1,5 +1,5 @@
 import { PicoForgeWebHid } from "./device.mjs?v=4";
-import { renderStatus, renderSelfTest } from "./view.mjs?v=4";
+import { renderStatus, renderSelfTest } from "./view.mjs?v=5";
 import { PicoForgeBluetooth } from "./bluetooth.mjs";
 import { bindWirelessForm } from "./wireless-form.mjs";
 import { decodeWireless, saveWireless } from "./wireless.mjs";
