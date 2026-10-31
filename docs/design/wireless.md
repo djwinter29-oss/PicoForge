@@ -7,15 +7,18 @@ This implementation has host checks and target builds, not physical radio qualif
 
 ## Configuration and operation
 
-Connect through USB and open **Wi-Fi and Bluetooth** on the standalone WebHID or Python/.NET dashboard.
+Connect through USB and expand **Board configuration > Wi-Fi and Bluetooth** on the standalone WebHID or Python/.NET
+dashboard. The section holds the Wi-Fi and Bluetooth switches and the credentials.
 The server dashboard provisions its selected USB-attached board; the browser does not need Bluetooth access.
 Set the SSID and WPA2 passphrase.
 SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters. Blank password/key fields
 preserve the existing secret. Generate a random BLE control key and copy it to a password manager before saving:
-the board never returns it. Explicit **Save wireless and reboot** confirmation is required.
+the board never returns it. Board configuration **Save and Reboot** commits the clock, SD Card speed, radio switches
+and pending credentials together as one atomic save.
 
-Saving requires fresh, idle firmware-owned storage. USB sharing, transitions, benchmark work, outstanding commands
-and an uncertain earlier result block provisioning. There is no forced wireless-save operation. Cancel or Escape
+Saving credentials requires fresh, idle firmware-owned storage. USB sharing, transitions, benchmark work, outstanding
+commands and an uncertain earlier result block provisioning. There is no forced wireless-save operation; a forced
+settings save while USB owns storage is available only without credential edits. Cancel or Escape
 sends nothing. Save is a single USB SET followed by matching-transaction status polling, never automatic replay.
 The existing deferred reboot follows verified persistence; failed saves do not reboot.
 
@@ -62,8 +65,8 @@ firmware; it is ignored when loading those records and written as zero on the ne
 default-enabled master switches but have no provisioned credentials, so neither radio starts.
 Every save sets the profile record's wireless-required byte, so a bad or torn extension loads complete defaults rather
 than new profiles without credentials; older records (byte `0`) without an extension keep their profiles. Profile saves
-preserve the extension. A Feature 31 update stages all credentials and saves once; any rejection or failure discards
-the staged values, so no partial credential change survives.
+preserve the extension. A Feature 31 update stages the clock, SD profile, radio switches and all credentials and saves
+once; any rejection or failure discards the staged values, so no partial change survives.
 Downgrading to firmware that predates wireless support can erase the extension on its next settings save;
 reprovision wireless credentials after upgrading again.
 Flash remains **unencrypted**: physical/debug access can recover credentials. Erasing settings clears them.
@@ -80,12 +83,15 @@ radio master switches.
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4
   (disabled/connecting/connected/failed = 0/1/2/3), IPv4 bytes at 5-8, NUL-terminated SSID at 9-41,
   password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3), zero at 45-47.
-- Feature **31 SET**, 136 payload bytes: version at 0, nonzero transaction at 1, reserved byte at 2 (ignored),
-  keep-secret flags at 3 (password bit 0, key bit 1), SSID at 4-36, password at 37-100, key at 101-132, zero at
-  133-135. There is **no Feature 31 readback**.
+- Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
+  bit 0, BLE bit 1), keep-secret flags at 3 (password bit 0, key bit 1), SSID at 4-36, password at 37-100, key at
+  101-132, little-endian clock MHz at 133-134 (opcode 6 values) and SD profile at 135. Other versions are rejected.
+  There is **no Feature 31 readback**; hosts confirm the board fields through Report 2.
 - Native-host `GET /api/wireless` returns `{wireless, reboot_pending}` with sanitized fields. Confirmed
-  `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled`, `ssid`, optional `password`, optional 64-hex-digit
-  `ble_key`, and required `confirm_reboot:true`. Omitted secrets are preserved; secrets are never returned.
+  `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled` (credential intent), `ssid`, optional `password`,
+  optional 64-hex-digit `ble_key`, required `board` (the `/api/settings` clock, profile and radios object) and
+  required `confirm_reboot:true`. It returns `{wireless, settings, reboot_pending}` after verifying both reports.
+  Omitted secrets are preserved; secrets are never returned.
   Existing board query selection and error handling apply.
 
 ## BLE contract and authorization

@@ -6,50 +6,48 @@ import { buildWireless, decodeWireless, saveWireless } from "../js/wireless.mjs"
 import { bindWirelessForm } from "../js/wireless-form.mjs";
 import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result } from "./support/fixtures.mjs";
 
-test("wireless form cancels without writing, preserves edits on refresh and clears secrets on reset/save", async () => {
+/** Board settings matching the config() fixture readback. */
+const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
+
+test("wireless form reports pending credentials, preserves edits on refresh and clears secrets after a save", async () => {
   const previous = globalThis.document;
   const elements = new Map();
-  for (const id of ["wireless-panel", "wifi-ssid", "wifi-password", "ble-secret",
-    "wireless-save", "wireless-generate", "wireless-status", "wireless-dialog", "wireless-cancel", "wireless-confirm"]) {
-    elements.set(id, { value: "", handlers: {}, open: false,
-      addEventListener(name, callback) { this.handlers[name] = callback; },
-      showModal() { this.open = true; }, close() { this.open = false; } });
+  for (const id of ["wireless-panel", "wifi-ssid", "wifi-password", "ble-secret", "wireless-generate",
+    "wireless-status"]) {
+    elements.set(id, { value: "", handlers: {}, addEventListener(name, callback) { this.handlers[name] = callback; } });
   }
   globalThis.document = { querySelector: selector => elements.get(selector.slice(1)) };
   const el = id => elements.get(id);
-  let writes = 0;
-  let ready = true;
+  let changes = 0;
   let resolveLoad;
   const fresh = { ssid: "saved", wifi_enabled: true, ble_enabled: false, wifi_state: "connected" };
   let load = async () => fresh;
   try {
-    const form = bindWirelessForm({ load: () => load(), supported: () => true, ready: () => ready,
-      async save(config) {
-        writes++;
-        assert.equal(config.password, "new-password");
-        assert.deepEqual([config.wifi_enabled, config.ble_enabled], [true, false]);
-        return fresh;
-      } });
+    const form = bindWirelessForm({ load: () => load(), supported: () => true, ready: () => true,
+      changed: () => changes++ });
     await form.load();
     assert.equal(el("wifi-ssid").value, "saved");
+    assert.equal(form.dirty(), false);
     el("wifi-ssid").value = "edited";
     el("wifi-ssid").handlers.input();
+    assert.equal(form.dirty(), true);
+    assert.equal(changes, 1);
     await form.load();
     assert.equal(el("wifi-ssid").value, "edited");
-    el("wireless-save").handlers.click();
-    el("wireless-cancel").handlers.click();
-    await el("wireless-confirm").handlers.click();
-    assert.equal(writes, 0);
-    el("wireless-save").handlers.click();
-    ready = false;
-    await el("wireless-confirm").handlers.click();
-    assert.equal(writes, 0);
-    ready = true;
     el("wifi-password").value = "new-password";
-    el("wireless-save").handlers.click();
-    await el("wireless-confirm").handlers.click();
-    assert.equal(writes, 1);
+    assert.deepEqual(form.request(), { wifi_enabled: true, ble_enabled: false, ssid: "edited",
+      confirm_reboot: true, password: "new-password" });
+    form.finish(null, "rejected");
     assert.equal(el("wifi-password").value, "");
+    assert.equal(form.dirty(), true);
+    assert.equal(el("wireless-status").textContent, "rejected");
+    el("wireless-generate").handlers.click();
+    assert.match(el("ble-secret").value, /^[0-9a-f]{64}$/);
+    assert.equal(form.request().ble_enabled, true);
+    form.finish({ ...fresh, ssid: "edited", ble_enabled: true });
+    assert.equal(el("ble-secret").value, "");
+    assert.equal(el("ble-secret").type, "password");
+    assert.equal(form.dirty(), false);
     load = () => new Promise(resolve => { resolveLoad = resolve; });
     const loading = form.load();
     el("ble-secret").value = "private";
@@ -62,16 +60,19 @@ test("wireless form cancels without writing, preserves edits on refresh and clea
 });
 
 test("USB wireless payloads preserve omitted secrets and reject malformed credentials without disclosing them", () => {
+  const board = { system_clock_mhz: 250, sdcard_profile: 1, radios: 2 };
   const settings = { wifi_enabled: true, ble_enabled: true, ssid: "test", password: "passphrase",
-    ble_key: "ab".repeat(32) };
+    ble_key: "ab".repeat(32), board };
   const request = buildWireless(7, settings);
   assert.equal(request.length, 136);
-  assert.deepEqual([...request.slice(0, 4)], [1, 7, 3, 0]);
+  assert.deepEqual([...request.slice(0, 4)], [2, 7, 2, 0]);
   assert.equal(request[101], 0xab);
-  const keep = buildWireless(8, { wifi_enabled: false, ble_enabled: false, ssid: "" });
+  assert.deepEqual([...request.slice(133)], [250, 0, 1]);
+  const keep = buildWireless(8, { wifi_enabled: false, ble_enabled: false, ssid: "", board });
   assert.equal(keep[3], 3);
   for (const change of [{ ssid: "x".repeat(33) }, { ssid: "bad\0ssid" }, { password: "short" },
-    { password: "é".repeat(8) }, { ble_key: "0".repeat(64) }, { wifi_enabled: 1 }]) {
+    { password: "é".repeat(8) }, { ble_key: "0".repeat(64) }, { wifi_enabled: 1 }, { board: undefined },
+    { board: { ...board, system_clock_mhz: 175 } }, { board: { ...board, radios: 4 } }]) {
     assert.throws(() => buildWireless(1, { ...settings, ...change }));
   }
   const bytes = new Uint8Array(48);
@@ -101,15 +102,34 @@ test("USB wireless save sends once, verifies sanitized readback, and locks write
       const report = new Uint8Array(48); report.set([1, 0, 2, 1]);
       return report;
     };
-    const operation = saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "" });
+    const operation = saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD });
     if (failure) await assert.rejects(operation, /disconnected/);
     else await operation;
     assert.equal(sent.length, 1);
     assert.equal(sent[0][0], 31);
     assert.equal(client.state.outcome_uncertain, failure);
     assert.equal(Boolean(client.state.reboot_pending), !failure);
+    if (!failure) assert.equal(client.state.settings.system_clock_mhz, 200);
     await client.disconnect();
   }
+});
+
+test("USB wireless save treats unconfirmed board settings as uncertain", async () => {
+  const { client, device, sent } = fakeConnection({ capabilities: 128 | 55 });
+  await client.connect();
+  emit(device, 10, storage()); emit(device, 11, selfTest());
+  const receive = device.receiveFeatureReport;
+  device.receiveFeatureReport = async id => {
+    if (id !== 30) return receive(id);
+    const report = new Uint8Array(48); report.set([1, 0, 2, 1]);
+    return report;
+  };
+  await assert.rejects(saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "",
+    board: { ...BOARD, radios: 1 } }), /not confirmed/);
+  assert.equal(sent.length, 1);
+  assert.equal(client.state.outcome_uncertain, true);
+  assert.equal(Boolean(client.state.reboot_pending), false);
+  await client.disconnect();
 });
 
 test("USB wireless save treats loss of a preserved secret as uncertain, never success", async () => {
@@ -124,7 +144,7 @@ test("USB wireless save treats loss of a preserved secret as uncertain, never su
     report[42] = sent.length ? 0 : 1;
     return report;
   };
-  await assert.rejects(saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "" }),
+  await assert.rejects(saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD }),
     /did not confirm/);
   assert.equal(sent.length, 1);
   assert.equal(client.state.outcome_uncertain, true);

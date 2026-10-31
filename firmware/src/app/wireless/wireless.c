@@ -84,8 +84,7 @@ bool pf_wireless_configure(const uint8_t *report)
 {
     save_transaction = report[1];
     save_status = PF_HID_COMMAND_INVALID;
-    if (report[0] != 1u || report[1] == 0u || (report[3] & ~3u) != 0u ||
-        report[133] != 0u || report[134] != 0u || report[135] != 0u) return false;
+    if (report[0] != 2u || report[1] == 0u || (report[3] & ~3u) != 0u) return false;
     if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
         save_status = PF_HID_COMMAND_BUSY;
         return false;
@@ -96,7 +95,11 @@ bool pf_wireless_configure(const uint8_t *report)
     memcpy(next_ssid, report + 4u, sizeof(next_ssid));
     memcpy(next_password, report + 37u, sizeof(next_password));
     memcpy(next_key, report + 101u, sizeof(next_key));
-    bool valid = pf_boot_config_set_wifi_ssid(next_ssid) &&
+    const uint16_t clock_mhz = (uint16_t)(report[133] | (uint16_t)report[134] << 8u);
+    bool valid = pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(clock_mhz)) &&
+        pf_boot_config_set_storage_speed((pf_storage_speed_t)report[135]) &&
+        pf_boot_config_set_radios(report[2]) &&
+        pf_boot_config_set_wifi_ssid(next_ssid) &&
         ((report[3] & 1u) || pf_boot_config_set_wifi_password(next_password)) &&
         ((report[3] & 2u) || pf_boot_config_set_ble_key(next_key));
     if (!valid) {

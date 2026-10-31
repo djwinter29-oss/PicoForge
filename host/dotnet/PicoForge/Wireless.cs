@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -9,10 +10,11 @@ public sealed record WirelessStatusResponse(bool WifiEnabled, bool BleEnabled, s
     bool PasswordConfigured, bool BleKeyConfigured, string Status, byte TransactionId,
     string WifiState, string Ipv4, byte Error);
 
-/// <summary>Wireless status with acknowledgement of an imminent reboot.</summary>
-public sealed record WirelessResponse(WirelessStatusResponse Wireless, bool RebootPending);
+/// <summary>Wireless status with acknowledgement of an imminent reboot and, after a save, the confirmed board settings.</summary>
+public sealed record WirelessResponse(WirelessStatusResponse Wireless, bool RebootPending,
+    BootSettingsResponse? Settings = null);
 
-/// <summary>Provisioning input. Omitted credentials preserve the stored values.</summary>
+/// <summary>Atomic board-settings and provisioning input. Omitted credentials preserve the stored values.</summary>
 public sealed class WirelessRequest
 {
     public bool? WifiEnabled { get; set; }
@@ -20,6 +22,8 @@ public sealed class WirelessRequest
     public string? Ssid { get; set; }
     public string? Password { get; set; }
     public string? BleKey { get; set; }
+    /// <summary>Clock, SD profile and radio switches committed in the same save.</summary>
+    public BootSettingsResponse? Board { get; set; }
     public bool ConfirmReboot { get; set; }
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
@@ -34,7 +38,9 @@ public sealed class WirelessRequest
                 PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
             }) ?? throw new JsonException();
             if (json.TryGetProperty("password", out var password) && password.ValueKind != JsonValueKind.String ||
-                json.TryGetProperty("ble_key", out var key) && key.ValueKind != JsonValueKind.String)
+                json.TryGetProperty("ble_key", out var key) && key.ValueKind != JsonValueKind.String ||
+                !json.TryGetProperty("board", out var board) || board.ValueKind != JsonValueKind.Object ||
+                !board.TryGetProperty("system_clock_mhz", out _) || !board.TryGetProperty("sdcard_profile", out _))
                 throw new JsonException();
             HidProtocol.BuildWirelessRequest(request, 1);
             return request;
@@ -55,7 +61,8 @@ internal static partial class HidProtocol
     public static byte[] BuildWirelessRequest(WirelessRequest settings, byte transaction)
     {
         if (!settings.ConfirmReboot || transaction == 0 || settings.WifiEnabled is null ||
-            settings.BleEnabled is null || settings.Ssid is null || settings.Extra?.Count > 0)
+            settings.BleEnabled is null || settings.Ssid is null || settings.Extra?.Count > 0 ||
+            settings.Board is not { SystemClockMhz: 0 or 150 or 200 or 250, SdCardProfile: 0 or 1, Radios: >= 0 and <= 3 })
             throw new ArgumentException("Invalid wireless configuration or missing reboot confirmation");
         byte[] ssid;
         try { ssid = new UTF8Encoding(false, true).GetBytes(settings.Ssid); }
@@ -64,9 +71,11 @@ internal static partial class HidProtocol
             throw new ArgumentException("SSID must be at most 32 UTF-8 bytes and nonempty when Wi-Fi is enabled");
         var report = new byte[137];
         report[0] = WirelessConfigurationReportId;
-        report[1] = 1;
+        report[1] = 2;
         report[2] = transaction;
-        report[3] = (byte)((settings.WifiEnabled == true ? 1 : 0) | (settings.BleEnabled == true ? 2 : 0));
+        report[3] = (byte)settings.Board.Radios;
+        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(134), (ushort)settings.Board.SystemClockMhz);
+        report[136] = (byte)settings.Board.SdCardProfile;
         ssid.CopyTo(report, 5);
         if (settings.Password is null) report[4] |= 1;
         else

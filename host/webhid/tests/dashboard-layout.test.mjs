@@ -10,7 +10,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/webhid\.css\?v=9"/);
-  assert.match(html, /src="js\/app\.mjs\?v=12"/);
+  assert.match(html, /src="js\/app\.mjs\?v=13"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=4"/);
   assert.match(app, /from "\.\/view\.mjs\?v=6"/);
@@ -24,6 +24,12 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     const settings = dashboard.split('aria-labelledby="settings-title"')[1].split("</section>")[0];
     const footer = dashboard.split('<footer class="status-line"')[1].split("</footer>")[0];
     assert.doesNotMatch(settings, /id="settings-note"/);
+    assert.match(settings, /<details[^>]*id="wireless-panel" hidden>\s*<summary>Wi-Fi and Bluetooth<\/summary>[\s\S]*/);
+    assert.match(settings, /id="wireless-panel"[\s\S]*<summary>Pin configuration<\/summary>/);
+    const wireless = settings.split('id="wireless-panel"')[1].split("</details>")[0];
+    assert.match(wireless, /id="settings-wifi"[\s\S]*id="settings-ble"[\s\S]*id="wifi-ssid"/);
+    assert.doesNotMatch(dashboard, /id="wireless-save"|id="wireless-dialog"/);
+    assert.match(dashboard, /id="configuration-wireless-warning" hidden/);
     assert.match(footer, /role="status" aria-live="polite"/);
     assert.match(footer, /id="status-message"[\s\S]*id="settings-note"/);
     assert.equal([...dashboard.matchAll(/id="settings-note"/g)].length, 1);

@@ -507,18 +507,14 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
     const uint16_t system_clock_mhz = read_u16_le(request->arguments);
     const uint8_t sdcard_profile = request->arguments[2];
     const uint8_t radios = request->arguments[3];
-    pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
     outcome_t result;
 
-    while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != system_clock_mhz) {
-        ++sysclk;
-    }
     const bool force = request->flags == 1u;
     if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 4u)) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
-    if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || (radios & ~PF_HID_RADIO_MASK) != 0u ||
-        !pf_boot_config_set_sysclk(sysclk) ||
+    if ((radios & ~PF_HID_RADIO_MASK) != 0u ||
+        !pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(system_clock_mhz)) ||
         !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile) ||
         (PF_HID_RADIO_MASK != 0u && !pf_boot_config_set_radios(radios))) {
         return invalid(PF_HID_ERROR_ARGUMENT);

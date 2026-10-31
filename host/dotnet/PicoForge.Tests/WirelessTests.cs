@@ -15,8 +15,21 @@ public sealed class WirelessTests
 {
     private static WirelessRequest Settings() => new()
     {
-        WifiEnabled = true, BleEnabled = true, Ssid = "Pico網", ConfirmReboot = true
+        WifiEnabled = true, BleEnabled = true, Ssid = "Pico網", ConfirmReboot = true, Board = Board
     };
+
+    private static readonly BootSettingsResponse Board = new(200, 1, 1);
+    private const string BoardJson = "\"board\":{\"system_clock_mhz\":200,\"sdcard_profile\":1,\"radios\":1}";
+
+    /// <summary>Report 2 readback for an SPI board without an LED; the default matches <see cref="Board"/>.</summary>
+    private static byte[] Configuration(byte radios = 1)
+    {
+        var report = ProtocolTests.ConfigurationReport();
+        report[14] = (byte)(report[14] & ~0x02 | radios << 3);
+        report[16] = byte.MaxValue;
+        report[12] = report[13] = byte.MaxValue;
+        return report;
+    }
 
     private static byte[] Report(byte status = 2, byte transaction = 1)
     {
@@ -38,9 +51,10 @@ public sealed class WirelessTests
     {
         var report = HidProtocol.BuildWirelessRequest(Settings(), 255);
         Assert.Equal(137, report.Length);
-        Assert.Equal(new byte[] { 31, 1, 255, 3, 3 }, report[..5]);
+        Assert.Equal(new byte[] { 31, 2, 255, 1, 3 }, report[..5]);
         Assert.Equal(Encoding.UTF8.GetBytes("Pico網"), report[5..12]);
-        Assert.All(report[38..], value => Assert.Equal(0, value));
+        Assert.All(report[38..134], value => Assert.Equal(0, value));
+        Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
         var request = Settings();
         request.Password = "secret12";
         request.BleKey = new string('a', 64);
@@ -48,7 +62,7 @@ public sealed class WirelessTests
         Assert.Equal(0, report[4]);
         Assert.Equal(Encoding.ASCII.GetBytes("secret12\0"), report[38..47]);
         Assert.All(report[102..134], value => Assert.Equal(0xaa, value));
-        Assert.All(report[134..], value => Assert.Equal(0, value));
+        Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
     }
 
     [Theory]
@@ -66,9 +80,14 @@ public sealed class WirelessTests
     [InlineData("\"ble_key\":\"0000000000000000000000000000000000000000000000000000000000000000\"")]
     [InlineData("\"confirm_reboot\":false")]
     [InlineData("\"force\":true")]
+    [InlineData("\"board\":null")]
+    [InlineData("\"board\":{\"sdcard_profile\":1}")]
+    [InlineData("\"board\":{\"system_clock_mhz\":175,\"sdcard_profile\":1}")]
+    [InlineData("\"board\":{\"system_clock_mhz\":200,\"sdcard_profile\":1,\"radios\":4}")]
     public void InvalidInputDoesNotEchoSecrets(string field)
     {
-        var json = "{\"wifi_enabled\":true,\"ble_enabled\":true,\"ssid\":\"Pico\",\"confirm_reboot\":true," + field + "}";
+        var board = field.StartsWith("\"board\"") ? "" : BoardJson + ",";
+        var json = "{\"wifi_enabled\":true,\"ble_enabled\":true,\"ssid\":\"Pico\",\"confirm_reboot\":true," + board + field + "}";
         using var document = JsonDocument.Parse(json);
         var error = Assert.Throws<ArgumentException>(() => WirelessRequest.Parse(document.RootElement));
         Assert.DoesNotContain("secret", error.Message);
@@ -107,6 +126,7 @@ public sealed class WirelessTests
         var writes = new List<byte[]>();
         using var hid = new PicoForgeHid(Hardware(), (id, size) =>
         {
+            if (id == 2) return Configuration();
             Assert.Equal(30, id);
             Assert.Equal(49, size);
             return reports.Dequeue();
@@ -163,6 +183,17 @@ public sealed class WirelessTests
             Assert.Throws<InvalidOperationException>(() => hid.SetWireless(Settings()));
             Assert.Equal(1, writes);
         }
+    }
+
+    [Fact]
+    public void BoardSettingsReadbackMismatchRemainsUncertain()
+    {
+        var reads = 0;
+        using var hid = new PicoForgeHid(Hardware(), (id, _) => id == 2 ? Configuration(0)
+            : ++reads == 1 ? Report(0, 0) : Report(), _ => { }, _ => Assert.Fail("No reconnect"));
+        var error = Assert.Throws<InvalidOperationException>(() => hid.SetWireless(Settings()));
+        Assert.Contains("uncertain", error.Message);
+        Assert.True(hid.CommandOutcomeUncertain);
     }
 
     [Theory]
@@ -237,8 +268,11 @@ public sealed class WirelessTests
             Assert.Equal(0, commands.Writes);
         }
         snapshot.SetValue(monitor, Ready());
-        Assert.True(monitor.SetWireless(Settings()).RebootPending);
+        var saved = monitor.SetWireless(Settings());
+        Assert.True(saved.RebootPending);
+        Assert.Equal(Board, saved.Settings);
         Assert.True(monitor.Snapshot.RebootPending);
+        Assert.Equal(Board, monitor.Snapshot.Settings);
         Assert.Equal(1, commands.Writes);
     }
 
@@ -267,7 +301,8 @@ public sealed class WirelessTests
         Assert.Equal(0, dashboard.Writes);
         var saved = await client.PostAsJsonAsync("/api/wireless?board=a",
             new { wifi_enabled = true, ble_enabled = true, ssid = "Pico網",
-                password = "secret12", ble_key = new string('a', 64), confirm_reboot = true });
+                password = "secret12", ble_key = new string('a', 64), confirm_reboot = true,
+                board = new { system_clock_mhz = 200, sdcard_profile = 1, radios = 1 } });
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
         var text = await saved.Content.ReadAsStringAsync();
         Assert.DoesNotContain("secret12", text);
@@ -280,7 +315,8 @@ public sealed class WirelessTests
         Assert.Equal("b", dashboard.Board);
         dashboard.Failure = new IOException("secret12");
         var failed = await client.PostAsJsonAsync("/api/wireless?board=a",
-            new { wifi_enabled = false, ble_enabled = false, ssid = "", confirm_reboot = true });
+            new { wifi_enabled = false, ble_enabled = false, ssid = "", confirm_reboot = true,
+                board = new { system_clock_mhz = 0, sdcard_profile = 0, radios = 0 } });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
         Assert.DoesNotContain("secret12", await failed.Content.ReadAsStringAsync());
         await app.StopAsync();

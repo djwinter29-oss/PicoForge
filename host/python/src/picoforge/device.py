@@ -240,6 +240,7 @@ class PicoForgeHid:
             self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE))
 
     def set_wireless(self, settings: dict[str, object]) -> dict[str, object]:
+        """Save board settings and credentials atomically; return wireless status plus confirmed settings."""
         self._require_open()
         command = build_wireless_configuration_report(settings, self._next_transaction_id())
         if self._command_uncertain:
@@ -257,16 +258,20 @@ class PicoForgeHid:
                 if result["transaction_id"] == command[2] and result["status"] != "pending":
                     if result["status"] == "completed":
                         expected = {
-                            "wifi_enabled": bool(command[3] & 1),
-                            "ble_enabled": bool(command[3] & 2),
+                            "wifi_enabled": settings["wifi_enabled"],
+                            "ble_enabled": settings["ble_enabled"],
                             "ssid": command[5:38].split(b"\0", 1)[0].decode("utf-8"),
                             "password_configured": previous["password_configured"] if command[4] & 1 else True,
                             "ble_key_configured": previous["ble_key_configured"] if command[4] & 2 else True,
                         }
                         if any(result[key] != value for key, value in expected.items()):
                             raise RuntimeError("Wireless saved configuration was not confirmed; outcome is uncertain")
+                        board = settings["board"]
+                        saved = self.read_settings()
+                        if saved != {**board, "radios": board.get("radios", 0)}:
+                            raise RuntimeError("Saved board settings were not confirmed; outcome is uncertain")
                         self._command_uncertain = False
-                        return result
+                        return {**result, "settings": saved}
                     if result["status"] in ("invalid", "unsupported", "busy", "failed"):
                         self._command_uncertain = False
                         raise RuntimeError(f"Wireless provisioning {result['status']}")

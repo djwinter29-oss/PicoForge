@@ -75,15 +75,16 @@ over HID and displays progress, verified byte counts, and average MiB/s. Its
 firmware rejection come from `self_test` in `/api/status`.
 
 USB wireless-capable firmware exposes sanitized configuration through `GET /api/wireless?board=ID`.
-`POST /api/wireless?board=ID` requires boolean `wifi_enabled`, `ble_enabled`, `confirm_reboot: true`,
-and `ssid` (at most 32 UTF-8 bytes; nonempty when Wi-Fi is enabled). Optional `password` must contain
+`POST /api/wireless?board=ID` saves board settings and credentials atomically. It requires boolean
+`wifi_enabled`, `ble_enabled` (credential intent), `confirm_reboot: true`, `board` (the `/api/settings` object, whose
+`radios` bits are the Wi-Fi and Bluetooth switches) and `ssid` (at most 32 UTF-8 bytes; nonempty when Wi-Fi is enabled). Optional `password` must contain
 8..63 printable ASCII characters; optional `ble_key` must contain 64 hexadecimal characters and be nonzero.
 Omitting either credential preserves its stored value. Responses never contain credentials.
 Saving requires idle, firmware-owned storage and no active self-test or outstanding command.
 The host sends Feature 31 once and verifies its transaction, saved flags, SSID, and credential-presence booleans
-using Feature 30 before marking reboot pending. A mismatched saved configuration leaves the outcome uncertain.
+using Feature 30, then reads back the board settings before marking reboot pending. The response adds `settings`. A mismatched saved configuration leaves the outcome uncertain.
 Timeouts or disconnects leave the outcome uncertain and block further writes; commands are not replayed.
-The local dashboards expose **Wi-Fi and Bluetooth** settings for the selected USB-attached W board, including
+The local dashboards expose **Board configuration > Wi-Fi and Bluetooth** settings for the selected USB-attached W board, including
 SSID, password and a generated BLE control key. See the
 [wireless configuration and security policy](../../docs/design/wireless.md).
 Bluetooth LE connections remain available only from the standalone WebHID page.

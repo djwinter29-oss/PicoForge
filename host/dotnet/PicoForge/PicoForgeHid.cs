@@ -162,6 +162,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         return HidProtocol.ParseWirelessStatus(readFeature(HidProtocol.WirelessReportId, HidProtocol.WirelessFeatureSize));
     }
 
+    /// <summary>Save board settings and credentials atomically, then confirm both through Reports 30 and 2.</summary>
     public WirelessStatusResponse SetWireless(WirelessRequest settings)
     {
         if (CommandOutcomeUncertain)
@@ -187,6 +188,9 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                         result.BleKeyConfigured != (settings.BleKey is not null || previous.BleKeyConfigured))
                         throw new InvalidOperationException(
                             "Wireless saved configuration was not confirmed; outcome is uncertain");
+                    if (ReadSettings() != settings.Board)
+                        throw new InvalidOperationException(
+                            "Saved board settings were not confirmed; outcome is uncertain");
                     CommandOutcomeUncertain = false;
                     return result;
                 }

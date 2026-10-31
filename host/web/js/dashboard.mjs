@@ -107,16 +107,16 @@ function renderSettings(snapshot) {
   if (settings && !snapshot.settings_storage_dirty) {
     storageControl.value = String(storageSpeed(settings));
   }
-  const wireless = Boolean(snapshot.hardware?.capabilities & 128);
   for (const [id, radio] of [["settings-wifi", 1], ["settings-ble", 2]]) {
     const control = document.querySelector(`#${id}`);
-    document.querySelector(`label[for="${id}"]`).hidden = !wireless;
     if (settings && !snapshot.settings_dirty) control.value = String(Number(Boolean((settings.radios ?? 0) & radio)));
   }
   for (const selector of ["#settings-clock", "#settings-storage", "#settings-wifi", "#settings-ble"]) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
-  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty
+  // Credentials have no forced-save path: provisioning requires firmware-owned storage.
+  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready
+    || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(snapshot.wireless_dirty && msc?.enabled)
     || !((snapshot.hardware?.capabilities ?? 0) & 2)
     || Boolean(msc?.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64));
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected

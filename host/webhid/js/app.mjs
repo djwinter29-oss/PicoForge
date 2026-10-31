@@ -1,8 +1,8 @@
 import { PicoForgeWebHid } from "./device.mjs?v=4";
 import { renderStatus, renderSelfTest } from "./view.mjs?v=6";
 import { PicoForgeBluetooth } from "./bluetooth.mjs";
-import { bindWirelessForm } from "./wireless-form.mjs";
-import { decodeWireless, saveWireless } from "./wireless.mjs";
+import { bindWirelessForm } from "./wireless-form.mjs?v=2";
+import { decodeWireless, saveWireless } from "./wireless.mjs?v=2";
 
 const element = id => document.querySelector(`#${id}`);
 const connectionControl = element("connection-control");
@@ -32,7 +32,7 @@ const wirelessForm = bindWirelessForm({
     (!(client.state.hardware?.capabilities & 32) ||
       (client.state.freshness[11] === "fresh" && client.state.self_test?.valid_for_control)),
   load: async () => decodeWireless(await client.device.receiveFeatureReport(30)),
-  save: settings => saveWireless(client, settings),
+  changed: () => render(client.state),
 });
 let wirelessLoadedAt = 0;
 
@@ -48,9 +48,6 @@ function render(state) {
     settingsClock.value = String(state.settings.system_clock_mhz);
     settingsStorage.value = String(state.settings.sdcard_profile);
     settingsRadios.forEach((control, bit) => { control.value = String(state.settings.radios >> bit & 1); });
-  }
-  for (const id of ["settings-wifi", "settings-ble"]) {
-    document.querySelector(`label[for="${id}"]`).hidden = !(state.hardware?.capabilities & 128);
   }
   const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected;
   const bluetooth = state.transport === "ble";
@@ -72,7 +69,9 @@ function render(state) {
   for (const control of [settingsClock, settingsStorage, ...settingsRadios, settingsSave]) {
     control.disabled = !settingsReady || !state.settings_supported;
   }
-  settingsSave.disabled ||= !settingsDirty;
+  settingsSave.disabled ||= !settingsDirty && !wirelessForm.dirty();
+  // Credentials have no forced-save path: provisioning requires firmware-owned storage.
+  settingsSave.disabled ||= wirelessForm.dirty() && Boolean(state.msc?.enabled);
   settingsSave.disabled ||= Boolean(state.msc?.enabled && !(state.hardware?.capabilities & 64));
   settingsReboot.disabled = !settingsReady || state.msc?.enabled || !(state.hardware?.capabilities & 2);
   element("settings-note").textContent = state.settings_message
@@ -141,6 +140,7 @@ settingsSave.addEventListener("click", () => {
   if (settingsSave.disabled) return;
   configurationForceSave = Boolean(client.state.msc?.enabled);
   element("configuration-force-warning").hidden = !configurationForceSave;
+  element("configuration-wireless-warning").hidden = !wirelessForm.dirty();
   const clock = Number(settingsClock.value);
   element("configuration-dialog-profile").textContent =
     `System clock: ${clock ? `${clock} MHz` : "Default"}. `
@@ -156,7 +156,18 @@ element("confirm-configuration").addEventListener("click", () => run(async () =>
   if (Boolean(client.state.msc?.enabled) !== configurationForceSave) return;
   const settings = { system_clock_mhz: Number(settingsClock.value), sdcard_profile: Number(settingsStorage.value),
     radios: selectedRadios() };
-  if (await client.saveSettings(settings, configurationForceSave)) settingsDirty = false;
+  if (!wirelessForm.dirty()) {
+    if (await client.saveSettings(settings, configurationForceSave)) settingsDirty = false;
+  } else {
+    try {
+      wirelessForm.finish(await saveWireless(client, { ...wirelessForm.request(), board: settings }));
+      settingsDirty = false;
+      client.update({ settings_message: "Settings saved. Waiting for the board to reboot." });
+    } catch (error) {
+      wirelessForm.finish(null, error.message);
+      client.update({ settings_message: `Save failed: ${error.message}` });
+    }
+  }
   render(client.state);
 }));
 settingsReboot.addEventListener("click", () => {

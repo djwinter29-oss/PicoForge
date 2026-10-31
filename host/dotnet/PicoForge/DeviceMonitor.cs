@@ -159,8 +159,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
                 throw new InvalidOperationException("Wireless provisioning is unavailable while storage or the board is busy");
             var saved = ExecuteCommand(activeClient, () => activeClient.SetWireless(settings));
-            lock (gate) snapshot = snapshot with { RebootPending = true };
-            return new(saved, true);
+            lock (gate) snapshot = snapshot with { Settings = settings.Board, RebootPending = true };
+            return new(saved, true, settings.Board);
         }
     }
 

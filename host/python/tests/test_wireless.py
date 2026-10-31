@@ -10,9 +10,12 @@ from test_protocol import identity_report
 from picoforge.protocol import parse_identity_report
 
 
+BOARD = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 1}
+
+
 def settings(**overrides):
     return {"wifi_enabled": True, "ble_enabled": True, "ssid": "Pico網",
-            "confirm_reboot": True, **overrides}
+            "confirm_reboot": True, "board": BOARD, **overrides}
 
 
 def status(status_code=2, transaction=1):
@@ -47,14 +50,15 @@ class WirelessTests(unittest.TestCase):
     def test_builder_offsets_sizes_and_preserved_credentials(self):
         report = build_wireless_configuration_report(settings(), 255)
         self.assertEqual(len(report), 137)
-        self.assertEqual(report[:5], bytes([31, 1, 255, 3, 3]))
+        self.assertEqual(report[:5], bytes([31, 2, 255, 1, 3]))
+        self.assertEqual(report[134:], bytes([200, 0, 1]))
         self.assertEqual(report[5:12], "Pico網".encode())
-        self.assertEqual(report[38:], bytes(99))
+        self.assertEqual(report[38:134], bytes(96))
         report = build_wireless_configuration_report(settings(password="secret12", ble_key="ab" * 32))
         self.assertEqual(report[4], 0)
         self.assertEqual(report[38:47], b"secret12\0")
         self.assertEqual(report[102:134], b"\xab" * 32)
-        self.assertEqual(report[134:], bytes(3))
+        self.assertEqual(report[134:], bytes([200, 0, 1]))
 
     def test_input_rejection_never_echoes_credentials(self):
         for change in (
@@ -63,12 +67,15 @@ class WirelessTests(unittest.TestCase):
             {"password": "short"}, {"password": "x" * 64}, {"password": "secret\nvalue"},
             {"password": "secret網"}, {"ble_key": "00" * 32}, {"ble_key": "gg" * 32},
             {"ble_key": None}, {"ble_key": "11"}, {"confirm_reboot": 1}, {"force": True},
+            {"board": None}, {"board": {**BOARD, "system_clock_mhz": 175}}, {"board": {**BOARD, "radios": 4}},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError) as caught:
                 build_wireless_configuration_report(settings(**change))
             self.assertNotIn("secret", str(caught.exception))
         with self.assertRaises(ValueError):
             build_wireless_configuration_report(settings(), 0)
+        with self.assertRaisesRegex(ValueError, "board"):
+            build_wireless_configuration_report({key: value for key, value in settings().items() if key != "board"})
 
     def test_status_is_sanitized_and_rejects_malformed_reports(self):
         parsed = parse_wireless_status_report(status())
@@ -95,12 +102,15 @@ class WirelessTests(unittest.TestCase):
         client._device = Mock()
         client._device.send_feature_report.side_effect = lambda value: len(value)
         client._device.get_feature_report.side_effect = reports
+        client.read_settings = Mock(return_value=dict(BOARD))
         return client
 
     def test_one_set_poll_matching_transaction_and_terminal_rejections(self):
         client = self.client([status(0, 0), status(2, 255), status(1), status()])
         with patch("picoforge.device.sleep"):
-            self.assertEqual(client.set_wireless(settings())["status"], "completed")
+            result = client.set_wireless(settings())
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["settings"], BOARD)
         client._device.send_feature_report.assert_called_once()
         self.assertTrue(all(call.args == (30, 49) for call in client._device.get_feature_report.call_args_list))
         self.assertFalse(client._command_uncertain)
@@ -146,6 +156,13 @@ class WirelessTests(unittest.TestCase):
                         monitor.set_wireless(settings())
                     client._device.send_feature_report.assert_called_once()
 
+    def test_board_settings_readback_mismatch_remains_uncertain(self):
+        client = self.client([status(0, 0), status()])
+        client.read_settings.return_value = {**BOARD, "radios": 0}
+        with self.assertRaisesRegex(RuntimeError, "uncertain"):
+            client.set_wireless(settings())
+        self.assertTrue(client._command_uncertain)
+
     def test_omitted_credentials_must_preserve_absent_configuration(self):
         before = bytearray(status(0, 0))
         before[43:45] = bytes(2)
@@ -163,7 +180,8 @@ class WirelessTests(unittest.TestCase):
         monitor._device_lock = threading.RLock()
         monitor._lock = threading.RLock()
         monitor._active_client = Mock()
-        monitor._active_client.set_wireless.return_value = parse_wireless_status_report(status())
+        monitor._active_client.set_wireless.return_value = {**parse_wireless_status_report(status()),
+                                                            "settings": BOARD}
         monitor._snapshot = {"connected": True, "hardware": {"wireless_supported": True},
                              "msc": {"enabled": False, "transition_pending": False}}
         return monitor
@@ -187,8 +205,12 @@ class WirelessTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             monitor.set_wireless(settings())
         monitor._command_outcome_uncertain = False
-        self.assertTrue(monitor.set_wireless(settings())["reboot_pending"])
+        result = monitor.set_wireless(settings())
+        self.assertTrue(result["reboot_pending"])
+        self.assertEqual(result["settings"], BOARD)
+        self.assertNotIn("settings", result["wireless"])
         self.assertTrue(monitor.snapshot()["reboot_pending"])
+        self.assertEqual(monitor.snapshot()["settings"], BOARD)
 
     def test_http_validation_routing_sanitization_and_uncertain_error(self):
         dashboard = Mock()

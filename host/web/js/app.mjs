@@ -1,5 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs";
+import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=2";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -45,7 +45,7 @@ const wirelessForm = bindWirelessForm({
     }
     return result.wireless;
   },
-  save: saveWirelessSettings,
+  changed: () => { if (currentSnapshot) renderStatus(currentSnapshot); },
 });
 
 function wirelessReady() {
@@ -61,19 +61,13 @@ function wirelessReady() {
     && (!(snapshot.hardware.capabilities & 32) || (snapshot.self_test && snapshot.self_test_stale === false));
 }
 
-async function saveWirelessSettings(settings) {
-  if (!wirelessReady()) {
-    throw new Error("Wireless configuration requires fresh idle USB storage, with sharing disabled.");
-  }
-  settingsRequestInProgress = true;
-  boardSelect.disabled = true;
-  rescanBoardsButton.disabled = true;
-  ledControl.disabled = true;
-  renderStatus(currentSnapshot);
+/** Save board settings and credentials in one firmware commit; failures before delivery stay retryable. */
+async function saveCombinedSettings(settings) {
+  const request = { ...wirelessForm.request(), board: settings };
   let rejected = false;
   try {
     const response = await fetch(boardUrl("/api/wireless"), {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
     });
     const result = await response.json();
     if (!response.ok) {
@@ -82,26 +76,25 @@ async function saveWirelessSettings(settings) {
       throw new Error(message);
     }
     const saved = result.wireless;
-    if (result.reboot_pending !== true || saved?.ssid !== settings.ssid
-      || saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled
-      || (settings.password !== undefined && saved.password_configured !== true)
-      || (settings.ble_key !== undefined && saved.ble_key_configured !== true)) {
+    if (result.reboot_pending !== true || saved?.ssid !== request.ssid
+      || saved.wifi_enabled !== request.wifi_enabled || saved.ble_enabled !== request.ble_enabled
+      || (request.password !== undefined && saved.password_configured !== true)
+      || (request.ble_key !== undefined && saved.ble_key_configured !== true)
+      || result.settings?.system_clock_mhz !== settings.system_clock_mhz
+      || result.settings?.sdcard_profile !== settings.sdcard_profile || result.settings?.radios !== settings.radios) {
       throw new Error("Wireless readback did not match the requested values");
     }
-    if (currentSnapshot) currentSnapshot.reboot_pending = true;
-    return saved;
+    wirelessForm.finish(saved);
+    currentSnapshot.reboot_pending = true;
+    return result.settings;
   } catch (error) {
     if (!rejected) {
       wirelessOutcomeUncertain = true;
       if (currentSnapshot) currentSnapshot.outcome_uncertain = true;
-      throw new Error("Wireless provisioning outcome is uncertain; command was not resent. Reload before retrying.");
+      error = new Error("Wireless provisioning outcome is uncertain; command was not resent. Reload before retrying.");
     }
+    wirelessForm.finish(null, error.message);
     throw error;
-  } finally {
-    settingsRequestInProgress = false;
-    boardSelect.disabled = scanningBoards || knownBoards.length === 0;
-    rescanBoardsButton.disabled = scanningBoards;
-    if (currentSnapshot) renderStatus(currentSnapshot);
   }
 }
 
@@ -129,6 +122,7 @@ function renderStatus(snapshot) {
     no_board_selected: !selectedBoard,
     settings_busy: settingsRequestInProgress || snapshot.reboot_pending || snapshot.outcome_uncertain,
     settings_dirty: settingsDirty,
+    wireless_dirty: wirelessForm.dirty(),
     settings_storage_dirty: settingsStorageDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
     msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
@@ -381,16 +375,27 @@ async function saveSettings() {
   configurationDialog.close();
   const msc = currentSnapshot?.msc;
   const force = configurationForceSave;
-  if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !settingsDirty
+  if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !(settingsDirty || wirelessForm.dirty())
       || settingsRequestInProgress || mscRequestInProgress || mscPendingEnabled !== null || !msc
       || msc.enabled !== force || msc.transition_pending || (force && !(currentSnapshot.hardware?.capabilities & 64))
       || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)) return;
+  const combined = wirelessForm.dirty();
+  if (combined && (force || !wirelessReady())) return;
   settingsRequestInProgress = true;
+  boardSelect.disabled = true;
+  rescanBoardsButton.disabled = true;
   settingsMessage = "Saving boot settings...";
   const settings = selectedSettings();
   renderStatus(currentSnapshot);
   try {
+    if (combined) {
+      currentSnapshot.settings = await saveCombinedSettings(settings);
+      settingsDirty = false;
+      settingsStorageDirty = false;
+      settingsMessage = "Settings saved. Reboot requested. Waiting for the device to reconnect.";
+      return;
+    }
     const response = await fetch(boardUrl("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -412,6 +417,8 @@ async function saveSettings() {
     settingsMessage = `Save failed: ${error.message}`;
   } finally {
     settingsRequestInProgress = false;
+    boardSelect.disabled = scanningBoards || knownBoards.length === 0 || mscRequestInProgress;
+    rescanBoardsButton.disabled = scanningBoards;
     if (currentSnapshot) renderStatus(currentSnapshot);
   }
 }
@@ -485,6 +492,7 @@ settingsSave.addEventListener("click", () => {
   if (settingsSave.disabled) return;
   configurationForceSave = Boolean(currentSnapshot?.msc?.enabled);
   document.querySelector("#configuration-force-warning").hidden = !configurationForceSave;
+  document.querySelector("#configuration-wireless-warning").hidden = !wirelessForm.dirty();
   const settings = selectedSettings();
   document.querySelector("#configuration-dialog-profile").textContent =
     `System clock: ${settings.system_clock_mhz ? `${settings.system_clock_mhz} MHz` : "Default"}. `

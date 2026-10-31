@@ -225,7 +225,7 @@ public sealed class ProtocolTests
         return report;
     }
 
-    private static byte[] ConfigurationReport()
+    internal static byte[] ConfigurationReport()
     {
         var report = new byte[HidProtocol.ConfigurationPayloadSize + 1];
         report[0] = HidProtocol.ConfigurationReportId;

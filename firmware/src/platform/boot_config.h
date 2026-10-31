@@ -88,6 +88,17 @@ static inline uint16_t pf_sysclk_profile_mhz(pf_sysclk_profile_t profile)
 }
 
 /**
+ * @brief Convert a protocol MHz value to a system clock profile.
+ * @return The matching profile, or an out-of-range profile rejected by pf_boot_config_set_sysclk().
+ */
+static inline pf_sysclk_profile_t pf_sysclk_profile_from_mhz(uint16_t mhz)
+{
+    unsigned profile = PF_SYSCLK_DEFAULT;
+    while (profile <= PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz((pf_sysclk_profile_t)profile) != mhz) ++profile;
+    return (pf_sysclk_profile_t)profile;
+}
+
+/**
  * @brief Convert a storage speed profile to its requested bus clock in MHz, not the achieved rate.
  * @return 50 for PF_STORAGE_SPEED_HIGH, otherwise 25 (Default Speed, also used for an unknown profile).
  */

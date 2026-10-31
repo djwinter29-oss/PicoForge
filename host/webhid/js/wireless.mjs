@@ -1,4 +1,4 @@
-import { withTimeout } from "./device.mjs?v=4";
+import { decodeConfigReport, withTimeout } from "./device.mjs?v=4";
 
 export function decodeWireless(report) {
   const bytes = report instanceof DataView
@@ -20,12 +20,16 @@ export function buildWireless(transaction, settings) {
     typeof settings.wifi_enabled !== "boolean" || typeof settings.ble_enabled !== "boolean") {
     throw new Error("Invalid wireless configuration");
   }
+  const board = settings.board;
+  if (![0, 150, 200, 250].includes(board?.system_clock_mhz) || ![0, 1].includes(board.sdcard_profile)
+    || ![0, 1, 2, 3].includes(board.radios)) throw new Error("Invalid board configuration");
   const ssid = new TextEncoder().encode(settings.ssid);
   if (typeof settings.ssid !== "string" || ssid.length > 32 || settings.ssid.includes("\0") ||
     (settings.wifi_enabled && !ssid.length)) throw new Error("Wi-Fi SSID must contain 1-32 UTF-8 bytes.");
   const report = new Uint8Array(136);
-  report.set([1, transaction, Number(settings.wifi_enabled) | Number(settings.ble_enabled) << 1,
+  report.set([2, transaction, board.radios,
     Number(settings.password === undefined) | Number(settings.ble_key === undefined) << 1]);
+  report.set([board.system_clock_mhz & 255, board.system_clock_mhz >> 8, board.sdcard_profile], 133);
   report.set(ssid, 4);
   if (settings.password !== undefined) {
     if (typeof settings.password !== "string" || !/^[\x20-\x7e]{8,63}$/.test(settings.password)) {
@@ -71,7 +75,13 @@ export async function saveWireless(client, settings) {
           saved.ble_key_configured !== (settings.ble_key !== undefined || previous.ble_key_configured)) {
           throw new Error("Wireless save did not confirm the requested configuration.");
         }
-        client.update({ reboot_pending: true });
+        const board = decodeConfigReport(await withTimeout(client.device.receiveFeatureReport(2), 1000),
+          client.state.hardware);
+        if (board.system_clock_mhz !== settings.board.system_clock_mhz
+          || board.sdcard_profile !== settings.board.sdcard_profile || board.radios !== settings.board.radios) {
+          throw new Error("Board configuration save was not confirmed.");
+        }
+        client.update({ settings: board, reboot_pending: true });
         return saved;
       }
       await new Promise(resolve => setTimeout(resolve, 50));

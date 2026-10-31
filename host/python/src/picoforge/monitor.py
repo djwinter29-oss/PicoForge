@@ -299,11 +299,13 @@ class DeviceMonitor:
                     or (hardware.get("self_test_supported") and not isinstance(self_test, dict))
                     or isinstance(self_test, dict) and self_test.get("active")):
                 raise RuntimeError("Wireless provisioning is unavailable while storage or the board is busy")
-            result = self._send_control(self._active_client.set_wireless, settings)
+            result = dict(self._send_control(self._active_client.set_wireless, settings))
+            saved = result.pop("settings")
             with self._lock:
-                self._snapshot.update(reboot_pending=True,
+                self._snapshot.update(settings=saved, board_configuration=self._active_client.configuration,
+                                      reboot_pending=True,
                                       settings_message="Settings saved. Waiting for the board to reboot.")
-            return {"wireless": result, "reboot_pending": True}
+            return {"wireless": result, "settings": saved, "reboot_pending": True}
 
     def _run(self) -> None:
         while not self._stop.is_set():

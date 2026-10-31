@@ -182,15 +182,18 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> dict[str, ob
 
 
 def build_wireless_configuration_report(settings: dict[str, object], transaction_id: int = 1) -> bytes:
-    """Validate provisioning input and build Feature 31 without exposing credentials."""
+    """Build Feature 31 v2: board settings, radio switches and credentials in one atomic save."""
     if not isinstance(settings, dict):
         raise ValueError("Expected wireless configuration JSON")
     if settings.get("confirm_reboot") is not True:
         raise ValueError("Explicit confirm_reboot: true is required")
-    if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "password", "ble_key", "confirm_reboot"}:
+    if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "password", "ble_key", "confirm_reboot", "board"}:
         raise ValueError("Unknown wireless configuration field")
     if type(settings.get("wifi_enabled")) is not bool or type(settings.get("ble_enabled")) is not bool:
         raise ValueError("wifi_enabled and ble_enabled must be boolean")
+    if "board" not in settings:
+        raise ValueError("board settings are required")
+    clock, profile, radios = _validate_settings(settings["board"])
     ssid = settings.get("ssid")
     try:
         encoded = ssid.encode("utf-8") if isinstance(ssid, str) else None
@@ -201,8 +204,8 @@ def build_wireless_configuration_report(settings: dict[str, object], transaction
     if type(transaction_id) is not int or not 1 <= transaction_id <= 255:
         raise ValueError("Wireless transaction must be 1..255")
     payload = bytearray(137)
-    payload[:5] = bytes([31, 1, transaction_id,
-                         int(settings["wifi_enabled"]) | int(settings["ble_enabled"]) << 1, 0])
+    payload[:5] = bytes([31, 2, transaction_id, radios, 0])
+    payload[134:137] = struct.pack("<HB", clock, profile)
     payload[5:5 + len(encoded)] = encoded
     if "password" not in settings:
         payload[4] |= 1
