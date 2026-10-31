@@ -203,7 +203,7 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
   mscError = null;
   renderStatus(currentSnapshot);
   mscControl.disabled = true;
-  document.querySelector("#msc-note").textContent = force ? "Detaching USB drive on Pico and attempting remount..."
+  document.querySelector("#msc-note").textContent = force ? "Revoking host access and attempting remount..."
     : "Preparing storage for USB...";
   document.querySelector("#msc-note").hidden = false;
   try {

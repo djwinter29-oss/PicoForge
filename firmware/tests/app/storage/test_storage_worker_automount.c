@@ -128,6 +128,8 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     TEST_ASSERT_FALSE(mounted);
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(msc_enabled && usb_owned);
+    TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+    TEST_ASSERT_TRUE(tud_msc_test_unit_ready_cb(0));
     poll(3);
     TEST_ASSERT_TRUE(!mounted && !auto_mount_pending);
     TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0, 0, false, true));
@@ -162,6 +164,8 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     pf_usb_msc_request(true);
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(msc_enabled && usb_owned && !msc_ejected);
+    TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+    TEST_ASSERT_TRUE(tud_msc_test_unit_ready_cb(0));
     pf_usb_msc_request(false);
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(request_rejected && msc_enabled);
@@ -245,7 +249,7 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(!msc_enabled && !request_rejected && queued_recovery && busy);
     TEST_ASSERT_TRUE(!usb_owned &&
-                     disconnects == before_disconnects + 1u);
+                     disconnects == before_disconnects);
     TEST_ASSERT_EQUAL_UINT(before_syncs, sync_calls);
     queued_recovery = false;
     recover_media();
@@ -256,6 +260,8 @@ void test_debounce_retry_wrap_ownership_removal_and_recovery_lifecycle(void)
     pf_usb_msc_request(true);
     pf_usb_msc_task();
     TEST_ASSERT_TRUE(msc_enabled);
+    TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+    TEST_ASSERT_TRUE(tud_msc_test_unit_ready_cb(0));
     TEST_ASSERT_TRUE(tud_msc_start_stop_cb(0, 0, false, true));
     pf_usb_msc_request(false);
     pf_usb_msc_task();
@@ -293,7 +299,7 @@ void test_command_cancellation_keeps_reservation_until_completion(void)
  TEST_ASSERT_FALSE(cancelled);
 }
 
-void test_forced_sd_return_detaches_before_release_and_attempts_mount_once(void)
+void test_forced_sd_return_revokes_media_without_usb_disconnect_and_mounts_once(void)
 {
  busy=media_service_busy=bench.active=bench.finished=false;
  mounted=false;
@@ -306,14 +312,13 @@ void test_forced_sd_return_detaches_before_release_and_attempts_mount_once(void)
  sync_ok=true;
  init_fails=queue_fails=false;
  mount_result=PF_FATFS_VOLUME_OK;
- disconnect_fails=true;
- expect_usb_owned_disconnect=true;
+ sync_ok=false;
  pf_usb_msc_request_force_return();
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(msc_enabled && request_rejected);
  TEST_ASSERT_FALSE(busy || remount_pending);
  TEST_ASSERT_TRUE(usb_owned);
- disconnect_fails=false;
+ sync_ok=true;
  queue_fails=true;
  pf_usb_msc_request_force_return();
  pf_usb_msc_task();
@@ -322,19 +327,18 @@ void test_forced_sd_return_detaches_before_release_and_attempts_mount_once(void)
  TEST_ASSERT_TRUE(usb_owned);
  queue_fails=false;
  unsigned before_disconnects=disconnects;
- expect_usb_owned_disconnect=true;
  pf_usb_msc_request_force_return();
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(busy && remount_pending && transition_pending && !msc_enabled);
- TEST_ASSERT_EQUAL_UINT(before_disconnects+1u,disconnects);
- /* The reconnect is a deadline, not a sleep: nothing reconnects early, then exactly once. */
+ TEST_ASSERT_EQUAL_UINT(before_disconnects,disconnects);
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
  unsigned before_connects=connects;
  pf_usb_msc_task();
  TEST_ASSERT_EQUAL_UINT(before_connects,connects);
  test_time_us+=250000u;
  pf_usb_msc_task();
  pf_usb_msc_task();
- TEST_ASSERT_EQUAL_UINT(before_connects+1u,connects);
+ TEST_ASSERT_EQUAL_UINT(before_connects,connects);
  TEST_ASSERT_FALSE(usb_owned);
  return_from_usb();
  pf_usb_msc_task();

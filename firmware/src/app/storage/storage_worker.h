@@ -72,16 +72,16 @@ bool pf_storage_worker_media_absent(void);
 /**
  * @brief Queue explicit fault recovery from the USB task.
  * @return False when busy, unconfigured or unavailable.
- * @note The caller reserves media until USB detaches and firmware ownership is restored. Reinitializes only, never
+ * @note The caller reserves media until MSC access is revoked and firmware ownership is restored. Reinitializes only, never
  *       mounts. Initialization failure is retained in backend diagnostics/logging; telemetry reports readiness.
  *       Automatic mounting is blocked until a successful explicit fs mount.
  */
 bool pf_storage_worker_recover_media(void);
 
 /**
- * @brief Queue one reinitialization/mount attempt after a confirmed forced USB detach.
+ * @brief Queue one reinitialization/mount attempt after confirmed revocation of MSC access.
  * @return False when busy, unconfigured or unavailable.
- * @note The caller holds the media reservation until MSC disconnects and firmware ownership is restored. Poll busy
+ * @note The caller holds the media reservation until MSC access is revoked and firmware ownership is restored. Poll busy
  *       then the mounted snapshot for completion. Failure blocks automatic retries and is logged; no formatting or
  *       repair is performed.
  */

@@ -31,9 +31,9 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
     private readonly Dictionary<string, DeviceMonitor> monitors = new();
     private bool closed;
 
-    public DashboardBoards(string? serialNumber = null, string? devicePath = null)
+    public DashboardBoards(string? serialNumber = null, string? devicePath = null, ILoggerFactory? loggerFactory = null)
         : this(serialNumber, devicePath, PicoForgeHid.Discover,
-            (serial, path) => new DeviceMonitor(serial, path)) { }
+            (serial, path) => new DeviceMonitor(serial, path, loggerFactory?.CreateLogger<DeviceMonitor>())) { }
 
     internal DashboardBoards(string? serialNumber, string? devicePath, Func<HidBoard[]> discover,
         Func<string?, string?, DeviceMonitor> createMonitor)

@@ -81,7 +81,7 @@ export function renderStatus(snapshot) {
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = snapshot.error
     ?? (snapshot.reboot_pending ? "Reboot accepted; waiting for USB reconnection"
-      : snapshot.reconnecting ? "USB interfaces changing; reconnecting HID automatically"
+      : snapshot.reconnecting ? "USB device reconnecting; reopening HID automatically"
       : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
   for (const [id, label] of [[3, "telemetry"], [10, "storage"], [11, "self-test"]]) {
     const status = document.querySelector(`#${label}-freshness`);

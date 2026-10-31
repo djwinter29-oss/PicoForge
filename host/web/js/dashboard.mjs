@@ -73,7 +73,7 @@ export function renderStatus(snapshot) {
     : msc?.request_rejected
     ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
       : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
-    : msc?.transition_pending ? "Preparing storage and changing USB mode; the device will reconnect."
+    : msc?.transition_pending ? "Storage handoff in progress; waiting for fresh ownership status."
       : "";
   document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
   renderBoardConfiguration(snapshot);

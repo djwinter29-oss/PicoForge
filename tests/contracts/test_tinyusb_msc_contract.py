@@ -53,3 +53,13 @@ def check_contract(root):
 
 def test_tinyusb_msc_contract():
     check_contract(ROOT)
+
+
+def test_usb_configuration_is_independent_of_storage_ownership():
+    descriptors = (ROOT / 'firmware/src/app/usb/usb_descriptors.c').read_text()
+    assert descriptors.count('TUD_CONFIG_DESCRIPTOR(') == 1
+    assert 'ITF_NUM_TOTAL = 4' in descriptors
+    assert 'return desc_configuration;' in descriptors
+    assert 'pf_usb_msc_is_enabled' not in descriptors
+    for interface in ('CDC', 'HID', 'MSC'):
+        assert descriptors.count(f'TUD_{interface}_DESCRIPTOR(') == 1

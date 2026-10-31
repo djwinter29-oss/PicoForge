@@ -223,8 +223,8 @@
       <h2 id="share-dialog-title">Enable USB drive?</h2>
       <p class="configuration-warning" id="share-warning">
         Pico will unmount its filesystem and give your computer exclusive access to the SD card.
-        USB briefly reconnects. Self-test is unavailable while shared; Save and Reboot requires a data-loss confirmation
-        on supporting firmware.
+        HID and the serial console stay connected. Self-test is unavailable while shared;
+        Save and Reboot requires a data-loss confirmation on supporting firmware.
         Safely eject the drive on your computer before returning storage to Pico.
       </p>
       <div class="dialog-actions">
@@ -238,7 +238,7 @@
       <h2 id="return-dialog-title">Return storage to Pico?</h2>
       <p class="configuration-warning" id="return-warning">
         Cached host writes may be lost and the filesystem may be corrupted. Stop all host file activity first
-        and safely eject whenever possible. Pico will detach the USB drive and attempt to remount without
+        and safely eject whenever possible. Pico will revoke host access to the card and attempt to remount without
         formatting or repair.
       </p>
       <div class="dialog-actions">

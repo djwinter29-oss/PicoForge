@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace PicoForge;
 
@@ -32,6 +33,7 @@ internal interface IHidCommands
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
     private readonly Func<PicoForgeHid> createClient;
+    private readonly ILogger<DeviceMonitor> logger;
     private readonly object gate = new();
     // Handle operations always acquire deviceGate before the snapshot gate.
     private readonly object deviceGate = new();
@@ -40,13 +42,16 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private long storageReceipt;
     private long selfTestReceipt;
     private bool commandOutcomeUncertain;
+    private long mscReconnectDeadline;
+    private bool? mscReconnectEnabled;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
     public DeviceMonitor() : this(null, null) { }
 
-    public DeviceMonitor(string? serialNumber, string? devicePath)
+    public DeviceMonitor(string? serialNumber, string? devicePath, ILogger<DeviceMonitor>? logger = null)
     {
         createClient = () => new PicoForgeHid(serialNumber, devicePath);
+        this.logger = logger ?? NullLogger<DeviceMonitor>.Instance;
     }
 
     public StatusResponse Snapshot
@@ -92,6 +97,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false,
                         snapshot.Msc?.ForceReturnSupported ?? false)
                 };
+                mscReconnectDeadline = Environment.TickCount64 + 5000;
+                mscReconnectEnabled = enabled;
                 return snapshot.Msc;
             }
         }
@@ -206,6 +213,12 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                         if (report?.SelfTest is not null) selfTestReceipt = Stopwatch.GetTimestamp();
                         lock (gate)
                         {
+                            if (report?.Msc is { TransitionPending: false } ownership &&
+                                ownership.Enabled == mscReconnectEnabled)
+                            {
+                                mscReconnectDeadline = 0;
+                                mscReconnectEnabled = null;
+                            }
                             var telemetryStale = IsStale(telemetryReceipt, 750);
                             var storageStale = IsStale(storageReceipt, 1500);
                             var selfTestStale = IsStale(selfTestReceipt, 1500);
@@ -241,16 +254,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             }
             catch (Exception error) when (IsDeviceError(error))
             {
-                lock (deviceGate)
-                lock (gate)
-                {
-                    activeClient = null;
-                    telemetryReceipt = storageReceipt = selfTestReceipt = 0;
-                    snapshot = new(false, commandOutcomeUncertain
-                            ? "A prior HID command outcome is uncertain; further writes are blocked" : error.Message,
-                        null, null, null, null, null, null,
-                        CommandOutcomeUncertain: commandOutcomeUncertain);
-                }
+                HandleDisconnect(error);
             }
             finally
             {
@@ -266,6 +270,27 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
             try { await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+        }
+    }
+
+    private void HandleDisconnect(Exception error)
+    {
+        lock (deviceGate)
+        lock (gate)
+        {
+            var reconnecting = !commandOutcomeUncertain && Environment.TickCount64 < mscReconnectDeadline &&
+                (error is IOException or TimeoutException ||
+                    error is InvalidOperationException && error.Message.StartsWith(
+                        "PicoForge HID interface not found;", StringComparison.Ordinal));
+            if (reconnecting)
+                logger.LogInformation(error, "USB-drive mode change: waiting for HID reconnection");
+            activeClient = null;
+            telemetryReceipt = storageReceipt = selfTestReceipt = 0;
+            snapshot = new(false, commandOutcomeUncertain
+                    ? "A prior HID command outcome is uncertain; further writes are blocked"
+                    : reconnecting ? null : error.Message,
+                null, null, null, null, null, null,
+                CommandOutcomeUncertain: commandOutcomeUncertain, Reconnecting: reconnecting);
         }
     }
 

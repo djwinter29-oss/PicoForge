@@ -248,6 +248,40 @@ public sealed class ForcedSaveTests
         Assert.Equal(new[] { true }, commands.Forces);
     }
 
+    [Theory]
+    [InlineData("read", true, false, true)]
+    [InlineData("missing", true, false, true)]
+    [InlineData("read", true, true, false)]
+    [InlineData("read", false, false, false)]
+    [InlineData("invalid", true, false, false)]
+    [InlineData("permissions", true, false, false)]
+    [InlineData("uncertain", true, false, false)]
+    public void MonitorOnlyTreatsConfirmedBoundedMscDisconnectAsReconnecting(
+        string kind, bool confirmed, bool expired, bool reconnecting)
+    {
+        using var monitor = new DeviceMonitor();
+        var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        typeof(DeviceMonitor).GetField("activeClient", fields)!.SetValue(monitor, new Commands());
+        typeof(DeviceMonitor).GetField("snapshot", fields)!.SetValue(monitor, Ready(false));
+        if (confirmed) Assert.NotNull(monitor.SetMsc(true));
+        if (expired)
+            typeof(DeviceMonitor).GetField("mscReconnectDeadline", fields)!.SetValue(monitor, Environment.TickCount64 - 1);
+        if (kind == "uncertain")
+            typeof(DeviceMonitor).GetField("commandOutcomeUncertain", fields)!.SetValue(monitor, true);
+        Exception error = kind switch
+        {
+            "missing" => new InvalidOperationException("PicoForge HID interface not found; check USB"),
+            "invalid" => new InvalidOperationException("unexpected HID report"),
+            "permissions" => new UnauthorizedAccessException("access denied"),
+            _ => new IOException("read error")
+        };
+        typeof(DeviceMonitor).GetMethod("HandleDisconnect", fields)!.Invoke(monitor, [error]);
+        Assert.False(monitor.Snapshot.Connected);
+        Assert.Equal(reconnecting, monitor.Snapshot.Reconnecting);
+        if (kind == "uncertain") Assert.Contains("uncertain", monitor.Snapshot.Error);
+        else Assert.Equal(reconnecting ? null : error.Message, monitor.Snapshot.Error);
+    }
+
     [Fact]
     public void MonitorBlocksNormalSaveAndRebootDuringPendingTransitionOrSelfTest()
     {

@@ -67,7 +67,7 @@ static void storage_command(EmbeddedCli *instance, char *args, void *context)
         strcmp(args, "recover --confirm") == 0) {
         pf_usb_msc_request_recovery();
         pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect before fs mount. "
-                     "Check UART recovery result and storage status after reconnect.");
+                     "Check UART recovery result and fresh storage status.");
         return;
     }
     if (!pf_storage_worker_submit(family, args != NULL ? args : "",

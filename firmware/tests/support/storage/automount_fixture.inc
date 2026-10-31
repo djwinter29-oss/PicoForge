@@ -20,7 +20,6 @@ static uint32_t now;
 static bool mounted, queue_fails, queued_recovery, queued_unmount, sync_ok = true, init_fails;
 static unsigned mount_calls, unmount_calls, forget_calls, removals, expected_removals;
 static unsigned sync_calls, disconnects, connects, init_calls;
-static bool expect_usb_owned_disconnect, disconnect_fails;
 static pf_fatfs_volume_result_t mount_result = PF_FATFS_VOLUME_OK;
 
 bool pf_sd_port_try_lock(void)
@@ -69,7 +68,7 @@ pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
     TEST_ASSERT_FALSE(usb_owned);
     TEST_ASSERT_NOT_EQUAL(0, reservation_depth);
     if (auto_mount_blocked) {
-        TEST_ASSERT_NOT_EQUAL(0, disconnects);
+        TEST_ASSERT_FALSE(msc_enabled);
         ++init_calls;
     }
     media.initialized = !init_fails;
@@ -115,12 +114,8 @@ bool tud_msc_set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
 { (void)lun; (void)key; (void)asc; (void)ascq; return true; }
 bool tud_disconnect(void)
 {
-    if (expect_usb_owned_disconnect) {
-        TEST_ASSERT_TRUE(usb_owned);
-        expect_usb_owned_disconnect = false;
-    }
     ++disconnects;
-    return !disconnect_fails;
+    return true;
 }
 bool tud_connect(void)
 {
