@@ -115,6 +115,38 @@ class MonitorMscTests(unittest.TestCase):
 
 
 class MonitorReconnectTests(unittest.TestCase):
+    def test_confirmed_msc_reconnect_is_bounded_and_does_not_hide_other_errors(self):
+        cases = [
+            (OSError("read error"), 104.0, True, False, True),
+            (RuntimeError("PicoForge HID interface not found; check USB"), 104.0, True, False, True),
+            (OSError("read error"), 105.0, True, False, False),
+            (OSError("read error"), 104.0, False, False, False),
+            (OSError("read error"), 104.0, True, True, False),
+            (ValueError("invalid report"), 104.0, True, False, False),
+            (RuntimeError("unexpected failure"), 104.0, True, False, False),
+        ]
+        for error, now, confirmed, uncertain, reconnecting in cases:
+            with self.subTest(error=error, now=now, confirmed=confirmed, uncertain=uncertain):
+                monitor = DeviceMonitor.__new__(DeviceMonitor)
+                monitor._device_lock = threading.RLock()
+                monitor._lock = threading.RLock()
+                monitor._stop = threading.Event()
+                monitor._stop.wait = lambda timeout: monitor._stop.set()
+                monitor._active_client = Mock()
+                monitor._active_client.set_msc.return_value = {"status": "completed", "error": "none"}
+                monitor._snapshot = {**_empty_snapshot(), "msc": {"enabled": False}}
+                if confirmed:
+                    with patch("picoforge.monitor.time.monotonic", return_value=100.0):
+                        monitor.set_msc(True)
+                monitor._command_outcome_uncertain = uncertain
+                monitor._client_factory = Mock(side_effect=error)
+                with patch("picoforge.monitor.time.monotonic", return_value=now):
+                    monitor._run()
+                snapshot = monitor.snapshot()
+                self.assertFalse(snapshot["connected"])
+                self.assertEqual(snapshot["reconnecting"], reconnecting)
+                self.assertEqual(snapshot["error"], None if reconnecting else str(error))
+
     def test_reconnect_snapshot_keeps_stable_api_shape(self):
         monitor = DeviceMonitor.__new__(DeviceMonitor)
         monitor._device_lock = threading.RLock()

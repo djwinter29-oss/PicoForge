@@ -18,7 +18,7 @@ export function renderStatus(snapshot) {
   const connection = document.querySelector("#connection");
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
   document.querySelector("#connection-label").textContent = snapshot.error
-    ? "Attention" : connected ? "Connected" : "Disconnected";
+    ? "Attention" : snapshot.reconnecting ? "Reconnecting" : connected ? "Connected" : "Disconnected";
   document.querySelector("#product-name").textContent = hardware
     ? `${hardware.product_name} (${hardware.capabilities & 8 ? "SPI" : "SDIO"})` : "--";
   const boardModel = typeof hardware?.board_model === "string" ? hardware.board_model
@@ -80,7 +80,8 @@ export function renderStatus(snapshot) {
   renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc);
   renderSelfTest(snapshot);
 
-  const message = snapshot.error ?? (runtime ? "HID telemetry is live"
+  const message = snapshot.error ?? (snapshot.reconnecting ? "Reconnecting after USB-drive mode change..."
+    : runtime ? "HID telemetry is live"
     : connected && snapshot.telemetry_stale ? "Telemetry report is stale"
     : connected ? "Waiting for first status report"
       : snapshot.no_board_selected ? "Select a PicoForge board" : "Connect a PicoForge board");

@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
+import logging
 import threading
 import time
 from typing import Any, Callable
@@ -17,10 +18,14 @@ from .protocol import (
     validate_legacy_settings,
 )
 
+_LOGGER = logging.getLogger(__name__)
+_MSC_RECONNECT_TIMEOUT_SECONDS = 5.0
+
 
 def _empty_snapshot() -> dict[str, object]:
     return {
         "connected": False,
+        "reconnecting": False,
         "error": None,
         "hardware": None,
         "board_configuration": None,
@@ -74,6 +79,8 @@ class DeviceMonitor:
         self._snapshot = _empty_snapshot()
         self._input_received_at: dict[int, float] = {}
         self._command_outcome_uncertain = False
+        self._msc_reconnect_deadline = 0.0
+        self._msc_reconnect_enabled: bool | None = None
         self._thread = threading.Thread(target=self._run, name="picoforge-hid-monitor", daemon=True)
         self._thread.start()
 
@@ -183,13 +190,15 @@ class DeviceMonitor:
                 self._snapshot["control_result"] = result
             if result.get("status") != "completed":
                 raise RuntimeError(f"MSC command {result['status']}: {result['error']}")
-        with self._lock:
-            previous = self._snapshot.get("msc") or {}
-            status = {"enabled": previous.get("enabled", False),
-                      "transition_pending": True, "request_rejected": False,
-                      "force_return_supported": previous.get("force_return_supported", False)}
-            self._snapshot["msc"] = status
-            self._snapshot["control_result"] = result
+            with self._lock:
+                previous = self._snapshot.get("msc") or {}
+                status = {"enabled": previous.get("enabled", False),
+                          "transition_pending": True, "request_rejected": False,
+                          "force_return_supported": previous.get("force_return_supported", False)}
+                self._snapshot["msc"] = status
+                self._snapshot["control_result"] = result
+                self._msc_reconnect_deadline = time.monotonic() + _MSC_RECONNECT_TIMEOUT_SECONDS
+                self._msc_reconnect_enabled = enable
         return status
 
     def reboot(self) -> dict[str, object]:
@@ -343,6 +352,11 @@ class DeviceMonitor:
                             )
                     elif item is not None and item["kind"] == "memory":
                         with self._lock:
+                            if (not item["data"]["msc"]["transition_pending"]
+                                    and item["data"]["msc"]["enabled"]
+                                    == getattr(self, "_msc_reconnect_enabled", None)):
+                                self._msc_reconnect_deadline = 0.0
+                                self._msc_reconnect_enabled = None
                             self._input_received_at[10] = time.monotonic()
                             self._snapshot.update(
                                 connected=True,
@@ -361,8 +375,21 @@ class DeviceMonitor:
                             )
             except (OSError, RuntimeError, ValueError) as error:
                 with self._lock:
+                    reconnecting = (
+                        not getattr(self, "_command_outcome_uncertain", False)
+                        and time.monotonic() < getattr(self, "_msc_reconnect_deadline", 0.0)
+                        and (isinstance(error, OSError) or (
+                            isinstance(error, RuntimeError)
+                            and str(error).startswith("PicoForge HID interface not found;")
+                        ))
+                    )
+                    if reconnecting:
+                        _LOGGER.info("USB-drive mode change: waiting for HID reconnection: %s", error)
                     self._input_received_at = {}
-                    self._snapshot = {**_empty_snapshot(), "error": str(error)}
+                    self._snapshot = {
+                        **_empty_snapshot(), "reconnecting": reconnecting,
+                        "error": None if reconnecting else str(error),
+                    }
             finally:
                 if client is not None:
                     with self._device_lock:

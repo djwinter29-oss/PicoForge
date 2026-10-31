@@ -53,6 +53,9 @@ storage first; host commands are never silently downgraded or replayed after rec
 Use **Enable USB drive** and confirm the storage-handoff dialog to hand the SD card to the host.
 Cancel or Escape sends no command. Firmware unmounts its filesystem before USB
 briefly re-enumerates with an added MSC interface, keeping the HID identity and interface stable.
+After a confirmed ownership-change command, the dashboard shows **Reconnecting** for expected HID disconnects
+for up to five seconds. Errors that persist beyond that window, invalid reports, and uncertain command outcomes
+remain errors; the reconnect notice does not confirm successful storage handoff.
 Firmware file operations and self-test remain unavailable until USB ownership returns and mounting succeeds.
 
 **Return to Pico** requires data-loss confirmation, then requests Pico-side detach and remount over HID.

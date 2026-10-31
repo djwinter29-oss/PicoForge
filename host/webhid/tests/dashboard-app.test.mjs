@@ -3,6 +3,30 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { renderStatus } from "../../web/js/dashboard.mjs";
 
+test("server dashboard presents expected USB reconnection without hiding real errors", () => {
+  const saved = globalThis.document;
+  const elements = new Map();
+  const element = selector => {
+    if (!elements.has(selector)) elements.set(selector, {
+      dataset: {}, valueAsNumber: 32, setAttribute() {}, replaceChildren() {},
+    });
+    return elements.get(selector);
+  };
+  globalThis.document = { querySelector: element, createElement: () => ({ append() {} }) };
+  try {
+    renderStatus({ connected: false, reconnecting: true });
+    assert.equal(element("#connection-label").textContent, "Reconnecting");
+    assert.equal(element("#status-message").textContent, "Reconnecting after USB-drive mode change...");
+    assert.equal(element(".status-line").dataset.error, "false");
+    renderStatus({ connected: false, reconnecting: true, error: "read error" });
+    assert.equal(element("#connection-label").textContent, "Attention");
+    assert.equal(element("#status-message").textContent, "read error");
+    assert.equal(element(".status-line").dataset.error, "true");
+  } finally {
+    globalThis.document = saved;
+  }
+});
+
 test("shared dashboard handlers survive a status failure that clears the snapshot mid-command", async () => {
   const handlers = new Map();
   let tick;
