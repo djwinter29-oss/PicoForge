@@ -1,8 +1,8 @@
 /**
- * @file wireless_auth.c
+ * @file bluetooth_auth.c
  * @brief Verify command-bound, UID-bound BLE proofs without exposing the USB-provisioned key.
  */
-#include "wireless_auth.h"
+#include "bluetooth_auth.h"
 
 #include <string.h>
 

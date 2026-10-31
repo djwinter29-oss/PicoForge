@@ -57,7 +57,7 @@ def test_two_core_configuration_has_one_authority_and_only_sdk_radio_affinity():
         if path == ROOT / "firmware/src/app/wireless/wireless.c":
             source = path.read_text()
             start = source[source.index("void pf_wireless_start(void)"):]
-            assert start.index("if (settings.flags == 0u) return;") < start.index("vTaskCoreAffinitySet(")
+            assert start.index("if (!wifi_enabled && !ble_enabled) return;") < start.index("vTaskCoreAffinitySet(")
             assert start.index("vTaskCoreAffinitySet(") < start.index("cyw43_arch_init(")
             assert source.count("vTaskCoreAffinitySet(") == 1
             assert "vTaskCoreAffinitySet(NULL, (UBaseType_t)1u << get_core_num());" in start

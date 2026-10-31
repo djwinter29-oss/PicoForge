@@ -9,8 +9,8 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=8"/);
-  assert.match(html, /src="js\/app\.mjs\?v=11"/);
+  assert.match(html, /href="css\/webhid\.css\?v=9"/);
+  assert.match(html, /src="js\/app\.mjs\?v=12"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=4"/);
   assert.match(app, /from "\.\/view\.mjs\?v=6"/);
@@ -21,6 +21,12 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
   for (const path of ["../index.html", "../../web/index.html"]) {
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
+    const settings = dashboard.split('aria-labelledby="settings-title"')[1].split("</section>")[0];
+    const footer = dashboard.split('<footer class="status-line"')[1].split("</footer>")[0];
+    assert.doesNotMatch(settings, /id="settings-note"/);
+    assert.match(footer, /role="status" aria-live="polite"/);
+    assert.match(footer, /id="status-message"[\s\S]*id="settings-note"/);
+    assert.equal([...dashboard.matchAll(/id="settings-note"/g)].length, 1);
     assert.match(dashboard, /id="self-test-start"[^>]*>Start benchmark<\/button>/);
     assert.doesNotMatch(dashboard, />Start self-test<\/button>/);
     assert.match(dashboard, /<details class="pin-map-disclosure self-test-disclosure" id="self-test-disclosure">/);
@@ -104,6 +110,7 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     await el("#connection-control").click();
     assert.equal(el("#settings-storage").value, "1");
     assert.equal(el("#settings-note").hidden, true);
+    assert.equal(el("#status-message").hidden, false);
     assert.equal(el("#settings-save").disabled, true);
     client.update({ self_test_command_pending: true });
     assert.equal(el("#settings-note").hidden, true);

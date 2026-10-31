@@ -84,6 +84,7 @@ function render(state) {
             ? "Update firmware or return storage to Pico before saving settings."
             : "");
   element("settings-note").hidden = !element("settings-note").textContent;
+  element("status-message").hidden = !state.error && !element("settings-note").hidden;
   element("msc-note").textContent = state.reconnecting
     ? "USB interfaces are reconnecting; HID will resume automatically."
     : state.msc?.request_rejected ? "Storage request or transition failed; inspect storage and CDC diagnostics."

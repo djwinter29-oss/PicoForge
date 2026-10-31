@@ -7,7 +7,7 @@ there is no runtime transport selector.
 | --- | --- | --- | --- |
 | System clock (`pf_sysclk_profile_t`) | `PF_SYSCLK_DEFAULT`, `PF_SYSCLK_150MHZ`, `PF_SYSCLK_200MHZ`, `PF_SYSCLK_250MHZ` | Default: keep the SDK stock clock | At boot |
 | Storage speed (`pf_storage_speed_t`) | `PF_STORAGE_SPEED_DEFAULT` (25 MHz), `PF_STORAGE_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
-| W-board Wi-Fi/BLE | Enable flags, SSID, private passphrase and BLE control key | Both radios off | At boot |
+| W-board Wi-Fi/BLE | Radio switches, SSID, passphrase and BLE key | On; no credentials | At boot |
 
 Wireless provisioning, private credential storage, BLE authorization and client support are defined in the
 [wireless design](wireless.md).
@@ -48,8 +48,10 @@ The inline `pf_sysclk_profile_mhz()` (`0` for Default) and `pf_storage_speed_mhz
 available for arbitrary profiles, including HID input validation.
 The record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
 once. Setters change only the RAM copy; saved values take effect at the next boot
-because the SD drivers lock their first configuration. The HID handler restores the previous values when a save
-is unconfirmed, so reports retain the previous session values. A failed save does not guarantee flash was unchanged:
+because the SD drivers lock their first configuration. A HID save is all-or-nothing: the handler stages every
+requested value, and any outcome other than Completed (invalid, busy, pending or failed) calls
+`pf_boot_config_discard()`, so RAM again equals flash and no partial request survives. A pending forced save re-stages
+its original request when it runs. A failed save does not guarantee flash was unchanged:
 an SDK safe-zone exit timeout can occur after programming. A later reboot may therefore load the new values despite
 the failed command; failed commands do not automatically reboot.
 
@@ -132,13 +134,16 @@ Little-endian, 16 bytes, padded with `0xFF` to one 256-byte page at the start of
 | 6 | 2 | record size (`16`) |
 | 8 | 1 | System clock profile (`0` Default, `1` 150 MHz, `2` 200 MHz, `3` 250 MHz) |
 | 9 | 1 | Shared SD-card speed profile (`0` Default, `1` High-Speed) |
-| 10 | 2 | Reserved, must be zero |
+| 10 | 1 | Disabled radios (`PF_WIRELESS_*` bits; `0` in older records enables both) |
+| 11 | 1 | Wireless extension required (`1` when written by this firmware, `0` in older records) |
 | 12 | 4 | CRC-32 (IEEE, reflected) of bytes 0–11 |
 
 Missing, erased, short, wrong magic/version/size, CRC-invalid or out-of-range data returns the complete defaults;
-fields are never applied partially and boot never depends on the record. There is a single copy: a power loss during
-save leaves a record that fails CRC and loads as defaults (single sector, no wear levelling: fine for infrequent user
-configuration; a dual-sector journal is the upgrade if atomic retention or frequent writes are needed).
+fields are never applied partially and boot never depends on the record. A record marked as requiring the wireless
+extension loads only together with a valid extension, so profiles and credentials commit as one unit. There is a single
+copy: a power loss during save leaves a record that fails CRC, or lacks its extension, and loads as defaults (single
+sector, no wear levelling: fine for infrequent user configuration; a dual-sector journal is the upgrade if retaining
+the old values across a power loss or frequent writes are needed).
 
 ## Flash reservation
 
@@ -185,7 +190,8 @@ They cover defaults, the CRC-32 check value, malformed metadata and profiles, ro
 failed and partially completed programming, rejected ISR/scheduler contexts, reentrant saves, safe loading retries,
 and lockout-TCB reclamation including elapsed-tick wraparound. The SDK fake distinguishes failure before task
 creation, failure after task creation but before programming, and failure after programming during safe-zone exit.
-Partial-program tests interrupt the record at every byte boundary, check complete defaults after reboot, then verify
+Partial-program tests interrupt the profile record and wireless extension at every byte boundary, check complete
+defaults with no credentials after reboot, then verify
 recovery through a successful save. Separate system-clock tests exercise modelled clock/regulator APIs.
 Real flash erase/program, power loss, clock changes and the bus speeds on hardware are not tested here and need a board.
 

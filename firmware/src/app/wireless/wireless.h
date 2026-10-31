@@ -23,8 +23,11 @@ void pf_wireless_start(void);
 void pf_wireless_poll(void);
 /** @brief Copy sanitized wireless status into a PF_WIRELESS_STATUS_SIZE buffer. */
 void pf_wireless_status(uint8_t *report);
-/** @brief Save a validated USB configuration, retaining previous RAM settings on failure.
- * @return True only after verified persistence; the caller must queue the existing deferred reboot.
+/** @brief Validate and save a USB credential update.
+ *
+ * All credentials are saved together or none are: a validation or save failure discards the staged values, and the
+ * next access reloads flash. The caller queues the existing deferred reboot after true.
+ * @return True only after verified persistence.
  */
 bool pf_wireless_configure(const uint8_t *report);
 

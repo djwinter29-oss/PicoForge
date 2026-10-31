@@ -8,7 +8,7 @@
 #include USB_TASK_SOURCE
 static pf_sysclk_profile_t test_sysclk, saved_sysclk;
 static pf_storage_speed_t test_sd_speed, saved_sd_speed;
-static uint8_t test_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+static uint8_t test_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE, saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
 static unsigned settings_save_calls;
 static bool settings_save_fails;
 static bool msc_enabled;
@@ -60,7 +60,15 @@ bool pf_boot_config_save(void)
     }
     saved_sysclk = test_sysclk;
     saved_sd_speed = test_sd_speed;
+    saved_radios = test_radios;
     return true;
+}
+
+void pf_boot_config_discard(void)
+{
+    test_sysclk = saved_sysclk;
+    test_sd_speed = saved_sd_speed;
+    test_radios = saved_radios;
 }
 
 static bool unavailable, reserved, initialized, mounted, queue_fails, retained_cid;

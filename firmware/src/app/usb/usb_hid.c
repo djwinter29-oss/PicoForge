@@ -501,7 +501,7 @@ void pf_hid_ble_result(pf_hid_control_result_t *report)
 }
 #endif
 
-/** @brief Validate and stage new boot settings; the caller restores the session values unless this completes. */
+/** @brief Validate, stage and save new boot settings; the caller discards the staged values unless this completes. */
 static outcome_t save_settings(const pf_hid_control_request_t *request)
 {
     const uint16_t system_clock_mhz = read_u16_le(request->arguments);
@@ -553,19 +553,11 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
     return result;
 }
 
+/** @brief Save all requested settings or none: any other outcome drops the staged values (a pending save re-stages). */
 static outcome_t handle_save_settings(const pf_hid_control_request_t *request)
 {
-    const pf_sysclk_profile_t old_sysclk = pf_boot_config_sysclk();
-    const pf_storage_speed_t old_sd_speed = pf_boot_config_storage_speed();
-    const uint8_t old_radios = pf_boot_config_radios();
     outcome_t result = save_settings(request);
-
-    if (result.status != PF_HID_COMMAND_COMPLETED) {
-        /* Retain the previous session values; a failed save may already have changed flash. */
-        (void)pf_boot_config_set_sysclk(old_sysclk);
-        (void)pf_boot_config_set_storage_speed(old_sd_speed);
-        (void)pf_boot_config_set_radios(old_radios);
-    }
+    if (result.status != PF_HID_COMMAND_COMPLETED) pf_boot_config_discard();
     return result;
 }
 

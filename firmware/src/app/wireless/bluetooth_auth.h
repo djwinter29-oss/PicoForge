@@ -1,9 +1,9 @@
 /**
- * @file wireless_auth.h
+ * @file bluetooth_auth.h
  * @brief Command-bound BLE proof verification using the SDK's pinned mbedTLS implementation.
  */
-#ifndef PF_WIRELESS_AUTH_H
-#define PF_WIRELESS_AUTH_H
+#ifndef PF_BLUETOOTH_AUTH_H
+#define PF_BLUETOOTH_AUTH_H
 
 #include <stdbool.h>
 #include <stdint.h>

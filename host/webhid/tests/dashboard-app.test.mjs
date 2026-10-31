@@ -18,10 +18,13 @@ test("server dashboard presents expected USB reconnection without hiding real er
     assert.equal(element("#connection-label").textContent, "Reconnecting");
     assert.equal(element("#status-message").textContent, "Reconnecting after USB-drive mode change...");
     assert.equal(element(".status-line").dataset.error, "false");
+    assert.equal(element("#settings-note").textContent, "Waiting for a PicoForge connection.");
+    assert.equal(element("#status-message").hidden, true);
     renderStatus({ connected: false, reconnecting: true, error: "read error" });
     assert.equal(element("#connection-label").textContent, "Attention");
     assert.equal(element("#status-message").textContent, "read error");
     assert.equal(element(".status-line").dataset.error, "true");
+    assert.equal(element("#status-message").hidden, false);
   } finally {
     globalThis.document = saved;
   }

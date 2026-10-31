@@ -18,7 +18,7 @@ def test_ble_proof_is_bound_to_nonce_board_and_every_command_byte(tmp_path):
         "gcc", "-shared", "-fPIC", "-Werror", "-DMBEDTLS_CONFIG_FILE=\"pf_mbedtls_config.h\"",
         "-I", str(ROOT / "firmware/src/integration/wireless"),
         "-I", str(crypto / "include"), "-I", str(crypto / "library"),
-        str(ROOT / "firmware/src/app/wireless/wireless_auth.c"),
+        str(ROOT / "firmware/src/app/wireless/bluetooth_auth.c"),
         *(str(crypto / "library" / name) for name in ["md.c", "sha256.c", "platform_util.c"]),
         "-o", str(output),
     ], check=True, capture_output=True, text=True)

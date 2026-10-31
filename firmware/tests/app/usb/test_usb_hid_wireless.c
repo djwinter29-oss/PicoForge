@@ -31,7 +31,7 @@ void setUp(void)
     memset(&bench, 0, sizeof(bench));
     control_result = ble_result = (pf_hid_control_result_t){.version = 1u};
     provisioning_calls = led_requests = msc_requests = force_requests = 0u;
-    test_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+    test_radios = saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
     settings_save_fails = false;
 }
 

@@ -132,6 +132,8 @@ function renderSettings(snapshot) {
           : msc.transition_pending ? "Wait for the USB storage transition before saving settings."
             : "");
   document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
+  document.querySelector("#status-message").hidden = !snapshot.error
+    && !document.querySelector("#settings-note").hidden;
 }
 
 function updateClockOptions(select, mcu, savedClock) {
