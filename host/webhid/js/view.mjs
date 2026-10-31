@@ -23,10 +23,14 @@ function renderLinkState(selector, label, active) {
 }
 
 let lastStorageDetails = null;
+let cardAbsent = false;
 
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
-  if (!connected) lastStorageDetails = null;
+  if (!connected) {
+    lastStorageDetails = null;
+    cardAbsent = false;
+  }
   const hardware = snapshot.hardware;
   const runtime = snapshot.runtime;
   updateClockOptions(document.querySelector("#settings-clock"), hardware?.mcu,
@@ -35,7 +39,8 @@ export function renderStatus(snapshot) {
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
   document.querySelector("#connection-label").textContent = snapshot.error
     ? "Attention" : snapshot.reconnecting ? "Reconnecting" : connected ? "Connected" : "Disconnected";
-  document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
+  document.querySelector("#product-name").textContent = hardware
+    ? `${hardware.product_name} (${hardware.capabilities & 8 ? "SPI" : "SDIO"})` : "--";
   document.querySelector("#board-model").textContent = hardware
     ? `${hardware.board_name} (${hardware.mcu})` : "--";
   document.querySelector("#firmware-version").textContent = hardware?.firmware_version ?? "Unknown";
@@ -58,8 +63,8 @@ export function renderStatus(snapshot) {
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   renderLinkState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   const memory = snapshot.memory;
-  const cardAbsent = memory?.presence_known === true && memory.present === false;
-  const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending;
+  if (memory?.presence_known === true) cardAbsent = memory.present === false;
+  const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending || snapshot.msc_command_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
   document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared
     || !(hardware?.capabilities & 32);
@@ -80,7 +85,7 @@ export function renderStatus(snapshot) {
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = snapshot.error
     ?? (snapshot.reboot_pending ? "Reboot accepted; waiting for USB reconnection"
-      : snapshot.reconnecting ? "USB interfaces changing; reconnecting HID automatically"
+      : snapshot.reconnecting ? "USB device reconnecting; reopening HID automatically"
       : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
   for (const [id, label] of [[3, "telemetry"], [10, "storage"], [11, "self-test"]]) {
     const status = document.querySelector(`#${label}-freshness`);
@@ -93,7 +98,7 @@ export function renderStatus(snapshot) {
 
 function renderBoardConfiguration(snapshot) {
   const config = snapshot.settings;
-  const spi = snapshot.hardware?.transport === "spi";
+  const spi = Boolean(snapshot.hardware?.capabilities & 8);
   const signals = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
   const renderPins = (selector, labels, pins) => {
     const headings = document.createElement("tr");
@@ -153,7 +158,9 @@ function renderMemory(memory, filesystemFormat, msc) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const busy = memory?.configured && memory.sample_valid === false
     && !msc?.enabled && !msc?.transition_pending;
-  if (memory?.sample_valid && memory.initialized) lastStorageDetails = { memory, filesystemFormat };
+  if (memory?.sample_valid && memory.initialized && !msc?.enabled && !msc?.transition_pending) {
+    lastStorageDetails = { memory, filesystemFormat };
+  }
   else if (!busy) lastStorageDetails = null;
   set("#memory-state", msc?.enabled ? "USB host" : msc?.transition_pending ? "Transitioning" : busy ? "Busy"
     : memory?.initialized ? "Ready" : memory?.configured ? "Not initialized" : "Unavailable");
@@ -168,9 +175,9 @@ function renderMemory(memory, filesystemFormat, msc) {
   document.querySelector("#memory-note").hidden = !document.querySelector("#memory-note").textContent;
   if (busy && lastStorageDetails) ({ memory, filesystemFormat } = lastStorageDetails);
   const manufacturer = memory?.manufacturer;
-  set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
-  set("#memory-speed", memory?.bus_clock_hz
-    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz (${memory.speed_mode === 2 ? "High-Speed" : "Standard"})`
+  set("#memory-speed", memory?.sample_valid !== false && memory?.initialized
+    && !msc?.enabled && !msc?.transition_pending && memory?.bus_clock_hz
+    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
@@ -203,9 +210,15 @@ export function renderSelfTest(snapshot) {
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", preparing: "Preparing", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
   const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
-  set("#self-test-state", labels[status?.state] ?? status?.state ?? "Unavailable");
-  set("#self-test-percent", `${Math.floor(status?.progress_percent ?? 0)}%`);
+  set("#self-test-state", status ? `${labels[status.state] ?? status.state} · ${Math.floor(status.progress_percent ?? 0)}%`
+    : "Unavailable");
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;
+  document.querySelector("#self-test-meter").dataset.result = ["passed", "failed"].includes(status?.state)
+    ? status.state : "";
+  const disclosure = document.querySelector("#self-test-disclosure");
+  const autoOpen = status?.active ? "active" : status?.state === "failed" ? "failed" : "";
+  if (autoOpen && disclosure.dataset.autoOpen !== autoOpen) disclosure.open = true;
+  disclosure.dataset.autoOpen = autoOpen;
   set("#self-test-write-speed", speed(status?.write_bytes_per_second));
   set("#self-test-read-speed", speed(status?.read_bytes_per_second));
   set("#self-test-written", status ? `${count(status.written_bytes)} / ${count(status.target_bytes)}` : "--");

@@ -6,6 +6,8 @@ hardware limits are in [firmware test guidance](../../firmware/tests/README.md) 
 [architecture guide](../design/architecture.md); the software HID protocol is implemented across firmware and host
 clients, while physical USB behavior remains a hardware-qualification item. The
 [HID Report Reference](../design/usb/usb-hid-report-reference.md) is authoritative for the current contract.
+W-board host checks and target builds do not qualify physical Wi-Fi/BLE; the
+[wireless acceptance scope](../design/wireless.md#qualification) lists the required hardware checks.
 
 ## Prerequisites
 
@@ -84,3 +86,47 @@ breakout, wiring, and exact firmware image. Follow the [hardware setup guide](..
 [transport and qualification notes](../design/sdcard/sdcard-driver-design.md), and the specific procedure for the behavior
 under test. Record partial runs as partial; passing tests do not imply sustained card integrity, safe power-loss
 recovery, or full MSC host compatibility.
+
+### Storage Lifecycle Board Checks
+
+This is the hardware acceptance procedure for the
+[default-mounted storage design](../design/architecture.md#storage-ownership-lifecycle), not a record of passing tests.
+Use backed-up or expendable FAT/exFAT media and record the board, card, transport, firmware image, host OS, and client.
+Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS pass does not qualify the others.
+
+1. Boot with a valid card and no dashboard/CDC session. Connect afterward and verify fresh `mounted` storage status
+   without sending `fs mount` or Start. Read an existing file, then create/read/delete a disposable file via CDC.
+   Confirm CDC, HID and MSC enumerate with fixed interface numbers and MSC reports no medium while Pico owns the card.
+2. Start one small self-test from mounted idle status. Verify that the first click runs write/verify/cleanup rather
+   than only mounting, and that storage remains mounted afterward. Record command-acceptance delay separately from
+   write/read timing; free-space scanning is outside the measured transfer phases.
+3. Enable USB sharing directly from mounted idle status without manual unmount. Verify worker unmount precedes host
+   block access, the host can use the card, and firmware file access/self-test are refused throughout host ownership.
+   Check rejection while a storage command or self-test is outstanding; do not interrupt live card writes.
+   Keep HID monitoring and a CDC session open across enable/return and verify neither disconnects nor restarts.
+4. Safely eject through the host OS, then use normal disable (opcode `3`, action `0`) and verify automatic remount
+   without Start or `fs mount`. Read a disposable file changed by the host to check that stale filesystem state
+   was discarded. Verify MSC reports no medium while firmware uses the card. Re-enable sharing after firmware changes
+   a disposable file and verify the host observes the new contents/capacity rather than cached metadata; inspect
+   the SCSI Unit Attention/media-change response where host tracing is available.
+   Do not treat HID availability or transition completion as mounted readiness.
+5. Separately test the dashboard's confirmed force-return action using expendable media with host writes stopped.
+   Verify its one-attempt remount result and failure block; it is not a substitute for the normal safe-return check.
+   Cancel its dialog and verify no command is sent.
+6. Boot without a card and with unsupported/unmountable expendable media. Verify USB management remains responsive,
+   unavailable/error status is explicit, Start remains disabled, and no formatting occurs. Check paced retries and,
+   where card detect is wired, insertion/removal while idle. Never remove media during a write.
+7. Explicitly unmount and verify idle polling does not immediately remount. Verify a deliberate mount or normal
+   ownership-return event restores normal use. Exercise fault recovery only with an appropriate fault fixture;
+   confirm it remains unmounted for inspection and does not replay failed writes or clear its recovery block on
+   insertion/normal return.
+8. On expendable media, stop host writes and safely eject while MSC remains enabled. Edit settings locally and
+   verify the forced-save risk warning appears before Save and Reboot. Cancel/Escape must send no command.
+   Confirm once; verify sync/detach precede flash programming, the original result is checked after HID reconnect
+   without SET replay, no card I/O resumes before reset, and boot returns to automatic firmware mounting.
+   Use controlled sync/detach/flash-failure fixtures to verify no reboot on failure and explicit diagnostics.
+   Older firmware must not receive a forced-save request, and self-test/transition busy gates must still apply.
+
+Record preparation/status visibility gaps separately from storage correctness. Richer mounting/checking UI labels
+remain a design requirement until implemented and tested; existing wire states must not be reinterpreted to fake
+those phases. Host mocks cannot establish real flush/eject behavior or filesystem integrity after forced return.

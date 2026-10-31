@@ -23,6 +23,12 @@
 #include "platform/storage/fatfs_volume.h"
 #include "app/storage/storage_worker.h"
 #include "app/runtime_stats.h"
+#if PF_ENABLE_WIRELESS
+#include "app/wireless/wireless.h"
+static bool ble_dispatch; /**< Current synchronous dispatcher targets the BLE-specific result slot. */
+static bool self_test_from_ble; /**< Pending benchmark admission belongs to the BLE result slot. */
+static pf_hid_control_result_t ble_result = { .version = PF_HID_REPORT_VERSION };
+#endif
 
 #ifndef PF_HID_BOARD_MODEL
 #define PF_HID_BOARD_MODEL 0u
@@ -31,8 +37,21 @@
 #define PF_HID_BOARD_FLAG_CARD_DETECT (1u << 0)
 #define PF_HID_BOARD_FLAG_LED (1u << 1)
 #define PF_HID_BOARD_FLAG_MONITOR_UART (1u << 2)
+/** Bits 3-4 carry the next-boot Wi-Fi and BLE enables; PF_WIRELESS_* shifted left by 3. */
+#define PF_HID_BOARD_RADIO_SHIFT 3u
+#if PF_ENABLE_WIRELESS
+#define PF_HID_RADIO_MASK (PF_WIRELESS_WIFI | PF_WIRELESS_BLE)
+#else
+#define PF_HID_RADIO_MASK 0u /**< Boards without a radio report and accept no radio enables. */
+#endif
 
 static bool reboot_requested; /**< A reboot or settings save awaits the USB task. */
+static bool force_save_pending; /**< Confirmed save waits for Pending GET before USB detach. */
+static bool force_save_result_read; /**< Host fetched the forced-save Pending result. */
+static uint64_t force_save_at_us; /**< Earliest detach, or deadline if no Pending GET arrives. */
+static bool force_save_reboot_waiting; /**< Completed forced save waits for result GET before reboot. */
+static uint64_t force_save_reboot_deadline_us; /**< Bounded wait for reconnect and result GET. */
+static pf_hid_control_request_t force_save_request; /**< Original transaction; never replayed. */
 /** Latest Feature 20 result returned by GET. */
 static pf_hid_control_result_t control_result = {
     .version = PF_HID_REPORT_VERSION,
@@ -67,14 +86,18 @@ static uint32_t read_u32_le(const uint8_t *value)
 static void set_result(const pf_hid_control_request_t *request, uint8_t status, uint8_t error,
                        const uint8_t result_data[4])
 {
-    control_result = (pf_hid_control_result_t){
+    pf_hid_control_result_t *target = &control_result;
+#if PF_ENABLE_WIRELESS
+    if (ble_dispatch) target = &ble_result;
+#endif
+    *target = (pf_hid_control_result_t){
         .version = PF_HID_REPORT_VERSION,
         .transaction_id = request->transaction_id,
         .opcode = request->opcode,
         .status = status,
         .error_reason = error,
     };
-    if (result_data != NULL) memcpy(control_result.result_data, result_data, sizeof(control_result.result_data));
+    if (result_data != NULL) memcpy(target->result_data, result_data, sizeof(target->result_data));
 }
 
 static uint8_t board_model(void)
@@ -88,6 +111,8 @@ typedef struct {
     uint8_t error; /**< PF_HID_ERROR_* value. */
     uint8_t data[4]; /**< Opcode-specific result bytes, zero otherwise. */
 } outcome_t;
+
+static outcome_t handle_save_settings(const pf_hid_control_request_t *request);
 
 static outcome_t outcome(uint8_t status, uint8_t error)
 {
@@ -110,6 +135,10 @@ static outcome_t benchmark_rejection(pf_file_benchmark_error_t error)
 
 bool pf_hid_take_reboot_request(void)
 {
+    if (force_save_reboot_waiting) {
+        if (time_us_64() < force_save_reboot_deadline_us) return false;
+        force_save_reboot_waiting = false;
+    }
     const bool requested = reboot_requested;
     reboot_requested = false;
     return requested;
@@ -117,6 +146,16 @@ bool pf_hid_take_reboot_request(void)
 
 void pf_hid_poll_async_commands(void)
 {
+    if (force_save_pending && time_us_64() >= force_save_at_us) {
+        force_save_pending = false;
+        force_save_result_read = true;
+        outcome_t result = handle_save_settings(&force_save_request);
+        set_result(&force_save_request, result.status, result.error, result.data);
+        if (result.status == PF_HID_COMMAND_COMPLETED) {
+            force_save_reboot_waiting = true;
+            force_save_reboot_deadline_us = time_us_64() + 5000000u;
+        }
+    }
 #if PF_ENABLE_STORAGE_BENCHMARK
     if (!self_test_result_pending) return;
 
@@ -125,12 +164,22 @@ void pf_hid_poll_async_commands(void)
     if (!pf_storage_worker_benchmark_admission_result(&accepted, &error)) return;
 
     self_test_result_pending = false;
-    if ((control_result.transaction_id != pending_self_test_request.transaction_id) ||
-        (control_result.opcode != pending_self_test_request.opcode)) {
+    pf_hid_control_result_t *target = &control_result;
+#if PF_ENABLE_WIRELESS
+    if (self_test_from_ble) target = &ble_result;
+#endif
+    if ((target->transaction_id != pending_self_test_request.transaction_id) ||
+        (target->opcode != pending_self_test_request.opcode)) {
         return;
     }
     const outcome_t result = accepted ? completed() : benchmark_rejection(error);
+#if PF_ENABLE_WIRELESS
+    ble_dispatch = self_test_from_ble;
+#endif
     set_result(&pending_self_test_request, result.status, result.error, NULL);
+#if PF_ENABLE_WIRELESS
+    ble_dispatch = false;
+#endif
 #endif
 }
 
@@ -155,7 +204,10 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     report->firmware_patch = PF_FIRMWARE_VERSION_PATCH;
     report->mcu = pf_system_mcu_id();
     report->board_model = board_model();
-    report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS;
+    report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS | PF_HID_CAP_FORCE_SAVE;
+#if PF_ENABLE_WIRELESS
+    report->capabilities |= PF_HID_CAP_WIRELESS;
+#endif
     if (pf_led_is_available()) report->capabilities |= PF_HID_CAP_LED;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
@@ -189,6 +241,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     }
     /* The logging UART is always configured by the board, so unlike the LED and card detect it has no absent case. */
     report->board_flags |= PF_HID_BOARD_FLAG_MONITOR_UART;
+    report->board_flags |= (uint8_t)((pf_boot_config_radios() & PF_HID_RADIO_MASK) << PF_HID_BOARD_RADIO_SHIFT);
     report->reset_cause = pf_system_reset_cause();
 }
 
@@ -383,6 +436,9 @@ static outcome_t start_self_test(const pf_hid_control_request_t *request, uint32
     if (pf_storage_worker_benchmark_start(size_mib, false)) {
         pending_self_test_request = *request;
         self_test_result_pending = true;
+#if PF_ENABLE_WIRELESS
+        self_test_from_ble = ble_dispatch;
+#endif
         return outcome(PF_HID_COMMAND_PENDING, PF_HID_ERROR_NONE);
     }
     pf_storage_worker_benchmark_status(&benchmark);
@@ -412,55 +468,104 @@ static outcome_t handle_self_test(const pf_hid_control_request_t *request)
 }
 #endif
 
-/** @brief Validate and stage new boot settings; the caller restores the session values unless this completes. */
+#if PF_ENABLE_WIRELESS
+/** @copydoc pf_hid_ble_control */
+bool pf_hid_ble_control(const pf_hid_control_request_t *request)
+{
+    if (request->version != PF_HID_REPORT_VERSION || request->transaction_id == 0u ||
+        (request->opcode != PF_HID_OPCODE_LED && request->opcode != PF_HID_OPCODE_SELF_TEST)) return false;
+    outcome_t result = busy_outcome();
+    if (!reboot_requested && !force_save_pending && !force_save_reboot_waiting
+#if PF_ENABLE_STORAGE_BENCHMARK
+        && !self_test_result_pending
+#endif
+    ) {
+        ble_dispatch = true;
+        result = request->opcode == PF_HID_OPCODE_LED ? handle_led(request)
+#if PF_ENABLE_STORAGE_BENCHMARK
+            : handle_self_test(request);
+#else
+            : outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
+#endif
+    }
+    ble_dispatch = true;
+    set_result(request, result.status, result.error, result.data);
+    ble_dispatch = false;
+    return true;
+}
+
+/** @copydoc pf_hid_ble_result */
+void pf_hid_ble_result(pf_hid_control_result_t *report)
+{
+    *report = ble_result;
+}
+#endif
+
+/** @brief Validate, stage and save new boot settings; the caller discards the staged values unless this completes. */
 static outcome_t save_settings(const pf_hid_control_request_t *request)
 {
     const uint16_t system_clock_mhz = read_u16_le(request->arguments);
     const uint8_t sdcard_profile = request->arguments[2];
-    pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
+    const uint8_t radios = request->arguments[3];
     outcome_t result;
 
-    while (sysclk < PF_SYSCLK_250MHZ && pf_sysclk_profile_mhz(sysclk) != system_clock_mhz) {
-        ++sysclk;
-    }
-    if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
+    const bool force = request->flags == 1u;
+    if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 4u)) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
-    if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || !pf_boot_config_set_sysclk(sysclk) ||
-        !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile)) {
+    if ((radios & ~PF_HID_RADIO_MASK) != 0u ||
+        !pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(system_clock_mhz)) ||
+        !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile) ||
+        (PF_HID_RADIO_MASK != 0u && !pf_boot_config_set_radios(radios))) {
         return invalid(PF_HID_ERROR_ARGUMENT);
     }
-    if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
+    if (pf_usb_msc_transition_pending() || pf_storage_worker_busy() ||
+        (pf_usb_msc_is_enabled() && !force)) {
         return busy_outcome();
     }
-    if (!pf_boot_config_save()) {
+    if (force && !pf_usb_msc_is_enabled()) return invalid(PF_HID_ERROR_ARGUMENT);
+    if (force && !force_save_pending && !force_save_result_read) {
+        force_save_request = *request;
+        force_save_pending = true;
+        force_save_at_us = time_us_64() + 500000u;
+        return outcome(PF_HID_COMMAND_PENDING, PF_HID_ERROR_NONE);
+    }
+    if (force && !pf_usb_msc_prepare_save()) {
+        PF_LOGGING_ERROR("settings", "Forced save refused: storage sync or USB detach failed");
+        return failed();
+    }
+    bool saved = pf_boot_config_save();
+    if (force) pf_usb_msc_finish_save(saved);
+    if (!saved) {
+        PF_LOGGING_ERROR("settings", "Boot settings save failed; reboot not scheduled");
         return failed();
     }
     result = completed();
     result.data[0] = (uint8_t)system_clock_mhz;
     result.data[1] = (uint8_t)(system_clock_mhz >> 8u);
     result.data[2] = sdcard_profile;
+    result.data[3] = radios;
     reboot_requested = true;
     return result;
 }
 
+/** @brief Save all requested settings or none: any other outcome drops the staged values (a pending save re-stages). */
 static outcome_t handle_save_settings(const pf_hid_control_request_t *request)
 {
-    const pf_sysclk_profile_t old_sysclk = pf_boot_config_sysclk();
-    const pf_storage_speed_t old_sd_speed = pf_boot_config_storage_speed();
     outcome_t result = save_settings(request);
-
-    if (result.status != PF_HID_COMMAND_COMPLETED) {
-        /* Retain the previous session values; a failed save may already have changed flash. */
-        (void)pf_boot_config_set_sysclk(old_sysclk);
-        (void)pf_boot_config_set_storage_speed(old_sd_speed);
-    }
+    if (result.status != PF_HID_COMMAND_COMPLETED) pf_boot_config_discard();
     return result;
 }
 
 static void process_control_request(const pf_hid_control_request_t *request)
 {
     outcome_t result;
+    if (force_save_pending || force_save_reboot_waiting) {
+        /* Preserve the outstanding transaction for reconnect result verification. */
+        PF_LOGGING_WARNING("settings", "Control write ignored while forced-save result is outstanding");
+        return;
+    }
+    force_save_result_read = false;
 
     switch (request->opcode) {
     case PF_HID_OPCODE_LED: result = handle_led(request); break;
@@ -486,6 +591,16 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
     if (instance != 0u || buffer == NULL) return 0u;
 
     if (report_type == HID_REPORT_TYPE_FEATURE) {
+#if PF_ENABLE_WIRELESS
+        if (report_id == PF_WIRELESS_REPORT_ID && reqlen >= PF_WIRELESS_STATUS_SIZE) {
+            pf_wireless_status(buffer);
+            return PF_WIRELESS_STATUS_SIZE;
+        }
+        if (report_id == PF_WIRELESS_RESULT_REPORT_ID && reqlen >= PF_WIRELESS_RESULT_SIZE) {
+            pf_wireless_result_report(buffer);
+            return PF_WIRELESS_RESULT_SIZE;
+        }
+#endif
         if (report_id == PF_HID_IDENTITY_REPORT_ID && reqlen >= sizeof(pf_hid_identity_report_t)) {
             pf_hid_identity_report_t report;
             pf_hid_build_identity_report(&report);
@@ -500,6 +615,13 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
             return sizeof(report);
         }
         if (report_id == PF_HID_CONTROL_REPORT_ID && reqlen >= sizeof(control_result)) {
+            if (force_save_pending && !force_save_result_read) {
+                force_save_result_read = true;
+                force_save_at_us = time_us_64() + 10000u;
+            }
+            if (force_save_reboot_waiting) {
+                force_save_reboot_deadline_us = time_us_64();
+            }
             pf_usb_msc_note_hid_result_read(control_result.transaction_id);
             memcpy(buffer, &control_result, sizeof(control_result));
             return sizeof(control_result);
@@ -532,6 +654,22 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            hid_report_type_t report_type, uint8_t const *buffer,
                            uint16_t bufsize)
 {
+#if PF_ENABLE_WIRELESS
+    if (instance == 0u && report_id == PF_WIRELESS_COMMAND_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
+        buffer != NULL && bufsize == PF_WIRELESS_COMMAND_SIZE) {
+        if (force_save_pending || force_save_reboot_waiting || reboot_requested)
+            pf_wireless_reject_command(buffer[2]);
+        else pf_wireless_command(buffer);
+        return;
+    }
+    if (instance == 0u && report_id == PF_WIRELESS_CONFIG_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
+        buffer != NULL && bufsize == PF_WIRELESS_REQUEST_SIZE) {
+        if (force_save_pending || force_save_reboot_waiting || reboot_requested) {
+            PF_LOGGING_WARNING("wireless", "Provisioning ignored during outstanding reboot/save");
+        } else if (pf_wireless_configure(buffer)) reboot_requested = true;
+        return;
+    }
+#endif
     if (instance != 0u || report_id != PF_HID_CONTROL_REPORT_ID ||
         report_type != HID_REPORT_TYPE_FEATURE || buffer == NULL ||
         bufsize != sizeof(pf_hid_control_request_t)) return;

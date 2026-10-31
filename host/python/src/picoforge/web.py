@@ -10,6 +10,8 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .monitor import DashboardBoards
 from .protocol import (
+    build_wireless_command_report,
+    build_wireless_configuration_report,
     build_self_test_command_report,
     build_settings_command_report,
     normalize_legacy_settings,
@@ -56,6 +58,13 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     def javascript(filename: str):
         return send_from_directory(root / "js", filename)
 
+    @app.get("/webhid/js/wireless-form.mjs")
+    def wireless_form():
+        installed_form = Path(__file__).with_name("wireless_ui")
+        form_root = (installed_form if installed_form.is_dir()
+                     else Path(__file__).resolve().parents[3] / "webhid" / "js")
+        return send_from_directory(form_root, "wireless-form.mjs")
+
     @app.get("/api/status")
     def status():
         try:
@@ -86,14 +95,82 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         except OSError as error:
             return jsonify({"error": str(error)}), 503
 
+    @app.get("/api/wireless")
+    def wireless():
+        try:
+            return jsonify(dashboard.read_wireless(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless status unavailable"}), 503
+
+    @app.post("/api/wireless/scan")
+    def scan_wireless():
+        try:
+            return jsonify(dashboard.scan_wireless(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless scan failed"}), 503
+
+    @app.post("/api/wireless/test")
+    def test_wireless():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) - {"ssid", "password"}:
+            return jsonify({"error": "Expected SSID and optional password"}), 400
+        try:
+            build_wireless_command_report(1, 3, ssid=payload.get("ssid", ""),
+                                          password=payload.get("password", ""))
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        try:
+            return jsonify(dashboard.test_wireless(request.args.get("board"), payload["ssid"],
+                                                   payload.get("password", "")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except TimeoutError:
+            return jsonify({"error": "Wi-Fi test timed out; outcome is uncertain. Restart the dashboard "
+                                     "and reconnect the board before retrying."}), 503
+        except (OSError, ValueError):
+            return jsonify({"error": "Wi-Fi test result is uncertain. Restart the dashboard "
+                                     "and reconnect the board before retrying."}), 503
+
+    @app.post("/api/wireless/cancel")
+    def cancel_wireless_test():
+        try:
+            return jsonify(dashboard.cancel_wireless_test(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Could not clear the wireless test credentials"}), 503
+
+    @app.post("/api/wireless")
+    def set_wireless():
+        payload = request.get_json(silent=True)
+        try:
+            build_wireless_configuration_report(payload)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        try:
+            return jsonify(dashboard.set_wireless(request.args.get("board"), payload))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless provisioning outcome is uncertain; command was not resent"}), 503
+
     @app.post("/api/settings")
     def set_settings():
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected boot settings JSON"}), 400
         board_id = request.args.get("board")
+        force = payload.get("confirm_data_loss", False)
+        if type(force) is not bool:
+            return jsonify({"error": "confirm_data_loss must be boolean"}), 400
         if "sdcard_profile" in payload:
             settings = {key: payload.get(key) for key in ("system_clock_mhz", "sdcard_profile")}
+            if "radios" in payload:
+                settings["radios"] = payload["radios"]
             validator = build_settings_command_report
         else:
             settings = {key: payload.get(key) for key in
@@ -121,7 +198,8 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             except RuntimeError as error:
                 return jsonify({"error": str(error)}), 409
         try:
-            saved = dashboard.set_settings(board_id, settings)
+            saved = (dashboard.set_settings(board_id, settings, force=True) if force
+                     else dashboard.set_settings(board_id, settings))
             snapshot = dashboard.snapshot(board_id)
             return jsonify({"settings": saved, "control_result": snapshot.get("control_result")}), 200
         except RuntimeError as error:

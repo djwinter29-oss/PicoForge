@@ -154,10 +154,10 @@ def test_host_packages_and_publishers_share_validated_artifacts():
         assert f"rid: {rid}" in dotnet
     assert '--self-contained true' in dotnet
     assert "shutil.unpack_archive(archive, directory)" in dotnet
-    assert 'assert b"PicoForge Diagnostics | .NET" in response.read()' in dotnet
+    assert 'assert b"PicoForge Dashboard | .NET" in response.read()' in dotnet
     assert 'assert version("picoforge") == os.environ["VERSION"]' in packages
     assert 'web = files("picoforge").joinpath("web")' in packages
-    assert 'assert b"PicoForge Diagnostics | Python" in response.data' in packages
+    assert 'assert b"PicoForge Dashboard | Python" in response.data' in packages
     for name, artifact, pattern in (
         ("pypi", "release-python", "picoforge-$version-py3-none-any.whl"),
         ("webhid", "release-webhid", "picoforge-webhid-v$version.zip"),

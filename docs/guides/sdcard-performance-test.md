@@ -6,7 +6,9 @@ for wiring and transport constraints, see [SD-card physical links](../design/sdc
 
 The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
 It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
-self-test. HID Input report `11` carries state and progress; Feature report `20`, opcode `4`, starts or cancels it.
+self-test. The [storage lifecycle](../design/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
+startup and after normal USB return independently of Start; healthy firmware-owned storage stays mounted.
+HID Input report `11` carries state and progress; Feature report `20`, opcode `4`, starts or cancels it.
 The numeric state/error values retain their documented assignments: wire state 2 (`preparing`) means the worker is
 preparing an accepted run against the existing mount, and wire error 5 (`card`) means the selected media is unavailable.
 
@@ -29,14 +31,16 @@ reject start/cancel commands as unsupported, and do not publish self-test report
 capability to disable self-test controls. Normal storage, filesystem commands, and MSC remain available.
 
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
-2. Ensure the filesystem is mounted; use `fs mount` if it is not already mounted.
+2. Wait for automatic mounting and fresh mounted-filesystem status. If mounting fails or was deliberately suppressed,
+   inspect the storage error first; `fs mount` is a manual retry, not a routine prerequisite for each test.
 3. Open one dashboard and connect to its vendor HID interface.
 4. Choose an integer file size from 1 to 1024 MiB; the default is 32 MiB.
    The test streams through its fixed buffer, not a file-sized RAM allocation. Larger tests take longer and
    write more data; sufficient free space and (when enabled) contiguous preallocation are still required.
    Update firmware and host software together to use sizes above the previous 128 MiB limit.
-5. Select **Start self-test**. The firmware checks the reserved path and free space before accepting the write;
-   no existing file is replaced.
+5. Select **Start benchmark** once. The firmware checks the reserved path and free space before accepting the write;
+   no existing file is replaced and no mount-only step occurs. Free-space scanning can delay acceptance and byte
+   progress, particularly on large filesystems; do not submit a second Start while its command result is pending.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and
    does not make ownership available until the worker finishes.
 
@@ -81,7 +85,10 @@ phases display no speed rather than an infinite or invented value.
   in phase averages.
 - Progress is `(written + read) / (2 * target)`; writing occupies the first half
   and verification the second half. Preparation/cleanup may take time without advancing
-  that byte counter.
+  that byte counter. The initial free-space check happens before the run is accepted, so it is not necessarily
+  represented by the self-test's Preparing state. The
+  [UI lifecycle design](../design/architecture.md#storage-ownership-lifecycle) calls for a pending/checking indication;
+  this is not a new wire state or a claim that all current dashboards display that phase.
 
 These are application-level filesystem throughput measurements, not raw wire
 bandwidth. SDIO contiguous writes use CMD25 and reads use CMD18 batches of up to

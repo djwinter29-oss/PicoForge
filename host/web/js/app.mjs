@@ -1,4 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
+import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=5";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -8,12 +9,16 @@ const settingsSave = document.querySelector("#settings-save");
 const configurationDialog = document.querySelector("#configuration-dialog");
 const rebootDialog = document.querySelector("#reboot-dialog");
 const returnDialog = document.querySelector("#return-dialog");
-const settingsControls = ["#settings-clock", "#settings-storage"]
+const shareDialog = document.querySelector("#share-dialog");
+let configurationForceSave = false;
+const settingsControls = ["#settings-clock", "#settings-storage", "#settings-wifi", "#settings-ble"]
   .map(selector => document.querySelector(selector));
 let requestInProgress = false;
 let currentSnapshot = null;
 let selfTestPendingSequence = null;
+let selfTestRequestInProgress = false;
 let mscRequestInProgress = false;
+let mscPendingEnabled = null;
 let settingsRequestInProgress = false;
 let settingsDirty = false;
 let settingsStorageDirty = false;
@@ -24,6 +29,116 @@ let selectedBoardLabel = "";
 let knownBoards = [];
 let scanningBoards = false;
 let selectionVersion = 0;
+let wirelessLoadedAt = 0;
+let wirelessOutcomeUncertain = false;
+let wirelessProgress = null;
+const wirelessForm = bindWirelessForm({
+  supported: () => Boolean(currentSnapshot?.hardware?.capabilities & 128),
+  ready: wirelessReady,
+  load: async () => {
+    const response = await fetch(boardUrl("/api/wireless"), { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`);
+    }
+    if (!result.wireless || typeof result.wireless.ssid !== "string") {
+      throw new Error("Wireless endpoint returned invalid status");
+    }
+    return result.wireless;
+  },
+  scan: async () => {
+    const response = await fetch(boardUrl("/api/wireless/scan"), { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? result.title ?? `Wireless scan returned HTTP ${response.status}`);
+    return result.networks;
+  },
+  test: async (settings, onProgress) => {
+    const version = selectionVersion;
+    let response;
+    let result;
+    wirelessProgress = onProgress;
+    try {
+      response = await fetch(boardUrl("/api/wireless/test"), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings),
+        signal: AbortSignal.timeout(40000),
+      });
+      result = await response.json();
+    } catch (error) {
+      if (version === selectionVersion) wirelessOutcomeUncertain = true;
+      throw new Error(error.name === "TimeoutError"
+        ? "Wi-Fi test timed out; result is uncertain. Restart the dashboard and reconnect the board before retrying."
+        : "Wi-Fi test result was lost. Restart the dashboard and reconnect the board before retrying.");
+    } finally {
+      wirelessProgress = null;
+    }
+    if (!response.ok) {
+      const message = result.error ?? result.title ?? `Connection test returned HTTP ${response.status}`;
+      if (version === selectionVersion) {
+        wirelessOutcomeUncertain ||= response.status >= 500 || /uncertain/i.test(message);
+      }
+      throw new Error(message);
+    }
+    return result.test;
+  },
+  cancelTest: async () => {
+    const response = await fetch(boardUrl("/api/wireless/cancel"), { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? result.title ?? `Cancel returned HTTP ${response.status}`);
+    return result;
+  },
+  changed: () => { if (currentSnapshot) renderStatus(currentSnapshot); },
+});
+
+function wirelessReady() {
+  const snapshot = currentSnapshot;
+  return snapshot?.connected && Boolean(snapshot.hardware?.capabilities & 128)
+    && !settingsRequestInProgress && !wirelessForm.operationBusy() && !snapshot.busy && !snapshot.reboot_pending
+    && !snapshot.outcome_uncertain && !snapshot.command_outcome_uncertain && !wirelessOutcomeUncertain
+    && !mscRequestInProgress && mscPendingEnabled === null && snapshot.storage_stale === false
+    && snapshot.msc && !snapshot.msc.enabled && !snapshot.msc.transition_pending
+    && !selfTestRequestInProgress && selfTestPendingSequence === null
+    && !snapshot.self_test_command_pending && !snapshot.self_test?.active
+    && !["pending", "busy"].includes(snapshot.control_result?.status)
+    && (!(snapshot.hardware.capabilities & 32) || (snapshot.self_test && snapshot.self_test_stale === false));
+}
+
+/** Save board settings and credentials in one firmware commit; failures before delivery stay retryable. */
+async function saveCombinedSettings(settings) {
+  const request = { ...wirelessForm.request(), wifi_enabled: Boolean(settings.radios & 1),
+    ble_enabled: Boolean(settings.radios & 2), board: settings };
+  let rejected = false;
+  try {
+    const response = await fetch(boardUrl("/api/wireless"), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      const message = result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`;
+      rejected = response.status >= 400 && response.status < 500 && !/uncertain/i.test(message);
+      throw new Error(message);
+    }
+    const saved = result.wireless;
+    if (result.reboot_pending !== true || saved?.ssid !== request.ssid
+      || saved.wifi_enabled !== request.wifi_enabled || saved.ble_enabled !== request.ble_enabled
+      || (request.password !== undefined && saved.password_configured !== true)
+      || (request.ble_key !== undefined && saved.ble_key_configured !== true)
+      || result.settings?.system_clock_mhz !== settings.system_clock_mhz
+      || result.settings?.sdcard_profile !== settings.sdcard_profile || result.settings?.radios !== settings.radios) {
+      throw new Error("Wireless readback did not match the requested values");
+    }
+    wirelessForm.finish(saved);
+    currentSnapshot.reboot_pending = true;
+    return result.settings;
+  } catch (error) {
+    if (!rejected) {
+      wirelessOutcomeUncertain = true;
+      if (currentSnapshot) currentSnapshot.outcome_uncertain = true;
+      error = new Error("Wireless provisioning outcome is uncertain; command was not resent. Reload before retrying.");
+    }
+    wirelessForm.finish(null, error.message);
+    throw error;
+  }
+}
 
 function boardUrl(path, boardId = selectedBoard) {
   if (!boardId) return path;
@@ -36,18 +151,31 @@ function boardLabel(board) {
 
 function renderStatus(snapshot) {
   if (!snapshot.connected) {
+    shareDialog.close();
+    wirelessLoadedAt = 0;
+    wirelessForm.reset();
     settingsDirty = false;
     settingsStorageDirty = false;
     settingsMessage = null;
   }
   renderDashboardStatus({
     ...snapshot,
+    busy: snapshot.busy || settingsRequestInProgress || wirelessForm.operationBusy()
+      || snapshot.reboot_pending || snapshot.outcome_uncertain,
     no_board_selected: !selectedBoard,
-    settings_busy: settingsRequestInProgress,
+    settings_busy: settingsRequestInProgress || wirelessForm.operationBusy()
+      || snapshot.reboot_pending || snapshot.outcome_uncertain,
     settings_dirty: settingsDirty,
+    wireless_dirty: wirelessForm.dirty(),
     settings_storage_dirty: settingsStorageDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
+    msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
   });
+  wirelessForm.update();
+  if (wirelessReady() && Date.now() - wirelessLoadedAt >= 2000) {
+    wirelessLoadedAt = Date.now();
+    void wirelessForm.load();
+  }
 }
 
 async function updateStatus() {
@@ -59,24 +187,37 @@ async function updateStatus() {
     if (!response.ok) throw new Error(`Status endpoint returned HTTP ${response.status}`);
     const snapshot = await response.json();
     if (version !== selectionVersion) return;
-    if (mscRequestInProgress) return;
+    if (mscRequestInProgress || settingsRequestInProgress) return;
     currentSnapshot = snapshot;
+    currentSnapshot.outcome_uncertain ||= wirelessOutcomeUncertain || currentSnapshot.command_outcome_uncertain;
+    if (currentSnapshot.connected && currentSnapshot.msc && !currentSnapshot.msc.transition_pending
+      && (currentSnapshot.msc.enabled === mscPendingEnabled || currentSnapshot.msc.request_rejected)) {
+      mscPendingEnabled = null;
+    }
     currentSnapshot.error = mscError ?? currentSnapshot.error;
-    if (currentSnapshot.self_test?.sequence !== selfTestPendingSequence) selfTestPendingSequence = null;
+    if (!selfTestRequestInProgress && currentSnapshot.self_test?.sequence !== selfTestPendingSequence) {
+      selfTestPendingSequence = null;
+    }
     currentSnapshot.self_test_command_pending = selfTestPendingSequence !== null;
+    if (currentSnapshot.wireless_phase) wirelessProgress?.(currentSnapshot.wireless_phase);
     renderStatus(currentSnapshot);
   } catch (error) {
     if (version !== selectionVersion) return;
-    renderStatus({ connected: false, error: error.message });
     currentSnapshot = null;
+    renderStatus({ connected: false, error: error.message });
   } finally {
     requestInProgress = false;
+    const wirelessBusy = wirelessForm.operationBusy();
     boardSelect.disabled = scanningBoards || knownBoards.length === 0
-      || mscRequestInProgress || settingsRequestInProgress;
-    rescanBoardsButton.disabled = scanningBoards;
-    ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
-    mscControl.disabled = mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
-      || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
+      || mscRequestInProgress || settingsRequestInProgress || wirelessBusy;
+    rescanBoardsButton.disabled = scanningBoards || settingsRequestInProgress || wirelessBusy;
+    ledControl.disabled = settingsRequestInProgress || wirelessBusy || currentSnapshot?.reboot_pending ||
+      currentSnapshot?.outcome_uncertain || !currentSnapshot?.connected ||
+      !currentSnapshot?.board_status?.led_available;
+    mscControl.disabled = settingsRequestInProgress || wirelessBusy || currentSnapshot?.reboot_pending ||
+      currentSnapshot?.outcome_uncertain || mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
+      || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
+      || Boolean(currentSnapshot.self_test?.active)
       || selfTestPendingSequence !== null
       || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
     if (version !== selectionVersion) void updateStatus();
@@ -84,11 +225,13 @@ async function updateStatus() {
 }
 
 function selectBoard(boardId) {
+  if (settingsRequestInProgress || wirelessForm.operationBusy()) return;
   const nextBoard = boardId || null;
   if (nextBoard === selectedBoard) return;
   configurationDialog.close();
   rebootDialog.close();
   returnDialog.close();
+  shareDialog.close();
   selectedBoard = nextBoard;
   const selected = knownBoards.find(board => board.id === selectedBoard);
   selectedBoardLabel = selected ? boardLabel(selected) : selectedBoardLabel;
@@ -97,13 +240,15 @@ function selectBoard(boardId) {
   settingsDirty = false;
   settingsStorageDirty = false;
   settingsMessage = null;
+  wirelessOutcomeUncertain = false;
   selfTestPendingSequence = null;
+  mscPendingEnabled = null;
   renderStatus({ connected: false });
   void updateStatus();
 }
 
 async function rescanBoards() {
-  if (scanningBoards) return;
+  if (scanningBoards || settingsRequestInProgress || wirelessForm.operationBusy()) return;
   scanningBoards = true;
   boardSelect.disabled = true;
   rescanBoardsButton.disabled = true;
@@ -140,7 +285,9 @@ async function rescanBoards() {
       currentSnapshot = null;
       settingsDirty = false;
       settingsStorageDirty = false;
+      wirelessOutcomeUncertain = false;
       selfTestPendingSequence = null;
+      mscPendingEnabled = null;
       renderStatus({ connected: false });
     }
     await updateStatus();
@@ -154,26 +301,36 @@ async function rescanBoards() {
   }
 }
 
-async function setMsc(confirmReturn = false) {
+async function setMsc(confirmReturn = false, confirmShare = false) {
+  if (confirmShare) {
+    if (!shareDialog.open) return;
+    shareDialog.close();
+  }
   if (confirmReturn) {
     if (!returnDialog.open) return;
     returnDialog.close();
   }
-  if (!currentSnapshot?.msc || mscRequestInProgress || settingsRequestInProgress) return;
+  if (!currentSnapshot?.msc || mscRequestInProgress || mscPendingEnabled !== null
+    || settingsRequestInProgress) return;
   const force = currentSnapshot.msc.enabled;
   if (currentSnapshot.msc.transition_pending || currentSnapshot.self_test?.active
-      || selfTestPendingSequence !== null || (confirmReturn && !force)) return;
+      || selfTestPendingSequence !== null || (confirmReturn && !force) || (confirmShare && force)) return;
   if (force) {
     if (!currentSnapshot.msc.force_return_supported) return;
     if (!confirmReturn) {
       returnDialog.showModal();
       return;
     }
+  } else if (!confirmShare) {
+    shareDialog.showModal();
+    return;
   }
   mscRequestInProgress = true;
+  mscPendingEnabled = !force;
   mscError = null;
+  renderStatus(currentSnapshot);
   mscControl.disabled = true;
-  document.querySelector("#msc-note").textContent = force ? "Detaching USB drive on Pico and attempting remount..."
+  document.querySelector("#msc-note").textContent = force ? "Revoking host access and attempting remount..."
     : "Preparing storage for USB...";
   document.querySelector("#msc-note").hidden = false;
   try {
@@ -192,6 +349,7 @@ async function setMsc(confirmReturn = false) {
       renderStatus(currentSnapshot);
     }
   } catch (error) {
+    mscPendingEnabled = null;
     mscError = error.message;
     if (currentSnapshot) {
       currentSnapshot.error = mscError;
@@ -199,8 +357,10 @@ async function setMsc(confirmReturn = false) {
     }
   } finally {
     mscRequestInProgress = false;
+    if (currentSnapshot) renderStatus(currentSnapshot);
     mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
-      || Boolean(currentSnapshot.msc.transition_pending) || Boolean(currentSnapshot.self_test?.active)
+      || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
+      || Boolean(currentSnapshot.self_test?.active)
       || selfTestPendingSequence !== null
       || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
   }
@@ -236,7 +396,13 @@ function selectedSettings() {
   return {
     system_clock_mhz: Number(settingsControls[0].value),
     sdcard_profile: settingsStorageDirty ? Number(settingsControls[1].value) : (saved?.sdcard_profile ?? 0),
+    radios: selectedRadios(),
   };
+}
+
+function selectedRadios() {
+  return currentSnapshot?.hardware?.capabilities & 128
+    ? Number(settingsControls[2].value) | Number(settingsControls[3].value) << 1 : 0;
 }
 
 function updateSettingsDirty() {
@@ -244,7 +410,8 @@ function updateSettingsDirty() {
   if (!saved) return;
   settingsStorageDirty = Number(settingsControls[1].value)
     !== storageSpeed(saved);
-  settingsDirty = Number(settingsControls[0].value) !== saved.system_clock_mhz || settingsStorageDirty;
+  settingsDirty = Number(settingsControls[0].value) !== saved.system_clock_mhz || settingsStorageDirty
+    || selectedRadios() !== (saved.radios ?? 0);
   settingsMessage = null;
   renderStatus(currentSnapshot);
 }
@@ -253,24 +420,39 @@ async function saveSettings() {
   if (!configurationDialog.open) return;
   configurationDialog.close();
   const msc = currentSnapshot?.msc;
-  if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !settingsDirty
-      || settingsRequestInProgress || !msc || msc.enabled || msc.transition_pending
+  const force = configurationForceSave;
+  if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !(settingsDirty || wirelessForm.dirty())
+      || wirelessForm.operationBusy() || !wirelessForm.canSave()
+      || settingsRequestInProgress || mscRequestInProgress || mscPendingEnabled !== null || !msc
+      || msc.enabled !== force || msc.transition_pending || (force && !(currentSnapshot.hardware?.capabilities & 64))
       || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)) return;
+  const combined = wirelessForm.dirty();
+  if (combined && (force || !wirelessReady())) return;
   settingsRequestInProgress = true;
+  boardSelect.disabled = true;
+  rescanBoardsButton.disabled = true;
   settingsMessage = "Saving boot settings...";
   const settings = selectedSettings();
   renderStatus(currentSnapshot);
   try {
+    if (combined) {
+      currentSnapshot.settings = await saveCombinedSettings(settings);
+      settingsDirty = false;
+      settingsStorageDirty = false;
+      settingsMessage = "Settings saved. Reboot requested. Waiting for the device to reconnect.";
+      return;
+    }
     const response = await fetch(boardUrl("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify(force ? { ...settings, confirm_data_loss: true } : settings),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? result.title ?? `Settings endpoint returned HTTP ${response.status}`);
     if (result.settings?.system_clock_mhz !== settings.system_clock_mhz
-        || result.settings?.sdcard_profile !== settings.sdcard_profile) {
+        || result.settings?.sdcard_profile !== settings.sdcard_profile
+        || (result.settings?.radios ?? 0) !== settings.radios) {
       throw new Error("Settings readback did not match the requested values");
     }
     currentSnapshot.settings = result.settings;
@@ -282,6 +464,8 @@ async function saveSettings() {
     settingsMessage = `Save failed: ${error.message}`;
   } finally {
     settingsRequestInProgress = false;
+    boardSelect.disabled = scanningBoards || knownBoards.length === 0 || mscRequestInProgress;
+    rescanBoardsButton.disabled = scanningBoards;
     if (currentSnapshot) renderStatus(currentSnapshot);
   }
 }
@@ -318,7 +502,10 @@ async function rebootDevice() {
 }
 
 async function selfTest(action) {
-  if (!currentSnapshot?.connected || settingsRequestInProgress) return;
+  if (!currentSnapshot?.connected || settingsRequestInProgress || selfTestRequestInProgress
+    || selfTestPendingSequence !== null) return;
+  const version = selectionVersion;
+  selfTestRequestInProgress = true;
   selfTestPendingSequence = currentSnapshot.self_test?.sequence ?? 0;
   currentSnapshot.self_test_command_pending = true;
   renderStatus(currentSnapshot);
@@ -328,13 +515,18 @@ async function selfTest(action) {
       body: JSON.stringify({ action, size_mib: document.querySelector("#self-test-size").valueAsNumber }),
     });
     if (!response.ok) throw new Error(`Self-test endpoint returned HTTP ${response.status}`);
+    if (version !== selectionVersion) return;
+    selfTestPendingSequence = currentSnapshot?.self_test?.sequence ?? selfTestPendingSequence;
   } catch (error) {
+    if (version !== selectionVersion) return;
     selfTestPendingSequence = null;
     if (currentSnapshot) {
       currentSnapshot.self_test_command_pending = false;
       currentSnapshot.error = error.message;
       renderStatus(currentSnapshot);
     }
+  } finally {
+    selfTestRequestInProgress = false;
   }
 }
 document.querySelector("#self-test-start").addEventListener("click", () => selfTest("start"));
@@ -345,23 +537,30 @@ rescanBoardsButton.addEventListener("click", rescanBoards);
 for (const control of settingsControls) control.addEventListener("change", updateSettingsDirty);
 settingsSave.addEventListener("click", () => {
   if (settingsSave.disabled) return;
+  configurationForceSave = Boolean(currentSnapshot?.msc?.enabled);
+  document.querySelector("#configuration-force-warning").hidden = !configurationForceSave;
+  document.querySelector("#configuration-wireless-warning").hidden = !wirelessForm.dirty();
   const settings = selectedSettings();
   document.querySelector("#configuration-dialog-profile").textContent =
     `System clock: ${settings.system_clock_mhz ? `${settings.system_clock_mhz} MHz` : "Default"}. `
-    + `SD Card: ${settings.sdcard_profile === 1 ? "High-Speed" : "Standard"}.`;
+    + `SD Card: ${settings.sdcard_profile === 1 ? "High-Speed" : "Standard"}.`
+    + (currentSnapshot?.hardware?.capabilities & 128 ? ` Wi-Fi: ${settings.radios & 1 ? "Enabled" : "Disabled"}.`
+      + ` Bluetooth: ${settings.radios & 2 ? "Enabled" : "Disabled"}.` : "");
   configurationDialog.showModal();
 });
 document.querySelector("#reboot-control").addEventListener("click", () => {
   if (document.querySelector("#reboot-control").disabled) return;
-  document.querySelector("#reboot-consequence").textContent = settingsDirty
+  document.querySelector("#reboot-consequence").textContent = settingsDirty || wirelessForm.dirty()
     ? "Unsaved dashboard changes will be lost." : "Saved next-boot settings will be applied.";
   rebootDialog.showModal();
 });
 document.querySelector("#cancel-configuration").addEventListener("click", () => configurationDialog.close());
 document.querySelector("#cancel-reboot").addEventListener("click", () => rebootDialog.close());
 document.querySelector("#cancel-return").addEventListener("click", () => returnDialog.close());
+document.querySelector("#cancel-share").addEventListener("click", () => shareDialog.close());
+document.querySelector("#confirm-share").addEventListener("click", () => setMsc(false, true));
 document.querySelector("#confirm-return").addEventListener("click", () => setMsc(true));
-for (const dialog of [configurationDialog, rebootDialog, returnDialog]) {
+for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) {
   dialog.addEventListener("keydown", event => {
     if (event.key === "Escape") {
       event.preventDefault();

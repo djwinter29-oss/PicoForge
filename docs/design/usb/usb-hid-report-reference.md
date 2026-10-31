@@ -12,15 +12,15 @@ Report ID `0` is unused. Unassigned IDs have no payload and require no padding.
 | `1`-`9` | Device information and telemetry | `1` Identity; `2` Board Configuration; `3` Telemetry. |
 | `10`-`19` | Application status | `10` Storage Status; `11` Self-Test Status. |
 | `20`-`29` | Device and application control | `20` Control Command & Result. |
-| `30`-`39` | Application diagnostics | Unassigned. |
+| `30`-`39` | Wireless management | `30` status; `31` provisioning; `34` scan/test command; `35` results. |
 | `40`-`255` | Expansion | Unassigned. |
 
 Report ranges group responsibilities; the descriptor and firmware define each report's type, length, and permitted
 operations.
 
-PicoForge exposes CDC ACM, a vendor-defined HID interface, and optional MSC while the host owns the SD card. CDC ACM
-uses control interface 0 and data interface 1; HID is interface 2 in both configurations. When enabled, MSC is
-appended as interface 3, so toggling MSC does not change the HID interface number. The development VID/PID is
+PicoForge always exposes CDC ACM, a vendor-defined HID interface, and removable-media MSC. CDC ACM
+uses control interface 0 and data interface 1; HID is interface 2 and MSC is interface 3.
+Storage ownership changes medium availability, not the USB configuration. The development VID/PID is
 `0xCAFE:0x4011`, not a product identity. HID uses vendor usage page `0xFF00`, usage `0x01`, with no boot protocol.
 The USB product string is `PicoForge CDC + HID`; its serial string is the Pico SDK unique board ID.
 
@@ -57,6 +57,10 @@ These are logical groups, not separate HID usage pages or mandatory dashboard ta
 | `10` | Storage Status | Input | Device publishes / host reads | 34 bytes | SD, filesystem, and MSC status. |
 | `11` | Self-Test Status | Input | Device publishes / host reads | 32 bytes | Self-test state and progress. |
 | `20` | Control Command & Result | Feature | Host writes/reads | 9 bytes | LED, reboot, MSC, self-test, and settings operations. |
+| `30` | Wireless status | Feature | Host reads | 48 bytes | W boards, capability bit 7; sanitized status. |
+| `31` | Wireless provisioning | Feature | Host writes | 136 bytes | W boards, bit 7; private config, no readback. |
+| `34` | Wireless operation | Feature | Host writes | 101 bytes | W boards (bit 7); scan, page, test, or cancel. |
+| `35` | Wireless operation result | Feature | Host reads | 220 bytes | W boards (bit 7); sanitized results and test phase. |
 
 Names are documentation labels, not additional wire fields.
 
@@ -67,8 +71,10 @@ payload in its data buffer. A .NET or other host adapter must follow its library
 normalize to the payload defined here before decoding. Some Feature-report APIs add a transport framing byte or
 fixed-size padding; remove only framing explicitly documented by that API, never a payload byte based only on its
 value. Validate the exact payload length after normalization. Multi-byte integers are little-endian; signed integers
-use two's complement. All reports fit within 64 bytes including report ID. The layouts use version `1`, independent
-of firmware semantic version.
+use two's complement. Wireless Features 31, 34 and 35 use 137-, 102- and 221-byte HIDAPI buffers over control
+transfers, not oversized interrupt endpoints. The layouts use version `1`, independent of firmware semantic version.
+
+The [wireless design](../wireless.md#usb-contract) owns Feature 30/31/34/35 layouts and the restricted BLE transport.
 
 ### Connection and Read Flow
 
@@ -138,10 +144,13 @@ Capability bits:
 | 3 | SPI storage transport selected for this firmware build. |
 | 4 | SDIO-PIO storage transport selected for this firmware build. |
 | 5 | SD self-test control and status available. |
-| 6-7 | Reserved; zero. |
+| 6 | Explicitly confirmed settings save/reboot while USB owns storage. |
+| 7 | W-board Wi-Fi/BLE support and USB-only wireless provisioning. |
 
-For bit 1, the host must explicitly confirm the reboot request. Bit 2 advertises saving persistent boot settings;
-reboot remains a separate operation governed by bit 1. Exactly one of bits 3 and 4 is set, identifying the transport
+For bit 1, the host must explicitly confirm the standalone reboot request. Bit 2 advertises saving persistent boot
+settings with a firmware-scheduled reboot; bit 6 adds the forced host-owned save path and does not replace bit 2.
+Clients must not send a forced save without bit 6 or silently fall back to normal save/reboot. Older clients that
+reject the previously reserved bit require an update alongside this firmware. Exactly one of bits 3 and 4 is set, identifying the transport
 selected at build time. Either selected storage transport implies that MSC control is supported; MSC has no separate
 capability bit. Use the transport bit to interpret report `2`'s storage GPIO layout. Bit 5 makes self-test control
 and status available together; when clear, Report `11` is unavailable and must not be published, and opcode `4`
@@ -188,7 +197,7 @@ storage transport.
 | 5 | 1 | `monitor_uart_tx_gpio` | TX GPIO number; `255` if unassigned. |
 | 6 | 1 | `monitor_uart_rx_gpio` | RX GPIO number; `255` if unassigned. |
 | 7 | 6 | `storage_gpios` | SDIO/SPI GPIO numbers, selected-transport order below. |
-| 13 | 1 | `board_flags` | Bit 0 card detect configured; bit 1 LED configured; bit 2 monitor UART enabled; other bits zero. |
+| 13 | 1 | `board_flags` | Bit 0 card detect configured; bit 1 LED configured; bit 2 monitor UART enabled; bit 3 Wi-Fi enabled for next boot; bit 4 BLE enabled for next boot; other bits zero. |
 | 14 | 1 | `reset_cause` | Cause of the reset that began this boot. |
 | 15 | 1 | `led_gpio` | LED GPIO number; `255` if unavailable. |
 | 16 | 1 | `card_detect_gpio` | Card-detect GPIO number; `255` if not configured. |
@@ -208,7 +217,9 @@ SDIO-PIO, storage slots 0-5 are CLK, CMD, DAT0-DAT3. For SPI, slots 0-3 are CLK,
 `255`. Report `1`'s transport capability determines the slot interpretation. These pins describe the build profile;
 they do not prove a peripheral is active.
 
-Configuration validity rules: reserved `board_flags` bits must be zero. The card-detect flag is set exactly when
+Configuration validity rules: reserved `board_flags` bits must be zero. Bits 3-4 are the persisted radio master
+switches; they default on and may be set only when Report `1` capability bit 7 is set.
+The card-detect flag is set exactly when
 `card_detect_gpio` is assigned; otherwise that field is `255`. The LED-configured flag is set exactly when
 `led_gpio` is assigned, and Report `1` bit 0 agrees with whether that configured LED is available for identification
 control. `monitor_uart_index` is `0` or `1` when available and `255` when unavailable; TX and RX are either both
@@ -289,9 +300,10 @@ returns a non-consuming current snapshot. The sequence increments for each accep
 | **Total** | **34** | | **35 bytes including report ID.** |
 
 The three MSC fields describe the ownership transition, not SD sample validity. `msc_enabled` is `1` only when the
-host owns the card and the MSC configuration is active. `msc_transition_pending` is `1` from acceptance of a valid
+host owns the card; the MSC interface remains present even when the card is unavailable to USB.
+`msc_transition_pending` is `1` from acceptance of a valid
 MSC request that requires a transition until ownership and the resulting USB/storage state settle; it remains `0`
-for an already-in-state no-op. HID may be temporarily unavailable while USB disconnects and re-enumerates.
+for an already-in-state no-op. Ownership changes do not disconnect HID or CDC.
 `msc_request_rejected` describes the most recent syntactically valid opcode `3` request: clear it when that request
 is received, then set it if the request is rejected or its transition fails. Malformed report envelopes do not
 change these fields.
@@ -379,8 +391,10 @@ error `10` (cleanup), it contains the FatFs result only when the cleanup failure
 otherwise it is zero. It is zero for every other execution error and in all states other than Failed. Unknown enum
 values must be retained and displayed as unknown, but treated as invalid for state transitions and safety decisions.
 
-The self-test requires an already-mounted filesystem; it never mounts or unmounts it. A start request is accepted
-only after preflight checks succeed and storage is reserved; acceptance publishes Queued, after which the operation
+The self-test uses the [default-mounted filesystem](../architecture.md#storage-ownership-lifecycle); startup and
+normal USB return trigger mounting independently of opcode `4`. The test never mounts or unmounts it.
+A start request is accepted only after preflight checks succeed and storage is reserved; acceptance publishes Queued,
+after which the operation
 may advance through Preparing and execution. Before acceptance, size, ownership, card, space, existing-file, and
 file-check errors reject the start: no test run is queued, and Report `11` retains the prior test result while
 updating `self_test_request_error`. Error `11` reports that the required filesystem is not mounted; error `3` is
@@ -425,15 +439,17 @@ the meaning of the fields.
 | `3` | MSC control | Bit 0 confirms force-return data-loss risk only; other bits zero. | Byte 0 action: `0` normal disable, `1` enable, `2` force return; bytes 1-4 zero. |
 | `4` | SD self-test | `0` | Byte 0 action: `0` cancel, `1` start; bytes 1-4 little-endian MiB size. |
 | `5` | Unassigned | - | Reject as unsupported. |
-| `6` | Save persistent settings and reboot | `0` | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); bytes 3-4 zero. |
+| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); byte 3 radio enables (bit 0 Wi-Fi, bit 1 BLE; zero without capability bit 7); byte 4 zero. |
 | Other | Unassigned | - | Reject as unsupported. |
 
 LED Off/On are idempotent. Reboot requires explicit confirmation. MSC action `0` is the normal disable request;
-the host application is responsible for safely ejecting first, and the device does not verify that precondition.
+the host application is responsible for safely ejecting first, and the device checks its SCSI eject indication
+(unless media removal is confirmed), removal prevention, and device sync without claiming host-cache durability.
 Action `2` is force return without a safe-eject guarantee and requires explicit data-loss confirmation. Self-test
 start accepts 1-1024 MiB; cancel requires zero size. System-clock values are `0`, `150`,
-`200`, or `250` MHz; SD-card profile values are `0` Standard and `1` High-Speed. Saving settings does not reboot
-automatically; read back Feature report `2`, then submit a separate confirmed reboot operation.
+`200`, or `250` MHz; SD-card profile values are `0` Standard and `1` High-Speed. A successful settings save schedules
+reboot automatically; verify the saved values in the matching Feature `20` result, then refresh Feature `2` after
+reboot. Do not submit a second reboot command.
 
 ### GET Result
 
@@ -446,7 +462,7 @@ GET returns the latest operation without executing it again or consuming its res
 | 2 | 1 | `opcode` | Operation associated with the result; `0` if none. |
 | 3 | 1 | `status` | Result state below. |
 | 4 | 1 | `error_reason` | Error enum below; zero when none. |
-| 5 | 4 | `result_data` | Verified saved settings for opcode 6; zero for other operations. |
+| 5 | 4 | `result_data` | Verified saved settings for opcode 6 in the opcode-6 argument layout; zero for other operations. |
 | **Total** | **9** | | **10 bytes including report ID.** |
 
 Status values: `0` Idle, `1` Pending, `2` Completed, `3` Invalid, `4` Unsupported, `5` Busy, `6` Failed.
@@ -507,6 +523,30 @@ timeout/disconnect makes outcome uncertain; do not automatically replay reboot, 
 do not send another command while an earlier request's outcome remains uncertain. GET is non-destructive and never
 extends or restarts a pending operation.
 
+### Confirmed Save and Reboot While Shared
+
+Opcode `6`, flags `0`, retains the normal firmware-owned storage requirement. Flags `1` is only valid with MSC
+enabled and requires capability bit 6 plus an explicit host data-loss confirmation. Both paths reject outstanding
+worker work and ownership transitions. Standalone opcode `2` still rejects MSC ownership.
+
+The forced path first returns Pending with zero result data. The USB task waits for the host to fetch Pending
+and a 10 ms control-transfer settle interval, or a 500 ms fallback deadline, then rechecks safety gates. It reserves
+storage through successful device-side sync and USB detach before flash programming. A failed sync/detach causes
+Failed/error `6`, with no flash save or reboot. A flash-save failure restores the prior RAM profiles, reconnects host
+access, and reports Failed without reboot; flash may nevertheless have partially changed.
+
+After verified saving, reconnect HID without usable MSC and keep media USB-reserved until reset so neither the host
+nor the worker starts new card I/O. Publish Completed with the original transaction and verified settings.
+Reboot waits for that result GET, or a five-second fallback deadline, followed by the existing one-second USB result
+grace period. Boot then follows the [default-mounted storage lifecycle](../architecture.md#storage-ownership-lifecycle).
+Additional control writes while the forced transaction is outstanding are ignored with a UART warning to preserve
+its result slot; hosts must serialize writes. GET never replays a save.
+
+Clients reconnect only to the same verified device UID and poll the original opcode/transaction result. Never replay
+SET or infer completion from reconnection. Timeout, mismatched identity, or invalid result leaves outcome uncertain
+and blocks further writes. The [settings safety policy](../settings.md#forced-save-and-reboot) explains confirmation
+and host-cache risks. This workflow has host/model coverage, not physical USB/power-loss qualification.
+
 ### Cross-Interface Resource Arbitration
 
 Storage arbitration is device-wide, not per USB interface. One storage transaction or background storage lifecycle
@@ -526,36 +566,46 @@ originating from CDC.
 
 ### MSC Force-Return Safety
 
-MSC is disabled at boot. For opcode `3`, action `1` enables MSC only when the SD card is initialized and no storage
-command or reply is outstanding. If firmware has mounted the filesystem, the storage worker unmounts it before
+MSC is disabled at boot; firmware automatically mounts configured media according to the
+[storage lifecycle](../architecture.md#storage-ownership-lifecycle). Only explicit USB enable transfers ownership;
+starting a self-test or opening a dashboard does not. For opcode `3`, action `1` enables MSC only when the SD card is
+initialized and no storage command or reply is outstanding. If firmware has mounted the filesystem, the storage worker unmounts it before
 ownership transfer. A successful unmount pauses automount before USB ownership moves to the host. An unmount failure
 rejects the request, leaves firmware ownership intact, and does not format the card. Both enable and disable requests
 are rejected while unrelated storage work or replies are outstanding. Repeating action `1` while MSC is already
 enabled completes as a no-op; repeating action `0` while MSC is already disabled completes as a no-op and does not
 retry a failed filesystem mount. Action `2` is only valid while MSC is enabled; otherwise reject it as an invalid
-operation argument. A successful ownership transition briefly disconnects USB and re-enumerates; HID is unavailable
-during that interval.
+operation argument. The CDC/HID/MSC configuration stays fixed during ownership transitions. MSC reports
+Not Ready/Medium Not Present (`02/3A/00`) while firmware owns the card. Newly available media raises
+Unit Attention/Medium Changed (`06/28/00`) before host block access resumes, including after host reload.
 
 Action `0` is the normal disable request, intended after the user safely ejects the volume through the host operating
-system. This precondition is the host application's responsibility; the device cannot verify host eject state or
-flush host-cached writes. The HID client only delivers the request and must not invoke OS eject/unmount commands.
+system. Firmware requires its SCSI eject indication (unless removal is confirmed) and rejects host removal prevention
+or failed device-side sync. These checks cannot establish host-cache durability or flush host-cached writes.
+The HID client only delivers the request and must not invoke OS eject/unmount commands.
 Action `2` is force return and requires both the report's confirmation flag and the dashboard's explicit data-loss
 warning/confirmation. It does not synthesize a successful SCSI eject. For either disable action, firmware rejects a
-busy transition or failed device-side sync before detach; in that case MSC remains enabled and host-owned.
+busy transition or failed device-side sync before release; in that case MSC remains enabled and host-owned.
 
-After a disable request passes pre-detach checks, the device disconnects USB before releasing SD ownership. The
-storage worker makes one initialization and mount attempt, and `msc_transition_pending` remains set until that
-attempt finishes; pending is clear in either terminal outcome. On success, MSC is disabled and firmware owns the
-mounted storage. On initialization or mount failure, MSC remains disabled, `msc_request_rejected` is set, and
-storage remains unmounted with automatic retries blocked until an explicit successful `fs mount`. No automatic
-formatting, filesystem repair, or failed-write replay is performed. A connected HID device after re-enumeration does
+After action `0` passes eject/sync checks, ownership returns to firmware and MSC reports no medium.
+The storage worker automatically reinitializes and remounts under the normal lifecycle policy, including paced
+retries on mount failure unless an earlier recovery block remains active. The transition flag can clear before this
+background mount completes; hosts must verify fresh mounted storage status before allowing file operations or Start.
+
+Action `2` revokes MSC access before releasing SD ownership, without disconnecting USB.
+The storage worker makes one initialization and mount
+attempt, and `msc_transition_pending` remains set until that attempt finishes; pending is clear in either terminal
+outcome. On success, MSC is disabled and firmware owns the mounted storage. On initialization or mount failure,
+MSC remains disabled, `msc_request_rejected` is set, and storage remains unmounted with automatic retries blocked
+until an explicit successful `fs mount`. No automatic
+formatting, filesystem repair, or failed-write replay is performed. A connected HID device does
 not prove that the filesystem remounted; hosts wait for pending to clear, inspect rejection, and verify storage
 state. Faulted-media recovery is a separate explicit workflow and is not a clean eject.
 
 Device-side sync cannot flush host-cached writes. Force return may lose data or corrupt the filesystem even if
 PicoForge later mounts successfully. Stop host file activity and manually safely eject whenever possible before
-requesting either disable action. If a pre-detach operation fails, the host still owns the card. If the post-detach
-mount fails, firmware owns the card but leaves it unmounted; the host must not infer recovery from USB reconnection.
+requesting either disable action. If a pre-release operation fails, the host still owns the card. If the post-release
+mount fails, firmware owns the card but leaves it unmounted; the host must not infer recovery from HID availability.
 The card is never automatically formatted or repaired.
 
 ## Host Polling and Validation
@@ -570,12 +620,13 @@ The card is never automatically formatted or repaired.
    not infer that zero card values mean an empty card.
 3. Submit all writable operations through report `20` with a fresh nonzero transaction ID. Read GET until the matching
    result is terminal. For opcode `3`, `Completed` means the transition was accepted/queued, not that ownership
-   changed: after any USB re-enumeration, reopen the same authorized HID device and monitor report `10` until
-   `msc_transition_pending` clears, then inspect `msc_enabled` and `msc_request_rejected`. Do not retry an uncertain
+   changed: keep monitoring report `10` until
+   `msc_transition_pending` clears, then inspect `msc_enabled` and `msc_request_rejected`. After return, also verify
+   fresh mounted filesystem status; normal-disable completion can precede background remount. Do not retry an uncertain
    non-idempotent operation.
 4. Use report `10` for storage/MSC state and, when capability bit 5 is set, report `11` for self-test progress and
-   terminal status; SET acknowledgement is not operation completion. For MSC re-enumeration, reopen the same
-   authorized device and reread reports `1` and `2`.
+   terminal status; SET acknowledgement is not operation completion. If older firmware re-enumerates for MSC,
+   reopen the same authorized device and reread reports `1` and `2`.
 5. Read persisted settings from Feature `2`. To save and apply them, confirm with the user, issue opcode `6`, and
    verify the saved values in its completion result. Firmware reboots automatically only after a successful save.
    Reconnect and reread Feature `2`; opcode `2` remains available for a standalone reboot.
@@ -619,7 +670,7 @@ are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and direc
 report contract. Settings saves preserve the existing persistent-record format and update only the selected
 transport's legacy speed field; Report `2` exposes the transport-neutral profile. An accepted self-test is
 preflighted by the sole storage worker before its prior result is replaced. The reserved `/PFTEST.BIN` path is never
-overwritten. MSC transitions allow a bounded interval for the matching Feature `20` result GET before a disconnect.
+overwritten. MSC transitions allow a bounded interval for the matching Feature `20` result GET before ownership changes.
 
 This describes software implementation, not hardware qualification. HID report delivery, MSC ownership changes,
 host safe-eject behavior, and reconnect handling still require physical validation on the supported boards.

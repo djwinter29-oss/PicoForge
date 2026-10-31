@@ -1,26 +1,27 @@
 /** @file
- * @brief USB device descriptors: CDC CLI, vendor HID and the optional MSC interface.
+ * @brief Stable USB device descriptors: CDC CLI, vendor HID and removable-media MSC.
  */
 #include <string.h>
 
 #include "pico/unique_id.h"
 #include "tusb.h"
 #include "usb_hid.h"
-#include "usb_msc.h"
+#if PF_ENABLE_WIRELESS
+#include "app/wireless/wireless.h"
+#endif
 
 /* ponytail: development IDs; replace with an allocated VID/PID before distributing devices. The identity report's
  * PF_HID_PRODUCT_ID is an independent firmware-product field, not this USB PID. */
 #define USB_VID 0xCAFEu /**< USB vendor ID. */
 #define USB_PID 0x4011u /**< USB product ID. */
 
-/** Interface numbers; MSC is last so the no-MSC configuration is a prefix. */
+/** Stable interface numbers, independent of storage ownership. */
 enum {
     ITF_NUM_CDC = 0,
     ITF_NUM_CDC_DATA = 1,
     ITF_NUM_HID = 2,
     ITF_NUM_MSC = 3,
-    ITF_NUM_TOTAL_NO_MSC = 3,
-    ITF_NUM_TOTAL_MSC = 4,
+    ITF_NUM_TOTAL = 4,
 };
 
 /** String descriptor indexes. */
@@ -41,9 +42,8 @@ enum {
 #define EPNUM_HID_IN 0x83u
 #define EPNUM_MSC_OUT 0x04u
 #define EPNUM_MSC_IN 0x84u
-/** Total configuration descriptor length without and with the MSC interface. */
-#define CONFIG_TOTAL_LEN_NO_MSC (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_HID_DESC_LEN)
-#define CONFIG_TOTAL_LEN_MSC \
+/** Total configuration descriptor length including the always-present MSC interface. */
+#define CONFIG_TOTAL_LEN \
     (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN + TUD_HID_DESC_LEN)
 
 /** Vendor HID report descriptor: feature 1, 2 and 20, input 3, 10 and 11, sized from usb_hid.h. */
@@ -78,10 +78,28 @@ static uint8_t const hid_report_descriptor[] = {
     0x95, PF_HID_CONTROL_PAYLOAD_SIZE,
     0x09, 0x14,
     0xB1, 0x02,
+#if PF_ENABLE_WIRELESS
+    0x85, PF_WIRELESS_REPORT_ID,
+    0x95, PF_WIRELESS_STATUS_SIZE,
+    0x09, 0x1E,
+    0xB1, 0x02,
+    0x85, PF_WIRELESS_CONFIG_REPORT_ID,
+    0x95, PF_WIRELESS_REQUEST_SIZE,
+    0x09, 0x1F,
+    0xB1, 0x02,
+    0x85, PF_WIRELESS_COMMAND_REPORT_ID,
+    0x95, PF_WIRELESS_COMMAND_SIZE,
+    0x09, 0x22,
+    0xB1, 0x02,
+    0x85, PF_WIRELESS_RESULT_REPORT_ID,
+    0x95, PF_WIRELESS_RESULT_SIZE,
+    0x09, 0x23,
+    0xB1, 0x02,
+#endif
     0xC0,
 };
 
-/** Composite device (CDC + HID [+ MSC]) via IAD; USB 2.0 full speed. */
+/** Composite device (CDC + HID + MSC) via IAD; USB 2.0 full speed. */
 static tusb_desc_device_t desc_device = {
     .bLength = sizeof(tusb_desc_device_t),
     .bDescriptorType = TUSB_DESC_DEVICE,
@@ -104,33 +122,22 @@ uint8_t const *tud_descriptor_device_cb(void)
     return (uint8_t const *)&desc_device;
 }
 
-/** CDC and HID interfaces shared by both configurations, so an endpoint change cannot be made in only one. */
-#define CDC_HID_DESCRIPTORS \
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64), \
-    TUD_HID_DESCRIPTOR(ITF_NUM_HID, STRID_HID, HID_ITF_PROTOCOL_NONE, sizeof(hid_report_descriptor), \
-                       EPNUM_HID_IN, CFG_TUD_HID_EP_BUFSIZE, 10)
-
-/** Configuration while firmware owns the card. */
-static uint8_t const desc_configuration_no_msc[] = {
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL_NO_MSC, 0, CONFIG_TOTAL_LEN_NO_MSC, 0x00, 100),
-    CDC_HID_DESCRIPTORS,
-};
-
-/** Configuration while the USB host owns the card. */
-static uint8_t const desc_configuration_msc[] = {
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL_MSC, 0, CONFIG_TOTAL_LEN_MSC, 0x00, 100),
-    CDC_HID_DESCRIPTORS,
+/** Fixed configuration; firmware-owned storage is exposed as an empty removable drive. */
+static uint8_t const desc_configuration[] = {
+    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID, STRID_HID, HID_ITF_PROTOCOL_NONE, sizeof(hid_report_descriptor),
+                       EPNUM_HID_IN, 64, 10),
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, STRID_MSC, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
 };
 
 /**
- * Returns the configuration matching the current MSC ownership. The host only re-reads it after the USB
- * detach/reconnect that pf_usb_msc_task() performs on every ownership change, so the two always agree.
+ * @brief Return the fixed CDC/HID/MSC configuration without consulting storage ownership.
  */
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 {
     (void)index;
-    return pf_usb_msc_is_enabled() ? desc_configuration_msc : desc_configuration_no_msc;
+    return desc_configuration;
 }
 
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)

@@ -39,6 +39,9 @@ void setUp(void)
     test_sd_speed = saved_sd_speed = PF_STORAGE_SPEED_DEFAULT;
     settings_save_calls = 0u;
     settings_save_fails = false;
+    prepare_save_fails = false;
+    prepare_save_calls = 0u;
+    force_save_pending = force_save_result_read = force_save_reboot_waiting = false;
     reset_requests = 0u;
     led_requests = msc_requests = force_requests = 0u;
     queries = queued = recovery_requests = normal_submissions = messages = 0u;
@@ -79,7 +82,7 @@ void test_feature_reports_match_wire_sizes_and_populate_identity_configuration(v
     TEST_ASSERT_EQUAL_UINT8(PF_SYSTEM_MCU_RP2040, identity.mcu);
     TEST_ASSERT_EQUAL_UINT8(0u, identity.board_model);
     TEST_ASSERT_EQUAL_UINT8(PF_HID_CAP_LED | PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS |
-                           PF_HID_CAP_SDIO | PF_HID_CAP_SELF_TEST, identity.capabilities);
+                           PF_HID_CAP_SDIO | PF_HID_CAP_SELF_TEST | PF_HID_CAP_FORCE_SAVE, identity.capabilities);
     TEST_ASSERT_EQUAL_UINT32(532480u, identity.ram_total_bytes);
     TEST_ASSERT_EQUAL_UINT32(65536u, identity.ram_reserved_bytes);
 
@@ -94,6 +97,7 @@ void test_feature_reports_match_wire_sizes_and_populate_identity_configuration(v
     TEST_ASSERT_EQUAL_UINT8(4u, configuration.storage_gpios[2]);
     TEST_ASSERT_EQUAL_UINT8(7u, configuration.storage_gpios[5]);
     TEST_ASSERT_EQUAL_UINT8(2u, configuration.reset_cause);
+    TEST_ASSERT_EQUAL_HEX8(0u, configuration.board_flags & 0x18u);
 
     uint8_t payload[PF_HID_IDENTITY_PAYLOAD_SIZE];
     TEST_ASSERT_EQUAL_UINT16(sizeof(identity), tud_hid_get_report_cb(
@@ -177,6 +181,7 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
     const uint8_t bad_profile[5] = {150u, 0u, 2u, 0u, 0u};
     const uint8_t bad_clock[5] = {100u, 0u, 1u, 0u, 0u};
+    const uint8_t radios_without_wireless[5] = {150u, 0u, 1u, 1u, 0u};
     send_control(9u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     const pf_hid_control_result_t result = read_control_result();
     TEST_ASSERT_EQUAL_UINT8(2u, result.status);
@@ -198,6 +203,10 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     send_control(13u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_clock);
     TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
     TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+    send_control(14u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, radios_without_wireless);
+    TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
     TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 
     settings_save_fails = true;
@@ -230,6 +239,92 @@ void test_save_reboot_services_control_result_until_grace_period_expires(void)
     TEST_ASSERT_EQUAL_UINT8(PF_HID_OPCODE_SAVE_SETTINGS, reboot_ack.opcode);
     TEST_ASSERT_EQUAL_UINT8(2u, reboot_ack.status);
     TEST_ASSERT_EQUAL_UINT(1u, reset_requests);
+}
+
+void test_forced_save_requires_confirmation_and_detach_before_save(void)
+{
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    msc_enabled = true;
+    send_control(1u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_BUSY, read_control_result().status);
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+    send_control(2u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_PENDING, read_control_result().status);
+    TEST_ASSERT_EQUAL_UINT(0u, prepare_save_calls);
+    fake_ticks += 10u;
+    pf_hid_poll_async_commands();
+    TEST_ASSERT_EQUAL_UINT(1u, prepare_save_calls);
+    TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_COMPLETED, read_control_result().status);
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
+}
+
+void test_forced_save_detach_failure_does_not_save_or_reboot(void)
+{
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    msc_enabled = true;
+    prepare_save_fails = true;
+    send_control(1u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_PENDING, read_control_result().status);
+    fake_ticks += 10u;
+    pf_hid_poll_async_commands();
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_FAILED, read_control_result().status);
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+    TEST_ASSERT_TRUE(msc_enabled);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+}
+
+void test_forced_save_flash_failure_restores_host_without_reboot(void)
+{
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    msc_enabled = true;
+    settings_save_fails = true;
+    send_control(1u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_PENDING, read_control_result().status);
+    fake_ticks += 10u;
+    pf_hid_poll_async_commands();
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_FAILED, read_control_result().status);
+    TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
+    TEST_ASSERT_TRUE(msc_enabled);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+}
+
+void test_forced_save_rechecks_busy_and_keeps_original_transaction(void)
+{
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    msc_enabled = true;
+    send_control(1u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
+    send_control(2u, PF_HID_OPCODE_LED, 0u, NULL);
+    TEST_ASSERT_EQUAL_UINT8(1u, read_control_result().transaction_id);
+    busy = true;
+    fake_ticks += 10u;
+    pf_hid_poll_async_commands();
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_BUSY, read_control_result().status);
+    TEST_ASSERT_EQUAL_UINT(0u, prepare_save_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+}
+
+void test_forced_save_uses_bounded_no_get_deadlines_and_rejects_invalid_flags(void)
+{
+    const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
+    send_control(1u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, read_control_result().status);
+    msc_enabled = true;
+    send_control(2u, PF_HID_OPCODE_SAVE_SETTINGS, 2u, arguments);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, read_control_result().status);
+    send_control(3u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
+    fake_ticks += 499u;
+    pf_hid_poll_async_commands();
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+    fake_ticks += 1u;
+    pf_hid_poll_async_commands();
+    TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+    fake_ticks += 5000u;
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
 }
 
 void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)

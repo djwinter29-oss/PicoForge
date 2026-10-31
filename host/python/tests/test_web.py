@@ -78,8 +78,9 @@ class FakeMonitor:
         self.last_msc = (enabled, force)
         return {"enabled": enabled, "transition_pending": True, "request_rejected": False}
 
-    def set_settings(self, board_id, settings):
+    def set_settings(self, board_id, settings, *, force=False):
         self.last_board_id = board_id
+        self.last_force_save = force
         if "sdcard_profile" in settings:
             result = settings
         else:
@@ -100,6 +101,28 @@ class FakeMonitor:
 
 
 class WebTests(unittest.TestCase):
+    def test_server_dashboard_does_not_serve_browser_bluetooth_page(self):
+        client = create_app(FakeMonitor()).test_client()
+        self.assertEqual(client.get("/ble/").status_code, 404)
+        self.assertEqual(client.get("/ble/js/app.mjs").status_code, 404)
+        page = client.get("/").get_data(as_text=True)
+        self.assertNotIn("/ble/", page)
+        self.assertIn('id="wifi-open"', page)
+        self.assertIn('id="ble-open"', page)
+        self.assertIn('id="wifi-dialog"', page)
+
+    def test_settings_force_confirmation_is_explicit_boolean(self):
+        monitor = FakeMonitor()
+        client = create_app(monitor).test_client()
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        for invalid in ["yes", 1, None]:
+            response = client.post("/api/settings", json={**settings, "confirm_data_loss": invalid},
+                                   base_url="http://127.0.0.1")
+            self.assertEqual(response.status_code, 400)
+        response = client.post("/api/settings", json={**settings, "confirm_data_loss": True},
+                               base_url="http://127.0.0.1")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(monitor.last_force_save)
     def test_dashboard_port_defaults_to_5000_and_can_be_overridden(self):
         self.assertEqual(parse_args(["web"]).port, 5000)
         self.assertEqual(parse_args(["web", "--port", "5001"]).port, 5001)
@@ -110,7 +133,7 @@ class WebTests(unittest.TestCase):
             "/", base_url="http://127.0.0.1"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"<title>PicoForge Diagnostics | Python</title>", response.data)
+        self.assertIn(b"<title>PicoForge Dashboard | Python</title>", response.data)
         self.assertIn(b"<small>Python</small>", response.data)
 
     def test_status_route_returns_snapshot_and_security_headers(self):
@@ -185,6 +208,12 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["settings"], {"system_clock_mhz": 150, "sdcard_profile": 0})
+        response = create_app(monitor).test_client().post(
+            "/api/settings?board=board-a",
+            json={"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 2},
+            base_url="http://127.0.0.1",
+        )
+        self.assertEqual(monitor.last_settings["radios"], 2)
 
     def test_settings_endpoint_reports_invalid_device_readback_as_service_error(self):
         class InvalidReadbackMonitor(FakeMonitor):

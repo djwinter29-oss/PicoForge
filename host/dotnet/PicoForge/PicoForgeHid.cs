@@ -7,8 +7,11 @@ public sealed record HidBoard(string DevicePath, string? SerialNumber, string Pr
 
 internal sealed class PicoForgeHid : IHidCommands, IDisposable
 {
-    private readonly HidDevice device;
-    private readonly HidStream stream;
+    private HidDevice device = null!;
+    private HidStream stream = null!;
+    private readonly Func<byte, int, byte[]> readFeature;
+    private readonly Action<byte[]> writeFeature;
+    private readonly Action<string> reopen;
     private HardwareInfoResponse? identity;
     private byte transactionId;
     public bool CommandOutcomeUncertain { get; private set; }
@@ -30,6 +33,18 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         stream = device.Open();
         stream.ReadTimeout = 250;
         stream.WriteTimeout = 1000;
+        readFeature = GetFeatureReport;
+        writeFeature = report => stream.SetFeature(report);
+        reopen = ReopenSameBoard;
+    }
+
+    internal PicoForgeHid(HardwareInfoResponse identity, Func<byte, int, byte[]> readFeature,
+        Action<byte[]> writeFeature, Action<string> reopen)
+    {
+        this.identity = identity;
+        this.readFeature = readFeature;
+        this.writeFeature = writeFeature;
+        this.reopen = reopen;
     }
 
     public static HidBoard[] Discover() => MatchingDevices().Select(candidate => new HidBoard(
@@ -45,7 +60,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     public HardwareInfoResponse ReadInfo()
     {
-        var report = GetFeatureReport(HidProtocol.IdentityReportId, HidProtocol.IdentityFeatureSize);
+        var report = readFeature(HidProtocol.IdentityReportId, HidProtocol.IdentityFeatureSize);
         identity = HidProtocol.ParseIdentityReport(report);
         return identity;
     }
@@ -54,7 +69,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     {
         identity ??= ReadInfo();
         return HidProtocol.ParseConfigurationReport(
-            GetFeatureReport(HidProtocol.ConfigurationReportId, HidProtocol.ConfigurationFeatureSize), identity);
+            readFeature(HidProtocol.ConfigurationReportId, HidProtocol.ConfigurationFeatureSize), identity);
     }
 
     public BootSettingsResponse ReadSettings() => HidProtocol.ToBootSettings(ReadConfiguration());
@@ -70,9 +85,12 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         return null;
     }
 
-    public InputReport? ReadInputReport()
+    public InputReport? ReadInputReport(int timeoutMilliseconds = 250)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(timeoutMilliseconds);
         var report = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
+        var previousTimeout = stream.ReadTimeout;
+        stream.ReadTimeout = timeoutMilliseconds;
         try
         {
             var count = stream.Read(report, 0, report.Length);
@@ -93,6 +111,10 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         catch (TimeoutException)
         {
             return null;
+        }
+        finally
+        {
+            stream.ReadTimeout = previousTimeout;
         }
     }
 
@@ -115,18 +137,23 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         SendCommand(3, force ? (byte)1 : (byte)0, arguments);
     }
 
-    public BootSettingsResponse SetSettings(BootSettingsResponse settings)
+    public BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false)
     {
         EnsureCapability(HidProtocol.CapabilitySettings, "persistent settings");
+        if (force) EnsureCapability(HidProtocol.CapabilityForcedSave, "forced settings save");
         ValidateSettings(settings);
         var arguments = new byte[5];
         BinaryPrimitives.WriteUInt16LittleEndian(arguments, (ushort)settings.SystemClockMhz);
         arguments[2] = (byte)settings.SdCardProfile;
-        var result = SendCommand(6, 0, arguments);
+        arguments[3] = (byte)settings.Radios;
+        var result = SendCommand(6, force ? (byte)1 : (byte)0, arguments);
         var saved = new BootSettingsResponse(BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData),
-            result.ResultData[2]);
+            result.ResultData[2], result.ResultData[3]);
         if (saved != settings)
+        {
+            if (force) CommandOutcomeUncertain = true;
             throw new InvalidOperationException("Firmware did not confirm the selected next-boot settings");
+        }
         return saved;
     }
 
@@ -134,6 +161,116 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     {
         EnsureCapability(HidProtocol.CapabilityReboot, "reboot");
         SendCommand(2, 1, new byte[5]);
+    }
+
+    public WirelessStatusResponse ReadWireless()
+    {
+        EnsureCapability(HidProtocol.CapabilityWireless, "wireless provisioning");
+        return HidProtocol.ParseWirelessStatus(readFeature(HidProtocol.WirelessReportId, HidProtocol.WirelessFeatureSize));
+    }
+
+    /// <summary>Save board settings and credentials atomically, then confirm both through Reports 30 and 2.</summary>
+    public WirelessStatusResponse SetWireless(WirelessRequest settings)
+    {
+        if (CommandOutcomeUncertain)
+            throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
+        var previous = ReadWireless();
+        if (previous.Status is "pending" or "busy")
+            throw new InvalidOperationException("Wireless provisioning is busy");
+        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
+        var request = HidProtocol.BuildWirelessRequest(settings, transactionId);
+        CommandOutcomeUncertain = true;
+        writeFeature(request);
+        var deadline = Environment.TickCount64 + 5000;
+        while (Environment.TickCount64 < deadline)
+        {
+            var result = ReadWireless();
+            if (result.TransactionId == transactionId)
+            {
+                if (result.Status == "completed")
+                {
+                    if (result.WifiEnabled != settings.WifiEnabled || result.BleEnabled != settings.BleEnabled ||
+                        result.Ssid != settings.Ssid ||
+                        result.PasswordConfigured != (settings.UseTestedWifi || settings.Password is not null ||
+                            previous.PasswordConfigured) ||
+                        result.BleKeyConfigured != (settings.BleKey is not null || previous.BleKeyConfigured))
+                        throw new InvalidOperationException(
+                            "Wireless saved configuration was not confirmed; outcome is uncertain");
+                    if (ReadSettings() != settings.Board)
+                        throw new InvalidOperationException(
+                            "Saved board settings were not confirmed; outcome is uncertain");
+                    CommandOutcomeUncertain = false;
+                    return result;
+                }
+                if (result.Status is "invalid" or "unsupported" or "busy" or "failed")
+                {
+                    CommandOutcomeUncertain = false;
+                    throw new InvalidOperationException($"Wireless provisioning {result.Status}");
+                }
+            }
+            Thread.Sleep(20);
+        }
+        throw new TimeoutException("Wireless provisioning outcome is uncertain; command was not resent");
+    }
+
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null)
+    {
+        var result = WirelessOperation(1, timeoutMilliseconds: 15000, terminalState: 2, onPoll: onPoll);
+        var networks = new List<WirelessNetworkResponse>();
+        for (byte page = 0; page < (result.Count + 5) / 6; page++)
+            networks.AddRange(WirelessOperation(2, page, timeoutMilliseconds: 5000,
+                terminalState: 2, onPoll: onPoll).Networks);
+        return networks;
+    }
+
+    public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
+        Action<string>? onProgress = null)
+    {
+        var result = WirelessOperation(3, ssid: ssid, password: password,
+            timeoutMilliseconds: 35000, terminalState: 5, onPoll: onPoll, onProgress: onProgress);
+        return result;
+    }
+
+    public void CancelWirelessTest() => WirelessOperation(4, timeoutMilliseconds: 5000, terminalState: 0);
+
+    private WirelessOperationResponse WirelessOperation(byte operation, byte page = 0,
+        string? ssid = null, string? password = null, int timeoutMilliseconds = 15000,
+        byte terminalState = 2, Action? onPoll = null, Action<string>? onProgress = null)
+    {
+        if (CommandOutcomeUncertain)
+            throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
+        var prior = ReadWireless();
+        if (prior.Status is "pending" or "busy")
+            throw new InvalidOperationException("Wireless provisioning is busy");
+        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
+        var request = HidProtocol.BuildWirelessCommand(transactionId, operation, page, ssid, password);
+        CommandOutcomeUncertain = true;
+        writeFeature(request);
+        var deadline = Environment.TickCount64 + timeoutMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            onPoll?.Invoke();
+            var result = HidProtocol.ParseWirelessOperation(
+                readFeature(HidProtocol.WirelessResultReportId, HidProtocol.WirelessResultFeatureSize));
+            if (result.TransactionId == transactionId)
+            {
+                if (result.State == 6)
+                {
+                    CommandOutcomeUncertain = false;
+                    throw new InvalidOperationException(operation == 3
+                        ? $"Could not connect: {(result.Detail == 0 ? "Timed out" : result.Phase)}"
+                        : "Wireless operation failed");
+                }
+                if (result.State == terminalState)
+                {
+                    CommandOutcomeUncertain = false;
+                    return result;
+                }
+                if (result.State == 4) onProgress?.Invoke(result.Phase);
+            }
+            Thread.Sleep(100);
+        }
+        throw new TimeoutException("Wireless operation timed out; do not resend until its result is checked");
     }
 
     public void SetSelfTest(string action, uint sizeMib)
@@ -150,7 +287,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         SendCommand(4, 0, arguments);
     }
 
-    public void Dispose() => stream.Dispose();
+    public void Dispose() => stream?.Dispose();
 
     private byte[] GetFeatureReport(byte reportId, int requiredSize)
     {
@@ -168,13 +305,35 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
         if (transactionId == 0) transactionId = 1;
         var request = HidProtocol.BuildControlRequest(transactionId, opcode, flags, arguments);
+        var forcedSave = opcode == 6 && flags == 1;
         CommandOutcomeUncertain = true;
-        stream.SetFeature(request);
+        var disconnected = false;
+        try { writeFeature(request); }
+        catch (Exception error) when (forcedSave && error is IOException or TimeoutException)
+        {
+            // SET may have reached firmware before USB detached. Only read its original result from here.
+            disconnected = true;
+        }
 
-        var deadline = Environment.TickCount64 + 1000;
+        var deadline = Environment.TickCount64 + (forcedSave ? 5000 : 1000);
         while (Environment.TickCount64 < deadline)
         {
-            var response = GetFeatureReport(HidProtocol.ControlReportId, HidProtocol.ControlFeatureSize);
+            byte[] response;
+            try
+            {
+                if (disconnected)
+                {
+                    reopen(identity.SerialNumber);
+                    disconnected = false;
+                }
+                response = readFeature(HidProtocol.ControlReportId, HidProtocol.ControlFeatureSize);
+            }
+            catch (Exception error) when (forcedSave && error is IOException or TimeoutException)
+            {
+                disconnected = true;
+                Thread.Sleep(20);
+                continue;
+            }
             var result = HidProtocol.ParseControlResult(response);
             if (result.TransactionId != transactionId || result.Opcode != opcode)
                 throw new InvalidOperationException("HID control result was replaced by another transaction");
@@ -186,7 +345,40 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             }
             Thread.Sleep(20);
         }
-        throw new TimeoutException($"Timed out waiting for HID command {opcode} transaction {transactionId}");
+        throw new TimeoutException(forcedSave
+            ? $"Forced save outcome is uncertain for transaction {transactionId}; the command was not resent"
+            : $"Timed out waiting for HID command {opcode} transaction {transactionId}");
+    }
+
+    /// <summary>Replace a detached handle only after Feature 1 proves the original board UID.</summary>
+    private void ReopenSameBoard(string uid)
+    {
+        stream.Dispose();
+        foreach (var candidate in MatchingDevices())
+        {
+            HidStream? replacement = null;
+            try
+            {
+                replacement = candidate.Open();
+                replacement.ReadTimeout = 250;
+                replacement.WriteTimeout = 1000;
+                var report = new byte[Math.Max(HidProtocol.IdentityFeatureSize,
+                    candidate.GetMaxFeatureReportLength() + 1)];
+                report[0] = HidProtocol.IdentityReportId;
+                replacement.GetFeature(report);
+                if (HidProtocol.ParseIdentityReport(report).SerialNumber != uid) continue;
+                device = candidate;
+                stream = replacement;
+                replacement = null;
+                return;
+            }
+            catch (Exception error) when (error is IOException or TimeoutException or InvalidOperationException)
+            {
+                // A board may still be reconnecting; do not select an unverified identity.
+            }
+            finally { replacement?.Dispose(); }
+        }
+        throw new IOException("Waiting for the original PicoForge board UID to reconnect");
     }
 
     private void EnsureCapability(byte capability, string operation)
@@ -198,7 +390,8 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     private static void ValidateSettings(BootSettingsResponse settings)
     {
-        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1)
+        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1 ||
+            settings.Radios is < 0 or > 3)
             throw new ArgumentOutOfRangeException(nameof(settings), "Unsupported next-boot settings value");
     }
 

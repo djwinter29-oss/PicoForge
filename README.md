@@ -24,15 +24,16 @@ peripheral access and hardware experimentation.
 | --- | --- |
 | **Board status at a glance** | Board identity, uptime, system clock, temperature, runtime metrics, and SD-card state. |
 | **Configuration and control** | Board LED control, reboot, and persistent system-clock and storage-speed settings. |
-| **Storage without removing the card** | Browse and manage FAT/exFAT files through the USB console. |
+| **Storage without removing the card** | Automatically mount existing FAT/exFAT storage at startup for file access through the USB console. |
 | **Use the card from your computer** | Temporarily share an attached card as a USB mass-storage drive, with explicit ownership handoff. |
-| **Check card I/O** | On supporting firmware, run a dashboard self-test that writes a temporary file, verifies its contents, and reports measured speeds. |
+| **Check card I/O** | On supporting firmware, test the mounted filesystem by writing and verifying a temporary file, with measured speeds. |
 | **Choose your interface** | Use the hosted WebHID dashboard, local Python or .NET dashboard, or USB serial console. |
+| **W-board wireless** | Optional Wi-Fi network connection and authenticated BLE diagnostics/LED/benchmark control; [hardware qualification pending](docs/design/wireless.md). |
 
 SD storage uses either SDIO-PIO or SPI, selected when building firmware. An external SD-card breakout is required for
 storage features; basic board monitoring and LED control do not require one.
 
-USB HID carries management commands and status, CDC provides the console, and optional MSC provides host block access.
+USB HID carries management commands and status, CDC provides the console, and MSC provides optional host block access.
 The browser, Python, and .NET dashboards are companion interfaces to the same firmware.
 
 ## Get Started
@@ -70,7 +71,7 @@ isolation or hard real-time guarantees. See the [architecture](docs/design/archi
 The lead use case is **evaluate one I²C sensor from Python or C#**: follow documented wiring, configure the sensor,
 read measurements, and diagnose transaction errors without custom firmware. This workflow is planned.
 
-SPI access is also planned. Recording, PWM, broader build selection, and wireless are optional future extensions,
+SPI access is also planned. Recording, PWM and broader build selection are optional future extensions,
 not prerequisites. Sensor-specific logic belongs in host examples or application extensions.
 
 See the [project vision](docs/design/vision.md) for intended workflows and scope, and the

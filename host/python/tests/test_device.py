@@ -1,6 +1,6 @@
 import struct
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from picoforge.device import PicoForgeHid, _matches_vendor_collection, enumerate_devices
 from picoforge.protocol import (
@@ -54,6 +54,45 @@ class HidEnumerationTests(unittest.TestCase):
 
 
 class HidDeviceTests(unittest.TestCase):
+    def test_forced_save_reopens_original_uid_and_never_replays_set(self):
+        client = self.connection()
+        client.identity["capabilities"] |= 64
+        original = client._device
+        original.close = Mock()
+        original.get_feature_report = Mock(side_effect=OSError("USB detached"))
+        replacement = Mock()
+        raw = bytes([1, 1]) + struct.pack("<H", 2) + bytes.fromhex("0123456789abcdef")
+        raw += bytes([1, 2, 3, 2, 2, 0, 0x75]) + struct.pack("<II", 520192, 100000)
+        replacement.get_feature_report.side_effect = [raw, control_result(opcode=6)]
+        with patch("picoforge.device._matching_devices", return_value=[
+                {"path": b"/hid/new", "serial_number": "0123456789ABCDEF"}]), \
+                patch("picoforge.device._require_hid") as hid, patch("picoforge.device.sleep"):
+            hid.return_value.device.return_value = replacement
+            settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
+            self.assertEqual(client.set_settings(settings, force=True), settings)
+        self.assertEqual(len(original.sent), 1)
+        self.assertEqual(original.sent[0][4], 1)
+        replacement.open_path.assert_called_once_with(b"/hid/new")
+        replacement.send_feature_report.assert_not_called()
+        self.assertFalse(client._command_uncertain)
+
+    def test_forced_save_rejects_old_firmware_without_sending(self):
+        client = self.connection()
+        with self.assertRaisesRegex(RuntimeError, "Update firmware"):
+            client.set_settings({"system_clock_mhz": 200, "sdcard_profile": 1}, force=True)
+        self.assertEqual(client._device.sent, [])
+
+    def test_forced_save_invalid_saved_values_remain_uncertain(self):
+        client = self.connection()
+        client.identity["capabilities"] |= 64
+        client._device.feature_reports[20] = [control_result(opcode=6)]
+        with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+            client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 1}, force=True)
+        self.assertTrue(client._command_uncertain)
+        with self.assertRaisesRegex(RuntimeError, "uncertain"):
+            client.set_led(True)
+        self.assertEqual(len(client._device.sent), 1)
+
     def connection(self, reports=None):
         class FakeTransport:
             def __init__(self):
@@ -105,7 +144,7 @@ class HidDeviceTests(unittest.TestCase):
     def test_settings_save_uses_one_command_and_verified_result_without_configuration_read(self):
         client = self.connection()
         client._device.feature_reports[20] = [control_result(opcode=6)]
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         self.assertEqual(client.set_settings(settings), settings)
         self.assertEqual(client._device.sent, [bytes([20, 1, 1, 6, 0, 200, 0, 1, 0, 0])])
         self.assertEqual(client._device.last_get, (20, 10))

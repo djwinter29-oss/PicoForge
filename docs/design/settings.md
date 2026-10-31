@@ -7,9 +7,15 @@ there is no runtime transport selector.
 | --- | --- | --- | --- |
 | System clock (`pf_sysclk_profile_t`) | `PF_SYSCLK_DEFAULT`, `PF_SYSCLK_150MHZ`, `PF_SYSCLK_200MHZ`, `PF_SYSCLK_250MHZ` | Default: keep the SDK stock clock | At boot |
 | Storage speed (`pf_storage_speed_t`) | `PF_STORAGE_SPEED_DEFAULT` (25 MHz), `PF_STORAGE_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
+| W-board Wi-Fi/BLE | Radio switches, SSID, passphrase and BLE key | On; no credentials | At boot |
+
+Wireless provisioning, private credential storage, BLE authorization and client support are defined in the
+[wireless design](wireless.md).
 
 Builds use the SDK stock clock; select a different clock through the saved system-clock profile, not a CMake
-override. The former `PF_SYS_CLK_MHZ` option is rejected, including in existing caches. Clear it once with
+override. The former `PF_SYS_CLK_MHZ` option is rejected, including in existing caches. The build/load scripts clear
+retired clock and SD-speed options automatically when rebuilding; `load.sh --skip-build` leaves the image unchanged.
+For direct CMake use, clear it once with
 `cmake -U PF_SYS_CLK_MHZ -S firmware -B <build-dir>`, then use the normal build command.
 
 Both SD transports obtain their requested clock from
@@ -36,14 +42,16 @@ pf_boot_config_set_storage_speed(PF_STORAGE_SPEED_HIGH);       /* RAM copy only 
 pf_boot_config_save();                               /* task, scheduler running; true after read-back verifies */
 ```
 
-The header exposes five out-of-line functions and inline configured-MHz getters. `pf_get_sysclk_mhz()` and
+The header exposes profile and private wireless accessors plus inline configured-MHz getters. `pf_get_sysclk_mhz()` and
 `pf_get_storage_speed_mhz()` read the current RAM configuration through the profile getters; neither measures hardware.
 The inline `pf_sysclk_profile_mhz()` (`0` for Default) and `pf_storage_speed_mhz()` (`25` or `50`) conversions remain
 available for arbitrary profiles, including HID input validation.
 The record format, validation and loading stay in `boot_config.c`. The first getter call loads the record
 once. Setters change only the RAM copy; saved values take effect at the next boot
-because the SD drivers lock their first configuration. The HID handler restores the previous values when a save
-is unconfirmed, so reports retain the previous session values. A failed save does not guarantee flash was unchanged:
+because the SD drivers lock their first configuration. A HID save is all-or-nothing: the handler stages every
+requested value, and any outcome other than Completed (invalid, busy, pending or failed) calls
+`pf_boot_config_discard()`, so RAM again equals flash and no partial request survives. A pending forced save re-stages
+its original request when it runs. A failed save does not guarantee flash was unchanged:
 an SDK safe-zone exit timeout can occur after programming. A later reboot may therefore load the new values despite
 the failed command; failed commands do not automatically reboot.
 
@@ -51,7 +59,8 @@ the failed command; failed commands do not automatically reboot.
 
 HID Feature report `2` reads persisted settings as transport-neutral profiles; Feature report `20`, opcode `6`, saves
 profiles. The profile payload is two-byte little-endian `system_clock_mhz` followed by one-byte `sdcard_profile`
-(`0` Standard, `1` High-Speed). Report `2` also returns the selected board's GPIO configuration. See the exact
+(`0` Standard, `1` High-Speed) and one-byte `radios` (bit 0 Wi-Fi, bit 1 BLE). Report `2` also returns the selected
+board's GPIO configuration. See the exact
 offsets and validation rules in the [HID Report Reference](usb/usb-hid-report-reference.md).
 
 The Python, .NET, and WebHID dashboards map these values to select options and verify the saved values returned in
@@ -60,13 +69,41 @@ reboot after a successful save. Failed or rejected saves do not reboot. Opcode `
 command. Reconnection refreshes Feature `2`. The Python/.NET
 `GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
 the system clock and `sdcard_profile`, and returns the values confirmed by the device. Unsupported values return HTTP 400;
-unsupported firmware or busy storage returns HTTP 409. Writes are rejected while MSC or storage work owns the media.
+unsupported firmware or busy storage returns HTTP 409. Normal writes are rejected while MSC or storage work owns
+the media; confirmed forced saving is the exception below.
 The dashboards expose one **SD Card** speed selector. High-Speed is a requested profile; the active negotiated timing
 is reported separately because a card or transport may remain at Standard speed. Values apply after reboot and do
 not change the active clock or bus immediately.
+On W boards (capability bit 7) the dashboards also show **Wi-Fi** and **Bluetooth** next-boot switches, enabled by
+default; Pico/Pico 2 builds hide them and must send `radios` as `0`. `POST /api/settings` accepts optional `radios`;
+omitting it keeps the saved switches.
 
-The version 1 persistent record stores one byte per profile: system clock and shared SD-card speed. It does not
+### Forced Save and Reboot
+
+Local profile editing is permitted while the computer owns the USB drive. Normal saving and standalone reboot
+remain blocked then. Supporting firmware advertises forced-save capability bit 6; **Save and Reboot** becomes
+available after an edit, and its confirmation dialog additionally warns that rebooting disconnects host storage,
+may lose cached host writes, and may corrupt the filesystem. Safely eject through the host OS first whenever possible.
+Cancel or Escape sends no command. Confirmation rechecks ownership, capability, and idle storage, and requires
+the same shared ownership state that was shown in the warning; it never silently changes the operation.
+
+`POST /api/settings` accepts optional boolean `confirm_data_loss`, default `false`, alongside the existing profile
+fields. Only explicit `true` requests the forced path. Firmware must successfully sync device-side storage and
+detach USB before programming flash; confirmation does not bypass busy work, self-tests, transitions, sync failures,
+or detach failures. Saving success reconnects HID for verification while card I/O remains blocked until reset.
+Failure does not schedule reboot. Host clients verify the original transaction after reconnect without resending
+the save. See the [wire lifecycle](usb/usb-hid-report-reference.md#confirmed-save-and-reboot-while-shared).
+
+Device sync cannot flush the computer's cached writes. This is an explicitly accepted unsafe interruption, not a
+safe-eject guarantee or filesystem repair. After successful reboot, MSC defaults off and automatic mounting resumes.
+Older firmware keeps Save disabled during sharing and displays an update/return-to-Pico instruction.
+
+## Persistence and flash safety
+
+The version 1 profile record stores one byte per profile: system clock and shared SD-card speed. It does not
 store MHz or separate SPI/SDIO settings. The HID protocol's system clock field still carries MHz.
+An independently checked wireless extension follows that unchanged record within the same flash page; see
+[wireless persistence](wireless.md#execution-and-storage-safety).
 
 Boot-applied settings are exposed through the platform facade `platform/boot_config.c/.h`. The USB task is the only
 runtime writer. The RAM copy uses the same record type as flash; save refreshes its metadata and CRC. Record
@@ -78,7 +115,8 @@ the record through the lock-free early flash read. The SD board setup later read
 the selected transport. Runtime reads and saves belong to the USB task; they are not a general multi-task settings API.
 
 `pf_boot_config_save()` rejects ISR, pre-scheduler and suspended-scheduler callers and re-entrant saves. It skips an identical record and uses `flash_safe_execute` for erase/program (interrupts off and the other
-core held, roughly 50 ms; USB can miss frames, so do not save during MSC transfers). Unlike the PicoUart reference,
+core held, roughly 50 ms; USB can miss frames, so active MSC access must stop and USB must detach before a forced save).
+Unlike the PicoUart reference,
 PicoForge disables FreeRTOS dynamic allocation: the SDK reuses a static lockout task control block. Therefore the
 settings module waits for that task to be reclaimed and refuses another save if it is not; it must remain the only
 `flash_safe_execute()` caller, and tasks must not be created or deleted during a save or while reclamation is pending.
@@ -96,13 +134,16 @@ Little-endian, 16 bytes, padded with `0xFF` to one 256-byte page at the start of
 | 6 | 2 | record size (`16`) |
 | 8 | 1 | System clock profile (`0` Default, `1` 150 MHz, `2` 200 MHz, `3` 250 MHz) |
 | 9 | 1 | Shared SD-card speed profile (`0` Default, `1` High-Speed) |
-| 10 | 2 | Reserved, must be zero |
+| 10 | 1 | Disabled radios (`PF_WIRELESS_*` bits; `0` in older records enables both) |
+| 11 | 1 | Wireless extension required (`1` when written by this firmware, `0` in older records) |
 | 12 | 4 | CRC-32 (IEEE, reflected) of bytes 0–11 |
 
 Missing, erased, short, wrong magic/version/size, CRC-invalid or out-of-range data returns the complete defaults;
-fields are never applied partially and boot never depends on the record. There is a single copy: a power loss during
-save leaves a record that fails CRC and loads as defaults (single sector, no wear levelling: fine for infrequent user
-configuration; a dual-sector journal is the upgrade if atomic retention or frequent writes are needed).
+fields are never applied partially and boot never depends on the record. A record marked as requiring the wireless
+extension loads only together with a valid extension, so profiles and credentials commit as one unit. There is a single
+copy: a power loss during save leaves a record that fails CRC, or lacks its extension, and loads as defaults (single
+sector, no wear levelling: fine for infrequent user configuration; a dual-sector journal is the upgrade if retaining
+the old values across a power loss or frequent writes are needed).
 
 ## Flash reservation
 
@@ -149,7 +190,8 @@ They cover defaults, the CRC-32 check value, malformed metadata and profiles, ro
 failed and partially completed programming, rejected ISR/scheduler contexts, reentrant saves, safe loading retries,
 and lockout-TCB reclamation including elapsed-tick wraparound. The SDK fake distinguishes failure before task
 creation, failure after task creation but before programming, and failure after programming during safe-zone exit.
-Partial-program tests interrupt the record at every byte boundary, check complete defaults after reboot, then verify
+Partial-program tests interrupt the profile record and wireless extension at every byte boundary, check complete
+defaults with no credentials after reboot, then verify
 recovery through a successful save. Separate system-clock tests exercise modelled clock/regulator APIs.
 Real flash erase/program, power loss, clock changes and the bus speeds on hardware are not tested here and need a board.
 

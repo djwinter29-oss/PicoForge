@@ -22,8 +22,9 @@ function requireValid(condition, label) {
 }
 
 const validClock = clock => [0, 150, 200, 250].includes(clock);
+// radios: bit 0 Wi-Fi, bit 1 Bluetooth; omitted (0) on boards without a radio.
 const validSettings = settings => settings && validClock(settings.system_clock_mhz)
-  && [0, 1].includes(settings.sdcard_profile);
+  && [0, 1].includes(settings.sdcard_profile) && [undefined, 0, 1, 2, 3].includes(settings.radios);
 const bytesAt = (view, offset, size) => new Uint8Array(view.buffer, view.byteOffset + offset, size);
 const zero = bytes => bytes.every(byte => byte === 0);
 
@@ -36,7 +37,7 @@ export function decodeIdentityReport(report) {
   const capabilities = view.getUint8(17);
   const total = view.getUint32(18, true);
   const reserved = view.getUint32(22, true);
-  requireValid(!(capabilities & 0xc0) && [8, 16].includes(capabilities & 24)
+  requireValid([8, 16].includes(capabilities & 24)
     && total > 0 && reserved <= total
     && (![1, 4].includes(board) || mcu === 1) && (![2, 3].includes(board) || mcu === 2), "identity");
   return {
@@ -60,10 +61,12 @@ export function decodeConfigReport(report, identity) {
   const rx = view.getUint8(6);
   const led = view.getUint8(15);
   const detect = view.getUint8(16);
-  const settings = { system_clock_mhz: view.getUint16(1, true), sdcard_profile: view.getUint8(3) };
+  const settings = { system_clock_mhz: view.getUint16(1, true), sdcard_profile: view.getUint8(3),
+    radios: flags >> 3 & 3 };
   const maxGpio = [1, 2, 3, 4].includes(identity.board_model) || identity.mcu_id === 1 ? 29
     : identity.mcu_id === 2 ? 47 : -1;
-  requireValid(validSettings(settings) && !(flags & ~7) && [0, 1, 255].includes(uart)
+  requireValid(validSettings(settings) && !(flags & ~31) && (identity.capabilities & 128 || !settings.radios)
+    && [0, 1, 255].includes(uart)
     && (tx === 255) === (rx === 255) && (!(flags & 4) || (uart !== 255 && tx !== 255))
     && Boolean(flags & 1) === (detect !== 255) && Boolean(flags & 2) === (led !== 255)
     && Boolean(identity.capabilities & 1) === (led !== 255)
@@ -196,8 +199,8 @@ export function buildControlRequest(transaction, opcode, { flags = 0, args = [] 
         : opcode === 4 ? flags === 0 && arg <= 1
           && (arg === 0 ? unused(5) : new DataView(report.buffer).getUint32(5, true) >= 1
             && new DataView(report.buffer).getUint32(5, true) <= 1024)
-          : opcode === 6 && flags === 0 && validClock(report[4] | report[5] << 8)
-            && report[6] <= 1 && unused(7), "control request");
+          : opcode === 6 && flags <= 1 && validClock(report[4] | report[5] << 8)
+            && report[6] <= 1 && report[7] <= 3 && unused(8), "control request");
   return report;
 }
 
@@ -208,7 +211,8 @@ export function decodeControlResult(report) {
   const status = view.getUint8(3);
   const error = view.getUint8(4);
   const known = [1, 2, 3, 4, 6].includes(opcode);
-  const settings = { system_clock_mhz: view.getUint16(5, true), sdcard_profile: view.getUint8(7) };
+  const settings = { system_clock_mhz: view.getUint16(5, true), sdcard_profile: view.getUint8(7),
+    radios: view.getUint8(8) };
   const allowedErrors = [[0], [0], [0], [1, 2, 3], [4, 7], [5], [6]];
   requireValid(allowedErrors[status]?.includes(error)
     && (status === 0 ? transaction === 0 && opcode === 0
@@ -217,7 +221,7 @@ export function decodeControlResult(report) {
         && !(status === 3 && error === 2 && ![2, 3].includes(opcode))
         && !(opcode === 2 && status === 3 && error === 3) : status === 4 && error === 7))
     && (opcode === 6 && status === 2
-      ? validSettings(settings) && view.getUint8(8) === 0 : zero(bytesAt(view, 5, 4))), "control result");
+      ? validSettings(settings) : zero(bytesAt(view, 5, 4))), "control result");
   return { transaction_id: transaction, opcode, status, error_reason: error,
     settings: opcode === 6 && status === 2 ? settings : null };
 }
@@ -234,10 +238,11 @@ const EMPTY = {
   freshness: { 3: "unavailable", 10: "unavailable", 11: "unavailable" },
   self_test_command_pending: false, msc_command_pending: false, reboot_pending: false,
 };
-const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile;
+const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile
+  && (a.radios ?? 0) === (b.radios ?? 0);
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-async function withTimeout(operation, milliseconds) {
+export async function withTimeout(operation, milliseconds) {
   let timer;
   try {
     return await Promise.race([operation, new Promise((resolve, reject) => {
@@ -250,7 +255,8 @@ async function withTimeout(operation, milliseconds) {
 export class PicoForgeWebHid {
   constructor(hid, onChange = () => {}, { now = () => performance.now(), sleep = wait, timeout = 3000 } = {}) {
     Object.assign(this, { hid, onChange, now, sleep, timeout, device: null, reconnectUid: null,
-      transaction: 0, outstanding: null, receipts: new Map(), timer: null, generation: 0 });
+      transaction: 0, outstanding: null, receipts: new Map(), timer: null, generation: 0,
+      mscPendingEnabled: null, selfTestPendingSequence: null });
     this.state = { ...EMPTY, connected: false, reconnecting: false, busy: false, outcome_uncertain: false,
       error: hid ? null : "WebHID is unavailable; use a supported browser on localhost or HTTPS" };
     this.onInputReport = event => {
@@ -262,8 +268,16 @@ export class PicoForgeWebHid {
           : id === 10 ? decodeStorageReport(event.data, this.state.hardware)
             : { self_test: decodeSelfTestReport(event.data) };
         if (id === 3) changes.board_status = changes.runtime;
-        if (id === 10 && !this.state.busy) changes.msc_command_pending = false;
-        if (id === 11 && !this.state.busy) changes.self_test_command_pending = false;
+        if (id === 10 && !this.state.busy && !this.outstanding && this.mscPendingEnabled !== null
+          && (changes.msc.request_rejected ||
+            (changes.msc.enabled === this.mscPendingEnabled && !changes.msc.transition_pending))) {
+          this.mscPendingEnabled = null;
+          changes.msc_command_pending = false;
+        }
+        if (id === 11 && !this.state.busy && !this.outstanding
+          && changes.self_test.sequence !== this.selfTestPendingSequence) {
+          changes.self_test_command_pending = false;
+        }
         this.receipts.set(id, this.now());
         this.update({ ...changes, freshness: { ...this.state.freshness, [id]: "fresh" } });
       } catch (error) { this.update({ error: error.message }); }
@@ -307,7 +321,8 @@ export class PicoForgeWebHid {
     this.timer = null;
     this.device = null;
     this.receipts.clear();
-    this.update({ ...EMPTY, connected: false, busy: false, outcome_uncertain: Boolean(this.outstanding) });
+    this.update({ ...EMPTY, connected: false, busy: false, outcome_uncertain: Boolean(this.outstanding),
+      msc_command_pending: this.mscPendingEnabled !== null });
   }
 
   async connect() {
@@ -345,16 +360,29 @@ export class PicoForgeWebHid {
       this.reconnectUid = hardware.serial_number;
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ ...EMPTY, connected: true, reconnecting: false, busy: false, error: null,
-        hardware, settings, settings_supported: Boolean(hardware.capabilities & 4) });
+        hardware, settings, settings_supported: Boolean(hardware.capabilities & 4),
+        msc_command_pending: this.mscPendingEnabled !== null });
       this.timer = setInterval(() => this.expireReports(), 100);
       this.timer.unref?.();
       if (this.outstanding) {
         try {
           const result = await this.pollResult(device, this.outstanding);
+          if (result.status === 2 && this.outstanding.settings &&
+            !sameSettings(result.settings, this.outstanding.settings)) {
+            throw new Error("Firmware did not confirm the selected values after reconnect");
+          }
+          this.reconnectedResult = result;
           this.outstanding = null;
+          if (result.opcode === 3 && result.status !== 2) {
+            this.mscPendingEnabled = null;
+            this.update({ msc_command_pending: false });
+          }
           this.update({ outcome_uncertain: false, error: result.status === 2 ? null
             : `Command ${result.opcode}: status ${result.status}, error ${result.error_reason}` });
-        } catch (error) { this.update({ outcome_uncertain: true, error: error.message }); }
+        } catch (error) {
+          this.reconnectError = error;
+          this.update({ outcome_uncertain: true, error: error.message });
+        }
       }
     } catch (error) {
       if (device.opened) { try { await device.close(); } catch {} }
@@ -369,6 +397,7 @@ export class PicoForgeWebHid {
     if (this.state.busy) return;
     const device = this.device;
     this.reconnectUid = null;
+    this.mscPendingEnabled = null;
     this.clearConnection();
     this.update({ reconnecting: false, error: null });
     if (device?.opened) {
@@ -413,35 +442,77 @@ export class PicoForgeWebHid {
     if (bit && !(this.state.hardware.capabilities & bit)) throw new Error("Unavailable capability");
     const transaction = this.transaction % 255 + 1;
     const report = buildControlRequest(transaction, opcode, options);
+    const forcedSave = opcode === 6 && report[3] === 1;
+    if (forcedSave && !(this.state.hardware.capabilities & 64)) throw new Error("Update firmware for forced save");
+    this.reconnectedResult = null;
+    this.reconnectError = null;
     this.transaction = transaction;
     const request = { transaction_id: transaction, opcode };
+    if (opcode === 6) request.settings = { system_clock_mhz: report[4] | report[5] << 8,
+      sdcard_profile: report[6], radios: report[7] };
     const device = this.device;
     const generation = this.generation;
     this.outstanding = request;
-    this.update({ busy: true, error: null });
+    if (opcode === 3) this.mscPendingEnabled = report[4] === 1;
+    this.update({ busy: true, error: null, ...(opcode === 3 ? { msc_command_pending: true } : {}) });
     let sent = false;
     try {
       await withTimeout(device.sendFeatureReport(20, report), this.timeout);
       sent = true;
       if (generation !== this.generation) throw new Error("Command outcome uncertain after disconnect");
       const result = await this.pollResult(device, request);
-      this.outstanding = null;
-      if (result.status !== 2) throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
+      if (result.status !== 2) {
+        this.outstanding = null;
+        if (opcode === 3) {
+          this.mscPendingEnabled = null;
+          this.update({ msc_command_pending: false });
+        }
+        throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
+      }
       if (opcode === 6) {
         const saved = result.settings;
-        const selected = { system_clock_mhz: report[4] | report[5] << 8, sdcard_profile: report[6] };
-        if (!sameSettings(saved, selected) || !sameSettings(result.settings, selected)) {
+        if (!sameSettings(saved, request.settings)) {
+          this.update({ outcome_uncertain: true });
           throw new Error("Firmware did not confirm the selected values");
         }
         this.update({ settings: saved });
       }
+      this.outstanding = null;
       if (opcode === 3) this.update({ msc_command_pending: true });
-      if (opcode === 4) this.update({ self_test_command_pending: true });
+      if (opcode === 4) {
+        this.selfTestPendingSequence = this.state.self_test?.sequence ?? null;
+        this.update({ self_test_command_pending: true });
+      }
       if (opcode === 2 || opcode === 6) this.update({ reboot_pending: true });
       return result;
     } catch (error) {
+      if (forcedSave && sent && this.reconnectUid &&
+        !(generation === this.generation && this.state.outcome_uncertain) &&
+        (this.outstanding || this.reconnectedResult || this.reconnectError)) {
+        const deadline = this.now() + 5000;
+        while (this.now() < deadline && !this.reconnectedResult && this.outstanding && !this.reconnectError) {
+          await this.sleep(50);
+        }
+        const result = this.reconnectedResult;
+        if (result?.transaction_id === transaction && result.opcode === opcode && result.status !== 2) {
+          throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
+        }
+        if (result?.transaction_id === transaction && result.opcode === opcode && result.status === 2
+          && sameSettings(result.settings, { system_clock_mhz: report[4] | report[5] << 8,
+            sdcard_profile: report[6], radios: report[7] })) {
+          this.update({ settings: result.settings, reboot_pending: true, outcome_uncertain: false });
+          return result;
+        }
+        if (this.state.error) throw new Error(this.state.error);
+      }
       // SET rejection is authoritative: do not poll or accept a prior result.
-      if (!sent && error.name !== "TimeoutError" && generation === this.generation) this.outstanding = null;
+      if (!sent && error.name !== "TimeoutError" && generation === this.generation) {
+        this.outstanding = null;
+        if (opcode === 3) {
+          this.mscPendingEnabled = null;
+          this.update({ msc_command_pending: false });
+        }
+      }
       if (generation === this.generation) {
         this.update({ outcome_uncertain: Boolean(this.outstanding), error: error.message });
       }
@@ -486,15 +557,18 @@ export class PicoForgeWebHid {
     return this.command(4, { args: [Number(action === "start"), ...size] });
   }
 
-  async saveSettings(settings) {
+  async saveSettings(settings, force = false) {
     requireValid(validSettings(settings), "boot settings");
-    if (!this.storageReady() || this.state.msc.enabled || this.state.self_test?.active) {
+    requireValid(typeof force === "boolean", "forced save confirmation");
+    if (!this.storageReady() || this.state.self_test?.active ||
+      (this.state.msc.enabled && !force) || (force && (!this.state.msc.enabled ||
+        !(this.state.hardware.capabilities & 64)))) {
       this.update({ settings_message: "Fresh idle firmware-owned storage required before saving." });
       return false;
     }
     try {
-      await this.command(6, { args: [settings.system_clock_mhz & 255,
-        settings.system_clock_mhz >> 8, settings.sdcard_profile] });
+      await this.command(6, { flags: Number(force), args: [settings.system_clock_mhz & 255,
+        settings.system_clock_mhz >> 8, settings.sdcard_profile, settings.radios ?? 0] });
       this.update({ settings_message: "Settings saved. Waiting for the board to reboot." });
       return true;
     } catch (error) {

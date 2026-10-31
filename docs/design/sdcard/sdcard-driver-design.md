@@ -906,13 +906,20 @@ are not assumed improvements, and no new hardware throughput claim is made.
 
 ## Ownership Workflow
 
+The [default-mounted storage lifecycle](../architecture.md#storage-ownership-lifecycle) is authoritative for startup,
+normal firmware use, automatic remount, and maintenance/recovery exceptions. Mounting belongs to the storage worker,
+not the driver or self-test. USB sharing is an explicit temporary ownership change.
+
 ```mermaid
 sequenceDiagram
     participant FW as Storage owner task
     participant Card as Storage service
     participant USB as USB/MSC integration
     participant Host as USB host
+    FW->>Card: Startup initialization (MSC disabled)
+    FW->>FW: Mount existing filesystem; keep mounted for firmware use
     FW->>Card: Firmware block operations and sync
+    Host->>USB: Explicit enable USB drive request
     FW->>FW: Finish work, close files, unmount filesystem
     USB->>Card: pf_storage_msc_acquire after integration checks
     Host->>USB: Sector read/write or synchronize
@@ -921,7 +928,7 @@ sequenceDiagram
     Host->>USB: Safely eject and allow removal
     USB->>Card: pf_storage_msc_release after checked eject/sync
     Card-->>FW: Reinitialization request available
-    FW->>FW: Invalidate cached filesystem state and reinitialize before remount
+    FW->>FW: Invalidate cached filesystem state, reinitialize and automatically remount
 ```
 
 The raw SD driver exposes serialized card operations without application ownership policy.
@@ -933,7 +940,7 @@ application, a statically
 allocated FreeRTOS recursive mutex
 serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
-[CDC recovery workflow](../../guides/usb-cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
+[CDC recovery workflow](../../guides/usb-cdc-cli.md#faulted-msc-recovery) revokes access to faulted MSC media
 before returning ownership and queues worker-only reinitialization. It never
 reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
 inhibited until a successful explicit `fs mount`; presence debounce continues.

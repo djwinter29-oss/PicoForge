@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>PicoForge Diagnostics | WebHID</title>
+  <title>PicoForge Dashboard | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
-  <link rel="stylesheet" href="css/webhid.css?v=4">
-  <script type="module" src="js/app.mjs?v=7"></script>
+  <link rel="stylesheet" href="css/webhid.css?v=10">
+  <script type="module" src="js/app.mjs?v=16"></script>
 </head>
 <body>
   <header class="topbar">
@@ -24,7 +24,7 @@
   <main>
     <section class="page-heading">
       <div>
-        <h1>Diagnostics</h1>
+        <h1>Dashboard</h1>
       </div>
     </section>
 
@@ -35,6 +35,12 @@
           <button class="button button-led" id="led-control" type="button" data-state="unknown"
             aria-pressed="false" title="Onboard LED unavailable" disabled>Board LED: --</button>
           <button class="button button-secondary" id="connection-control" type="button">Connect</button>
+          <select id="connection-transport" aria-label="Connection transport">
+            <option value="usb">USB HID</option><option value="ble">Bluetooth LE</option>
+          </select>
+          <label for="ble-control-key">BLE control key
+            <input id="ble-control-key" type="password" maxlength="64" autocomplete="off"></label>
+          <button class="button button-secondary" id="ble-authorize" type="button">Use BLE key</button>
         </div>
       </div>
       <div class="identity" aria-label="Hardware identity">
@@ -72,13 +78,24 @@
             <option value="1">High-Speed</option>
           </select>
         </label>
-        <div class="metric">
-          <span>Reset cause</span><strong id="board-reset-cause">--</strong>
-        </div>
+        <label for="settings-wifi" hidden>Wi-Fi
+          <select id="settings-wifi" disabled>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </label>
+        <label for="settings-ble" hidden>Bluetooth
+          <select id="settings-ble" disabled>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </label>
       </div>
-      <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
-        Connect to read the saved settings.
-      </p>
+      <div class="wireless-actions" id="wireless-actions" hidden>
+        <button class="button button-secondary" id="wifi-open" type="button">Configure Wi-Fi…</button>
+        <button class="button button-secondary" id="ble-open" type="button">Configure Bluetooth…</button>
+      </div>
+      <p id="wireless-summary" role="status" aria-live="polite"></p>
       <details class="pin-map-disclosure">
         <summary>Pin configuration</summary>
         <div class="pin-tables">
@@ -102,12 +119,14 @@
       </div>
       <dl class="runtime-grid runtime-summary">
         <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
+        <div><dt>Reset cause</dt><dd id="board-reset-cause">--</dd></div>
         <div title="Service-pass workload proxies, not CPU utilization">
           <dt>Service load (Core 0 / Core 1)</dt>
           <dd><span id="cpu-usage-core0">--</span> / <span id="cpu-usage-core1">--</span></dd>
         </div>
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
         <div><dt>CLI port</dt><dd id="cdc-state">--</dd></div>
+        <div><dt>Storage bus speed</dt><dd id="memory-speed">--</dd></div>
       </dl>
       <p class="sample-time" id="telemetry-freshness" role="status">telemetry: unavailable</p>
     </section>
@@ -123,8 +142,6 @@
       <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
         <div><dt>Memory state</dt><dd id="memory-state">--</dd></div>
-        <div><dt>Mode</dt><dd id="memory-mode">--</dd></div>
-        <div><dt>Bus speed</dt><dd id="memory-speed">--</dd></div>
         <div><dt>Capacity</dt><dd id="memory-size">--</dd></div>
         <div><dt>Filesystem</dt><dd id="memory-filesystem">Unknown</dd></div>
         <div><dt>Manufacturer</dt><dd id="memory-manufacturer">--</dd></div>
@@ -134,37 +151,50 @@
       <p class="sample-time" id="storage-freshness" role="status">storage: unavailable</p>
     </section>
 
-    <section class="runtime self-test" aria-labelledby="self-test-title">
-      <div class="section-heading self-test-heading">
-        <h2 id="self-test-title">Storage benchmark</h2>
-        <div class="self-test-controls">
-          <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
-          <button class="button" id="self-test-start" type="button" disabled>Start self-test</button>
-          <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
+
+    <section class="runtime self-test self-test-meter" id="self-test-meter" aria-labelledby="self-test-title">
+      <details class="pin-map-disclosure self-test-disclosure" id="self-test-disclosure">
+        <summary>
+          <h2 id="self-test-title">Storage benchmark</h2>
+          <span class="self-test-label" id="self-test-state">Unavailable</span>
+        </summary>
+        <div class="self-test-body">
+          <div class="self-test-controls">
+            <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
+            <button class="button" id="self-test-start" type="button" disabled>Start benchmark</button>
+            <button class="button button-secondary" id="self-test-cancel" type="button" disabled>Cancel</button>
+          </div>
+          <progress id="self-test-progress" value="0" max="100" aria-label="Benchmark progress"></progress>
+          <dl class="runtime-grid">
+            <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
+            <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
+            <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
+            <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
+            <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
+            <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
+          </dl>
+          <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
+          <p class="sample-time" id="self-test-freshness" role="status">self-test: unavailable</p>
         </div>
-      </div>
-      <progress id="self-test-progress" value="0" max="100" aria-label="Self-test progress"></progress>
-      <dl class="runtime-grid">
-        <div><dt>Test status</dt><dd id="self-test-state">Unavailable</dd></div>
-        <div><dt>Overall progress</dt><dd id="self-test-percent">0%</dd></div>
-        <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
-        <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
-        <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
-        <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
-        <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
-        <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
-      </dl>
-      <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
-      <p class="sample-time" id="self-test-freshness" role="status">self-test: unavailable</p>
+      </details>
     </section>
 
     <dialog class="confirmation-dialog" id="configuration-dialog" aria-labelledby="configuration-dialog-title"
-      aria-describedby="configuration-dialog-profile configuration-warning">
+      aria-describedby="configuration-dialog-profile configuration-warning configuration-wireless-warning configuration-force-warning">
       <h2 id="configuration-dialog-title">Save and reboot?</h2>
       <p id="configuration-dialog-profile"></p>
       <p class="configuration-warning" id="configuration-warning">
         Firmware saves boot settings, then reboots the board and briefly disconnects USB.
         Close all CLI ports and stop external traffic first. Stop any storage test or USB drive activity before saving.
+      </p>
+      <p class="configuration-warning" id="configuration-wireless-warning" hidden>
+        Wi-Fi and Bluetooth credentials are saved with these settings. Keep a copy of the BLE key; it cannot be read
+        back. Flash credentials are not encrypted.
+      </p>
+      <p class="configuration-warning" id="configuration-force-warning" hidden>
+        Your computer owns the SD card. Rebooting disconnects the drive; cached host writes may be lost and the
+        filesystem may be corrupted. Safely eject first. Confirming forces USB detach before saving and rebooting.
+        A successful device sync does not flush your computer's cached writes.
       </p>
       <div class="dialog-actions">
         <button class="button button-cancel" id="cancel-configuration" type="button" autofocus>Cancel</button>
@@ -186,12 +216,27 @@
       </div>
     </dialog>
 
+    <dialog class="confirmation-dialog" id="share-dialog" aria-labelledby="share-dialog-title"
+      aria-describedby="share-warning">
+      <h2 id="share-dialog-title">Enable USB drive?</h2>
+      <p class="configuration-warning" id="share-warning">
+        Pico will unmount its filesystem and give your computer exclusive access to the SD card.
+        Updated firmware keeps HID and the serial console connected. Self-test is unavailable while shared;
+        Save and Reboot requires a data-loss confirmation on supporting firmware.
+        Safely eject the drive on your computer before returning storage to Pico.
+      </p>
+      <div class="dialog-actions">
+        <button class="button button-cancel" id="cancel-share" type="button" autofocus>Cancel</button>
+        <button class="button" id="confirm-share" type="button">Enable USB drive</button>
+      </div>
+    </dialog>
+
     <dialog class="confirmation-dialog" id="return-dialog" aria-labelledby="return-dialog-title"
       aria-describedby="return-warning">
       <h2 id="return-dialog-title">Return storage to Pico?</h2>
       <p class="configuration-warning" id="return-warning">
         Cached host writes may be lost and the filesystem may be corrupted. Stop all host file activity first
-        and safely eject whenever possible. Pico will detach the USB drive and attempt to remount without
+        and safely eject whenever possible. Pico will revoke host access to the card and attempt to remount without
         formatting or repair.
       </p>
       <div class="dialog-actions">
@@ -203,7 +248,37 @@
     <footer class="status-line" role="status" aria-live="polite">
       <span class="status-mark" aria-hidden="true"></span>
       <span id="status-message">Select a PicoForge HID device</span>
+      <p class="settings-note" id="settings-note">Connect to read the saved settings.</p>
     </footer>
   </main>
+  <dialog class="confirmation-dialog wireless-dialog" id="wifi-dialog" aria-labelledby="wifi-dialog-title">
+    <h2 id="wifi-dialog-title">Connect to Wi-Fi</h2>
+    <p>Scan for nearby networks or enter a network name. A connection test does not save credentials to flash.</p>
+    <button class="button button-secondary" id="wifi-scan" type="button">Scan for networks</button>
+    <p id="wifi-status" role="status" aria-live="polite"></p>
+    <div id="wifi-networks" class="wifi-networks" role="listbox" aria-label="Available Wi-Fi networks"></div>
+    <button class="button button-secondary" id="wifi-other" type="button">Other network…</button>
+    <label id="wifi-manual-label" hidden>Network name (SSID)
+      <input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
+    <label id="wifi-password-label">Password (leave blank for an open network)
+      <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
+    <div class="dialog-actions">
+      <button class="button" id="wifi-connect" type="button">Test connection</button>
+      <button class="button button-secondary" id="wifi-cancel" type="button">Cancel</button>
+    </div>
+  </dialog>
+  <dialog class="confirmation-dialog wireless-dialog" id="ble-dialog" aria-labelledby="ble-dialog-title">
+    <h2 id="ble-dialog-title">Bluetooth control key</h2>
+    <p>Generate a new key and save it with Board configuration. The key authenticates control commands; it does not
+      encrypt the Bluetooth connection. The board cannot show a saved key again.</p>
+    <label for="ble-secret">New control key
+      <input id="ble-secret" type="password" readonly autocomplete="off"></label>
+    <div class="dialog-actions">
+      <button class="button button-secondary" id="ble-generate" type="button">Generate key</button>
+      <button class="button button-secondary" id="ble-copy" type="button" disabled>Copy key</button>
+      <button class="button button-secondary" id="ble-cancel" type="button">Close</button>
+    </div>
+    <p id="ble-status" role="status" aria-live="polite"></p>
+  </dialog>
 </body>
 </html>

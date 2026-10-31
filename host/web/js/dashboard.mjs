@@ -9,17 +9,22 @@ function uptimeLabel(milliseconds) {
 }
 
 let lastStorageDetails = null;
+let cardAbsent = false;
 
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
-  if (!connected) lastStorageDetails = null;
+  if (!connected) {
+    lastStorageDetails = null;
+    cardAbsent = false;
+  }
   const hardware = snapshot.hardware;
   const runtime = snapshot.telemetry_stale ? null : snapshot.runtime;
   const connection = document.querySelector("#connection");
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
   document.querySelector("#connection-label").textContent = snapshot.error
-    ? "Attention" : connected ? "Connected" : "Disconnected";
-  document.querySelector("#product-name").textContent = hardware?.product_name ?? "--";
+    ? "Attention" : snapshot.reconnecting ? "Reconnecting" : connected ? "Connected" : "Disconnected";
+  document.querySelector("#product-name").textContent = hardware
+    ? `${hardware.product_name} (${hardware.capabilities & 8 ? "SPI" : "SDIO"})` : "--";
   const boardModel = typeof hardware?.board_model === "string" ? hardware.board_model
     : ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W", 4: "Pico W" })[hardware?.board_model]
       ?? (hardware ? `Unknown (${hardware.board_model})` : "--");
@@ -47,8 +52,8 @@ export function renderStatus(snapshot) {
     ? uptimeLabel(runtime.uptime_milliseconds ?? runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   const memory = snapshot.storage_stale ? null : snapshot.memory;
-  const cardAbsent = memory?.presence_known === true && memory.present === false;
-  const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending;
+  if (memory?.presence_known === true) cardAbsent = memory.present === false;
+  const storageShared = snapshot.msc_command_pending || snapshot.msc?.enabled || snapshot.msc?.transition_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
   document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared;
   const board = snapshot.board_status;
@@ -64,7 +69,7 @@ export function renderStatus(snapshot) {
   const msc = snapshot.msc;
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  mscControl.disabled = snapshot.settings_busy || !connected || !msc || Boolean(msc.transition_pending)
+  mscControl.disabled = snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
     || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
     || Boolean(msc?.enabled && !msc.force_return_supported);
   document.querySelector("#msc-note").textContent = msc?.enabled && !msc.force_return_supported
@@ -72,14 +77,15 @@ export function renderStatus(snapshot) {
     : msc?.request_rejected
     ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
       : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
-    : msc?.transition_pending ? "Preparing storage and changing USB mode; the device will reconnect."
+    : msc?.transition_pending ? "Storage handoff in progress; waiting for fresh ownership status."
       : "";
   document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
   renderBoardConfiguration(snapshot);
   renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc);
   renderSelfTest(snapshot);
 
-  const message = snapshot.error ?? (runtime ? "HID telemetry is live"
+  const message = snapshot.error ?? (snapshot.reconnecting ? "Reconnecting after USB-drive mode change..."
+    : runtime ? "HID telemetry is live"
     : connected && snapshot.telemetry_stale ? "Telemetry report is stale"
     : connected ? "Waiting for first status report"
       : snapshot.no_board_selected ? "Select a PicoForge board" : "Connect a PicoForge board");
@@ -93,7 +99,7 @@ function renderSettings(snapshot) {
   const settings = snapshot.settings;
   const supported = Boolean(snapshot.connected && snapshot.settings_supported && settings);
   const msc = snapshot.msc;
-  const storageBusy = !msc || msc.enabled || msc.transition_pending
+  const storageBusy = snapshot.msc_command_pending || !msc || msc.transition_pending
     || snapshot.self_test?.active || snapshot.self_test_command_pending;
   const ready = supported && !storageBusy;
   const storageControl = document.querySelector("#settings-storage");
@@ -105,25 +111,35 @@ function renderSettings(snapshot) {
   if (settings && !snapshot.settings_storage_dirty) {
     storageControl.value = String(storageSpeed(settings));
   }
-  for (const selector of ["#settings-clock", "#settings-storage"]) {
+  const wireless = Boolean(snapshot.hardware?.capabilities & 128);
+  for (const [id, radio] of [["settings-wifi", 1], ["settings-ble", 2]]) {
+    const control = document.querySelector(`#${id}`);
+    document.querySelector(`label[for="${id}"]`).hidden = !wireless;
+    if (settings && !snapshot.settings_dirty) control.value = String(Number(Boolean((settings.radios ?? 0) & radio)));
+  }
+  for (const selector of ["#settings-clock", "#settings-storage", "#settings-wifi", "#settings-ble"]) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
-  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty
-    || !((snapshot.hardware?.capabilities ?? 0) & 2);
+  // Credentials have no forced-save path: provisioning requires firmware-owned storage.
+  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready
+    || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(snapshot.wireless_dirty && msc?.enabled)
+    || !((snapshot.hardware?.capabilities ?? 0) & 2)
+    || Boolean(msc?.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64));
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
     || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
     || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
-    || snapshot.self_test_command_pending;
+    || snapshot.self_test_command_pending || snapshot.msc_command_pending;
   document.querySelector("#settings-note").textContent = snapshot.settings_message
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
         : !msc ? "Waiting for storage ownership status."
-          : msc.enabled || msc.transition_pending ? "Disable the USB drive before saving settings."
-            : snapshot.self_test?.active || snapshot.self_test_command_pending
-              ? "Wait for the storage test to finish before saving settings."
-              : snapshot.settings_dirty ? "Unsaved changes."
-                : "");
+          : msc.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64)
+            ? "Update firmware or return storage to Pico before saving settings."
+          : msc.transition_pending ? "Wait for the USB storage transition before saving settings."
+            : "");
   document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
+  document.querySelector("#status-message").hidden = !snapshot.error
+    && !document.querySelector("#settings-note").hidden;
 }
 
 function updateClockOptions(select, mcu, savedClock) {
@@ -175,7 +191,7 @@ function renderBoardConfiguration(snapshot) {
     });
     document.querySelector(selector).replaceChildren(headings, values);
   };
-  const spi = configuration?.storage_transport === "spi";
+  const spi = Boolean(snapshot.hardware?.capabilities & 8);
   const labels = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
   set("#board-uart-title", configuration && configuration.monitor_uart_index !== 255
     ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
@@ -197,14 +213,14 @@ function renderMemory(memory, filesystemFormat, stale, msc) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const busy = !stale && memory?.configured && memory.sample_valid === false
     && !msc?.enabled && !msc?.transition_pending;
-  if (!stale && memory?.sample_valid && memory.initialized) {
+  if (!stale && memory?.sample_valid && memory.initialized && !msc?.enabled && !msc?.transition_pending) {
     lastStorageDetails = { memory, filesystemFormat };
   } else if (!busy) {
     lastStorageDetails = null;
   }
   if (stale) {
     set("#memory-note", "Storage status is stale; waiting for a fresh report.");
-    for (const id of ["#memory-state", "#memory-mode", "#memory-speed", "#memory-size",
+    for (const id of ["#memory-state", "#memory-speed", "#memory-size",
       "#memory-filesystem", "#memory-manufacturer", "#memory-product", "#memory-serial"]) set(id, "--");
     return;
   }
@@ -225,9 +241,9 @@ function renderMemory(memory, filesystemFormat, stale, msc) {
     ({ memory, filesystemFormat } = lastStorageDetails);
   }
   const manufacturer = memory?.manufacturer;
-  set("#memory-mode", memory?.mode?.toUpperCase() ?? "--");
-  set("#memory-speed", memory?.bus_clock_hz
-    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz (${memory.speed_mode === 2 || memory.speed_mode === "high-speed" ? "High-Speed" : "Standard"})`
+  set("#memory-speed", memory?.sample_valid !== false && memory?.initialized
+    && !msc?.enabled && !msc?.transition_pending && memory?.bus_clock_hz
+    ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
@@ -267,9 +283,15 @@ export function renderSelfTest(snapshot) {
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", mounting: "Mounting", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
   const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
-  set("#self-test-state", labels[status?.state] ?? "Unavailable");
-  set("#self-test-percent", `${Math.floor(status?.progress_percent ?? 0)}%`);
+  set("#self-test-state", status ? `${labels[status.state] ?? "Unknown"} · ${Math.floor(status.progress_percent ?? 0)}%`
+    : "Unavailable");
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;
+  document.querySelector("#self-test-meter").dataset.result = ["passed", "failed"].includes(status?.state)
+    ? status.state : "";
+  const disclosure = document.querySelector("#self-test-disclosure");
+  const autoOpen = status?.active ? "active" : status?.state === "failed" ? "failed" : "";
+  if (autoOpen && disclosure.dataset.autoOpen !== autoOpen) disclosure.open = true;
+  disclosure.dataset.autoOpen = autoOpen;
   set("#self-test-write-speed", speed(status?.write_bytes_per_second));
   set("#self-test-read-speed", speed(status?.read_bytes_per_second));
   set("#self-test-written", status ? `${count(status.written_bytes)} / ${count(status.target_bytes)}` : "--");
@@ -288,7 +310,8 @@ export function renderSelfTest(snapshot) {
   const size = document.querySelector("#self-test-size");
   const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 1024;
   document.querySelector("#self-test-start").disabled = !ready || status.active || pending || Boolean(snapshot.busy)
-    || !validSize || Boolean(snapshot.msc?.transition_pending);
-  document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup" || pending || Boolean(snapshot.busy);
-  size.disabled = !snapshot.connected || Boolean(status?.active) || pending;
+    || !validSize || Boolean(snapshot.msc?.transition_pending) || Boolean(snapshot.msc_command_pending);
+  document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup"
+    || pending || Boolean(snapshot.busy) || Boolean(snapshot.msc_command_pending);
+  size.disabled = !snapshot.connected || Boolean(status?.active) || pending || Boolean(snapshot.msc_command_pending);
 }

@@ -1,0 +1,26 @@
+#ifndef PF_LWIPOPTS_H
+#define PF_LWIPOPTS_H
+
+#define NO_SYS 1
+/* lwIP defaults to byte alignment; Cortex-M multi-word stores into unaligned pbuf headers fault on received frames. */
+#define MEM_ALIGNMENT 4
+#define LWIP_SOCKET 0
+#define LWIP_NETCONN 0
+#define LWIP_TCP 0
+#define LWIP_UDP 1
+#define LWIP_DHCP 1
+#define LWIP_DNS 0
+#define LWIP_IPV6 0
+#define LWIP_NETIF_HOSTNAME 1
+#define LWIP_NETIF_STATUS_CALLBACK 1
+#define LWIP_NETIF_LINK_CALLBACK 1
+#define MEM_SIZE 4096
+#define MEMP_NUM_PBUF 8
+#define PBUF_POOL_SIZE 8
+#define PBUF_POOL_BUFSIZE 1536
+#define LWIP_STATS 0
+#define LWIP_ARP 1
+#define LWIP_ETHERNET 1
+#define LWIP_ICMP 1
+
+#endif

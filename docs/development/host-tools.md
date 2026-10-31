@@ -74,6 +74,22 @@ Python and .NET serve the same assets from `host/web`; keep shared UI behavior b
 API response contract. WebHID is independent and owns its renderer and assets under `host/webhid`. Keep browser-specific
 USB handling there rather than creating a second Python/.NET frontend.
 
+In the shared dashboard, active or pending self-tests disable board configuration and reboot controls without
+adding an automatic test warning above Pin configuration. The Save button state indicates unsaved changes without
+a separate notice. Explicit settings results/errors remain visible, and reboot confirmation still warns about
+discarding unsaved changes; test progress belongs in the storage benchmark section.
+Self-test controls stay pending throughout HTTP command delivery, even when idle telemetry sequences advance or
+wrap. After delivery, wait for a newer self-test report before releasing the pending gate; an active report then
+keeps conflicting controls disabled through cleanup.
+USB sharing keeps the benchmark hidden and conflicting controls disabled from request submission until telemetry
+confirms the requested owner with no transition pending, or reports rejection, including with older firmware that reconnects.
+Intermediate disconnected or old firmware-owned snapshots must not briefly restore the benchmark.
+Enable USB drive opens the same styled confirmation pattern as reboot and return on both dashboard frontends.
+The dialog explains exclusive host ownership, uninterrupted HID/CDC, unavailable self-test, confirmed forced saving, and safe eject.
+Cancel, Escape, or disconnect sends no enable request; confirmation rechecks current storage safety gates.
+Local settings edits remain available while shared. Supporting firmware permits Save and Reboot only through the
+[forced-save confirmation](../design/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
+
 Current host behavior follows the firmware's implemented HID reports. The
 [HID Report Reference](../design/usb/usb-hid-report-reference.md) is the authoritative protocol contract; host
 changes must preserve its framing, validation, and asynchronous-operation semantics.

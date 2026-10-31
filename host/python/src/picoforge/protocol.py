@@ -39,7 +39,16 @@ CAP_SAVE_SETTINGS = 1 << 2
 CAP_SPI = 1 << 3
 CAP_SDIO = 1 << 4
 CAP_SELF_TEST = 1 << 5
-CAP_KNOWN = CAP_LED | CAP_REBOOT | CAP_SAVE_SETTINGS | CAP_SPI | CAP_SDIO | CAP_SELF_TEST
+CAP_FORCE_SAVE = 1 << 6
+CAP_WIRELESS = 1 << 7
+CAP_KNOWN = 255
+WIRELESS_REPORT_ID = 30
+WIRELESS_FEATURE_SIZE = 49
+WIRELESS_COMMAND_REPORT_ID = 34
+WIRELESS_COMMAND_FEATURE_SIZE = 102
+WIRELESS_RESULT_REPORT_ID = 35
+WIRELESS_RESULT_FEATURE_SIZE = 221
+WIRELESS_CONFIGURATION_REPORT_ID = 31
 
 TELEMETRY_USB_MOUNTED = 1 << 0
 TELEMETRY_CDC_OPEN = 1 << 1
@@ -137,6 +146,7 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> dict[str, ob
             "reboot_available": False,
             "settings_supported": False,
             "self_test_supported": False,
+            "wireless_supported": False,
         }
     uid = payload[3:11]
     firmware = tuple(payload[11:14])
@@ -169,8 +179,153 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> dict[str, ob
         "settings_supported": bool(capabilities & CAP_SAVE_SETTINGS),
         "storage_transport": "spi" if capabilities & CAP_SPI else "sdio",
         "self_test_supported": bool(capabilities & CAP_SELF_TEST),
+        "wireless_supported": bool(capabilities & CAP_WIRELESS),
         "ram_total_bytes": ram_total,
         "ram_reserved_bytes": ram_reserved,
+    }
+
+
+def build_wireless_configuration_report(settings: dict[str, object], transaction_id: int = 1) -> bytes:
+    """Build Feature 31 v2: board settings, radio switches and credentials in one atomic save."""
+    if not isinstance(settings, dict):
+        raise ValueError("Expected wireless configuration JSON")
+    if settings.get("confirm_reboot") is not True:
+        raise ValueError("Explicit confirm_reboot: true is required")
+    if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "password", "ble_key", "confirm_reboot", "board",
+                       "use_tested_wifi"}:
+        raise ValueError("Unknown wireless configuration field")
+    if type(settings.get("wifi_enabled")) is not bool or type(settings.get("ble_enabled")) is not bool:
+        raise ValueError("wifi_enabled and ble_enabled must be boolean")
+    if "use_tested_wifi" in settings and type(settings["use_tested_wifi"]) is not bool:
+        raise ValueError("use_tested_wifi must be boolean")
+    use_tested = settings.get("use_tested_wifi", False)
+    if "board" not in settings:
+        raise ValueError("board settings are required")
+    clock, profile, radios = _validate_settings(settings["board"])
+    if settings["wifi_enabled"] != bool(radios & 1) or settings["ble_enabled"] != bool(radios & 2):
+        raise ValueError("Wireless enable flags must match the board radio switches")
+    ssid = settings.get("ssid")
+    try:
+        encoded = ssid.encode("utf-8") if isinstance(ssid, str) else None
+    except UnicodeError:
+        encoded = None
+    if encoded is None or b"\0" in encoded or len(encoded) > 32 or (settings["wifi_enabled"] and not encoded):
+        raise ValueError("SSID must be UTF-8, at most 32 bytes, and nonempty when Wi-Fi is enabled")
+    if type(transaction_id) is not int or not 1 <= transaction_id <= 255:
+        raise ValueError("Wireless transaction must be 1..255")
+    payload = bytearray(137)
+    payload[:5] = bytes([31, 2, transaction_id, radios, 0])
+    payload[134:137] = struct.pack("<HB", clock, profile)
+    payload[5:5 + len(encoded)] = encoded
+    if "password" not in settings and not use_tested:
+        payload[4] |= 1
+    elif not use_tested:
+        password = settings["password"]
+        if not isinstance(password, str) or password and not 8 <= len(password) <= 63 or any(
+                not 32 <= ord(char) <= 126 for char in password):
+            raise ValueError("Password must be empty or contain 8..63 printable ASCII characters")
+        payload[38:38 + len(password)] = password.encode("ascii")
+    if "ble_key" not in settings:
+        payload[4] |= 2
+    else:
+        key = settings["ble_key"]
+        if not isinstance(key, str) or len(key) != 64 or any(char not in "0123456789abcdefABCDEF" for char in key):
+            raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+        decoded = bytes.fromhex(key)
+        if not any(decoded):
+            raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+        payload[102:134] = decoded
+    if use_tested:
+        payload[4] |= 4
+    return bytes(payload)
+
+
+def build_wireless_command_report(
+    transaction_id: int, operation: int, *, page: int = 0, ssid: str = "", password: str = ""
+) -> bytes:
+    """Build USB-only wireless scan, paging, test-join or staged-credential clear command."""
+    if type(transaction_id) is not int or not 1 <= transaction_id <= 255 or operation not in (1, 2, 3, 4):
+        raise ValueError("Invalid wireless command")
+    payload = bytearray(WIRELESS_COMMAND_FEATURE_SIZE)
+    payload[:4] = bytes([WIRELESS_COMMAND_REPORT_ID, 1, operation, transaction_id])
+    if operation == 2:
+        if type(page) is not int or not 0 <= page <= 2:
+            raise ValueError("Invalid wireless scan page")
+        payload[4] = page
+    elif operation == 3:
+        try:
+            encoded = ssid.encode("utf-8")
+        except (AttributeError, UnicodeError):
+            raise ValueError("SSID must be valid UTF-8") from None
+        if not encoded or len(encoded) > 32 or b"\0" in encoded:
+            raise ValueError("SSID must contain 1..32 UTF-8 bytes")
+        if not isinstance(password, str) or password and (
+                not 8 <= len(password) <= 63 or any(not 32 <= ord(char) <= 126 for char in password)):
+            raise ValueError("Password must contain 8..63 printable ASCII characters or be empty for an open network")
+        secret = password.encode("ascii")
+        payload[5] = len(encoded)
+        payload[6] = len(secret)
+        payload[7:7 + len(encoded)] = encoded
+        payload[39:39 + len(secret)] = secret
+    return bytes(payload)
+
+
+#: Feature 35 byte 3 while testing (states 4..6): join phase or failure reason.
+WIRELESS_TEST_DETAILS = ("", "Searching for network", "Checking password", "Waiting for IP address",
+                         "Network not found", "Password rejected", "Connected but no IP address from DHCP",
+                         "Timed out")
+
+
+def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
+    """Decode sanitized Feature 35 scan/test results; no password is returned."""
+    payload = _feature_payload(report, WIRELESS_RESULT_REPORT_ID, WIRELESS_RESULT_FEATURE_SIZE - 1)
+    state, page, count, wifi_state = payload[2:6]
+    if payload[0] != 1 or state > 6 or page > (7 if state >= 4 else 2) or count > 18 or wifi_state > 3:
+        raise ValueError("Invalid wireless scan/test result")
+    networks = []
+    for index in range(6):
+        entry = payload[6 + index * 35: 41 + index * 35]
+        length = entry[0]
+        if length == 0:
+            if any(entry):
+                raise ValueError("Invalid empty wireless scan entry")
+            continue
+        if length > 32 or any(entry[1 + length:33]) or entry[34] > 1:
+            raise ValueError("Invalid wireless scan entry")
+        try:
+            ssid = entry[1:1 + length].decode("utf-8")
+        except UnicodeError:
+            raise ValueError("Invalid wireless scan SSID") from None
+        networks.append({"ssid": ssid, "rssi": int.from_bytes(entry[33:34], "little", signed=True),
+                         "secured": bool(entry[34])})
+    if len(networks) > count or (state != 5 and any(payload[216:220])):
+        raise ValueError("Invalid wireless scan/test result fields")
+    detail = page if state >= 4 else 0
+    return {"transaction_id": payload[1], "state": state, "page": 0 if state >= 4 else page, "detail": detail,
+            "phase": WIRELESS_TEST_DETAILS[detail], "count": count, "wifi_state": wifi_state, "ipv4": ".".join(map(str, payload[216:220])), "networks": networks}
+
+
+def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
+    """Decode sanitized Feature 30; credentials are never present in this report."""
+    payload = _feature_payload(report, WIRELESS_REPORT_ID, 48)
+    if (payload[0] != 1 or payload[1] & ~3 or payload[2] > 6 or payload[4] > 3
+            or payload[42] > 1 or payload[43] > 1 or payload[44] > 3 or any(payload[45:])):
+        raise ValueError("Invalid wireless status report")
+    ssid = payload[9:42]
+    nul = ssid.find(b"\0")
+    if nul < 0 or any(ssid[nul:]):
+        raise ValueError("Invalid wireless SSID encoding")
+    try:
+        name = ssid[:nul].decode("utf-8")
+    except UnicodeError:
+        raise ValueError("Invalid wireless SSID encoding") from None
+    return {
+        "wifi_enabled": bool(payload[1] & 1), "ble_enabled": bool(payload[1] & 2),
+        "status": CONTROL_STATUS_NAMES[payload[2]], "transaction_id": payload[3],
+        "wifi_state": ("disabled", "connecting", "connected", "failed")[payload[4]],
+        "ipv4": ".".join(map(str, payload[5:9])), "ssid": name,
+        "password_configured": bool(payload[42]), "ble_key_configured": bool(payload[43]),
+        "error": payload[44],
     }
 
 
@@ -189,8 +344,11 @@ def parse_configuration_report(
         raise ValueError(f"unsupported HID board configuration report version {version}")
     if clock_profile not in (0, 150, 200, 250) or sd_profile not in (0, 1):
         raise ValueError("invalid stored board configuration profile")
-    if flags & ~0x07:
+    if flags & ~0x1F:
         raise ValueError("unknown board configuration flags")
+    radios = flags >> 3 & 3
+    if radios and not identity.get("wireless_supported"):
+        raise ValueError("radio enables reported without wireless capability")
     if uart_index not in (0, 1, 255):
         raise ValueError("invalid monitor UART index")
     if (uart_tx == 255) != (uart_rx == 255):
@@ -229,6 +387,7 @@ def parse_configuration_report(
         "system_clock_mhz": clock_profile,
         "stored_sdcard_profile": sd_profile,
         "sdcard_profile": sd_profile,
+        "radios": radios,
         "monitor_uart_index": uart_index,
         "monitor_uart_tx_gpio": uart_tx,
         "monitor_uart_rx_gpio": uart_rx,
@@ -249,14 +408,17 @@ def parse_settings_report(report: bytes | bytearray | list[int],
     return parse_configuration_report(report, identity)
 
 
-def _validate_settings(settings: dict[str, object]) -> tuple[int, int]:
+def _validate_settings(settings: dict[str, object]) -> tuple[int, int, int]:
+    """Return clock, SD profile and radio enables (bit 0 Wi-Fi, bit 1 BLE; 0 when omitted)."""
     if not isinstance(settings, dict):
         raise ValueError("boot settings must be an object")
     clock = settings.get("system_clock_mhz")
     profile = settings.get("sdcard_profile")
-    if type(clock) is not int or clock not in (0, 150, 200, 250) or type(profile) is not int or profile not in (0, 1):
+    radios = settings.get("radios", 0)
+    if (type(clock) is not int or clock not in (0, 150, 200, 250) or type(profile) is not int or profile not in (0, 1)
+            or type(radios) is not int or radios not in range(4)):
         raise ValueError("unsupported boot settings value")
-    return clock, profile
+    return clock, profile, radios
 
 
 def normalize_legacy_settings(
@@ -299,11 +461,14 @@ def validate_legacy_settings(settings: dict[str, object]) -> None:
 
 
 def build_settings_command_report(
-    settings: dict[str, object], transaction_id: int = 1
+    settings: dict[str, object], transaction_id: int = 1, *, force: bool = False
 ) -> bytes:
     """Build Feature report 20 opcode 6 to save persistent settings."""
-    clock, profile = _validate_settings(settings)
-    return build_control_command_report(transaction_id, 6, arguments=struct.pack("<HB", clock, profile) + b"\0\0")
+    clock, profile, radios = _validate_settings(settings)
+    if type(force) is not bool:
+        raise ValueError("Forced settings save confirmation must be boolean")
+    return build_control_command_report(transaction_id, 6, flags=int(force),
+                                        arguments=struct.pack("<HBB", clock, profile, radios) + b"\0")
 
 
 def build_control_command_report(
@@ -340,7 +505,7 @@ def build_control_command_report(
             raise ValueError("invalid self-test command fields")
     if opcode == 6:
         clock, profile = struct.unpack_from("<HB", args)
-        if flags or any(args[3:]) or clock not in (0, 150, 200, 250) or profile not in (0, 1):
+        if flags & ~1 or args[3] > 3 or args[4] or clock not in (0, 150, 200, 250) or profile not in (0, 1):
             raise ValueError("invalid persistent settings command fields")
     if opcode not in (1, 2, 3, 4, 6):
         raise ValueError("control opcode is unsupported")
@@ -387,13 +552,13 @@ def parse_control_result_report(
         raise ValueError("HID control result data is only valid for settings")
     saved_settings = None
     if opcode == 6:
-        clock, profile, reserved = struct.unpack("<HBB", result_data)
-        if reserved or (status == CONTROL_COMPLETED and (clock not in (0, 150, 200, 250) or profile not in (0, 1))):
+        clock, profile, radios = struct.unpack("<HBB", result_data)
+        if radios > 3 or (status == CONTROL_COMPLETED and (clock not in (0, 150, 200, 250) or profile not in (0, 1))):
             raise ValueError("invalid HID settings result data")
         if status != CONTROL_COMPLETED and any(result_data):
             raise ValueError("unsuccessful settings command returned result data")
         if status == CONTROL_COMPLETED:
-            saved_settings = {"system_clock_mhz": clock, "sdcard_profile": profile}
+            saved_settings = {"system_clock_mhz": clock, "sdcard_profile": profile, "radios": radios}
     return {
         "version": version,
         "transaction_id": transaction_id,

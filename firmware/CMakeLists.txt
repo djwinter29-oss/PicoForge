@@ -54,6 +54,7 @@ if(DEFINED PF_SDIO_PIO_HIGH_SPEED)
         "PF_SDIO_PIO_HIGH_SPEED has been removed; use saved speed profiles. Clear it with cmake -U PF_SDIO_PIO_HIGH_SPEED.")
 endif()
 
+set(PICO_MBEDTLS_CONFIG_FILE "pf_mbedtls_config.h")
 pico_sdk_init()
 
 set(PF_HID_BOARD_MODEL_VALUE 0)
@@ -313,6 +314,21 @@ target_link_libraries(pico_forge
     pf_led
     pf_boot_config
 )
+
+if(PICO_CYW43_SUPPORTED)
+    target_sources(pico_forge PRIVATE
+        src/app/wireless/wireless.c
+        src/app/wireless/wifi.c
+        src/app/wireless/bluetooth.c
+        src/app/wireless/bluetooth_auth.c)
+    target_include_directories(pico_forge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/integration/wireless")
+    target_compile_definitions(pico_forge PRIVATE PF_ENABLE_WIRELESS=1)
+    target_link_libraries(pico_forge pico_cyw43_arch_lwip_poll pico_btstack_ble pico_btstack_cyw43
+                          pico_mbedtls pico_rand)
+    pico_btstack_make_gatt_header(pico_forge PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/src/app/wireless/bluetooth_profile.gatt")
+    target_link_options(pico_forge PRIVATE "LINKER:--wrap=btstack_tlv_flash_bank_init_instance")
+endif()
 
 target_compile_definitions(pico_forge PRIVATE
     PF_FIRMWARE_VERSION_MAJOR=${PF_FIRMWARE_VERSION_MAJOR}u

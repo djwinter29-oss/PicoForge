@@ -21,11 +21,15 @@ def check_contract(root):
     assert command.index('(resplen < 0) && (p_msc->sense_key == 0)') < command.index('resplen = tud_msc_scsi_cb(')
     assert '(uint16_t)p_msc->total_len' in command[:command.index('if (resplen < 0) {')]
     for opcode, callback_name in (
+        ('TEST_UNIT_READY', 'test_unit_ready'),
+        ('READ_CAPACITY_10', 'capacity'),
+        ('READ_FORMAT_CAPACITY', 'capacity'),
         ('START_STOP_UNIT', 'start_stop'),
         ('PREVENT_ALLOW_MEDIUM_REMOVAL', 'prevent_allow_medium_removal'),
     ):
         builtin = tinyusb[tinyusb.index(f'case SCSI_CMD_{opcode}:'):]
         assert builtin.index(f'tud_msc_{callback_name}_cb(') < builtin.index('if (p_msc->sense_key == 0)') < builtin.index('set_sense_medium_not_present(lun);')
+    assert '.is_removable = 1' in tinyusb
     completed = tinyusb[tinyusb.index('case MSC_STAGE_STATUS_SENT:'):]
     assert completed.index('xferred_bytes == sizeof(msc_csw_t)') < completed.index('tud_msc_write10_complete_cb(p_cbw->lun)')
     assert 'tu_min32(CFG_TUD_MSC_EP_BUFSIZE, p_cbw->total_bytes - p_msc->xferred_len)' in tinyusb
@@ -53,3 +57,13 @@ def check_contract(root):
 
 def test_tinyusb_msc_contract():
     check_contract(ROOT)
+
+
+def test_usb_configuration_is_independent_of_storage_ownership():
+    descriptors = (ROOT / 'firmware/src/app/usb/usb_descriptors.c').read_text()
+    assert descriptors.count('TUD_CONFIG_DESCRIPTOR(') == 1
+    assert 'ITF_NUM_TOTAL = 4' in descriptors
+    assert 'return desc_configuration;' in descriptors
+    assert 'pf_usb_msc_is_enabled' not in descriptors
+    for interface in ('CDC', 'HID', 'MSC'):
+        assert descriptors.count(f'TUD_{interface}_DESCRIPTOR(') == 1

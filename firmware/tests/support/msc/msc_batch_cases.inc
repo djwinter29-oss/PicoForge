@@ -13,6 +13,7 @@ static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
 #include "app/usb/usb_msc.c"
 uint64_t test_time_us;
+unsigned test_usb_disconnects, test_usb_connects;
 #include "drivers/sdcard/sd_backend.h"
 #if PF_TEST_SDCARD_TRANSPORT == 1
 #define TEST_TRANSPORT PF_SD_LINK_SPI
@@ -70,6 +71,8 @@ static void msc_batch_regression(void)
  pf_fatfs_disk_bind(pf_storage_firmware_device());
  TEST_ASSERT_TRUE(pf_sd_init(&c)==PF_SD_OK);
  pf_usb_msc_request(true); pf_usb_msc_task(); TEST_ASSERT_TRUE(msc_enabled);
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0)); /* New medium requires host cache refresh. */
+ TEST_ASSERT_TRUE(tud_msc_test_unit_ready_cb(0));
  uint8_t raw[1538], out[1538]; uint8_t *data=raw+1, *readback=out+1;
  for(unsigned i=0;i<1536;++i) data[i]=(uint8_t)(i*73u+i/512u);
  memset(out,0xa5,sizeof(out));

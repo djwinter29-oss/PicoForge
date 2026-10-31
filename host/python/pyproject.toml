@@ -19,8 +19,9 @@ Issues = "https://github.com/djwinter29-oss/PicoForge/issues"
 picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
-package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
-packages = ["picoforge", "picoforge.web"]
+package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web", "picoforge.wireless_ui" = "../webhid/js"}
+packages = ["picoforge", "picoforge.web", "picoforge.wireless_ui"]
 
 [tool.setuptools.package-data]
 "picoforge.web" = ["index.html", "favicon.svg", "css/*.css", "js/*.mjs"]
+"picoforge.wireless_ui" = ["wireless-form.mjs"]

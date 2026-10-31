@@ -31,11 +31,12 @@ The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` 
 and LED behavior still require board validation.
 
 Input report `10` publishes SD detection/initialization, selected bus mode, effective bus speed, capacity, CID,
-filesystem format, and MSC ownership state every 500 ms. In MSC mode the USB descriptor appends MSC after CDC and HID,
-preserving the HID interface number; see the [HID Report Reference](usb/usb-hid-report-reference.md). The owner gate rejects
+filesystem format, and MSC ownership state every 500 ms. CDC, HID and MSC interfaces remain present in a fixed
+configuration; Pico-owned storage reports no medium to MSC. See the [HID Report Reference](usb/usb-hid-report-reference.md).
+The owner gate rejects
 firmware block calls while the host owns the card. Enabling queues a worker-owned FatFs unmount before acquisition
 and is rejected if CLI storage work is pending. Normal disable requires host eject; the dashboard's confirmed
-**Disable USB drive** action requests [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety),
+**Disable USB drive** action requests [Pico-side return/remount](usb/usb-hid-report-reference.md#msc-force-return-safety),
 with one worker mount attempt and explicit failure reporting. Host apps never run OS eject commands.
 
 CDC storage commands are queued to a statically allocated FreeRTOS storage worker,
@@ -56,6 +57,10 @@ before accepting a run; existing files are left untouched. See the
 [performance-test safeguards](../guides/sdcard-performance-test.md#running). Browser, Python, and
 .NET dashboards expose the controls and calculate average read/write metrics.
 
+W-board images also provide optional [Wi-Fi and BLE](wireless.md), default off. SDK poll-mode radio work runs on the
+USB owner task; authenticated BLE LED/benchmark commands reuse existing admission with separate result slots.
+USB-only credential provisioning and existing storage ownership rules remain in force.
+
 ## Core and Runtime Policy
 
 Before starting the scheduler, USB startup disconnects for 250 ms using the SDK busy wait, then reconnects.
@@ -69,7 +74,9 @@ starts on core 0; applications must not launch a second independent core entry p
  tasks use the kernel's all-core affinity default and may migrate. Idle tasks are pinned to their corresponding
 physical cores (`configIDLE_AFFINITY=1`) so idle-runtime CPU telemetry remains per-core. Different priorities may execute
 simultaneously. Affinity capability remains enabled for Pico SDK boot-flash-safe execution, which temporarily uses a
-core-specific lockout task; application tasks are not pinned. Task/ISR kernel critical sections exclude both cores,
+core-specific lockout task. With an enabled W-board radio, the USB/radio owner task is pinned to its startup core
+because SDK poll contexts and CYW43 IRQ setup require it; other application tasks are not pinned.
+Task/ISR kernel critical sections exclude both cores,
 while existing media reservations serialize physical storage operations. FatFs retains one executor.
 SMP schedules tasks, not arbitrary hardware resources: board setup and IRQ installation still occur before scheduler
 startup, and IRQ routing stays on its initialization core. Peripheral ownership remains explicit rather than being
@@ -218,41 +225,87 @@ selection. Neither platform storage service depends on application headers.
   Worker admission and transition coordination run on the USB task; these APIs are not arbitrary multi-task entry points.
 - Owner-gated I/O holds the same recursive reservation through backend completion; USB partial-sector
   read-modify-write also holds it across the full operation.
-- Normal release requires checked eject/sync. Fault release requires detached, unavailable USB-owned media and queues
+- Normal release requires checked eject/sync. Fault release requires revoked access to unavailable USB-owned media and queues
   worker recovery without claiming a clean eject. Recovery logs its result and never mounts automatically.
-- Confirmed force return disconnects before normal owner release and holds worker admission through one mount
+- Confirmed force return revokes MSC access before normal owner release and holds worker admission through one mount
   attempt; failure leaves the volume unmounted and blocks automatic retries. It never claims host-cache durability.
+- [Confirmed forced settings save/reboot](settings.md#forced-save-and-reboot) syncs and detaches before flash save,
+  keeping media USB-reserved and unavailable until successful reset; failures do not schedule reboot.
 - Uncertain failed writes are not replayed. Host tests cover exclusion, failed sync retention, no-replay and recovery
   rejection/completion; they do not establish physical USB BOT or power-loss qualification.
 
 ### Storage Ownership Lifecycle
 
-This is the product-level lifecycle; worker admission and operation completion details are in
-[Storage Worker State](#storage-worker-state), and transition rules are in the
-[SD-card ownership workflow](sdcard/sdcard-driver-design.md#ownership-workflow).
+This section owns the product's default-mounted storage policy. Worker admission and operation completion details
+are in [Storage Worker State](#storage-worker-state); the
+[HID report reference](usb/usb-hid-report-reference.md#msc-force-return-safety) owns USB command semantics.
+
+- **Startup:** MSC is disabled. The storage worker asynchronously initializes the configured card and mounts its
+  existing FAT/exFAT filesystem without requiring a dashboard connection, CDC session, or self-test click.
+  Startup does not wait for a usable card; absent, unsupported, or damaged media must not block USB management.
+- **USB interfaces:** CDC, HID and MSC remain present regardless of ownership. While Pico owns the card, MSC reports
+  no medium; the OS may show an empty removable drive. Ownership changes do not disconnect USB or reset the serial
+  console. When media becomes available to the host, SCSI Unit Attention (`06/28/00`) requests a media/cache refresh.
+  Reboot and confirmed forced settings save still disconnect USB.
+- **Firmware use:** keep the filesystem mounted and ready for serialized reads/writes whenever firmware owns healthy
+  media. Self-test operates on this existing mount, checks the reserved path and free space, then writes and verifies
+  its temporary file. It never mounts or unmounts; cleanup leaves the filesystem mounted.
+- **USB sharing:** only an explicit user request exports the card. Finish storage work and close/sync files before
+  the worker unmounts; transfer exclusive ownership only after successful unmount. Reject conflicting work as busy
+  rather than interrupting it. Firmware file access is unavailable while the USB host owns the card.
+- **Safe return:** after host safe eject and normal MSC disable, release USB ownership, discard host-invalidated
+  filesystem state, reinitialize, and automatically remount. No second user action or self-test click is required.
+  A connected HID interface or cleared transition flags alone do not establish mounted readiness.
+- **Mount failure or insertion:** startup, insertion, and normal-return mount failures remain visible and retry at
+  the existing five-second interval after each failed attempt completes. With board-provided card detect, debounce
+  presence before acting. Never format, repair, or replay a failed write automatically.
+
+Explicit maintenance is an exception to the default: `fs unmount` suppresses automatic mounting until an insertion
+or normal USB return; `fs mount` permits deliberate manual mounting. Faulted-MSC recovery and failed forced return
+leave automatic mounting blocked for inspection until an explicit successful mount. These runtime-only safeguards
+are not persistent boot settings. A safe return does not clear an existing fault-recovery block.
+
+The UI design should distinguish mounting/unavailable storage from a usable mounted filesystem, and enable Start
+only after fresh mounted-state telemetry and idle firmware ownership. One **Start benchmark** action must start the
+test after preflight, not perform a mount-only step. Free-space scanning can take time before acceptance, so the UI
+should show a pending/checking indication rather than imply that mounting is underway.
+The current protocol has no distinct mounting or free-space-checking state: use pending transaction and storage
+status without assigning new wire enums. Richer UI labels are a design requirement, not a claim that every dashboard
+already displays them. Current dashboard **Return to Pico** uses confirmed force return; it is not host safe eject.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> FirmwareOwned: boot / MSC disabled
-    FirmwareOwned --> FirmwareOwned: mount, commands, self-test
+    [*] --> Mounting: boot / MSC disabled
+    Mounting --> FirmwareOwned: initialization and mount succeed
+    Mounting --> FirmwareUnavailable: card absent or initialization/mount fails
+    FirmwareOwned --> FirmwareOwned: commands, self-test / keep mounted
+    FirmwareOwned --> FirmwareUnmounted: explicit fs unmount
+    FirmwareUnmounted --> Mounting: explicit fs mount or card insertion
+    FirmwareUnmounted --> ToHost: admitted MSC enable
     FirmwareOwned --> ToHost: admitted MSC enable / worker unmount
-    ToHost --> HostOwned: USB re-enumerates with MSC
-    ToHost --> FirmwareOwned: acquisition rejected before ownership transfer
+    ToHost --> HostOwned: MSC medium becomes available
+    ToHost --> FirmwareOwned: unmount rejected / existing mount retained
+    ToHost --> FirmwareUnmounted: acquisition rejected after unmount
     HostOwned --> ToFirmware: safe-eject then normal disable
-    HostOwned --> ToFirmware: confirmed force return
+    HostOwned --> ForcedReturn: confirmed unsafe force return
+    HostOwned --> SavingAndRebooting: confirmed forced save / sync and detach succeed
+    SavingAndRebooting --> Mounting: verified save and reset / MSC defaults off
+    SavingAndRebooting --> HostOwned: save fails / host access restored without reset
     HostOwned --> FaultedHostOwned: card/media I/O fault
-    FaultedHostOwned --> Recovering: confirmed fault recovery / USB detached
-    ToFirmware --> Recovering: ownership returned / reinitialize
-    Recovering --> FirmwareOwned: initialization and one permitted mount succeed
-    Recovering --> FirmwareUnavailable: initialization or mount fails
-    FirmwareUnavailable --> Recovering: explicit recovery or mount retry
-    FirmwareUnavailable --> FirmwareOwned: card insertion / lifecycle retry succeeds
+    FaultedHostOwned --> Recovering: confirmed fault recovery / MSC access revoked
+    ToFirmware --> Mounting: ownership returned / automatic reinitialize and remount
+    ForcedReturn --> FirmwareOwned: single mount attempt succeeds
+    ForcedReturn --> FirmwareBlocked: single mount attempt fails
+    Recovering --> FirmwareBlocked: initialization only / no automatic mount
+    FirmwareBlocked --> FirmwareOwned: explicit fs mount succeeds
+    FirmwareUnavailable --> Mounting: paced retry or card insertion
 ```
 
-The diagram shows ownership and recovery, not every request state. Worker admission remains held through file cleanup,
+The diagram shows ownership and mount policy, not every request state; normal return retains a pre-existing recovery
+block even though that exceptional path is omitted. Worker admission remains held through file cleanup,
 command reply draining, and the relevant ownership transition. A failed force-return mount leaves firmware owning the
 card but the volume unmounted; it must not be interpreted as a successful return to a usable filesystem. Fault recovery
-is distinct: it detaches faulted host-owned media and reinitializes without claiming a clean eject or automatically
+is distinct: it revokes access to faulted host-owned media and reinitializes without claiming a clean eject or automatically
 mounting the filesystem.
 
 ### Storage Worker State

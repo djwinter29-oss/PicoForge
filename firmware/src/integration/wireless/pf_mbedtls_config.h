@@ -1,0 +1,8 @@
+#ifndef PF_MBEDTLS_CONFIG_H
+#define PF_MBEDTLS_CONFIG_H
+
+#define MBEDTLS_SHA256_C
+#define MBEDTLS_MD_C
+#define MBEDTLS_NO_PLATFORM_ENTROPY
+
+#endif

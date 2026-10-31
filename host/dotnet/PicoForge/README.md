@@ -6,10 +6,38 @@ The .NET 10 host monitors the vendor HID interface and serves the shared local d
 dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 ```
 
-`GET /api/boards` discovers attached boards. The dashboard's **Rescan** and board selector choose one, and status/command requests include its ID as `?board=<id>`. `GET /api/status` returns the selected board's hardware identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected board's LED; `POST /api/settings` saves supported boot settings and verifies HID readback. `POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Enabling briefly re-enumerates USB while keeping HID identity stable; safely eject before disabling to return the card to PicoForge. `POST /api/self-test` starts or cancels the SD-card test and acknowledges HID delivery with HTTP 202. See [the performance-test guide](../../../docs/guides/sdcard-performance-test.md) for safety and metric definitions. Run with `ASPNETCORE_ENVIRONMENT=Development` to expose `/openapi/v1.json`.
+`GET /api/boards` discovers attached boards. The dashboard's **Rescan** and board selector choose one, and
+status/command requests include its ID as `?board=<id>`. `GET /api/status` returns the selected board's hardware
+identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected
+board's LED; `POST /api/settings` saves supported boot settings and verifies HID readback.
+`POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Current firmware keeps CDC, HID and MSC connected;
+MSC reports no medium while Pico owns the card. Safely eject before disabling to return the card to PicoForge.
+With older firmware, expected HID disconnects after a confirmed MSC command show **Reconnecting** for up to
+five seconds. Persistent errors, invalid reports, permission failures and uncertain command outcomes remain errors.
+`POST /api/self-test` starts or cancels the SD-card test and acknowledges HID delivery with HTTP 202.
+See [the performance-test guide](../../../docs/guides/sdcard-performance-test.md) for safety and metric definitions.
+Run with `ASPNETCORE_ENVIRONMENT=Development` to expose `/openapi/v1.json`.
 The dashboard's **Return to Pico** action requires explicit data-loss confirmation and requests Pico-side
-detach/remount without any host OS eject command. See the
+host-access revocation/remount without any host OS eject command. See the
 [force-return design](../../../docs/design/usb/usb-hid-report-reference.md#msc-force-return-safety) for its
 one-attempt remount policy and host-cache risks. The legacy safe-disable API remains available for manual-eject clients.
 If a HID write times out or its result cannot be matched, the dashboard marks the command outcome uncertain and blocks
 further writes rather than replaying or overwriting the result.
+**Enable USB drive** also opens a storage-handoff confirmation dialog; Cancel or Escape sends no command.
+Local settings edits are permitted while shared. Capability bit 6 enables confirmed forced **Save and Reboot**,
+including a host-cache data-loss warning; `POST /api/settings` requests it only with `confirm_data_loss:true`.
+Device sync and detach must succeed before saving, and the original result is verified after reconnect without
+SET replay. See the [forced-save policy](../../../docs/design/settings.md#forced-save-and-reboot).
+Self-tests and transitions still block saving; standalone reboot remains blocked while USB owns storage.
+Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
+not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
+The shared dashboard and HID/API checks run with
+`dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
+These host tests do not validate physical USB detach/reconnect or storage durability.
+
+The [storage lifecycle](../../../docs/design/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
+startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
+USB sharing temporarily grants the host exclusive access; firmware file operations and self-test are unavailable.
+Wait for fresh mounted status after return, not merely HID reconnection. Start uses the existing mount and checks
+free space before accepting temporary writes; that scan can delay progress, but is not a mount-only action.
+Wait for its command result rather than clicking again. Self-test cleanup leaves the filesystem mounted.
