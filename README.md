@@ -33,7 +33,7 @@ peripheral access and hardware experimentation.
 SD storage uses either SDIO-PIO or SPI, selected when building firmware. An external SD-card breakout is required for
 storage features; basic board monitoring and LED control do not require one.
 
-USB HID carries management commands and status, CDC provides the console, and optional MSC provides host block access.
+USB HID carries management commands and status, CDC provides the console, and MSC provides optional host block access.
 The browser, Python, and .NET dashboards are companion interfaces to the same firmware.
 
 ## Get Started

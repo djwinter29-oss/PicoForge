@@ -42,7 +42,7 @@ CR, LF, and CRLF are accepted.
 | `version` | Show the PicoForge CLI and Embedded CLI version. |
 | `echo <text>` | Echo text for non-destructive transport checks. |
 | `storage status` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
-| `storage recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
+| `storage recover --confirm` | Revoke access to faulted MSC media and request worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Manually initialize/mount the existing FAT/exFAT volume after inspection or explicit unmount; normally startup/return mounting is automatic. Never format. |
 | `fs unmount` | Explicit maintenance unmount; suppress automatic mounting until insertion or normal MSC return. USB enable also unmounts automatically. |
 | `fs format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
@@ -110,11 +110,11 @@ all fail. For that faulted state only:
    removal is prevented by the host, storage work is busy, or the recovery
    request cannot be queued. The existing HID MSC status exposes pending and
    rejected requests; rejected requests do not detach the device.
-4. Once accepted, USB detaches before returning card ownership to firmware.
-   CDC/HID reconnect without MSC; reopen the same board if necessary.
+4. Once accepted, MSC access is revoked before returning card ownership to firmware.
+   CDC and HID stay connected; MSC reports no medium.
    The worker attempts card initialization only. It does not retry the failed
    payload, report a successful SCSI sync/eject, mount, format, or repair.
-5. After reconnect, use `storage status` to check that the state is `ready`, not
+5. After the worker finishes, use `storage status` to check that the state is `ready`, not
    `mounted`, and to inspect the retained `last_error`. Successful
    initialization does not erase the original I/O diagnostic. A new failed
    initialization replaces it with the latest failure.

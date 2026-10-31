@@ -224,9 +224,9 @@ selection. Neither platform storage service depends on application headers.
   Worker admission and transition coordination run on the USB task; these APIs are not arbitrary multi-task entry points.
 - Owner-gated I/O holds the same recursive reservation through backend completion; USB partial-sector
   read-modify-write also holds it across the full operation.
-- Normal release requires checked eject/sync. Fault release requires detached, unavailable USB-owned media and queues
+- Normal release requires checked eject/sync. Fault release requires revoked access to unavailable USB-owned media and queues
   worker recovery without claiming a clean eject. Recovery logs its result and never mounts automatically.
-- Confirmed force return disconnects before normal owner release and holds worker admission through one mount
+- Confirmed force return revokes MSC access before normal owner release and holds worker admission through one mount
   attempt; failure leaves the volume unmounted and blocks automatic retries. It never claims host-cache durability.
 - [Confirmed forced settings save/reboot](settings.md#forced-save-and-reboot) syncs and detaches before flash save,
   keeping media USB-reserved and unavailable until successful reset; failures do not schedule reboot.
@@ -242,6 +242,10 @@ are in [Storage Worker State](#storage-worker-state); the
 - **Startup:** MSC is disabled. The storage worker asynchronously initializes the configured card and mounts its
   existing FAT/exFAT filesystem without requiring a dashboard connection, CDC session, or self-test click.
   Startup does not wait for a usable card; absent, unsupported, or damaged media must not block USB management.
+- **USB interfaces:** CDC, HID and MSC remain present regardless of ownership. While Pico owns the card, MSC reports
+  no medium; the OS may show an empty removable drive. Ownership changes do not disconnect USB or reset the serial
+  console. When media becomes available to the host, SCSI Unit Attention (`06/28/00`) requests a media/cache refresh.
+  Reboot and confirmed forced settings save still disconnect USB.
 - **Firmware use:** keep the filesystem mounted and ready for serialized reads/writes whenever firmware owns healthy
   media. Self-test operates on this existing mount, checks the reserved path and free space, then writes and verifies
   its temporary file. It never mounts or unmounts; cleanup leaves the filesystem mounted.
@@ -250,7 +254,7 @@ are in [Storage Worker State](#storage-worker-state); the
   rather than interrupting it. Firmware file access is unavailable while the USB host owns the card.
 - **Safe return:** after host safe eject and normal MSC disable, release USB ownership, discard host-invalidated
   filesystem state, reinitialize, and automatically remount. No second user action or self-test click is required.
-  USB reconnection or cleared transition flags alone do not establish mounted readiness.
+  A connected HID interface or cleared transition flags alone do not establish mounted readiness.
 - **Mount failure or insertion:** startup, insertion, and normal-return mount failures remain visible and retry at
   the existing five-second interval after each failed attempt completes. With board-provided card detect, debounce
   presence before acting. Never format, repair, or replay a failed write automatically.
@@ -278,7 +282,7 @@ stateDiagram-v2
     FirmwareUnmounted --> Mounting: explicit fs mount or card insertion
     FirmwareUnmounted --> ToHost: admitted MSC enable
     FirmwareOwned --> ToHost: admitted MSC enable / worker unmount
-    ToHost --> HostOwned: USB re-enumerates with MSC
+    ToHost --> HostOwned: MSC medium becomes available
     ToHost --> FirmwareOwned: unmount rejected / existing mount retained
     ToHost --> FirmwareUnmounted: acquisition rejected after unmount
     HostOwned --> ToFirmware: safe-eject then normal disable
@@ -287,7 +291,7 @@ stateDiagram-v2
     SavingAndRebooting --> Mounting: verified save and reset / MSC defaults off
     SavingAndRebooting --> HostOwned: save fails / host access restored without reset
     HostOwned --> FaultedHostOwned: card/media I/O fault
-    FaultedHostOwned --> Recovering: confirmed fault recovery / USB detached
+    FaultedHostOwned --> Recovering: confirmed fault recovery / MSC access revoked
     ToFirmware --> Mounting: ownership returned / automatic reinitialize and remount
     ForcedReturn --> FirmwareOwned: single mount attempt succeeds
     ForcedReturn --> FirmwareBlocked: single mount attempt fails
@@ -300,7 +304,7 @@ The diagram shows ownership and mount policy, not every request state; normal re
 block even though that exceptional path is omitted. Worker admission remains held through file cleanup,
 command reply draining, and the relevant ownership transition. A failed force-return mount leaves firmware owning the
 card but the volume unmounted; it must not be interpreted as a successful return to a usable filesystem. Fault recovery
-is distinct: it detaches faulted host-owned media and reinitializes without claiming a clean eject or automatically
+is distinct: it revokes access to faulted host-owned media and reinitializes without claiming a clean eject or automatically
 mounting the filesystem.
 
 ### Storage Worker State

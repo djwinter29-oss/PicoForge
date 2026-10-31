@@ -940,7 +940,7 @@ application, a statically
 allocated FreeRTOS recursive mutex
 serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
-[CDC recovery workflow](../../guides/usb-cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
+[CDC recovery workflow](../../guides/usb-cdc-cli.md#faulted-msc-recovery) revokes access to faulted MSC media
 before returning ownership and queues worker-only reinitialization. It never
 reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
 inhibited until a successful explicit `fs mount`; presence debounce continues.

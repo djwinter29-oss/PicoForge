@@ -297,9 +297,10 @@ returns a non-consuming current snapshot. The sequence increments for each accep
 | **Total** | **34** | | **35 bytes including report ID.** |
 
 The three MSC fields describe the ownership transition, not SD sample validity. `msc_enabled` is `1` only when the
-host owns the card and the MSC configuration is active. `msc_transition_pending` is `1` from acceptance of a valid
+host owns the card; the MSC interface remains present even when the card is unavailable to USB.
+`msc_transition_pending` is `1` from acceptance of a valid
 MSC request that requires a transition until ownership and the resulting USB/storage state settle; it remains `0`
-for an already-in-state no-op. HID may be temporarily unavailable while USB disconnects and re-enumerates.
+for an already-in-state no-op. Ownership changes do not disconnect HID or CDC.
 `msc_request_rejected` describes the most recent syntactically valid opcode `3` request: clear it when that request
 is received, then set it if the request is rejected or its transition fails. Malformed report envelopes do not
 change these fields.
@@ -571,8 +572,9 @@ rejects the request, leaves firmware ownership intact, and does not format the c
 are rejected while unrelated storage work or replies are outstanding. Repeating action `1` while MSC is already
 enabled completes as a no-op; repeating action `0` while MSC is already disabled completes as a no-op and does not
 retry a failed filesystem mount. Action `2` is only valid while MSC is enabled; otherwise reject it as an invalid
-operation argument. A successful ownership transition briefly disconnects USB and re-enumerates; HID is unavailable
-during that interval.
+operation argument. The CDC/HID/MSC configuration stays fixed during ownership transitions. MSC reports
+Not Ready/Medium Not Present (`02/3A/00`) while firmware owns the card. Newly available media raises
+Unit Attention/Medium Changed (`06/28/00`) before host block access resumes, including after host reload.
 
 Action `0` is the normal disable request, intended after the user safely ejects the volume through the host operating
 system. Firmware requires its SCSI eject indication (unless removal is confirmed) and rejects host removal prevention
@@ -580,26 +582,27 @@ or failed device-side sync. These checks cannot establish host-cache durability 
 The HID client only delivers the request and must not invoke OS eject/unmount commands.
 Action `2` is force return and requires both the report's confirmation flag and the dashboard's explicit data-loss
 warning/confirmation. It does not synthesize a successful SCSI eject. For either disable action, firmware rejects a
-busy transition or failed device-side sync before detach; in that case MSC remains enabled and host-owned.
+busy transition or failed device-side sync before release; in that case MSC remains enabled and host-owned.
 
-After action `0` passes eject/sync checks, ownership returns to firmware and USB re-enumerates without MSC.
+After action `0` passes eject/sync checks, ownership returns to firmware and MSC reports no medium.
 The storage worker automatically reinitializes and remounts under the normal lifecycle policy, including paced
 retries on mount failure unless an earlier recovery block remains active. The transition flag can clear before this
 background mount completes; hosts must verify fresh mounted storage status before allowing file operations or Start.
 
-Action `2` disconnects USB before releasing SD ownership. The storage worker makes one initialization and mount
+Action `2` revokes MSC access before releasing SD ownership, without disconnecting USB.
+The storage worker makes one initialization and mount
 attempt, and `msc_transition_pending` remains set until that attempt finishes; pending is clear in either terminal
 outcome. On success, MSC is disabled and firmware owns the mounted storage. On initialization or mount failure,
 MSC remains disabled, `msc_request_rejected` is set, and storage remains unmounted with automatic retries blocked
 until an explicit successful `fs mount`. No automatic
-formatting, filesystem repair, or failed-write replay is performed. A connected HID device after re-enumeration does
+formatting, filesystem repair, or failed-write replay is performed. A connected HID device does
 not prove that the filesystem remounted; hosts wait for pending to clear, inspect rejection, and verify storage
 state. Faulted-media recovery is a separate explicit workflow and is not a clean eject.
 
 Device-side sync cannot flush host-cached writes. Force return may lose data or corrupt the filesystem even if
 PicoForge later mounts successfully. Stop host file activity and manually safely eject whenever possible before
-requesting either disable action. If a pre-detach operation fails, the host still owns the card. If the post-detach
-mount fails, firmware owns the card but leaves it unmounted; the host must not infer recovery from USB reconnection.
+requesting either disable action. If a pre-release operation fails, the host still owns the card. If the post-release
+mount fails, firmware owns the card but leaves it unmounted; the host must not infer recovery from HID availability.
 The card is never automatically formatted or repaired.
 
 ## Host Polling and Validation
@@ -614,13 +617,13 @@ The card is never automatically formatted or repaired.
    not infer that zero card values mean an empty card.
 3. Submit all writable operations through report `20` with a fresh nonzero transaction ID. Read GET until the matching
    result is terminal. For opcode `3`, `Completed` means the transition was accepted/queued, not that ownership
-   changed: after any USB re-enumeration, reopen the same authorized HID device and monitor report `10` until
+   changed: keep monitoring report `10` until
    `msc_transition_pending` clears, then inspect `msc_enabled` and `msc_request_rejected`. After return, also verify
    fresh mounted filesystem status; normal-disable completion can precede background remount. Do not retry an uncertain
    non-idempotent operation.
 4. Use report `10` for storage/MSC state and, when capability bit 5 is set, report `11` for self-test progress and
-   terminal status; SET acknowledgement is not operation completion. For MSC re-enumeration, reopen the same
-   authorized device and reread reports `1` and `2`.
+   terminal status; SET acknowledgement is not operation completion. If older firmware re-enumerates for MSC,
+   reopen the same authorized device and reread reports `1` and `2`.
 5. Read persisted settings from Feature `2`. To save and apply them, confirm with the user, issue opcode `6`, and
    verify the saved values in its completion result. Firmware reboots automatically only after a successful save.
    Reconnect and reread Feature `2`; opcode `2` remains available for a standalone reboot.

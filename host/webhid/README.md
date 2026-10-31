@@ -55,7 +55,7 @@ All operations serialize Feature 20 SET/GET transactions, matching both transact
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for
 fresh corresponding Input status. A timeout or disconnect never replays a command; uncertain results block further
 writes. Reconnecting reads the outstanding result without resubmitting it. Do not run competing HID writers.
-USB sharing hides the benchmark from submission through reconnect until fresh status confirms the requested
+USB sharing hides the benchmark from submission until fresh status confirms the requested
 ownership and a finished transition, or an explicit rejection. Self-test acceptance keeps controls pending until
 a newer status report, including sequence rollover. Active/pending tests disable settings controls without a
 routine waiting notice; Save availability indicates edited settings without a redundant unsaved-changes notice.
@@ -73,9 +73,11 @@ The reconnect path verifies the original transaction and saved values without re
 [forced-save policy](../../docs/design/settings.md#forced-save-and-reboot). Older firmware keeps saving blocked
 until storage returns to Pico; self-test and transition gates still apply.
 
-USB ownership transitions briefly re-enumerate. The WebHID API does not expose the USB serial string, so the
-dashboard identifies a reconnect candidate by reading Feature 1 and matching its stable device UID before
-resuming; it does not replay the prior command. **Return to Pico** is explicitly confirmed force return, not an OS eject.
+USB ownership transitions leave CDC, HID and MSC connected; Pico-owned storage reports no medium through MSC.
+See the [storage lifecycle](../../docs/design/architecture.md#storage-ownership-lifecycle).
+For reboot or older firmware's ownership reconnects, the dashboard identifies a reconnect candidate by reading
+Feature 1 and matching its stable device UID before resuming; it never replays the prior command.
+**Return to Pico** is explicitly confirmed force return, not an OS eject.
 **Enable USB drive** first opens a matching storage-handoff dialog explaining exclusive host access and safe eject;
 Cancel or Escape sends no command, and confirmation rechecks the current safety gates.
 Stop host file activity and safely eject whenever possible first. See the
