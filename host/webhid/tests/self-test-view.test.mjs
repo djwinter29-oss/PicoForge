@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderStatus, renderSelfTest } from "../js/view.mjs";
+import { renderSelfTest as renderServerSelfTest } from "../../web/js/dashboard.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -8,7 +9,7 @@ function withDocument(run) {
   const saved = globalThis.document;
   const elements = new Map();
   const element = selector => {
-    if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", value: "0",
+    if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", value: "0", open: false,
       valueAsNumber: 32, setAttribute(name, value) { this[name] = value; },
       replaceChildren(...children) { this.children = children; } });
     return elements.get(selector);
@@ -55,6 +56,7 @@ test("self-test writes require fresh, known, mounted, firmware-owned state and v
   renderSelfTest(state); assert.equal(el("#self-test-start").disabled, false);
   state.self_test = { ...state.self_test, state: "writing", active: true };
   renderSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
   assert.equal(el("#self-test-cancel").disabled, false);
   assert.equal(el("#self-test-start").disabled, true);
   state.self_test.state = "cleanup"; renderSelfTest(state);
@@ -66,6 +68,7 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   state.self_test = decodeSelfTestReport(selfTest(6));
   state.self_test.request_error = 11;
   renderSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, false);
   assert.equal(el("#self-test-state").textContent, "Passed · 100%");
   assert.equal(el("#self-test-meter").dataset.result, "passed");
   assert.equal(el("#self-test-write-speed").textContent, "2.00 MiB/s");
@@ -79,6 +82,29 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   assert.equal(el("#self-test-meter").dataset.result, "");
   assert.match(el("#self-test-message").textContent, /Unknown error \(255\)/);
   assert.equal(el("#self-test-start").disabled, true);
+  state.self_test = { ...state.self_test, state: "failed", active: false };
+  renderSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
+  el("#self-test-disclosure").open = false;
+  renderSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, false);
+}));
+
+test("server dashboard opens the benchmark disclosure on active and failed transitions", () => withDocument(el => {
+  const state = snapshot();
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, false);
+
+  state.self_test = { ...state.self_test, state: "writing", active: true };
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
+  el("#self-test-disclosure").open = false;
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, false);
+
+  state.self_test = { ...state.self_test, state: "failed", active: false };
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
 }));
 
 test("identity RAM stays build accounting while stale inputs show no current values", () => withDocument(el => {

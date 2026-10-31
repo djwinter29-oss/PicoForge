@@ -145,27 +145,29 @@
     </section>
 
     <section class="runtime self-test self-test-meter" id="self-test-meter" aria-labelledby="self-test-title">
-      <div class="section-heading self-test-heading">
-        <div class="self-test-heading-copy">
+      <details class="pin-map-disclosure self-test-disclosure" id="self-test-disclosure">
+        <summary>
           <h2 id="self-test-title">Storage benchmark</h2>
           <span class="self-test-label" id="self-test-state">Unavailable</span>
+        </summary>
+        <div class="self-test-body">
+          <div class="self-test-controls">
+            <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
+            <button class="button" id="self-test-start" type="button" disabled>Start benchmark</button>
+            <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
+          </div>
+          <progress id="self-test-progress" value="0" max="100" aria-label="Benchmark progress"></progress>
+          <dl class="runtime-grid">
+            <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
+            <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
+            <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
+            <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
+            <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
+            <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
+          </dl>
+          <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
         </div>
-        <div class="self-test-controls">
-          <label for="self-test-size">Test file size (MiB)<input id="self-test-size" type="number" min="1" max="1024" step="1" value="32"></label>
-          <button class="button" id="self-test-start" type="button" disabled>Start benchmark</button>
-          <button class="button" id="self-test-cancel" type="button" disabled>Cancel</button>
-        </div>
-      </div>
-      <progress id="self-test-progress" value="0" max="100" aria-label="Benchmark progress"></progress>
-      <dl class="runtime-grid">
-        <div><dt>Written / target</dt><dd id="self-test-written">--</dd></div>
-        <div><dt>Write duration</dt><dd id="self-test-write-time">--</dd></div>
-        <div><dt>Average write speed</dt><dd id="self-test-write-speed">--</dd></div>
-        <div><dt>Verified / target</dt><dd id="self-test-read">--</dd></div>
-        <div><dt>Read duration</dt><dd id="self-test-read-time">--</dd></div>
-        <div><dt>Average read speed</dt><dd id="self-test-read-speed">--</dd></div>
-      </dl>
-      <p class="sample-time self-test-message" id="self-test-message" role="status" aria-live="polite"></p>
+      </details>
     </section>
 
     <dialog class="confirmation-dialog" id="configuration-dialog" aria-labelledby="configuration-dialog-title"

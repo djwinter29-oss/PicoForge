@@ -23,8 +23,9 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
     assert.match(dashboard, /id="self-test-start"[^>]*>Start benchmark<\/button>/);
     assert.doesNotMatch(dashboard, />Start self-test<\/button>/);
-    assert.match(dashboard, /class="self-test-heading-copy">\s*<h2[^>]*>Storage benchmark<\/h2>\s*<span[^>]*id="self-test-state"/);
-    assert.match(dashboard, /<\/button>\s*<\/div>\s*<\/div>\s*<progress id="self-test-progress"/);
+    assert.match(dashboard, /<details class="pin-map-disclosure self-test-disclosure" id="self-test-disclosure">/);
+    assert.match(dashboard, /<summary>\s*<h2[^>]*>Storage benchmark<\/h2>\s*<span[^>]*id="self-test-state"/);
+    assert.match(dashboard, /<\/button>\s*<\/div>\s*<progress id="self-test-progress"/);
     const benchmark = dashboard.split('aria-labelledby="self-test-title"')[1].split("</section>")[0];
     assert.deepEqual([...benchmark.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
       ["Written / target", "Write duration", "Average write speed", "Verified / target", "Read duration",

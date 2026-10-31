@@ -211,6 +211,10 @@ export function renderSelfTest(snapshot) {
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;
   document.querySelector("#self-test-meter").dataset.result = ["passed", "failed"].includes(status?.state)
     ? status.state : "";
+  const disclosure = document.querySelector("#self-test-disclosure");
+  const autoOpen = status?.active ? "active" : status?.state === "failed" ? "failed" : "";
+  if (autoOpen && disclosure.dataset.autoOpen !== autoOpen) disclosure.open = true;
+  disclosure.dataset.autoOpen = autoOpen;
   set("#self-test-write-speed", speed(status?.write_bytes_per_second));
   set("#self-test-read-speed", speed(status?.read_bytes_per_second));
   set("#self-test-written", status ? `${count(status.written_bytes)} / ${count(status.target_bytes)}` : "--");
