@@ -596,6 +596,10 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
             pf_wireless_status(buffer);
             return PF_WIRELESS_STATUS_SIZE;
         }
+        if (report_id == PF_WIRELESS_RESULT_REPORT_ID && reqlen >= PF_WIRELESS_RESULT_SIZE) {
+            pf_wireless_result_report(buffer);
+            return PF_WIRELESS_RESULT_SIZE;
+        }
 #endif
         if (report_id == PF_HID_IDENTITY_REPORT_ID && reqlen >= sizeof(pf_hid_identity_report_t)) {
             pf_hid_identity_report_t report;
@@ -651,6 +655,13 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            uint16_t bufsize)
 {
 #if PF_ENABLE_WIRELESS
+    if (instance == 0u && report_id == PF_WIRELESS_COMMAND_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
+        buffer != NULL && bufsize == PF_WIRELESS_COMMAND_SIZE) {
+        if (force_save_pending || force_save_reboot_waiting || reboot_requested)
+            pf_wireless_reject_command(buffer[2]);
+        else pf_wireless_command(buffer);
+        return;
+    }
     if (instance == 0u && report_id == PF_WIRELESS_CONFIG_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
         buffer != NULL && bufsize == PF_WIRELESS_REQUEST_SIZE) {
         if (force_save_pending || force_save_reboot_waiting || reboot_requested) {

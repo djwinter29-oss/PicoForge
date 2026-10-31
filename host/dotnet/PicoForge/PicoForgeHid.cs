@@ -184,7 +184,8 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 {
                     if (result.WifiEnabled != settings.WifiEnabled || result.BleEnabled != settings.BleEnabled ||
                         result.Ssid != settings.Ssid ||
-                        result.PasswordConfigured != (settings.Password is not null || previous.PasswordConfigured) ||
+                        result.PasswordConfigured != (settings.UseTestedWifi || settings.Password is not null ||
+                            previous.PasswordConfigured) ||
                         result.BleKeyConfigured != (settings.BleKey is not null || previous.BleKeyConfigured))
                         throw new InvalidOperationException(
                             "Wireless saved configuration was not confirmed; outcome is uncertain");
@@ -203,6 +204,62 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             Thread.Sleep(20);
         }
         throw new TimeoutException("Wireless provisioning outcome is uncertain; command was not resent");
+    }
+
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless()
+    {
+        var result = WirelessOperation(1, timeoutMilliseconds: 15000, terminalState: 2);
+        var networks = new List<WirelessNetworkResponse>();
+        for (byte page = 0; page < (result.Count + 5) / 6; page++)
+            networks.AddRange(WirelessOperation(2, page, timeoutMilliseconds: 5000,
+                terminalState: 2).Networks);
+        return networks;
+    }
+
+    public WirelessOperationResponse TestWireless(string ssid, string password)
+    {
+        var result = WirelessOperation(3, ssid: ssid, password: password,
+            timeoutMilliseconds: 35000, terminalState: 5);
+        return result;
+    }
+
+    public void CancelWirelessTest() => WirelessOperation(4, timeoutMilliseconds: 5000, terminalState: 0);
+
+    private WirelessOperationResponse WirelessOperation(byte operation, byte page = 0,
+        string? ssid = null, string? password = null, int timeoutMilliseconds = 15000,
+        byte terminalState = 2)
+    {
+        if (CommandOutcomeUncertain)
+            throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
+        var prior = ReadWireless();
+        if (prior.Status is "pending" or "busy")
+            throw new InvalidOperationException("Wireless provisioning is busy");
+        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
+        var request = HidProtocol.BuildWirelessCommand(transactionId, operation, page, ssid, password);
+        CommandOutcomeUncertain = true;
+        writeFeature(request);
+        var deadline = Environment.TickCount64 + timeoutMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            var result = HidProtocol.ParseWirelessOperation(
+                readFeature(HidProtocol.WirelessResultReportId, HidProtocol.WirelessResultFeatureSize));
+            if (result.TransactionId == transactionId)
+            {
+                if (result.State == 6)
+                {
+                    CommandOutcomeUncertain = false;
+                    throw new InvalidOperationException(operation == 3
+                        ? "Could not connect; check the password and try again" : "Wireless operation failed");
+                }
+                if (result.State == terminalState)
+                {
+                    CommandOutcomeUncertain = false;
+                    return result;
+                }
+            }
+            Thread.Sleep(100);
+        }
+        throw new TimeoutException("Wireless operation timed out; do not resend until its result is checked");
     }
 
     public void SetSelfTest(string action, uint sizeMib)

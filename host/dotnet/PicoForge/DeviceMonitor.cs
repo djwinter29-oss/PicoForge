@@ -13,6 +13,11 @@ internal interface IDeviceMonitor
     bool SetSelfTest(string action, uint sizeMib);
     WirelessResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
     WirelessResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless() =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessOperationResponse TestWireless(string ssid, string password) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    bool CancelWirelessTest() => throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 /// <summary>HID command writes used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
@@ -28,6 +33,11 @@ internal interface IHidCommands
     void SetSelfTest(string action, uint sizeMib);
     WirelessStatusResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
     WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless() =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessOperationResponse TestWireless(string ssid, string password) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    void CancelWirelessTest() => throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
@@ -154,14 +164,56 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             var current = Snapshot;
             if (activeClient is null || !current.Connected || current.Hardware?.WirelessSupported != true)
                 throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
-            if (current.CommandOutcomeUncertain || current.Msc is not { Enabled: false, TransitionPending: false } ||
+            if (current.CommandOutcomeUncertain || current.StorageStale ||
+                current.Msc is not { Enabled: false, TransitionPending: false } ||
                 current.RebootPending || current.SelfTest?.Active == true ||
-                ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
+                ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 &&
+                    (current.SelfTest is null || current.SelfTestStale)))
                 throw new InvalidOperationException("Wireless provisioning is unavailable while storage or the board is busy");
             var saved = ExecuteCommand(activeClient, () => activeClient.SetWireless(settings));
             lock (gate) snapshot = snapshot with { Settings = settings.Board, RebootPending = true };
             return new(saved, true, settings.Board);
         }
+    }
+
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless()
+    {
+        lock (deviceGate)
+        {
+            var client = RequireWirelessIdle();
+            return client.ScanWireless();
+        }
+    }
+
+    public WirelessOperationResponse TestWireless(string ssid, string password)
+    {
+        lock (deviceGate)
+        {
+            var client = RequireWirelessIdle();
+            return client.TestWireless(ssid, password);
+        }
+    }
+
+    public bool CancelWirelessTest()
+    {
+        lock (deviceGate)
+        {
+            var client = RequireWirelessIdle();
+            client.CancelWirelessTest();
+            return true;
+        }
+    }
+
+    private IHidCommands RequireWirelessIdle()
+    {
+        var current = Snapshot;
+        if (activeClient is null || !current.Connected || current.Hardware?.WirelessSupported != true)
+            throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
+        if (current.CommandOutcomeUncertain || current.Msc is not { Enabled: false, TransitionPending: false } ||
+            current.RebootPending || current.SelfTest?.Active == true ||
+            ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
+            throw new InvalidOperationException("Wireless scan and connection test require idle firmware-owned storage");
+        return activeClient;
     }
 
     public bool Reboot()

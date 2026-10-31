@@ -18,11 +18,11 @@ public sealed class WirelessTests
         WifiEnabled = true, BleEnabled = true, Ssid = "Pico網", ConfirmReboot = true, Board = Board
     };
 
-    private static readonly BootSettingsResponse Board = new(200, 1, 1);
-    private const string BoardJson = "\"board\":{\"system_clock_mhz\":200,\"sdcard_profile\":1,\"radios\":1}";
+    private static readonly BootSettingsResponse Board = new(200, 1, 3);
+    private const string BoardJson = "\"board\":{\"system_clock_mhz\":200,\"sdcard_profile\":1,\"radios\":3}";
 
     /// <summary>Report 2 readback for an SPI board without an LED; the default matches <see cref="Board"/>.</summary>
-    private static byte[] Configuration(byte radios = 1)
+    private static byte[] Configuration(byte radios = 3)
     {
         var report = ProtocolTests.ConfigurationReport();
         report[14] = (byte)(report[14] & ~0x02 | radios << 3);
@@ -40,18 +40,29 @@ public sealed class WirelessTests
         return report;
     }
 
+    private static byte[] OperationResult(byte state = 2, byte transaction = 1)
+    {
+        var report = new byte[221];
+        report[0] = 35;
+        report[1] = 1;
+        report[2] = transaction;
+        report[3] = state;
+        return report;
+    }
+
     private static HardwareInfoResponse Hardware(byte capabilities = 0x88) =>
         new("PicoForge", "RP2040", 1, "0001020304050607", BoardModel: 4, Capabilities: capabilities);
 
     private static StatusResponse Ready() =>
-        new(true, null, Hardware(), null, null, null, null, new(false, false, false));
+        new(true, null, Hardware(), null, null, null, null, new(false, false, false),
+            StorageStale: false, SelfTestStale: false);
 
     [Fact]
     public void BuilderUsesExactOffsetsAndOmittedCredentialsArePreserved()
     {
         var report = HidProtocol.BuildWirelessRequest(Settings(), 255);
         Assert.Equal(137, report.Length);
-        Assert.Equal(new byte[] { 31, 2, 255, 1, 3 }, report[..5]);
+        Assert.Equal(new byte[] { 31, 2, 255, 3, 3 }, report[..5]);
         Assert.Equal(Encoding.UTF8.GetBytes("Pico網"), report[5..12]);
         Assert.All(report[38..134], value => Assert.Equal(0, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
@@ -63,6 +74,33 @@ public sealed class WirelessTests
         Assert.Equal(Encoding.ASCII.GetBytes("secret12\0"), report[38..47]);
         Assert.All(report[102..134], value => Assert.Equal(0xaa, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
+        request.WifiEnabled = false;
+        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 2));
+    }
+
+    [Fact]
+    public void ScanAndTestCommandsHaveBoundedPayloadsAndSanitizedResults()
+    {
+        var scan = HidProtocol.BuildWirelessCommand(7, 1);
+        Assert.Equal(102, scan.Length);
+        Assert.Equal(new byte[] { 34, 1, 1, 7, 0, 0, 0 }, scan[..7]);
+        var test = HidProtocol.BuildWirelessCommand(8, 3, ssid: "Pico網", password: "secret12");
+        Assert.Equal(Encoding.UTF8.GetBytes("Pico網"), test[7..14]);
+        Assert.Equal(Encoding.ASCII.GetBytes("secret12"), test[39..47]);
+        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessCommand(1, 3, ssid: "", password: ""));
+
+        var result = OperationResult();
+        result[5] = 1;
+        result[7] = 4;
+        Encoding.UTF8.GetBytes("test").CopyTo(result, 8);
+        result[40] = unchecked((byte)-42);
+        result[41] = 1;
+        var decoded = HidProtocol.ParseWirelessOperation(result);
+        Assert.Single(decoded.Networks);
+        Assert.Equal(new WirelessNetworkResponse("test", -42, true), decoded.Networks[0]);
+        Assert.DoesNotContain("secret12", JsonSerializer.Serialize(decoded));
+        result[41] = 2;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(result));
     }
 
     [Theory]
@@ -152,6 +190,28 @@ public sealed class WirelessTests
         Assert.Contains(name, error.Message);
         Assert.Equal(1, writes);
         Assert.False(hid.CommandOutcomeUncertain);
+    }
+
+    [Fact]
+    public void WirelessOperationFailureIsKnownButDeliveryFailureBlocksReplay()
+    {
+        using var rejected = new PicoForgeHid(Hardware(), (id, _) =>
+            id == 30 ? Report(0, 0) : OperationResult(6, 1),
+            _ => { }, _ => Assert.Fail("No reconnect"));
+        Assert.Contains("Could not connect",
+            Assert.Throws<InvalidOperationException>(() => rejected.TestWireless("Pico網", "secret12")).Message);
+        Assert.False(rejected.CommandOutcomeUncertain);
+
+        var writes = 0;
+        using var disconnected = new PicoForgeHid(Hardware(), (_, _) => Report(0, 0), _ =>
+        {
+            writes++;
+            throw new IOException("detached");
+        }, _ => Assert.Fail("No reconnect"));
+        Assert.Throws<IOException>(() => disconnected.ScanWireless());
+        Assert.True(disconnected.CommandOutcomeUncertain);
+        Assert.Throws<InvalidOperationException>(() => disconnected.ScanWireless());
+        Assert.Equal(1, writes);
     }
 
     [Theory]
@@ -258,9 +318,13 @@ public sealed class WirelessTests
             Ready() with { Connected = false }, Ready() with { Hardware = Hardware(8) },
             Ready() with { Msc = null }, Ready() with { Msc = new(true, false, false) },
             Ready() with { Msc = new(false, true, false) }, Ready() with { RebootPending = true },
+            Ready() with { StorageStale = true },
             Ready() with { CommandOutcomeUncertain = true },
             Ready() with { Hardware = Hardware(0xa8) },
-            Ready() with { SelfTest = new(0, "writing", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, true) }
+            Ready() with { SelfTest = new(0, "writing", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, true) },
+            Ready() with { Hardware = Hardware(0xa8),
+                SelfTest = new(0, "idle", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false),
+                SelfTestStale = true }
         })
         {
             snapshot.SetValue(monitor, status);
@@ -302,7 +366,7 @@ public sealed class WirelessTests
         var saved = await client.PostAsJsonAsync("/api/wireless?board=a",
             new { wifi_enabled = true, ble_enabled = true, ssid = "Pico網",
                 password = "secret12", ble_key = new string('a', 64), confirm_reboot = true,
-                board = new { system_clock_mhz = 200, sdcard_profile = 1, radios = 1 } });
+                board = new { system_clock_mhz = 200, sdcard_profile = 1, radios = 3 } });
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
         var text = await saved.Content.ReadAsStringAsync();
         Assert.DoesNotContain("secret12", text);
@@ -311,6 +375,15 @@ public sealed class WirelessTests
         using var parsed = JsonDocument.Parse(text);
         Assert.True(parsed.RootElement.GetProperty("reboot_pending").GetBoolean());
         Assert.Equal("connected", parsed.RootElement.GetProperty("wireless").GetProperty("wifi_state").GetString());
+        var scanned = await client.PostAsync("/api/wireless/scan?board=a", null);
+        Assert.Equal(HttpStatusCode.OK, scanned.StatusCode);
+        Assert.Equal("a", dashboard.Board);
+        var tested = await client.PostAsJsonAsync("/api/wireless/test?board=a",
+            new { ssid = "Pico網", password = "secret12" });
+        Assert.Equal(HttpStatusCode.OK, tested.StatusCode);
+        var testText = await tested.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("secret12", testText);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/wireless/cancel?board=a", null)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/wireless?board=b")).StatusCode);
         Assert.Equal("b", dashboard.Board);
         dashboard.Failure = new IOException("secret12");
@@ -364,5 +437,18 @@ public sealed class WirelessTests
             Board = boardId;
             return new(HidProtocol.ParseWirelessStatus(Report()), true);
         }
+        public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId)
+        {
+            Board = boardId;
+            return [new("Pico網", -42, true)];
+        }
+        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password)
+        {
+            Board = boardId;
+            Assert.Equal("Pico網", ssid);
+            Assert.Equal("secret12", password);
+            return new(1, 5, 0, 0, 2, "192.168.1.2", []);
+        }
+        public bool CancelWirelessTest(string? boardId) { Board = boardId; return true; }
     }
 }

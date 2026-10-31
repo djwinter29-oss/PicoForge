@@ -1,8 +1,8 @@
 import { PicoForgeWebHid } from "./device.mjs?v=4";
 import { renderStatus, renderSelfTest } from "./view.mjs?v=6";
 import { PicoForgeBluetooth } from "./bluetooth.mjs";
-import { bindWirelessForm } from "./wireless-form.mjs?v=2";
-import { decodeWireless, saveWireless } from "./wireless.mjs?v=2";
+import { bindWirelessForm } from "./wireless-form.mjs?v=3";
+import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=3";
 
 const element = id => document.querySelector(`#${id}`);
 const connectionControl = element("connection-control");
@@ -32,6 +32,9 @@ const wirelessForm = bindWirelessForm({
     (!(client.state.hardware?.capabilities & 32) ||
       (client.state.freshness[11] === "fresh" && client.state.self_test?.valid_for_control)),
   load: async () => decodeWireless(await client.device.receiveFeatureReport(30)),
+  scan: () => scanWireless(client),
+  test: settings => testWireless(client, settings),
+  cancelTest: () => cancelWireless(client),
   changed: () => render(client.state),
 });
 let wirelessLoadedAt = 0;
@@ -73,6 +76,7 @@ function render(state) {
     control.disabled = !settingsReady || !state.settings_supported;
   }
   settingsSave.disabled ||= !settingsDirty && !wirelessForm.dirty();
+  settingsSave.disabled ||= !wirelessForm.canSave();
   // Credentials have no forced-save path: provisioning requires firmware-owned storage.
   settingsSave.disabled ||= wirelessForm.dirty() && Boolean(state.msc?.enabled);
   settingsSave.disabled ||= Boolean(state.msc?.enabled && !(state.hardware?.capabilities & 64));
@@ -163,7 +167,8 @@ element("confirm-configuration").addEventListener("click", () => run(async () =>
     if (await client.saveSettings(settings, configurationForceSave)) settingsDirty = false;
   } else {
     try {
-      wirelessForm.finish(await saveWireless(client, { ...wirelessForm.request(), board: settings }));
+      wirelessForm.finish(await saveWireless(client, { ...wirelessForm.request(),
+        wifi_enabled: Boolean(settings.radios & 1), ble_enabled: Boolean(settings.radios & 2), board: settings }));
       settingsDirty = false;
       client.update({ settings_message: "Settings saved. Waiting for the board to reboot." });
     } catch (error) {
@@ -175,7 +180,7 @@ element("confirm-configuration").addEventListener("click", () => run(async () =>
 }));
 settingsReboot.addEventListener("click", () => {
   if (settingsReboot.disabled) return;
-  element("reboot-consequence").textContent = settingsDirty
+  element("reboot-consequence").textContent = settingsDirty || wirelessForm.dirty()
     ? "Unsaved dashboard changes will be lost." : "Saved next-boot settings will be applied.";
   rebootDialog.showModal();
 });

@@ -63,6 +63,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   let wirelessFailure = 0;
   let wirelessError = "Storage busy";
   const wirelessSettings = [];
+  const testedWireless = [];
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
   globalThis.document = {
     querySelector: element,
@@ -88,6 +89,10 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     if (url.startsWith("/api/status?board=")) {
       if (statusFails) throw new Error("status down");
       return { ok: true, json: async () => structuredClone(connected) };
+    }
+    if (url.startsWith("/api/wireless/test?board=")) {
+      testedWireless.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ test: { ipv4: "192.168.1.9" } }) };
     }
     if (url.startsWith("/api/wireless?board=")) {
       if (options.method !== "POST") return { ok: true, json: async () => ({
@@ -456,25 +461,33 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     handlers.get("#board-select:change")();
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(requestedUrls.includes("/api/status?board=board-b"));
-    assert.equal(elements.get("#wireless-panel").hidden, true);
+    assert.equal(elements.get("#wireless-actions").hidden, true);
     connected.hardware.capabilities = 128 | 16 | 2;
     connected.settings.radios = 3;
     connected.storage_stale = false;
     connected.msc = { enabled: false, transition_pending: false };
     await tick();
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(elements.get("#wireless-panel").hidden, false);
+    assert.equal(elements.get("#wireless-actions").hidden, false);
     assert.equal(elements.get('label[for="settings-wifi"]').hidden, false);
     assert.equal(elements.get('label[for="settings-ble"]').hidden, false);
     assert.equal(elements.get("#settings-wifi").value, "1");
     assert.equal(elements.get("#settings-ble").value, "1");
     assert.equal(elements.get("#wifi-ssid").value, "saved");
     assert.equal(elements.get("#settings-save").disabled, true);
+    handlers.get("#wifi-open:click")();
+    handlers.get("#wifi-other:click")();
     elements.get("#wifi-ssid").value = "new-network";
     handlers.get("#wifi-ssid:input")();
-    assert.equal(elements.get("#settings-save").disabled, false, "credential edits enable Board configuration save");
     elements.get("#wifi-password").value = "new-passphrase";
-    handlers.get("#wireless-generate:click")();
+    handlers.get("#wifi-password:input")();
+    assert.equal(elements.get("#settings-save").disabled, true, "unverified Wi-Fi credentials cannot be saved");
+    await handlers.get("#wifi-connect:click")();
+    assert.deepEqual(testedWireless.at(-1), { ssid: "new-network", password: "new-passphrase" });
+    assert.equal(elements.get("#settings-save").disabled, false);
+    assert.equal(elements.get("#settings-save").disabled, false, "staged wireless settings enable combined save");
+    handlers.get("#ble-open:click")();
+    handlers.get("#ble-generate:click")();
     assert.match(elements.get("#ble-secret").value, /^[0-9a-f]{64}$/);
     handlers.get("#settings-save:click")();
     assert.equal(elements.get("#configuration-wireless-warning").hidden, false);
@@ -485,14 +498,13 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     wirelessFailure = 409;
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 1);
-    assert.match(elements.get("#wireless-status").textContent, /Storage busy/);
+    assert.match(elements.get("#wifi-status").textContent, /Storage busy/);
     assert.match(elements.get("#settings-note").textContent, /Save failed: Storage busy/);
     assert.equal(elements.get("#settings-save").disabled, false, "a rejected save stays retryable");
     assert.equal(elements.get("#wifi-password").value, "");
     assert.equal(elements.get("#ble-secret").value, "");
     wirelessFailure = 0;
-    elements.get("#wifi-password").value = "new-passphrase";
-    handlers.get("#wireless-generate:click")();
+    handlers.get("#ble-generate:click")();
     handlers.get("#settings-save:click")();
     const saving = handlers.get("#confirm-configuration:click")();
     assert.equal(elements.get("#board-select").disabled, true);
@@ -504,17 +516,24 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(wirelessSettings[1].confirm_reboot, true);
     assert.equal(wirelessSettings[1].wifi_enabled, true);
     assert.equal(wirelessSettings[1].ble_enabled, true);
+    assert.equal(wirelessSettings[1].use_tested_wifi, true);
+    assert.equal(Object.hasOwn(wirelessSettings[1], "password"), false);
     assert.deepEqual(wirelessSettings[1].board, { system_clock_mhz: 200, sdcard_profile: 0, radios: 3 });
-    assert.match(elements.get("#wireless-status").textContent, /saved/);
+    assert.match(elements.get("#wifi-status").textContent, /saved/);
     assert.match(elements.get("#settings-note").textContent, /Settings saved. Reboot requested/);
     assert.equal(elements.get("#settings-save").disabled, true);
     await tick();
     wirelessFailure = 503;
+    handlers.get("#wifi-open:click")();
+    handlers.get("#wifi-other:click")();
     elements.get("#wifi-ssid").value = "uncertain-network";
     handlers.get("#wifi-ssid:input")();
+    elements.get("#wifi-password").value = "new-passphrase";
+    handlers.get("#wifi-password:input")();
+    await handlers.get("#wifi-connect:click")();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 3);
-    assert.match(elements.get("#wireless-status").textContent, /uncertain.*not resent/);
+    assert.match(elements.get("#wifi-status").textContent, /uncertain.*not resent/);
     await tick();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 3);
@@ -525,11 +544,16 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#ble-secret").value, "");
     wirelessFailure = 409;
     wirelessError = "Wireless outcome is uncertain";
+    handlers.get("#wifi-open:click")();
+    handlers.get("#wifi-other:click")();
     elements.get("#wifi-ssid").value = "mismatched-network";
     handlers.get("#wifi-ssid:input")();
+    elements.get("#wifi-password").value = "new-passphrase";
+    handlers.get("#wifi-password:input")();
+    await handlers.get("#wifi-connect:click")();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 4);
-    assert.match(elements.get("#wireless-status").textContent, /uncertain.*not resent/);
+    assert.match(elements.get("#wifi-status").textContent, /uncertain.*not resent/);
     await tick();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 4);

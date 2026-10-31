@@ -88,22 +88,11 @@
           </select>
         </label>
       </div>
-      <details class="pin-map-disclosure" id="wireless-panel" hidden>
-        <summary>Wi-Fi and Bluetooth</summary>
-        <p>A radio starts after reboot only when its Board configuration switch is enabled and it is
-          provisioned. Save and Reboot saves these fields with the board settings. Credentials are stored in
-          unencrypted flash.</p>
-        <div class="settings-controls">
-          <label for="wifi-ssid">SSID<input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
-          <label for="wifi-password">New Wi-Fi password (blank keeps saved)
-            <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
-          <label for="ble-secret">New BLE control key (blank keeps saved)
-            <input id="ble-secret" type="password" maxlength="64" autocomplete="new-password"></label>
-          <button class="button button-secondary" id="wireless-generate" type="button">Generate BLE key</button>
-        </div>
-        <p>The BLE key authenticates control commands; diagnostics remain public. It does not encrypt the connection.</p>
-        <p id="wireless-status" role="status" aria-live="polite"></p>
-      </details>
+      <div class="wireless-actions" id="wireless-actions" hidden>
+        <button class="button button-secondary" id="wifi-open" type="button">Configure Wi-Fi…</button>
+        <button class="button button-secondary" id="ble-open" type="button">Configure Bluetooth…</button>
+      </div>
+      <p id="wireless-summary" role="status" aria-live="polite"></p>
       <details class="pin-map-disclosure">
         <summary>Pin configuration</summary>
         <div class="pin-tables">
@@ -255,5 +244,34 @@
       <p class="settings-note" id="settings-note">Waiting for a PicoForge connection.</p>
     </footer>
   </main>
+  <dialog class="confirmation-dialog wireless-dialog" id="wifi-dialog" aria-labelledby="wifi-dialog-title">
+    <h2 id="wifi-dialog-title">Connect to Wi-Fi</h2>
+    <p>Scan for nearby networks or enter a network name. A connection test does not save credentials to flash.</p>
+    <button class="button button-secondary" id="wifi-scan" type="button">Scan for networks</button>
+    <p id="wifi-status" role="status" aria-live="polite"></p>
+    <div id="wifi-networks" class="wifi-networks" role="listbox" aria-label="Available Wi-Fi networks"></div>
+    <button class="button button-secondary" id="wifi-other" type="button">Other network…</button>
+    <label id="wifi-manual-label" hidden>Network name (SSID)
+      <input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
+    <label id="wifi-password-label">Password (leave blank for an open network)
+      <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
+    <div class="dialog-actions">
+      <button class="button" id="wifi-connect" type="button">Test connection</button>
+      <button class="button button-secondary" id="wifi-cancel" type="button">Cancel</button>
+    </div>
+  </dialog>
+  <dialog class="confirmation-dialog wireless-dialog" id="ble-dialog" aria-labelledby="ble-dialog-title">
+    <h2 id="ble-dialog-title">Bluetooth control key</h2>
+    <p>Generate a new key and save it with Board configuration. The key authenticates control commands; it does not
+      encrypt the Bluetooth connection. The board cannot show a saved key again.</p>
+    <label for="ble-secret">New control key
+      <input id="ble-secret" type="password" readonly autocomplete="off"></label>
+    <div class="dialog-actions">
+      <button class="button button-secondary" id="ble-generate" type="button">Generate key</button>
+      <button class="button button-secondary" id="ble-copy" type="button" disabled>Copy key</button>
+      <button class="button button-secondary" id="ble-cancel" type="button">Close</button>
+    </div>
+    <p id="ble-status" role="status" aria-live="polite"></p>
+  </dialog>
 </body>
 </html>

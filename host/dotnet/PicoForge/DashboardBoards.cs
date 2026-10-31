@@ -18,6 +18,12 @@ internal interface IDashboardBoards
     WirelessResponse ReadWireless(string? boardId) => throw new InvalidOperationException("Wireless provisioning unavailable");
     WirelessResponse SetWireless(string? boardId, WirelessRequest settings) =>
         throw new InvalidOperationException("Wireless provisioning unavailable");
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    bool CancelWirelessTest(string? boardId) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 internal sealed class DashboardBoards : IDisposable, IDashboardBoards
@@ -77,6 +83,11 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
     public bool SetLed(string? boardId, bool on) => Reader(boardId).SetLed(on);
     public WirelessResponse ReadWireless(string? boardId) => Reader(boardId).ReadWireless();
     public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => Reader(boardId).SetWireless(settings);
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
+        Reader(boardId).ScanWireless();
+    public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+        Reader(boardId).TestWireless(ssid, password);
+    public bool CancelWirelessTest(string? boardId) => Reader(boardId).CancelWirelessTest();
 
     public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
         Reader(boardId).SetMsc(enabled, force);

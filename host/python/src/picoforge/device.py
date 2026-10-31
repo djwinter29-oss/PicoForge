@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from math import ceil
 from time import monotonic, sleep
-from typing import Any
+from typing import Any, Callable
 
 from .protocol import (
     CAP_WIRELESS,
     WIRELESS_REPORT_ID,
     WIRELESS_FEATURE_SIZE,
+    WIRELESS_RESULT_REPORT_ID,
+    WIRELESS_RESULT_FEATURE_SIZE,
     build_wireless_configuration_report,
+    build_wireless_command_report,
     parse_wireless_status_report,
+    parse_wireless_result_report,
     CAP_LED,
     CAP_REBOOT,
     CAP_SAVE_SETTINGS,
@@ -261,7 +265,8 @@ class PicoForgeHid:
                             "wifi_enabled": settings["wifi_enabled"],
                             "ble_enabled": settings["ble_enabled"],
                             "ssid": command[5:38].split(b"\0", 1)[0].decode("utf-8"),
-                            "password_configured": previous["password_configured"] if command[4] & 1 else True,
+                            "password_configured": (True if settings.get("use_tested_wifi")
+                                else previous["password_configured"] if command[4] & 1 else True),
                             "ble_key_configured": previous["ble_key_configured"] if command[4] & 2 else True,
                         }
                         if any(result[key] != value for key, value in expected.items()):
@@ -280,6 +285,64 @@ class PicoForgeHid:
                 sleep(0.05)
         except OSError:
             raise OSError("Wireless provisioning delivery failed; outcome is uncertain; command was not resent") from None
+
+    def scan_wireless(self, *, on_poll: Callable[[], None] | None = None) -> list[dict[str, object]]:
+        """Scan for nearby access points and return strongest unique SSIDs."""
+        self._require_open()
+        scan = self._wireless_command(1, timeout=15.0, on_poll=on_poll)
+        networks: list[dict[str, object]] = []
+        for page in range((int(scan["count"]) + 5) // 6):
+            networks.extend(self._wireless_command(2, page=page, on_poll=on_poll)["networks"])
+        return networks
+
+    def test_wireless(
+        self, ssid: str, password: str = "", *, on_poll: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
+        """Test a temporary network join; firmware retains credentials only in RAM after success."""
+        self._require_open()
+        return self._wireless_command(3, ssid=ssid, password=password, timeout=35.0, terminal=5, on_poll=on_poll)
+
+    def cancel_wireless_test(self) -> None:
+        """Clear temporary test credentials from firmware RAM."""
+        self._require_open()
+        self._wireless_command(4)
+
+    def _wireless_command(
+        self, operation: int, *, page: int = 0, ssid: str = "", password: str = "",
+        timeout: float = 15.0, terminal: int | None = None,
+        on_poll: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
+        if self._command_uncertain:
+            raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
+        previous = self.read_wireless()
+        if previous["status"] in ("pending", "busy"):
+            raise RuntimeError("Wireless provisioning is busy")
+        transaction = self._next_transaction_id()
+        command = build_wireless_command_report(transaction, operation, page=page, ssid=ssid, password=password)
+        self._command_uncertain = True
+        try:
+            if self._device.send_feature_report(list(command)) != len(command):
+                raise OSError("Wireless command delivery failed; outcome is uncertain")
+        except OSError:
+            raise OSError("Wireless command delivery failed; outcome is uncertain; command was not resent") from None
+        deadline = monotonic() + timeout
+        expected = terminal if terminal is not None else {1: 2, 2: 2, 3: 5, 4: 0}[operation]
+        while monotonic() < deadline:
+            if on_poll is not None:
+                on_poll()
+            result = parse_wireless_result_report(
+                self._device.get_feature_report(WIRELESS_RESULT_REPORT_ID, WIRELESS_RESULT_FEATURE_SIZE))
+            if result["transaction_id"] == transaction:
+                if result["state"] == 6:
+                    self._command_uncertain = False
+                    if operation == 3:
+                        raise RuntimeError("Could not connect; check the password and try again")
+                    raise RuntimeError("Wireless operation failed")
+                if result["state"] == expected:
+                    self._command_uncertain = False
+                    return result
+            sleep(0.1)
+        raise TimeoutError("Wireless operation timed out; do not resend until its result is checked")
 
     def set_msc(self, enable: bool, *, force: bool = False) -> dict[str, object]:
         self._require_open()

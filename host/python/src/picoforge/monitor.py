@@ -128,8 +128,8 @@ class DeviceMonitor:
         self._thread.join(timeout=2.0)
 
     def _send_control(
-        self, method: Callable[..., dict[str, object]], *args: object, **kwargs: object
-    ) -> dict[str, object]:
+        self, method: Callable[..., Any], *args: object, **kwargs: object
+    ) -> Any:
         if getattr(self, "_command_outcome_uncertain", False):
             raise RuntimeError("a prior command outcome is uncertain; no further writes are allowed")
         try:
@@ -283,22 +283,95 @@ class DeviceMonitor:
             return {"wireless": self._active_client.read_wireless(),
                     "reboot_pending": self.snapshot().get("reboot_pending", False)}
 
+    def scan_wireless(self) -> dict[str, object]:
+        with self._device_lock:
+            snapshot = self.snapshot()
+            self._require_wireless_idle(snapshot)
+            return {"networks": self._send_control(self._active_client.scan_wireless,
+                                                   on_poll=self._poll_wireless_inputs)}
+
+    def test_wireless(self, ssid: str, password: str = "") -> dict[str, object]:
+        with self._device_lock:
+            snapshot = self.snapshot()
+            self._require_wireless_idle(snapshot)
+            return {"test": self._send_control(self._active_client.test_wireless, ssid, password,
+                                               on_poll=self._poll_wireless_inputs)}
+
+    def _poll_wireless_inputs(self) -> None:
+        """Drain a bounded input batch while the wireless command owns the HID lock."""
+        for _ in range(16):
+            item = self._active_client.read_input_report(timeout_ms=0)
+            if item is None:
+                break
+            self._apply_input_report(item)
+
+    def _apply_input_report(self, item: dict[str, object] | None) -> None:
+        if item is None:
+            return
+        kind = item["kind"]
+        data = item["data"]
+        with self._lock:
+            if kind == "runtime":
+                self._input_received_at[3] = time.monotonic()
+                self._snapshot.update(
+                    connected=True, error=None, runtime=data,
+                    board_status=_board_status_from_runtime(data),
+                    updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                )
+            elif kind == "memory":
+                if (not data["msc"]["transition_pending"]
+                        and data["msc"]["enabled"] == getattr(self, "_msc_reconnect_enabled", None)):
+                    self._msc_reconnect_deadline = 0.0
+                    self._msc_reconnect_enabled = None
+                self._input_received_at[10] = time.monotonic()
+                self._snapshot.update(
+                    connected=True, error=None, memory=data, filesystem_format=data["filesystem_format"],
+                    msc=data["msc"], updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                )
+            elif kind == "self_test":
+                self._input_received_at[11] = time.monotonic()
+                self._snapshot.update(
+                    connected=True, error=None, self_test=data,
+                    updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                )
+
+    def cancel_wireless_test(self) -> dict[str, object]:
+        with self._device_lock:
+            snapshot = self.snapshot()
+            self._require_wireless_idle(snapshot)
+            self._send_control(self._active_client.cancel_wireless_test)
+            return {"cancelled": True}
+
+    def _require_wireless_idle(self, snapshot: dict[str, object]) -> None:
+        hardware = snapshot.get("hardware") or {}
+        msc = snapshot.get("msc")
+        self_test = snapshot.get("self_test")
+        freshness = snapshot.get("report_freshness")
+        storage_report = freshness.get("10") if isinstance(freshness, dict) else None
+        self_test_report = freshness.get("11") if isinstance(freshness, dict) else None
+        if (self._active_client is None or not snapshot.get("connected")
+                or not hardware.get("wireless_supported")):
+            raise RuntimeError("Wireless provisioning is unavailable on this firmware")
+        if snapshot.get("command_outcome_uncertain"):
+            raise RuntimeError("A prior command outcome is uncertain; no further writes are allowed")
+        if (not isinstance(storage_report, dict) or storage_report.get("available") is not True
+                or storage_report.get("stale") is not False
+                or snapshot.get("storage_stale") is not False
+                or not isinstance(msc, dict) or msc.get("enabled") or msc.get("transition_pending")
+                or snapshot.get("reboot_pending")
+                or (snapshot.get("control_result") or {}).get("status") in ("pending", "busy")
+                or hardware.get("self_test_supported") and (
+                    not isinstance(self_test, dict) or not isinstance(self_test_report, dict)
+                    or self_test_report.get("available") is not True or self_test_report.get("stale") is not False
+                    or snapshot.get("self_test_stale") is not False)
+                or isinstance(self_test, dict) and self_test.get("active")):
+            raise RuntimeError("Wireless scan and connection test require idle firmware-owned storage")
+
     def set_wireless(self, settings: dict[str, object]) -> dict[str, object]:
         build_wireless_configuration_report(settings)
         with self._device_lock:
             snapshot = self.snapshot()
-            hardware = snapshot.get("hardware") or {}
-            msc = snapshot.get("msc")
-            self_test = snapshot.get("self_test")
-            if (self._active_client is None or not snapshot.get("connected")
-                    or not hardware.get("wireless_supported")):
-                raise RuntimeError("Wireless provisioning is unavailable on this firmware")
-            if (not isinstance(msc, dict) or msc.get("enabled") or msc.get("transition_pending")
-                    or snapshot.get("reboot_pending")
-                    or (snapshot.get("control_result") or {}).get("status") in ("pending", "busy")
-                    or (hardware.get("self_test_supported") and not isinstance(self_test, dict))
-                    or isinstance(self_test, dict) and self_test.get("active")):
-                raise RuntimeError("Wireless provisioning is unavailable while storage or the board is busy")
+            self._require_wireless_idle(snapshot)
             result = dict(self._send_control(self._active_client.set_wireless, settings))
             saved = result.pop("settings")
             with self._lock:
@@ -349,41 +422,7 @@ class DeviceMonitor:
                 while not self._stop.is_set():
                     with self._device_lock:
                         item = client.read_input_report(timeout_ms=250)
-                    if item is not None and item["kind"] == "runtime":
-                        runtime = item["data"]
-                        board_status = _board_status_from_runtime(runtime)
-                        with self._lock:
-                            self._input_received_at[3] = time.monotonic()
-                            self._snapshot.update(
-                                connected=True,
-                                error=None,
-                                runtime=runtime,
-                                board_status=board_status,
-                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                            )
-                    elif item is not None and item["kind"] == "memory":
-                        with self._lock:
-                            if (not item["data"]["msc"]["transition_pending"]
-                                    and item["data"]["msc"]["enabled"]
-                                    == getattr(self, "_msc_reconnect_enabled", None)):
-                                self._msc_reconnect_deadline = 0.0
-                                self._msc_reconnect_enabled = None
-                            self._input_received_at[10] = time.monotonic()
-                            self._snapshot.update(
-                                connected=True,
-                                error=None,
-                                memory=item["data"],
-                                filesystem_format=item["data"]["filesystem_format"],
-                                msc=item["data"]["msc"],
-                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                            )
-                    elif item is not None and item["kind"] == "self_test":
-                        with self._lock:
-                            self._input_received_at[11] = time.monotonic()
-                            self._snapshot.update(
-                                connected=True, error=None, self_test=item["data"],
-                                updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                            )
+                        self._apply_input_report(item)
             except (OSError, RuntimeError, ValueError) as error:
                 with self._lock:
                     reconnecting = (
@@ -491,6 +530,15 @@ class DashboardBoards:
 
     def read_wireless(self, board_id: str | None) -> dict[str, object]:
         return self._monitor(board_id).read_wireless()
+
+    def scan_wireless(self, board_id: str | None) -> dict[str, object]:
+        return self._monitor(board_id).scan_wireless()
+
+    def test_wireless(self, board_id: str | None, ssid: str, password: str = "") -> dict[str, object]:
+        return self._monitor(board_id).test_wireless(ssid, password)
+
+    def cancel_wireless_test(self, board_id: str | None) -> dict[str, object]:
+        return self._monitor(board_id).cancel_wireless_test()
 
     def set_wireless(self, board_id: str | None, settings: dict[str, object]) -> dict[str, object]:
         return self._monitor(board_id).set_wireless(settings)

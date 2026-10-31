@@ -10,6 +10,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .monitor import DashboardBoards
 from .protocol import (
+    build_wireless_command_report,
     build_wireless_configuration_report,
     build_self_test_command_report,
     build_settings_command_report,
@@ -102,6 +103,46 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             return jsonify({"error": str(error)}), 409
         except (OSError, ValueError):
             return jsonify({"error": "Wireless status unavailable"}), 503
+
+    @app.post("/api/wireless/scan")
+    def scan_wireless():
+        try:
+            return jsonify(dashboard.scan_wireless(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless scan failed"}), 503
+
+    @app.post("/api/wireless/test")
+    def test_wireless():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) - {"ssid", "password"}:
+            return jsonify({"error": "Expected SSID and optional password"}), 400
+        try:
+            build_wireless_command_report(1, 3, ssid=payload.get("ssid", ""),
+                                          password=payload.get("password", ""))
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        try:
+            return jsonify(dashboard.test_wireless(request.args.get("board"), payload["ssid"],
+                                                   payload.get("password", "")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except TimeoutError:
+            return jsonify({"error": "Wi-Fi test timed out; outcome is uncertain. Restart the dashboard "
+                                     "and reconnect the board before retrying."}), 503
+        except (OSError, ValueError):
+            return jsonify({"error": "Wi-Fi test result is uncertain. Restart the dashboard "
+                                     "and reconnect the board before retrying."}), 503
+
+    @app.post("/api/wireless/cancel")
+    def cancel_wireless_test():
+        try:
+            return jsonify(dashboard.cancel_wireless_test(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Could not clear the wireless test credentials"}), 503
 
     @app.post("/api/wireless")
     def set_wireless():

@@ -12,7 +12,7 @@ Report ID `0` is unused. Unassigned IDs have no payload and require no padding.
 | `1`-`9` | Device information and telemetry | `1` Identity; `2` Board Configuration; `3` Telemetry. |
 | `10`-`19` | Application status | `10` Storage Status; `11` Self-Test Status. |
 | `20`-`29` | Device and application control | `20` Control Command & Result. |
-| `30`-`39` | Wireless management | `30` Sanitized wireless status; `31` USB-only provisioning. |
+| `30`-`39` | Wireless management | `30` status; `31` provisioning; `34` scan/test command; `35` results. |
 | `40`-`255` | Expansion | Unassigned. |
 
 Report ranges group responsibilities; the descriptor and firmware define each report's type, length, and permitted
@@ -58,7 +58,9 @@ These are logical groups, not separate HID usage pages or mandatory dashboard ta
 | `11` | Self-Test Status | Input | Device publishes / host reads | 32 bytes | Self-test state and progress. |
 | `20` | Control Command & Result | Feature | Host writes/reads | 9 bytes | LED, reboot, MSC, self-test, and settings operations. |
 | `30` | Wireless status | Feature | Host reads | 48 bytes | W boards, capability bit 7; sanitized status. |
-| `31` | Wireless provisioning | Feature | Host writes | 136 bytes | W boards, capability bit 7; private USB-only configuration, no readback. |
+| `31` | Wireless provisioning | Feature | Host writes | 136 bytes | W boards, bit 7; private config, no readback. |
+| `34` | Wireless operation | Feature | Host writes | 101 bytes | W boards (bit 7); scan, page, test, or cancel. |
+| `35` | Wireless operation result | Feature | Host reads | 220 bytes | W boards (bit 7); sanitized results. |
 
 Names are documentation labels, not additional wire fields.
 
@@ -69,11 +71,10 @@ payload in its data buffer. A .NET or other host adapter must follow its library
 normalize to the payload defined here before decoding. Some Feature-report APIs add a transport framing byte or
 fixed-size padding; remove only framing explicitly documented by that API, never a payload byte based only on its
 value. Validate the exact payload length after normalization. Multi-byte integers are little-endian; signed integers
-use two's complement. Existing reports fit within 64 bytes including report ID; wireless provisioning uses a
-137-byte HIDAPI buffer over control transfers, not an oversized interrupt endpoint. The layouts use version `1`, independent
-of firmware semantic version.
+use two's complement. Wireless Features 31, 34 and 35 use 137-, 102- and 221-byte HIDAPI buffers over control
+transfers, not oversized interrupt endpoints. The layouts use version `1`, independent of firmware semantic version.
 
-The [wireless design](../wireless.md#usb-contract) owns Feature 30/31 layouts and the restricted BLE transport.
+The [wireless design](../wireless.md#usb-contract) owns Feature 30/31/34/35 layouts and the restricted BLE transport.
 
 ### Connection and Read Flow
 

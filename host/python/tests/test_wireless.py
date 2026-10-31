@@ -1,16 +1,22 @@
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
 from picoforge.device import PicoForgeHid
 from picoforge.monitor import DeviceMonitor
-from picoforge.protocol import build_wireless_configuration_report, parse_wireless_status_report
+from picoforge.protocol import (
+    build_wireless_command_report,
+    build_wireless_configuration_report,
+    parse_wireless_result_report,
+    parse_wireless_status_report,
+)
 from picoforge.web import create_app
 from test_protocol import identity_report
 from picoforge.protocol import parse_identity_report
 
 
-BOARD = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 1}
+BOARD = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 3}
 
 
 def settings(**overrides):
@@ -25,6 +31,19 @@ def status(status_code=2, transaction=1):
     ssid = "Pico網".encode()
     report[10:10 + len(ssid)] = ssid
     report[43:45] = b"\1\1"
+    return bytes(report)
+
+
+def operation_result(state=2, transaction=1, page=0, networks=()):
+    report = bytearray(221)
+    report[:6] = bytes([35, 1, transaction, state, page, len(networks)])
+    for index, (ssid, rssi, secured) in enumerate(networks):
+        encoded = ssid.encode("utf-8")
+        offset = 7 + index * 35
+        report[offset] = len(encoded)
+        report[offset + 1:offset + 1 + len(encoded)] = encoded
+        report[offset + 33] = rssi & 0xFF
+        report[offset + 34] = int(secured)
     return bytes(report)
 
 
@@ -50,8 +69,11 @@ class WirelessTests(unittest.TestCase):
     def test_builder_offsets_sizes_and_preserved_credentials(self):
         report = build_wireless_configuration_report(settings(), 255)
         self.assertEqual(len(report), 137)
-        self.assertEqual(report[:5], bytes([31, 2, 255, 1, 3]))
+        self.assertEqual(report[:5], bytes([31, 2, 255, 3, 3]))
         self.assertEqual(report[134:], bytes([200, 0, 1]))
+        tested = build_wireless_configuration_report(settings(use_tested_wifi=True))
+        self.assertEqual(tested[4], 6)
+        self.assertEqual(tested[38:102], bytes(64))
         self.assertEqual(report[5:12], "Pico網".encode())
         self.assertEqual(report[38:134], bytes(96))
         report = build_wireless_configuration_report(settings(password="secret12", ble_key="ab" * 32))
@@ -62,7 +84,8 @@ class WirelessTests(unittest.TestCase):
 
     def test_input_rejection_never_echoes_credentials(self):
         for change in (
-            {"wifi_enabled": 1}, {"ble_enabled": None}, {"ssid": "é" * 17},
+            {"wifi_enabled": 1}, {"wifi_enabled": False}, {"ble_enabled": None}, {"ble_enabled": False},
+            {"ssid": "é" * 17},
             {"ssid": "\0"}, {"ssid": "\ud800"}, {"ssid": ""}, {"password": None},
             {"password": "short"}, {"password": "x" * 64}, {"password": "secret\nvalue"},
             {"password": "secret網"}, {"ble_key": "00" * 32}, {"ble_key": "gg" * 32},
@@ -76,6 +99,54 @@ class WirelessTests(unittest.TestCase):
             build_wireless_configuration_report(settings(), 0)
         with self.assertRaisesRegex(ValueError, "board"):
             build_wireless_configuration_report({key: value for key, value in settings().items() if key != "board"})
+
+    def test_scan_test_command_layout_and_result_validation(self):
+        command = build_wireless_command_report(9, 3, ssid="Pico網", password="secret12")
+        self.assertEqual(len(command), 102)
+        self.assertEqual(command[:7], bytes([34, 1, 3, 9, 0, 7, 8]))
+        self.assertEqual(command[7:14], "Pico網".encode())
+        self.assertEqual(command[39:47], b"secret12")
+        self.assertEqual(build_wireless_command_report(10, 2, page=2)[4], 2)
+        for args in ((0, 1), (1, 5), (1, 2, {"page": 3}), (1, 3, {"ssid": "", "password": ""}),
+                     (1, 3, {"ssid": "Pico", "password": "short"})):
+            transaction, operation, *rest = args
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                build_wireless_command_report(transaction, operation, **(rest[0] if rest else {}))
+        parsed = parse_wireless_result_report(operation_result(networks=[("Pico網", -42, True)]))
+        self.assertEqual(parsed["networks"], [{"ssid": "Pico網", "rssi": -42, "secured": True}])
+        for offset, value in ((1, 2), (3, 7), (4, 3), (5, 19), (41, 2), (220, 1)):
+            malformed = bytearray(operation_result())
+            malformed[offset] = value
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                parse_wireless_result_report(malformed)
+
+    def test_wireless_command_terminal_failure_is_known_but_delivery_failure_blocks_replay(self):
+        client = self.client([])
+        sent = []
+
+        def send(command):
+            sent.append(bytes(command))
+            return len(command)
+
+        def terminal(report_id, _size):
+            return status(0, 0) if report_id == 30 else operation_result(6, 1)
+
+        client._device.send_feature_report.side_effect = send
+        client._device.get_feature_report.side_effect = terminal
+        with self.assertRaisesRegex(RuntimeError, "Could not connect"):
+            client.test_wireless("Pico網", "secret12")
+        self.assertFalse(client._command_uncertain)
+        self.assertEqual(len(sent), 1)
+
+        client = self.client([])
+        client._device.get_feature_report.side_effect = lambda report_id, _size: status(0, 0)
+        client._device.send_feature_report.side_effect = OSError("detached")
+        with self.assertRaisesRegex(OSError, "outcome is uncertain"):
+            client.scan_wireless()
+        self.assertTrue(client._command_uncertain)
+        with self.assertRaisesRegex(RuntimeError, "uncertain"):
+            client.scan_wireless()
+        client._device.send_feature_report.assert_called_once()
 
     def test_status_is_sanitized_and_rejects_malformed_reports(self):
         parsed = parse_wireless_status_report(status())
@@ -120,6 +191,40 @@ class WirelessTests(unittest.TestCase):
                 client.set_wireless(settings())
             self.assertFalse(client._command_uncertain)
             client._device.send_feature_report.assert_called_once()
+
+    def test_wireless_scan_paging_and_test_join_are_single_attempts(self):
+        client = self.client([])
+        sent = []
+
+        def send(command):
+            sent.append(bytes(command))
+            return len(command)
+
+        def receive(report_id, _size):
+            if report_id == 30:
+                return status(2, 0)
+            operation, transaction = sent[-1][2], sent[-1][3]
+            if operation == 1:
+                result = bytearray(operation_result(2, transaction))
+                result[5] = 1
+                return result
+            if operation == 2:
+                return operation_result(2, transaction, networks=[("Pico網", -42, True)])
+            if operation == 3:
+                result = bytearray(operation_result(5, transaction))
+                result[217:221] = bytes([192, 168, 1, 5])
+                return result
+            return operation_result(0, transaction)
+
+        client._device.send_feature_report.side_effect = send
+        client._device.get_feature_report.side_effect = receive
+        with patch("picoforge.device.sleep"):
+            self.assertEqual(client.scan_wireless(), [{"ssid": "Pico網", "rssi": -42, "secured": True}])
+            self.assertEqual(client.test_wireless("Pico網", "secret12")["ipv4"], "192.168.1.5")
+            client.cancel_wireless_test()
+        self.assertEqual([command[2] for command in sent], [1, 2, 3, 4])
+        self.assertEqual(sent[2][39:47], b"secret12")
+        self.assertEqual(client._device.send_feature_report.call_count, 4)
 
     def test_disconnect_timeout_and_short_write_block_replays(self):
         for reports in ([status(0, 0), OSError("secret12")], [status(0, 0), status(1)]):
@@ -183,7 +288,14 @@ class WirelessTests(unittest.TestCase):
         monitor._active_client.set_wireless.return_value = {**parse_wireless_status_report(status()),
                                                             "settings": BOARD}
         monitor._snapshot = {"connected": True, "hardware": {"wireless_supported": True},
-                             "msc": {"enabled": False, "transition_pending": False}}
+                             "msc": {"enabled": False, "transition_pending": False}, "storage_stale": False}
+        monitor._input_received_at = {10: time.monotonic()}
+        monitor._active_client.scan_wireless.return_value = [{"ssid": "Pico網", "rssi": -42, "secured": True}]
+        monitor._active_client.test_wireless.return_value = {
+            "transaction_id": 1, "state": 5, "page": 0, "count": 0, "wifi_state": 3,
+            "ipv4": "192.168.1.5", "networks": [],
+        }
+        monitor._active_client.cancel_wireless_test.return_value = None
         return monitor
 
     def test_monitor_ownership_capability_busy_and_uncertainty_gates(self):
@@ -195,16 +307,25 @@ class WirelessTests(unittest.TestCase):
             {"self_test": {"active": True}}, {"reboot_pending": True},
             {"control_result": {"status": "pending"}}, {"control_result": {"status": "busy"}},
             {"hardware": {"wireless_supported": True, "self_test_supported": True}},
+            {"hardware": {"wireless_supported": True, "self_test_supported": True},
+             "self_test": {"active": False}, "self_test_stale": True},
         ):
             monitor._snapshot = {**baseline, **change}
             with self.subTest(change=change), self.assertRaises(RuntimeError):
                 monitor.set_wireless(settings())
             monitor._active_client.set_wireless.assert_not_called()
+        monitor._input_received_at[10] = time.monotonic() - 2
+        with self.assertRaises(RuntimeError):
+            monitor.scan_wireless()
         monitor._snapshot = baseline
+        monitor._input_received_at[10] = time.monotonic()
         monitor._command_outcome_uncertain = True
         with self.assertRaises(RuntimeError):
             monitor.set_wireless(settings())
         monitor._command_outcome_uncertain = False
+        self.assertEqual(monitor.scan_wireless()["networks"][0]["ssid"], "Pico網")
+        self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
+        self.assertTrue(monitor.cancel_wireless_test()["cancelled"])
         result = monitor.set_wireless(settings())
         self.assertTrue(result["reboot_pending"])
         self.assertEqual(result["settings"], BOARD)
@@ -217,6 +338,9 @@ class WirelessTests(unittest.TestCase):
         dashboard.set_wireless.return_value = {"wireless": parse_wireless_status_report(status()),
                                                "reboot_pending": True}
         dashboard.read_wireless.return_value = {**dashboard.set_wireless.return_value, "reboot_pending": False}
+        dashboard.scan_wireless.return_value = {"networks": [{"ssid": "Pico網", "rssi": -42, "secured": True}]}
+        dashboard.test_wireless.return_value = {"test": {"state": 5, "ipv4": "192.168.1.5"}}
+        dashboard.cancel_wireless_test.return_value = {"cancelled": True}
         client = create_app(dashboard).test_client()
         for body in (None, [], settings(confirm_reboot=False), settings(password="secret\n12")):
             response = client.post("/api/wireless?board=a", json=body)
@@ -231,6 +355,14 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(dashboard.set_wireless.call_args.args[0], "a")
         self.assertEqual(client.get("/api/wireless?board=a").status_code, 200)
         dashboard.read_wireless.assert_called_once_with("a")
+        self.assertEqual(client.post("/api/wireless/scan?board=a").json["networks"][0]["ssid"], "Pico網")
+        self.assertEqual(client.post("/api/wireless/test?board=a", json={"ssid": "Pico網",
+            "password": "secret12"}).json["test"]["state"], 5)
+        self.assertNotIn("secret12", client.post("/api/wireless/test?board=a", json={"ssid": "Pico網",
+            "password": "secret12"}).text)
+        self.assertEqual(client.post("/api/wireless/cancel?board=a").json["cancelled"], True)
+        self.assertEqual(client.post("/api/wireless/test", json={"ssid": "Pico", "password": "short"})
+                         .status_code, 400)
         dashboard.set_wireless.side_effect = OSError("secret12")
         response = client.post("/api/wireless?board=a", json=settings())
         self.assertEqual(response.status_code, 503)

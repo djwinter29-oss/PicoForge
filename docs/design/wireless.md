@@ -7,15 +7,21 @@ This implementation has host checks and target builds, not physical radio qualif
 
 ## Configuration and operation
 
-Connect through USB and expand **Board configuration > Wi-Fi and Bluetooth** on the standalone WebHID or Python/.NET
-dashboard. The Wi-Fi and Bluetooth switches sit beside System clock and SD Card on W boards; the collapsed section
-holds the credentials.
-The server dashboard provisions its selected USB-attached board; the browser does not need Bluetooth access.
-Set the SSID and WPA2 passphrase.
-SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters. Blank password/key fields
-preserve the existing secret. Generate a random BLE control key and copy it to a password manager before saving:
-the board never returns it. Board configuration **Save and Reboot** commits the clock, SD Card speed, radio switches
-and pending credentials together as one atomic save.
+Connect through USB and use **Configure Wi-Fi…** or **Configure Bluetooth…** under Board configuration on either
+dashboard. W boards also show the Wi-Fi and Bluetooth enable switches beside System clock and SD Card. The server
+dashboard provisions its selected USB-attached board; the browser does not need Bluetooth access.
+
+The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter a hidden one manually. Enter a
+password when required and test the connection. Credentials are staged in RAM only after the board joins
+successfully; they are not saved to flash until **Save and Reboot**. Cancel or Escape discards staged credentials.
+Connection testing shows elapsed time; association and DHCP can take up to 30 seconds. The Python host continues
+reading live diagnostics during scan/test polling. Controls and dialog dismissal are disabled while a test is pending.
+The server dashboard stops waiting after 40 seconds; an uncertain result blocks further writes until the dashboard
+is restarted and the board reconnected. Tests are never automatically replayed.
+SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters, while an empty password
+tests an open network. The Bluetooth dialog generates a random control key; copy it to a password manager before
+saving because the board never returns it. Board configuration **Save and Reboot** commits the clock, SD Card speed,
+radio switches and staged credentials together as one atomic save.
 
 Saving credentials requires fresh, idle firmware-owned storage. USB sharing, transitions, benchmark work, outstanding
 commands and an uncertain earlier result block provisioning. There is no forced wireless-save operation; a forced
@@ -23,8 +29,9 @@ settings save while USB owns storage is available only without credential edits.
 sends nothing. Save is a single USB SET followed by matching-transaction status polling, never automatic replay.
 The existing deferred reboot follows verified persistence; failed saves do not reboot.
 
-Wi-Fi joins an existing 2.4 GHz WPA2 network and obtains an IPv4 address through DHCP. Association/DHCP has a
-30-second deadline; failures and dropped connections are reported and retried after five seconds. This does not
+Wi-Fi joins an existing 2.4 GHz open or WPA/WPA2-PSK network and obtains an IPv4 address through DHCP.
+Association/DHCP has a 30-second deadline; failures and dropped connections are reported and retried after five
+seconds. This does not
 provide a web server, network filesystem, Bluetooth Classic, internet management API or Wi-Fi dashboard transport.
 
 The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE connections.
@@ -76,24 +83,36 @@ Passwords and keys are never included in status, diagnostic logs or readback rep
 ## USB contract
 
 Identity capability bit 7 denotes wireless provisioning. The radio master switches use Report 2 `board_flags`
-bits 3-4 and opcode 6 argument byte 3; see [USB HID report reference](usb/usb-hid-report-reference.md). Status
-report 30 derives its Wi-Fi and BLE bits from the saved SSID and BLE key; they report credential presence, not the
-radio master switches.
+bits 3-4 and opcode 6 argument byte 3; see [USB HID report reference](usb/usb-hid-report-reference.md). Feature 30
+reports the saved radio switches; its separate booleans indicate whether credentials are configured.
 
-- Feature **30 GET**, 48 payload bytes: version at 0, credential-presence flags at 1 (Wi-Fi bit 0, BLE bit 1), last
+- Feature **30 GET**, 48 payload bytes: version at 0, saved radio-switch flags at 1 (Wi-Fi bit 0, BLE bit 1), last
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4
   (disabled/connecting/connected/failed = 0/1/2/3), IPv4 bytes at 5-8, NUL-terminated SSID at 9-41,
   password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3), zero at 45-47.
 - Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
-  bit 0, BLE bit 1), keep-secret flags at 3 (password bit 0, key bit 1), SSID at 4-36, password at 37-100, key at
-  101-132, little-endian clock MHz at 133-134 (opcode 6 values) and SD profile at 135. Other versions are rejected.
+  bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
+  credentials bit 2), SSID at 4-36, password at 37-100, key at 101-132, little-endian clock MHz at 133-134
+  (opcode 6 values) and SD profile at 135. Other versions or radio flags inconsistent with the settings are rejected.
   There is **no Feature 31 readback**; hosts confirm the board fields through Report 2.
+- Feature **34 SET**, 101 payload bytes: version `1` at 0, operation at 1 (scan `1`, select page `2`, test join
+  `3`, clear staged test `4`), nonzero transaction at 2, page at 3, SSID/password byte lengths at 4/5, SSID bytes
+  at 6-37 and temporary password at 38-100. Unused fields are zero. Password data is never returned.
+- Feature **35 GET**, 220 payload bytes: version, transaction, operation state, selected page, total scan count and
+  Wi-Fi state at offsets 0-5. Six entries of 35 bytes each start at 6: SSID length, a 32-byte SSID, signed RSSI
+  and secured flag. Bytes 216-219 contain the IPv4 address only after a successful test join. Operation states are
+  idle `0`, scanning `1`, scan complete `2`, scan failed `3`, joining `4`, joined `5`, and failed `6`. The scan
+  list is capped at 18 strongest unique SSIDs (three pages).
 - Native-host `GET /api/wireless` returns `{wireless, reboot_pending}` with sanitized fields. Confirmed
   `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled` (credential intent), `ssid`, optional `password`,
   optional 64-hex-digit `ble_key`, required `board` (the `/api/settings` clock, profile and radios object) and
   required `confirm_reboot:true`. It returns `{wireless, settings, reboot_pending}` after verifying both reports.
   Omitted secrets are preserved; secrets are never returned.
   Existing board query selection and error handling apply.
+- `POST /api/wireless/scan` returns nearby sanitized SSIDs, RSSI and security flags. `POST /api/wireless/test`
+  accepts an SSID and temporary password and returns join state/IP without saving credentials.
+  `POST /api/wireless/cancel` clears a successful temporary test. Passwords are accepted only in the request and
+  are never included in the response.
 
 ## BLE contract and authorization
 

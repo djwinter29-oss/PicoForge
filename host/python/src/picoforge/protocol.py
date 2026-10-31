@@ -44,6 +44,10 @@ CAP_WIRELESS = 1 << 7
 CAP_KNOWN = 255
 WIRELESS_REPORT_ID = 30
 WIRELESS_FEATURE_SIZE = 49
+WIRELESS_COMMAND_REPORT_ID = 34
+WIRELESS_COMMAND_FEATURE_SIZE = 102
+WIRELESS_RESULT_REPORT_ID = 35
+WIRELESS_RESULT_FEATURE_SIZE = 221
 WIRELESS_CONFIGURATION_REPORT_ID = 31
 
 TELEMETRY_USB_MOUNTED = 1 << 0
@@ -187,13 +191,19 @@ def build_wireless_configuration_report(settings: dict[str, object], transaction
         raise ValueError("Expected wireless configuration JSON")
     if settings.get("confirm_reboot") is not True:
         raise ValueError("Explicit confirm_reboot: true is required")
-    if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "password", "ble_key", "confirm_reboot", "board"}:
+    if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "password", "ble_key", "confirm_reboot", "board",
+                       "use_tested_wifi"}:
         raise ValueError("Unknown wireless configuration field")
     if type(settings.get("wifi_enabled")) is not bool or type(settings.get("ble_enabled")) is not bool:
         raise ValueError("wifi_enabled and ble_enabled must be boolean")
+    if "use_tested_wifi" in settings and type(settings["use_tested_wifi"]) is not bool:
+        raise ValueError("use_tested_wifi must be boolean")
+    use_tested = settings.get("use_tested_wifi", False)
     if "board" not in settings:
         raise ValueError("board settings are required")
     clock, profile, radios = _validate_settings(settings["board"])
+    if settings["wifi_enabled"] != bool(radios & 1) or settings["ble_enabled"] != bool(radios & 2):
+        raise ValueError("Wireless enable flags must match the board radio switches")
     ssid = settings.get("ssid")
     try:
         encoded = ssid.encode("utf-8") if isinstance(ssid, str) else None
@@ -207,13 +217,13 @@ def build_wireless_configuration_report(settings: dict[str, object], transaction
     payload[:5] = bytes([31, 2, transaction_id, radios, 0])
     payload[134:137] = struct.pack("<HB", clock, profile)
     payload[5:5 + len(encoded)] = encoded
-    if "password" not in settings:
+    if "password" not in settings and not use_tested:
         payload[4] |= 1
-    else:
+    elif not use_tested:
         password = settings["password"]
-        if not isinstance(password, str) or not 8 <= len(password) <= 63 or any(
+        if not isinstance(password, str) or password and not 8 <= len(password) <= 63 or any(
                 not 32 <= ord(char) <= 126 for char in password):
-            raise ValueError("Password must contain 8..63 printable ASCII characters")
+            raise ValueError("Password must be empty or contain 8..63 printable ASCII characters")
         payload[38:38 + len(password)] = password.encode("ascii")
     if "ble_key" not in settings:
         payload[4] |= 2
@@ -225,7 +235,67 @@ def build_wireless_configuration_report(settings: dict[str, object], transaction
         if not any(decoded):
             raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
         payload[102:134] = decoded
+    if use_tested:
+        payload[4] |= 4
     return bytes(payload)
+
+
+def build_wireless_command_report(
+    transaction_id: int, operation: int, *, page: int = 0, ssid: str = "", password: str = ""
+) -> bytes:
+    """Build USB-only wireless scan, paging, test-join or staged-credential clear command."""
+    if type(transaction_id) is not int or not 1 <= transaction_id <= 255 or operation not in (1, 2, 3, 4):
+        raise ValueError("Invalid wireless command")
+    payload = bytearray(WIRELESS_COMMAND_FEATURE_SIZE)
+    payload[:4] = bytes([WIRELESS_COMMAND_REPORT_ID, 1, operation, transaction_id])
+    if operation == 2:
+        if type(page) is not int or not 0 <= page <= 2:
+            raise ValueError("Invalid wireless scan page")
+        payload[4] = page
+    elif operation == 3:
+        try:
+            encoded = ssid.encode("utf-8")
+        except (AttributeError, UnicodeError):
+            raise ValueError("SSID must be valid UTF-8") from None
+        if not encoded or len(encoded) > 32 or b"\0" in encoded:
+            raise ValueError("SSID must contain 1..32 UTF-8 bytes")
+        if not isinstance(password, str) or password and (
+                not 8 <= len(password) <= 63 or any(not 32 <= ord(char) <= 126 for char in password)):
+            raise ValueError("Password must contain 8..63 printable ASCII characters or be empty for an open network")
+        secret = password.encode("ascii")
+        payload[5] = len(encoded)
+        payload[6] = len(secret)
+        payload[7:7 + len(encoded)] = encoded
+        payload[39:39 + len(secret)] = secret
+    return bytes(payload)
+
+
+def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
+    """Decode sanitized Feature 35 scan/test results; no password is returned."""
+    payload = _feature_payload(report, WIRELESS_RESULT_REPORT_ID, WIRELESS_RESULT_FEATURE_SIZE - 1)
+    state, page, count, wifi_state = payload[2:6]
+    if payload[0] != 1 or state > 6 or page > 2 or count > 18 or wifi_state > 3:
+        raise ValueError("Invalid wireless scan/test result")
+    networks = []
+    for index in range(6):
+        entry = payload[6 + index * 35: 41 + index * 35]
+        length = entry[0]
+        if length == 0:
+            if any(entry):
+                raise ValueError("Invalid empty wireless scan entry")
+            continue
+        if length > 32 or any(entry[1 + length:33]) or entry[34] > 1:
+            raise ValueError("Invalid wireless scan entry")
+        try:
+            ssid = entry[1:1 + length].decode("utf-8")
+        except UnicodeError:
+            raise ValueError("Invalid wireless scan SSID") from None
+        networks.append({"ssid": ssid, "rssi": int.from_bytes(entry[33:34], "little", signed=True),
+                         "secured": bool(entry[34])})
+    if len(networks) > count or (state != 5 and any(payload[216:220])):
+        raise ValueError("Invalid wireless scan/test result fields")
+    return {"transaction_id": payload[1], "state": state, "page": page, "count": count,
+            "wifi_state": wifi_state, "ipv4": ".".join(map(str, payload[216:220])), "networks": networks}
 
 
 def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
