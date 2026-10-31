@@ -16,7 +16,7 @@ static bool pf_storage_worker_unmount_for_usb(void);
 uint64_t test_time_us;
 unsigned test_usb_disconnects, test_usb_connects;
 static bool initialized=true, worker_busy, mounted, media_absent, recover_accepted;
-static unsigned locks, syncs, sense, asc, reads, writes;
+static unsigned locks, lock_calls, syncs, sense, asc, reads, writes;
 static pf_block_result_t read_result=PF_BLOCK_OK, write_result=PF_BLOCK_OK;
 static pf_block_result_t sync_result=PF_BLOCK_OK, owner_result=PF_BLOCK_OK;
 static enum { OWNER_FIRMWARE, OWNER_USB } owner=OWNER_USB;
@@ -28,7 +28,7 @@ static bool pf_storage_worker_recover_media(void) { return recover_accepted; }
 static bool pf_storage_worker_return_from_usb(void) { worker_busy = true; return true; }
 static bool pf_storage_worker_unmount_for_usb(void) { worker_busy = true; return true; }
 bool pf_storage_try_lock(void) { ++locks; return true; }
-void pf_storage_lock(void) { ++locks; }
+void pf_storage_lock(void) { ++locks; ++lock_calls; }
 void pf_storage_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }
 bool pf_storage_msc_ready(void) { return initialized; }
 uint32_t pf_storage_msc_count(void) { return 128; }
@@ -188,7 +188,7 @@ static void sense_lifecycle(void)
 void setUp(void)
 {
  initialized=true; worker_busy=mounted=media_absent=recover_accepted=false;
- locks=syncs=sense=asc=reads=writes=test_usb_disconnects=test_usb_connects=0;
+ locks=lock_calls=syncs=sense=asc=reads=writes=test_usb_disconnects=test_usb_connects=0;
  read_result=write_result=sync_result=owner_result=PF_BLOCK_OK;
  owner=OWNER_USB;
  msc_enabled=true; medium_changed=false;
@@ -553,6 +553,7 @@ void test_firmware_owned_or_returning_media_rejects_all_host_block_access(void)
  TEST_ASSERT_EQUAL_UINT(0u,reads);
  TEST_ASSERT_EQUAL_UINT(0u,writes);
  TEST_ASSERT_EQUAL_UINT(0u,syncs);
+ TEST_ASSERT_EQUAL_UINT(0u,lock_calls);
  request_sense(SCSI_SENSE_NOT_READY,ASC_MEDIUM_NOT_PRESENT);
 }
 

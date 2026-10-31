@@ -81,11 +81,11 @@ discarding unsaved changes; test progress belongs in the storage benchmark secti
 Self-test controls stay pending throughout HTTP command delivery, even when idle telemetry sequences advance or
 wrap. After delivery, wait for a newer self-test report before releasing the pending gate; an active report then
 keeps conflicting controls disabled through cleanup.
-USB sharing keeps the benchmark hidden and conflicting controls disabled from request submission through
-re-enumeration until telemetry confirms the requested owner with no transition pending, or reports rejection.
+USB sharing keeps the benchmark hidden and conflicting controls disabled from request submission until telemetry
+confirms the requested owner with no transition pending, or reports rejection, including with older firmware that reconnects.
 Intermediate disconnected or old firmware-owned snapshots must not briefly restore the benchmark.
 Enable USB drive opens the same styled confirmation pattern as reboot and return on both dashboard frontends.
-The dialog explains exclusive host ownership, USB reconnection, unavailable self-test, confirmed forced saving, and safe eject.
+The dialog explains exclusive host ownership, uninterrupted HID/CDC, unavailable self-test, confirmed forced saving, and safe eject.
 Cancel, Escape, or disconnect sends no enable request; confirmation rechecks current storage safety gates.
 Local settings edits remain available while shared. Supporting firmware permits Save and Reboot only through the
 [forced-save confirmation](../design/settings.md#forced-save-and-reboot); standalone reboot remains blocked.

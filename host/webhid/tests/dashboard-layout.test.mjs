@@ -10,10 +10,10 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/webhid\.css\?v=8"/);
-  assert.match(html, /src="js\/app\.mjs\?v=10"/);
+  assert.match(html, /src="js\/app\.mjs\?v=11"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=4"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=5"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=6"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);

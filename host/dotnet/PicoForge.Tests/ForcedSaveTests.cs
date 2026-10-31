@@ -253,6 +253,7 @@ public sealed class ForcedSaveTests
     [InlineData("missing", true, false, true)]
     [InlineData("read", true, true, false)]
     [InlineData("read", false, false, false)]
+    [InlineData("noop", true, false, false)]
     [InlineData("invalid", true, false, false)]
     [InlineData("permissions", true, false, false)]
     [InlineData("uncertain", true, false, false)]
@@ -262,7 +263,7 @@ public sealed class ForcedSaveTests
         using var monitor = new DeviceMonitor();
         var fields = BindingFlags.Instance | BindingFlags.NonPublic;
         typeof(DeviceMonitor).GetField("activeClient", fields)!.SetValue(monitor, new Commands());
-        typeof(DeviceMonitor).GetField("snapshot", fields)!.SetValue(monitor, Ready(false));
+        typeof(DeviceMonitor).GetField("snapshot", fields)!.SetValue(monitor, Ready(kind == "noop"));
         if (confirmed) Assert.NotNull(monitor.SetMsc(true));
         if (expired)
             typeof(DeviceMonitor).GetField("mscReconnectDeadline", fields)!.SetValue(monitor, Environment.TickCount64 - 1);

@@ -92,13 +92,14 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             ExecuteCommand(client, () => client.SetMsc(enabled, force));
             lock (gate)
             {
+                var changingOwner = (snapshot.Msc?.Enabled ?? false) != enabled;
                 snapshot = snapshot with
                 {
                     Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false,
                         snapshot.Msc?.ForceReturnSupported ?? false)
                 };
-                mscReconnectDeadline = Environment.TickCount64 + 5000;
-                mscReconnectEnabled = enabled;
+                mscReconnectDeadline = changingOwner ? Environment.TickCount64 + 5000 : 0;
+                mscReconnectEnabled = changingOwner ? enabled : null;
                 return snapshot.Msc;
             }
         }

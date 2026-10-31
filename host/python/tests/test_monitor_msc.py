@@ -87,6 +87,8 @@ class MonitorMscTests(unittest.TestCase):
     def test_enable_keeps_existing_command(self):
         self.monitor.set_msc(True)
         self.monitor._active_client.set_msc.assert_called_once_with(True)
+        self.assertEqual(self.monitor._msc_reconnect_deadline, 0.0)
+        self.assertIsNone(self.monitor._msc_reconnect_enabled)
 
     def test_reboot_exposes_control_result(self):
         result = {"status": "completed", "opcode": 2, "transaction_id": 1}

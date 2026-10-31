@@ -31,11 +31,12 @@ The PR workflow and `tools/validation/validate.sh` build the `pico` and `pico2` 
 and LED behavior still require board validation.
 
 Input report `10` publishes SD detection/initialization, selected bus mode, effective bus speed, capacity, CID,
-filesystem format, and MSC ownership state every 500 ms. In MSC mode the USB descriptor appends MSC after CDC and HID,
-preserving the HID interface number; see the [HID Report Reference](usb/usb-hid-report-reference.md). The owner gate rejects
+filesystem format, and MSC ownership state every 500 ms. CDC, HID and MSC interfaces remain present in a fixed
+configuration; Pico-owned storage reports no medium to MSC. See the [HID Report Reference](usb/usb-hid-report-reference.md).
+The owner gate rejects
 firmware block calls while the host owns the card. Enabling queues a worker-owned FatFs unmount before acquisition
 and is rejected if CLI storage work is pending. Normal disable requires host eject; the dashboard's confirmed
-**Disable USB drive** action requests [Pico-side detach/remount](usb/usb-hid-report-reference.md#msc-force-return-safety),
+**Disable USB drive** action requests [Pico-side return/remount](usb/usb-hid-report-reference.md#msc-force-return-safety),
 with one worker mount attempt and explicit failure reporting. Host apps never run OS eject commands.
 
 CDC storage commands are queued to a statically allocated FreeRTOS storage worker,

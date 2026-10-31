@@ -653,6 +653,10 @@ static int32_t write10(uint8_t lun, uint32_t lba, uint32_t offset,
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                          void *buffer, uint32_t bufsize)
 {
+    if ((lun != 0u) || !msc_enabled || msc_ejected) {
+        fail_transfer(lun, SCSI_SENSE_NOT_READY, ASC_MEDIUM_NOT_PRESENT);
+        return -1;
+    }
     pf_storage_lock();
     int32_t result = read10(lun, lba, offset, buffer, bufsize);
     pf_storage_unlock();
@@ -662,6 +666,10 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
 int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                           uint8_t *buffer, uint32_t bufsize)
 {
+    if ((lun != 0u) || !msc_enabled || msc_ejected) {
+        fail_transfer(lun, SCSI_SENSE_NOT_READY, ASC_MEDIUM_NOT_PRESENT);
+        return -1;
+    }
     pf_storage_lock();
     int32_t result = write10(lun, lba, offset, buffer, bufsize);
     pf_storage_unlock();

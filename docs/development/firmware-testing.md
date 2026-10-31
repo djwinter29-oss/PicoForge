@@ -96,15 +96,20 @@ Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS p
 
 1. Boot with a valid card and no dashboard/CDC session. Connect afterward and verify fresh `mounted` storage status
    without sending `fs mount` or Start. Read an existing file, then create/read/delete a disposable file via CDC.
+   Confirm CDC, HID and MSC enumerate with fixed interface numbers and MSC reports no medium while Pico owns the card.
 2. Start one small self-test from mounted idle status. Verify that the first click runs write/verify/cleanup rather
    than only mounting, and that storage remains mounted afterward. Record command-acceptance delay separately from
    write/read timing; free-space scanning is outside the measured transfer phases.
 3. Enable USB sharing directly from mounted idle status without manual unmount. Verify worker unmount precedes host
    block access, the host can use the card, and firmware file access/self-test are refused throughout host ownership.
    Check rejection while a storage command or self-test is outstanding; do not interrupt live card writes.
+   Keep HID monitoring and a CDC session open across enable/return and verify neither disconnects nor restarts.
 4. Safely eject through the host OS, then use normal disable (opcode `3`, action `0`) and verify automatic remount
    without Start or `fs mount`. Read a disposable file changed by the host to check that stale filesystem state
-   was discarded. Do not treat HID reconnection or transition completion as mounted readiness.
+   was discarded. Verify MSC reports no medium while firmware uses the card. Re-enable sharing after firmware changes
+   a disposable file and verify the host observes the new contents/capacity rather than cached metadata; inspect
+   the SCSI Unit Attention/media-change response where host tracing is available.
+   Do not treat HID availability or transition completion as mounted readiness.
 5. Separately test the dashboard's confirmed force-return action using expendable media with host writes stopped.
    Verify its one-attempt remount result and failure block; it is not a substitute for the normal safe-return check.
    Cancel its dialog and verify no command is sent.

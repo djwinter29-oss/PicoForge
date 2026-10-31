@@ -18,9 +18,9 @@ Report ID `0` is unused. Unassigned IDs have no payload and require no padding.
 Report ranges group responsibilities; the descriptor and firmware define each report's type, length, and permitted
 operations.
 
-PicoForge exposes CDC ACM, a vendor-defined HID interface, and optional MSC while the host owns the SD card. CDC ACM
-uses control interface 0 and data interface 1; HID is interface 2 in both configurations. When enabled, MSC is
-appended as interface 3, so toggling MSC does not change the HID interface number. The development VID/PID is
+PicoForge always exposes CDC ACM, a vendor-defined HID interface, and removable-media MSC. CDC ACM
+uses control interface 0 and data interface 1; HID is interface 2 and MSC is interface 3.
+Storage ownership changes medium availability, not the USB configuration. The development VID/PID is
 `0xCAFE:0x4011`, not a product identity. HID uses vendor usage page `0xFF00`, usage `0x01`, with no boot protocol.
 The USB product string is `PicoForge CDC + HID`; its serial string is the Pico SDK unique board ID.
 
@@ -667,7 +667,7 @@ are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and direc
 report contract. Settings saves preserve the existing persistent-record format and update only the selected
 transport's legacy speed field; Report `2` exposes the transport-neutral profile. An accepted self-test is
 preflighted by the sole storage worker before its prior result is replaced. The reserved `/PFTEST.BIN` path is never
-overwritten. MSC transitions allow a bounded interval for the matching Feature `20` result GET before a disconnect.
+overwritten. MSC transitions allow a bounded interval for the matching Feature `20` result GET before ownership changes.
 
 This describes software implementation, not hardware qualification. HID report delivery, MSC ownership changes,
 host safe-eject behavior, and reconnect handling still require physical validation on the supported boards.

@@ -197,8 +197,11 @@ class DeviceMonitor:
                           "force_return_supported": previous.get("force_return_supported", False)}
                 self._snapshot["msc"] = status
                 self._snapshot["control_result"] = result
-                self._msc_reconnect_deadline = time.monotonic() + _MSC_RECONNECT_TIMEOUT_SECONDS
-                self._msc_reconnect_enabled = enable
+                changing_owner = previous.get("enabled", False) != enable
+                self._msc_reconnect_deadline = (
+                    time.monotonic() + _MSC_RECONNECT_TIMEOUT_SECONDS if changing_owner else 0.0
+                )
+                self._msc_reconnect_enabled = enable if changing_owner else None
         return status
 
     def reboot(self) -> dict[str, object]:
