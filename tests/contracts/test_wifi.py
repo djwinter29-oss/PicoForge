@@ -8,6 +8,11 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.contracts
 
 
+def test_lwip_heap_is_word_aligned():
+    options = (ROOT / "firmware/src/integration/wireless/lwipopts.h").read_text()
+    assert "#define MEM_ALIGNMENT 4" in options
+
+
 def test_wifi_boot_gating_deadline_retries_and_ipv4(tmp_path):
     pico = tmp_path / "pico"
     pico.mkdir()
@@ -20,7 +25,11 @@ def test_wifi_boot_gating_deadline_retries_and_ipv4(tmp_path):
 #define CYW43_AUTH_WPA2_AES_PSK 0x00400004u
 #define CYW43_AUTH_WPA2_MIXED_PSK 0x00400006u
 #define CYW43_ITF_STA 0
+#define CYW43_LINK_JOIN 1
+#define CYW43_LINK_NOIP 2
 #define CYW43_LINK_UP 3
+#define CYW43_LINK_NONET (-2)
+#define CYW43_LINK_BADAUTH (-3)
 typedef struct { uint8_t unused; } cyw43_wifi_scan_options_t;
 typedef struct {
     uint8_t ssid_len;
@@ -30,7 +39,7 @@ typedef struct {
 } cyw43_ev_scan_result_t;
 typedef struct { uint32_t addr; } ip4_addr_t;
 typedef struct { ip4_addr_t ip; } netif_t;
-typedef struct { netif_t netif[1]; } cyw43_t;
+typedef struct { netif_t netif[1]; uint32_t wifi_join_state; } cyw43_t;
 typedef int (*scan_result_cb_t)(void *, const cyw43_ev_scan_result_t *);
 extern cyw43_t cyw43_state;
 bool cyw43_wifi_scan_active(cyw43_t *);
@@ -207,6 +216,81 @@ int main(void) {
     unsigned before_open_join = joins;
     pf_wifi_start(&error);
     assert(joins == before_open_join + 1 && pf_wifi_state() == 1);
+
+    radios = PF_WIRELESS_BLE;
+    assert(!pf_wifi_prepare());
+    memset(command, 0, sizeof(command));
+    command[0] = 1; command[1] = 3; command[2] = 14;
+    expected_ssid = "missing";
+    expected_password = "missing-pass";
+    expected_auth = CYW43_AUTH_WPA2_MIXED_PSK;
+    command[4] = (uint8_t)strlen(expected_ssid);
+    command[5] = (uint8_t)strlen(expected_password);
+    memcpy(command + 6, expected_ssid, strlen(expected_ssid));
+    memcpy(command + 38, expected_password, strlen(expected_password));
+    link = 0;
+    assert(pf_wifi_command(command));
+    unsigned failed_joins = joins, failed_leaves = leaves;
+    link = -2;
+    pf_wifi_poll(&error);
+    pf_wifi_result(result);
+    assert(result[2] == 6 && leaves == failed_leaves + 1 && pf_wifi_state() == 3 && error == 2);
+    link = 0;
+    now += 60000000;
+    pf_wifi_poll(&error);
+    assert(joins == failed_joins && pf_wifi_state() == 3);
+
+    /* Live phases, then a wrong passphrase: the driver re-associates silently after each failed handshake. */
+    command[2] = 15;
+    link = CYW43_LINK_JOIN;
+    cyw43_state.wifi_join_state = 0x0001;
+    assert(pf_wifi_command(command));
+    pf_wifi_result(result);
+    assert(result[2] == 4 && result[3] == 1);
+    cyw43_state.wifi_join_state = 0x0601;
+    pf_wifi_poll(&error);
+    pf_wifi_result(result);
+    assert(result[2] == 4 && result[3] == 2);
+    cyw43_state.wifi_join_state = 0x0001;
+    pf_wifi_poll(&error);
+    cyw43_state.wifi_join_state = 0x0601;
+    pf_wifi_poll(&error);
+    pf_wifi_result(result);
+    assert(result[2] == 4 && result[3] == 2 && pf_wifi_state() == 1);
+    failed_leaves = leaves;
+    cyw43_state.wifi_join_state = 0x0001;
+    pf_wifi_poll(&error);
+    pf_wifi_result(result);
+    assert(result[2] == 6 && result[3] == 5 && leaves == failed_leaves + 1 && error == 2);
+    assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
+
+    /* A password accepted without DHCP reports the address phase, then a specific timeout. */
+    command[2] = 16;
+    assert(pf_wifi_command(command));
+    link = CYW43_LINK_NOIP;
+    pf_wifi_poll(&error);
+    pf_wifi_result(result);
+    assert(result[2] == 4 && result[3] == 3);
+    now += 30000000;
+    pf_wifi_poll(&error);
+    pf_wifi_result(result);
+    assert(result[2] == 6 && result[3] == 6 && error == 3);
+
+    command[2] = 17;
+    link = CYW43_LINK_JOIN;
+    cyw43_state.wifi_join_state = 0x0001;
+    assert(pf_wifi_command(command));
+    link = CYW43_LINK_NONET;
+    pf_wifi_poll(&error);
+    pf_wifi_result(result);
+    assert(result[2] == 6 && result[3] == 4 && error == 2);
+
+    memset(command, 0, sizeof(command));
+    command[0] = 1; command[1] = 1; command[2] = 18;
+    scan_active = false;
+    assert(pf_wifi_command(command));
+    pf_wifi_result(result);
+    assert(result[2] == 1 && result[3] == 0);
     return 0;
 }
 """)

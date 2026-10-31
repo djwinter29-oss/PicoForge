@@ -40,13 +40,14 @@ public sealed class WirelessTests
         return report;
     }
 
-    private static byte[] OperationResult(byte state = 2, byte transaction = 1)
+    private static byte[] OperationResult(byte state = 2, byte transaction = 1, byte detail = 0)
     {
         var report = new byte[221];
         report[0] = 35;
         report[1] = 1;
         report[2] = transaction;
         report[3] = state;
+        report[4] = detail;
         return report;
     }
 
@@ -196,9 +197,9 @@ public sealed class WirelessTests
     public void WirelessOperationFailureIsKnownButDeliveryFailureBlocksReplay()
     {
         using var rejected = new PicoForgeHid(Hardware(), (id, _) =>
-            id == 30 ? Report(0, 0) : OperationResult(6, 1),
+            id == 30 ? Report(0, 0) : OperationResult(6, 1, 5),
             _ => { }, _ => Assert.Fail("No reconnect"));
-        Assert.Contains("Could not connect",
+        Assert.Contains("Could not connect: Password rejected",
             Assert.Throws<InvalidOperationException>(() => rejected.TestWireless("Pico網", "secret12")).Message);
         Assert.False(rejected.CommandOutcomeUncertain);
 
@@ -212,6 +213,61 @@ public sealed class WirelessTests
         Assert.True(disconnected.CommandOutcomeUncertain);
         Assert.Throws<InvalidOperationException>(() => disconnected.ScanWireless());
         Assert.Equal(1, writes);
+    }
+
+    [Fact]
+    public void WirelessOperationPumpsInputsWithoutReplayingTheTest()
+    {
+        var reads = 0;
+        var polls = 0;
+        var writes = 0;
+        using var hid = new PicoForgeHid(Hardware(), (id, _) =>
+            id == 30 ? Report(0, 0) : OperationResult(++reads == 1 ? (byte)4 : (byte)5, 1, 2),
+            _ => writes++, _ => Assert.Fail("No reconnect"));
+        var phases = new List<string>();
+        Assert.Equal(5, hid.TestWireless("Pico網", "secret12", () => polls++, phases.Add).State);
+        Assert.Equal(["Checking password"], phases);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(OperationResult(6, 1, 8)));
+        Assert.Equal(2, polls);
+        Assert.Equal(1, writes);
+        Assert.False(hid.CommandOutcomeUncertain);
+    }
+
+    [Fact]
+    public void MonitorPublishesLiveReportsWhileTheWirelessTestOwnsTheDeviceGate()
+    {
+        using var monitor = new DeviceMonitor();
+        var commands = new Commands();
+        var runtime = new RuntimeStatusResponse(1, 1000, 150000000, true, false, true, 2500, false, false);
+        var memory = new MemoryStatusResponse(1, true, true, false, false, "sd-card", "sdio",
+            null, null, null, null);
+        var msc = new MscStatusResponse(false, false, false);
+        var selfTest = new SelfTestStatusResponse(1, "idle", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false);
+        commands.Inputs.Enqueue(new(runtime, null, null));
+        commands.Inputs.Enqueue(new(null, memory, msc, FilesystemFormat: "unknown"));
+        commands.Inputs.Enqueue(new(null, null, null, selfTest));
+        commands.AfterPoll = () =>
+        {
+            Assert.Equal("Waiting for IP address", monitor.Snapshot.WirelessPhase);
+            Assert.Equal(runtime, monitor.Snapshot.Runtime);
+            Assert.Equal(memory, monitor.Snapshot.Memory);
+            Assert.Equal(msc, monitor.Snapshot.Msc);
+            Assert.Equal(selfTest, monitor.Snapshot.SelfTest);
+            Assert.False(monitor.Snapshot.TelemetryStale);
+            Assert.False(monitor.Snapshot.StorageStale);
+            Assert.False(monitor.Snapshot.SelfTestStale);
+        };
+        typeof(DeviceMonitor).GetField("activeClient", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(monitor, commands);
+        var snapshot = typeof(DeviceMonitor).GetField("snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        snapshot.SetValue(monitor, Ready());
+        Assert.Equal(5, monitor.TestWireless("Pico網", "secret12").State);
+        Assert.Null(monitor.Snapshot.WirelessPhase);
+        Assert.Equal(4, commands.InputReads);
+        Assert.Single(commands.InputTimeouts.Distinct());
+        Assert.Equal(0, commands.InputTimeouts[0]);
+        snapshot.SetValue(monitor, Ready() with { StorageStale = true });
+        Assert.Throws<InvalidOperationException>(() => monitor.TestWireless("Pico網", "secret12"));
     }
 
     [Theory]
@@ -398,7 +454,24 @@ public sealed class WirelessTests
     private sealed class Commands : IHidCommands
     {
         public int Writes { get; private set; }
+        public Queue<InputReport> Inputs { get; } = new();
+        public List<int> InputTimeouts { get; } = new();
+        public int InputReads => InputTimeouts.Count;
+        public Action? AfterPoll { get; set; }
         public bool CommandOutcomeUncertain => false;
+        public InputReport? ReadInputReport(int timeoutMilliseconds = 250)
+        {
+            InputTimeouts.Add(timeoutMilliseconds);
+            return Inputs.TryDequeue(out var report) ? report : null;
+        }
+        public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
+            Action<string>? onProgress = null)
+        {
+            onProgress?.Invoke("Waiting for IP address");
+            onPoll?.Invoke();
+            AfterPoll?.Invoke();
+            return HidProtocol.ParseWirelessOperation(OperationResult(5));
+        }
         public void SetLed(bool on) { }
         public void SetMsc(bool enabled, bool force = false) { }
         public BoardConfigurationResponse ReadConfiguration() => throw new NotSupportedException();

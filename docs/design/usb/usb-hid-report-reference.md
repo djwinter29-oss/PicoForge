@@ -60,7 +60,7 @@ These are logical groups, not separate HID usage pages or mandatory dashboard ta
 | `30` | Wireless status | Feature | Host reads | 48 bytes | W boards, capability bit 7; sanitized status. |
 | `31` | Wireless provisioning | Feature | Host writes | 136 bytes | W boards, bit 7; private config, no readback. |
 | `34` | Wireless operation | Feature | Host writes | 101 bytes | W boards (bit 7); scan, page, test, or cancel. |
-| `35` | Wireless operation result | Feature | Host reads | 220 bytes | W boards (bit 7); sanitized results. |
+| `35` | Wireless operation result | Feature | Host reads | 220 bytes | W boards (bit 7); sanitized results and test phase. |
 
 Names are documentation labels, not additional wire fields.
 

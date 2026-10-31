@@ -19,7 +19,15 @@ public sealed record WirelessNetworkResponse(string Ssid, int Rssi, bool Secured
 
 /// <summary>Sanitized scan or temporary-join status; never includes a password.</summary>
 public sealed record WirelessOperationResponse(byte TransactionId, byte State, byte Page, byte Count,
-    byte WifiState, string Ipv4, IReadOnlyList<WirelessNetworkResponse> Networks);
+    byte WifiState, string Ipv4, IReadOnlyList<WirelessNetworkResponse> Networks, byte Detail = 0)
+{
+    /// <summary>Feature 35 byte 3 while testing (states 4..6): join phase or failure reason.</summary>
+    public static readonly string[] Details = ["", "Searching for network", "Checking password",
+        "Waiting for IP address", "Network not found", "Password rejected", "Connected but no IP address from DHCP",
+        "Timed out"];
+
+    public string Phase => Details[Detail];
+}
 
 /// <summary>Atomic board-settings and provisioning input. Omitted credentials preserve the stored values.</summary>
 public sealed class WirelessRequest
@@ -156,7 +164,7 @@ internal static partial class HidProtocol
     public static WirelessOperationResponse ParseWirelessOperation(ReadOnlySpan<byte> report)
     {
         var payload = FeaturePayload(report, WirelessResultReportId, 220);
-        Require(payload[0] == 1 && payload[2] <= 6 && payload[3] <= 2 && payload[4] <= 18 &&
+        Require(payload[0] == 1 && payload[2] <= 6 && payload[3] <= (payload[2] >= 4 ? 7 : 2) && payload[4] <= 18 &&
             payload[5] <= 3, "Invalid wireless scan/test result");
         var networks = new List<WirelessNetworkResponse>();
         for (var index = 0; index < 6; index++)
@@ -178,7 +186,9 @@ internal static partial class HidProtocol
         Require(networks.Count <= payload[4] && (payload[2] == 5 || payload[216..].IndexOfAnyExcept((byte)0) < 0),
             "Invalid wireless scan/test result fields");
         var ip = string.Join(".", payload[216..220].ToArray());
-        return new(payload[1], payload[2], payload[3], payload[4], payload[5], ip, networks);
+        var detail = payload[2] >= 4 ? payload[3] : (byte)0;
+        return new(payload[1], payload[2], payload[2] >= 4 ? (byte)0 : payload[3], payload[4], payload[5], ip, networks,
+            detail);
     }
 
     public static WirelessStatusResponse ParseWirelessStatus(ReadOnlySpan<byte> report)

@@ -117,6 +117,43 @@ class MonitorMscTests(unittest.TestCase):
 
 
 class MonitorReconnectTests(unittest.TestCase):
+    def test_monitor_yields_outside_the_hid_lock_between_nonblocking_input_batches(self):
+        monitor = DeviceMonitor.__new__(DeviceMonitor)
+        monitor._device_lock = threading.RLock()
+        monitor._lock = threading.RLock()
+        monitor._stop = threading.Event()
+        monitor._active_client = None
+        monitor._snapshot = _empty_snapshot()
+        monitor._input_received_at = {}
+        client = Mock()
+        client.read_info.return_value = {"supported": True}
+        client.read_configuration.return_value = {"system_clock_mhz": 0, "sdcard_profile": 0}
+        client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
+        monitor._client_factory = lambda: client
+        waits = []
+
+        def wait(timeout):
+            waits.append(timeout)
+            if timeout != 0.01:
+                return
+            acquired = []
+
+            def acquire():
+                locked = monitor._device_lock.acquire(blocking=False)
+                acquired.append(locked)
+                if locked:
+                    monitor._device_lock.release()
+
+            worker = threading.Thread(target=acquire)
+            worker.start()
+            worker.join(timeout=1)
+            self.assertEqual(acquired, [True], "Commands must be able to acquire HID between input batches")
+
+        monitor._stop.wait = wait
+        monitor._run()
+        client.read_input_report.assert_called_once_with(timeout_ms=0)
+        self.assertIn(0.01, waits)
+
     def test_confirmed_msc_reconnect_is_bounded_and_does_not_hide_other_errors(self):
         cases = [
             (OSError("read error"), 104.0, True, False, True),

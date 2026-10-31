@@ -48,11 +48,15 @@ export function buildWirelessCommand(transaction, operation, settings = {}) {
   return report;
 }
 
+/** Feature 35 byte 3 while testing (states 4..6): join phase or failure reason. */
+export const WIRELESS_TEST_DETAILS = ["", "Searching for network", "Checking password", "Waiting for IP address",
+  "Network not found", "Password rejected", "Connected but no IP address from DHCP", "Timed out"];
+
 export function decodeWirelessResult(report) {
   const bytes = report instanceof DataView
     ? new Uint8Array(report.buffer, report.byteOffset, report.byteLength) : report;
   if (!(bytes instanceof Uint8Array) || bytes.length !== 220 || bytes[0] !== 1 || bytes[2] > 6
-    || bytes[3] > 2 || bytes[4] > 18 || bytes[5] > 3) {
+    || bytes[3] > (bytes[2] >= 4 ? 7 : 2) || bytes[4] > 18 || bytes[5] > 3) {
     throw new Error("Invalid wireless scan/test result");
   }
   const results = [];
@@ -72,8 +76,9 @@ export function decodeWirelessResult(report) {
   if (results.length > bytes[4] || bytes.subarray(216).some((value, i) => bytes[2] !== 5 && value !== 0 && i < 4)) {
     throw new Error("Invalid wireless scan/test result fields");
   }
-  return { transaction_id: bytes[1], state: bytes[2], page: bytes[3], count: bytes[4], wifi_state: bytes[5],
-    networks: results, ipv4: [...bytes.subarray(216, 220)].join(".") };
+  const detail = bytes[2] >= 4 ? bytes[3] : 0;
+  return { transaction_id: bytes[1], state: bytes[2], page: detail ? 0 : bytes[3], detail,
+    phase: WIRELESS_TEST_DETAILS[detail], count: bytes[4], wifi_state: bytes[5], networks: results, ipv4: [...bytes.subarray(216, 220)].join(".") };
 }
 
 export function buildWireless(transaction, settings) {
@@ -111,7 +116,7 @@ export function buildWireless(transaction, settings) {
   return report;
 }
 
-async function wirelessCommand(client, operation, settings = {}, terminalStates = [2]) {
+async function wirelessCommand(client, operation, settings = {}, terminalStates = [2], onProgress = null) {
   if (client.state.transport === "ble" || !(client.state.hardware?.capabilities & 128) ||
     !client.storageReady() || client.state.msc.enabled || client.state.self_test?.active ||
     client.state.busy || client.state.outcome_uncertain || client.state.reboot_pending || client.outstanding) {
@@ -138,12 +143,13 @@ async function wirelessCommand(client, operation, settings = {}, terminalStates 
         if (result.state === 6) {
           resultKnown = true;
           throw new Error(operation === 3
-            ? "Could not connect. Check the password and try again." : "Wireless operation failed.");
+            ? `Could not connect: ${result.phase || "Timed out"}.` : "Wireless operation failed.");
         }
         if (terminalStates.includes(result.state)) {
           resultKnown = true;
           return result;
         }
+        if (result.state === 4) onProgress?.(result.phase);
       }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
@@ -169,8 +175,8 @@ export async function scanWireless(client) {
   return pages;
 }
 
-export async function testWireless(client, settings) {
-  const result = await wirelessCommand(client, 3, settings, [5]);
+export async function testWireless(client, settings, onProgress) {
+  const result = await wirelessCommand(client, 3, settings, [5], onProgress);
   client.update({ wireless_tested: true });
   return result;
 }

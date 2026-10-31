@@ -1,5 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=3";
+import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=5";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -31,6 +31,7 @@ let scanningBoards = false;
 let selectionVersion = 0;
 let wirelessLoadedAt = 0;
 let wirelessOutcomeUncertain = false;
+let wirelessProgress = null;
 const wirelessForm = bindWirelessForm({
   supported: () => Boolean(currentSnapshot?.hardware?.capabilities & 128),
   ready: wirelessReady,
@@ -51,9 +52,11 @@ const wirelessForm = bindWirelessForm({
     if (!response.ok) throw new Error(result.error ?? result.title ?? `Wireless scan returned HTTP ${response.status}`);
     return result.networks;
   },
-  test: async settings => {
+  test: async (settings, onProgress) => {
+    const version = selectionVersion;
     let response;
     let result;
+    wirelessProgress = onProgress;
     try {
       response = await fetch(boardUrl("/api/wireless/test"), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings),
@@ -61,14 +64,18 @@ const wirelessForm = bindWirelessForm({
       });
       result = await response.json();
     } catch (error) {
-      wirelessOutcomeUncertain = true;
+      if (version === selectionVersion) wirelessOutcomeUncertain = true;
       throw new Error(error.name === "TimeoutError"
         ? "Wi-Fi test timed out; result is uncertain. Restart the dashboard and reconnect the board before retrying."
         : "Wi-Fi test result was lost. Restart the dashboard and reconnect the board before retrying.");
+    } finally {
+      wirelessProgress = null;
     }
     if (!response.ok) {
       const message = result.error ?? result.title ?? `Connection test returned HTTP ${response.status}`;
-      wirelessOutcomeUncertain ||= response.status >= 500 || /uncertain/i.test(message);
+      if (version === selectionVersion) {
+        wirelessOutcomeUncertain ||= response.status >= 500 || /uncertain/i.test(message);
+      }
       throw new Error(message);
     }
     return result.test;
@@ -192,6 +199,7 @@ async function updateStatus() {
       selfTestPendingSequence = null;
     }
     currentSnapshot.self_test_command_pending = selfTestPendingSequence !== null;
+    if (currentSnapshot.wireless_phase) wirelessProgress?.(currentSnapshot.wireless_phase);
     renderStatus(currentSnapshot);
   } catch (error) {
     if (version !== selectionVersion) return;

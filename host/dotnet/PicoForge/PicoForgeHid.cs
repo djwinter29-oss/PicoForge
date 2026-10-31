@@ -85,9 +85,12 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         return null;
     }
 
-    public InputReport? ReadInputReport()
+    public InputReport? ReadInputReport(int timeoutMilliseconds = 250)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(timeoutMilliseconds);
         var report = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
+        var previousTimeout = stream.ReadTimeout;
+        stream.ReadTimeout = timeoutMilliseconds;
         try
         {
             var count = stream.Read(report, 0, report.Length);
@@ -108,6 +111,10 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         catch (TimeoutException)
         {
             return null;
+        }
+        finally
+        {
+            stream.ReadTimeout = previousTimeout;
         }
     }
 
@@ -206,20 +213,21 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         throw new TimeoutException("Wireless provisioning outcome is uncertain; command was not resent");
     }
 
-    public IReadOnlyList<WirelessNetworkResponse> ScanWireless()
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null)
     {
-        var result = WirelessOperation(1, timeoutMilliseconds: 15000, terminalState: 2);
+        var result = WirelessOperation(1, timeoutMilliseconds: 15000, terminalState: 2, onPoll: onPoll);
         var networks = new List<WirelessNetworkResponse>();
         for (byte page = 0; page < (result.Count + 5) / 6; page++)
             networks.AddRange(WirelessOperation(2, page, timeoutMilliseconds: 5000,
-                terminalState: 2).Networks);
+                terminalState: 2, onPoll: onPoll).Networks);
         return networks;
     }
 
-    public WirelessOperationResponse TestWireless(string ssid, string password)
+    public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
+        Action<string>? onProgress = null)
     {
         var result = WirelessOperation(3, ssid: ssid, password: password,
-            timeoutMilliseconds: 35000, terminalState: 5);
+            timeoutMilliseconds: 35000, terminalState: 5, onPoll: onPoll, onProgress: onProgress);
         return result;
     }
 
@@ -227,7 +235,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     private WirelessOperationResponse WirelessOperation(byte operation, byte page = 0,
         string? ssid = null, string? password = null, int timeoutMilliseconds = 15000,
-        byte terminalState = 2)
+        byte terminalState = 2, Action? onPoll = null, Action<string>? onProgress = null)
     {
         if (CommandOutcomeUncertain)
             throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
@@ -241,6 +249,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         var deadline = Environment.TickCount64 + timeoutMilliseconds;
         while (Environment.TickCount64 < deadline)
         {
+            onPoll?.Invoke();
             var result = HidProtocol.ParseWirelessOperation(
                 readFeature(HidProtocol.WirelessResultReportId, HidProtocol.WirelessResultFeatureSize));
             if (result.TransactionId == transactionId)
@@ -249,13 +258,15 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 {
                     CommandOutcomeUncertain = false;
                     throw new InvalidOperationException(operation == 3
-                        ? "Could not connect; check the password and try again" : "Wireless operation failed");
+                        ? $"Could not connect: {(result.Detail == 0 ? "Timed out" : result.Phase)}"
+                        : "Wireless operation failed");
                 }
                 if (result.State == terminalState)
                 {
                     CommandOutcomeUncertain = false;
                     return result;
                 }
+                if (result.State == 4) onProgress?.Invoke(result.Phase);
             }
             Thread.Sleep(100);
         }

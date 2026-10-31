@@ -36,11 +36,23 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
   const tested = [];
   let cancelled = 0;
   let loadCount = 0;
+  let pendingTest = null;
+  let reportPhase;
+  let tick;
+  let now = 0;
+  const oldTimers = { setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, now: Date.now };
+  globalThis.setInterval = callback => { tick = callback; return 1; };
+  globalThis.clearInterval = () => { tick = null; };
+  Date.now = () => now;
   try {
     const form = bindWirelessForm({ load: async () => { loadCount++; return fresh; },
       supported: () => true, ready: () => true,
       scan: async () => { scanned.push(true); return [{ ssid: "nearby", rssi: -40, secured: true }]; },
-      test: async credentials => { tested.push(credentials); return { ipv4: "192.168.1.9" }; },
+      test: async (credentials, onProgress) => {
+        tested.push(credentials);
+        reportPhase = onProgress;
+        return pendingTest ?? { ipv4: "192.168.1.9" };
+      },
       cancelTest: async () => { cancelled++; } });
     await form.load();
     assert.equal(el("wifi-ssid").value, "saved");
@@ -83,7 +95,45 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(cancelled, 1);
     assert.equal(form.dirty(), false);
-  } finally { globalThis.document = previous; }
+    el("wifi-open").handlers.click();
+    el("wifi-ssid").value = "slow-network";
+    let finishTest;
+    pendingTest = new Promise(resolve => { finishTest = resolve; });
+    const waiting = el("wifi-connect").handlers.click();
+    assert.equal(form.operationBusy(), true);
+    assert.equal(el("wifi-connect").textContent, "Testing…");
+    assert.equal(el("wifi-cancel").disabled, true);
+    assert.equal(el("wifi-password").disabled, true);
+    now = 12000;
+    reportPhase("Checking password");
+    assert.match(el("wifi-status").textContent, /Checking password… 12s \(up to 30s\)/);
+    now = 31000;
+    tick();
+    assert.match(el("wifi-status").textContent, /Checking password… 31s; waiting for the final result/);
+    el("wifi-dialog").handlers.cancel({ preventDefault() {} });
+    assert.equal(el("wifi-dialog").open, true, "Escape must not dismiss an in-flight test");
+    finishTest({ ipv4: "192.168.1.10" });
+    await waiting;
+    assert.equal(tick, null);
+    assert.equal(form.operationBusy(), false);
+    assert.equal(el("wifi-connect").textContent, "Test connection");
+    assert.equal(el("wifi-cancel").disabled, false);
+    assert.equal(form.request().ssid, "slow-network");
+
+    el("wifi-open").handlers.click();
+    pendingTest = new Promise(resolve => { finishTest = resolve; });
+    const obsolete = el("wifi-connect").handlers.click();
+    form.reset();
+    finishTest({ ipv4: "192.168.1.10" });
+    await obsolete;
+    assert.equal(form.dirty(), false, "a late result after disconnect must not stage credentials");
+    assert.equal(tick, null);
+  } finally {
+    globalThis.document = previous;
+    globalThis.setInterval = oldTimers.setInterval;
+    globalThis.clearInterval = oldTimers.clearInterval;
+    Date.now = oldTimers.now;
+  }
 });
 
 test("wireless scan/test command and result reports have consistent bounded layouts", () => {
@@ -110,6 +160,11 @@ test("wireless scan/test command and result reports have consistent bounded layo
   report[2] = 5;
   report.set([192, 168, 1, 9], 216);
   assert.equal(decodeWirelessResult(report).ipv4, "192.168.1.9");
+  const failed = new Uint8Array(220);
+  failed.set([1, 7, 6, 5]);
+  assert.deepEqual([decodeWirelessResult(failed).detail, decodeWirelessResult(failed).phase], [5, "Password rejected"]);
+  failed[3] = 8;
+  assert.throws(() => decodeWirelessResult(failed));
   report[4] = 19;
   assert.throws(() => decodeWirelessResult(report));
 });

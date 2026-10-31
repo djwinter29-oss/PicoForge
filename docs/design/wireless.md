@@ -14,8 +14,15 @@ dashboard provisions its selected USB-attached board; the browser does not need 
 The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter a hidden one manually. Enter a
 password when required and test the connection. Credentials are staged in RAM only after the board joins
 successfully; they are not saved to flash until **Save and Reboot**. Cancel or Escape discards staged credentials.
-Connection testing shows elapsed time; association and DHCP can take up to 30 seconds. The Python host continues
-reading live diagnostics during scan/test polling. Controls and dialog dismissal are disabled while a test is pending.
+Connection testing shows the live phase (searching, checking password, waiting for an IP address) and elapsed time;
+the firmware deadline is 30 seconds. A failed test names the reason: network not found, password rejected, no DHCP
+address, or timed out. The CYW43 driver reports a wrong WPA2 password as a handshake timeout and silently re-associates
+rather than reporting a bad-auth status, so firmware fails the test after two dropped handshakes (about 16 seconds).
+Both server dashboards expose the phase as `wireless_phase` in `/api/status` while a test runs. Python and .NET hosts
+continue reading live diagnostics during scan/test polling. Their normal monitors drain nonblocking input batches and
+wait outside the HID lock so button requests are not starved. Both dashboards retain the last confirmed card presence
+for section visibility when storage reports become stale; stale readings and storage controls remain unavailable.
+Controls and dialog dismissal are disabled while a test is pending.
 The server dashboard stops waiting after 40 seconds; an uncertain result blocks further writes until the dashboard
 is restarted and the board reconnected. Tests are never automatically replayed.
 SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters, while an empty password
@@ -31,7 +38,8 @@ The existing deferred reboot follows verified persistence; failed saves do not r
 
 Wi-Fi joins an existing 2.4 GHz open or WPA/WPA2-PSK network and obtains an IPv4 address through DHCP.
 Association/DHCP has a 30-second deadline; failures and dropped connections are reported and retried after five
-seconds. This does not
+seconds. A failed connection test leaves the tested network and retries only the saved network, if one is enabled.
+lwIP uses 4-byte heap alignment, required by Cortex-M multi-word stores into received packet buffers. This does not
 provide a web server, network filesystem, Bluetooth Classic, internet management API or Wi-Fi dashboard transport.
 
 The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE connections.
@@ -98,11 +106,13 @@ reports the saved radio switches; its separate booleans indicate whether credent
 - Feature **34 SET**, 101 payload bytes: version `1` at 0, operation at 1 (scan `1`, select page `2`, test join
   `3`, clear staged test `4`), nonzero transaction at 2, page at 3, SSID/password byte lengths at 4/5, SSID bytes
   at 6-37 and temporary password at 38-100. Unused fields are zero. Password data is never returned.
-- Feature **35 GET**, 220 payload bytes: version, transaction, operation state, selected page, total scan count and
-  Wi-Fi state at offsets 0-5. Six entries of 35 bytes each start at 6: SSID length, a 32-byte SSID, signed RSSI
-  and secured flag. Bytes 216-219 contain the IPv4 address only after a successful test join. Operation states are
-  idle `0`, scanning `1`, scan complete `2`, scan failed `3`, joining `4`, joined `5`, and failed `6`. The scan
-  list is capped at 18 strongest unique SSIDs (three pages).
+- Feature **35 GET**, 220 payload bytes: version, transaction, operation state, page/detail, total scan count and
+  Wi-Fi state at offsets 0-5. Byte 3 is the selected page (0-2) in scan states and the test detail in states 4-6:
+  none `0`, searching `1`, checking password `2`, waiting for DHCP `3`, network not found `4`, password rejected
+  `5`, no DHCP address `6`, timed out `7`. Six entries of 35 bytes each start at 6: SSID length, a 32-byte SSID,
+  signed RSSI and secured flag. Bytes 216-219 contain the IPv4 address only after a successful test join.
+  Operation states are idle `0`, scanning `1`, scan complete `2`, scan failed `3`, joining `4`, joined `5`, and
+  failed `6`. The scan list is capped at 18 strongest unique SSIDs (three pages).
 - Native-host `GET /api/wireless` returns `{wireless, reboot_pending}` with sanitized fields. Confirmed
   `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled` (credential intent), `ssid`, optional `password`,
   optional 64-hex-digit `ble_key`, required `board` (the `/api/settings` clock, profile and radios object) and

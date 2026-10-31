@@ -1,8 +1,8 @@
 import { PicoForgeWebHid } from "./device.mjs?v=4";
-import { renderStatus, renderSelfTest } from "./view.mjs?v=6";
+import { renderStatus, renderSelfTest } from "./view.mjs?v=7";
 import { PicoForgeBluetooth } from "./bluetooth.mjs";
-import { bindWirelessForm } from "./wireless-form.mjs?v=3";
-import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=3";
+import { bindWirelessForm } from "./wireless-form.mjs?v=5";
+import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=4";
 
 const element = id => document.querySelector(`#${id}`);
 const connectionControl = element("connection-control");
@@ -33,7 +33,7 @@ const wirelessForm = bindWirelessForm({
       (client.state.freshness[11] === "fresh" && client.state.self_test?.valid_for_control)),
   load: async () => decodeWireless(await client.device.receiveFeatureReport(30)),
   scan: () => scanWireless(client),
-  test: settings => testWireless(client, settings),
+  test: (settings, onProgress) => testWireless(client, settings, onProgress),
   cancelTest: () => cancelWireless(client),
   changed: () => render(client.state),
 });

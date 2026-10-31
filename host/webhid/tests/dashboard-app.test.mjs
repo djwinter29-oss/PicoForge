@@ -30,7 +30,7 @@ test("server dashboard presents expected USB reconnection without hiding real er
   }
 });
 
-test("shared dashboard handlers survive a status failure that clears the snapshot mid-command", async () => {
+test("shared dashboard handlers survive a status failure that clears the snapshot mid-command", async context => {
   const handlers = new Map();
   let tick;
   const elements = new Map();
@@ -64,6 +64,12 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   let wirelessError = "Storage busy";
   const wirelessSettings = [];
   const testedWireless = [];
+  let wirelessTestGate = null;
+  let wirelessTestError = null;
+  context.mock.method(AbortSignal, "timeout", milliseconds => {
+    assert.equal(milliseconds, 40000, "connection tests have a 40-second HTTP deadline");
+    return new AbortController().signal;
+  });
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
   globalThis.document = {
     querySelector: element,
@@ -91,7 +97,10 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       return { ok: true, json: async () => structuredClone(connected) };
     }
     if (url.startsWith("/api/wireless/test?board=")) {
+      assert.ok(options.signal instanceof AbortSignal);
       testedWireless.push(JSON.parse(options.body));
+      await wirelessTestGate;
+      if (wirelessTestError) throw wirelessTestError;
       return { ok: true, json: async () => ({ test: { ipv4: "192.168.1.9" } }) };
     }
     if (url.startsWith("/api/wireless?board=")) {
@@ -482,7 +491,22 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     elements.get("#wifi-password").value = "new-passphrase";
     handlers.get("#wifi-password:input")();
     assert.equal(elements.get("#settings-save").disabled, true, "unverified Wi-Fi credentials cannot be saved");
-    await handlers.get("#wifi-connect:click")();
+    let finishWirelessTest;
+    wirelessTestGate = new Promise(resolve => { finishWirelessTest = resolve; });
+    const testing = handlers.get("#wifi-connect:click")();
+    await tick();
+    assert.equal(elements.get("#board-select").disabled, true);
+    assert.equal(elements.get("#rescan-boards").disabled, true);
+    assert.equal(elements.get("#led-control").disabled, true);
+    assert.equal(elements.get("#msc-control").disabled, true);
+    assert.equal(elements.get("#wifi-connect").textContent, "Testing…");
+    const beforeSwitch = requestedUrls.length;
+    elements.get("#board-select").value = "board-a";
+    handlers.get("#board-select:change")();
+    assert.equal(requestedUrls.length, beforeSwitch, "board switching must not interrupt a pending test");
+    finishWirelessTest();
+    await testing;
+    wirelessTestGate = null;
     assert.deepEqual(testedWireless.at(-1), { ssid: "new-network", password: "new-passphrase" });
     assert.equal(elements.get("#settings-save").disabled, false);
     assert.equal(elements.get("#settings-save").disabled, false, "staged wireless settings enable combined save");
@@ -557,6 +581,19 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     await tick();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 4);
+    elements.get("#board-select").value = "board-b";
+    handlers.get("#board-select:change")();
+    await new Promise(resolve => setImmediate(resolve));
+    handlers.get("#wifi-open:click")();
+    elements.get("#wifi-ssid").value = "timed-out-network";
+    wirelessTestError = new DOMException("HTTP deadline", "TimeoutError");
+    const beforeTimeout = testedWireless.length;
+    await handlers.get("#wifi-connect:click")();
+    assert.equal(testedWireless.length, beforeTimeout + 1, "timed-out tests are not replayed");
+    assert.match(elements.get("#wifi-status").textContent, /timed out.*uncertain/);
+    await tick();
+    assert.equal(elements.get("#wifi-connect").disabled, true);
+    assert.equal(elements.get("#settings-save").disabled, true);
   } finally {
     Object.assign(globalThis, saved);
   }

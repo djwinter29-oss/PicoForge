@@ -119,6 +119,10 @@ class WirelessTests(unittest.TestCase):
             malformed[offset] = value
             with self.subTest(offset=offset), self.assertRaises(ValueError):
                 parse_wireless_result_report(malformed)
+        joining = parse_wireless_result_report(operation_result(4, page=2))
+        self.assertEqual((joining["detail"], joining["phase"], joining["page"]), (2, "Checking password", 0))
+        with self.assertRaises(ValueError):
+            parse_wireless_result_report(operation_result(6, page=8))
 
     def test_wireless_command_terminal_failure_is_known_but_delivery_failure_blocks_replay(self):
         client = self.client([])
@@ -129,11 +133,11 @@ class WirelessTests(unittest.TestCase):
             return len(command)
 
         def terminal(report_id, _size):
-            return status(0, 0) if report_id == 30 else operation_result(6, 1)
+            return status(0, 0) if report_id == 30 else operation_result(6, 1, page=5)
 
         client._device.send_feature_report.side_effect = send
         client._device.get_feature_report.side_effect = terminal
-        with self.assertRaisesRegex(RuntimeError, "Could not connect"):
+        with self.assertRaisesRegex(RuntimeError, "Could not connect: Password rejected"):
             client.test_wireless("Pico網", "secret12")
         self.assertFalse(client._command_uncertain)
         self.assertEqual(len(sent), 1)
@@ -147,6 +151,24 @@ class WirelessTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "uncertain"):
             client.scan_wireless()
         client._device.send_feature_report.assert_called_once()
+
+    def test_connection_wait_pumps_inputs_and_preserves_the_deadline_without_replaying(self):
+        for terminal, expected_error in ((5, None), (4, TimeoutError)):
+            client = self.client([])
+            client._device.send_feature_report.side_effect = lambda command: len(command)
+            client._device.get_feature_report.side_effect = lambda report_id, _size: (
+                status(0, 0) if report_id == 30 else operation_result(terminal, 1))
+            on_poll = Mock()
+            with self.subTest(terminal=terminal), patch("picoforge.device.monotonic", side_effect=[0, 0, 36]), \
+                    patch("picoforge.device.sleep"):
+                if expected_error:
+                    with self.assertRaises(expected_error):
+                        client.test_wireless("Pico網", "secret12", on_poll=on_poll)
+                else:
+                    self.assertEqual(client.test_wireless("Pico網", "secret12", on_poll=on_poll)["state"], 5)
+            on_poll.assert_called_once_with()
+            client._device.send_feature_report.assert_called_once()
+            self.assertEqual(client._command_uncertain, expected_error is not None)
 
     def test_status_is_sanitized_and_rejects_malformed_reports(self):
         parsed = parse_wireless_status_report(status())
@@ -333,6 +355,50 @@ class WirelessTests(unittest.TestCase):
         self.assertTrue(monitor.snapshot()["reboot_pending"])
         self.assertEqual(monitor.snapshot()["settings"], BOARD)
 
+    def test_monitor_updates_all_live_reports_during_a_connection_wait(self):
+        monitor = self.monitor()
+        runtime = {"temperature_valid": True, "temperature_centidegrees": 2500,
+                   "led_available": True, "led_on": False}
+        memory = {"msc": {"enabled": False, "transition_pending": False}, "filesystem_format": "fat32"}
+        self_test = {"active": False}
+        monitor._active_client.read_input_report.side_effect = [
+            {"kind": "runtime", "data": runtime}, {"kind": "memory", "data": memory},
+            {"kind": "self_test", "data": self_test}, None,
+        ]
+
+        def joining(ssid, password, *, on_poll, on_progress):
+            self.assertEqual((ssid, password), ("Pico網", "secret12"))
+            on_progress("Checking password")
+            self.assertEqual(monitor.snapshot()["wireless_phase"], "Checking password")
+            monitor._input_received_at = {3: 0, 10: 0, 11: 0}
+            with patch("picoforge.monitor.time.monotonic", return_value=30):
+                self.assertTrue(monitor.snapshot()["telemetry_stale"])
+                on_poll()
+                snapshot = monitor.snapshot()
+                self.assertFalse(snapshot["telemetry_stale"])
+                self.assertFalse(snapshot["storage_stale"])
+                self.assertFalse(snapshot["self_test_stale"])
+                self.assertEqual(snapshot["runtime"], runtime)
+                self.assertEqual(snapshot["memory"], memory)
+                self.assertEqual(snapshot["self_test"], self_test)
+            return {"state": 5}
+
+        monitor._active_client.test_wireless.side_effect = joining
+        self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
+        self.assertIsNone(monitor.snapshot()["wireless_phase"])
+        self.assertEqual(monitor._active_client.read_input_report.call_count, 4)
+        for call in monitor._active_client.read_input_report.call_args_list:
+            self.assertEqual(call.kwargs, {"timeout_ms": 0})
+
+    def test_monitor_input_pump_is_bounded_and_does_not_swallow_usb_errors(self):
+        monitor = self.monitor()
+        monitor._active_client.read_input_report.return_value = {"kind": "self_test", "data": {"active": False}}
+        monitor._poll_wireless_inputs()
+        self.assertEqual(monitor._active_client.read_input_report.call_count, 16)
+        monitor._active_client.read_input_report.side_effect = OSError("USB disconnected")
+        with self.assertRaises(OSError):
+            monitor._poll_wireless_inputs()
+
     def test_http_validation_routing_sanitization_and_uncertain_error(self):
         dashboard = Mock()
         dashboard.set_wireless.return_value = {"wireless": parse_wireless_status_report(status()),
@@ -368,3 +434,9 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("uncertain", response.text)
         self.assertNotIn("secret12", response.text)
+        for failure in (TimeoutError("secret12"), OSError("secret12"), ValueError("secret12")):
+            dashboard.test_wireless.side_effect = failure
+            response = client.post("/api/wireless/test?board=a", json={"ssid": "Pico", "password": "secret12"})
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("uncertain", response.json["error"])
+            self.assertNotIn("secret12", response.text)

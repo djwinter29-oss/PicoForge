@@ -23,10 +23,14 @@ function renderLinkState(selector, label, active) {
 }
 
 let lastStorageDetails = null;
+let cardAbsent = false;
 
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
-  if (!connected) lastStorageDetails = null;
+  if (!connected) {
+    lastStorageDetails = null;
+    cardAbsent = false;
+  }
   const hardware = snapshot.hardware;
   const runtime = snapshot.runtime;
   updateClockOptions(document.querySelector("#settings-clock"), hardware?.mcu,
@@ -59,7 +63,7 @@ export function renderStatus(snapshot) {
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   renderLinkState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   const memory = snapshot.memory;
-  const cardAbsent = memory?.presence_known === true && memory.present === false;
+  if (memory?.presence_known === true) cardAbsent = memory.present === false;
   const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending || snapshot.msc_command_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
   document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared

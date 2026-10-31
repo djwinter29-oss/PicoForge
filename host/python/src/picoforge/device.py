@@ -297,10 +297,12 @@ class PicoForgeHid:
 
     def test_wireless(
         self, ssid: str, password: str = "", *, on_poll: Callable[[], None] | None = None,
+        on_progress: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         """Test a temporary network join; firmware retains credentials only in RAM after success."""
         self._require_open()
-        return self._wireless_command(3, ssid=ssid, password=password, timeout=35.0, terminal=5, on_poll=on_poll)
+        return self._wireless_command(3, ssid=ssid, password=password, timeout=35.0, terminal=5, on_poll=on_poll,
+                                      on_progress=on_progress)
 
     def cancel_wireless_test(self) -> None:
         """Clear temporary test credentials from firmware RAM."""
@@ -310,7 +312,7 @@ class PicoForgeHid:
     def _wireless_command(
         self, operation: int, *, page: int = 0, ssid: str = "", password: str = "",
         timeout: float = 15.0, terminal: int | None = None,
-        on_poll: Callable[[], None] | None = None,
+        on_poll: Callable[[], None] | None = None, on_progress: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         if self._command_uncertain:
             raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
@@ -336,11 +338,13 @@ class PicoForgeHid:
                 if result["state"] == 6:
                     self._command_uncertain = False
                     if operation == 3:
-                        raise RuntimeError("Could not connect; check the password and try again")
+                        raise RuntimeError(f"Could not connect: {result['phase'] or 'Timed out'}")
                     raise RuntimeError("Wireless operation failed")
                 if result["state"] == expected:
                     self._command_uncertain = False
                     return result
+                if on_progress is not None and result["state"] == 4:
+                    on_progress(str(result["phase"]))
             sleep(0.1)
         raise TimeoutError("Wireless operation timed out; do not resend until its result is checked")
 

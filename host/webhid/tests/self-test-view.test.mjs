@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderStatus, renderSelfTest } from "../js/view.mjs";
-import { renderSelfTest as renderServerSelfTest } from "../../web/js/dashboard.mjs";
+import { renderStatus as renderServerStatus, renderSelfTest as renderServerSelfTest } from "../../web/js/dashboard.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -152,6 +152,41 @@ test("storage does not infer absence from an unavailable sample or mount from ca
   renderStatus(state);
   assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
 }));
+
+test("both dashboards retain storage visibility through stale reports without showing cached readings", () =>
+  withDocument(el => {
+    for (const render of [renderStatus, renderServerStatus]) {
+      render({ connected: false });
+      const state = snapshot();
+      state.memory.present = false;
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, true);
+      assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
+
+      state.memory = null;
+      state.msc = null;
+      state.storage_stale = true;
+      state.freshness[10] = "stale";
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, true, "A missing report must not reveal absent storage");
+      assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
+
+      state.memory = { sample_valid: true, presence_known: true, present: true, initialized: true, configured: true };
+      state.storage_stale = false;
+      state.freshness[10] = "fresh";
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, false, "Confirmed card insertion must update layout");
+      state.memory = null;
+      state.storage_stale = true;
+      state.freshness[10] = "stale";
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, false);
+      assert.equal(el("#memory-size").textContent, "--", "Stale readings must not be presented as live");
+
+      render({ connected: false });
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, false, "Disconnect must clear confirmed presence");
+    }
+  }));
 
 test("busy storage retains card details without a message, but stale or replaced media clears them", () =>
   withDocument(el => {

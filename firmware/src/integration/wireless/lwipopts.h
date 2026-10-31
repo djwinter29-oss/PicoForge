@@ -2,6 +2,8 @@
 #define PF_LWIPOPTS_H
 
 #define NO_SYS 1
+/* lwIP defaults to byte alignment; Cortex-M multi-word stores into unaligned pbuf headers fault on received frames. */
+#define MEM_ALIGNMENT 4
 #define LWIP_SOCKET 0
 #define LWIP_NETCONN 0
 #define LWIP_TCP 0

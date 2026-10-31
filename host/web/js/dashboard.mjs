@@ -9,10 +9,14 @@ function uptimeLabel(milliseconds) {
 }
 
 let lastStorageDetails = null;
+let cardAbsent = false;
 
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
-  if (!connected) lastStorageDetails = null;
+  if (!connected) {
+    lastStorageDetails = null;
+    cardAbsent = false;
+  }
   const hardware = snapshot.hardware;
   const runtime = snapshot.telemetry_stale ? null : snapshot.runtime;
   const connection = document.querySelector("#connection");
@@ -48,7 +52,7 @@ export function renderStatus(snapshot) {
     ? uptimeLabel(runtime.uptime_milliseconds ?? runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
   const memory = snapshot.storage_stale ? null : snapshot.memory;
-  const cardAbsent = memory?.presence_known === true && memory.present === false;
+  if (memory?.presence_known === true) cardAbsent = memory.present === false;
   const storageShared = snapshot.msc_command_pending || snapshot.msc?.enabled || snapshot.msc?.transition_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
   document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared;

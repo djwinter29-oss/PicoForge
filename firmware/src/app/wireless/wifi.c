@@ -14,6 +14,22 @@
 #define PF_WIFI_SCAN_LIMIT 18u
 #define PF_WIFI_SCAN_PAGE_SIZE 6u
 /* ponytail: cap results at 18 (three report pages) to keep static RAM bounded on RP2040; raise with a paged protocol. */
+/* ponytail: mirrors the pinned cyw43-driver's private "associated" join bit; the driver retries a WPA2 handshake
+ * with a wrong passphrase silently instead of reporting BADAUTH. Recheck this bit when updating the driver. */
+#define PF_CYW43_JOIN_LINK 0x0400u
+#define PF_WIFI_HANDSHAKE_FAILURES 2u
+
+/** @brief Feature 35 byte 3 during connection-test states 4-6. */
+typedef enum {
+    PF_WIFI_DETAIL_NONE = 0, /**< No detail; also used for rejected commands. */
+    PF_WIFI_DETAIL_SEARCHING = 1, /**< Finding and associating with the network. */
+    PF_WIFI_DETAIL_PASSWORD = 2, /**< Associated; WPA handshake is checking the password. */
+    PF_WIFI_DETAIL_DHCP = 3, /**< Password accepted; waiting for a DHCP address. */
+    PF_WIFI_DETAIL_NOT_FOUND = 4, /**< Failed: network not found. */
+    PF_WIFI_DETAIL_REJECTED = 5, /**< Failed: password rejected (repeated handshake failure or BADAUTH). */
+    PF_WIFI_DETAIL_NO_ADDRESS = 6, /**< Failed: password accepted but no DHCP address before the deadline. */
+    PF_WIFI_DETAIL_TIMEOUT = 7, /**< Failed: association did not complete before the deadline. */
+} pf_wifi_detail_t;
 
 /** @brief Sanitized access point data retained between report reads. */
 typedef struct {
@@ -35,6 +51,9 @@ static uint8_t command_transaction; /**< Latest scan/test transaction. */
 static uint8_t command_state; /**< 0 idle, 1 scanning, 2 scan complete, 3 scan failed, 4 joining, 5 joined, 6 failed. */
 static uint8_t scan_count; /**< Number of retained results, at most PF_WIFI_SCAN_LIMIT. */
 static uint8_t scan_page; /**< Selected result page. */
+static uint8_t join_detail; /**< pf_wifi_detail_t reported while a test is joining, joined or failed. */
+static uint8_t handshake_failures; /**< Handshakes dropped back to association during the current test. */
+static bool handshake_active; /**< Current test was associated at the previous poll. */
 static bool test_active; /**< True while a temporary credential test is joining. */
 static bool test_succeeded; /**< Tested credentials remain staged until saved or explicitly cleared. */
 static bool saved_wifi_enabled; /**< Saved switch and credential availability for restoring the boot network. */
@@ -128,17 +147,36 @@ void pf_wifi_poll(uint8_t *error)
     if (test_active) {
         if (link == CYW43_LINK_UP) {
             command_state = 5u;
+            join_detail = PF_WIFI_DETAIL_NONE;
             test_active = false;
             test_succeeded = true;
             wifi_state = 2u;
             *error = 0u;
-        } else if (link < 0 || now >= connect_deadline_us) {
+            return;
+        }
+        const bool associated = (cyw43_state.wifi_join_state & PF_CYW43_JOIN_LINK) != 0u;
+        /* A completed handshake reports NOIP, so dropping association while still joining is a failed handshake. */
+        if (handshake_active && !associated && link == CYW43_LINK_JOIN) ++handshake_failures;
+        handshake_active = associated;
+        uint8_t failure = link == CYW43_LINK_NONET ? PF_WIFI_DETAIL_NOT_FOUND
+            : link == CYW43_LINK_BADAUTH || handshake_failures >= PF_WIFI_HANDSHAKE_FAILURES
+                ? PF_WIFI_DETAIL_REJECTED
+            : link < 0 ? PF_WIFI_DETAIL_TIMEOUT
+            : now < connect_deadline_us ? PF_WIFI_DETAIL_NONE
+            : link == CYW43_LINK_NOIP ? PF_WIFI_DETAIL_NO_ADDRESS : PF_WIFI_DETAIL_TIMEOUT;
+        if (failure != PF_WIFI_DETAIL_NONE) {
+            cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
             memset(test_ssid, 0, sizeof(test_ssid));
             memset(test_password, 0, sizeof(test_password));
             command_state = 6u;
+            join_detail = failure;
             test_active = false;
             wifi_state = 3u;
-            *error = link < 0 ? 2u : 3u;
+            *error = failure == PF_WIFI_DETAIL_NO_ADDRESS || (failure == PF_WIFI_DETAIL_TIMEOUT && link >= 0)
+                ? 3u : 2u;
+        } else {
+            join_detail = link == CYW43_LINK_NOIP ? PF_WIFI_DETAIL_DHCP
+                : associated ? PF_WIFI_DETAIL_PASSWORD : PF_WIFI_DETAIL_SEARCHING;
         }
         return;
     }
@@ -154,7 +192,7 @@ void pf_wifi_poll(uint8_t *error)
         wifi_state = 3u;
         retry_us = now + 5000000u;
         PF_LOGGING_WARNING("wifi", "Wi-Fi link lost");
-    } else if (wifi_state == 3u && now >= retry_us) connect_wifi(error);
+    } else if (wifi_state == 3u && saved_wifi_enabled && now >= retry_us) connect_wifi(error);
 }
 
 /** @copydoc pf_wifi_state */
@@ -208,6 +246,9 @@ bool pf_wifi_command(const uint8_t report[101])
         memcpy(test_password, report + 38u, password_length);
         test_active = true;
         command_state = 4u;
+        join_detail = PF_WIFI_DETAIL_SEARCHING;
+        handshake_failures = 0u;
+        handshake_active = false;
         wifi_state = 1u;
         connect_deadline_us = time_us_64() + 30000000u;
         const int rc = cyw43_arch_wifi_connect_async(test_ssid, test_password,
@@ -215,6 +256,8 @@ bool pf_wifi_command(const uint8_t report[101])
         if (rc != 0) {
             test_active = false;
             command_state = 6u;
+            join_detail = PF_WIFI_DETAIL_NONE;
+            wifi_state = 3u;
             memset(test_ssid, 0, sizeof(test_ssid));
             memset(test_password, 0, sizeof(test_password));
             return false;
@@ -243,6 +286,7 @@ void pf_wifi_reject_command(uint8_t transaction)
 {
     command_transaction = transaction;
     command_state = 6u;
+    join_detail = PF_WIFI_DETAIL_NONE;
     test_active = false;
     test_succeeded = false;
     memset(test_ssid, 0, sizeof(test_ssid));
@@ -256,7 +300,7 @@ void pf_wifi_result(uint8_t report[220])
     report[0] = 1u;
     report[1] = command_transaction;
     report[2] = command_state;
-    report[3] = scan_page;
+    report[3] = command_state >= 4u ? join_detail : scan_page;
     report[4] = scan_count;
     report[5] = wifi_state;
     const uint8_t start = (uint8_t)(scan_page * PF_WIFI_SCAN_PAGE_SIZE);

@@ -124,18 +124,23 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     const current = generation;
     const started = Date.now();
     busy = true;
+    let phase = "Starting";
     const progress = () => {
       const elapsed = Math.floor((Date.now() - started) / 1000);
       setStatus("wifi-status", elapsed < 30
-        ? `Testing connection to “${ssid}”… ${elapsed}s elapsed; allow up to 30s for connection and DHCP.`
-        : `Testing connection to “${ssid}”… ${elapsed}s elapsed; waiting for the final result.`);
+        ? `Testing “${ssid}”: ${phase}… ${elapsed}s (up to 30s).`
+        : `Testing “${ssid}”: ${phase}… ${elapsed}s; waiting for the final result.`);
     };
     progress();
     testTimer = setInterval(progress, 1000);
     refresh();
     changed();
     try {
-      const result = await test({ ssid, password });
+      const result = await test({ ssid, password }, next => {
+        if (current !== generation || !next || next === phase) return;
+        phase = next;
+        progress();
+      });
       if (current !== generation) return;
       wifiStage = { ssid, use_tested_wifi: true };
       wifiEdited = false;

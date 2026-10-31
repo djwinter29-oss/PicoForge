@@ -270,11 +270,17 @@ def build_wireless_command_report(
     return bytes(payload)
 
 
+#: Feature 35 byte 3 while testing (states 4..6): join phase or failure reason.
+WIRELESS_TEST_DETAILS = ("", "Searching for network", "Checking password", "Waiting for IP address",
+                         "Network not found", "Password rejected", "Connected but no IP address from DHCP",
+                         "Timed out")
+
+
 def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
     """Decode sanitized Feature 35 scan/test results; no password is returned."""
     payload = _feature_payload(report, WIRELESS_RESULT_REPORT_ID, WIRELESS_RESULT_FEATURE_SIZE - 1)
     state, page, count, wifi_state = payload[2:6]
-    if payload[0] != 1 or state > 6 or page > 2 or count > 18 or wifi_state > 3:
+    if payload[0] != 1 or state > 6 or page > (7 if state >= 4 else 2) or count > 18 or wifi_state > 3:
         raise ValueError("Invalid wireless scan/test result")
     networks = []
     for index in range(6):
@@ -294,8 +300,9 @@ def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> dict[
                          "secured": bool(entry[34])})
     if len(networks) > count or (state != 5 and any(payload[216:220])):
         raise ValueError("Invalid wireless scan/test result fields")
-    return {"transaction_id": payload[1], "state": state, "page": page, "count": count,
-            "wifi_state": wifi_state, "ipv4": ".".join(map(str, payload[216:220])), "networks": networks}
+    detail = page if state >= 4 else 0
+    return {"transaction_id": payload[1], "state": state, "page": 0 if state >= 4 else page, "detail": detail,
+            "phase": WIRELESS_TEST_DETAILS[detail], "count": count, "wifi_state": wifi_state, "ipv4": ".".join(map(str, payload[216:220])), "networks": networks}
 
 
 def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> dict[str, object]:

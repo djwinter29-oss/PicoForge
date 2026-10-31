@@ -294,18 +294,29 @@ class DeviceMonitor:
         with self._device_lock:
             snapshot = self.snapshot()
             self._require_wireless_idle(snapshot)
-            return {"test": self._send_control(self._active_client.test_wireless, ssid, password,
-                                               on_poll=self._poll_wireless_inputs)}
+            try:
+                return {"test": self._send_control(self._active_client.test_wireless, ssid, password,
+                                                   on_poll=self._poll_wireless_inputs,
+                                                   on_progress=self._set_wireless_phase)}
+            finally:
+                self._set_wireless_phase(None)
+
+    def _set_wireless_phase(self, phase: str | None) -> None:
+        with self._lock:
+            self._snapshot["wireless_phase"] = phase
 
     def _poll_wireless_inputs(self) -> None:
         """Drain a bounded input batch while the wireless command owns the HID lock."""
+        client = self._active_client
+        if client is None:
+            raise RuntimeError("PicoForge HID is not connected")
         for _ in range(16):
-            item = self._active_client.read_input_report(timeout_ms=0)
+            item = client.read_input_report(timeout_ms=0)
             if item is None:
                 break
             self._apply_input_report(item)
 
-    def _apply_input_report(self, item: dict[str, object] | None) -> None:
+    def _apply_input_report(self, item: dict[str, Any] | None) -> None:
         if item is None:
             return
         kind = item["kind"]
@@ -421,8 +432,8 @@ class DeviceMonitor:
                     }
                 while not self._stop.is_set():
                     with self._device_lock:
-                        item = client.read_input_report(timeout_ms=250)
-                        self._apply_input_report(item)
+                        self._poll_wireless_inputs()
+                    self._stop.wait(0.01)
             except (OSError, RuntimeError, ValueError) as error:
                 with self._lock:
                     reconnecting = (

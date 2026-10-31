@@ -71,7 +71,8 @@ public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoR
     BoardConfigurationResponse? BoardConfiguration = null, DateTimeOffset? TelemetryUpdatedAt = null,
     DateTimeOffset? StorageUpdatedAt = null, DateTimeOffset? SelfTestUpdatedAt = null,
     bool TelemetryStale = true, bool StorageStale = true, bool SelfTestStale = true,
-    bool CommandOutcomeUncertain = false, bool RebootPending = false, bool Reconnecting = false)
+    bool CommandOutcomeUncertain = false, bool RebootPending = false, bool Reconnecting = false,
+    string? WirelessPhase = null)
 {
     public bool SettingsSupported => Settings is not null;
 }
