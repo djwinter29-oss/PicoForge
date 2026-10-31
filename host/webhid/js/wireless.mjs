@@ -1,4 +1,4 @@
-import { decodeConfigReport, withTimeout } from "./device.mjs?v=4";
+import { decodeConfigReport, withTimeout } from "./device.mjs?v=5";
 
 export function decodeWireless(report) {
   const bytes = report instanceof DataView

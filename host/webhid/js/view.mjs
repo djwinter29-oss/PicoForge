@@ -1,3 +1,5 @@
+import { renderWifiStatus } from "./wireless-form.mjs?v=7";
+
 function uptimeLabel(milliseconds) {
   if (typeof milliseconds === "bigint") {
     const seconds = milliseconds / 1000n;
@@ -62,6 +64,7 @@ export function renderStatus(snapshot) {
   document.querySelector("#serial").textContent = hardware?.serial_number || "--";
   document.querySelector("#uptime").textContent = runtime ? uptimeLabel(runtime.uptime_ms) : "--";
   renderLinkState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
+  renderWifiStatus(snapshot);
   const memory = snapshot.memory;
   if (memory?.presence_known === true) cardAbsent = memory.present === false;
   const storageShared = snapshot.msc?.enabled || snapshot.msc?.transition_pending || snapshot.msc_command_pending;

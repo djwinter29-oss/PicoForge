@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=4";
+import { PicoForgeWebHid } from "../js/device.mjs?v=5";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -9,11 +9,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=10"/);
-  assert.match(html, /src="js\/app\.mjs\?v=16"/);
+  assert.match(html, /href="css\/webhid\.css\?v=11"/);
+  assert.match(html, /src="js\/app\.mjs\?v=17"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
-  assert.match(app, /from "\.\/device\.mjs\?v=4"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=7"/);
+  assert.match(app, /from "\.\/device\.mjs\?v=5"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=8"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
@@ -61,7 +61,8 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     ["product-name", "board-model", "serial", "identity-clock", "ram-usage", "firmware-version"]);
   const runtime = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
   assert.deepEqual([...runtime.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
-    ["Uptime", "Reset cause", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
+    ["Uptime", "Reset cause", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed",
+      "Wi-Fi"]);
   const storage = html.split('aria-labelledby="memory-title"')[1].split("</section>")[0];
   assert.deepEqual([...storage.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
     ["Memory state", "Capacity", "Filesystem", "Manufacturer", "Product", "Serial"]);
@@ -78,7 +79,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   }
 });
 
-test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and confirms force return", async () => {
+test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and confirms force return", async context => {
   const saved = {
     document: globalThis.document, window: globalThis.window,
     navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
@@ -216,6 +217,52 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     assert.equal(el("#msc-control").disabled, true);
     assert.equal(el("#settings-save").disabled, true);
     assert.equal(el("#self-test-start").disabled, true);
+    let now = Date.now();
+    context.mock.method(Date, "now", () => now);
+    let reads = 0;
+    let wifiState = 2;
+    let failure = false;
+    let delayed = null;
+    const device = new EventTarget();
+    device.receiveFeatureReport = async id => {
+      assert.equal(id, 30);
+      reads++;
+      if (failure) throw new Error("device read failed");
+      if (delayed) return delayed;
+      const report = new Uint8Array(48);
+      report.set([1, 1, 0, 0, wifiState, 192, 168, 1, 9]);
+      report.set(new TextEncoder().encode("HomeDev"), 9);
+      return report;
+    };
+    client.device = device;
+    client.update({ hardware: { ...client.state.hardware, capabilities: client.state.hardware.capabilities | 128 } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(el("#wifi-state").textContent, "HomeDev (192.168.1.9)");
+    assert.equal(reads, 1);
+    wifiState = 1;
+    client.update({});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reads, 1, "input reports must not issue unthrottled wireless reads");
+    now += 2000;
+    client.update({});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(el("#wifi-state").textContent, "HomeDev (connecting)");
+    failure = true;
+    now += 2000;
+    client.update({});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(el("#wifi-state").textContent, "Unavailable");
+    assert.match(el("#wifi-state").title, /device read failed/);
+    failure = false;
+    let finishRead;
+    delayed = new Promise(resolve => { finishRead = resolve; });
+    now += 2000;
+    client.update({});
+    client.clearConnection();
+    finishRead(new Uint8Array(48));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(client.state.wireless, null, "a late report must not repopulate a disconnected board");
+    assert.equal(el("#wifi-state").textContent, "--");
   } finally {
     for (const [name, method] of prototypes) PicoForgeWebHid.prototype[name] = method;
     globalThis.document = saved.document; globalThis.window = saved.window;
@@ -224,4 +271,15 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     if (saved.secure) Object.defineProperty(globalThis, "isSecureContext", saved.secure);
     else delete globalThis.isSecureContext;
   }
+});
+
+test("server dashboard imports only the WebHID module the Python and .NET servers publish", () => {
+  for (const name of ["app.mjs", "dashboard.mjs"]) {
+    const source = readFileSync(new URL(`../../web/js/${name}`, import.meta.url), "utf8");
+    for (const [, path] of source.matchAll(/from "\.\.\/\.\.\/webhid\/js\/([^"?]+)/g)) {
+      assert.equal(path, "wireless-form.mjs", `${name} imports unpublished ${path}`);
+    }
+  }
+  const form = readFileSync(new URL("../js/wireless-form.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(form, /^import /m);
 });

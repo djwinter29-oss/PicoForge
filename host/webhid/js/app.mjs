@@ -1,8 +1,8 @@
-import { PicoForgeWebHid } from "./device.mjs?v=4";
-import { renderStatus, renderSelfTest } from "./view.mjs?v=7";
-import { PicoForgeBluetooth } from "./bluetooth.mjs";
-import { bindWirelessForm } from "./wireless-form.mjs?v=5";
-import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=4";
+import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=5";
+import { renderStatus, renderSelfTest } from "./view.mjs?v=8";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=2";
+import { bindWirelessForm } from "./wireless-form.mjs?v=7";
+import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=5";
 
 const element = id => document.querySelector(`#${id}`);
 const connectionControl = element("connection-control");
@@ -31,13 +31,32 @@ const wirelessForm = bindWirelessForm({
     !client.state.self_test_command_pending && !client.state.self_test?.active &&
     (!(client.state.hardware?.capabilities & 32) ||
       (client.state.freshness[11] === "fresh" && client.state.self_test?.valid_for_control)),
-  load: async () => decodeWireless(await client.device.receiveFeatureReport(30)),
+  load: async () => client.state.wireless ?? decodeWireless(await client.device.receiveFeatureReport(30)),
   scan: () => scanWireless(client),
   test: (settings, onProgress) => testWireless(client, settings, onProgress),
   cancelTest: () => cancelWireless(client),
   changed: () => render(client.state),
 });
 let wirelessLoadedAt = 0;
+let wirelessReading = false;
+
+async function refreshWirelessStatus() {
+  const target = client;
+  const device = target.device;
+  const generation = target.generation;
+  wirelessReading = true;
+  wirelessLoadedAt = Date.now();
+  try {
+    const wireless = decodeWireless(await withTimeout(device.receiveFeatureReport(30), 1500));
+    if (target === client && device === target.device && generation === target.generation) {
+      target.update({ wireless, wireless_error: null });
+    }
+  } catch (error) {
+    if (target === client && device === target.device && generation === target.generation) {
+      target.update({ wireless: null, wireless_error: `Wi-Fi status read failed: ${error.message}` });
+    }
+  } finally { wirelessReading = false; }
+}
 
 function render(state) {
   renderStatus(state);
@@ -99,11 +118,12 @@ function render(state) {
         : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
   element("msc-note").hidden = !element("msc-note").textContent;
   wirelessForm.update();
-  if (Date.now() - wirelessLoadedAt >= 2000 && state.connected && storageReady && !state.busy && !bluetooth &&
-    (state.hardware?.capabilities & 128)) {
-    wirelessLoadedAt = Date.now();
+  if (state.connected && state.wireless && storageReady && !state.busy && !bluetooth) {
     void wirelessForm.load();
   }
+  if (Date.now() - wirelessLoadedAt >= 2000 && state.connected && !state.busy && !state.reboot_pending
+    && !client.outstanding && !wirelessForm.operationBusy() && !wirelessReading
+    && (state.hardware?.capabilities & 128)) void refreshWirelessStatus();
 }
 
 async function run(operation) {

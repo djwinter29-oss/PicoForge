@@ -1,3 +1,5 @@
+import { renderWifiStatus } from "../../webhid/js/wireless-form.mjs?v=7";
+
 function uptimeLabel(milliseconds) {
   if (!Number.isFinite(milliseconds)) return "--";
   const totalSeconds = Math.floor(milliseconds / 1000);
@@ -51,6 +53,7 @@ export function renderStatus(snapshot) {
   document.querySelector("#uptime").textContent = runtime
     ? uptimeLabel(runtime.uptime_milliseconds ?? runtime.uptime_ms) : "--";
   setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
+  renderWifiStatus(snapshot);
   const memory = snapshot.storage_stale ? null : snapshot.memory;
   if (memory?.presence_known === true) cardAbsent = memory.present === false;
   const storageShared = snapshot.msc_command_pending || snapshot.msc?.enabled || snapshot.msc?.transition_pending;

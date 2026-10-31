@@ -1,5 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=5";
+import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=7";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -32,20 +32,44 @@ let selectionVersion = 0;
 let wirelessLoadedAt = 0;
 let wirelessOutcomeUncertain = false;
 let wirelessProgress = null;
+let wirelessStatus = null;
+let wirelessError = null;
+let wirelessReading = false;
+async function readWirelessStatus() {
+  const response = await fetch(boardUrl("/api/wireless"), {
+    cache: "no-store", signal: AbortSignal.timeout(5000),
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`);
+  }
+  if (!result.wireless || typeof result.wireless.ssid !== "string") {
+    throw new Error("Wireless endpoint returned invalid status");
+  }
+  return result.wireless;
+}
+async function refreshWirelessStatus() {
+  const version = selectionVersion;
+  wirelessReading = true;
+  wirelessLoadedAt = Date.now();
+  try {
+    const fresh = await readWirelessStatus();
+    if (version !== selectionVersion || !currentSnapshot?.connected) return;
+    wirelessStatus = fresh;
+    wirelessError = null;
+  } catch (error) {
+    if (version !== selectionVersion || !currentSnapshot?.connected) return;
+    wirelessStatus = null;
+    wirelessError = `Wi-Fi status read failed: ${error.message}`;
+  } finally {
+    wirelessReading = false;
+    if (version === selectionVersion && currentSnapshot?.connected) renderStatus(currentSnapshot);
+  }
+}
 const wirelessForm = bindWirelessForm({
   supported: () => Boolean(currentSnapshot?.hardware?.capabilities & 128),
   ready: wirelessReady,
-  load: async () => {
-    const response = await fetch(boardUrl("/api/wireless"), { cache: "no-store" });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`);
-    }
-    if (!result.wireless || typeof result.wireless.ssid !== "string") {
-      throw new Error("Wireless endpoint returned invalid status");
-    }
-    return result.wireless;
-  },
+  load: async () => wirelessStatus ?? await readWirelessStatus(),
   scan: async () => {
     const response = await fetch(boardUrl("/api/wireless/scan"), { method: "POST" });
     const result = await response.json();
@@ -153,6 +177,8 @@ function renderStatus(snapshot) {
   if (!snapshot.connected) {
     shareDialog.close();
     wirelessLoadedAt = 0;
+    wirelessStatus = null;
+    wirelessError = null;
     wirelessForm.reset();
     settingsDirty = false;
     settingsStorageDirty = false;
@@ -160,6 +186,8 @@ function renderStatus(snapshot) {
   }
   renderDashboardStatus({
     ...snapshot,
+    wireless: wirelessStatus,
+    wireless_error: wirelessError,
     busy: snapshot.busy || settingsRequestInProgress || wirelessForm.operationBusy()
       || snapshot.reboot_pending || snapshot.outcome_uncertain,
     no_board_selected: !selectedBoard,
@@ -172,9 +200,12 @@ function renderStatus(snapshot) {
     msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
   });
   wirelessForm.update();
-  if (wirelessReady() && Date.now() - wirelessLoadedAt >= 2000) {
-    wirelessLoadedAt = Date.now();
+  if (wirelessReady() && wirelessStatus) {
     void wirelessForm.load();
+  }
+  if (snapshot.connected && (snapshot.hardware?.capabilities & 128) && !wirelessReading
+    && !wirelessForm.operationBusy() && !snapshot.reboot_pending && Date.now() - wirelessLoadedAt >= 2000) {
+    void refreshWirelessStatus();
   }
 }
 

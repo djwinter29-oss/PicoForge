@@ -27,6 +27,33 @@ function snapshot() {
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
 
+test("both dashboards show live Wi-Fi state without treating unavailable reports as disabled", () => withDocument(el => {
+  for (const render of [renderStatus, renderServerStatus]) {
+    const state = { ...snapshot(), hardware: { ...snapshot().hardware, capabilities: 128 } };
+    for (const [wireless, expected] of [
+      [{ wifi_enabled: false, ssid: "saved", wifi_state: "connected" }, "Disabled"],
+      [{ wifi_enabled: true, ssid: "", wifi_state: "failed" }, "Disabled"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connected", ipv4: "192.168.1.9" }, "HomeDev (192.168.1.9)"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connecting" }, "HomeDev (connecting)"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "failed" }, "HomeDev (disconnected)"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "disabled" }, "HomeDev (disconnected)"],
+      [{ wifi_enabled: true, ssid: "<script>", wifi_state: "connected", ipv4: "10.0.0.2" }, "<script> (10.0.0.2)"],
+      [null, "--"],
+    ]) {
+      render({ ...state, wireless });
+      assert.equal(el("#wifi-state").textContent, expected);
+      assert.equal(el("#wifi-diagnostics").hidden, false);
+    }
+    render({ ...state, wireless_error: "Wi-Fi status read failed: disconnected" });
+    assert.equal(el("#wifi-state").textContent, "Unavailable");
+    assert.match(el("#wifi-state").title, /read failed/);
+    render({ ...state, connected: false });
+    assert.equal(el("#wifi-state").textContent, "--");
+    render({ ...state, hardware: { capabilities: 16 } });
+    assert.equal(el("#wifi-diagnostics").hidden, true);
+  }
+}));
+
 test("self-test writes require fresh, known, mounted, firmware-owned state and valid size", () => withDocument(el => {
   const state = snapshot();
   renderSelfTest(state);

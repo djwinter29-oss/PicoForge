@@ -1,3 +1,18 @@
+/** Show Wi-Fi as "SSID (IP)" when connected, "SSID (state)" otherwise, or Disabled when off or unconfigured. */
+export function renderWifiStatus(snapshot) {
+  const row = document.querySelector("#wifi-diagnostics");
+  row.hidden = !(snapshot.hardware?.capabilities & 128);
+  const status = document.querySelector("#wifi-state");
+  const wireless = snapshot.wireless;
+  status.textContent = !snapshot.connected ? "--"
+    : snapshot.wireless_error ? "Unavailable"
+    : !wireless ? "--"
+    : !wireless.wifi_enabled || !wireless.ssid ? "Disabled"
+    : `${wireless.ssid} (${wireless.wifi_state === "connected" ? wireless.ipv4
+      : wireless.wifi_state === "connecting" ? "connecting" : "disconnected"})`;
+  status.title = snapshot.wireless_error ?? "";
+}
+
 /** Bind the staged Wi-Fi/Bluetooth dialogs to one atomic Board configuration save. */
 export function bindWirelessForm({ load, scan, test, cancelTest, ready, supported, changed = () => {} }) {
   const el = id => document.querySelector(`#${id}`);

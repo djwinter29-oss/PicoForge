@@ -66,8 +66,13 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   const testedWireless = [];
   let wirelessTestGate = null;
   let wirelessTestError = null;
+  let wirelessState = "connected";
+  let wirelessReadFails = false;
+  let wirelessReadGate = null;
+  let wirelessNow = Date.now();
+  context.mock.method(Date, "now", () => wirelessNow);
   context.mock.method(AbortSignal, "timeout", milliseconds => {
-    assert.equal(milliseconds, 40000, "connection tests have a 40-second HTTP deadline");
+    assert.ok([5000, 40000].includes(milliseconds), "status reads and connection tests have bounded HTTP deadlines");
     return new AbortController().signal;
   });
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
@@ -104,8 +109,10 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       return { ok: true, json: async () => ({ test: { ipv4: "192.168.1.9" } }) };
     }
     if (url.startsWith("/api/wireless?board=")) {
+      if (options.method !== "POST") await wirelessReadGate;
+      if (options.method !== "POST" && wirelessReadFails) throw new Error("wireless down");
       if (options.method !== "POST") return { ok: true, json: async () => ({
-        wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false, wifi_state: "connected" },
+        wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false, wifi_state: wirelessState, ipv4: "192.168.1.9" },
         reboot_pending: false,
       }) };
       const settings = JSON.parse(options.body);
@@ -348,7 +355,8 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.doesNotMatch(html, /metric-product/);
     const diagnostics = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
     assert.deepEqual([...diagnostics.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
-      ["Uptime", "Reset cause", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed"]);
+      ["Uptime", "Reset cause", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed",
+        "Wi-Fi"]);
     const storage = html.split('aria-labelledby="memory-title"')[1].split("</section>")[0];
     assert.deepEqual([...storage.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
       ["Memory state", "Capacity", "Filesystem", "Manufacturer", "Product", "Serial"]);
@@ -483,6 +491,47 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#settings-wifi").value, "1");
     assert.equal(elements.get("#settings-ble").value, "1");
     assert.equal(elements.get("#wifi-ssid").value, "saved");
+    assert.equal(elements.get("#wifi-state").textContent, "saved (192.168.1.9)");
+    let finishWirelessRead;
+    wirelessReadGate = new Promise(resolve => { finishWirelessRead = resolve; });
+    wirelessNow += 2000;
+    const beforeStatusReads = requestedUrls.filter(url => url.startsWith("/api/status?")).length;
+    let timeout;
+    try {
+      await Promise.race([tick(), new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Wireless reads must not block diagnostics polling")), 1000);
+      })]);
+      await tick();
+      assert.equal(requestedUrls.filter(url => url.startsWith("/api/status?")).length, beforeStatusReads + 2);
+    } finally {
+      clearTimeout(timeout);
+      finishWirelessRead();
+      wirelessReadGate = null;
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    wirelessState = "connecting";
+    wirelessNow += 2000;
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(elements.get("#wifi-state").textContent, "saved (connecting)");
+    wirelessState = "failed";
+    wirelessNow += 2000;
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(elements.get("#wifi-state").textContent, "saved (disconnected)");
+    wirelessReadFails = true;
+    wirelessNow += 2000;
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(elements.get("#wifi-state").textContent, "Unavailable");
+    assert.match(elements.get("#wifi-state").title, /wireless down/);
+    assert.equal(elements.get("#connection-label").textContent, "Connected");
+    wirelessReadFails = false;
+    wirelessState = "connected";
+    wirelessNow += 2000;
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(elements.get("#wifi-state").textContent, "saved (192.168.1.9)");
     assert.equal(elements.get("#settings-save").disabled, true);
     handlers.get("#wifi-open:click")();
     handlers.get("#wifi-other:click")();

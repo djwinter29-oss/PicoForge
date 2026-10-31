@@ -235,6 +235,7 @@ export function matchesPicoForge(device) {
 const EMPTY = {
   hardware: null, settings: null, settings_supported: false, settings_message: null,
   runtime: null, board_status: null, memory: null, filesystem_format: null, msc: null, self_test: null,
+  wireless: null, wireless_error: null,
   freshness: { 3: "unavailable", 10: "unavailable", 11: "unavailable" },
   self_test_command_pending: false, msc_command_pending: false, reboot_pending: false,
 };

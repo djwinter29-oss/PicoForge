@@ -11,6 +11,11 @@ Connect through USB and use **Configure Wi-Fi…** or **Configure Bluetooth…**
 dashboard. W boards also show the Wi-Fi and Bluetooth enable switches beside System clock and SD Card. The server
 dashboard provisions its selected USB-attached board; the browser does not need Bluetooth access.
 
+Both dashboards show Wi-Fi in live diagnostics on wireless-capable boards, refreshing the saved SSID and runtime
+state every two seconds while no wireless operation is pending. The value is `SSID (IP address)` when connected,
+`SSID (connecting)`, or `SSID (disconnected)`; Wi-Fi switched off or an empty saved SSID shows `Disabled`.
+Missing reports show `--`, and read failures show `Unavailable` with the error in the value's tooltip.
+
 The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter a hidden one manually. Enter a
 password when required and test the connection. Credentials are staged in RAM only after the board joins
 successfully; they are not saved to flash until **Save and Reboot**. Cancel or Escape discards staged credentials.
