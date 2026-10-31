@@ -264,8 +264,11 @@ def parse_configuration_report(
         raise ValueError(f"unsupported HID board configuration report version {version}")
     if clock_profile not in (0, 150, 200, 250) or sd_profile not in (0, 1):
         raise ValueError("invalid stored board configuration profile")
-    if flags & ~0x07:
+    if flags & ~0x1F:
         raise ValueError("unknown board configuration flags")
+    radios = flags >> 3 & 3
+    if radios and not identity.get("wireless_supported"):
+        raise ValueError("radio enables reported without wireless capability")
     if uart_index not in (0, 1, 255):
         raise ValueError("invalid monitor UART index")
     if (uart_tx == 255) != (uart_rx == 255):
@@ -304,6 +307,7 @@ def parse_configuration_report(
         "system_clock_mhz": clock_profile,
         "stored_sdcard_profile": sd_profile,
         "sdcard_profile": sd_profile,
+        "radios": radios,
         "monitor_uart_index": uart_index,
         "monitor_uart_tx_gpio": uart_tx,
         "monitor_uart_rx_gpio": uart_rx,
@@ -324,14 +328,17 @@ def parse_settings_report(report: bytes | bytearray | list[int],
     return parse_configuration_report(report, identity)
 
 
-def _validate_settings(settings: dict[str, object]) -> tuple[int, int]:
+def _validate_settings(settings: dict[str, object]) -> tuple[int, int, int]:
+    """Return clock, SD profile and radio enables (bit 0 Wi-Fi, bit 1 BLE; 0 when omitted)."""
     if not isinstance(settings, dict):
         raise ValueError("boot settings must be an object")
     clock = settings.get("system_clock_mhz")
     profile = settings.get("sdcard_profile")
-    if type(clock) is not int or clock not in (0, 150, 200, 250) or type(profile) is not int or profile not in (0, 1):
+    radios = settings.get("radios", 0)
+    if (type(clock) is not int or clock not in (0, 150, 200, 250) or type(profile) is not int or profile not in (0, 1)
+            or type(radios) is not int or radios not in range(4)):
         raise ValueError("unsupported boot settings value")
-    return clock, profile
+    return clock, profile, radios
 
 
 def normalize_legacy_settings(
@@ -377,11 +384,11 @@ def build_settings_command_report(
     settings: dict[str, object], transaction_id: int = 1, *, force: bool = False
 ) -> bytes:
     """Build Feature report 20 opcode 6 to save persistent settings."""
-    clock, profile = _validate_settings(settings)
+    clock, profile, radios = _validate_settings(settings)
     if type(force) is not bool:
         raise ValueError("Forced settings save confirmation must be boolean")
     return build_control_command_report(transaction_id, 6, flags=int(force),
-                                        arguments=struct.pack("<HB", clock, profile) + b"\0\0")
+                                        arguments=struct.pack("<HBB", clock, profile, radios) + b"\0")
 
 
 def build_control_command_report(
@@ -418,7 +425,7 @@ def build_control_command_report(
             raise ValueError("invalid self-test command fields")
     if opcode == 6:
         clock, profile = struct.unpack_from("<HB", args)
-        if flags & ~1 or any(args[3:]) or clock not in (0, 150, 200, 250) or profile not in (0, 1):
+        if flags & ~1 or args[3] > 3 or args[4] or clock not in (0, 150, 200, 250) or profile not in (0, 1):
             raise ValueError("invalid persistent settings command fields")
     if opcode not in (1, 2, 3, 4, 6):
         raise ValueError("control opcode is unsupported")
@@ -465,13 +472,13 @@ def parse_control_result_report(
         raise ValueError("HID control result data is only valid for settings")
     saved_settings = None
     if opcode == 6:
-        clock, profile, reserved = struct.unpack("<HBB", result_data)
-        if reserved or (status == CONTROL_COMPLETED and (clock not in (0, 150, 200, 250) or profile not in (0, 1))):
+        clock, profile, radios = struct.unpack("<HBB", result_data)
+        if radios > 3 or (status == CONTROL_COMPLETED and (clock not in (0, 150, 200, 250) or profile not in (0, 1))):
             raise ValueError("invalid HID settings result data")
         if status != CONTROL_COMPLETED and any(result_data):
             raise ValueError("unsuccessful settings command returned result data")
         if status == CONTROL_COMPLETED:
-            saved_settings = {"system_clock_mhz": clock, "sdcard_profile": profile}
+            saved_settings = {"system_clock_mhz": clock, "sdcard_profile": profile, "radios": radios}
     return {
         "version": version,
         "transaction_id": transaction_id,

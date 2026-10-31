@@ -107,7 +107,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     public BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false)
     {
-        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1)
+        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1 ||
+            settings.Radios is < 0 or > 3)
             throw new ArgumentOutOfRangeException(nameof(settings));
         lock (deviceGate)
         {

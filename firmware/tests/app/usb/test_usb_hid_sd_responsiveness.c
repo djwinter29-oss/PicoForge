@@ -97,6 +97,7 @@ void test_feature_reports_match_wire_sizes_and_populate_identity_configuration(v
     TEST_ASSERT_EQUAL_UINT8(4u, configuration.storage_gpios[2]);
     TEST_ASSERT_EQUAL_UINT8(7u, configuration.storage_gpios[5]);
     TEST_ASSERT_EQUAL_UINT8(2u, configuration.reset_cause);
+    TEST_ASSERT_EQUAL_HEX8(0u, configuration.board_flags & 0x18u);
 
     uint8_t payload[PF_HID_IDENTITY_PAYLOAD_SIZE];
     TEST_ASSERT_EQUAL_UINT16(sizeof(identity), tud_hid_get_report_cb(
@@ -180,6 +181,7 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     const uint8_t arguments[5] = {150u, 0u, 1u, 0u, 0u};
     const uint8_t bad_profile[5] = {150u, 0u, 2u, 0u, 0u};
     const uint8_t bad_clock[5] = {100u, 0u, 1u, 0u, 0u};
+    const uint8_t radios_without_wireless[5] = {150u, 0u, 1u, 1u, 0u};
     send_control(9u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     const pf_hid_control_result_t result = read_control_result();
     TEST_ASSERT_EQUAL_UINT8(2u, result.status);
@@ -201,6 +203,10 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     send_control(13u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, bad_clock);
     TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
     TEST_ASSERT_EQUAL(PF_STORAGE_SPEED_DEFAULT, test_sd_speed);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+    send_control(14u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, radios_without_wireless);
+    TEST_ASSERT_EQUAL_UINT8(3u, read_control_result().status);
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
     TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 
     settings_save_fails = true;

@@ -9,14 +9,15 @@ export function bindWirelessForm({ load, save, ready, supported }) {
   let status = null;
   let generation = 0;
   let message = "";
-  const fields = ["wifi-enabled", "ble-enabled", "wifi-ssid", "wifi-password", "ble-secret"];
+  const fields = ["wifi-ssid", "wifi-password", "ble-secret"];
   const refresh = () => {
     panel.hidden = !supported();
     for (const id of fields) el(id).disabled = busy || !ready();
     el("wireless-save").disabled = busy || !ready() || !dirty;
     el("wireless-generate").disabled = busy || !ready();
     el("wireless-status").textContent = message || (status
-      ? `Wi-Fi: ${status.wifi_state}, IP: ${status.ipv4 || "--"}. BLE: ${status.ble_enabled ? "enabled" : "disabled"}.`
+      ? `Wi-Fi: ${status.wifi_state}, IP: ${status.ipv4 || "--"}. `
+        + `BLE key: ${status.ble_enabled ? "configured" : "none"}.`
       : "Connect over USB to configure wireless.");
   };
   for (const id of fields) el(id).addEventListener("input", () => { dirty = true; refresh(); });
@@ -41,8 +42,10 @@ export function bindWirelessForm({ load, save, ready, supported }) {
     if (!el("wireless-dialog").open) return;
     el("wireless-dialog").close();
     if (busy || !ready()) return;
-    const config = { wifi_enabled: el("wifi-enabled").checked, ble_enabled: el("ble-enabled").checked,
-      ssid: el("wifi-ssid").value, confirm_reboot: true };
+    // Credentials provision a radio; Board configuration's Wi-Fi/Bluetooth switches decide whether it starts.
+    const config = { wifi_enabled: Boolean(el("wifi-ssid").value),
+      ble_enabled: Boolean(el("ble-secret").value || status?.ble_enabled), ssid: el("wifi-ssid").value,
+      confirm_reboot: true };
     if (el("wifi-password").value) config.password = el("wifi-password").value;
     if (el("ble-secret").value) config.ble_key = el("ble-secret").value;
     busy = true;
@@ -69,7 +72,6 @@ export function bindWirelessForm({ load, save, ready, supported }) {
       dirty = false;
       message = "";
       for (const id of ["wifi-ssid", "wifi-password", "ble-secret"]) el(id).value = "";
-      el("wifi-enabled").checked = el("ble-enabled").checked = false;
       el("ble-secret").type = "password";
       el("wireless-dialog").close();
     },
@@ -83,8 +85,6 @@ export function bindWirelessForm({ load, save, ready, supported }) {
         if (generation !== current || busy) return;
         status = fresh;
         if (!dirty) {
-          el("wifi-enabled").checked = status.wifi_enabled;
-          el("ble-enabled").checked = status.ble_enabled;
           el("wifi-ssid").value = status.ssid;
         }
       } catch (error) { if (generation === current) message = error.message; }

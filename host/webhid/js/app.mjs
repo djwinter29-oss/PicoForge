@@ -12,6 +12,9 @@ const settingsSave = element("settings-save");
 const settingsReboot = element("settings-reboot");
 const settingsClock = element("settings-clock");
 const settingsStorage = element("settings-storage");
+const settingsRadios = [element("settings-wifi"), element("settings-ble")];
+const selectedRadios = () => client.state.hardware?.capabilities & 128
+  ? Number(settingsRadios[0].value) | Number(settingsRadios[1].value) << 1 : 0;
 const configurationDialog = element("configuration-dialog");
 const rebootDialog = element("reboot-dialog");
 const returnDialog = element("return-dialog");
@@ -44,6 +47,10 @@ function render(state) {
   if (!settingsDirty && state.settings) {
     settingsClock.value = String(state.settings.system_clock_mhz);
     settingsStorage.value = String(state.settings.sdcard_profile);
+    settingsRadios.forEach((control, bit) => { control.value = String(state.settings.radios >> bit & 1); });
+  }
+  for (const id of ["settings-wifi", "settings-ble"]) {
+    document.querySelector(`label[for="${id}"]`).hidden = !(state.hardware?.capabilities & 128);
   }
   const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected;
   const bluetooth = state.transport === "ble";
@@ -62,7 +69,7 @@ function render(state) {
   mscControl.disabled = blocked || !storageReady || bluetooth;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
   const settingsReady = !blocked && storageReady && !bluetooth;
-  for (const control of [settingsClock, settingsStorage, settingsSave]) {
+  for (const control of [settingsClock, settingsStorage, ...settingsRadios, settingsSave]) {
     control.disabled = !settingsReady || !state.settings_supported;
   }
   settingsSave.disabled ||= !settingsDirty;
@@ -121,10 +128,11 @@ element("self-test-start").addEventListener("click", () => run(() =>
   client.setSelfTest("start", element("self-test-size").valueAsNumber)));
 element("self-test-cancel").addEventListener("click", () => run(() => client.setSelfTest("cancel")));
 element("self-test-size").addEventListener("input", () => renderSelfTest(client.state));
-for (const control of [settingsClock, settingsStorage]) {
+for (const control of [settingsClock, settingsStorage, ...settingsRadios]) {
   control.addEventListener("change", () => {
     settingsDirty = Number(settingsClock.value) !== client.state.settings?.system_clock_mhz
-      || Number(settingsStorage.value) !== client.state.settings?.sdcard_profile;
+      || Number(settingsStorage.value) !== client.state.settings?.sdcard_profile
+      || selectedRadios() !== (client.state.settings?.radios ?? 0);
     render(client.state);
   });
 }
@@ -135,7 +143,9 @@ settingsSave.addEventListener("click", () => {
   const clock = Number(settingsClock.value);
   element("configuration-dialog-profile").textContent =
     `System clock: ${clock ? `${clock} MHz` : "Default"}. `
-    + `SD Card: ${Number(settingsStorage.value) === 1 ? "High-Speed" : "Standard"}.`;
+    + `SD Card: ${Number(settingsStorage.value) === 1 ? "High-Speed" : "Standard"}.`
+    + (client.state.hardware?.capabilities & 128 ? ` Wi-Fi: ${selectedRadios() & 1 ? "Enabled" : "Disabled"}.`
+      + ` Bluetooth: ${selectedRadios() & 2 ? "Enabled" : "Disabled"}.` : "");
   configurationDialog.showModal();
 });
 element("confirm-configuration").addEventListener("click", () => run(async () => {
@@ -143,8 +153,9 @@ element("confirm-configuration").addEventListener("click", () => run(async () =>
   configurationDialog.close();
   if (settingsSave.disabled) return;
   if (Boolean(client.state.msc?.enabled) !== configurationForceSave) return;
-  if (await client.saveSettings({ system_clock_mhz: Number(settingsClock.value),
-    sdcard_profile: Number(settingsStorage.value) }, configurationForceSave)) settingsDirty = false;
+  const settings = { system_clock_mhz: Number(settingsClock.value), sdcard_profile: Number(settingsStorage.value),
+    radios: selectedRadios() };
+  if (await client.saveSettings(settings, configurationForceSave)) settingsDirty = false;
   render(client.state);
 }));
 settingsReboot.addEventListener("click", () => {

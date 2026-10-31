@@ -167,6 +167,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .button-danger { background: #fff; border-color: #dbb5aa; color: var(--coral); }
 .button-danger:hover:not(:disabled) { background: #fff3ef; }
 .settings-controls label { min-height: 72px; padding: 12px 14px; display: grid; align-content: space-between; gap: 6px; color: var(--muted); background: var(--paper); font-size: 12px; }
+.settings-controls label[hidden] { display: none; }
 .settings-controls select {
   min-width: 0;
   min-height: 38px;

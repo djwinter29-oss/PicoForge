@@ -78,6 +78,18 @@
             <option value="1">High-Speed</option>
           </select>
         </label>
+        <label for="settings-wifi" hidden>Wi-Fi
+          <select id="settings-wifi" disabled>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </label>
+        <label for="settings-ble" hidden>Bluetooth
+          <select id="settings-ble" disabled>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </label>
       </div>
       <p class="sample-time settings-note" id="settings-note" role="status" aria-live="polite">
         Connect to read the saved settings.
@@ -139,13 +151,12 @@
 
     <section class="runtime" id="wireless-panel" aria-labelledby="wireless-title" hidden>
       <h2 id="wireless-title">Wi-Fi and Bluetooth</h2>
-      <p>USB provisioning only. Changes apply after reboot. Credentials are stored in unencrypted flash.</p>
+      <p>USB provisioning only. After reboot, a radio with saved credentials starts if Board configuration enables
+        it. Credentials are stored in unencrypted flash.</p>
       <div class="settings-controls">
-        <label><input id="wifi-enabled" type="checkbox"> Enable Wi-Fi (WPA2)</label>
         <label for="wifi-ssid">SSID<input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
         <label for="wifi-password">New Wi-Fi password (blank keeps saved)
           <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
-        <label><input id="ble-enabled" type="checkbox"> Enable Bluetooth LE</label>
         <label for="ble-secret">New BLE key (blank keeps saved)
           <input id="ble-secret" type="password" maxlength="64" autocomplete="new-password"></label>
         <button class="button button-secondary" id="wireless-generate" type="button">Generate BLE key</button>

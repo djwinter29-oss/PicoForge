@@ -196,7 +196,7 @@ storage transport.
 | 5 | 1 | `monitor_uart_tx_gpio` | TX GPIO number; `255` if unassigned. |
 | 6 | 1 | `monitor_uart_rx_gpio` | RX GPIO number; `255` if unassigned. |
 | 7 | 6 | `storage_gpios` | SDIO/SPI GPIO numbers, selected-transport order below. |
-| 13 | 1 | `board_flags` | Bit 0 card detect configured; bit 1 LED configured; bit 2 monitor UART enabled; other bits zero. |
+| 13 | 1 | `board_flags` | Bit 0 card detect configured; bit 1 LED configured; bit 2 monitor UART enabled; bit 3 Wi-Fi enabled for next boot; bit 4 BLE enabled for next boot; other bits zero. |
 | 14 | 1 | `reset_cause` | Cause of the reset that began this boot. |
 | 15 | 1 | `led_gpio` | LED GPIO number; `255` if unavailable. |
 | 16 | 1 | `card_detect_gpio` | Card-detect GPIO number; `255` if not configured. |
@@ -216,7 +216,9 @@ SDIO-PIO, storage slots 0-5 are CLK, CMD, DAT0-DAT3. For SPI, slots 0-3 are CLK,
 `255`. Report `1`'s transport capability determines the slot interpretation. These pins describe the build profile;
 they do not prove a peripheral is active.
 
-Configuration validity rules: reserved `board_flags` bits must be zero. The card-detect flag is set exactly when
+Configuration validity rules: reserved `board_flags` bits must be zero. Bits 3-4 are the persisted radio master
+switches; they default on and may be set only when Report `1` capability bit 7 is set.
+The card-detect flag is set exactly when
 `card_detect_gpio` is assigned; otherwise that field is `255`. The LED-configured flag is set exactly when
 `led_gpio` is assigned, and Report `1` bit 0 agrees with whether that configured LED is available for identification
 control. `monitor_uart_index` is `0` or `1` when available and `255` when unavailable; TX and RX are either both
@@ -436,7 +438,7 @@ the meaning of the fields.
 | `3` | MSC control | Bit 0 confirms force-return data-loss risk only; other bits zero. | Byte 0 action: `0` normal disable, `1` enable, `2` force return; bytes 1-4 zero. |
 | `4` | SD self-test | `0` | Byte 0 action: `0` cancel, `1` start; bytes 1-4 little-endian MiB size. |
 | `5` | Unassigned | - | Reject as unsupported. |
-| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); bytes 3-4 zero. |
+| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); byte 3 radio enables (bit 0 Wi-Fi, bit 1 BLE; zero without capability bit 7); byte 4 zero. |
 | Other | Unassigned | - | Reject as unsupported. |
 
 LED Off/On are idempotent. Reboot requires explicit confirmation. MSC action `0` is the normal disable request;
@@ -459,7 +461,7 @@ GET returns the latest operation without executing it again or consuming its res
 | 2 | 1 | `opcode` | Operation associated with the result; `0` if none. |
 | 3 | 1 | `status` | Result state below. |
 | 4 | 1 | `error_reason` | Error enum below; zero when none. |
-| 5 | 4 | `result_data` | Verified saved settings for opcode 6; zero for other operations. |
+| 5 | 4 | `result_data` | Verified saved settings for opcode 6 in the opcode-6 argument layout; zero for other operations. |
 | **Total** | **9** | | **10 bytes including report ID.** |
 
 Status values: `0` Idle, `1` Pending, `2` Completed, `3` Invalid, `4` Unsupported, `5` Busy, `6` Failed.

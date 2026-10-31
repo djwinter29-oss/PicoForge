@@ -188,6 +188,7 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
 void pf_wireless_start(void)
 {
     pf_boot_config_wireless(&settings);
+    settings.flags &= pf_boot_config_radios();
     if (settings.flags == 0u) return;
     /* SDK poll contexts and CYW43 IRQ setup must remain on their initialization core. */
     vTaskCoreAffinitySet(NULL, (UBaseType_t)1u << get_core_num());

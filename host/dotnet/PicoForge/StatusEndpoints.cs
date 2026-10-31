@@ -8,9 +8,10 @@ internal static class StatusEndpoints
 {
     public sealed record SetLedRequest(bool? On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
-    /// <summary>Requested persistent next-boot system clock and transport-neutral SD-card profile.</summary>
+    /// <summary>Requested next-boot clock, SD-card profile and optional radio enables (omitted keeps saved).</summary>
     public sealed record SetSettingsRequest(int? SystemClockMhz,
-        [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile, bool ConfirmDataLoss = false);
+        [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile, bool ConfirmDataLoss = false,
+        int? Radios = null);
     /// <summary>Settings values confirmed by the device after saving.</summary>
     public sealed record SetSettingsResponse(BootSettingsResponse Settings);
     public sealed record SetMscRequest(bool? Enabled);
@@ -151,10 +152,10 @@ internal static class StatusEndpoints
     private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard)
     {
         if (request.SystemClockMhz is not (0 or 150 or 200 or 250) ||
-            request.SdCardProfile is not (0 or 1))
+            request.SdCardProfile is not (0 or 1) || request.Radios is < 0 or > 3)
             return Results.Problem(statusCode: 400, title: "Unsupported boot settings value");
-        var settings = new BootSettingsResponse(request.SystemClockMhz.Value,
-            request.SdCardProfile.Value);
+        var settings = new BootSettingsResponse(request.SystemClockMhz.Value, request.SdCardProfile.Value,
+            request.Radios ?? dashboard.Snapshot(board).Settings?.Radios ?? 0);
         try
         {
             if (request.ConfirmDataLoss)

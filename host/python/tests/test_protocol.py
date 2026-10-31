@@ -96,6 +96,13 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "flags"):
             parse_configuration_report(config, self.identity)
         config = bytearray(configuration_report())
+        config[14] |= 0x18
+        with self.assertRaisesRegex(ValueError, "radio"):
+            parse_configuration_report(config, self.identity)
+        wireless = parse_identity_report(identity_report(capabilities=0xB5))
+        self.assertEqual(parse_configuration_report(config, wireless)["radios"], 3)
+        self.assertEqual(parse_configuration_report(configuration_report(), wireless)["radios"], 0)
+        config = bytearray(configuration_report())
         config[16] = 255
         with self.assertRaisesRegex(ValueError, "LED"):
             parse_configuration_report(config, self.identity)
@@ -161,12 +168,19 @@ class ProtocolTests(unittest.TestCase):
     def test_control_result_validates_transaction_status_and_data(self):
         result = parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 0]))
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["saved_settings"], {"system_clock_mhz": 200, "sdcard_profile": 1})
+        self.assertEqual(result["saved_settings"], {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0})
+        self.assertEqual(parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 2]))["saved_settings"],
+                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2})
+        self.assertEqual(build_settings_command_report({"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 1}, 2),
+                         bytes([20, 1, 2, 6, 0, 200, 0, 1, 1, 0]))
+        with self.assertRaises(ValueError):
+            build_settings_command_report({"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 4})
         for malformed in (
             bytes([20, 1, 0, 6, 2, 0, 0, 0, 0, 0]),
             bytes([20, 1, 11, 6, 3, 5, 0, 0, 0, 0]),
             bytes([20, 1, 11, 3, 4, 4, 0, 0, 0, 0]),
             bytes([20, 1, 11, 6, 2, 0, 0, 0, 2, 0]),
+            bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 4]),
         ):
             with self.subTest(report=malformed), self.assertRaises(ValueError):
                 parse_control_result_report(malformed)

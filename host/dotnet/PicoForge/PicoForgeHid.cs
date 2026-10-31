@@ -138,9 +138,10 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         var arguments = new byte[5];
         BinaryPrimitives.WriteUInt16LittleEndian(arguments, (ushort)settings.SystemClockMhz);
         arguments[2] = (byte)settings.SdCardProfile;
+        arguments[3] = (byte)settings.Radios;
         var result = SendCommand(6, force ? (byte)1 : (byte)0, arguments);
         var saved = new BootSettingsResponse(BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData),
-            result.ResultData[2]);
+            result.ResultData[2], result.ResultData[3]);
         if (saved != settings)
         {
             if (force) CommandOutcomeUncertain = true;
@@ -317,7 +318,8 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     private static void ValidateSettings(BootSettingsResponse settings)
     {
-        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1)
+        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1 ||
+            settings.Radios is < 0 or > 3)
             throw new ArgumentOutOfRangeException(nameof(settings), "Unsupported next-boot settings value");
     }
 

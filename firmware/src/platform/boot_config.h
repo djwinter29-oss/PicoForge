@@ -22,7 +22,7 @@
 #define PF_WIRELESS_BLE 2u
 /** Saved wireless configuration; credentials are private and must never be returned in diagnostic reports. */
 typedef struct {
-    uint8_t flags; /**< Enabled radios; only PF_WIRELESS_WIFI and PF_WIRELESS_BLE are valid. */
+    uint8_t flags; /**< Provisioned radios (PF_WIRELESS_*); each also needs pf_boot_config_radios() to start. */
     char ssid[33]; /**< NUL-terminated SSID, up to 32 bytes. */
     char password[64]; /**< NUL-terminated WPA2 passphrase, 8-63 bytes when Wi-Fi is enabled. */
     uint8_t ble_key[32]; /**< USB-provisioned HMAC-SHA256 key; nonzero when BLE is enabled. */
@@ -32,6 +32,14 @@ typedef struct {
 void pf_boot_config_wireless(pf_wireless_config_t *settings);
 /** @brief Validate and stage wireless settings in RAM; false leaves the configuration unchanged. */
 bool pf_boot_config_set_wireless(const pf_wireless_config_t *settings);
+
+/** @brief Return the PF_WIRELESS_* radios allowed to start at boot; both by default, independent of credentials. */
+uint8_t pf_boot_config_radios(void);
+/**
+ * @brief Allow PF_WIRELESS_* radios in RAM; persist with pf_boot_config_save(), applied at the next boot.
+ * @return false (configuration unchanged) for unknown bits or when first-use loading is unsafe.
+ */
+bool pf_boot_config_set_radios(uint8_t radios);
 
 /** User-selected storage bus speed profile; the storage backend maps it to its own bus clock. */
 typedef enum {

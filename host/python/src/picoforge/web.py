@@ -121,6 +121,8 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             return jsonify({"error": "confirm_data_loss must be boolean"}), 400
         if "sdcard_profile" in payload:
             settings = {key: payload.get(key) for key in ("system_clock_mhz", "sdcard_profile")}
+            if "radios" in payload:
+                settings["radios"] = payload["radios"]
             validator = build_settings_command_report
         else:
             settings = {key: payload.get(key) for key in

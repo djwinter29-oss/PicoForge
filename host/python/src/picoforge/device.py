@@ -157,6 +157,7 @@ class PicoForgeHid:
         return {
             "system_clock_mhz": configuration["system_clock_mhz"],
             "sdcard_profile": configuration["sdcard_profile"],
+            "radios": configuration["radios"],
         }
 
     def read_status(self, timeout_ms: int = 250) -> dict[str, object] | None:
@@ -217,7 +218,7 @@ class PicoForgeHid:
         if result["status"] != "completed":
             raise RuntimeError(f"settings command {result['status']}: {result['error']}")
         saved = result["saved_settings"]
-        if saved != settings:
+        if saved != {**settings, "radios": settings.get("radios", 0)}:
             self._command_uncertain = True
             raise RuntimeError("firmware did not confirm the selected boot settings")
         return saved

@@ -22,8 +22,9 @@ function requireValid(condition, label) {
 }
 
 const validClock = clock => [0, 150, 200, 250].includes(clock);
+// radios: bit 0 Wi-Fi, bit 1 Bluetooth; omitted (0) on boards without a radio.
 const validSettings = settings => settings && validClock(settings.system_clock_mhz)
-  && [0, 1].includes(settings.sdcard_profile);
+  && [0, 1].includes(settings.sdcard_profile) && [undefined, 0, 1, 2, 3].includes(settings.radios);
 const bytesAt = (view, offset, size) => new Uint8Array(view.buffer, view.byteOffset + offset, size);
 const zero = bytes => bytes.every(byte => byte === 0);
 
@@ -60,10 +61,12 @@ export function decodeConfigReport(report, identity) {
   const rx = view.getUint8(6);
   const led = view.getUint8(15);
   const detect = view.getUint8(16);
-  const settings = { system_clock_mhz: view.getUint16(1, true), sdcard_profile: view.getUint8(3) };
+  const settings = { system_clock_mhz: view.getUint16(1, true), sdcard_profile: view.getUint8(3),
+    radios: flags >> 3 & 3 };
   const maxGpio = [1, 2, 3, 4].includes(identity.board_model) || identity.mcu_id === 1 ? 29
     : identity.mcu_id === 2 ? 47 : -1;
-  requireValid(validSettings(settings) && !(flags & ~7) && [0, 1, 255].includes(uart)
+  requireValid(validSettings(settings) && !(flags & ~31) && (identity.capabilities & 128 || !settings.radios)
+    && [0, 1, 255].includes(uart)
     && (tx === 255) === (rx === 255) && (!(flags & 4) || (uart !== 255 && tx !== 255))
     && Boolean(flags & 1) === (detect !== 255) && Boolean(flags & 2) === (led !== 255)
     && Boolean(identity.capabilities & 1) === (led !== 255)
@@ -197,7 +200,7 @@ export function buildControlRequest(transaction, opcode, { flags = 0, args = [] 
           && (arg === 0 ? unused(5) : new DataView(report.buffer).getUint32(5, true) >= 1
             && new DataView(report.buffer).getUint32(5, true) <= 1024)
           : opcode === 6 && flags <= 1 && validClock(report[4] | report[5] << 8)
-            && report[6] <= 1 && unused(7), "control request");
+            && report[6] <= 1 && report[7] <= 3 && unused(8), "control request");
   return report;
 }
 
@@ -208,7 +211,8 @@ export function decodeControlResult(report) {
   const status = view.getUint8(3);
   const error = view.getUint8(4);
   const known = [1, 2, 3, 4, 6].includes(opcode);
-  const settings = { system_clock_mhz: view.getUint16(5, true), sdcard_profile: view.getUint8(7) };
+  const settings = { system_clock_mhz: view.getUint16(5, true), sdcard_profile: view.getUint8(7),
+    radios: view.getUint8(8) };
   const allowedErrors = [[0], [0], [0], [1, 2, 3], [4, 7], [5], [6]];
   requireValid(allowedErrors[status]?.includes(error)
     && (status === 0 ? transaction === 0 && opcode === 0
@@ -217,7 +221,7 @@ export function decodeControlResult(report) {
         && !(status === 3 && error === 2 && ![2, 3].includes(opcode))
         && !(opcode === 2 && status === 3 && error === 3) : status === 4 && error === 7))
     && (opcode === 6 && status === 2
-      ? validSettings(settings) && view.getUint8(8) === 0 : zero(bytesAt(view, 5, 4))), "control result");
+      ? validSettings(settings) : zero(bytesAt(view, 5, 4))), "control result");
   return { transaction_id: transaction, opcode, status, error_reason: error,
     settings: opcode === 6 && status === 2 ? settings : null };
 }
@@ -234,7 +238,8 @@ const EMPTY = {
   freshness: { 3: "unavailable", 10: "unavailable", 11: "unavailable" },
   self_test_command_pending: false, msc_command_pending: false, reboot_pending: false,
 };
-const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile;
+const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile
+  && (a.radios ?? 0) === (b.radios ?? 0);
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 export async function withTimeout(operation, milliseconds) {
@@ -444,7 +449,7 @@ export class PicoForgeWebHid {
     this.transaction = transaction;
     const request = { transaction_id: transaction, opcode };
     if (opcode === 6) request.settings = { system_clock_mhz: report[4] | report[5] << 8,
-      sdcard_profile: report[6] };
+      sdcard_profile: report[6], radios: report[7] };
     const device = this.device;
     const generation = this.generation;
     this.outstanding = request;
@@ -494,7 +499,7 @@ export class PicoForgeWebHid {
         }
         if (result?.transaction_id === transaction && result.opcode === opcode && result.status === 2
           && sameSettings(result.settings, { system_clock_mhz: report[4] | report[5] << 8,
-            sdcard_profile: report[6] })) {
+            sdcard_profile: report[6], radios: report[7] })) {
           this.update({ settings: result.settings, reboot_pending: true, outcome_uncertain: false });
           return result;
         }
@@ -563,7 +568,7 @@ export class PicoForgeWebHid {
     }
     try {
       await this.command(6, { flags: Number(force), args: [settings.system_clock_mhz & 255,
-        settings.system_clock_mhz >> 8, settings.sdcard_profile] });
+        settings.system_clock_mhz >> 8, settings.sdcard_profile, settings.radios ?? 0] });
       this.update({ settings_message: "Settings saved. Waiting for the board to reboot." });
       return true;
     } catch (error) {

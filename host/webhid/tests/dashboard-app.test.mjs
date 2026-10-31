@@ -43,7 +43,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     return elements.get(selector);
   };
   const connected = { connected: true, error: null, board_status: { led_available: true, led_on: false },
-    hardware: { board_model: "Pico 2", mcu: "RP2350", capabilities: 2 | 16,
+    hardware: { product_name: "PicoForge", board_model: "Pico 2", mcu: "RP2350", capabilities: 2 | 16,
       ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
     settings_supported: true, settings: { system_clock_mhz: 200, sdcard_profile: 0 },
     memory: { mode: "spi" }, msc: { enabled: false, transition_pending: false }, self_test: null };
@@ -353,13 +353,13 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     await handlers.get("#confirm-configuration:click")();
     assert.equal(requestedUrls.length, beforeCancel);
     await saveAndConfirm();
-    assert.deepEqual(savedSettings[0], { system_clock_mhz: 250, sdcard_profile: 0 });
+    assert.deepEqual(savedSettings[0], { system_clock_mhz: 250, sdcard_profile: 0, radios: 0 });
     assert.equal(requestedUrls.at(-1), "/api/settings?board=board-a");
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/reboot")).length, 0);
     elements.get("#settings-storage").value = "1";
     handlers.get("#settings-storage:change")();
     await saveAndConfirm();
-    assert.deepEqual(savedSettings[1], { system_clock_mhz: 250, sdcard_profile: 1 });
+    assert.deepEqual(savedSettings[1], { system_clock_mhz: 250, sdcard_profile: 1, radios: 0 });
     elements.get("#settings-clock").value = "200";
     handlers.get("#settings-clock:change")();
     for (const failure of ["save", "readback"]) {

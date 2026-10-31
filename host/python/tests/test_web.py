@@ -206,6 +206,12 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["settings"], {"system_clock_mhz": 150, "sdcard_profile": 0})
+        response = create_app(monitor).test_client().post(
+            "/api/settings?board=board-a",
+            json={"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 2},
+            base_url="http://127.0.0.1",
+        )
+        self.assertEqual(monitor.last_settings["radios"], 2)
 
     def test_settings_endpoint_reports_invalid_device_readback_as_service_error(self):
         class InvalidReadbackMonitor(FakeMonitor):

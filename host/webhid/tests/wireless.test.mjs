@@ -9,7 +9,7 @@ import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, r
 test("wireless form cancels without writing, preserves edits on refresh and clears secrets on reset/save", async () => {
   const previous = globalThis.document;
   const elements = new Map();
-  for (const id of ["wireless-panel", "wifi-enabled", "ble-enabled", "wifi-ssid", "wifi-password", "ble-secret",
+  for (const id of ["wireless-panel", "wifi-ssid", "wifi-password", "ble-secret",
     "wireless-save", "wireless-generate", "wireless-status", "wireless-dialog", "wireless-cancel", "wireless-confirm"]) {
     elements.set(id, { value: "", handlers: {}, open: false,
       addEventListener(name, callback) { this.handlers[name] = callback; },
@@ -24,7 +24,12 @@ test("wireless form cancels without writing, preserves edits on refresh and clea
   let load = async () => fresh;
   try {
     const form = bindWirelessForm({ load: () => load(), supported: () => true, ready: () => ready,
-      async save(config) { writes++; assert.equal(config.password, "new-password"); return fresh; } });
+      async save(config) {
+        writes++;
+        assert.equal(config.password, "new-password");
+        assert.deepEqual([config.wifi_enabled, config.ble_enabled], [true, false]);
+        return fresh;
+      } });
     await form.load();
     assert.equal(el("wifi-ssid").value, "saved");
     el("wifi-ssid").value = "edited";

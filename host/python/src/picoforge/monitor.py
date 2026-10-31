@@ -239,6 +239,11 @@ class DeviceMonitor:
                 command_settings = normalize_legacy_settings(
                     settings, hardware["storage_transport"], current_profile
                 )
+            if "radios" not in command_settings:
+                # Callers that predate the radio switches keep the saved enables instead of turning radios off.
+                configuration = snapshot.get("board_configuration")
+                command_settings = {**command_settings, "radios": configuration.get("radios", 0)
+                                    if isinstance(configuration, dict) else 0}
             build_settings_command_report(command_settings)
             msc = snapshot.get("msc")
             if not isinstance(msc, dict):
@@ -321,6 +326,7 @@ class DeviceMonitor:
                     settings = {
                         "system_clock_mhz": configuration["system_clock_mhz"],
                         "sdcard_profile": configuration["sdcard_profile"],
+                        "radios": configuration.get("radios", 0),
                     }
                     settings_message = None
                 except (OSError, RuntimeError, ValueError) as error:

@@ -12,9 +12,9 @@ public sealed record HardwareInfoResponse(string ProductName, string Mcu, byte M
     public bool WirelessSupported => (Capabilities & HidProtocol.CapabilityWireless) != 0;
 }
 
-/// <summary>Persisted next-boot clock and selected transport speed profile.</summary>
+/// <summary>Persisted next-boot clock, transport speed profile and radio enables (bit 0 Wi-Fi, bit 1 BLE).</summary>
 public sealed record BootSettingsResponse(int SystemClockMhz,
-    [property: JsonPropertyName("sdcard_profile")] int SdCardProfile);
+    [property: JsonPropertyName("sdcard_profile")] int SdCardProfile, int Radios = 0);
 
 /// <summary>GPIO topology and persisted configuration from HID Feature report 2.</summary>
 public sealed record BoardConfigurationResponse(ushort StoredSystemClockMhz, byte StoredSdCardProfile,
@@ -161,7 +161,9 @@ internal static partial class HidProtocol
         var detectGpio = payload[16];
         Require(clock is 0 or 150 or 200 or 250, "unsupported persisted system-clock profile");
         Require(sdProfile <= 1, "unsupported persisted SD-card profile");
-        Require((flags & ~0x07) == 0, "unknown board-configuration flags");
+        Require((flags & ~0x1F) == 0, "unknown board-configuration flags");
+        Require((flags & 0x18) == 0 || identity.WirelessSupported,
+            "radio enables reported without wireless capability");
         Require((uartIndex <= 1 || uartIndex == byte.MaxValue)
             && ((tx == byte.MaxValue) == (rx == byte.MaxValue)), "invalid monitor UART assignment");
         Require(((flags & 0x04) == 0 || (uartIndex <= 1 && tx != byte.MaxValue && rx != byte.MaxValue)),
@@ -182,7 +184,7 @@ internal static partial class HidProtocol
     }
 
     public static BootSettingsResponse ToBootSettings(BoardConfigurationResponse configuration) =>
-        new(configuration.StoredSystemClockMhz, configuration.StoredSdCardProfile);
+        new(configuration.StoredSystemClockMhz, configuration.StoredSdCardProfile, configuration.BoardFlags >> 3 & 3);
 
     public static RuntimeStatusResponse ParseTelemetryReport(ReadOnlySpan<byte> report)
     {
@@ -359,7 +361,7 @@ internal static partial class HidProtocol
             _ => result.Status == 4
         }, "control result status is invalid for its opcode");
         if (result.Opcode == 6 && result.Status == 2)
-            Require(result.ResultData[2] <= 1 && result.ResultData[3] == 0,
+            Require(result.ResultData[2] <= 1 && result.ResultData[3] <= 3,
                 "invalid saved-settings result data");
         else
             Require(result.ResultData.All(value => value == 0), "unexpected control result data");

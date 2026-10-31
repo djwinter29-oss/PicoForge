@@ -1,12 +1,13 @@
 # Wi-Fi and Bluetooth LE
 
 Pico W and Pico 2 W images include the pinned Pico SDK CYW43, lwIP and BTstack implementations. Non-wireless
-images do not link those stacks. Both radios default off, including when upgrading an existing settings record.
+images do not link those stacks. A radio starts only when its Board configuration switch is enabled and its
+credentials are provisioned. The switches default on (including older settings records); credentials default empty.
 This implementation has host checks and target builds, not physical radio qualification.
 
 ## Configuration and operation
 
-Connect through USB on the standalone WebHID page and open **Wi-Fi and Bluetooth**. Set the enable switches, SSID and WPA2 passphrase.
+Connect through USB on the standalone WebHID page and open **Wi-Fi and Bluetooth**. Set the SSID and WPA2 passphrase.
 SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters. Blank password/key fields
 preserve the existing secret. Generate a random BLE control key and copy it to a password manager before saving:
 the board never returns it. Explicit **Save wireless and reboot** confirmation is required.
@@ -56,7 +57,9 @@ Passwords and keys are never included in status, diagnostic logs or readback rep
 
 ## USB contract
 
-Identity capability bit 7 denotes wireless provisioning. Other existing report layouts remain unchanged.
+Identity capability bit 7 denotes wireless provisioning. The radio master switches use Report 2 `board_flags`
+bits 3-4 and opcode 6 argument byte 3; see [USB HID report reference](usb/usb-hid-report-reference.md). The
+provisioning enable flags below mean "provisioned"; the WebHID page sets them from whether credentials exist.
 
 - Feature **30 GET**, 48 payload bytes: version at 0, saved enable flags at 1 (Wi-Fi bit 0, BLE bit 1), last
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4

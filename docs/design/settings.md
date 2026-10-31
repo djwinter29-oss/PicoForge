@@ -57,7 +57,8 @@ the failed command; failed commands do not automatically reboot.
 
 HID Feature report `2` reads persisted settings as transport-neutral profiles; Feature report `20`, opcode `6`, saves
 profiles. The profile payload is two-byte little-endian `system_clock_mhz` followed by one-byte `sdcard_profile`
-(`0` Standard, `1` High-Speed). Report `2` also returns the selected board's GPIO configuration. See the exact
+(`0` Standard, `1` High-Speed) and one-byte `radios` (bit 0 Wi-Fi, bit 1 BLE). Report `2` also returns the selected
+board's GPIO configuration. See the exact
 offsets and validation rules in the [HID Report Reference](usb/usb-hid-report-reference.md).
 
 The Python, .NET, and WebHID dashboards map these values to select options and verify the saved values returned in
@@ -71,6 +72,9 @@ the media; confirmed forced saving is the exception below.
 The dashboards expose one **SD Card** speed selector. High-Speed is a requested profile; the active negotiated timing
 is reported separately because a card or transport may remain at Standard speed. Values apply after reboot and do
 not change the active clock or bus immediately.
+On W boards (capability bit 7) the dashboards also show **Wi-Fi** and **Bluetooth** next-boot switches, enabled by
+default; Pico/Pico 2 builds hide them and must send `radios` as `0`. `POST /api/settings` accepts optional `radios`;
+omitting it keeps the saved switches.
 
 ### Forced Save and Reboot
 

@@ -125,7 +125,7 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     assert.deepEqual(commands, []);
     await el("#settings-save").click();
     await el("#confirm-configuration").click();
-    assert.deepEqual(commands, [["save", { system_clock_mhz: 250, sdcard_profile: 1 }]]);
+    assert.deepEqual(commands, [["save", { system_clock_mhz: 250, sdcard_profile: 1, radios: 0 }]]);
     await el("#settings-reboot").click();
     assert.equal(commands.length, 1);
     assert.equal(el("#reboot-dialog").open, true);

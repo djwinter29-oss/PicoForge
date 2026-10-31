@@ -10,7 +10,7 @@ const rebootDialog = document.querySelector("#reboot-dialog");
 const returnDialog = document.querySelector("#return-dialog");
 const shareDialog = document.querySelector("#share-dialog");
 let configurationForceSave = false;
-const settingsControls = ["#settings-clock", "#settings-storage"]
+const settingsControls = ["#settings-clock", "#settings-storage", "#settings-wifi", "#settings-ble"]
   .map(selector => document.querySelector(selector));
 let requestInProgress = false;
 let currentSnapshot = null;
@@ -269,7 +269,13 @@ function selectedSettings() {
   return {
     system_clock_mhz: Number(settingsControls[0].value),
     sdcard_profile: settingsStorageDirty ? Number(settingsControls[1].value) : (saved?.sdcard_profile ?? 0),
+    radios: selectedRadios(),
   };
+}
+
+function selectedRadios() {
+  return currentSnapshot?.hardware?.capabilities & 128
+    ? Number(settingsControls[2].value) | Number(settingsControls[3].value) << 1 : 0;
 }
 
 function updateSettingsDirty() {
@@ -277,7 +283,8 @@ function updateSettingsDirty() {
   if (!saved) return;
   settingsStorageDirty = Number(settingsControls[1].value)
     !== storageSpeed(saved);
-  settingsDirty = Number(settingsControls[0].value) !== saved.system_clock_mhz || settingsStorageDirty;
+  settingsDirty = Number(settingsControls[0].value) !== saved.system_clock_mhz || settingsStorageDirty
+    || selectedRadios() !== (saved.radios ?? 0);
   settingsMessage = null;
   renderStatus(currentSnapshot);
 }
@@ -305,7 +312,8 @@ async function saveSettings() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? result.title ?? `Settings endpoint returned HTTP ${response.status}`);
     if (result.settings?.system_clock_mhz !== settings.system_clock_mhz
-        || result.settings?.sdcard_profile !== settings.sdcard_profile) {
+        || result.settings?.sdcard_profile !== settings.sdcard_profile
+        || (result.settings?.radios ?? 0) !== settings.radios) {
       throw new Error("Settings readback did not match the requested values");
     }
     currentSnapshot.settings = result.settings;
@@ -393,7 +401,9 @@ settingsSave.addEventListener("click", () => {
   const settings = selectedSettings();
   document.querySelector("#configuration-dialog-profile").textContent =
     `System clock: ${settings.system_clock_mhz ? `${settings.system_clock_mhz} MHz` : "Default"}. `
-    + `SD Card: ${settings.sdcard_profile === 1 ? "High-Speed" : "Standard"}.`;
+    + `SD Card: ${settings.sdcard_profile === 1 ? "High-Speed" : "Standard"}.`
+    + (currentSnapshot?.hardware?.capabilities & 128 ? ` Wi-Fi: ${settings.radios & 1 ? "Enabled" : "Disabled"}.`
+      + ` Bluetooth: ${settings.radios & 2 ? "Enabled" : "Disabled"}.` : "");
   configurationDialog.showModal();
 });
 document.querySelector("#reboot-control").addEventListener("click", () => {

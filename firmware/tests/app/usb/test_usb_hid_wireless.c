@@ -31,6 +31,8 @@ void setUp(void)
     memset(&bench, 0, sizeof(bench));
     control_result = ble_result = (pf_hid_control_result_t){.version = 1u};
     provisioning_calls = led_requests = msc_requests = force_requests = 0u;
+    test_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+    settings_save_fails = false;
 }
 
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
@@ -81,4 +83,32 @@ void test_wireless_feature_has_sanitized_status_and_no_private_readback(void)
     tud_hid_set_report_cb(0u, PF_WIRELESS_CONFIG_REPORT_ID, HID_REPORT_TYPE_FEATURE, buffer, sizeof(buffer));
     TEST_ASSERT_EQUAL_UINT(1u, provisioning_calls);
     TEST_ASSERT_TRUE(reboot_requested);
+}
+
+static uint8_t save_radios(uint8_t transaction_id, uint8_t radios)
+{
+    pf_hid_control_request_t request = {.version = 1u, .transaction_id = transaction_id,
+        .opcode = PF_HID_OPCODE_SAVE_SETTINGS, .arguments = {150u, 0u, 1u, radios, 0u}};
+    tud_hid_set_report_cb(0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE,
+                          (const uint8_t *)&request, sizeof(request));
+    return control_result.status;
+}
+
+void test_radio_enables_are_reported_in_board_flags_and_saved_by_opcode_6(void)
+{
+    pf_hid_configuration_report_t configuration;
+    pf_hid_build_configuration_report(&configuration);
+    TEST_ASSERT_EQUAL_HEX8(0x18u, configuration.board_flags & 0x18u);
+
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, save_radios(1u, 4u));
+    TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE, test_radios);
+    settings_save_fails = true;
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_FAILED, save_radios(2u, PF_WIRELESS_BLE));
+    TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE, test_radios);
+    settings_save_fails = false;
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_COMPLETED, save_radios(3u, PF_WIRELESS_BLE));
+    TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_BLE, control_result.result_data[3]);
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
+    pf_hid_build_configuration_report(&configuration);
+    TEST_ASSERT_EQUAL_HEX8(0x10u, configuration.board_flags & 0x18u);
 }

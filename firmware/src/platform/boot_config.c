@@ -34,7 +34,8 @@ typedef struct {
     uint16_t size; /**< sizeof(record_t). */
     uint8_t sysclk_profile; /**< pf_sysclk_profile_t value, independent of enum storage size. */
     uint8_t sdcard_profile; /**< Shared pf_storage_speed_t value for either transport. */
-    uint16_t reserved; /**< Must be zero; keeps the CRC naturally aligned. */
+    uint8_t radios_disabled; /**< PF_WIRELESS_* radios turned off; zero (erased or older record) enables both. */
+    uint8_t reserved; /**< Must be zero; keeps the CRC naturally aligned. */
     uint32_t crc; /**< IEEE CRC-32 of all preceding bytes. */
 } record_t;
 
@@ -113,7 +114,8 @@ static bool record_valid(const record_t *record)
 {
     return record->magic == MAGIC && record->version == FORMAT_VERSION && record->size == sizeof(record_t) &&
            record->crc == crc32(record, offsetof(record_t, crc)) && record->sysclk_profile <= PF_SYSCLK_250MHZ &&
-           record->sdcard_profile <= PF_STORAGE_SPEED_HIGH && record->reserved == 0u;
+           record->sdcard_profile <= PF_STORAGE_SPEED_HIGH &&
+           (record->radios_disabled & ~(PF_WIRELESS_WIFI | PF_WIRELESS_BLE)) == 0u && record->reserved == 0u;
 }
 
 /** @brief Validate radio flags, bounded strings and required credentials before changing RAM or enabling a radio. */
@@ -224,6 +226,22 @@ bool pf_boot_config_set_storage_speed(pf_storage_speed_t speed)
         return false;
     }
     config.sdcard_profile = (uint8_t)speed;
+    return true;
+}
+
+/** @copydoc pf_boot_config_radios */
+uint8_t pf_boot_config_radios(void)
+{
+    ensure_loaded();
+    return (uint8_t)(~config.radios_disabled & (PF_WIRELESS_WIFI | PF_WIRELESS_BLE));
+}
+
+/** @copydoc pf_boot_config_set_radios */
+bool pf_boot_config_set_radios(uint8_t radios)
+{
+    ensure_loaded();
+    if (!loaded || (radios & ~(PF_WIRELESS_WIFI | PF_WIRELESS_BLE)) != 0u) return false;
+    config.radios_disabled = (uint8_t)(~radios & (PF_WIRELESS_WIFI | PF_WIRELESS_BLE));
     return true;
 }
 

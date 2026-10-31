@@ -82,6 +82,9 @@ test("configuration validates profiles, selected-transport GPIOs, flags and LED 
   assert.equal(decodeConfigReport(spiConfig, spi).storage_gpios[4], 255);
   spiConfig[11] = 10;
   assert.throws(() => decodeConfigReport(spiConfig, spi));
+  const radios = report.slice(); radios[13] |= 8;
+  assert.throws(() => decodeConfigReport(radios, id));
+  assert.equal(decodeConfigReport(radios, decodeIdentityReport(identity(1 | 2 | 4 | 16 | 32 | 128))).radios, 1);
   const unknownReset = config(); unknownReset[14] = 255;
   assert.equal(decodeConfigReport(unknownReset, id).reset_cause, 255);
 });
@@ -194,8 +197,10 @@ test("control results enforce every opcode/status/error combination and zero res
   const badData = result(1, 1); badData[5] = 1;
   assert.throws(() => decodeControlResult(badData));
   const saved = result(1, 6); saved.set([200, 0, 1, 0], 5);
-  assert.deepEqual(decodeControlResult(saved).settings, { system_clock_mhz: 200, sdcard_profile: 1 });
-  saved[8] = 1;
+  assert.deepEqual(decodeControlResult(saved).settings, { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 });
+  saved[8] = 3;
+  assert.equal(decodeControlResult(saved).settings.radios, 3);
+  saved[8] = 4;
   assert.throws(() => decodeControlResult(saved));
 });
 
@@ -415,6 +420,16 @@ test("settings completion remains serialized and verifies saved values without a
   assert.match(client.state.settings_message, /did not confirm/);
   assert.equal(sent.length, 1);
   assert.equal(client.state.settings.system_clock_mhz, 200);
+  await client.disconnect();
+});
+
+test("W-board settings save sends and verifies the radio enables", async () => {
+  const { client, device, sent } = fakeConnection({ capabilities: 1 | 2 | 4 | 16 | 32 | 128 });
+  await client.connect();
+  emit(device, 10, storage()); emit(device, 11, selfTest());
+  assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1, radios: 2 }), true);
+  assert.deepEqual(sent[0], [20, 1, 1, 6, 0, 200, 0, 1, 2, 0]);
+  assert.equal(client.state.settings.radios, 2);
   await client.disconnect();
 });
 

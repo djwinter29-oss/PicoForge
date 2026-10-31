@@ -195,6 +195,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .settings-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 8px; padding: 1px; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 3px 12px #17332e08; }
 .settings-controls > .metric { min-height: 72px; padding: 12px 14px; }
 .settings-controls label { min-height: 72px; padding: 12px 14px; display: grid; align-content: space-between; gap: 6px; color: var(--muted); background: var(--paper); font-size: 12px; }
+.settings-controls label[hidden] { display: none; }
 .settings-controls select {
   min-width: 0;
   min-height: 38px;

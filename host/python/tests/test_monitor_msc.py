@@ -17,7 +17,7 @@ class MonitorMscTests(unittest.TestCase):
         self.monitor._snapshot = {"msc": {"enabled": True, "force_return_supported": True}}
 
     def test_forced_settings_require_confirmed_capable_idle_host_ownership(self):
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         snapshot = {"connected": True, "settings_supported": True,
                     "hardware": {"capabilities": 68, "storage_transport": "sdio"},
                     "msc": {"enabled": True, "transition_pending": False},
@@ -172,7 +172,7 @@ class MonitorReconnectTests(unittest.TestCase):
         monitor._run()
         snapshot = monitor.snapshot()
         self.assertTrue(snapshot["connected"])
-        self.assertEqual(snapshot["settings"], {"system_clock_mhz": 200, "sdcard_profile": 1})
+        self.assertEqual(snapshot["settings"], {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0})
         self.assertEqual(snapshot["board_configuration"], client.read_configuration.return_value)
         self.assertTrue(snapshot["settings_supported"])
         self.assertIn("filesystem_format", snapshot)
@@ -279,16 +279,22 @@ class MonitorSettingsTests(unittest.TestCase):
         saved = self.monitor.set_settings(settings)
         self.assertEqual(saved["sdcard_profile"], 1)
         self.monitor._active_client.set_settings.assert_called_once_with(
-            {"system_clock_mhz": 200, "sdcard_profile": 1}
+            {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         )
         self.assertIn("Waiting for the board to reboot", self.monitor.snapshot()["settings_message"])
 
     def test_canonical_settings_are_saved_and_returned_without_transport_fields(self):
-        settings = {"system_clock_mhz": 150, "sdcard_profile": 0}
+        settings = {"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 0}
         self.monitor._active_client.set_settings.return_value = settings
         self.monitor._active_client.configuration = {"system_clock_mhz": 150, "sdcard_profile": 0}
         self.assertEqual(self.monitor.set_settings(settings), settings)
         self.monitor._active_client.set_settings.assert_called_once_with(settings)
+
+    def test_settings_without_radios_keep_the_saved_radio_enables(self):
+        self.monitor._snapshot["board_configuration"] = {"radios": 3}
+        self.monitor.set_settings({"system_clock_mhz": 150, "sdcard_profile": 0})
+        self.monitor._active_client.set_settings.assert_called_once_with(
+            {"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 3})
 
     def test_rejects_settings_when_storage_state_is_unknown_or_busy(self):
         settings = {"system_clock_mhz": 150, "sdio_bus_mhz": 0, "spi_bus_mhz": 0}

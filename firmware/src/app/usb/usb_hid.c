@@ -37,6 +37,13 @@ static pf_hid_control_result_t ble_result = { .version = PF_HID_REPORT_VERSION }
 #define PF_HID_BOARD_FLAG_CARD_DETECT (1u << 0)
 #define PF_HID_BOARD_FLAG_LED (1u << 1)
 #define PF_HID_BOARD_FLAG_MONITOR_UART (1u << 2)
+/** Bits 3-4 carry the next-boot Wi-Fi and BLE enables; PF_WIRELESS_* shifted left by 3. */
+#define PF_HID_BOARD_RADIO_SHIFT 3u
+#if PF_ENABLE_WIRELESS
+#define PF_HID_RADIO_MASK (PF_WIRELESS_WIFI | PF_WIRELESS_BLE)
+#else
+#define PF_HID_RADIO_MASK 0u /**< Boards without a radio report and accept no radio enables. */
+#endif
 
 static bool reboot_requested; /**< A reboot or settings save awaits the USB task. */
 static bool force_save_pending; /**< Confirmed save waits for Pending GET before USB detach. */
@@ -234,6 +241,7 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     }
     /* The logging UART is always configured by the board, so unlike the LED and card detect it has no absent case. */
     report->board_flags |= PF_HID_BOARD_FLAG_MONITOR_UART;
+    report->board_flags |= (uint8_t)((pf_boot_config_radios() & PF_HID_RADIO_MASK) << PF_HID_BOARD_RADIO_SHIFT);
     report->reset_cause = pf_system_reset_cause();
 }
 
@@ -498,6 +506,7 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
 {
     const uint16_t system_clock_mhz = read_u16_le(request->arguments);
     const uint8_t sdcard_profile = request->arguments[2];
+    const uint8_t radios = request->arguments[3];
     pf_sysclk_profile_t sysclk = PF_SYSCLK_DEFAULT;
     outcome_t result;
 
@@ -505,11 +514,13 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
         ++sysclk;
     }
     const bool force = request->flags == 1u;
-    if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 3u)) {
+    if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 4u)) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
-    if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || !pf_boot_config_set_sysclk(sysclk) ||
-        !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile)) {
+    if (pf_sysclk_profile_mhz(sysclk) != system_clock_mhz || (radios & ~PF_HID_RADIO_MASK) != 0u ||
+        !pf_boot_config_set_sysclk(sysclk) ||
+        !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile) ||
+        (PF_HID_RADIO_MASK != 0u && !pf_boot_config_set_radios(radios))) {
         return invalid(PF_HID_ERROR_ARGUMENT);
     }
     if (pf_usb_msc_transition_pending() || pf_storage_worker_busy() ||
@@ -537,6 +548,7 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
     result.data[0] = (uint8_t)system_clock_mhz;
     result.data[1] = (uint8_t)(system_clock_mhz >> 8u);
     result.data[2] = sdcard_profile;
+    result.data[3] = radios;
     reboot_requested = true;
     return result;
 }
@@ -545,12 +557,14 @@ static outcome_t handle_save_settings(const pf_hid_control_request_t *request)
 {
     const pf_sysclk_profile_t old_sysclk = pf_boot_config_sysclk();
     const pf_storage_speed_t old_sd_speed = pf_boot_config_storage_speed();
+    const uint8_t old_radios = pf_boot_config_radios();
     outcome_t result = save_settings(request);
 
     if (result.status != PF_HID_COMMAND_COMPLETED) {
         /* Retain the previous session values; a failed save may already have changed flash. */
         (void)pf_boot_config_set_sysclk(old_sysclk);
         (void)pf_boot_config_set_storage_speed(old_sd_speed);
+        (void)pf_boot_config_set_radios(old_radios);
     }
     return result;
 }

@@ -68,7 +68,7 @@ class HidDeviceTests(unittest.TestCase):
                 {"path": b"/hid/new", "serial_number": "0123456789ABCDEF"}]), \
                 patch("picoforge.device._require_hid") as hid, patch("picoforge.device.sleep"):
             hid.return_value.device.return_value = replacement
-            settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+            settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
             self.assertEqual(client.set_settings(settings, force=True), settings)
         self.assertEqual(len(original.sent), 1)
         self.assertEqual(original.sent[0][4], 1)
@@ -144,7 +144,7 @@ class HidDeviceTests(unittest.TestCase):
     def test_settings_save_uses_one_command_and_verified_result_without_configuration_read(self):
         client = self.connection()
         client._device.feature_reports[20] = [control_result(opcode=6)]
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         self.assertEqual(client.set_settings(settings), settings)
         self.assertEqual(client._device.sent, [bytes([20, 1, 1, 6, 0, 200, 0, 1, 0, 0])])
         self.assertEqual(client._device.last_get, (20, 10))

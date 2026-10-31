@@ -107,7 +107,13 @@ function renderSettings(snapshot) {
   if (settings && !snapshot.settings_storage_dirty) {
     storageControl.value = String(storageSpeed(settings));
   }
-  for (const selector of ["#settings-clock", "#settings-storage"]) {
+  const wireless = Boolean(snapshot.hardware?.capabilities & 128);
+  for (const [id, radio] of [["settings-wifi", 1], ["settings-ble", 2]]) {
+    const control = document.querySelector(`#${id}`);
+    document.querySelector(`label[for="${id}"]`).hidden = !wireless;
+    if (settings && !snapshot.settings_dirty) control.value = String(Number(Boolean((settings.radios ?? 0) & radio)));
+  }
+  for (const selector of ["#settings-clock", "#settings-storage", "#settings-wifi", "#settings-ble"]) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready || !snapshot.settings_dirty

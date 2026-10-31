@@ -96,7 +96,7 @@ static void store(uint8_t sysclk_profile, uint8_t sdcard_profile)
     record_t *stored = (record_t *)bytes;
     stored->sysclk_profile = sysclk_profile;
     stored->sdcard_profile = sdcard_profile;
-    stored->reserved = 0u;
+    stored->radios_disabled = stored->reserved = 0u;
     reseal();
 }
 
@@ -210,6 +210,23 @@ void test_save_writes_the_v1_profile_layout_and_survives_reboot(void)
     }
 }
 
+void test_radios_default_on_for_erased_and_older_records_and_persist_disables(void)
+{
+    TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE, pf_boot_config_radios());
+    store(PF_SYSCLK_150MHZ, PF_STORAGE_SPEED_HIGH);
+    reboot();
+    TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE, pf_boot_config_radios());
+    TEST_ASSERT_FALSE(pf_boot_config_set_radios(4u));
+    TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE, pf_boot_config_radios());
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_set_radios(PF_WIRELESS_BLE));
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_WIFI, stored_bytes()[10]);
+    reboot();
+    TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_BLE, pf_boot_config_radios());
+    TEST_ASSERT_EQUAL(PF_SYSCLK_150MHZ, pf_boot_config_sysclk());
+}
+
 void test_failed_write_is_reported(void)
 {
     pf_test_safe_execute_result = -1;
@@ -235,7 +252,7 @@ void test_corrupt_or_unknown_records_give_defaults(void)
 {
     const struct { unsigned offset; uint8_t value; bool reseal; } cases[] = {
         {0u, 'X', true}, {4u, 2u, true}, {6u, 15u, true}, {8u, 4u, true}, {9u, 2u, true},
-        {10u, 1u, true}, {11u, 1u, true}, {8u, 1u, false}, {15u, 0u, false},
+        {10u, 4u, true}, {11u, 1u, true}, {8u, 1u, false}, {15u, 0u, false},
     };
     for (unsigned i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         store(PF_SYSCLK_200MHZ, PF_STORAGE_SPEED_HIGH);
