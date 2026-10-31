@@ -39,13 +39,6 @@ function boardLabel(board) {
 }
 
 function renderStatus(snapshot) {
-  if (document.dispatchEvent && typeof CustomEvent !== "undefined") {
-    document.dispatchEvent(new CustomEvent("picoforge-status", {
-      detail: { board: selectedBoard, snapshot: { ...snapshot, settings_busy: settingsRequestInProgress ||
-        snapshot.reboot_pending || snapshot.outcome_uncertain,
-        msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null } },
-    }));
-  }
   if (!snapshot.connected) {
     shareDialog.close();
     settingsDirty = false;
@@ -63,14 +56,6 @@ function renderStatus(snapshot) {
     msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
   });
 }
-
-document.addEventListener?.("picoforge-wireless-operation", event => {
-  settingsRequestInProgress = event.detail.busy;
-  boardSelect.disabled = settingsRequestInProgress || scanningBoards || knownBoards.length === 0;
-  if (currentSnapshot && event.detail.reboot_pending) currentSnapshot.reboot_pending = true;
-  if (currentSnapshot) renderStatus(currentSnapshot);
-  if (!settingsRequestInProgress) void updateStatus();
-});
 
 async function updateStatus() {
   if (requestInProgress || mscRequestInProgress || settingsRequestInProgress) return;

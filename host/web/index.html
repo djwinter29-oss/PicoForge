@@ -8,7 +8,6 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
   <link rel="stylesheet" href="/css/dashboard.css">
   <script type="module" src="/js/app.mjs"></script>
-  <script type="module" src="/ble/js/native-wireless.mjs"></script>
 </head>
 <body>
   <header class="topbar">
@@ -33,7 +32,6 @@
       <div class="section-heading">
         <h2 id="identity-title">Device information</h2>
         <div class="actions" aria-label="Board identification and controls">
-          <a class="button button-secondary" href="/ble/">Bluetooth dashboard</a>
           <button class="button button-led" id="rescan-boards" type="button">Rescan</button>
           <select id="board-select" aria-label="Board attached to this server" disabled>
             <option value="">Scanning boards...</option>
@@ -135,29 +133,6 @@
         <div><dt>Serial</dt><dd id="memory-serial">--</dd></div>
       </dl>
     </section>
-
-    <section class="runtime" id="wireless-panel" aria-labelledby="wireless-title" hidden>
-      <h2 id="wireless-title">Wi-Fi and Bluetooth</h2>
-      <p>W boards only. Configure over USB; changes apply after reboot. Credentials are stored in unencrypted flash.</p>
-      <div class="settings-controls">
-        <label><input id="wifi-enabled" type="checkbox"> Enable Wi-Fi (WPA2)</label>
-        <label for="wifi-ssid">SSID<input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
-        <label for="wifi-password">New Wi-Fi password (blank keeps saved)
-          <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
-        <label><input id="ble-enabled" type="checkbox"> Enable Bluetooth LE</label>
-        <label for="ble-secret">New BLE key (blank keeps saved)
-          <input id="ble-secret" type="password" maxlength="64" autocomplete="new-password"></label>
-        <button class="button button-secondary" id="wireless-generate" type="button">Generate BLE key</button>
-        <button class="button" id="wireless-save" type="button" disabled>Save wireless and reboot</button>
-      </div>
-      <p id="wireless-status" role="status" aria-live="polite"></p>
-    </section>
-    <dialog class="confirmation-dialog" id="wireless-dialog" aria-labelledby="wireless-dialog-title">
-      <h2 id="wireless-dialog-title">Save wireless settings and reboot?</h2>
-      <p>USB will disconnect. Keep a copy of the BLE key; it cannot be read back. Flash credentials are not encrypted.</p>
-      <button class="button button-secondary" id="wireless-cancel" type="button">Cancel</button>
-      <button class="button" id="wireless-confirm" type="button">Save and reboot</button>
-    </dialog>
 
     <section class="runtime self-test" aria-labelledby="self-test-title">
       <div class="section-heading self-test-heading">

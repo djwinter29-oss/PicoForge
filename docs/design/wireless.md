@@ -6,7 +6,7 @@ This implementation has host checks and target builds, not physical radio qualif
 
 ## Configuration and operation
 
-Connect through USB and open **Wi-Fi and Bluetooth**. Set the enable switches, SSID and WPA2 passphrase.
+Connect through USB on the standalone WebHID page and open **Wi-Fi and Bluetooth**. Set the enable switches, SSID and WPA2 passphrase.
 SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters. Blank password/key fields
 preserve the existing secret. Generate a random BLE control key and copy it to a password manager before saving:
 the board never returns it. Explicit **Save wireless and reboot** confirmation is required.
@@ -20,11 +20,11 @@ Wi-Fi joins an existing 2.4 GHz WPA2 network and obtains an IPv4 address through
 30-second deadline; failures and dropped connections are reported and retried after five seconds. This does not
 provide a web server, network filesystem, Bluetooth Classic, internet management API or Wi-Fi dashboard transport.
 
-The Python and .NET pages configure their server-attached board through their HID backend. **Bluetooth dashboard**
-opens the same static diagnostics page used by standalone WebHID; select **Bluetooth LE** there. The browser,
-not the Python/.NET server, must be within radio range and support Web Bluetooth on localhost or HTTPS
-(desktop Chrome/Edge where supported by the operating system). USB WebHID provisioning likewise addresses a
-board attached to the browser computer.
+The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE or a wireless
+settings panel; their `/api/wireless` endpoint remains available. Bluetooth LE is available only from the
+standalone WebHID page: select **Bluetooth LE** there. The browser must be within radio range and support Web
+Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
+provisioning likewise addresses a board attached to the browser computer.
 
 BLE diagnostics are public. To control the LED or start/cancel a benchmark, enter the USB-provisioned control key
 and select **Use BLE key**. It is held only as a non-exportable browser CryptoKey and forgotten on disconnect.

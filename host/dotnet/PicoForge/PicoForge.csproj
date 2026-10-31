@@ -15,10 +15,5 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </Content>
-    <Content Include="../../webhid/**/*" Exclude="../../webhid/tests/**;../../webhid/README.md;../../webhid/**/__pycache__/**">
-      <Link>wwwroot/ble/%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-    </Content>
   </ItemGroup>
 </Project>

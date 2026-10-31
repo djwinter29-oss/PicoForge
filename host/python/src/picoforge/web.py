@@ -22,8 +22,6 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     """Create a testable status app; hardware monitoring starts only by default."""
     installed = Path(__file__).with_name("web")  # packaged from host/web; source checkouts use host/web directly
     root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[3] / "web")
-    installed_ble = Path(__file__).with_name("ble")
-    ble_root = installed_ble if installed_ble.is_dir() else Path(__file__).resolve().parents[3] / "webhid"
     dashboard = monitor or DashboardBoards()
     app = Flask(__name__, template_folder=str(root), static_folder=None)
     app.config.update(
@@ -50,11 +48,6 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     @app.get("/favicon.svg")
     def favicon():
         return send_from_directory(root, "favicon.svg", mimetype="image/svg+xml")
-
-    @app.get("/ble/")
-    @app.get("/ble/<path:filename>")
-    def bluetooth(filename: str = "index.html"):
-        return send_from_directory(ble_root, filename)
 
     @app.get("/css/<path:filename>")
     def css(filename: str):

@@ -19,9 +19,8 @@ Issues = "https://github.com/djwinter29-oss/PicoForge/issues"
 picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
-package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web", "picoforge.ble" = "../webhid"}
-packages = ["picoforge", "picoforge.web", "picoforge.ble"]
+package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
+packages = ["picoforge", "picoforge.web"]
 
 [tool.setuptools.package-data]
 "picoforge.web" = ["index.html", "favicon.svg", "css/*.css", "js/*.mjs"]
-"picoforge.ble" = ["index.html", "favicon.svg", "css/*.css", "js/*.mjs"]
