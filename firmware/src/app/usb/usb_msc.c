@@ -26,6 +26,7 @@
 #define ASC_INVALID_COMMAND 0x20u /**< Invalid command operation code. */
 #define ASC_LBA_OUT_OF_RANGE 0x21u /**< Logical block address out of range. */
 #define ASC_INVALID_CDB_FIELD 0x24u /**< Invalid field in CDB. */
+#define ASC_MEDIUM_CHANGED 0x28u /**< Not-ready to ready transition; medium may have changed. */
 #define ASC_MEDIUM_NOT_PRESENT 0x3au /**< Medium not present. */
 #define ASC_REMOVAL_PREVENTED 0x53u /**< Media removal prevented; ASCQ 02 is the qualifier. */
 #define ASCQ_REMOVAL_PREVENTED 0x02u /**< ASCQ paired with ASC_REMOVAL_PREVENTED. */
@@ -36,27 +37,29 @@
 #define SCSI_SENSE_KEY_OFFSET 2u
 #define SCSI_SENSE_ASC_OFFSET 12u
 #define SCSI_SENSE_ASCQ_OFFSET 13u
-/** Detach time before reconnecting after an ownership change, so the host notices the media change. */
+/** Detach time before reconnecting after a confirmed settings save. */
 #define MSC_RECONNECT_DETACH_US 250000u
 /** Longest wait for the host to fetch a deferred Feature 20 result before an ownership change proceeds. */
 #define MSC_HID_RESULT_DEADLINE_US 500000u
-/** Pause after the host fetched the result, so the GET completes before USB detaches. */
+/** Pause after the host fetched the result, so the GET completes before ownership changes. */
 #define MSC_HID_RESULT_SETTLE_US 10000u
 
 static bool msc_enabled; /**< USB host owns the card. */
+static bool save_detached; /**< Confirmed save detached USB; card remains reserved for shutdown. */
 static bool msc_ejected; /**< Host ejected the medium. */
+static bool medium_changed; /**< Host has not yet been notified that newly available media may have changed. */
 static bool removal_prevented; /**< Host holds PREVENT MEDIUM REMOVAL (volatile, cleared on bus reset). */
 static bool request_pending; /**< An ownership request awaits pf_usb_msc_task(). */
 static bool requested_enabled; /**< Target owner of the pending request: true for USB. */
 static bool transition_pending; /**< Reported to the host through HID: an ownership change is in progress. */
-/* Ownership flow: request -> [unmount_pending] -> apply_* -> [remount_pending] -> detach, then
- * reconnect_pending until the deadline. transition_pending covers the whole span. */
+/* Ownership flow: request -> [unmount_pending] -> apply_* -> [remount_pending].
+ * CDC/HID/MSC stay connected; transition_pending covers the worker handoff. */
 static bool request_rejected; /**< The last valid request failed; reported through HID. */
-static bool recovery_requested; /**< Pending request is a faulted-media detach, not a clean eject. */
+static bool recovery_requested; /**< Pending request revokes faulted-media access, not a clean eject. */
 static bool unmount_pending; /**< Worker handoff preparation must finish before ownership changes. */
 static bool force_return_requested; /**< Explicit unsafe command; never inferred from normal disable. */
 static bool remount_pending; /**< Forced return awaits the sole worker's mount result. */
-static bool reconnect_pending; /**< USB is detached after an ownership change and reconnects at the deadline. */
+static bool reconnect_pending; /**< USB is detached after settings save and reconnects at the deadline. */
 static uint64_t reconnect_at_us; /**< time_us_64() value at which to reconnect. */
 static bool hid_result_deferred; /**< Delay the change until the host fetched the HID result or the deadline passes. */
 static bool hid_result_read; /**< The host fetched the deferred result. */
@@ -72,6 +75,8 @@ static uint8_t sector_buffer[MSC_SECTOR_SIZE] __attribute__((aligned(4)));
 static bool transfer_sense_pending; /**< A transfer error sense awaits REQUEST SENSE. */
 static uint8_t transfer_sense_key; /**< Sense key to report. */
 static uint8_t transfer_sense_asc; /**< Additional sense code to report. */
+
+static void schedule_reconnect(uint64_t delay_us);
 
 static void set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq)
 {
@@ -171,6 +176,34 @@ bool pf_usb_msc_is_enabled(void)
     return msc_enabled;
 }
 
+/** @copydoc pf_usb_msc_prepare_save */
+bool pf_usb_msc_prepare_save(void)
+{
+    if (!msc_enabled || transition_pending || reconnect_pending || pf_storage_worker_busy()) {
+        return false;
+    }
+    if (!pf_storage_try_lock()) return false;
+    bool prepared = pf_storage_msc_sync() == PF_BLOCK_OK && tud_disconnect();
+    if (prepared) {
+        save_detached = true;
+        transition_pending = true;
+    }
+    pf_storage_unlock();
+    return prepared;
+}
+
+/** @copydoc pf_usb_msc_finish_save */
+void pf_usb_msc_finish_save(bool saved)
+{
+    if (!save_detached) return;
+    save_detached = false;
+    msc_enabled = !saved;
+    medium_changed = !saved;
+    transition_pending = saved;
+    /* Ownership remains USB-held: no worker mount or host block access during successful shutdown. */
+    schedule_reconnect(MSC_RECONNECT_DETACH_US);
+}
+
 bool pf_usb_msc_is_ejected(void)
 {
     return msc_ejected;
@@ -258,7 +291,7 @@ static void reject_request(void)
     request_rejected = true;
 }
 
-/** @brief Detach and hand the card to the worker for faulted-media recovery; never reported as a clean eject. */
+/** @brief Revoke host access and hand faulted media to the worker; never reported as a clean eject. */
 static void apply_recovery(void)
 {
     recovery_requested = false;
@@ -268,34 +301,32 @@ static void apply_recovery(void)
         reject_request();
         return;
     }
-    /* The queued worker waits for our reservation. Detach before handing
-     * it the card; this is never reported as successful SCSI eject/sync. */
-    (void)tud_disconnect();
+    /* The queued worker waits for our reservation. Revoke MSC access before handing it the card. */
+    msc_enabled = false;
     if (pf_storage_msc_release_for_recovery() != PF_BLOCK_OK) {
+        msc_enabled = true;
         reject_request();
-        schedule_reconnect(0u);
         return;
     }
-    msc_enabled = false;
     transition_pending = false;
 }
 
-/** @brief Explicit unsafe return: detach, then let the worker remount once. */
+/** @brief Explicit unsafe return: revoke host access, then let the worker remount once. */
 static void apply_force_return(void)
 {
     force_return_requested = false;
     /* Device sync cannot flush writes still cached by the host. A device-side
      * failure keeps USB ownership; only the explicit command bypasses host eject. */
-    if (pf_fatfs_volume_is_mounted() || pf_storage_msc_sync() != PF_BLOCK_OK || !tud_disconnect()) {
+    if (pf_fatfs_volume_is_mounted() || pf_storage_msc_sync() != PF_BLOCK_OK) {
         reject_request();
-        return;
-    }
-    if (!pf_storage_worker_return_from_usb() || pf_storage_msc_release() != PF_BLOCK_OK) {
-        reject_request();
-        schedule_reconnect(0u);
         return;
     }
     msc_enabled = false;
+    if (!pf_storage_worker_return_from_usb() || pf_storage_msc_release() != PF_BLOCK_OK) {
+        msc_enabled = true;
+        reject_request();
+        return;
+    }
     remount_pending = true;
 }
 
@@ -409,16 +440,12 @@ void pf_usb_msc_task(void)
         return;
     }
     bool was_enabled = msc_enabled;
-    bool detached_first = recovery_requested || force_return_requested;
     apply_msc_request();
     pf_storage_unlock();
     if (was_enabled != msc_enabled) {
         transfer_sense_pending = false;
-        if (!detached_first) {
-            (void)tud_disconnect();
-        }
-        /* Reconnect later instead of sleeping, so HID, CDC and storage replies keep being serviced. */
-        schedule_reconnect(MSC_RECONNECT_DETACH_US);
+        removal_prevented = false;
+        medium_changed = msc_enabled;
     }
 }
 
@@ -432,6 +459,12 @@ static bool set_not_ready(uint8_t lun)
 static bool media_ready(uint8_t lun)
 {
     if ((lun == 0u) && msc_enabled && !msc_ejected && pf_storage_msc_ready()) {
+        if (medium_changed) {
+            medium_changed = false;
+            /* READ10/WRITE10 use this check too; preserve unit attention across TinyUSB's error overwrite. */
+            fail_transfer(lun, SCSI_SENSE_UNIT_ATTENTION, ASC_MEDIUM_CHANGED);
+            return false;
+        }
         return true;
     }
     return set_not_ready(lun);
@@ -489,6 +522,9 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start,
         if (start) {
             if (!pf_storage_msc_ready()) {
                 return set_not_ready(lun);
+            }
+            if (msc_ejected) {
+                medium_changed = true;
             }
             msc_ejected = false;
         } else {
@@ -617,6 +653,10 @@ static int32_t write10(uint8_t lun, uint32_t lba, uint32_t offset,
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                          void *buffer, uint32_t bufsize)
 {
+    if ((lun != 0u) || !msc_enabled || msc_ejected) {
+        fail_transfer(lun, SCSI_SENSE_NOT_READY, ASC_MEDIUM_NOT_PRESENT);
+        return -1;
+    }
     pf_storage_lock();
     int32_t result = read10(lun, lba, offset, buffer, bufsize);
     pf_storage_unlock();
@@ -626,6 +666,10 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
 int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                           uint8_t *buffer, uint32_t bufsize)
 {
+    if ((lun != 0u) || !msc_enabled || msc_ejected) {
+        fail_transfer(lun, SCSI_SENSE_NOT_READY, ASC_MEDIUM_NOT_PRESENT);
+        return -1;
+    }
     pf_storage_lock();
     int32_t result = write10(lun, lba, offset, buffer, bufsize);
     pf_storage_unlock();

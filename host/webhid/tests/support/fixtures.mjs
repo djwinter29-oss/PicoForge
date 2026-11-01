@@ -56,7 +56,7 @@ export function fakeConnection({ capabilities, ...options } = {}) {
       if (id === 2) return config(capabilities & 8 ? "spi" : "sdio");
       const request = sent.at(-1);
       const reply = result(request[2], request[3]);
-      if (request[3] === 6) reply.set(request.slice(5, 8), 5);
+      if (request[3] === 6) reply.set(request.slice(5, 9), 5);
       return reply;
     } });
   const hid = new EventTarget(); hid.getDevices = async () => [device];

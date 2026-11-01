@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace PicoForge;
 
@@ -7,9 +8,10 @@ internal static class StatusEndpoints
 {
     public sealed record SetLedRequest(bool? On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
-    /// <summary>Requested persistent next-boot system clock and transport-neutral SD-card profile.</summary>
+    /// <summary>Requested next-boot clock, SD-card profile and optional radio enables (omitted keeps saved).</summary>
     public sealed record SetSettingsRequest(int? SystemClockMhz,
-        [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile);
+        [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile, bool ConfirmDataLoss = false,
+        int? Radios = null);
     /// <summary>Settings values confirmed by the device after saving.</summary>
     public sealed record SetSettingsResponse(BootSettingsResponse Settings);
     public sealed record SetMscRequest(bool? Enabled);
@@ -23,9 +25,15 @@ internal static class StatusEndpoints
     public sealed record SelfTestAcceptedResponse(bool Accepted);
     /// <summary>Explicit acknowledgement that the device will reboot and disconnect.</summary>
     public sealed record RebootRequest(bool Confirm);
+    public sealed record WirelessTestRequest(string? Ssid, string? Password = null);
 
     public static IEndpointRouteBuilder MapDeviceStatus(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/wireless", GetWireless);
+        endpoints.MapPost("/api/wireless", SetWireless);
+        endpoints.MapPost("/api/wireless/scan", ScanWireless);
+        endpoints.MapPost("/api/wireless/test", TestWireless);
+        endpoints.MapPost("/api/wireless/cancel", CancelWirelessTest);
         endpoints.MapGet("/api/boards", GetBoards)
             .WithName("GetBoards")
             .WithSummary("Discover attached PicoForge boards")
@@ -85,6 +93,69 @@ internal static class StatusEndpoints
         return endpoints;
     }
 
+    private static IResult GetWireless(string? board, IDashboardBoards dashboard)
+    {
+        try { return Results.Ok(dashboard.ReadWireless(board)); }
+        catch (NotSupportedException) { return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" }); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "Wireless status unavailable");
+        }
+    }
+
+    private static IResult SetWireless(JsonElement request, string? board, IDashboardBoards dashboard)
+    {
+        WirelessRequest settings;
+        try { settings = WirelessRequest.Parse(request); }
+        catch (ArgumentException error) { return Results.Problem(statusCode: 400, title: error.Message); }
+        try { return Results.Ok(dashboard.SetWireless(board, settings)); }
+        catch (NotSupportedException) { return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" }); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: 503, title: "Wireless provisioning outcome is uncertain; command was not resent");
+        }
+    }
+
+    private static IResult ScanWireless(string? board, IDashboardBoards dashboard)
+    {
+        try { return Results.Ok(new { networks = dashboard.ScanWireless(board) }); }
+        catch (NotSupportedException) { return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" }); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        { return Results.Problem(statusCode: 503, title: "Wireless scan failed"); }
+    }
+
+    private static IResult TestWireless(JsonElement request, string? board, IDashboardBoards dashboard)
+    {
+        WirelessTestRequest test;
+        try
+        {
+            test = request.Deserialize<WirelessTestRequest>(new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+            }) ?? throw new ArgumentException("Expected SSID and optional password");
+            HidProtocol.BuildWirelessCommand(1, 3, ssid: test.Ssid, password: test.Password);
+        }
+        catch (Exception error) when (error is JsonException or ArgumentException)
+        { return Results.Problem(statusCode: 400, title: "Invalid SSID or password"); }
+        try { return Results.Ok(new { test = dashboard.TestWireless(board, test.Ssid!, test.Password ?? "") }); }
+        catch (NotSupportedException) { return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" }); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        { return Results.Problem(statusCode: 503, title: "Wireless connection test failed"); }
+    }
+
+    private static IResult CancelWirelessTest(string? board, IDashboardBoards dashboard)
+    {
+        try { return Results.Ok(new { cancelled = dashboard.CancelWirelessTest(board) }); }
+        catch (NotSupportedException) { return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" }); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        { return Results.Problem(statusCode: 503, title: "Could not clear wireless test credentials"); }
+    }
+
     private static IResult GetBoards(IDashboardBoards dashboard)
     {
         try { return Results.Ok(dashboard.Boards()); }
@@ -123,24 +194,37 @@ internal static class StatusEndpoints
     private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard)
     {
         if (request.SystemClockMhz is not (0 or 150 or 200 or 250) ||
-            request.SdCardProfile is not (0 or 1))
+            request.SdCardProfile is not (0 or 1) || request.Radios is < 0 or > 3)
             return Results.Problem(statusCode: 400, title: "Unsupported boot settings value");
-        var settings = new BootSettingsResponse(request.SystemClockMhz.Value,
-            request.SdCardProfile.Value);
+        var settings = new BootSettingsResponse(request.SystemClockMhz.Value, request.SdCardProfile.Value,
+            request.Radios ?? dashboard.Snapshot(board).Settings?.Radios ?? 0);
         try
         {
-            var saved = dashboard.SetSettings(board, settings);
+            if (request.ConfirmDataLoss)
+            {
+                var status = dashboard.Snapshot(board);
+                if (!status.Connected || status.CommandOutcomeUncertain ||
+                    (status.Hardware?.Capabilities & HidProtocol.CapabilityForcedSave) !=
+                        HidProtocol.CapabilityForcedSave ||
+                    status.Msc is not { Enabled: true, TransitionPending: false } || status.SelfTest?.Active == true)
+                    return Results.Conflict(new { error = "Forced save is unavailable or storage is busy" });
+            }
+            var saved = dashboard.SetSettings(board, settings, request.ConfirmDataLoss);
             return saved is null
                 ? Results.Conflict(new { error = "Boot settings are unavailable or storage is busy" })
                 : Results.Ok(new SetSettingsResponse(saved));
         }
         catch (InvalidOperationException error)
         {
-            return Results.Conflict(new { error = error.Message });
+            return Results.Conflict(new { error = request.ConfirmDataLoss &&
+                dashboard.Snapshot(board).CommandOutcomeUncertain
+                    ? $"Forced save outcome is uncertain: {error.Message}" : error.Message });
         }
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {
-            return Results.Problem(statusCode: 503, title: "HID settings command delivery failed");
+            return Results.Problem(statusCode: 503, title: request.ConfirmDataLoss
+                ? "Forced save outcome is uncertain; the command was not resent"
+                : "HID settings command delivery failed");
         }
         catch (NotSupportedException)
         {

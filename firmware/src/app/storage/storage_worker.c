@@ -41,7 +41,7 @@ typedef struct {
     uint32_t test_size_mib; /**< Nonzero selects a file benchmark. */
     bool host_owned; /**< Ownership snapshot protected by the admission gate. */
     bool recover_media; /**< Selects explicit recovery instead of a command. */
-    bool return_from_usb; /**< Attempt one mount after a confirmed forced USB detach. */
+    bool return_from_usb; /**< Attempt one mount after confirmed revocation of MSC access. */
     bool unmount_for_usb; /**< Unregister FatFs for the pending USB ownership transition. */
     char family[REQUEST_FAMILY_SIZE]; /**< Command family: storage or fs. */
     char arguments[PF_STORAGE_WORKER_ARGS_SIZE]; /**< Copied command arguments. */

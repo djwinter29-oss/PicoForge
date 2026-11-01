@@ -4,14 +4,17 @@
  */
 #include "led.h"
 
+#include <stddef.h>
+
 #include "hardware/gpio.h"
 
 static bool led_available;
 static bool led_on;
+static void (*attached_put)(bool on); /**< Non-GPIO LED driver from pf_led_attach, or NULL for the GPIO LED. */
 
 /*
- * ponytail: state is unlocked; one writer (the USB task) is assumed. A single-bool race is harmless on Cortex-M.
- * Upgrade path: guard set/is_on with a lock if a second writer appears.
+ * ponytail: state is unlocked; one writer (the USB task, which also owns the CYW43) is assumed. A single-bool race is
+ * harmless on Cortex-M. Upgrade path: guard set/is_on with a lock if a second writer appears.
  */
 bool pf_led_init(void)
 {
@@ -30,6 +33,17 @@ bool pf_led_init(void)
     return true;
 }
 
+void pf_led_attach(void (*put)(bool on))
+{
+    if (led_available || put == NULL) {
+        return;
+    }
+    put(false);
+    attached_put = put;
+    led_on = false;
+    led_available = true;
+}
+
 bool pf_led_is_available(void)
 {
     return led_available;
@@ -42,7 +56,11 @@ bool pf_led_set(bool on)
     }
 
     led_on = on;
-    gpio_put((uint)pf_led_board.gpio, (on == pf_led_board.active_high) ? 1u : 0u);
+    if (attached_put != NULL) {
+        attached_put(on);
+    } else {
+        gpio_put((uint)pf_led_board.gpio, (on == pf_led_board.active_high) ? 1u : 0u);
+    }
     return true;
 }
 

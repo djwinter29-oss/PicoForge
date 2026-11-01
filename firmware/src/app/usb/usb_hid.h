@@ -45,6 +45,8 @@
 #define PF_HID_CAP_SPI (1u << 3)
 #define PF_HID_CAP_SDIO (1u << 4)
 #define PF_HID_CAP_SELF_TEST (1u << 5)
+#define PF_HID_CAP_FORCE_SAVE (1u << 6) /**< Confirmed settings save/reboot while MSC owns media. */
+#define PF_HID_CAP_WIRELESS (1u << 7) /**< USB radio provisioning and restricted BLE controls on W boards. */
 
 /** @} */
 
@@ -261,6 +263,13 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
  */
 void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t sequence);
 
+#if PF_ENABLE_WIRELESS
+/** @brief Execute a validated BLE LED/benchmark request on the USB owner task; false rejects unsupported writes. */
+bool pf_hid_ble_control(const pf_hid_control_request_t *request);
+/** @brief Read the BLE-specific result slot; USB results remain independent. */
+void pf_hid_ble_result(pf_hid_control_result_t *report);
+#endif
+
 /** @return True when this build includes the file benchmark and reports PF_HID_CAP_SELF_TEST. */
 bool pf_hid_self_test_supported(void);
 
@@ -270,6 +279,9 @@ bool pf_hid_self_test_supported(void);
  * @note USB task only.
  */
 bool pf_hid_take_reboot_request(void);
+
+/** @brief Return whether a save, reboot or benchmark admission blocks another control interface. USB task only. */
+bool pf_hid_control_pending(void);
 
 /**
  * @brief Publish completion of an asynchronous command preflight when the worker resolves it.

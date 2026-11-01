@@ -116,7 +116,7 @@ uint32_t pf_storage_msc_count(void);
 pf_block_result_t pf_storage_msc_acquire(void);
 /** Return USB media to firmware after caller-checked eject/sync; does not flush. */
 pf_block_result_t pf_storage_msc_release(void);
-/** Return faulted USB media after detach; rejects healthy media and never claims a flush. */
+/** Return faulted USB media after host access is revoked; rejects healthy media and never claims a flush. */
 pf_block_result_t pf_storage_msc_release_for_recovery(void);
 /** Sync under USB ownership. */
 pf_block_result_t pf_storage_msc_sync(void);

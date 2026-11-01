@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PicoForge Wi-Fi console</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/css/dashboard.css">
+  <link rel="stylesheet" href="/css/console.css">
+  <script type="module" src="/js/console.mjs"></script>
+</head>
+<body>
+  <main>
+    <h1>PicoForge Wi-Fi console</h1>
+    <p>Raw TCP CLI through this local dashboard. Trusted LAN only: no authentication or encryption.</p>
+    <p>Click the terminal to type. Enter runs a command; Tab completes; arrow keys edit and recall history.</p>
+    <div class="console-controls">
+      <button id="connect" type="button">Connect</button>
+      <button id="disconnect" type="button" disabled>Disconnect</button>
+      <span id="console-status" role="status" aria-live="polite">Disconnected</span>
+    </div>
+    <pre id="terminal" tabindex="0" role="textbox" aria-label="PicoForge CLI terminal"
+      aria-multiline="true" aria-readonly="true"></pre>
+    <p>Only one CLI session is allowed. Close other USB CDC or TCP terminals before connecting.</p>
+  </main>
+</body>
+</html>

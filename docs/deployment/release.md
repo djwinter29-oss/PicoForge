@@ -25,7 +25,7 @@ The release also includes:
 - `picoforge-X.Y.Z-py3-none-any.whl`: Python CLI and local dashboard.
 - `picoforge-host-vX.Y.Z-linux-x64.tar.gz`, `picoforge-host-vX.Y.Z-win-x64.zip`, and
   `picoforge-host-vX.Y.Z-osx-arm64.tar.gz`: self-contained .NET hosts, including dashboard assets.
-- `picoforge-webhid-vX.Y.Z.zip`: standalone browser dashboard.
+- `picoforge-webhid-vX.Y.Z.zip`: Direct dashboard.
 - `SHA256SUMS.txt`: SHA-256 checksums for all attached packages.
 
 The release workflow builds the Python wheel and WebHID archive directly and calls `publish-dotnet.yml` to build
@@ -91,8 +91,9 @@ and [HID permissions](../development/host-tools.md); macOS needs HIDAPI (`brew i
 Unsigned binaries may trigger Windows SmartScreen or macOS Gatekeeper warnings; no code-signing/notarization is claimed.
 Only run trusted, verified downloads and follow local security policy.
 
-Use [hosted WebHID](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome/Edge, or extract the WebHID ZIP
-and run `python -m http.server 8000 --directory PATH_TO_EXTRACTED_SITE`, then open <http://localhost:8000/>.
+Use the [hosted Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome/Edge, or extract
+the Direct dashboard ZIP and run
+`python -m http.server 8000 --directory PATH_TO_EXTRACTED_SITE`, then open <http://localhost:8000/>.
 Localhost or HTTPS and device permission are required. Avoid competing dashboard connections to one board.
 
 ## Build and hardware limits

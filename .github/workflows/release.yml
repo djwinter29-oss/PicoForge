@@ -92,11 +92,15 @@ jobs:
           for name in ("index.html", "favicon.svg", "css/dashboard.css",
                        "js/app.mjs", "js/dashboard.mjs"):
               assert web.joinpath(name).is_file(), name
+          assert files("picoforge.wireless_ui").joinpath("wireless-form.mjs").is_file()
           from picoforge.web import create_app
           client = create_app(monitor=object()).test_client()
           response = client.get("/")
           assert response.status_code == 200
-          assert b"PicoForge Diagnostics | Python" in response.data
+          assert b"PicoForge Dashboard | Python" in response.data
+          response = client.get("/webhid/js/wireless-form.mjs")
+          assert response.status_code == 200
+          assert b"export function bindWirelessForm" in response.data
           PY
           wheel-check/bin/picoforge --help
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
