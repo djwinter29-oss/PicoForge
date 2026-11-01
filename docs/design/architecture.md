@@ -18,7 +18,8 @@ validation. The temperature driver reads the on-chip ADC temperature sensor on c
 The shared Pico-family profile in `firmware/src/config/board.c` uses the SDK's default UART and direct-LED
 assignments; CMake selects `config/board_spi.c` or `config/board_sdio.c` for storage connector wiring.
 Pico, Pico 2, and Pico 2 W use the
-same monitor UART pins; boards without a direct GPIO LED do not advertise one. This follows PicoUart's
+same monitor UART pins. Pico W and Pico 2 W have no direct GPIO LED; their images drive the CYW43 LED once the
+wireless chip starts at boot. Non-wireless boards without a direct GPIO LED do not advertise one. This follows PicoUart's
 [board-configuration approach](https://github.com/djwinter29-oss/PicoUart/blob/main/docs/hardware-setup.md) without
 adopting its UART-channel map or hardware features. Other layouts require a matching board profile; see
 [hardware setup](../guides/hardware-setup.md). Platform services (system, temperature, LED, logging, boot config)

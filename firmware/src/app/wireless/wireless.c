@@ -12,6 +12,7 @@
 #include "app/wireless/wifi.h"
 #include "pico/cyw43_arch.h"
 #include "platform/boot_config.h"
+#include "platform/led.h"
 #include "platform/logging.h"
 #include "app/usb/usb_hid.h"
 #include "app/usb/usb_msc.h"
@@ -39,13 +40,20 @@ static bool ensure_started(void)
     return true;
 }
 
+/** @brief Drive the W-board LED, which is wired to the CYW43 rather than an RP2 GPIO. */
+static void led_put(bool on)
+{
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, on);
+}
+
 /** @copydoc pf_wireless_start */
 void pf_wireless_start(void)
 {
     wifi_enabled = pf_wifi_prepare();
     ble_enabled = pf_bluetooth_prepare();
-    if (!wifi_enabled && !ble_enabled) return;
+    /* The chip starts even with both radios off because it owns the board LED; radios stay off unless enabled. */
     if (!ensure_started()) return;
+    pf_led_attach(led_put);
     if (wifi_enabled) pf_wifi_start(&error_code);
     if (ble_enabled && !pf_bluetooth_start()) error_code = 1u;
 }

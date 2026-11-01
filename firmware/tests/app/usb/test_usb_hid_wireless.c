@@ -13,10 +13,29 @@ TEST_INCLUDE_PATH("firmware/tests/support/config")
 #include "storage/responsiveness_fixture.inc"
 
 static unsigned provisioning_calls;
+static unsigned wireless_command_calls, wireless_reject_calls, wireless_result_calls;
+static uint8_t wireless_command[PF_WIRELESS_COMMAND_SIZE];
+static uint8_t wireless_result[PF_WIRELESS_RESULT_SIZE];
+static uint8_t rejected_transaction;
 void pf_wireless_start(void) {}
 void pf_wireless_poll(void) {}
 void pf_wireless_status(uint8_t *report) { memset(report, 0, PF_WIRELESS_STATUS_SIZE); report[0] = 1u; }
 bool pf_wireless_configure(const uint8_t *report) { (void)report; ++provisioning_calls; return true; }
+void pf_wireless_command(const uint8_t *report)
+{
+    ++wireless_command_calls;
+    memcpy(wireless_command, report, sizeof(wireless_command));
+}
+void pf_wireless_reject_command(uint8_t transaction)
+{
+    ++wireless_reject_calls;
+    rejected_transaction = transaction;
+}
+void pf_wireless_result_report(uint8_t *report)
+{
+    ++wireless_result_calls;
+    memcpy(report, wireless_result, sizeof(wireless_result));
+}
 
 void setUp(void)
 {
@@ -31,6 +50,11 @@ void setUp(void)
     memset(&bench, 0, sizeof(bench));
     control_result = ble_result = (pf_hid_control_result_t){.version = 1u};
     provisioning_calls = led_requests = msc_requests = force_requests = 0u;
+    wireless_command_calls = wireless_reject_calls = wireless_result_calls = 0u;
+    memset(wireless_command, 0, sizeof(wireless_command));
+    memset(wireless_result, 0, sizeof(wireless_result));
+    wireless_result[0] = 1u;
+    rejected_transaction = 0u;
     test_radios = saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
     settings_save_fails = false;
 }
@@ -83,6 +107,55 @@ void test_wireless_feature_has_sanitized_status_and_no_private_readback(void)
     tud_hid_set_report_cb(0u, PF_WIRELESS_CONFIG_REPORT_ID, HID_REPORT_TYPE_FEATURE, buffer, sizeof(buffer));
     TEST_ASSERT_EQUAL_UINT(1u, provisioning_calls);
     TEST_ASSERT_TRUE(reboot_requested);
+}
+
+void test_wireless_scan_result_requires_a_full_feature_buffer(void)
+{
+    uint8_t buffer[PF_WIRELESS_RESULT_SIZE];
+    memset(buffer, 0xa5, sizeof(buffer));
+    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(
+        0u, PF_WIRELESS_RESULT_REPORT_ID, HID_REPORT_TYPE_FEATURE, buffer, sizeof(buffer) - 1u));
+    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(
+        0u, PF_WIRELESS_RESULT_REPORT_ID, HID_REPORT_TYPE_INPUT, buffer, sizeof(buffer)));
+    TEST_ASSERT_EQUAL_UINT(0u, wireless_result_calls);
+    TEST_ASSERT_EACH_EQUAL_UINT8(0xa5u, buffer, sizeof(buffer));
+
+    wireless_result[1] = 7u;
+    wireless_result[sizeof(wireless_result) - 1u] = 0x5au;
+    TEST_ASSERT_EQUAL_UINT16(PF_WIRELESS_RESULT_SIZE, tud_hid_get_report_cb(
+        0u, PF_WIRELESS_RESULT_REPORT_ID, HID_REPORT_TYPE_FEATURE, buffer, sizeof(buffer)));
+    TEST_ASSERT_EQUAL_UINT(1u, wireless_result_calls);
+    TEST_ASSERT_EQUAL_MEMORY(wireless_result, buffer, sizeof(buffer));
+}
+
+void test_wireless_scan_command_validates_framing_and_forwards_once(void)
+{
+    uint8_t command[PF_WIRELESS_COMMAND_SIZE] = {1u, 1u, 7u};
+    tud_hid_set_report_cb(1u, PF_WIRELESS_COMMAND_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_WIRELESS_COMMAND_REPORT_ID, HID_REPORT_TYPE_INPUT, command, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_WIRELESS_COMMAND_REPORT_ID, HID_REPORT_TYPE_FEATURE, NULL, sizeof(command));
+    tud_hid_set_report_cb(0u, PF_WIRELESS_COMMAND_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command) - 1u);
+    TEST_ASSERT_EQUAL_UINT(0u, wireless_command_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, wireless_reject_calls);
+
+    tud_hid_set_report_cb(0u, PF_WIRELESS_COMMAND_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+    TEST_ASSERT_EQUAL_UINT(1u, wireless_command_calls);
+    TEST_ASSERT_EQUAL_UINT(0u, wireless_reject_calls);
+    TEST_ASSERT_EQUAL_MEMORY(command, wireless_command, sizeof(command));
+}
+
+void test_wireless_scan_command_is_rejected_during_save_or_reboot(void)
+{
+    uint8_t command[PF_WIRELESS_COMMAND_SIZE] = {1u, 1u, 7u};
+    bool *gates[] = {&force_save_pending, &force_save_reboot_waiting, &reboot_requested};
+    for (unsigned i = 0u; i < sizeof(gates) / sizeof(gates[0]); ++i) {
+        *gates[i] = true;
+        tud_hid_set_report_cb(0u, PF_WIRELESS_COMMAND_REPORT_ID, HID_REPORT_TYPE_FEATURE, command, sizeof(command));
+        *gates[i] = false;
+        TEST_ASSERT_EQUAL_UINT(i + 1u, wireless_reject_calls);
+        TEST_ASSERT_EQUAL_UINT8(command[2], rejected_transaction);
+        TEST_ASSERT_EQUAL_UINT(0u, wireless_command_calls);
+    }
 }
 
 static uint8_t save_radios(uint8_t transaction_id, uint8_t radios)

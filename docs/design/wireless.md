@@ -1,7 +1,8 @@
 # Wi-Fi and Bluetooth LE
 
 Pico W and Pico 2 W images include the pinned Pico SDK CYW43, lwIP and BTstack implementations. Non-wireless
-images do not link those stacks. A radio starts only when its Board configuration switch is enabled and its
+images do not link those stacks. W images always start the CYW43 chip at boot because it drives the board LED, but a
+radio starts only when its Board configuration switch is enabled and its
 credentials are provisioned. The switches default on (including older settings records); credentials default empty.
 This implementation has host checks and target builds, not physical radio qualification.
 
@@ -81,9 +82,9 @@ The application stays flat under `firmware/src/app/wireless`: `wifi.c/.h` owns s
 combined status and atomic USB provisioning. Radio-specific modules keep their boot-applied secrets private.
 
 SDK poll-mode wireless work runs on the existing USB owner task. It creates no additional FreeRTOS tasks, preserves
-the static-allocation policy, and never invokes FatFs from a radio callback. When a radio is enabled, that owner task
-is pinned to its startup core before initializing the SDK: poll-context checks and CYW43 IRQ ownership require it.
-Radio-disabled/non-wireless builds keep the existing all-core task affinity. BLE controls reuse the existing LED
+the static-allocation policy, and never invokes FatFs from a radio callback. On W images that owner task is pinned to
+its startup core before initializing the SDK at boot: poll-context checks and CYW43 IRQ ownership require it. The same
+task drives the CYW43 LED. Non-wireless builds keep the existing all-core task affinity. BLE controls reuse the existing LED
 and benchmark admission helpers. USB and BLE retain separate command-result slots, with the original benchmark
 admission tied to its source. Storage ownership remains exclusive.
 

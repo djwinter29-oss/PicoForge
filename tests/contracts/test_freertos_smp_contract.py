@@ -58,7 +58,8 @@ def test_two_core_configuration_has_one_authority_and_only_sdk_radio_affinity():
             source = path.read_text()
             start = source[source.index("void pf_wireless_start(void)"):]
             init = source[source.index("static bool ensure_started(void)"):source.index("void pf_wireless_start(void)")]
-            assert start.index("if (!wifi_enabled && !ble_enabled) return;") < start.index("if (!ensure_started()) return;")
+            assert "if (!wifi_enabled && !ble_enabled) return;" not in start[:start.index("pf_led_attach(")]
+            assert start.index("if (!ensure_started()) return;") < start.index("pf_led_attach(")
             assert init.index("vTaskCoreAffinitySet(") < init.index("cyw43_arch_init(")
             assert source.count("vTaskCoreAffinitySet(") == 1
             assert "vTaskCoreAffinitySet(NULL, (UBaseType_t)1u << get_core_num());" in init

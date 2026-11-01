@@ -26,6 +26,13 @@ extern const pf_led_board_t pf_led_board;
  */
 bool pf_led_init(void);
 
+/**
+ * @brief Drive the LED through a runtime-owned driver, such as the Pico W CYW43 LED, once that driver is ready.
+ * @param put Sets the physical LED level (true lights it); called on the LED writer task only.
+ * @note Ignored when a GPIO LED is already configured. The LED starts off.
+ */
+void pf_led_attach(void (*put)(bool on));
+
 /** Return whether a board LED has been configured. */
 bool pf_led_is_available(void);
 
