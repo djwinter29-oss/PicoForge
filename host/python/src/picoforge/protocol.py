@@ -309,7 +309,7 @@ def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> dict[
     """Decode sanitized Feature 30; credentials are never present in this report."""
     payload = _feature_payload(report, WIRELESS_REPORT_ID, 48)
     if (payload[0] != 1 or payload[1] & ~3 or payload[2] > 6 or payload[4] > 3
-            or payload[42] > 1 or payload[43] > 1 or payload[44] > 3 or any(payload[45:])):
+            or payload[42] > 1 or payload[43] > 1 or payload[44] > 3 or payload[45] > 2 or any(payload[46:])):
         raise ValueError("Invalid wireless status report")
     ssid = payload[9:42]
     nul = ssid.find(b"\0")
@@ -325,7 +325,7 @@ def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> dict[
         "wifi_state": ("disabled", "connecting", "connected", "failed")[payload[4]],
         "ipv4": ".".join(map(str, payload[5:9])), "ssid": name,
         "password_configured": bool(payload[42]), "ble_key_configured": bool(payload[43]),
-        "error": payload[44],
+        "error": payload[44], "ble_state": ("off", "advertising", "connected")[payload[45]],
     }
 
 

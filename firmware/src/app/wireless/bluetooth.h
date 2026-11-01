@@ -6,6 +6,7 @@
 #define PF_BLUETOOTH_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /** @brief Load the boot control key once before SDK initialization.
  * @return true when the Bluetooth master switch and nonzero key allow startup.
@@ -16,5 +17,10 @@ bool pf_bluetooth_prepare(void);
  * @return true when the controller power-on request succeeds; failures are logged.
  */
 bool pf_bluetooth_start(void);
+
+/** @brief Report the peripheral link for Feature 30 byte 45.
+ * @return 0 when the controller is not working, 1 while advertising, 2 while a central is connected.
+ */
+uint8_t pf_bluetooth_state(void);
 
 #endif

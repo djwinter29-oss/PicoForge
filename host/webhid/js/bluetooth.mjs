@@ -18,7 +18,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     if (!this.bluetooth || this.state.busy || this.state.connected) return;
     this.update({ busy: true, error: null });
     try {
-      this.bleDevice = await this.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }] });
+      this.bleDevice = await this.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }], optionalServices: [BLE_SERVICE] });
       this.bleDevice.addEventListener("gattserverdisconnected", () => {
         clearTimeout(this.pollTimer);
         this.bleKey = null;

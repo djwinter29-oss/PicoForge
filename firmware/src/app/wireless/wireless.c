@@ -80,6 +80,7 @@ void pf_wireless_status(uint8_t *report)
     report[42] = saved_password[0] != '\0';
     report[43] = key_bits != 0u;
     report[44] = error_code;
+    report[45] = started && ble_enabled ? pf_bluetooth_state() : 0u;
     memset(saved_ssid, 0, sizeof(saved_ssid));
     memset(saved_password, 0, sizeof(saved_password));
     memset(saved_key, 0, sizeof(saved_key));

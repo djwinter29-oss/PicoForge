@@ -195,7 +195,11 @@ test("USB wireless payloads preserve omitted secrets and reject malformed creden
   assert.equal(decoded.ipv4, "192.168.1.9");
   assert.equal(decoded.password, undefined);
   assert.equal(decoded.ble_key, undefined);
-  for (const [offset, value] of [[0, 2], [1, 4], [2, 7], [4, 4], [42, 2], [44, 4], [47, 1]]) {
+  assert.equal(decoded.ble_state, "off");
+  bytes[45] = 2;
+  assert.equal(decodeWireless(bytes).ble_state, "connected");
+  bytes[45] = 0;
+  for (const [offset, value] of [[0, 2], [1, 4], [2, 7], [4, 4], [42, 2], [44, 4], [45, 3], [46, 1], [47, 1]]) {
     const bad = bytes.slice(); bad[offset] = value;
     assert.throws(() => decodeWireless(bad));
   }
@@ -295,7 +299,7 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
       disconnect() { this.connected = false; ble.dispatchEvent(new Event("gattserverdisconnected")); },
     };
     const bluetooth = { async requestDevice(options) {
-      assert.deepEqual(options, { filters: [{ services: [BLE_SERVICE] }] });
+      assert.deepEqual(options, { filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }], optionalServices: [BLE_SERVICE] });
       return ble;
     } };
     client = new PicoForgeBluetooth(bluetooth, () => {}, { sleep: async () => {} });

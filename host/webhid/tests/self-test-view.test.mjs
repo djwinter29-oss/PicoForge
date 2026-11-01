@@ -27,7 +27,7 @@ function snapshot() {
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
 
-test("both dashboards show live Wi-Fi state without treating unavailable reports as disabled", () => withDocument(el => {
+test("both dashboards show live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () => withDocument(el => {
   for (const render of [renderStatus, renderServerStatus]) {
     const state = { ...snapshot(), hardware: { ...snapshot().hardware, capabilities: 128 } };
     for (const [wireless, expected] of [
@@ -44,13 +44,27 @@ test("both dashboards show live Wi-Fi state without treating unavailable reports
       assert.equal(el("#wifi-state").textContent, expected);
       assert.equal(el("#wifi-diagnostics").hidden, false);
     }
+    for (const [wireless, expected] of [
+      [{ ble_enabled: false, ble_key_configured: true, ble_state: "advertising" }, "Disabled"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "off" }, "No key"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "off" }, "Starting"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "advertising" }, "Advertising"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "connected" }, "Connected"],
+      [null, "--"],
+    ]) {
+      render({ ...state, wireless });
+      assert.equal(el("#ble-state").textContent, expected);
+      assert.equal(el("#ble-diagnostics").hidden, false);
+    }
     render({ ...state, wireless_error: "Wi-Fi status read failed: disconnected" });
+    assert.equal(el("#ble-state").textContent, "Unavailable");
     assert.equal(el("#wifi-state").textContent, "Unavailable");
     assert.match(el("#wifi-state").title, /read failed/);
     render({ ...state, connected: false });
     assert.equal(el("#wifi-state").textContent, "--");
     render({ ...state, hardware: { capabilities: 16 } });
     assert.equal(el("#wifi-diagnostics").hidden, true);
+    assert.equal(el("#ble-diagnostics").hidden, true);
   }
 }));
 

@@ -12,6 +12,7 @@
 #include "btstack_tlv_flash_bank.h"
 #include "app/wireless/bluetooth_auth.h"
 #include "pico/rand.h"
+#include "pico/unique_id.h"
 #include "platform/boot_config.h"
 #include "platform/logging.h"
 #include "app/usb/usb_hid.h"
@@ -39,7 +40,10 @@ static union {
 static uint16_t read_handle; /**< Characteristic owning the frozen read buffer. */
 static uint16_t read_length; /**< Valid frozen payload length. */
 static uint8_t report_sequence; /**< Sequence for BLE-polled diagnostic snapshots. */
+static uint8_t link_state; /**< 0 controller not working, 1 advertising, 2 central connected. */
 static btstack_packet_callback_registration_t events; /**< Static HCI state/disconnect registration. */
+/** Scan-response "PicoForge-<USB serial>" local name; BTstack keeps the pointer, and GAP Device Name reads it. */
+static uint8_t scan_response[2u + 10u + 2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES];
 
 /**
  * @brief Keep the SDK Bluetooth TLV nonpersistent: application authorization does not use OS pairing/bonding.
@@ -74,7 +78,14 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
     if (packet_type != HCI_EVENT_PACKET) return;
     uint8_t event = hci_event_packet_get_type(packet);
     if ((event == BTSTACK_EVENT_STATE && btstack_event_state_get_state(packet) == HCI_STATE_WORKING) ||
-        event == HCI_EVENT_DISCONNECTION_COMPLETE) advertise();
+        event == HCI_EVENT_DISCONNECTION_COMPLETE) {
+        link_state = 1u;
+        advertise();
+    } else if (event == HCI_EVENT_LE_META && hci_event_le_meta_get_subevent_code(packet) ==
+               HCI_SUBEVENT_LE_CONNECTION_COMPLETE &&
+               hci_subevent_le_connection_complete_get_status(packet) == ERROR_CODE_SUCCESS) {
+        link_state = 2u;
+    }
 }
 
 /** @brief Freeze a report at the first read so ATT read-blob offsets use the same snapshot. */
@@ -82,6 +93,10 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
                               uint8_t *buffer, uint16_t buffer_size)
 {
     (void)connection;
+    if (handle == ATT_CHARACTERISTIC_GAP_DEVICE_NAME_01_VALUE_HANDLE) {
+        return att_read_callback_handle_blob(scan_response + 2u, sizeof(scan_response) - 2u, offset, buffer,
+                                             buffer_size);
+    }
     if (offset == 0u) {
         read_handle = handle;
         read_length = 0u;
@@ -171,6 +186,12 @@ bool pf_bluetooth_prepare(void)
     return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u && key_bits != 0u;
 }
 
+/** @copydoc pf_bluetooth_state */
+uint8_t pf_bluetooth_state(void)
+{
+    return link_state;
+}
+
 /** @copydoc pf_bluetooth_start */
 bool pf_bluetooth_start(void)
 {
@@ -179,13 +200,21 @@ bool pf_bluetooth_start(void)
     att_server_init(profile_data, read_callback, write_callback);
     events.callback = packet_handler;
     hci_add_event_handler(&events);
-    const uint8_t advertising[] = {2, BLUETOOTH_DATA_TYPE_FLAGS, 6,
+    /* BTstack keeps this pointer and reads it whenever advertising is (re)enabled; it must outlive this call. */
+    static const uint8_t advertising[] = {2, BLUETOOTH_DATA_TYPE_FLAGS, 6,
         17, BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS,
         0x01, 0xf5, 0x43, 0x64, 0x85, 0x6e, 0x32, 0x8b,
         0x70, 0x4d, 0x91, 0x7c, 0x00, 0x00, 0xfc, 0x50};
+    char serial[2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1u];
+    pico_get_unique_board_id_string(serial, sizeof(serial));
+    scan_response[0] = sizeof(scan_response) - 1u;
+    scan_response[1] = BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME;
+    memcpy(scan_response + 2u, "PicoForge-", 10u);
+    memcpy(scan_response + 12u, serial, sizeof(serial) - 1u);
     bd_addr_t empty = {0};
     gap_advertisements_set_params(800, 800, 0, 0, empty, 7, 0);
     gap_advertisements_set_data(sizeof(advertising), (uint8_t *)advertising);
+    gap_scan_response_set_data(sizeof(scan_response), scan_response);
     int rc = hci_power_control(HCI_POWER_ON);
     if (rc != 0) {
         PF_LOGGING_ERROR("wireless", "BLE initialization failed: %d", rc);

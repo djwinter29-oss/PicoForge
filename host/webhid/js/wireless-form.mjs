@@ -1,16 +1,22 @@
-/** Show Wi-Fi as "SSID (IP)" when connected, "SSID (state)" otherwise, or Disabled when off or unconfigured. */
-export function renderWifiStatus(snapshot) {
-  const row = document.querySelector("#wifi-diagnostics");
-  row.hidden = !(snapshot.hardware?.capabilities & 128);
-  const status = document.querySelector("#wifi-state");
+/**
+ * Show live radio state: Wi-Fi as "SSID (IP)" when connected or "SSID (state)" otherwise; Bluetooth as
+ * Connected/Advertising/Starting/No key. Either shows Disabled when switched off or unconfigured.
+ */
+export function renderWirelessStatus(snapshot) {
   const wireless = snapshot.wireless;
-  status.textContent = !snapshot.connected ? "--"
-    : snapshot.wireless_error ? "Unavailable"
-    : !wireless ? "--"
-    : !wireless.wifi_enabled || !wireless.ssid ? "Disabled"
+  const unavailable = !snapshot.connected ? "--" : snapshot.wireless_error ? "Unavailable" : !wireless ? "--" : null;
+  const render = (name, text) => {
+    document.querySelector(`#${name}-diagnostics`).hidden = !(snapshot.hardware?.capabilities & 128);
+    const status = document.querySelector(`#${name}-state`);
+    status.textContent = unavailable ?? text();
+    status.title = snapshot.wireless_error ?? "";
+  };
+  render("wifi", () => !wireless.wifi_enabled || !wireless.ssid ? "Disabled"
     : `${wireless.ssid} (${wireless.wifi_state === "connected" ? wireless.ipv4
-      : wireless.wifi_state === "connecting" ? "connecting" : "disconnected"})`;
-  status.title = snapshot.wireless_error ?? "";
+      : wireless.wifi_state === "connecting" ? "connecting" : "disconnected"})`);
+  render("ble", () => !wireless.ble_enabled ? "Disabled" : !wireless.ble_key_configured ? "No key"
+    : wireless.ble_state === "connected" ? "Connected" : wireless.ble_state === "advertising" ? "Advertising"
+      : "Starting");
 }
 
 /** Bind the staged Wi-Fi/Bluetooth dialogs to one atomic Board configuration save. */

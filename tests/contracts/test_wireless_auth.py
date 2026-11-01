@@ -37,3 +37,14 @@ def test_ble_proof_is_bound_to_nonce_board_and_every_command_byte(tmp_path):
             altered = inputs.copy()
             altered[field] = bytes(changed)
             assert not verify(*altered)
+
+
+def test_ble_advertising_payload_outlives_start():
+    """BTstack stores the advertising-data pointer; a stack buffer advertises garbage after start returns."""
+    source = (ROOT / "firmware/src/app/wireless/bluetooth.c").read_text()
+    start = source.split("bool pf_bluetooth_start(void)")[1]
+    assert "static const uint8_t advertising[]" in start
+    assert "gap_advertisements_set_data(sizeof(advertising), (uint8_t *)advertising)" in start
+    assert "static uint8_t scan_response[2u + 10u + 2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES];" in source
+    assert 'memcpy(scan_response + 2u, "PicoForge-", 10u);' in start
+    assert "gap_scan_response_set_data(sizeof(scan_response), scan_response);" in start

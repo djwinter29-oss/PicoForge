@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PicoForgeWebHid } from "../js/device.mjs?v=5";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=2";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=3";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -10,11 +10,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=11"/);
-  assert.match(html, /src="js\/app\.mjs\?v=18"/);
+  assert.match(html, /href="css\/webhid\.css\?v=12"/);
+  assert.match(html, /src="js\/app\.mjs\?v=20"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=5"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=8"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=9"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
     assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));
@@ -70,7 +70,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const runtime = html.split('<dl class="runtime-grid runtime-summary">')[1].split("</dl>")[0];
   assert.deepEqual([...runtime.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
     ["Uptime", "Reset cause", "Service load (Core 0 / Core 1)", "Board temperature", "CLI port", "Storage bus speed",
-      "Wi-Fi"]);
+      "Wi-Fi", "Bluetooth"]);
   const storage = html.split('aria-labelledby="memory-title"')[1].split("</section>")[0];
   assert.deepEqual([...storage.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]),
     ["Memory state", "Capacity", "Filesystem", "Manufacturer", "Product", "Serial"]);

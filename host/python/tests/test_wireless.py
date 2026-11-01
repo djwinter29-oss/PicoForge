@@ -175,9 +175,13 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(parsed["ssid"], "Pico網")
         self.assertEqual(parsed["ipv4"], "192.168.1.2")
         self.assertEqual(parsed["wifi_state"], "connected")
+        self.assertEqual(parsed["ble_state"], "off")
+        advertising = bytearray(status())
+        advertising[46] = 1
+        self.assertEqual(parse_wireless_status_report(advertising)["ble_state"], "advertising")
         self.assertNotIn("password", parsed)
         self.assertNotIn("ble_key", parsed)
-        for offset, value in ((1, 2), (2, 4), (3, 7), (5, 4), (43, 2), (44, 2), (45, 4), (48, 1)):
+        for offset, value in ((1, 2), (2, 4), (3, 7), (5, 4), (43, 2), (44, 2), (45, 4), (46, 3), (47, 1), (48, 1)):
             malformed = bytearray(status())
             malformed[offset] = value
             with self.subTest(offset=offset), self.assertRaises(ValueError):

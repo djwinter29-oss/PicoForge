@@ -14,6 +14,9 @@ dashboard provisions its selected USB-attached board; the browser does not need 
 Both dashboards show Wi-Fi in live diagnostics on wireless-capable boards, refreshing the saved SSID and runtime
 state every two seconds while no wireless operation is pending. The value is `SSID (IP address)` when connected,
 `SSID (connecting)`, or `SSID (disconnected)`; Wi-Fi switched off or an empty saved SSID shows `Disabled`.
+A Bluetooth row follows from the same report: `Connected` while a central is attached, `Advertising` when the
+board is discoverable, `Starting` when enabled with a key but the controller is not yet working, `No key` when the
+switch is on without a saved control key, and `Disabled` otherwise.
 Missing reports show `--`, and read failures show `Unavailable` with the error in the value's tooltip.
 
 The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter a hidden one manually. Enter a
@@ -52,7 +55,9 @@ Their wireless settings panel uses `/api/wireless`; it shares the standalone pag
 Bluetooth LE connections are available only from the
 standalone WebHID page: its **USB** and **Bluetooth** buttons open separate connection dialogs. In the USB dialog,
 **Select board** opens the local USB HID picker. In the Bluetooth dialog, **Scan for boards** opens the browser's
-nearby-device picker using the browser computer's Bluetooth adapter, filtered to the PicoForge service.
+nearby-device picker using the browser computer's Bluetooth adapter, filtered to the PicoForge service or name.
+Each board advertises the PicoForge service UUID and returns the name `PicoForge-<USB serial>` in its scan response
+and GAP Device Name, so the picker can tell boards apart.
 Select a board, then enter its control key. The browser must be within radio range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.
@@ -110,7 +115,8 @@ reports the saved radio switches; its separate booleans indicate whether credent
 - Feature **30 GET**, 48 payload bytes: version at 0, saved radio-switch flags at 1 (Wi-Fi bit 0, BLE bit 1), last
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4
   (disabled/connecting/connected/failed = 0/1/2/3), IPv4 bytes at 5-8, NUL-terminated SSID at 9-41,
-  password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3), zero at 45-47.
+  password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3), BLE link at 45
+  (off/advertising/connected = 0/1/2; off until the controller is working), zero at 46-47.
 - Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
   bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
   credentials bit 2), SSID at 4-36, password at 37-100, key at 101-132, little-endian clock MHz at 133-134

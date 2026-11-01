@@ -154,8 +154,8 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .runtime-grid dd[data-active="false"] { color: var(--muted); }
 .runtime[aria-labelledby="runtime-title"] .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-#wifi-diagnostics { grid-column: 1 / -1; }
-#wifi-diagnostics[hidden] { display: none; }
+#wifi-diagnostics, #ble-diagnostics { grid-column: span 3; }
+#wifi-diagnostics[hidden], #ble-diagnostics[hidden] { display: none; }
 .runtime[aria-labelledby="settings-title"] .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
@@ -272,6 +272,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 }
 
 @media (max-width: 720px) {
+  #wifi-diagnostics, #ble-diagnostics { grid-column: 1 / -1; }
   .topbar { padding-inline: 18px; }
   main { padding: 18px 18px 24px; }
   .page-heading { align-items: start; flex-direction: column; gap: 10px; }

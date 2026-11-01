@@ -15,7 +15,7 @@ python3 -m http.server 8000 --directory host/webhid
 
 Open `http://localhost:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
 The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or a host server API.
-Every explicit **Connect** opens the browser device chooser, including when devices were previously authorized,
+Choose **USB**, then **Select board** to open the browser device chooser, including when devices were previously authorized,
 so the user selects which board to open. Cancel leaves the page disconnected. Close other clients using that board
 before connecting; the chooser cannot override another application's HID access.
 
@@ -48,8 +48,9 @@ samples clear retained details. Retained values are display-only and never autho
 ## Controls
 
 Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/design/wireless.md).
-Use USB to provision radio settings and a random BLE key, then select Bluetooth LE for public diagnostics and
-key-authorized LED/benchmark controls. Privileged management remains USB-only. Radios default off.
+Use USB to provision radio settings and a random BLE key, then open **Bluetooth** for public diagnostics and
+key-authorized LED/benchmark controls. See the linked wireless guide for scanning and entering the key.
+Privileged management remains USB-only.
 
 All operations serialize Feature 20 SET/GET transactions, matching both transaction ID and opcode.
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for

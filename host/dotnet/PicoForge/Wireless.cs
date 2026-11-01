@@ -8,7 +8,7 @@ namespace PicoForge;
 /// <summary>Sanitized saved configuration and live wireless state; never contains credentials.</summary>
 public sealed record WirelessStatusResponse(bool WifiEnabled, bool BleEnabled, string Ssid,
     bool PasswordConfigured, bool BleKeyConfigured, string Status, byte TransactionId,
-    string WifiState, string Ipv4, byte Error);
+    string WifiState, string Ipv4, byte Error, string BleState = "off");
 
 /// <summary>Wireless status with acknowledgement of an imminent reboot and, after a save, the confirmed board settings.</summary>
 public sealed record WirelessResponse(WirelessStatusResponse Wireless, bool RebootPending,
@@ -196,7 +196,7 @@ internal static partial class HidProtocol
         var payload = FeaturePayload(report, WirelessReportId, 48);
         Require(payload[0] == 1 && (payload[1] & ~3) == 0 && payload[2] <= 6 &&
             payload[4] <= 3 && payload[42] <= 1 && payload[43] <= 1 && payload[44] <= 3 &&
-            payload[45..].IndexOfAnyExcept((byte)0) < 0, "Invalid wireless status report");
+            payload[45] <= 2 && payload[46..].IndexOfAnyExcept((byte)0) < 0, "Invalid wireless status report");
         var ssid = payload.Slice(9, 33);
         var nul = ssid.IndexOf((byte)0);
         Require(nul >= 0 && ssid[nul..].IndexOfAnyExcept((byte)0) < 0, "Invalid wireless SSID encoding");
@@ -207,6 +207,7 @@ internal static partial class HidProtocol
             payload[42] != 0, payload[43] != 0,
             new[] { "idle", "pending", "completed", "invalid", "unsupported", "busy", "failed" }[payload[2]],
             payload[3], new[] { "disabled", "connecting", "connected", "failed" }[payload[4]],
-            $"{payload[5]}.{payload[6]}.{payload[7]}.{payload[8]}", payload[44]);
+            $"{payload[5]}.{payload[6]}.{payload[7]}.{payload[8]}", payload[44],
+            new[] { "off", "advertising", "connected" }[payload[45]]);
     }
 }

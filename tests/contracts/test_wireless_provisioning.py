@@ -75,6 +75,7 @@ bool pf_wifi_tested_credentials(char out_ssid[33], char out_password[64]) {
 void pf_wifi_clear_tested_credentials(void) { staged_test = false; ++cleared_tests; }
 bool pf_bluetooth_prepare(void) { return false; }
 bool pf_bluetooth_start(void) { return false; }
+uint8_t pf_bluetooth_state(void) { return 2; }
 int cyw43_arch_init(void) { return 0; }
 void cyw43_arch_poll(void) {}
 void vTaskCoreAffinitySet(void *task, UBaseType_t mask) { (void)task; (void)mask; }

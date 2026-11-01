@@ -1,8 +1,8 @@
 import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=5";
-import { renderStatus } from "./view.mjs?v=8";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=2";
-import { bindWirelessForm } from "./wireless-form.mjs?v=7";
-import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=5";
+import { renderStatus } from "./view.mjs?v=9";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=3";
+import { bindWirelessForm } from "./wireless-form.mjs?v=8";
+import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=6";
 
 const element = id => document.querySelector(`#${id}`);
 const usbDialog = element("usb-connection-dialog");
