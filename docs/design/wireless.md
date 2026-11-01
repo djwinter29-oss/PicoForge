@@ -50,12 +50,20 @@ provide a web server, network filesystem, Bluetooth Classic, internet management
 The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE connections.
 Their wireless settings panel uses `/api/wireless`; it shares the standalone page's form implementation.
 Bluetooth LE connections are available only from the
-standalone WebHID page: select **Bluetooth LE** there. The browser must be within radio range and support Web
+standalone WebHID page: its **USB** and **Bluetooth** buttons open separate connection dialogs. In the USB dialog,
+**Select board** opens the local USB HID picker. In the Bluetooth dialog, **Scan for boards** opens the browser's
+nearby-device picker using the browser computer's Bluetooth adapter, filtered to the PicoForge service.
+Select a board, then enter its control key. The browser must be within radio range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.
 
 BLE diagnostics are public. To control the LED or start/cancel a benchmark, enter the USB-provisioned control key
-and select **Use BLE key**. It is held only as a non-exportable browser CryptoKey and forgotten on disconnect.
+and select **Use control key**. The key field appears only after connection; closing without a key leaves diagnostics
+available but disables control buttons. A key is validated locally for format and checked by the board on each command,
+not when entered. Reopen **Bluetooth** to change the key or disconnect; use **USB** to disconnect a USB board.
+Transport switching is blocked during a connection, reconnection, pending command, or uncertain command outcome.
+The key is held only as a non-exportable browser CryptoKey and forgotten on disconnect; the input is cleared on
+submission, dialog dismissal, and disconnect.
 This generated 32-byte key authenticates commands; it is not a Bluetooth pairing password and does not encrypt the link.
 BLE cannot save configuration, provision credentials, reboot, or transfer USB storage ownership.
 Only one BLE connection is supported; disconnects never replay a command or reconnect automatically.

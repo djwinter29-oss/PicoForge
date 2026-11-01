@@ -7,7 +7,7 @@
   <title>PicoForge Dashboard | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
   <link rel="stylesheet" href="css/webhid.css?v=11">
-  <script type="module" src="js/app.mjs?v=17"></script>
+  <script type="module" src="js/app.mjs?v=18"></script>
 </head>
 <body>
   <header class="topbar">
@@ -34,13 +34,10 @@
         <div class="actions" aria-label="Board controls">
           <button class="button button-led" id="led-control" type="button" data-state="unknown"
             aria-pressed="false" title="Onboard LED unavailable" disabled>Board LED: --</button>
-          <button class="button button-secondary" id="connection-control" type="button">Connect</button>
-          <select id="connection-transport" aria-label="Connection transport">
-            <option value="usb">USB HID</option><option value="ble">Bluetooth LE</option>
-          </select>
-          <label for="ble-control-key">BLE control key
-            <input id="ble-control-key" type="password" maxlength="64" autocomplete="off"></label>
-          <button class="button button-secondary" id="ble-authorize" type="button">Use BLE key</button>
+          <button class="button button-secondary" id="usb-open" type="button"
+            aria-haspopup="dialog">USB</button>
+          <button class="button button-secondary" id="bluetooth-open" type="button"
+            aria-haspopup="dialog">Bluetooth</button>
         </div>
       </div>
       <div class="identity" aria-label="Hardware identity">
@@ -252,6 +249,34 @@
       <p class="settings-note" id="settings-note">Connect to read the saved settings.</p>
     </footer>
   </main>
+  <dialog class="confirmation-dialog" id="usb-connection-dialog" aria-labelledby="usb-connection-title">
+    <h2 id="usb-connection-title">Connect through USB</h2>
+    <p>Attach your board to this computer, then select it in the browser's USB HID device picker.</p>
+    <p id="usb-connection-status" role="status" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button class="button" id="usb-connect" type="button">Select board</button>
+      <button class="button button-secondary" id="usb-connection-close" type="button">Close</button>
+    </div>
+  </dialog>
+  <dialog class="confirmation-dialog wireless-dialog" id="bluetooth-connection-dialog"
+    aria-labelledby="bluetooth-connection-title">
+    <h2 id="bluetooth-connection-title">Connect through Bluetooth</h2>
+    <p>Scan uses this computer's Bluetooth adapter and opens the browser's nearby-device picker.
+      The board must have Bluetooth enabled and a control key saved through USB.</p>
+    <button class="button button-secondary" id="bluetooth-scan" type="button">Scan for boards</button>
+    <p id="bluetooth-connection-status" role="status" aria-live="polite"></p>
+    <div id="bluetooth-key-step" hidden>
+      <label for="ble-control-key">Control key
+        <input id="ble-control-key" type="password" maxlength="64" autocomplete="off" spellcheck="false"></label>
+      <p>Enter the 64-digit hexadecimal key saved through USB. It is checked by the board on each control command,
+        not when entered here. Close without a key to view diagnostics only.</p>
+    </div>
+    <div class="dialog-actions">
+      <button class="button" id="ble-authorize" type="button" disabled>Use control key</button>
+      <button class="button button-secondary" id="bluetooth-disconnect" type="button" disabled>Disconnect</button>
+      <button class="button button-secondary" id="bluetooth-connection-close" type="button">Close</button>
+    </div>
+  </dialog>
   <dialog class="confirmation-dialog wireless-dialog" id="wifi-dialog" aria-labelledby="wifi-dialog-title">
     <h2 id="wifi-dialog-title">Connect to Wi-Fi</h2>
     <p>Scan for nearby networks or enter a network name. A connection test does not save credentials to flash.</p>

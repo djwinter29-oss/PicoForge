@@ -1,11 +1,12 @@
 import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=5";
-import { renderStatus, renderSelfTest } from "./view.mjs?v=8";
+import { renderStatus } from "./view.mjs?v=8";
 import { PicoForgeBluetooth } from "./bluetooth.mjs?v=2";
 import { bindWirelessForm } from "./wireless-form.mjs?v=7";
 import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=5";
 
 const element = id => document.querySelector(`#${id}`);
-const connectionControl = element("connection-control");
+const usbDialog = element("usb-connection-dialog");
+const bluetoothDialog = element("bluetooth-connection-dialog");
 const ledControl = element("led-control");
 const mscControl = element("msc-control");
 const settingsSave = element("settings-save");
@@ -78,13 +79,43 @@ function render(state) {
   const storageReady = state.freshness[10] === "fresh" && selfTestReady
     && !state.msc?.transition_pending && !state.self_test?.active
     && !state.self_test_command_pending && !state.msc_command_pending;
-  connectionControl.textContent = state.connected || state.reconnecting ? "Disconnect" : "Connect";
-  connectionControl.setAttribute("aria-label", state.connected || state.reconnecting
-    ? "Disconnect from PicoForge board" : "Connect to PicoForge board");
-  connectionControl.disabled = state.busy || !globalThis.isSecureContext ||
-    (element("connection-transport").value === "ble" ? !navigator.bluetooth : !navigator.hid);
-  element("connection-transport").disabled = state.connected || state.busy;
+  const bleClient = client instanceof PicoForgeBluetooth;
+  const connectionLocked = state.connected || state.reconnecting || client.outstanding || state.outcome_uncertain;
+  element("usb-open").disabled = state.busy || Boolean(connectionLocked && bleClient);
+  element("bluetooth-open").disabled = state.busy || Boolean(connectionLocked && !bleClient);
+  element("usb-connect").textContent = !bleClient && (state.connected || state.reconnecting)
+    ? "Disconnect" : "Select board";
+  element("usb-connect").disabled = state.busy || bleClient || !globalThis.isSecureContext || !navigator.hid;
+  element("bluetooth-scan").disabled = state.busy || !bleClient || state.connected
+    || !globalThis.isSecureContext || !navigator.bluetooth;
+  element("bluetooth-disconnect").disabled = state.busy || !bleClient || !state.connected;
+  element("bluetooth-key-step").hidden = !bleClient || !state.connected;
+  element("ble-authorize").disabled = state.busy || !bleClient || !state.connected;
+  element("ble-control-key").disabled = element("ble-authorize").disabled;
+  element("usb-connection-close").disabled = state.busy;
+  element("bluetooth-connection-close").disabled = state.busy;
+  element("usb-connection-status").textContent = !globalThis.isSecureContext || !navigator.hid
+    ? "USB HID requires a supported browser on HTTPS or localhost."
+    : !bleClient && state.error ? state.error
+    : !bleClient && state.busy ? "Connecting to the selected USB board…"
+    : !bleClient && state.reconnecting ? "Reconnecting to the USB board…"
+    : !bleClient && state.connected ? "Connected through USB." : "Select a PicoForge board to connect.";
+  element("bluetooth-connection-status").textContent = !globalThis.isSecureContext || !navigator.bluetooth
+    ? "Web Bluetooth requires a supported browser and operating system on HTTPS or localhost."
+    : bleClient && state.error ? state.error
+    : bleClient && state.busy ? (state.connected ? "Loading control key…"
+      : "Select a nearby board; connecting through Bluetooth…")
+    : bleClient && state.connected
+      ? `Connected to ${client.bleDevice?.name || state.hardware?.board_name || "PicoForge"}. `
+        + (client.bleKey ? "Control key loaded." : "Enter the control key, or close for diagnostics only.")
+      : "Scan for nearby PicoForge boards.";
+  if (!state.connected) element("ble-control-key").value = "";
   ledControl.disabled = blocked || !state.board_status?.led_available || !(state.hardware?.capabilities & 1);
+  if (bluetooth && !client.bleKey) {
+    ledControl.disabled = true;
+    element("self-test-start").disabled = true;
+    element("self-test-cancel").disabled = true;
+  }
   mscControl.disabled = blocked || !storageReady || bluetooth;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
   const settingsReady = !blocked && storageReady && !bluetooth;
@@ -130,20 +161,68 @@ async function run(operation) {
   try { await operation(); } catch (error) { client.update({ error: error.message }); }
 }
 
-connectionControl.addEventListener("click", () => run(() =>
-  client.state.connected || client.state.reconnecting ? client.disconnect() : client.connect()));
-element("connection-transport").addEventListener("change", () => {
-  if (client.state.connected || client.state.busy || client.outstanding) return;
-  client = element("connection-transport").value === "ble"
-    ? new PicoForgeBluetooth(navigator.bluetooth, render)
-    : new PicoForgeWebHid(navigator.hid, render);
-  render(client.state);
-});
-element("ble-authorize").addEventListener("click", () => run(async () => {
-  if (!(client instanceof PicoForgeBluetooth)) throw new Error("Select Bluetooth LE first.");
-  try { await client.setControlKey(element("ble-control-key").value); }
-  finally { element("ble-control-key").value = ""; }
+for (const [id, dialog, bluetooth] of [["usb-open", usbDialog, false],
+  ["bluetooth-open", bluetoothDialog, true]]) {
+  element(id).addEventListener("click", () => {
+    if (element(id).disabled) return;
+    if ((client instanceof PicoForgeBluetooth) !== bluetooth) {
+      client = bluetooth ? new PicoForgeBluetooth(globalThis.isSecureContext ? navigator.bluetooth : undefined, render)
+        : new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
+    }
+    render(client.state);
+    dialog.showModal();
+  });
+}
+element("usb-connect").addEventListener("click", () => run(async () => {
+  if (element("usb-connect").disabled) return;
+  if (client.state.connected || client.state.reconnecting) await client.disconnect();
+  else {
+    await client.connect();
+    if (client.state.connected) usbDialog.close();
+  }
 }));
+element("bluetooth-scan").addEventListener("click", () => run(async () => {
+  if (element("bluetooth-scan").disabled) return;
+  await client.connect();
+  if (client.state.connected) element("ble-control-key").focus();
+}));
+element("bluetooth-disconnect").addEventListener("click", () => run(async () => {
+  if (!element("bluetooth-disconnect").disabled) await client.disconnect();
+}));
+element("ble-authorize").addEventListener("click", () => run(async () => {
+  if (element("ble-authorize").disabled) return;
+  const target = client;
+  const generation = target.generation;
+  target.update({ busy: true, error: null });
+  try {
+    await target.setControlKey(element("ble-control-key").value);
+    if (target !== client || generation !== target.generation || !target.state.connected) {
+      target.bleKey = null;
+      throw new Error("Bluetooth disconnected while loading the control key. Scan and connect again.");
+    }
+    target.update({ error: null });
+    bluetoothDialog.close();
+  }
+  finally {
+    element("ble-control-key").value = "";
+    if (target === client) target.update({ busy: false });
+  }
+}));
+for (const [name, dialog] of [["usb", usbDialog], ["bluetooth", bluetoothDialog]]) {
+  element(`${name}-connection-close`).addEventListener("click", () => {
+    if (!client.state.busy) dialog.close();
+  });
+  dialog.addEventListener("cancel", event => {
+    if (client.state.busy) event.preventDefault();
+  });
+  dialog.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (!client.state.busy) dialog.close();
+    }
+  });
+  dialog.addEventListener("close", () => { element("ble-control-key").value = ""; });
+}
 ledControl.addEventListener("click", () => run(() => client.setLed(!client.state.board_status?.led_on)));
 mscControl.addEventListener("click", () => run(async () => {
   if (mscControl.disabled) return;
@@ -154,7 +233,7 @@ mscControl.addEventListener("click", () => run(async () => {
 element("self-test-start").addEventListener("click", () => run(() =>
   client.setSelfTest("start", element("self-test-size").valueAsNumber)));
 element("self-test-cancel").addEventListener("click", () => run(() => client.setSelfTest("cancel")));
-element("self-test-size").addEventListener("input", () => renderSelfTest(client.state));
+element("self-test-size").addEventListener("input", () => render(client.state));
 for (const control of [settingsClock, settingsStorage, ...settingsRadios]) {
   control.addEventListener("change", () => {
     settingsDirty = Number(settingsClock.value) !== client.state.settings?.system_clock_mhz

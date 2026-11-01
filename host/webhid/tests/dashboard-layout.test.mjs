@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PicoForgeWebHid } from "../js/device.mjs?v=5";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=2";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -10,10 +11,17 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/webhid\.css\?v=11"/);
-  assert.match(html, /src="js\/app\.mjs\?v=17"/);
+  assert.match(html, /src="js\/app\.mjs\?v=18"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=5"/);
   assert.match(app, /from "\.\/view\.mjs\?v=8"/);
+  assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
+  for (const name of ["usb", "bluetooth"]) {
+    assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));
+    assert.match(html, new RegExp(`<dialog[^>]*id="${name}-connection-dialog"[\\s\\S]*?aria-labelledby=`));
+    assert.match(html, new RegExp(`id="${name}-connection-status" role="status" aria-live="polite"`));
+  }
+  assert.match(html, /id="bluetooth-key-step" hidden/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
@@ -90,8 +98,9 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
   const elements = new Map();
   const el = selector => {
     if (!elements.has(selector)) elements.set(selector, { value: "0", dataset: {}, valueAsNumber: 32,
-      open: false, showModal() { this.open = true; }, close() { this.open = false; },
-      addEventListener(type, handler) { this[type] = handler; }, setAttribute(name, value) { this[name] = value; },
+      open: false, showModal() { this.open = true; }, close() { this.open = false; this.onclose?.(); },
+      addEventListener(type, handler) { this[type === "close" ? "onclose" : type] = handler; },
+      setAttribute(name, value) { this[name] = value; },
       replaceChildren(...children) { this.children = children; } });
     return elements.get(selector);
   };
@@ -120,7 +129,8 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
   PicoForgeWebHid.prototype.reboot = async confirmed => { commands.push(["reboot", confirmed]); };
   try {
     await import(`../js/app.mjs?test=${Date.now()}`);
-    await el("#connection-control").click();
+    await el("#usb-open").click();
+    await el("#usb-connect").click();
     assert.equal(el("#settings-storage").value, "1");
     assert.equal(el("#settings-note").hidden, true);
     assert.equal(el("#status-message").hidden, false);
@@ -270,6 +280,146 @@ test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and conf
     else delete globalThis.navigator;
     if (saved.secure) Object.defineProperty(globalThis, "isSecureContext", saved.secure);
     else delete globalThis.isSecureContext;
+  }
+});
+
+test("connection dialogs scan before prompting for a key and preserve transport safety", async () => {
+  const saved = {
+    document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
+    secure: Object.getOwnPropertyDescriptor(globalThis, "isSecureContext"),
+  };
+  const prototypes = new Map(["connect", "disconnect", "setControlKey"].map(name =>
+    [name, PicoForgeBluetooth.prototype[name]]));
+  const elements = new Map();
+  const el = selector => {
+    if (!elements.has(selector)) elements.set(selector, { value: "", dataset: {}, valueAsNumber: 32, children: [],
+      open: false, showModal() { this.open = true; },
+      close() { this.open = false; this.events.close?.(); }, focus() { this.focused = true; }, events: {},
+      addEventListener(type, handler) { this.events[type] = handler; if (type !== "close") this[type] = handler; },
+      setAttribute(name, value) { this[name] = value; },
+      replaceChildren(...children) { this.children = children; } });
+    return elements.get(selector);
+  };
+  globalThis.document = { querySelector: el, createElement: () => ({ append() {} }) };
+  Object.defineProperty(globalThis, "navigator", { configurable: true,
+    value: { hid: new EventTarget(), bluetooth: {} } });
+  Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
+  let client;
+  let scans = 0;
+  let failure = false;
+  let finishScan;
+  let loadedKey;
+  let finishKey;
+  let pauseKey = false;
+  PicoForgeBluetooth.prototype.connect = async function () {
+    client = this;
+    scans++;
+    this.update({ busy: true, error: null });
+    await new Promise(resolve => { finishScan = resolve; });
+    if (failure) {
+      this.update({ busy: false, error: "No board selected." });
+      return;
+    }
+    this.bleDevice = { name: "Nearby PicoForge" };
+    this.update({ connected: true, busy: false, transport: "ble", hardware: decodeIdentityReport(identity()),
+      board_status: { led_available: true, led_on: false }, freshness: { 10: "fresh", 11: "fresh" },
+      msc: { enabled: false }, self_test: decodeSelfTestReport(selfTest()) });
+  };
+  PicoForgeBluetooth.prototype.setControlKey = async function (key) {
+    if (!/^[a-f0-9]{64}$/i.test(key)) throw new Error("BLE key must be 64 nonzero hex digits.");
+    if (pauseKey) await new Promise(resolve => { finishKey = resolve; });
+    loadedKey = key;
+    this.bleKey = {};
+  };
+  PicoForgeBluetooth.prototype.disconnect = async function () {
+    this.bleKey = null;
+    this.clearConnection();
+  };
+  try {
+    await import(`../js/app.mjs?connections=${Date.now()}`);
+    el("#usb-open").click();
+    assert.equal(el("#usb-connection-dialog").open, true);
+    el("#usb-connection-close").click();
+    el("#bluetooth-open").click();
+    assert.equal(el("#bluetooth-connection-dialog").open, true);
+    assert.equal(scans, 0, "opening a dialog must not scan without another user gesture");
+    assert.equal(el("#bluetooth-key-step").hidden, true);
+    assert.equal(el("#ble-authorize").disabled, true);
+    failure = true;
+    let scan = el("#bluetooth-scan").click();
+    assert.equal(el("#bluetooth-scan").disabled, true);
+    let prevented = false;
+    el("#bluetooth-connection-dialog").cancel({ preventDefault() { prevented = true; } });
+    assert.equal(prevented, true, "do not dismiss while a picker/connection is pending");
+    finishScan(); await scan;
+    assert.match(el("#bluetooth-connection-status").textContent, /No board selected/);
+    assert.equal(el("#bluetooth-key-step").hidden, true);
+    assert.equal(el("#bluetooth-scan").disabled, false);
+    failure = false;
+    scan = el("#bluetooth-scan").click();
+    finishScan(); await scan;
+    assert.equal(scans, 2);
+    assert.equal(el("#bluetooth-key-step").hidden, false);
+    assert.equal(el("#ble-control-key").focused, true);
+    assert.match(el("#bluetooth-connection-status").textContent, /Nearby PicoForge/);
+    assert.equal(el("#usb-open").disabled, true);
+    assert.equal(el("#led-control").disabled, true);
+    el("#self-test-size").input();
+    assert.equal(el("#self-test-start").disabled, true);
+    el("#ble-control-key").value = "bad";
+    await el("#ble-authorize").click();
+    assert.match(el("#bluetooth-connection-status").textContent, /64 nonzero hex digits/);
+    assert.equal(el("#bluetooth-connection-dialog").open, true);
+    assert.equal(el("#ble-control-key").value, "");
+    el("#ble-control-key").value = "ab".repeat(32);
+    el("#bluetooth-connection-dialog").keydown({ key: "Escape", preventDefault() {} });
+    assert.equal(el("#bluetooth-connection-dialog").open, false);
+    assert.equal(el("#ble-control-key").value, "", "dismissal clears unsubmitted secrets");
+    assert.equal(client.state.connected, true, "closing without a key retains read-only diagnostics");
+    assert.equal(client.bleKey, null);
+    el("#bluetooth-open").click();
+    el("#ble-control-key").value = "ab".repeat(32);
+    await el("#ble-authorize").click();
+    assert.equal(loadedKey, "ab".repeat(32));
+    assert.equal(el("#bluetooth-connection-dialog").open, false);
+    assert.equal(el("#ble-control-key").value, "");
+    assert.equal(el("#led-control").disabled, false);
+    client.outstanding = { opcode: 1, transaction_id: 1 };
+    client.update({ outcome_uncertain: true });
+    assert.equal(el("#usb-open").disabled, true);
+    el("#bluetooth-open").click();
+    await el("#bluetooth-disconnect").click();
+    assert.equal(client.bleKey, null);
+    assert.equal(el("#bluetooth-key-step").hidden, true);
+    assert.equal(el("#usb-open").disabled, true, "disconnect must not discard a pending command to switch transport");
+    client.outstanding = null;
+    client.update({ outcome_uncertain: false });
+    assert.equal(el("#usb-open").disabled, false);
+    scan = el("#bluetooth-scan").click();
+    finishScan(); await scan;
+    pauseKey = true;
+    el("#ble-control-key").value = "ab".repeat(32);
+    const authorization = el("#ble-authorize").click();
+    assert.equal(el("#bluetooth-connection-close").disabled, true);
+    await client.disconnect();
+    finishKey(); await authorization;
+    assert.equal(client.bleKey, null, "a key imported after disconnect must not survive");
+    assert.match(el("#bluetooth-connection-status").textContent, /disconnected while loading/);
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+    el("#bluetooth-open").click();
+    client.update({});
+    assert.equal(el("#bluetooth-scan").disabled, true);
+    assert.match(el("#bluetooth-connection-status").textContent, /supported browser/);
+    Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: false });
+    client.update({});
+    assert.equal(el("#usb-connect").disabled, true);
+  } finally {
+    for (const [name, method] of prototypes) PicoForgeBluetooth.prototype[name] = method;
+    globalThis.document = saved.document;
+    for (const [name, descriptor] of [["navigator", saved.navigator], ["isSecureContext", saved.secure]]) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
   }
 });
 
