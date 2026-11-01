@@ -201,3 +201,6 @@ bool pf_led_set(bool on) { ++led_requests; requested_state = on; return true; }
 void pf_system_reset(void) { ++reset_requests; }
 bool pf_usb_msc_request(bool enabled) { ++msc_requests; requested_state = enabled; return true; }
 bool pf_usb_msc_request_force_return(void) { ++force_requests; requested_state = false; return true; }
+#ifdef TEST_SOURCE_FILE
+TEST_SOURCE_FILE("embedded_cli_adapter.c")
+#endif

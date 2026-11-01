@@ -197,8 +197,10 @@ static void config_command(EmbeddedCli *instance, char *args, void *context)
 {
     (void)instance;
     (void)context;
-    if (args != NULL && strncmp(args, "set ", 4u) == 0) {
-        set_config(args + 4u);
+    if (args != NULL && strncmp(args, "set", 3u) == 0 && isspace((unsigned char)args[3])) {
+        args += 3u;
+        while (isspace((unsigned char)*args)) ++args;
+        set_config(args);
         return;
     }
     embeddedCliTokenizeArgs(args);

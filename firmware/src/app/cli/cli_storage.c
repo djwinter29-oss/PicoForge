@@ -135,9 +135,16 @@ static void list_command(const char *path, pf_storage_worker_reply_fn_t reply, v
         if ((result != FR_OK) || (info.fname[0] == '\0')) {
             break;
         }
-        (void)snprintf(line, sizeof(line), "%c %llu %.200s",
+        size_t name_size = strlen(info.fname);
+        bool shortened = name_size > 200u;
+        if (shortened) {
+            name_size = 200u;
+            while (name_size > 0u && ((unsigned char)info.fname[name_size] & 0xc0u) == 0x80u) --name_size;
+        }
+        (void)snprintf(line, sizeof(line), "%c %llu %.*s%s",
                        (info.fattrib & AM_DIR) != 0u ? 'd' : '-',
-                       (unsigned long long)info.fsize, info.fname);
+                       (unsigned long long)info.fsize, (int)name_size, info.fname,
+                       shortened ? " [name truncated]" : "");
         for (char *position = line; *position != '\0'; ++position) {
             if (((unsigned char)*position < 32u) || ((unsigned char)*position == 127u)) {
                 *position = '?';

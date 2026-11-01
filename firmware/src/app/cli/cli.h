@@ -22,6 +22,7 @@ bool pf_cli_init(pf_cli_write_char_t write_char, void *context);
 
 /**
  * @brief Queue one input byte. Call pf_cli_process() regularly to avoid RX overflow.
+ * @note Editor or RX overflow rejects input through the next line ending; no truncated command is dispatched.
  * @param character Received byte.
  */
 void pf_cli_receive_char(char character);

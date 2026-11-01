@@ -8,8 +8,13 @@ software validation. User commands and stalled-output recovery remain in [the co
 [Embedded CLI](https://github.com/funbiscuit/embedded-cli) is an MIT-licensed Git
 submodule at `firmware/third_party/embedded-cli`, pinned to v0.1.4, commit
 `ffa8014c6230ba809c6a655ccc611a6c4689113f`. Its license remains in the submodule's
-`LICENSE.txt`. Firmware compiles the upstream C source directly, not the upstream
-examples or test dependencies. Initialize dependencies from the repository root:
+`LICENSE.txt`. Firmware compiles the upstream C source through the
+[input-pump adapter](../../firmware/src/integration/cli/embedded_cli_adapter.c), not the upstream examples or test dependencies.
+The adapter reuses the pinned editor/parser internals because the public API has no editor-overflow rejection hook.
+It rejects editor or RX overflow through the next line ending, before dispatch, without changing vendor files.
+RX overflow discards the queued backlog because its line endings cannot identify which command lost bytes.
+Review the adapter's flag allocation and input-pump semantics when updating the dependency.
+Initialize dependencies from the repository root:
 
 ```sh
 git submodule update --init --recursive
@@ -44,7 +49,7 @@ them bounded and non-blocking; do not run long operations there.
 [TCP transport](../../firmware/src/app/wireless/wifi/tcp_cli.c) is polled by the same task, so the session pump
 treats CDC and TCP as interchangeable byte streams.
 The CLI uses a 4 KiB aligned static arena, 64-byte RX buffer, 128-byte command
-buffer, 256-byte history buffer, and eight application-binding slots. The session
+buffer (126 editable bytes plus two tokenizer terminators), 256-byte history buffer, and five application-binding slots. The session
 has a 2 KiB output ring. It processes at most 32 received characters
 per task iteration and pauses input when less than 1 KiB of output space remains.
 It never waits for the host to consume output. Each process call must emit at
@@ -68,15 +73,15 @@ filesystem clients must also be routed through this worker, not a second task.
 Run the hardware-independent platform tests:
 
 ```sh
-tools/validation/setup-ceedling-testing.sh test:test_cli
-tools/validation/setup-ceedling-testing.sh test:test_cli_storage
+tools/validation/setup-ceedling-testing.sh test:cli test:cli_device test:cli_storage
 ```
 
 They cover prompt/help, commands, invalid arguments, unknown commands, session
 reset, completion/history, asynchronous binding registration, and the output
-reserve. Mocked FatFs tests cover commands, ownership/mount guards, safe paths,
+reserve, editor/RX overflow rejection, cursor/history behavior at the input limit, and raw configuration whitespace.
+Mocked FatFs tests cover commands, ownership/mount guards, safe paths,
 create-new/append modes, close/sync and partial-write errors, bounded cat output,
-directory cleanup, confirmed deletion, and cancellation. They do not verify actual
+directory cleanup, UTF-8-safe marked filename shortening, confirmed deletion, and cancellation. They do not verify actual
 card I/O, FreeRTOS queue scheduling, USB CDC enumeration, or host backpressure.
 
 For a board check, safely eject and disable any active MSC drive before flashing.

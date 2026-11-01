@@ -1,4 +1,5 @@
 #include "unity.h"
+TEST_SOURCE_FILE("embedded_cli_adapter.c")
 #include "cli.h"
 #include "embedded_cli.h"
 #include <string.h>
@@ -395,4 +396,24 @@ void test_radio_status_uses_sanitized_state_and_never_prints_ssid_or_secrets(voi
 void test_device_registration_rejects_missing_reset_scheduler(void)
 {
     TEST_ASSERT_FALSE(pf_cli_device_register(NULL));
+}
+
+void test_config_set_accepts_tab_and_mixed_assignment_whitespace(void)
+{
+    char arguments[] = "set\t \tclock = 200 , storage = high";
+    /* Tab is an editor completion key; exercise raw binding input independently of the terminal editor. */
+    config_command(NULL, arguments, NULL);
+    TEST_ASSERT_EQUAL_UINT(PF_SYSCLK_200MHZ, clock_profile);
+    TEST_ASSERT_EQUAL_UINT(PF_STORAGE_SPEED_HIGH, speed_profile);
+    TEST_ASSERT_EQUAL_UINT(1u, saves);
+    TEST_ASSERT_EQUAL_UINT(1u, reboots);
+}
+
+void test_oversized_board_command_does_not_dispatch_its_valid_prefix(void)
+{
+    send("board reboot");
+    for (unsigned i = 0u; i < 114u; ++i) send(" ");
+    send("EXTRA\r");
+    TEST_ASSERT_EQUAL_UINT(0u, reboots);
+    TEST_ASSERT_NOT_NULL(strstr(captured, "ERR input overflow"));
 }

@@ -34,9 +34,9 @@
     - -:firmware/tests/support/**
   :source:
     - +:firmware/src/**
-    - +:firmware/third_party/embedded-cli/lib/src
     - +:firmware/tests/support/msc
   :include:
+    - firmware
     - firmware/src/**
     - firmware/third_party/fatfs/source
     - firmware/third_party/embedded-cli/lib/include

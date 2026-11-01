@@ -1,4 +1,5 @@
 #include "unity.h"
+TEST_SOURCE_FILE("embedded_cli_adapter.c")
 #include "app/cli/cli_storage.h"
 #include "embedded_cli.h"
 #include "Mockff.h"
@@ -55,6 +56,26 @@ static FRESULT read_directory(DIR *directory, FILINFO *info, int calls)
         info->fattrib = AM_DIR;
         info->fsize = 10u;
     }
+
+    return FR_OK;
+}
+
+static FRESULT read_long_directory_name(DIR *directory, FILINFO *info, int calls)
+{
+    (void)directory;
+    memset(info, 0, sizeof(*info));
+    if (calls == 0) {
+        memset(info->fname, 'a', 199u);
+        memcpy(info->fname + 199u, "\xe2\x82\xac" "tail", 8u);
+    }
+    return FR_OK;
+}
+
+static FRESULT read_exact_directory_name(DIR *directory, FILINFO *info, int calls)
+{
+    (void)directory;
+    memset(info, 0, sizeof(*info));
+    if (calls == 0) memset(info->fname, 'a', 200u);
     return FR_OK;
 }
 
@@ -517,5 +538,28 @@ void test_ls_without_a_path_lists_the_volume_root(void)
     f_readdir_StubWithCallback(read_directory);
     f_closedir_ExpectAnyArgsAndReturn(FR_OK);
     run("ls");
+    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
+}
+
+void test_long_listing_name_is_marked_and_not_split_inside_utf8(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_opendir_ExpectAnyArgsAndReturn(FR_OK);
+    f_readdir_StubWithCallback(read_long_directory_name);
+    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
+    run("ls");
+    TEST_ASSERT_NOT_NULL(strstr(output, " [name truncated]"));
+    TEST_ASSERT_NULL(strchr(output, (char)0xe2));
+    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
+}
+
+void test_listing_name_at_display_limit_is_not_marked(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    f_opendir_ExpectAnyArgsAndReturn(FR_OK);
+    f_readdir_StubWithCallback(read_exact_directory_name);
+    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
+    run("ls");
+    TEST_ASSERT_NULL(strstr(output, "[name truncated]"));
     TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
 }

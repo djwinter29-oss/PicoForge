@@ -23,8 +23,9 @@ UART speed. Opening the port produces `PicoForge> `. Enter sends a command; Tab
 completes command names, Backspace edits input, and arrow keys navigate history
 and the current line. Live completion is disabled; Tab completion is enabled.
 CR, LF, and CRLF are accepted.
-The editor accepts at most 126 command-line bytes and ignores additional printable bytes. Stay within this limit:
-submitting an overlong line can execute its accepted prefix.
+The editor accepts at most 126 command-line bytes. Editor or receive-buffer overflow rejects the command through
+the next CR/LF and prints `ERR input overflow`; its accepted prefix is never executed. Backspace, history, and
+completion do not restore an overflowed command. Re-enter it after the error or reopen the session.
 
 `help` groups commands by name, with one indented subcommand per line. Prefix each subcommand with its group name:
 `get clock` under `board` means `board get clock`. Use `help <command>` or `<command> --help` to show only that group's
@@ -121,6 +122,8 @@ File commands require absolute ASCII paths on volume 0, with no drive
 prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
 bytes and must fit the CLI's command buffer. Double-quote paths or text containing
 spaces. There is no current-directory state, recursive deletion, or file overwrite.
+Directory listings display up to 200 filename bytes without splitting UTF-8 characters and append
+`[name truncated]` when shortened. The marker is not part of the filename.
 File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
