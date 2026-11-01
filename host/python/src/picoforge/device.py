@@ -50,7 +50,7 @@ PRODUCT_ID = 0x4011
 PRODUCT_IDS = {0x4011, 0x4012}
 USAGE_PAGE = 0xFF00
 USAGE = 0x0001
-PRODUCT_STRING = "PicoForge CDC + HID"
+PRODUCT_STRING = "PicoForge"
 
 try:
     import hid
@@ -80,7 +80,7 @@ def _matches_vendor_collection(info: dict[str, Any]) -> bool:
         return usage_page == USAGE_PAGE and usage == USAGE
     product_string = info.get("product_string")
     if product_string:
-        return product_string in (PRODUCT_STRING, "PicoForge CDC + HID + MSC")
+        return product_string == PRODUCT_STRING
     # enumerate() is already restricted to our VID/PID; some HIDAPI backends
     # leave usage and string metadata empty when the device is not readable.
     return True

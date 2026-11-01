@@ -147,11 +147,11 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 }
 
 /* The language ID (index 0) is built in the callback; STRID_SERIAL is generated from the board ID. The product
- * string is matched by host tools and docs (host/python device.py), so it stays "CDC + HID" in both configurations. */
+ * string is matched by host tools (host/python device.py), so keep them in sync when renaming. */
 static char const *string_desc_arr[] = {
     NULL,
+    "djwinter29",
     "PicoForge",
-    "PicoForge CDC + HID",
     NULL,
     "CDC ACM",
     "Vendor HID",

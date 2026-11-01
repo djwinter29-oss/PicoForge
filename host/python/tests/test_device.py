@@ -37,12 +37,12 @@ def configuration(clock=200, profile=1):
 class HidEnumerationTests(unittest.TestCase):
     def test_enumerates_board_identity_without_opening_hid(self):
         devices = [
-            {"product_string": "PicoForge CDC + HID", "serial_number": "board-A", "path": b"/hid/a"},
+            {"product_string": "PicoForge", "serial_number": "board-A", "path": b"/hid/a"},
             {"product_string": "", "serial_number": "", "path": b"/hid/b"},
         ]
         with patch("picoforge.device._matching_devices", return_value=devices):
             self.assertEqual(enumerate_devices(), [
-                {"product_name": "PicoForge CDC + HID", "serial_number": "board-A", "device_path": "/hid/a"},
+                {"product_name": "PicoForge", "serial_number": "board-A", "device_path": "/hid/a"},
                 {"product_name": "PicoForge", "serial_number": None, "device_path": "/hid/b"},
             ])
 
@@ -51,6 +51,7 @@ class HidEnumerationTests(unittest.TestCase):
         self.assertFalse(_matches_vendor_collection({"usage_page": 1, "usage": 1}))
         self.assertTrue(_matches_vendor_collection({"usage_page": 0, "usage": 0, "product_string": ""}))
         self.assertFalse(_matches_vendor_collection({"usage_page": 0, "usage": 0, "product_string": "Other"}))
+        self.assertTrue(_matches_vendor_collection({"usage_page": 0, "usage": 0, "product_string": "PicoForge"}))
 
 
 class HidDeviceTests(unittest.TestCase):

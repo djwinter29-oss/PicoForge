@@ -22,7 +22,8 @@ PicoForge always exposes CDC ACM, a vendor-defined HID interface, and removable-
 uses control interface 0 and data interface 1; HID is interface 2 and MSC is interface 3.
 Storage ownership changes medium availability, not the USB configuration. The development VID/PID is
 `0xCAFE:0x4011`, not a product identity. HID uses vendor usage page `0xFF00`, usage `0x01`, with no boot protocol.
-The USB product string is `PicoForge CDC + HID`; its serial string is the Pico SDK unique board ID.
+The USB manufacturer string is `djwinter29` and the product string is `PicoForge`; its serial string is the Pico SDK
+unique board ID.
 
 CDC ACM is the [Embedded CLI console](../../guides/usb-cdc-cli.md). UART debug logs use the board monitor UART, independently of
 USB CDC. HID carries no CLI text, file data, or SD block data. MSC is the host-facing block interface while it owns
