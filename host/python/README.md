@@ -87,7 +87,7 @@ Timeouts or disconnects leave the outcome uncertain and block further writes; co
 The local dashboards expose **Boot configuration > Wi-Fi and Bluetooth** settings for the selected USB-attached W board, including
 SSID, password and a generated BLE control key. See the
 [wireless configuration and security policy](../../docs/design/wireless.md).
-Bluetooth LE connections remain available only from the standalone WebHID page.
+Bluetooth LE connections remain available only from the Direct dashboard.
 
 Run all hardware-free host unit suites from the repository root (install this package first):
 

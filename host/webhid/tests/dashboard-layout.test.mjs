@@ -8,7 +8,7 @@ import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 test("standalone dashboard labels profiles, active measurements, controls and accessible statuses", () => {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-  assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
+  assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/webhid\.css\?v=13"/);
   assert.match(html, /src="js\/app\.mjs\?v=26"/);
@@ -89,7 +89,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   }
 });
 
-test("WebHID UI preserves unsaved profiles, separates confirmed reboot, and confirms force return", async context => {
+test("Direct UI preserves unsaved profiles, separates confirmed reboot, and confirms force return", async context => {
   const saved = {
     document: globalThis.document, window: globalThis.window,
     navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),

@@ -1,13 +1,17 @@
-# PicoForge WebHID
+# PicoForge Direct Dashboard
 
-Open the hosted [WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
+The Direct dashboard connects from the browser straight to the board over USB (WebHID) or Bluetooth LE
+(Web Bluetooth); no local host service is needed.
+
+Open the hosted [Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
 The hosted site is deployed from successful releases after the initial
 [Pages setup](../../docs/deployment/release.md#publishing-setup).
-For offline/local hosting, download the WebHID ZIP from
+For offline/local hosting, download the Direct dashboard ZIP (`picoforge-webhid-vX.Y.Z.zip`) from
 [Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest), extract it, and serve the extracted directory
 on localhost. Opening `index.html` directly as a file is not supported.
 
-Serve the WebHID directory directly so its `index.html` is the site root and the browser gets a secure localhost origin:
+Serve the dashboard directory directly so `index.html` is the site root and the browser gets a secure localhost
+origin:
 
 ```sh
 python3 -m http.server 8000 --directory host/webhid
@@ -21,9 +25,9 @@ before connecting; the chooser cannot override another application's HID access.
 
 ## Protocol compatibility
 
-This standalone client targets layout version 1 of the authoritative
+This Direct dashboard targets layout version 1 of the authoritative
 [HID Report Reference](../../docs/design/usb/usb-hid-report-reference.md), implemented by firmware and the Python,
-.NET, shared dashboard, and direct WebHID clients. Physical USB qualification remains outstanding.
+.NET, shared dashboard, and Direct dashboard clients. Physical USB qualification remains outstanding.
 It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
 (9), and Input 3 telemetry (22), 10 storage (34), and optionally 11 self-test (32, capability bit 5).
 Mandatory identity/configuration failures are explicit connection errors, not legacy fallbacks.

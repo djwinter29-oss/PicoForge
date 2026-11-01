@@ -17,6 +17,20 @@ static unsigned wireless_command_calls, wireless_reject_calls, wireless_result_c
 static uint8_t wireless_command[PF_WIRELESS_COMMAND_SIZE];
 static uint8_t wireless_result[PF_WIRELESS_RESULT_SIZE];
 static uint8_t rejected_transaction;
+static bool tcp_client;
+static const char *tcp_close_notice;
+static unsigned tcp_closes;
+bool pf_tcp_cli_connected(void) { return tcp_client; }
+bool pf_tcp_cli_read(char *character) { (void)character; return false; }
+uint32_t pf_tcp_cli_write_available(void) { return 0u; }
+uint32_t pf_tcp_cli_write(const char *data, uint32_t size) { (void)data; (void)size; return 0u; }
+void pf_tcp_cli_flush(void) {}
+void pf_tcp_cli_close(const char *notice)
+{
+    tcp_client = false;
+    tcp_close_notice = notice;
+    ++tcp_closes;
+}
 void pf_wireless_start(void) {}
 void pf_wireless_poll(void) {}
 void pf_wireless_status(uint8_t *report) { memset(report, 0, PF_WIRELESS_STATUS_SIZE); report[0] = 1u; }
@@ -57,6 +71,10 @@ void setUp(void)
     rejected_transaction = 0u;
     test_radios = saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
     settings_save_fails = false;
+    cli_owner = NULL;
+    fake_connected = tcp_client = false;
+    tcp_close_notice = NULL;
+    tcp_closes = 0u;
 }
 
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
@@ -184,4 +202,40 @@ void test_radio_enables_are_reported_in_board_flags_and_saved_by_opcode_6(void)
     TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
     pf_hid_build_configuration_report(&configuration);
     TEST_ASSERT_EQUAL_HEX8(0x10u, configuration.board_flags & 0x18u);
+}
+
+void test_cli_session_belongs_to_the_first_transport_and_turns_the_other_away(void)
+{
+    fake_connected = tcp_client = true;
+    cli_task();
+    TEST_ASSERT_EQUAL_PTR(&cdc_transport, cli_owner);
+    TEST_ASSERT_FALSE(tcp_client);
+    TEST_ASSERT_NOT_NULL(strstr(tcp_close_notice, "USB CDC session"));
+
+    fake_connected = false;
+    tcp_client = true;
+    cli_task();
+    TEST_ASSERT_EQUAL_PTR(&tcp_transport, cli_owner);
+    fake_connected = true;
+    cli_task();
+    TEST_ASSERT_EQUAL_PTR(&tcp_transport, cli_owner);
+
+    tcp_client = false;
+    cli_task();
+    TEST_ASSERT_EQUAL_PTR(&cdc_transport, cli_owner);
+}
+
+void test_stalled_tcp_session_is_closed_instead_of_waiting_for_the_client(void)
+{
+    fake_ticks = 0u;
+    tcp_client = true;
+    cli_task();
+    TEST_ASSERT_EQUAL_PTR(&tcp_transport, cli_owner);
+    cli_tx_count = 1u;
+    cli_last_progress = 0u;
+    fake_ticks = USB_CLI_STALL_TIMEOUT;
+    cli_task();
+    TEST_ASSERT_NULL(cli_owner);
+    TEST_ASSERT_FALSE(tcp_client || cli_stalled);
+    TEST_ASSERT_EQUAL_UINT(0u, cli_tx_count);
 }

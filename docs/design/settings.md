@@ -63,7 +63,7 @@ profiles. The profile payload is two-byte little-endian `system_clock_mhz` follo
 board's GPIO configuration. See the exact
 offsets and validation rules in the [HID Report Reference](usb/usb-hid-report-reference.md).
 
-The Python, .NET, and WebHID dashboards map these values to select options and verify the saved values returned in
+The Python, .NET, and Direct dashboards map these values to select options and verify the saved values returned in
 the Feature `20` completion result. **Save&Reboot** sends only opcode `6`; firmware queues its existing deferred
 reboot after a successful save. Failed or rejected saves do not reboot. Opcode `2` remains the standalone reboot
 command. Reconnection refreshes Feature `2`. The Python/.NET

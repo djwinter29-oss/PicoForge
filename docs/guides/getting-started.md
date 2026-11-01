@@ -62,10 +62,10 @@ but PicoForge is not a multi-port UART bridge; use USB CDC for the command conso
 
 ### Browser Dashboard
 
-Open the hosted [WebHID dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
-Connect the board to the computer running the browser, click **Connect**, and select the board.
-No host installation is needed. See the [WebHID guide](../../host/webhid/README.md) for local hosting and
-connection details.
+Open the hosted [Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
+Connect the board to the computer running the browser, choose **USB**, then **Select board**. W boards can also be
+monitored over **Bluetooth** after USB provisioning. No host installation is needed. See the
+[Direct dashboard guide](../../host/webhid/README.md) for local hosting and connection details.
 
 ### Local Python Dashboard
 

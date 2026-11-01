@@ -16,7 +16,7 @@ Current source-review dispositions and remaining qualification: [SD remediation 
 
 The firmware can write a dedicated file, read it back, verify every byte, and
 report average filesystem write/read speeds over HID. The Python and .NET
-dashboards and the direct WebHID page expose Start, Cancel, progress, timings,
+dashboards and the Direct dashboard expose Start, Cancel, progress, timings,
 byte counts, average MiB/s, verification results, and cleanup errors.
 
 ## Running

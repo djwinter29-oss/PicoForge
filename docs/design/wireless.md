@@ -9,7 +9,7 @@ This implementation has host checks and target builds, not physical radio qualif
 ## Configuration and operation
 
 Connect through USB and use the Wi-Fi and Bluetooth dropdowns beside System clock and SD Card under Boot
-configuration in the Python/.NET dashboard or Board configuration in the standalone WebHID dashboard. Each offers
+configuration in the Python/.NET dashboard or Board configuration in the Direct dashboard. Each offers
 **Enabled**, **Disabled**, and **Configure…**. Configure… opens the Wi-Fi scan/test or Bluetooth key dialog and leaves
 the dropdown unchanged; a passed Wi-Fi test or a generated key switches it to Enabled. Wi-Fi Enabled requires a saved
 or tested network. Bluetooth Enabled without a key runs view-only. Switching a saved-enabled radio to Disabled erases
@@ -54,13 +54,17 @@ The existing deferred reboot follows verified persistence; failed saves do not r
 Wi-Fi joins an existing 2.4 GHz open or WPA/WPA2-PSK network and obtains an IPv4 address through DHCP.
 Association/DHCP has a 30-second deadline; failures and dropped connections are reported and retried after five
 seconds. A failed connection test leaves the tested network and retries only the saved network, if one is enabled.
-lwIP uses 4-byte heap alignment, required by Cortex-M multi-word stores into received packet buffers. This does not
-provide a web server, network filesystem, Bluetooth Classic, internet management API or Wi-Fi dashboard transport.
+lwIP uses 4-byte heap alignment, required by Cortex-M multi-word stores into received packet buffers. While Wi-Fi
+is enabled, a single-client raw TCP listener on port 2323 serves the same CLI as USB CDC; see the
+[CLI guide](../guides/usb-cdc-cli.md#wi-fi-tcp-terminal). It is unauthenticated and unencrypted, for trusted LANs
+only. lwIP TCP is sized for that one client: 1460-byte MSS, 2 × MSS window and send buffer, three PCBs and an
+8 KiB heap. This does not provide a web server, network filesystem, Bluetooth Classic, internet management API or
+Wi-Fi dashboard transport.
 
 The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE connections.
-Their wireless settings panel uses `/api/wireless`; it shares the standalone page's form implementation.
+Their wireless settings panel uses `/api/wireless`; it shares the Direct dashboard's form implementation.
 Bluetooth LE connections are available only from the
-standalone WebHID page: its **USB** and **Bluetooth** buttons open separate connection dialogs. In the USB dialog,
+Direct dashboard: its **USB** and **Bluetooth** buttons open separate connection dialogs. In the USB dialog,
 **Select board** opens the local USB HID picker. In the Bluetooth dialog, **Scan for boards** opens the browser's
 nearby-device picker using the browser computer's Bluetooth adapter, filtered to the PicoForge service or name.
 Each board advertises the PicoForge service UUID and returns the name `PicoForge-<USB serial>` in its scan response

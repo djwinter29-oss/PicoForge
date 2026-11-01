@@ -55,7 +55,8 @@ void setUp(void)
     unavailable = reserved = initialized = mounted = queue_fails = retained_cid = false;
     busy = bench.active = bench.finished = bench.cancelled = false;
     media_service_busy = false;
-    cli_connected = cli_stalled = cli_stall_reported = false;
+    cli_owner = NULL;
+    cli_stalled = cli_stall_reported = false;
     cli_tx_count = 0u;
     cli_last_progress = 0u;
     control_result = (pf_hid_control_result_t){.version = PF_HID_REPORT_VERSION};
@@ -401,7 +402,8 @@ void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(
     bench.active = false;
     active_session = cli_session;
     cancelled = false;
-    cli_connected = fake_connected = true;
+    cli_owner = &cdc_transport;
+    fake_connected = true;
     cli_stalled = cli_stall_reported = false;
     cli_tx_count = USB_CLI_TX_SIZE;
     cli_last_progress = fake_ticks = 0u;
@@ -415,29 +417,30 @@ void test_stalled_full_reply_path_cancels_and_drains_completion_before_new_work(
     TEST_ASSERT_EQUAL_UINT(USB_CLI_STALL_TIMEOUT, fake_ticks);
     reply_count = 1u;
     fake_done = true;
-    cdc_cli_task();
+    cli_task();
     TEST_ASSERT_FALSE(pf_storage_worker_busy());
     TEST_ASSERT_TRUE(pf_storage_worker_submit("storage", "status", false, cli_session));
     fake_connected = false;
-    cdc_cli_task();
-    TEST_ASSERT_FALSE(cli_connected || cli_stalled);
+    cli_task();
+    TEST_ASSERT_FALSE((cli_owner != NULL) || cli_stalled);
     TEST_ASSERT_EQUAL_UINT(0u, cli_tx_count);
     fake_connected = true;
 }
 
 void test_stalled_cdc_session_reports_truncation_once_when_buffer_space_returns(void)
 {
-    cli_connected = fake_connected = true;
+    cli_owner = &cdc_transport;
+    fake_connected = true;
     cli_stalled = true;
     cli_stall_reported = false;
     cli_tx_head = cli_tx_tail = 0u;
     cli_tx_count = USB_CLI_TX_SIZE;
     messages = 0u;
-    cdc_cli_task();
+    cli_task();
     TEST_ASSERT_EQUAL_UINT(0u, messages);
     cli_tx_count = 0u;
-    cdc_cli_task();
-    cdc_cli_task();
+    cli_task();
+    cli_task();
     TEST_ASSERT_EQUAL_UINT(1u, messages);
     TEST_ASSERT_TRUE(cli_stall_reported);
     cli_stalled = cli_stall_reported = false;
@@ -457,14 +460,15 @@ void test_cdc_storage_command_routes_recover_to_msc_and_everything_else_to_the_w
 
 void test_cdc_task_drops_worker_replies_from_an_older_session(void)
 {
-    cli_connected = fake_connected = true;
+    cli_owner = &cdc_transport;
+    fake_connected = true;
     reply_count = 1u;
     reply_session_skew = 1u;
-    cdc_cli_task();
+    cli_task();
     TEST_ASSERT_EQUAL_UINT(0u, messages);
     reply_count = 1u;
     reply_session_skew = 0u;
-    cdc_cli_task();
+    cli_task();
     TEST_ASSERT_EQUAL_UINT(1u, messages);
 }
 

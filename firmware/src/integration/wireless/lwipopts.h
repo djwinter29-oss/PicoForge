@@ -6,7 +6,14 @@
 #define MEM_ALIGNMENT 4
 #define LWIP_SOCKET 0
 #define LWIP_NETCONN 0
-#define LWIP_TCP 0
+#define LWIP_TCP 1
+/* TCP serves only the single-client raw CLI (app/wireless/tcp_cli.c); keep its buffers bounded. */
+#define TCP_MSS 1460
+#define TCP_WND (2 * TCP_MSS)
+#define TCP_SND_BUF (2 * TCP_MSS)
+#define MEMP_NUM_TCP_PCB 3
+#define MEMP_NUM_TCP_PCB_LISTEN 1
+#define LWIP_TCP_KEEPALIVE 1
 #define LWIP_UDP 1
 #define LWIP_DHCP 1
 #define LWIP_DNS 0
@@ -14,7 +21,7 @@
 #define LWIP_NETIF_HOSTNAME 1
 #define LWIP_NETIF_STATUS_CALLBACK 1
 #define LWIP_NETIF_LINK_CALLBACK 1
-#define MEM_SIZE 4096
+#define MEM_SIZE 8192
 #define MEMP_NUM_PBUF 8
 #define PBUF_POOL_SIZE 8
 #define PBUF_POOL_BUFSIZE 1536

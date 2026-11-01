@@ -96,6 +96,22 @@ write or sync/close failure is reported; a new or partially modified file may
 remain. Commands do not roll back writes. Only explicit fault recovery changes
 MSC ownership.
 
+### Wi-Fi TCP terminal
+
+Pico W and Pico 2 W boards with Wi-Fi enabled also serve the same CLI as a raw TCP stream on port 2323. Find the board
+IP in the dashboard's live diagnostics. In PuTTY choose connection type **Raw**, host `<board IP>`, port `2323`, and
+set **Terminal > Local echo** and **Local line editing** to **Force off**; the CLI echoes and edits input itself. On
+Linux, `nc <board IP> 2323` also works after `stty raw -echo` in the local terminal.
+
+One CLI session exists at a time. The first transport to connect owns it: a TCP client connecting while a CDC terminal
+holds DTR receives `PicoForge CLI busy: a USB CDC session is active.` and is closed; a CDC terminal opened during a
+TCP session receives a busy line and its input is discarded. A second TCP client is turned away the same way. Closing
+the owning connection ends the session and cancels its pending output, exactly like dropping DTR. TCP keepalive
+drops a vanished client after about 50 seconds idle.
+
+The TCP terminal has no authentication or encryption; anyone on the network can run every command, including
+`--confirm` destructive ones. Use it only on a trusted LAN, and disable Wi-Fi when that is not acceptable.
+
 ## Faulted MSC Recovery
 
 Use normal host eject followed by HID MSC disable whenever possible. If an I/O
@@ -179,10 +195,12 @@ dependency. Its output callback and input/process API are documented in
 come from the upstream framework. Callbacks execute in the USB task, so keep
 them bounded and non-blocking; do not run long operations there.
 
-[The USB task](../../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI.
+[The USB task](../../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI; the Wi-Fi
+[TCP transport](../../firmware/src/app/wireless/tcp_cli.c) is polled by the same task, so the session pump
+treats CDC and TCP as interchangeable byte streams.
 The CLI uses a 4 KiB aligned static arena, 64-byte RX buffer, 128-byte command
-buffer, 256-byte history buffer, and eight application-binding slots. The CDC
-adapter has a 2 KiB output ring. It processes at most 32 received characters
+buffer, 256-byte history buffer, and eight application-binding slots. The session
+has a 2 KiB output ring. It processes at most 32 received characters
 per task iteration and pauses input when less than 1 KiB of output space remains.
 It never waits for the host to consume output. Each process call must emit at
 most 1 KiB; adding commands requires preserving that output budget. Exceeding the
@@ -229,7 +247,8 @@ automatic USB handoff/remount, busy rejection, and failure cases. Do not reset w
 
 USB tracks successful transfers from the CLI ring to TinyUSB. After five seconds with buffered output and no
 progress, it cancels reply production for that DTR session and drains the worker queue, including completion,
-even while the host is not reading. The session accepts no further input until DTR closes and reopens.
+even while the host is not reading. The session accepts no further input until DTR closes and reopens. A stalled TCP session is closed instead, because
+its client cannot read the notice.
 Buffered output keeps its order; when space becomes available an explicit truncation notice follows it.
 Disconnect clears buffered output and drains completion as before. USB continues its paced service loop.
 

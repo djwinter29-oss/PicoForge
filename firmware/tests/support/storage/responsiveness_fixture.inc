@@ -104,7 +104,7 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
         TEST_ASSERT_EQUAL_UINT32(50u, timeout);
         TEST_ASSERT_EQUAL_UINT(8u, reply_count);
         fake_ticks += timeout;
-        cdc_cli_task();
+        cli_task();
         return 0;
     }
     const storage_request_t *request = item;

@@ -319,6 +319,7 @@ if(PICO_CYW43_SUPPORTED)
     target_sources(pico_forge PRIVATE
         src/app/wireless/wireless.c
         src/app/wireless/wifi.c
+        src/app/wireless/tcp_cli.c
         src/app/wireless/bluetooth.c
         src/app/wireless/bluetooth_auth.c)
     target_include_directories(pico_forge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/integration/wireless")

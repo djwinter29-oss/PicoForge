@@ -9,6 +9,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "app/wireless/bluetooth.h"
+#include "app/wireless/tcp_cli.h"
 #include "app/wireless/wifi.h"
 #include "pico/cyw43_arch.h"
 #include "platform/boot_config.h"
@@ -54,7 +55,10 @@ void pf_wireless_start(void)
     /* The chip starts even with both radios off because it owns the board LED; radios stay off unless enabled. */
     if (!ensure_started()) return;
     pf_led_attach(led_put);
-    if (wifi_enabled) pf_wifi_start(&error_code);
+    if (wifi_enabled) {
+        pf_wifi_start(&error_code);
+        (void)pf_tcp_cli_start();
+    }
     if (ble_enabled && !pf_bluetooth_start()) error_code = 1u;
 }
 

@@ -668,7 +668,7 @@ product use.
 ## Implementation and Integration
 
 The descriptor and firmware implementation are in `firmware/src/app/usb`; storage self-test admission and execution
-are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and direct WebHID clients implement the same
+are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and Direct dashboard clients implement the same
 report contract. Settings saves preserve the existing persistent-record format and update only the selected
 transport's legacy speed field; Report `2` exposes the transport-neutral profile. An accepted self-test is
 preflighted by the sole storage worker before its prior result is replaced. The reserved `/PFTEST.BIN` path is never

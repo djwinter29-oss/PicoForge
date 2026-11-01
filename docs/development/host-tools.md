@@ -1,9 +1,9 @@
 # Host Tools Development
 
-PicoForge has Python and .NET dashboards that share the frontend in `host/web`, plus an independent browser-only
-WebHID dashboard in `host/webhid`. For installation and everyday use, see the
-[Python host guide](../../host/python/README.md), [.NET host guide](../../host/dotnet/PicoForge/README.md), and
-[WebHID guide](../../host/webhid/README.md).
+PicoForge has Python and .NET dashboards that share the frontend in `host/web`, plus the independent Direct dashboard
+in `host/webhid`, which connects over USB (WebHID) or Bluetooth LE (Web Bluetooth). For installation and everyday use,
+see the [Python host guide](../../host/python/README.md), [.NET host guide](../../host/dotnet/PicoForge/README.md),
+and [Direct dashboard guide](../../host/webhid/README.md).
 
 Run commands from the repository root. Host unit tests do not require a board; physical device checks require an
 identified board and appropriate USB permissions.
@@ -28,8 +28,8 @@ tools/host/run-webhid.sh
 ```
 
 Python and .NET serve the shared dashboard at `http://127.0.0.1:5000/` by default; run only one server on that port at
-a time. WebHID serves the standalone browser app at `http://localhost:8000/`. A browser dashboard requires WebHID
-support and local USB permission. The CDC console is documented in the [CDC CLI guide](../guides/usb-cdc-cli.md).
+a time. The Direct dashboard is served at `http://localhost:8000/`. USB connections require WebHID support and local
+USB permission. The CDC console is documented in the [CDC CLI guide](../guides/usb-cdc-cli.md).
 
 The Python launcher provisions its environment on first use. To install the package explicitly for development and
 tests:
