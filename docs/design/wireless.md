@@ -129,7 +129,9 @@ reports the saved radio switches; its separate booleans indicate whether credent
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4
   (disabled/connecting/connected/failed = 0/1/2/3), IPv4 bytes at 5-8, NUL-terminated SSID at 9-41,
   password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3), BLE link at 45
-  (off/advertising/connected = 0/1/2; off until the controller is working), zero at 46-47.
+  (off/advertising/connected = 0/1/2; off until the controller is working), TCP CLI listener-started boolean
+  at 46 (zero on older firmware), zero at 47. Older hosts that reject reserved byte 46 must be updated
+  alongside firmware that starts the TCP listener.
 - Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
   bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
   credentials bit 2), SSID at 4-36, password at 37-100, key at 101-132, little-endian clock MHz at 133-134

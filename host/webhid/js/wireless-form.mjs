@@ -5,10 +5,22 @@
 export function renderWirelessStatus(snapshot) {
   const wireless = snapshot.wireless;
   const unavailable = !snapshot.connected ? "--" : snapshot.wireless_error ? "Unavailable" : !wireless ? "--" : null;
+  const consoleReady = !unavailable && wireless?.wifi_enabled && wireless.wifi_state === "connected"
+    && wireless.tcp_cli_started && snapshot.console_url;
   const render = (name, text) => {
     document.querySelector(`#${name}-diagnostics`).hidden = !(snapshot.hardware?.capabilities & 128);
     const status = document.querySelector(`#${name}-state`);
-    status.textContent = unavailable ?? text();
+    const label = unavailable ?? text();
+    if (name === "wifi" && consoleReady) {
+      const existing = status.querySelector?.("a");
+      const link = existing ?? document.createElement("a");
+      link.textContent = label;
+      link.href = snapshot.console_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.title = "Open the Wi-Fi CLI console in a new tab";
+      if (!existing) status.replaceChildren(link);
+    } else status.textContent = label;
     status.title = snapshot.wireless_error ?? "";
   };
   render("wifi", () => !wireless.wifi_enabled || !wireless.ssid ? "Disabled"

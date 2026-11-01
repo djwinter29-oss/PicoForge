@@ -5,7 +5,7 @@ export function decodeWireless(report) {
     ? new Uint8Array(report.buffer, report.byteOffset, report.byteLength) : report;
   if (!(bytes instanceof Uint8Array) || bytes.length !== 48 || bytes[0] !== 1 || bytes[1] > 3
     || bytes[2] > 6 || bytes[4] > 3 || bytes[42] > 1 || bytes[43] > 1 || bytes[44] > 3
-    || bytes[45] > 2 || bytes[46] || bytes[47] || bytes.slice(9, 42).indexOf(0) < 0) {
+    || bytes[45] > 2 || bytes[46] > 1 || bytes[47] || bytes.slice(9, 42).indexOf(0) < 0) {
     throw new Error("Invalid wireless status report");
   }
   const ssid = bytes.slice(9, 42);
@@ -13,7 +13,7 @@ export function decodeWireless(report) {
     status: bytes[2], transaction_id: bytes[3], wifi_state: ["disabled", "connecting", "connected", "failed"][bytes[4]],
     ipv4: [...bytes.slice(5, 9)].join("."), ssid: new TextDecoder("utf-8", { fatal: true }).decode(ssid.slice(0, ssid.indexOf(0))),
     password_configured: Boolean(bytes[42]), ble_key_configured: Boolean(bytes[43]), error: bytes[44],
-    ble_state: ["off", "advertising", "connected"][bytes[45]] };
+    ble_state: ["off", "advertising", "connected"][bytes[45]], tcp_cli_started: Boolean(bytes[46]) };
 }
 
 export function buildWirelessCommand(transaction, operation, settings = {}) {

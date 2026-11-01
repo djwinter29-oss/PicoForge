@@ -100,8 +100,24 @@ MSC ownership.
 
 Pico W and Pico 2 W boards with Wi-Fi enabled also serve the same CLI as a raw TCP stream on port 2323. Find the board
 IP in the dashboard's live diagnostics. In PuTTY choose connection type **Raw**, host `<board IP>`, port `2323`, and
-set **Terminal > Local echo** and **Local line editing** to **Force off**; the CLI echoes and edits input itself. On
-Linux, `nc <board IP> 2323` also works after `stty raw -echo` in the local terminal.
+set **Terminal > Local echo** and **Local line editing** to **Force off**; the CLI echoes and edits input itself.
+PuTTY's default **Auto** enables both for Raw connections, which shows each command twice and sends it only on Enter,
+so Tab completion and history keys do not work. Save the settings as a named session. On Linux,
+`nc <board IP> 2323` also works after `stty raw -echo` in the local terminal.
+
+In the Python and .NET dashboards, the connected **SSID (IP)** label in Live diagnostics becomes a link when the
+firmware reports that the TCP CLI listener has started. Clicking it opens a separate web console tab and connects
+automatically. Type in the terminal; there is no local echo. Use **Disconnect** to release it or **Connect** to
+reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser request.
+The local host relays bounded raw bytes over TCP, using same-origin HTTP polling between browser and host; browsers
+cannot open raw TCP sockets themselves. Targets come only from the selected USB board's wireless status, not a
+user-supplied host or port. Once connected, the console does not require the USB connection to remain open.
+The Direct dashboard has no local bridge, so use PuTTY there. Flash the updated firmware and restart the local
+dashboard to enable the link; older firmware that does not report listener state retains the plain-text label.
+
+The web console supports the Embedded CLI's cursor movement, character insertion/deletion and saved cursor escapes.
+It keeps at most 1000 lines of 512 columns; it is not a general-purpose VT100/color terminal. Input is limited to
+1024 bytes per pending batch. Pasting text containing Enter asks for confirmation before executing it.
 
 One CLI session exists at a time. The first transport to connect owns it: a TCP client connecting while a CDC terminal
 holds DTR receives `PicoForge CLI busy: a USB CDC session is active.` and is closed; a CDC terminal opened during a

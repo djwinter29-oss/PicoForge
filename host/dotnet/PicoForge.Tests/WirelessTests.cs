@@ -150,14 +150,17 @@ public sealed class WirelessTests
         Assert.Equal("192.168.1.2", result.Ipv4);
         Assert.Equal("connected", result.WifiState);
         Assert.Equal("off", result.BleState);
+        Assert.False(result.TcpCliStarted);
         var connected = Report();
         connected[46] = 2;
         Assert.Equal("connected", HidProtocol.ParseWirelessStatus(connected).BleState);
+        connected[47] = 1;
+        Assert.True(HidProtocol.ParseWirelessStatus(connected).TcpCliStarted);
         var json = JsonSerializer.Serialize(result);
         Assert.DoesNotContain("\"Password\":", json);
         Assert.DoesNotContain("\"BleKey\":", json);
         foreach (var (offset, value) in new (int, byte)[]
-                 { (1, 2), (2, 4), (3, 7), (5, 4), (43, 2), (44, 2), (45, 4), (46, 3), (47, 1), (48, 1) })
+                 { (1, 2), (2, 4), (3, 7), (5, 4), (43, 2), (44, 2), (45, 4), (46, 3), (47, 2), (48, 1) })
         {
             var report = Report();
             report[offset] = value;

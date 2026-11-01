@@ -1,5 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=12";
+import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=13";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -188,6 +188,7 @@ function renderStatus(snapshot) {
     ...snapshot,
     wireless: wirelessStatus,
     wireless_error: wirelessError,
+    console_url: `/console?board=${encodeURIComponent(selectedBoard ?? "")}`,
     busy: snapshot.busy || settingsRequestInProgress || wirelessForm.operationBusy()
       || snapshot.reboot_pending || snapshot.outcome_uncertain,
     no_board_selected: !selectedBoard,

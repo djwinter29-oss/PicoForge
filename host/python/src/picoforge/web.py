@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import base64
+import binascii
 import secrets
 from typing import Any
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .monitor import DashboardBoards
+from .console import ConsoleBridge
 from .protocol import (
     build_wireless_command_report,
     build_wireless_configuration_report,
@@ -24,6 +27,7 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     installed = Path(__file__).with_name("web")  # packaged from host/web; source checkouts use host/web directly
     root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[3] / "web")
     dashboard = monitor or DashboardBoards()
+    console = ConsoleBridge()
     app = Flask(__name__, template_folder=str(root), static_folder=None)
     app.config.update(
         SECRET_KEY=secrets.token_bytes(32),
@@ -45,6 +49,46 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     @app.get("/")
     def index():
         return render_template("index.html", dashboard_type="Python")
+
+    @app.get("/console")
+    def console_page():
+        return send_from_directory(root, "console.html")
+
+    @app.route("/api/console", methods=["POST", "GET", "PUT", "DELETE"])
+    def console_api():
+        request.max_content_length = 2048
+        origin = request.headers.get("Origin")
+        if origin is not None and origin != request.host_url.rstrip("/"):
+            return jsonify({"error": "Console requests must be same-origin"}), 403
+        try:
+            if request.method == "POST":
+                if request.get_json(silent=True) != {}:
+                    return jsonify({"error": "Expected an empty JSON object"}), 400
+                status = dashboard.read_wireless(request.args.get("board"))["wireless"]
+                return jsonify({"session": console.open(status)})
+            session = request.args.get("session")
+            if request.method == "GET":
+                data, closed = console.read(session)
+                return jsonify({"data": base64.b64encode(data).decode("ascii"), "closed": closed})
+            if request.method == "PUT":
+                payload = request.get_json(silent=True)
+                if (not isinstance(payload, dict) or set(payload) != {"data"}
+                        or not isinstance(payload["data"], str) or len(payload["data"]) > 1368):
+                    return jsonify({"error": "Expected up to 1024 base64-encoded input bytes"}), 400
+                data = base64.b64decode(payload["data"], validate=True)
+                if not 0 < len(data) <= 1024:
+                    return jsonify({"error": "Expected 1..1024 input bytes"}), 400
+                console.write(session, data)
+            else:
+                console.close(session)
+            return jsonify({"ok": True})
+        except (ValueError, binascii.Error) as error:
+            return jsonify({"error": str(error)}), 400
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except OSError as error:
+            app.logger.warning("TCP console connection failed: %s", error)
+            return jsonify({"error": f"TCP console connection failed: {error}"}), 503
 
     @app.get("/favicon.svg")
     def favicon():

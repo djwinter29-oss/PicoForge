@@ -22,6 +22,7 @@
 static bool wifi_enabled; /**< Wi-Fi master switch and credentials allow startup. */
 static bool ble_enabled; /**< BLE master switch allows advertising; a key is required only for control. */
 static bool started; /**< Shared SDK context initialized successfully. */
+static bool tcp_cli_started; /**< Raw TCP CLI listener was successfully started. */
 static uint8_t error_code; /**< 0 none, 1 initialization, 2 join failure, 3 connection timeout. */
 static uint8_t save_status; /**< Last provisioning result, using Feature 20 status values. */
 static uint8_t save_transaction; /**< Last USB provisioning transaction ID. */
@@ -57,7 +58,7 @@ void pf_wireless_start(void)
     pf_led_attach(led_put);
     if (wifi_enabled) {
         pf_wifi_start(&error_code);
-        (void)pf_tcp_cli_start();
+        tcp_cli_started = pf_tcp_cli_start();
     }
     if (ble_enabled && !pf_bluetooth_start()) error_code = 1u;
 }
@@ -93,6 +94,7 @@ void pf_wireless_status(uint8_t *report)
     report[43] = key_bits != 0u;
     report[44] = error_code;
     report[45] = started && ble_enabled ? pf_bluetooth_state() : 0u;
+    report[46] = tcp_cli_started;
     memset(saved_ssid, 0, sizeof(saved_ssid));
     memset(saved_password, 0, sizeof(saved_password));
     memset(saved_key, 0, sizeof(saved_key));

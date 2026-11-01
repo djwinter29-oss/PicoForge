@@ -23,5 +23,5 @@ package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web", "picof
 packages = ["picoforge", "picoforge.web", "picoforge.wireless_ui"]
 
 [tool.setuptools.package-data]
-"picoforge.web" = ["index.html", "favicon.svg", "css/*.css", "js/*.mjs"]
+"picoforge.web" = ["index.html", "console.html", "favicon.svg", "css/*.css", "js/*.mjs"]
 "picoforge.wireless_ui" = ["wireless-form.mjs"]

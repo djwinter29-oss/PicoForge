@@ -10,6 +10,10 @@ public sealed class SharedDashboardAssetsTests
     [InlineData("css/dashboard.css")]
     [InlineData("js/app.mjs")]
     [InlineData("js/dashboard.mjs")]
+    [InlineData("console.html")]
+    [InlineData("css/console.css")]
+    [InlineData("js/console.mjs")]
+    [InlineData("js/console-terminal.mjs")]
     public void OutputContainsCurrentSharedDashboardAsset(string relativePath)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -266,10 +266,13 @@ test("USB wireless payloads preserve omitted secrets and reject malformed creden
   assert.equal(decoded.password, undefined);
   assert.equal(decoded.ble_key, undefined);
   assert.equal(decoded.ble_state, "off");
+  assert.equal(decoded.tcp_cli_started, false);
   bytes[45] = 2;
   assert.equal(decodeWireless(bytes).ble_state, "connected");
   bytes[45] = 0;
-  for (const [offset, value] of [[0, 2], [1, 4], [2, 7], [4, 4], [42, 2], [44, 4], [45, 3], [46, 1], [47, 1]]) {
+  bytes[46] = 1;
+  assert.equal(decodeWireless(bytes).tcp_cli_started, true);
+  for (const [offset, value] of [[0, 2], [1, 4], [2, 7], [4, 4], [42, 2], [44, 4], [45, 3], [46, 2], [47, 1]]) {
     const bad = bytes.slice(); bad[offset] = value;
     assert.throws(() => decodeWireless(bad));
   }
