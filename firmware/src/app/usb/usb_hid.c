@@ -657,7 +657,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
     if (instance == 0u && report_id == PF_WIRELESS_COMMAND_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
         buffer != NULL && bufsize == PF_WIRELESS_COMMAND_SIZE) {
         if (force_save_pending || force_save_reboot_waiting || reboot_requested)
-            pf_wireless_reject_command(buffer[2]);
+            pf_wireless_reject_command(buffer[PF_WIRELESS_COMMAND_TRANSACTION_OFFSET]);
         else pf_wireless_command(buffer);
         return;
     }

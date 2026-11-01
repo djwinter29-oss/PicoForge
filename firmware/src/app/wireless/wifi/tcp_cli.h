@@ -20,6 +20,15 @@
  */
 bool pf_tcp_cli_start(void);
 
+/**
+ * @brief Allow or refuse TCP clients; refusing also closes the current client with a notice.
+ * @param enabled True while the station is up on the saved network; false on a test network or without a link.
+ */
+void pf_tcp_cli_set_serving(bool enabled);
+
+/** @brief Report whether the listener is running and currently accepts clients. */
+bool pf_tcp_cli_serving(void);
+
 /** @brief Report whether a client connection is currently open. */
 bool pf_tcp_cli_connected(void);
 

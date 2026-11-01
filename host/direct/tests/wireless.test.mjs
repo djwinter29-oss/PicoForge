@@ -234,6 +234,8 @@ test("wireless scan/test command and result reports have consistent bounded layo
   failed.set([1, 7, 6, 5]);
   assert.deepEqual([decodeWirelessResult(failed).detail, decodeWirelessResult(failed).phase], [5, "Password rejected"]);
   failed[3] = 8;
+  assert.equal(decodeWirelessResult(failed).phase, "Could not start connection");
+  failed[3] = 9;
   assert.throws(() => decodeWirelessResult(failed));
   report[4] = 19;
   assert.throws(() => decodeWirelessResult(report));

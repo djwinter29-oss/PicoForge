@@ -250,6 +250,13 @@ bool pf_boot_config_set_wifi_password(const char *password)
     return true;
 }
 
+/** @copydoc pf_boot_config_wifi_password_configured */
+bool pf_boot_config_wifi_password_configured(void)
+{
+    ensure_loaded();
+    return wireless.settings.password[0] != '\0';
+}
+
 /** @copydoc pf_boot_config_ble_key */
 void pf_boot_config_ble_key(uint8_t key[32])
 {
@@ -264,6 +271,15 @@ bool pf_boot_config_set_ble_key(const uint8_t key[32])
     if (!loaded || key == NULL) return false;
     memcpy(wireless.settings.ble_key, key, sizeof(wireless.settings.ble_key));
     return true;
+}
+
+/** @copydoc pf_boot_config_ble_key_configured */
+bool pf_boot_config_ble_key_configured(void)
+{
+    ensure_loaded();
+    uint8_t bits = 0u;
+    for (size_t i = 0u; i < sizeof(wireless.settings.ble_key); ++i) bits |= wireless.settings.ble_key[i];
+    return bits != 0u;
 }
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void)

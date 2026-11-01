@@ -40,7 +40,7 @@ static int clock = -1, speed = -1, radios = -1;
 static char ssid[33], saved_password[64];
 static bool storage_busy;
 static bool staged_test;
-static unsigned cleared_tests, enabled_sta;
+static unsigned cleared_tests;
 static unsigned chip_inits;
 static int chip_init_result;
 static bool wifi_prepared;
@@ -63,19 +63,27 @@ void pf_boot_config_discard(void) {
 uint8_t pf_boot_config_radios(void) { return radios < 0 ? 0u : (uint8_t)radios; }
 void pf_boot_config_wifi_ssid(char out[33]) { strcpy(out, ssid); }
 void pf_boot_config_wifi_password(char out[64]) { strcpy(out, saved_password); }
-void pf_boot_config_ble_key(uint8_t out[32]) { memset(out, 0, 32); }
+bool pf_boot_config_wifi_password_configured(void) { return saved_password[0] != 0; }
+bool pf_boot_config_ble_key_configured(void) { return false; }
 bool pf_usb_msc_is_enabled(void) { return false; }
 bool pf_usb_msc_transition_pending(void) { return false; }
 bool pf_storage_worker_busy(void) { return storage_busy; }
 bool pf_wifi_prepare(void) { return wifi_prepared; }
-void pf_wifi_start(uint8_t *error) { (void)error; ++wifi_starts; }
+void pf_wifi_start(void) { ++wifi_starts; }
 bool pf_tcp_cli_start(void) { ++tcp_cli_starts; return true; }
-void pf_wifi_poll(uint8_t *error) { (void)error; }
+static bool saved_link_up = true, tcp_serving_set;
+bool pf_tcp_cli_serving(void) { return tcp_cli_starts != 0u && tcp_serving_set; }
+void pf_tcp_cli_set_serving(bool enabled) { tcp_serving_set = enabled; }
+bool pf_wifi_saved_link_up(void) { return saved_link_up; }
+static uint8_t wifi_error;
+static bool ble_prepared, ble_start_result;
+void pf_wifi_poll(void) {}
+uint8_t pf_wifi_error(void) { return wifi_error; }
 uint8_t pf_wifi_state(void) { return 0; }
 void pf_wifi_ip_address(uint8_t address[4]) { (void)address; }
-void pf_wifi_enable(void) { ++enabled_sta; }
-bool pf_wifi_command(const uint8_t report[101]) { (void)report; return true; }
-void pf_wifi_reject_command(uint8_t transaction) { (void)transaction; }
+static unsigned wifi_commands, wifi_rejects;
+bool pf_wifi_command(const uint8_t report[101]) { ++wifi_commands; return report[0] == 1u; }
+void pf_wifi_reject_command(uint8_t transaction) { assert(transaction != 0u); ++wifi_rejects; }
 void pf_wifi_result(uint8_t report[220]) { memset(report, 0, 220); }
 bool pf_wifi_tested_credentials(char out_ssid[33], char out_password[64]) {
     if (!staged_test) return false;
@@ -84,8 +92,8 @@ bool pf_wifi_tested_credentials(char out_ssid[33], char out_password[64]) {
     return true;
 }
 void pf_wifi_clear_tested_credentials(void) { staged_test = false; ++cleared_tests; }
-bool pf_bluetooth_prepare(void) { return false; }
-bool pf_bluetooth_start(void) { return false; }
+bool pf_bluetooth_prepare(void) { return ble_prepared; }
+bool pf_bluetooth_start(void) { return ble_start_result; }
 uint8_t pf_bluetooth_state(void) { return 2; }
 int cyw43_arch_init(void) { ++chip_inits; return chip_init_result; }
 void cyw43_arch_poll(void) {}
@@ -111,7 +119,7 @@ int main(void)
     assert(chip_inits == 1 && !pf_wireless_led_put(true) && led_level == -1);
     chip_init_result = 0;
     pf_wireless_start();
-    assert(chip_inits == 2 && enabled_sta == 0 && led_level == 0);
+    assert(chip_inits == 2 && led_level == 0);
     assert(wifi_starts == 0 && tcp_cli_starts == 0);
     pf_wireless_status(status);
     assert(status[46] == 0);
@@ -150,14 +158,48 @@ int main(void)
 
     uint8_t command[PF_WIRELESS_COMMAND_SIZE] = {1, 1, 9};
     pf_wireless_command(command);
-    assert(enabled_sta == 1);
+    assert(wifi_commands == 1 && wifi_rejects == 0);
+    command[0] = 2;
+    pf_wireless_command(command);
+    assert(wifi_commands == 2 && wifi_rejects == 1);
+    storage_busy = true;
+    pf_wireless_command(command);
+    assert(wifi_commands == 2 && wifi_rejects == 2);
+    storage_busy = false;
+    command[2] = 0;
+    pf_wireless_command(command);
+    assert(wifi_commands == 2 && wifi_rejects == 2);
     uint8_t result[PF_WIRELESS_RESULT_SIZE];
     pf_wireless_result_report(result);
     wifi_prepared = true;
     pf_wireless_start();
     assert(chip_inits == 2 && wifi_starts == 1 && tcp_cli_starts == 1);
+    /* The TCP CLI serves, and status reports it, only while the saved network is up. */
+    pf_wireless_poll();
     pf_wireless_status(status);
-    assert(status[46] == 1);
+    assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 1);
+    saved_link_up = false;
+    pf_wireless_poll();
+    pf_wireless_status(status);
+    assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0);
+    saved_link_up = true;
+    pf_wireless_poll();
+
+    /* Wi-Fi owns its error; a BLE start failure stays visible after Wi-Fi recovers. */
+    wifi_error = PF_WIRELESS_ERROR_TIMEOUT;
+    pf_wireless_status(status);
+    assert(status[PF_WIRELESS_STATUS_ERROR_OFFSET] == PF_WIRELESS_ERROR_TIMEOUT);
+    ble_prepared = true;
+    pf_wireless_start();
+    wifi_error = PF_WIRELESS_ERROR_NONE;
+    pf_wireless_poll();
+    pf_wireless_status(status);
+    assert(status[PF_WIRELESS_STATUS_ERROR_OFFSET] == PF_WIRELESS_ERROR_INIT);
+
+    /* Status never needs the secret values, only whether they are configured. */
+    strcpy(saved_password, "configured");
+    pf_wireless_status(status);
+    assert(status[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] == 1 && strcmp((char *)status + 9, "network") == 0);
     return 0;
 }
 """)

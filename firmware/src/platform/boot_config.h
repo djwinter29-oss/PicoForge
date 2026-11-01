@@ -43,6 +43,8 @@ void pf_boot_config_wifi_password(char password[64]);
  * @return false for an invalid passphrase or when first-use loading is unsafe.
  */
 bool pf_boot_config_set_wifi_password(const char *password);
+/** @brief Return whether a Wi-Fi passphrase is configured, without copying it. */
+bool pf_boot_config_wifi_password_configured(void);
 /**
  * @brief Copy the saved private BLE HMAC-SHA256 key; never expose it in a host report.
  * @param key Output buffer of at least 32 bytes.
@@ -54,6 +56,8 @@ void pf_boot_config_ble_key(uint8_t key[32]);
  * @return false when the pointer is null or first-use loading is unsafe.
  */
 bool pf_boot_config_set_ble_key(const uint8_t key[32]);
+/** @brief Return whether a nonzero BLE control key is configured, without copying it. */
+bool pf_boot_config_ble_key_configured(void);
 
 /** @brief Return the PF_WIRELESS_* radios allowed to start at boot; both by default, independent of credentials. */
 uint8_t pf_boot_config_radios(void);

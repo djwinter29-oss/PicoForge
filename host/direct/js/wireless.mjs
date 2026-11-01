@@ -51,13 +51,14 @@ export function buildWirelessCommand(transaction, operation, settings = {}) {
 
 /** Feature 35 byte 3 while testing (states 4..6): join phase or failure reason. */
 export const WIRELESS_TEST_DETAILS = ["", "Searching for network", "Checking password", "Waiting for IP address",
-  "Network not found", "Password rejected", "Connected but no IP address from DHCP", "Timed out"];
+  "Network not found", "Password rejected", "Connected but no IP address from DHCP", "Timed out",
+  "Could not start connection"];
 
 export function decodeWirelessResult(report) {
   const bytes = report instanceof DataView
     ? new Uint8Array(report.buffer, report.byteOffset, report.byteLength) : report;
   if (!(bytes instanceof Uint8Array) || bytes.length !== 220 || bytes[0] !== 1 || bytes[2] > 6
-    || bytes[3] > (bytes[2] >= 4 ? 7 : 2) || bytes[4] > 18 || bytes[5] > 3) {
+    || bytes[3] > (bytes[2] >= 4 ? WIRELESS_TEST_DETAILS.length - 1 : 2) || bytes[4] > 18 || bytes[5] > 3) {
     throw new Error("Invalid wireless scan/test result");
   }
   const results = [];

@@ -173,7 +173,7 @@ so Tab completion and history keys do not work. Save the settings as a named ses
 `nc <board IP> 2323` also works after `stty raw -echo` in the local terminal.
 
 In the Python and .NET dashboards, the connected **SSID (IP)** label in Live diagnostics becomes a link when the
-firmware reports that the TCP CLI listener has started. Clicking it opens a separate web console tab and connects
+firmware reports that the TCP CLI is serving. Clicking it opens a separate web console tab and connects
 automatically. Type in the terminal; there is no local echo. Use **Disconnect** to release it or **Connect** to
 reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser request.
 The local host relays bounded raw bytes over TCP, using same-origin HTTP polling between browser and host; browsers

@@ -127,8 +127,10 @@ class WirelessTests(unittest.TestCase):
                 parse_wireless_result_report(malformed)
         joining = parse_wireless_result_report(operation_result(4, page=2))
         self.assertEqual((joining["detail"], joining["phase"], joining["page"]), (2, "Checking password", 0))
+        start_failed = parse_wireless_result_report(operation_result(6, page=8))
+        self.assertEqual(start_failed["phase"], "Could not start connection")
         with self.assertRaises(ValueError):
-            parse_wireless_result_report(operation_result(6, page=8))
+            parse_wireless_result_report(operation_result(6, page=9))
 
     def test_wireless_command_terminal_failure_is_known_but_delivery_failure_blocks_replay(self):
         client = self.client([])

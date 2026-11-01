@@ -35,12 +35,21 @@ typedef enum {
     PF_WIRELESS_STATUS_BLE_KEY_CONFIGURED_OFFSET = 43u, /**< Whether a BLE key is configured. */
     PF_WIRELESS_STATUS_ERROR_OFFSET = 44u, /**< Last wireless error code. */
     PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET = 45u, /**< Bluetooth connection state. */
-    PF_WIRELESS_STATUS_TCP_CLI_OFFSET = 46u, /**< Whether the TCP CLI is active. */
+    PF_WIRELESS_STATUS_TCP_CLI_OFFSET = 46u, /**< Whether the TCP CLI accepts clients on the saved network. */
 } pf_wireless_status_offset_t;
+/** @brief Feature 30 byte 44 error codes; an initialization failure takes precedence over Wi-Fi errors. */
+typedef enum {
+    PF_WIRELESS_ERROR_NONE = 0, /**< No error. */
+    PF_WIRELESS_ERROR_INIT = 1, /**< SDK radio or BLE initialization failed. */
+    PF_WIRELESS_ERROR_JOIN = 2, /**< Wi-Fi join failed or was refused by the network. */
+    PF_WIRELESS_ERROR_TIMEOUT = 3, /**< Wi-Fi association or DHCP timed out. */
+} pf_wireless_error_t;
 /** Private USB configuration payload size. */
 #define PF_WIRELESS_REQUEST_SIZE 136u
 /** Scan/test command payload size. */
 #define PF_WIRELESS_COMMAND_SIZE 101u
+/** Byte offset of the nonzero host transaction in the scan/test command payload. */
+#define PF_WIRELESS_COMMAND_TRANSACTION_OFFSET 2u
 /** Scan/test result payload size, including six paged AP results. */
 #define PF_WIRELESS_RESULT_SIZE 220u
 

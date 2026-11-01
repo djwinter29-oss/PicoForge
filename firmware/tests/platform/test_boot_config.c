@@ -399,12 +399,16 @@ void test_individual_wireless_setters_validate_and_clear_values(void)
     TEST_ASSERT_TRUE(pf_boot_config_set_wifi_password(password));
     password[0] = '\x01';
     TEST_ASSERT_FALSE(pf_boot_config_set_wifi_password(password));
+    TEST_ASSERT_TRUE(pf_boot_config_wifi_password_configured());
     strcpy(password, "");
     TEST_ASSERT_TRUE(pf_boot_config_set_wifi_password(password));
-    key[0] = 1u;
+    TEST_ASSERT_FALSE(pf_boot_config_wifi_password_configured());
+    key[31] = 1u;
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
+    TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
     memset(key, 0, sizeof(key));
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
+    TEST_ASSERT_FALSE(pf_boot_config_ble_key_configured());
 
     const char *invalid_ssids[] = {"\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82", "\xff"};
     for (unsigned i = 0u; i < sizeof(invalid_ssids) / sizeof(invalid_ssids[0]); ++i) {

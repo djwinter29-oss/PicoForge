@@ -51,9 +51,11 @@ reports the saved radio switches; its separate booleans indicate whether credent
 - Feature **30 GET**, 48 payload bytes: version at 0, saved radio-switch flags at 1 (Wi-Fi bit 0, BLE bit 1), last
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4
   (disabled/connecting/connected/failed = 0/1/2/3), IPv4 bytes at 5-8, NUL-terminated SSID at 9-41,
-  password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3), BLE link at 45
-  (off/advertising/connected = 0/1/2; off until the controller is working), TCP CLI listener-started boolean
-  at 46 (zero on older firmware), zero at 47. Older hosts that reject reserved byte 46 must be updated
+  password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3; a radio init failure
+  takes precedence over Wi-Fi join errors until a later start succeeds), BLE link at 45
+  (off/advertising/connected = 0/1/2; off until the controller is working), TCP CLI serving boolean
+  at 46 (listener started and the saved network joined; zero during a connection test, without a link, and on older
+  firmware), zero at 47. Older hosts that reject reserved byte 46 must be updated
   alongside firmware that starts the TCP listener.
 - Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
   bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
@@ -64,13 +66,17 @@ reports the saved radio switches; its separate booleans indicate whether credent
 - Feature **34 SET**, 101 payload bytes: version `1` at 0, operation at 1 (scan `1`, select page `2`, test join
   `3`, clear staged test `4`), nonzero transaction at 2, page at 3, SSID/password byte lengths at 4/5, SSID bytes
   at 6-37 and temporary password at 38-100. Unused fields are zero. Password data is never returned.
+  Clear leaves the station link and rejoins the saved network only when a test owns the link; otherwise the saved
+  connection is untouched. New scans and tests are rejected while a driver scan is still running.
 - Feature **35 GET**, 220 payload bytes: version, transaction, operation state, page/detail, total scan count and
   Wi-Fi state at offsets 0-5. Byte 3 is the selected page (0-2) in scan states and the test detail in states 4-6:
   none `0`, searching `1`, checking password `2`, waiting for DHCP `3`, network not found `4`, password rejected
-  `5`, no DHCP address `6`, timed out `7`. Six entries of 35 bytes each start at 6: SSID length, a 32-byte SSID,
-  signed RSSI and secured flag. Bytes 216-219 contain the IPv4 address only after a successful test join.
-  Operation states are idle `0`, scanning `1`, scan complete `2`, scan failed `3`, joining `4`, joined `5`, and
-  failed `6`. The scan list is capped at 18 strongest unique SSIDs (three pages).
+  `5`, no DHCP address `6`, timed out `7`, connection start failed `8`. Six entries of 35 bytes each start at 6:
+  SSID length, a 32-byte SSID, signed RSSI and secured flag. Bytes 216-219 contain the IPv4 address only after a
+  successful test join. Operation states are idle `0`, scanning `1`, scan complete `2`, scan failed `3`, joining
+  `4`, joined `5`, and failed `6`. The scan list is capped at 18 strongest unique SSIDs (three pages). A scan that
+  does not complete within 10 seconds reports scan failed. If the tested link drops, joined returns to idle; the
+  tested credentials stay staged for **Save&Reboot**.
 - Native-host `GET /api/wireless` returns `{wireless, reboot_pending}` with sanitized fields. Confirmed
   `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled` (credential intent), `ssid`, optional `password`,
   optional 64-hex-digit `ble_key`, required `board` (the `/api/settings` clock, profile and radios object) and
@@ -86,7 +92,8 @@ reports the saved radio switches; its separate booleans indicate whether credent
 
 Service UUID: `50fc0000-7c91-4d70-8b32-6e856443f501`. Characteristic UUIDs use the same suffix and replace
 `0000` with the hexadecimal report ID: `0001`, `0002`, `0003`, `000a`, `000b`, `0014`, `001e`.
-Reads return the corresponding payload without a HID report ID. Characteristics use ATT long reads where needed;
+Reads return the corresponding payload without a HID report ID; `001e` zeroes the IPv4 address and SSID (bytes
+5-41) because BLE diagnostics are unauthenticated. Characteristics use ATT long reads where needed;
 the first read freezes the value for subsequent read-blob offsets. Report `0014` has the BLE-specific command
 result; writes accept only existing opcode 1 (LED) or 4 (benchmark). Reports are polled; no notification MTU
 assumption is needed.

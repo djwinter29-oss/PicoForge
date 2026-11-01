@@ -112,6 +112,10 @@ public sealed class WirelessTests
         Assert.DoesNotContain("secret12", JsonSerializer.Serialize(decoded));
         result[41] = 2;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(result));
+        Assert.Equal("Could not start connection",
+            HidProtocol.ParseWirelessOperation(OperationResult(state: 6, detail: 8)).Phase);
+        Assert.Throws<InvalidOperationException>(
+            () => HidProtocol.ParseWirelessOperation(OperationResult(state: 6, detail: 9)));
     }
 
     [Theory]
@@ -244,7 +248,7 @@ public sealed class WirelessTests
         var phases = new List<string>();
         Assert.Equal(5, hid.TestWireless("Pico網", "secret12", () => polls++, phases.Add).State);
         Assert.Equal(["Checking password"], phases);
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(OperationResult(6, 1, 8)));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(OperationResult(6, 1, 9)));
         Assert.Equal(2, polls);
         Assert.Equal(1, writes);
         Assert.False(hid.CommandOutcomeUncertain);

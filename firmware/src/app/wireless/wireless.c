@@ -21,10 +21,31 @@
 static bool wifi_enabled; /**< Wi-Fi master switch and credentials allow startup. */
 static bool ble_enabled; /**< BLE master switch allows advertising; a key is required only for control. */
 static bool started; /**< Shared SDK context initialized successfully. */
-static bool tcp_cli_started; /**< Raw TCP CLI listener was successfully started. */
-static uint8_t error_code; /**< 0 none, 1 initialization, 2 join failure, 3 connection timeout. */
+static uint8_t init_error; /**< Sticky pf_wireless_error_t for SDK or BLE initialization failure. */
 static uint8_t save_status; /**< Last provisioning result, using Feature 20 status values. */
 static uint8_t save_transaction; /**< Last USB provisioning transaction ID. */
+
+/** @brief Feature 31 configuration request byte offsets and flags. */
+enum {
+    REQUEST_VERSION = 0, /**< Payload version, always 2. */
+    REQUEST_TRANSACTION = 1, /**< Nonzero host transaction. */
+    REQUEST_RADIOS = 2, /**< PF_WIRELESS_* radio switches. */
+    REQUEST_FLAGS = 3, /**< REQUEST_KEEP_* and REQUEST_USE_TESTED bits. */
+    REQUEST_SSID = 4, /**< 33-byte NUL-terminated SSID. */
+    REQUEST_PASSWORD = 37, /**< 64-byte NUL-terminated passphrase. */
+    REQUEST_KEY = 101, /**< 32-byte BLE key. */
+    REQUEST_CLOCK_MHZ = 133, /**< Little-endian system clock in MHz. */
+    REQUEST_STORAGE_SPEED = 135, /**< pf_storage_speed_t. */
+    REQUEST_KEEP_PASSWORD = 1, /**< Keep the saved passphrase. */
+    REQUEST_KEEP_KEY = 2, /**< Keep the saved BLE key. */
+    REQUEST_USE_TESTED = 4, /**< Save the staged tested credentials. */
+};
+
+/** @brief Return whether USB mass storage or the storage worker owns the shared flash/radio admission. */
+static bool storage_busy(void)
+{
+    return pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy();
+}
 
 /** @brief Initialize the shared SDK once, always on the USB owner task/core. */
 static bool ensure_started(void)
@@ -33,11 +54,12 @@ static bool ensure_started(void)
     vTaskCoreAffinitySet(NULL, (UBaseType_t)1u << get_core_num());
     int rc = cyw43_arch_init();
     if (rc != 0) {
-        error_code = 1u;
+        init_error = PF_WIRELESS_ERROR_INIT;
         PF_LOGGING_ERROR("wireless", "SDK radio initialization failed: %d", rc);
         return false;
     }
     started = true;
+    init_error = PF_WIRELESS_ERROR_NONE;
     return true;
 }
 
@@ -58,10 +80,10 @@ void pf_wireless_start(void)
     if (!ensure_started()) return;
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
     if (wifi_enabled) {
-        pf_wifi_start(&error_code);
-        tcp_cli_started = pf_tcp_cli_start();
+        pf_wifi_start();
+        (void)pf_tcp_cli_start();
     }
-    if (ble_enabled && !pf_bluetooth_start()) error_code = 1u;
+    if (ble_enabled && !pf_bluetooth_start()) init_error = PF_WIRELESS_ERROR_INIT;
 }
 
 /** @copydoc pf_wireless_poll */
@@ -69,62 +91,42 @@ void pf_wireless_poll(void)
 {
     if (!started) return;
     cyw43_arch_poll();
-    pf_wifi_poll(&error_code);
+    pf_wifi_poll();
+    /* The unauthenticated TCP CLI serves only the saved network, never a test network or a lost link. */
+    pf_tcp_cli_set_serving(pf_wifi_saved_link_up());
 }
 
 /** @copydoc pf_wireless_status */
 void pf_wireless_status(uint8_t *report)
 {
-    char saved_ssid[33];
-    char saved_password[64];
-    uint8_t saved_key[32];
-    pf_boot_config_wifi_ssid(saved_ssid);
-    pf_boot_config_wifi_password(saved_password);
-    pf_boot_config_ble_key(saved_key);
     memset(report, 0, PF_WIRELESS_STATUS_SIZE);
     report[PF_WIRELESS_STATUS_VERSION_OFFSET] = 1u;
     report[PF_WIRELESS_STATUS_RADIOS_OFFSET] = pf_boot_config_radios() & (PF_WIRELESS_WIFI | PF_WIRELESS_BLE);
-    uint8_t key_bits = 0u;
-    for (size_t i = 0u; i < sizeof(saved_key); ++i) key_bits |= saved_key[i];
     report[PF_WIRELESS_STATUS_SAVE_STATUS_OFFSET] = save_status;
     report[PF_WIRELESS_STATUS_SAVE_TRANSACTION_OFFSET] = save_transaction;
-    report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] = !started && wifi_enabled ? 3u : pf_wifi_state();
-    if (started && report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] == 2u) {
+    const uint8_t wifi_state = !started && wifi_enabled ? PF_WIFI_STATE_FAILED : pf_wifi_state();
+    report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] = wifi_state;
+    if (started && wifi_state == PF_WIFI_STATE_CONNECTED) {
         pf_wifi_ip_address(report + PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET);
     }
-    memcpy(report + PF_WIRELESS_STATUS_SSID_OFFSET, saved_ssid, sizeof(saved_ssid));
-    report[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] = saved_password[0] != '\0';
-    report[PF_WIRELESS_STATUS_BLE_KEY_CONFIGURED_OFFSET] = key_bits != 0u;
-    report[PF_WIRELESS_STATUS_ERROR_OFFSET] = error_code;
+    pf_boot_config_wifi_ssid((char *)report + PF_WIRELESS_STATUS_SSID_OFFSET);
+    report[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] = pf_boot_config_wifi_password_configured();
+    report[PF_WIRELESS_STATUS_BLE_KEY_CONFIGURED_OFFSET] = pf_boot_config_ble_key_configured();
+    report[PF_WIRELESS_STATUS_ERROR_OFFSET] = init_error != PF_WIRELESS_ERROR_NONE ? init_error : pf_wifi_error();
     report[PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET] = started && ble_enabled ? pf_bluetooth_state() : 0u;
-    report[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] = tcp_cli_started;
-    memset(saved_ssid, 0, sizeof(saved_ssid));
-    memset(saved_password, 0, sizeof(saved_password));
-    memset(saved_key, 0, sizeof(saved_key));
+    report[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] = pf_tcp_cli_serving();
 }
 
 /** @copydoc pf_wireless_command */
 void pf_wireless_command(const uint8_t *report)
 {
-    if (report[2] == 0u) return;
-    if (report[0] != 1u || report[1] < 1u || report[1] > 4u) {
-        pf_wifi_reject_command(report[2]);
+    const uint8_t transaction = report[PF_WIRELESS_COMMAND_TRANSACTION_OFFSET];
+    if (transaction == 0u) return;
+    if (storage_busy() || !ensure_started()) {
+        pf_wifi_reject_command(transaction);
         return;
     }
-    if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
-        pf_wifi_reject_command(report[2]);
-        return;
-    }
-    if (report[1] == 2u && !started) {
-        pf_wifi_reject_command(report[2]);
-        return;
-    }
-    if (!ensure_started()) {
-        pf_wifi_reject_command(report[2]);
-        return;
-    }
-    pf_wifi_enable();
-    if (!pf_wifi_command(report)) pf_wifi_reject_command(report[2]);
+    if (!pf_wifi_command(report)) pf_wifi_reject_command(transaction);
 }
 
 /** @copydoc pf_wireless_reject_command */
@@ -142,47 +144,51 @@ void pf_wireless_result_report(uint8_t *report)
 /** @copydoc pf_wireless_configure */
 bool pf_wireless_configure(const uint8_t *report)
 {
-    save_transaction = report[1];
+    const uint8_t flags = report[REQUEST_FLAGS];
+    const bool keep_password = (flags & REQUEST_KEEP_PASSWORD) != 0u;
+    const bool keep_key = (flags & REQUEST_KEEP_KEY) != 0u;
+    const bool use_tested = (flags & REQUEST_USE_TESTED) != 0u;
+    save_transaction = report[REQUEST_TRANSACTION];
     save_status = PF_HID_COMMAND_INVALID;
-    if (report[0] != 2u || report[1] == 0u || (report[3] & ~7u) != 0u) return false;
-    if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy()) {
+    if (report[REQUEST_VERSION] != 2u || save_transaction == 0u ||
+        (flags & ~(REQUEST_KEEP_PASSWORD | REQUEST_KEEP_KEY | REQUEST_USE_TESTED)) != 0u) return false;
+    if (storage_busy()) {
         save_status = PF_HID_COMMAND_BUSY;
+        return false;
+    }
+    /* Tested credentials come only from RAM: the request names the SSID and must not carry a password. */
+    if (use_tested && (keep_password || memcmp(report + REQUEST_PASSWORD, (uint8_t[64]){0}, 64u) != 0)) {
+        return false;
+    }
+    char tested_ssid[33] = {0};
+    char tested_password[64] = {0};
+    if (use_tested && (!pf_wifi_tested_credentials(tested_ssid, tested_password) ||
+                       memcmp(tested_ssid, report + REQUEST_SSID, sizeof(tested_ssid)) != 0)) {
+        memset(tested_ssid, 0, sizeof(tested_ssid));
+        memset(tested_password, 0, sizeof(tested_password));
         return false;
     }
     char next_ssid[33];
     char next_password[64];
     uint8_t next_key[32];
-    char tested_ssid[33] = {0};
-    char tested_password[64] = {0};
-    const bool use_tested = (report[3] & 4u) != 0u;
-    if (use_tested && ((report[3] & 1u) != 0u || memcmp(report + 37u, (uint8_t[64]){0}, 64u) != 0)) {
-        return false;
-    }
-    const bool tested_available = !use_tested || pf_wifi_tested_credentials(tested_ssid, tested_password);
-    if (use_tested && (!tested_available || memcmp(tested_ssid, report + 4u, sizeof(tested_ssid)) != 0)) {
-        memset(tested_ssid, 0, sizeof(tested_ssid));
-        memset(tested_password, 0, sizeof(tested_password));
-        return false;
-    }
-    if (use_tested) memcpy(next_ssid, tested_ssid, sizeof(next_ssid));
-    else memcpy(next_ssid, report + 4u, sizeof(next_ssid));
-    memcpy(next_password, report + 37u, sizeof(next_password));
-    memcpy(next_key, report + 101u, sizeof(next_key));
-    const uint16_t clock_mhz = (uint16_t)(report[133] | (uint16_t)report[134] << 8u);
-    bool valid = pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(clock_mhz)) &&
-        pf_boot_config_set_storage_speed((pf_storage_speed_t)report[135]) &&
-        pf_boot_config_set_radios(report[2]) &&
+    memcpy(next_ssid, report + REQUEST_SSID, sizeof(next_ssid));
+    if (use_tested) memcpy(next_password, tested_password, sizeof(next_password));
+    else memcpy(next_password, report + REQUEST_PASSWORD, sizeof(next_password));
+    memcpy(next_key, report + REQUEST_KEY, sizeof(next_key));
+    const uint16_t clock_mhz = (uint16_t)(report[REQUEST_CLOCK_MHZ] | (uint16_t)report[REQUEST_CLOCK_MHZ + 1] << 8u);
+    const bool valid = pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(clock_mhz)) &&
+        pf_boot_config_set_storage_speed((pf_storage_speed_t)report[REQUEST_STORAGE_SPEED]) &&
+        pf_boot_config_set_radios(report[REQUEST_RADIOS]) &&
         pf_boot_config_set_wifi_ssid(next_ssid) &&
-        ((report[3] & 1u) || (use_tested
-            ? pf_boot_config_set_wifi_password(tested_password)
-            : pf_boot_config_set_wifi_password(next_password))) &&
-        ((report[3] & 2u) || pf_boot_config_set_ble_key(next_key));
+        (keep_password || pf_boot_config_set_wifi_password(next_password)) &&
+        (keep_key || pf_boot_config_set_ble_key(next_key));
     if (!valid) {
         pf_boot_config_discard();
         save_status = PF_HID_COMMAND_INVALID;
         PF_LOGGING_ERROR("wireless", "Wireless configuration invalid");
-    } else if (pf_boot_config_save()) save_status = PF_HID_COMMAND_COMPLETED;
-    else {
+    } else if (pf_boot_config_save()) {
+        save_status = PF_HID_COMMAND_COMPLETED;
+    } else {
         save_status = PF_HID_COMMAND_FAILED;
         PF_LOGGING_ERROR("wireless", "Wireless configuration save unconfirmed");
     }

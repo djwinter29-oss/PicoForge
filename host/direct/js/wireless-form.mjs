@@ -23,9 +23,12 @@ export function renderWirelessStatus(snapshot) {
     } else status.textContent = label;
     status.title = snapshot.wireless_error ?? "";
   };
-  render("wifi", () => !wireless.wifi_enabled || !wireless.ssid ? "Disabled"
-    : `${wireless.ssid} (${wireless.wifi_state === "connected" ? wireless.ipv4
-      : wireless.wifi_state === "connecting" ? "connecting" : "disconnected"})`);
+  // BLE status omits SSID and IP, so Bluetooth shows only the link state.
+  const bluetooth = snapshot.transport === "ble";
+  render("wifi", () => !wireless.wifi_enabled || (!bluetooth && !wireless.ssid) ? "Disabled"
+    : wireless.wifi_state === "connected" ? (bluetooth ? "Connected" : `${wireless.ssid} (${wireless.ipv4})`)
+      : `${bluetooth ? "Wi-Fi" : wireless.ssid} (${wireless.wifi_state === "connecting" ? "connecting"
+        : "disconnected"})`);
   render("ble", () => {
     if (!wireless.ble_enabled) return "Disabled";
     const name = snapshot.hardware?.serial_number ? `PicoForge-${snapshot.hardware.serial_number}` : "PicoForge";

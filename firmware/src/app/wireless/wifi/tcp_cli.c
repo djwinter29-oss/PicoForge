@@ -11,12 +11,15 @@
 
 /** Final line sent to an extra client before it is closed. */
 #define TCP_CLI_BUSY_NOTICE "PicoForge CLI busy: another TCP session is active.\r\n"
+/** Final line sent when the CLI stops serving TCP because the saved Wi-Fi link is down or replaced by a test. */
+#define TCP_CLI_UNAVAILABLE_NOTICE "PicoForge CLI unavailable: saved Wi-Fi link is not active.\r\n"
 #define TCP_CLI_KEEPALIVE_IDLE_MS 30000u /**< Idle time before the first keepalive probe. */
 #define TCP_CLI_KEEPALIVE_INTERVAL_MS 5000u /**< Time between unanswered keepalive probes. */
 #define TCP_CLI_KEEPALIVE_COUNT 4u /**< Unanswered probes before lwIP drops a vanished client. */
 
 static struct tcp_pcb *listener; /**< Listening PCB, or NULL when the listener is not running. */
 static struct tcp_pcb *client; /**< Connected client PCB; NULL when idle or after lwIP freed it on error. */
+static bool serving = true; /**< False turns every client away; set by the wireless owner from the link state. */
 /**
  * Received bytes not yet read by the CLI. Bytes are acknowledged to the window only after they are read, so the
  * peer can never have more than TCP_WND unread bytes outstanding and every accepted segment fits.
@@ -107,8 +110,8 @@ static err_t accept_client(void *argument, struct tcp_pcb *pcb, err_t error)
     if (error != ERR_OK || pcb == NULL) {
         return ERR_VAL;
     }
-    if (client != NULL) {
-        return close_with_notice(pcb, TCP_CLI_BUSY_NOTICE) ? ERR_ABRT : ERR_OK;
+    if (!serving || client != NULL) {
+        return close_with_notice(pcb, serving ? TCP_CLI_BUSY_NOTICE : TCP_CLI_UNAVAILABLE_NOTICE) ? ERR_ABRT : ERR_OK;
     }
     client = pcb;
     reset_input();
@@ -149,6 +152,19 @@ bool pf_tcp_cli_start(void)
     tcp_accept(listener, accept_client);
     PF_LOGGING_INFO("tcp-cli", "Listening on TCP port %u", (unsigned)PF_TCP_CLI_PORT);
     return true;
+}
+
+/** @copydoc pf_tcp_cli_set_serving */
+void pf_tcp_cli_set_serving(bool enabled)
+{
+    serving = enabled;
+    if (!enabled) pf_tcp_cli_close(TCP_CLI_UNAVAILABLE_NOTICE);
+}
+
+/** @copydoc pf_tcp_cli_serving */
+bool pf_tcp_cli_serving(void)
+{
+    return listener != NULL && serving;
 }
 
 /** @copydoc pf_tcp_cli_connected */

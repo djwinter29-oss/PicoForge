@@ -275,14 +275,15 @@ def build_wireless_command_report(
 #: Feature 35 byte 3 while testing (states 4..6): join phase or failure reason.
 WIRELESS_TEST_DETAILS = ("", "Searching for network", "Checking password", "Waiting for IP address",
                          "Network not found", "Password rejected", "Connected but no IP address from DHCP",
-                         "Timed out")
+                         "Timed out", "Could not start connection")
 
 
 def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> dict[str, object]:
     """Decode sanitized Feature 35 scan/test results; no password is returned."""
     payload = _feature_payload(report, WIRELESS_RESULT_REPORT_ID, WIRELESS_RESULT_FEATURE_SIZE - 1)
     state, page, count, wifi_state = payload[2:6]
-    if payload[0] != 1 or state > 6 or page > (7 if state >= 4 else 2) or count > 18 or wifi_state > 3:
+    max_page = len(WIRELESS_TEST_DETAILS) - 1 if state >= 4 else 2
+    if payload[0] != 1 or state > 6 or page > max_page or count > 18 or wifi_state > 3:
         raise ValueError("Invalid wireless scan/test result")
     networks = []
     for index in range(6):

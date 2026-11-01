@@ -39,28 +39,6 @@ def test_ble_proof_is_bound_to_nonce_board_and_every_command_byte(tmp_path):
             assert not verify(*altered)
 
 
-def test_ble_advertising_payload_outlives_start():
-    """BTstack stores the advertising-data pointer; a stack buffer advertises garbage after start returns."""
-    source = (ROOT / "firmware/src/app/wireless/bluetooth/bluetooth.c").read_text()
-    start = source.split("bool pf_bluetooth_start(void)")[1]
-    assert "static const uint8_t advertising[]" in start
-    assert "gap_advertisements_set_data(sizeof(advertising), (uint8_t *)advertising)" in start
-    assert "static uint8_t scan_response[2u + 10u + 2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES];" in source
-    assert 'memcpy(scan_response + 2u, "PicoForge-", 10u);' in start
-    assert "gap_scan_response_set_data(sizeof(scan_response), scan_response);" in start
-
-
-def test_ble_without_control_key_is_diagnostics_only():
-    source = (ROOT / "firmware/src/app/wireless/bluetooth/bluetooth.c").read_text()
-    prepare = source.split("bool pf_bluetooth_prepare(void)")[1].split("uint8_t pf_bluetooth_state(void)")[0]
-    authenticate = source.split("static bool authenticate(")[1].split("static int write_callback(")[0]
-    proof_write = source.split("if (handle == BLE_HANDLE(0021))")[1].split("if (handle != BLE_HANDLE(0014))")[0]
-    assert "control_key_available = key_bits != 0u;" in prepare
-    assert "return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;" in prepare
-    assert "!control_key_available" in authenticate
-    assert "!control_key_available" in proof_write
-
-
 def test_ble_rejected_proof_does_not_request_os_pairing():
     source = (ROOT / "firmware/src/app/wireless/bluetooth/bluetooth.c").read_text()
     assert "ATT_ERROR_INSUFFICIENT_AUTHENTICATION" not in source

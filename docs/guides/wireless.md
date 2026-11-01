@@ -23,16 +23,21 @@ state every two seconds while no wireless operation is pending. The value is `SS
 A Bluetooth row shows the advertised name `PicoForge-<USB serial>` followed by `(connected)` while a central is
 attached, `(advertising)` when discoverable, or `(starting)` while the controller is not yet working.
 These link states also apply to keyless, view-only Bluetooth. Disabled Bluetooth shows `Disabled`.
+Over a Direct Bluetooth connection the board omits the SSID and IP address, so Wi-Fi shows only `Connected`,
+`Wi-Fi (connecting)` or `Wi-Fi (disconnected)`.
 The firmware does not report a separate connecting state. If the serial is unavailable, the name is `PicoForge`.
 Missing reports show `--`, and read failures show `Unavailable` with the error in the value's tooltip.
 The configuration section shows only a staged Wi-Fi test reminder until saved, not duplicate live connection details.
 
 The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter a hidden one manually. Enter a
 password when required and test the connection. Credentials are staged in RAM only after the board joins
-successfully; they are not saved to flash until **Save&Reboot**. Cancel or Escape discards staged credentials.
+successfully; they are not saved to flash until **Save&Reboot**. Cancel or Escape discards staged credentials and
+reconnects the saved network only if a test had replaced it; an untested saved connection is left alone.
 Connection testing shows the live phase (searching, checking password, waiting for an IP address) and elapsed time;
 the firmware deadline is 30 seconds. A failed test names the reason: network not found, password rejected, no DHCP
-address, or timed out. The CYW43 driver reports a wrong WPA2 password as a handshake timeout and silently re-associates
+address, timed out, or the radio could not start the connection. The firmware drops an existing station link before
+testing new credentials so the previous network cannot make the test appear successful. The CYW43 driver reports a
+wrong WPA2 password as a handshake timeout and silently re-associates
 rather than reporting a bad-auth status, so firmware fails the test after two dropped handshakes (about 16 seconds).
 Both server dashboards expose the phase as `wireless_phase` in `/api/status` while a test runs. Python and .NET hosts
 continue reading live diagnostics during scan/test polling. Their normal monitors drain nonblocking input batches and
@@ -53,14 +58,19 @@ sends nothing. Save is a single USB SET followed by matching-transaction status 
 The existing deferred reboot follows verified persistence; failed saves do not reboot.
 
 Wi-Fi joins an existing 2.4 GHz open or WPA/WPA2-PSK network and obtains an IPv4 address through DHCP.
+WPA3-only networks and 64-hex-digit raw PSKs are not supported; use WPA2 or WPA2/WPA3 transition mode.
 Association/DHCP has a 30-second deadline; failures and dropped connections are reported and retried after five
-seconds. A failed connection test leaves the tested network and retries only the saved network, if one is enabled.
+seconds. A failed connection test leaves the tested network and retries only the saved network, if one is enabled,
+after five seconds. Scans time out after 10 seconds; the saved network is rejoined after the scan finishes.
 lwIP uses 4-byte heap alignment, required by Cortex-M multi-word stores into received packet buffers. While Wi-Fi
 is enabled, a single-client raw TCP listener on port 2323 serves the same CLI as USB CDC; see the
 [CLI guide](console.md#wi-fi-tcp-terminal). It is unauthenticated and unencrypted, for trusted LANs
-only. lwIP TCP is sized for that one client: 1460-byte MSS, 2 × MSS window and send buffer, three PCBs and an
-8 KiB heap. This does not provide a web server, network filesystem, Bluetooth Classic, internet management API or
-Wi-Fi dashboard transport.
+only, so it serves only while joined to the saved network: a connection test, a lost link or a rejoin closes the
+client and turns new clients away until the saved network is back. Scan and test commands enable the station
+interface only after validation; with saved Wi-Fi disabled, it is released again when the scan finishes, the test
+fails or the staged test is cleared. lwIP TCP is sized for that one client: 1460-byte MSS, 2 × MSS window and send
+buffer, three PCBs and an 8 KiB heap. This does not provide a web server, network filesystem, Bluetooth Classic,
+internet management API or Wi-Fi dashboard transport.
 
 The Python and .NET dashboards manage only their USB-attached board and do not offer Bluetooth LE connections.
 Their wireless settings panel uses `/api/wireless` and their own form implementation. No dashboard components are

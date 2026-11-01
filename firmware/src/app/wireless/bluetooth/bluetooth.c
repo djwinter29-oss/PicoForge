@@ -25,6 +25,10 @@
  * Authentication (0x05) makes centrals start OS pairing, which PicoForge does not use, and they then disconnect.
  */
 #define BLE_ERROR_CONTROL_REJECTED 0x80
+/* BLE status blanks one range, so the IPv4 address and SSID must stay adjacent and end at the password flag. */
+_Static_assert(PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 4u == PF_WIRELESS_STATUS_SSID_OFFSET, "IP must precede SSID");
+_Static_assert(PF_WIRELESS_STATUS_SSID_OFFSET + 33u == PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET,
+               "SSID must precede the password flag");
 
 static uint8_t ble_key[32]; /**< Boot-applied private control key. */
 static bool control_key_available; /**< False when BLE is enabled for public diagnostics only. */
@@ -67,10 +71,12 @@ const btstack_tlv_t *__wrap_btstack_tlv_flash_bank_init_instance(btstack_tlv_fla
     return btstack_tlv_none_init_instance();
 }
 
-/** @brief Reset per-connection authorization and begin/restart peripheral advertising. */
+/** @brief Reset per-connection authorization and read snapshots, then begin/restart peripheral advertising. */
 static void advertise(void)
 {
     proof_valid = challenge_valid = false;
+    read_handle = 0u;
+    read_length = 0u;
     memset(proof, 0, sizeof(proof));
     memset(nonce, 0, sizeof(nonce));
     gap_advertisements_enable(1);
@@ -125,7 +131,10 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
             pf_hid_ble_result(&read_buffer.result);
             read_length = sizeof(pf_hid_control_result_t);
         } else if (handle == BLE_HANDLE(001e)) {
+            /* Unauthenticated BLE readers get state and flags only, never the saved SSID or the LAN address. */
             pf_wireless_status(read_buffer.bytes);
+            memset(read_buffer.bytes + PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET, 0,
+                   PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET - PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET);
             read_length = PF_WIRELESS_STATUS_SIZE;
         } else if (handle == BLE_HANDLE(0020)) {
             if (buffer != NULL) {
@@ -188,9 +197,7 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
 bool pf_bluetooth_prepare(void)
 {
     pf_boot_config_ble_key(ble_key);
-    uint8_t key_bits = 0u;
-    for (size_t i = 0u; i < sizeof(ble_key); ++i) key_bits |= ble_key[i];
-    control_key_available = key_bits != 0u;
+    control_key_available = pf_boot_config_ble_key_configured();
     return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;
 }
 

@@ -45,6 +45,14 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
       assert.equal(el("#wifi-diagnostics").hidden, false);
     }
     for (const [wireless, expected] of [
+      [{ wifi_enabled: true, ssid: "", wifi_state: "connected", ipv4: "0.0.0.0" }, "Connected"],
+      [{ wifi_enabled: true, ssid: "", wifi_state: "connecting" }, "Wi-Fi (connecting)"],
+      [{ wifi_enabled: false, ssid: "", wifi_state: "disabled" }, "Disabled"],
+    ]) {
+      render({ ...state, transport: "ble", wireless });
+      assert.equal(el("#wifi-state").textContent, expected);
+    }
+    for (const [wireless, expected] of [
       [{ ble_enabled: false, ble_key_configured: true, ble_state: "advertising" }, "Disabled"],
       [{ ble_enabled: true, ble_key_configured: false, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],
       [{ ble_enabled: true, ble_key_configured: true, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],

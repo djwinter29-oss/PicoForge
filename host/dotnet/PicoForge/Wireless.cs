@@ -24,7 +24,7 @@ public sealed record WirelessOperationResponse(byte TransactionId, byte State, b
     /// <summary>Feature 35 byte 3 while testing (states 4..6): join phase or failure reason.</summary>
     public static readonly string[] Details = ["", "Searching for network", "Checking password",
         "Waiting for IP address", "Network not found", "Password rejected", "Connected but no IP address from DHCP",
-        "Timed out"];
+        "Timed out", "Could not start connection"];
 
     public string Phase => Details[Detail];
 }
@@ -164,8 +164,9 @@ internal static partial class HidProtocol
     public static WirelessOperationResponse ParseWirelessOperation(ReadOnlySpan<byte> report)
     {
         var payload = FeaturePayload(report, WirelessResultReportId, 220);
-        Require(payload[0] == 1 && payload[2] <= 6 && payload[3] <= (payload[2] >= 4 ? 7 : 2) && payload[4] <= 18 &&
-            payload[5] <= 3, "Invalid wireless scan/test result");
+        var maxPage = payload[2] >= 4 ? WirelessOperationResponse.Details.Length - 1 : 2;
+        Require(payload[0] == 1 && payload[2] <= 6 && payload[3] <= maxPage && payload[4] <= 18 && payload[5] <= 3,
+            "Invalid wireless scan/test result");
         var networks = new List<WirelessNetworkResponse>();
         for (var index = 0; index < 6; index++)
         {
