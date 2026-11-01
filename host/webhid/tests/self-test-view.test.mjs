@@ -29,7 +29,8 @@ function snapshot() {
 
 test("both dashboards show live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () => withDocument(el => {
   for (const render of [renderStatus, renderServerStatus]) {
-    const state = { ...snapshot(), hardware: { ...snapshot().hardware, capabilities: 128 } };
+    const state = { ...snapshot(), hardware: { ...snapshot().hardware, capabilities: 128,
+      serial_number: "892BA313F9BB56E1" } };
     for (const [wireless, expected] of [
       [{ wifi_enabled: false, ssid: "saved", wifi_state: "connected" }, "Disabled"],
       [{ wifi_enabled: true, ssid: "", wifi_state: "failed" }, "Disabled"],
@@ -46,16 +47,23 @@ test("both dashboards show live Wi-Fi and Bluetooth state without treating unava
     }
     for (const [wireless, expected] of [
       [{ ble_enabled: false, ble_key_configured: true, ble_state: "advertising" }, "Disabled"],
-      [{ ble_enabled: true, ble_key_configured: false, ble_state: "off" }, "No key"],
-      [{ ble_enabled: true, ble_key_configured: true, ble_state: "off" }, "Starting"],
-      [{ ble_enabled: true, ble_key_configured: true, ble_state: "advertising" }, "Advertising"],
-      [{ ble_enabled: true, ble_key_configured: true, ble_state: "connected" }, "Connected"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "advertising" },
+        "PicoForge-892BA313F9BB56E1 (advertising)"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "connected" }, "PicoForge-892BA313F9BB56E1 (connected)"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "connected" }, "PicoForge-892BA313F9BB56E1 (connected)"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "advertising" },
+        "PicoForge-892BA313F9BB56E1 (advertising)"],
       [null, "--"],
     ]) {
       render({ ...state, wireless });
       assert.equal(el("#ble-state").textContent, expected);
       assert.equal(el("#ble-diagnostics").hidden, false);
     }
+    render({ ...state, hardware: { capabilities: 128 },
+      wireless: { ble_enabled: true, ble_state: "connected" } });
+    assert.equal(el("#ble-state").textContent, "PicoForge (connected)");
     render({ ...state, wireless_error: "Wi-Fi status read failed: disconnected" });
     assert.equal(el("#ble-state").textContent, "Unavailable");
     assert.equal(el("#wifi-state").textContent, "Unavailable");

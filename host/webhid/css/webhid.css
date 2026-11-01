@@ -169,7 +169,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .configuration-warning { color: var(--muted); font-size: 13px; }
 .dialog-actions { margin-top: 20px; display: flex; justify-content: end; gap: 8px; }
 .dialog-actions .button { flex: 0 0 auto; }
-.wireless-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .wireless-dialog { max-height: min(760px, calc(100% - 32px)); overflow-y: auto; }
 .wireless-dialog label { display: grid; gap: 6px; margin-top: 12px; color: var(--muted); font-size: 13px; }
 .wireless-dialog input { min-width: 0; min-height: 38px; padding: 0 10px; border: 1px solid #cbd6d3;

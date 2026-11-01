@@ -8,17 +8,21 @@ This implementation has host checks and target builds, not physical radio qualif
 
 ## Configuration and operation
 
-Connect through USB and use **Configure Wi-Fi…** or **Configure Bluetooth…** under Boot configuration in the Python/.NET
-dashboard or Board configuration in the standalone WebHID dashboard. W boards also show the Wi-Fi and Bluetooth
-enable switches beside System clock and SD Card. The server
-dashboard provisions its selected USB-attached board; the browser does not need Bluetooth access.
+Connect through USB and use the Wi-Fi and Bluetooth dropdowns beside System clock and SD Card under Boot
+configuration in the Python/.NET dashboard or Board configuration in the standalone WebHID dashboard. Each offers
+**Enabled**, **Disabled**, and **Configure…**. Configure… opens the Wi-Fi scan/test or Bluetooth key dialog and leaves
+the dropdown unchanged; a passed Wi-Fi test or a generated key switches it to Enabled. Wi-Fi Enabled requires a saved
+or tested network. Bluetooth Enabled without a key runs view-only. Switching a saved-enabled radio to Disabled erases
+its saved credentials (SSID and password, or control key) on **Save&Reboot**. The server dashboard provisions its
+selected USB-attached board; the browser does not need Bluetooth access.
 
 Both dashboards show Wi-Fi in live diagnostics on wireless-capable boards, refreshing the saved SSID and runtime
 state every two seconds while no wireless operation is pending. The value is `SSID (IP address)` when connected,
 `SSID (connecting)`, or `SSID (disconnected)`; Wi-Fi switched off or an empty saved SSID shows `Disabled`.
-A Bluetooth row follows from the same report: `Connected` while a central is attached, `Advertising` when the
-board is discoverable, `Starting` when enabled with a key but the controller is not yet working, `No key` when the
-switch is on without a saved control key, and `Disabled` otherwise.
+A Bluetooth row shows the advertised name `PicoForge-<USB serial>` followed by `(connected)` while a central is
+attached, `(advertising)` when discoverable, or `(starting)` while the controller is not yet working.
+These link states also apply to keyless, view-only Bluetooth. Disabled Bluetooth shows `Disabled`.
+The firmware does not report a separate connecting state. If the serial is unavailable, the name is `PicoForge`.
 Missing reports show `--`, and read failures show `Unavailable` with the error in the value's tooltip.
 The configuration section shows only a staged Wi-Fi test reminder until saved, not duplicate live connection details.
 
@@ -125,7 +129,8 @@ reports the saved radio switches; its separate booleans indicate whether credent
 - Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
   bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
   credentials bit 2), SSID at 4-36, password at 37-100, key at 101-132, little-endian clock MHz at 133-134
-  (opcode 6 values) and SD profile at 135. Other versions or radio flags inconsistent with the settings are rejected.
+  (opcode 6 values) and SD profile at 135. A cleared preserve flag with an empty password or all-zero key erases
+  that credential. Other versions or radio flags inconsistent with the settings are rejected.
   There is **no Feature 31 readback**; hosts confirm the board fields through Report 2.
 - Feature **34 SET**, 101 payload bytes: version `1` at 0, operation at 1 (scan `1`, select page `2`, test join
   `3`, clear staged test `4`), nonzero transaction at 2, page at 3, SSID/password byte lengths at 4/5, SSID bytes
@@ -166,7 +171,9 @@ For **every** command:
 4. Read the original matching result; never replay SET following timeout/disconnect.
 
 The device consumes a challenge/proof once, compares MAC bytes without early exit, and rate-limits failed proofs
-for two seconds. Fresh nonces prevent replay; UID binding prevents cross-board reuse; request binding prevents
+for two seconds. A missing, rejected or rate-limited proof returns ATT application error `0x80`, not Insufficient
+Authentication (`0x05`), which would make the central start OS pairing and drop the link. Fresh nonces prevent
+replay; UID binding prevents cross-board reuse; request binding prevents
 changing an authorized command. This is application authorization, **not encrypted BLE transport** or protection
 against radio jamming/connection denial. Use USB for privileged management and credentials.
 

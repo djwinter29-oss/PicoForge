@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "../../webhid/js/wireless-form.mjs?v=10";
+import { renderWirelessStatus } from "../../webhid/js/wireless-form.mjs?v=12";
 
 function uptimeLabel(milliseconds) {
   if (!Number.isFinite(milliseconds)) return "--";

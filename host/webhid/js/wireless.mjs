@@ -108,7 +108,8 @@ export function buildWireless(transaction, settings) {
     }
     report.set(new TextEncoder().encode(settings.password), 37);
   }
-  if (settings.ble_key !== undefined) {
+  // An empty ble_key erases the saved key; the report field stays zero.
+  if (settings.ble_key) {
     if (!/^[a-f0-9]{64}$/i.test(settings.ble_key) || /^0+$/.test(settings.ble_key)) {
       throw new Error("BLE key must be 64 nonzero hex digits.");
     }
@@ -212,9 +213,10 @@ export async function saveWireless(client, settings) {
         }
         if (saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled ||
           saved.ssid !== settings.ssid ||
-          saved.password_configured !== (settings.use_tested_wifi || settings.password !== undefined ||
-            previous.password_configured) ||
-          saved.ble_key_configured !== (settings.ble_key !== undefined || previous.ble_key_configured)) {
+          saved.password_configured !== (settings.use_tested_wifi
+            || (settings.password !== undefined ? Boolean(settings.password) : previous.password_configured)) ||
+          saved.ble_key_configured !== (settings.ble_key !== undefined ? Boolean(settings.ble_key)
+            : previous.ble_key_configured)) {
           throw new Error("Wireless save did not confirm the requested configuration.");
         }
         const board = decodeConfigReport(await withTimeout(client.device.receiveFeatureReport(2), 1000),

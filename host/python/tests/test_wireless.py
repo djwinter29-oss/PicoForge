@@ -81,6 +81,11 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(report[38:47], b"secret12\0")
         self.assertEqual(report[102:134], b"\xab" * 32)
         self.assertEqual(report[134:], bytes([200, 0, 1]))
+        erase = build_wireless_configuration_report({
+            "wifi_enabled": False, "ble_enabled": False, "ssid": "", "password": "", "ble_key": "",
+            "confirm_reboot": True, "board": {**BOARD, "radios": 0}})
+        self.assertEqual(erase[3:5], bytes([0, 0]), "empty credentials erase instead of preserving")
+        self.assertEqual(erase[5:134], bytes(129))
 
     def test_input_rejection_never_echoes_credentials(self):
         for change in (

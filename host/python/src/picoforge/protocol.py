@@ -229,12 +229,14 @@ def build_wireless_configuration_report(settings: dict[str, object], transaction
         payload[4] |= 2
     else:
         key = settings["ble_key"]
-        if not isinstance(key, str) or len(key) != 64 or any(char not in "0123456789abcdefABCDEF" for char in key):
-            raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
-        decoded = bytes.fromhex(key)
-        if not any(decoded):
-            raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
-        payload[102:134] = decoded
+        if key != "":  # an empty key erases the saved key; the payload field stays zero
+            if not isinstance(key, str) or len(key) != 64 or any(
+                    char not in "0123456789abcdefABCDEF" for char in key):
+                raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+            decoded = bytes.fromhex(key)
+            if not any(decoded):
+                raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+            payload[102:134] = decoded
     if use_tested:
         payload[4] |= 4
     return bytes(payload)

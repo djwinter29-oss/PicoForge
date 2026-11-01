@@ -77,6 +77,16 @@ public sealed class WirelessTests
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
         request.WifiEnabled = false;
         Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 2));
+        var erase = Settings();
+        erase.WifiEnabled = false;
+        erase.BleEnabled = false;
+        erase.Ssid = "";
+        erase.Password = "";
+        erase.BleKey = "";
+        erase.Board = new(200, 1, 0);
+        report = HidProtocol.BuildWirelessRequest(erase, 3);
+        Assert.Equal(0, report[4]);
+        Assert.All(report[5..134], value => Assert.Equal(0, value));
     }
 
     [Fact]

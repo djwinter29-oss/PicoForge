@@ -32,6 +32,12 @@ test("server dashboard presents expected USB reconnection without hiding real er
 
 test("shared dashboard handlers survive a status failure that clears the snapshot mid-command", async context => {
   const handlers = new Map();
+  /** Pick Configure… the way a browser does: focus, then an input event before change. */
+  const configureRadio = radio => {
+    handlers.get(`#settings-${radio}:focus`)();
+    element(`#settings-${radio}`).value = "configure";
+    handlers.get(`#settings-${radio}:input`)();
+  };
   let tick;
   const elements = new Map();
   const element = selector => {
@@ -479,14 +485,13 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     handlers.get("#board-select:change")();
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(requestedUrls.includes("/api/status?board=board-b"));
-    assert.equal(elements.get("#wireless-actions").hidden, true);
+    assert.equal(elements.get('label[for="settings-wifi"]').hidden, true);
     connected.hardware.capabilities = 128 | 16 | 2;
     connected.settings.radios = 3;
     connected.storage_stale = false;
     connected.msc = { enabled: false, transition_pending: false };
     await tick();
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(elements.get("#wireless-actions").hidden, false);
     assert.equal(elements.get('label[for="settings-wifi"]').hidden, false);
     assert.equal(elements.get('label[for="settings-ble"]').hidden, false);
     assert.equal(elements.get("#settings-wifi").value, "1");
@@ -534,7 +539,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#wifi-state").textContent, "saved (192.168.1.9)");
     assert.equal(elements.get("#settings-save").disabled, true);
-    handlers.get("#wifi-open:click")();
+    configureRadio("wifi");
     handlers.get("#wifi-other:click")();
     elements.get("#wifi-ssid").value = "new-network";
     handlers.get("#wifi-ssid:input")();
@@ -560,7 +565,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.deepEqual(testedWireless.at(-1), { ssid: "new-network", password: "new-passphrase" });
     assert.equal(elements.get("#settings-save").disabled, false);
     assert.equal(elements.get("#settings-save").disabled, false, "staged wireless settings enable combined save");
-    handlers.get("#ble-open:click")();
+    configureRadio("ble");
     handlers.get("#ble-generate:click")();
     assert.match(elements.get("#ble-secret").value, /^[0-9a-f]{64}$/);
     handlers.get("#settings-save:click")();
@@ -598,7 +603,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#settings-save").disabled, true);
     await tick();
     wirelessFailure = 503;
-    handlers.get("#wifi-open:click")();
+    configureRadio("wifi");
     handlers.get("#wifi-other:click")();
     elements.get("#wifi-ssid").value = "uncertain-network";
     handlers.get("#wifi-ssid:input")();
@@ -618,7 +623,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#ble-secret").value, "");
     wirelessFailure = 409;
     wirelessError = "Wireless outcome is uncertain";
-    handlers.get("#wifi-open:click")();
+    configureRadio("wifi");
     handlers.get("#wifi-other:click")();
     elements.get("#wifi-ssid").value = "mismatched-network";
     handlers.get("#wifi-ssid:input")();
@@ -634,7 +639,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     elements.get("#board-select").value = "board-b";
     handlers.get("#board-select:change")();
     await new Promise(resolve => setImmediate(resolve));
-    handlers.get("#wifi-open:click")();
+    configureRadio("wifi");
     elements.get("#wifi-ssid").value = "timed-out-network";
     wirelessTestError = new DOMException("HTTP deadline", "TimeoutError");
     const beforeTimeout = testedWireless.length;

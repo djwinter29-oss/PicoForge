@@ -191,9 +191,10 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 {
                     if (result.WifiEnabled != settings.WifiEnabled || result.BleEnabled != settings.BleEnabled ||
                         result.Ssid != settings.Ssid ||
-                        result.PasswordConfigured != (settings.UseTestedWifi || settings.Password is not null ||
-                            previous.PasswordConfigured) ||
-                        result.BleKeyConfigured != (settings.BleKey is not null || previous.BleKeyConfigured))
+                        result.PasswordConfigured != (settings.UseTestedWifi ||
+                            (settings.Password is null ? previous.PasswordConfigured : settings.Password.Length != 0)) ||
+                        result.BleKeyConfigured != (settings.BleKey is null ? previous.BleKeyConfigured
+                            : settings.BleKey.Length != 0))
                         throw new InvalidOperationException(
                             "Wireless saved configuration was not confirmed; outcome is uncertain");
                     if (ReadSettings() != settings.Board)

@@ -9,10 +9,57 @@ import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, r
 /** Board settings matching the config() fixture readback. */
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
 
+test("disabling a saved radio erases its credentials; Wi-Fi Enabled needs a network", async () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  for (const id of ["wifi-dialog", "ble-dialog", "settings-wifi", "settings-ble", "wifi-scan", "wifi-other",
+    "wifi-connect", "wifi-cancel", "wifi-ssid", "wifi-password", "wifi-password-label", "wifi-manual-label",
+    "wifi-networks", "wifi-status", "wireless-summary", "ble-generate", "ble-copy", "ble-cancel", "ble-secret",
+    "ble-status"]) {
+    elements.set(id, { value: "", textContent: "", hidden: false, disabled: false, children: [], handlers: {},
+      options: ["1", "0", "configure"].map(value => ({ value, disabled: false })),
+      addEventListener(name, callback) { this.handlers[name] = callback; }, showModal() {}, close() {},
+      replaceChildren() {}, focus() {} });
+  }
+  globalThis.document = { querySelector: selector => elements.get(selector.slice(1)) };
+  const el = id => elements.get(id);
+  const pick = (id, value) => { el(id).handlers.focus(); el(id).value = value; el(id).handlers.input(); };
+  try {
+    el("settings-wifi").value = "1";
+    el("settings-ble").value = "1";
+    let saved = { ssid: "home", password_configured: true, wifi_enabled: true, ble_enabled: true,
+      ble_key_configured: true };
+    const form = bindWirelessForm({ load: async () => saved, supported: () => true, ready: () => true,
+      scan: async () => [], test: async () => ({}), cancelTest: async () => {} });
+    await form.load();
+    assert.equal(form.dirty(), false);
+    pick("settings-wifi", "0");
+    pick("settings-ble", "0");
+    assert.equal(form.dirty(), true, "turning a saved radio off is a pending erase");
+    assert.deepEqual(form.request(), { wifi_enabled: false, ble_enabled: false, ssid: "", confirm_reboot: true,
+      password: "", ble_key: "" });
+    assert.equal(buildWireless(1, { ...form.request(), board: { system_clock_mhz: 0, sdcard_profile: 0,
+      radios: 0 } })[3], 0, "erase clears both keep flags");
+    pick("settings-ble", "1");
+    assert.equal(Object.hasOwn(form.request(), "ble_key"), false, "Enabled keeps the saved key");
+    saved = { ssid: "", password_configured: false, wifi_enabled: false, ble_enabled: false,
+      ble_key_configured: false };
+    form.reset();
+    el("settings-wifi").value = "0";
+    el("settings-ble").value = "0";
+    await form.load();
+    assert.equal(form.dirty(), false, "a radio that was already off has nothing to erase");
+    assert.equal(el("settings-wifi").options[0].disabled, true, "Wi-Fi cannot be enabled without a network");
+    assert.equal(el("settings-ble").options[0].disabled, false, "keyless Bluetooth stays view-only");
+  } finally {
+    globalThis.document = previous;
+  }
+});
+
 test("wireless dialogs scan, stage tested credentials, and keep them until the combined save", async () => {
   const previous = globalThis.document;
   const elements = new Map();
-  const ids = ["wifi-dialog", "ble-dialog", "wireless-actions", "wifi-open", "ble-open", "wifi-scan", "wifi-other",
+  const ids = ["wifi-dialog", "ble-dialog", "settings-wifi", "settings-ble", "wifi-scan", "wifi-other",
     "wifi-connect", "wifi-cancel", "wifi-ssid", "wifi-password", "wifi-password-label",
     "wifi-manual-label", "wifi-networks", "wifi-status", "wireless-summary", "ble-generate", "ble-copy",
     "ble-cancel", "ble-secret", "ble-status"];
@@ -22,6 +69,13 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
       showModal() { this.open = true; }, close() { this.open = false; }, replaceChildren() {},
       setAttribute() {}, append() {}, focus() {} });
   }
+  {
+    elements.get("settings-wifi").value = "1";
+    elements.get("settings-ble").value = "0";
+    for (const id of ["settings-wifi", "settings-ble"]) {
+      elements.get(id).options = ["1", "0", "configure"].map(value => ({ value, disabled: false }));
+    }
+  }
   elements.get("wifi-networks").children = [];
   elements.get("wifi-networks").replaceChildren = function (...children) { this.children = children; };
   elements.get("wifi-networks").append = function (child) { this.children.push(child); };
@@ -30,6 +84,7 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     setAttribute() {}, append(...children) { this.children = children; },
   }) };
   const el = id => elements.get(id);
+  const pick = (id, value) => { el(id).handlers.focus(); el(id).value = value; el(id).handlers.input(); };
   const fresh = { ssid: "saved", wifi_enabled: true, ble_enabled: false, ble_key_configured: false,
     wifi_state: "connected" };
   const scanned = [];
@@ -57,11 +112,19 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     await form.load();
     assert.equal(el("wifi-ssid").value, "saved");
     assert.equal(form.dirty(), false);
+    pick("settings-wifi", "configure");
+    assert.equal(el("settings-wifi").value, "1", "Configure… opens the dialog and keeps the radio state");
+    assert.equal(el("wifi-dialog").open, true);
+    el("wifi-dialog").close();
+    pick("settings-ble", "configure");
+    assert.equal(el("settings-ble").value, "0");
+    assert.equal(el("ble-dialog").open, true);
+    el("ble-dialog").close();
     assert.equal(el("wireless-summary").textContent, "");
     assert.equal(el("wireless-summary").hidden, true, "live connection status belongs in diagnostics");
     await form.load();
     assert.equal(loadCount, 1, "wireless status should load once per board connection");
-    el("wifi-open").handlers.click();
+    pick("settings-wifi", "configure");
     await el("wifi-scan").handlers.click();
     assert.deepEqual(scanned, [true]);
     el("wifi-networks").children[0].handlers.click();
@@ -84,12 +147,13 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     assert.equal(el("wifi-status").textContent, "rejected");
     el("ble-generate").handlers.click();
     assert.match(el("ble-secret").value, /^[0-9a-f]{64}$/);
+    assert.equal(el("settings-ble").value, "1", "a generated key enables Bluetooth");
     assert.equal(form.request().ble_enabled, true);
     form.finish({ ...fresh, ssid: "nearby", ble_enabled: true });
     assert.equal(el("ble-secret").value, "");
     assert.equal(el("ble-secret").type, "password");
     assert.equal(form.dirty(), false);
-    el("wifi-open").handlers.click();
+    pick("settings-wifi", "configure");
     assert.equal(el("wireless-summary").textContent, "");
     assert.equal(el("wireless-summary").hidden, true, "saving clears the staged-configuration notice");
     el("wifi-ssid").value = "second-network";
@@ -101,7 +165,7 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(cancelled, 1);
     assert.equal(form.dirty(), false);
-    el("wifi-open").handlers.click();
+    pick("settings-wifi", "configure");
     el("wifi-ssid").value = "slow-network";
     let finishTest;
     pendingTest = new Promise(resolve => { finishTest = resolve; });
@@ -126,7 +190,7 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     assert.equal(el("wifi-cancel").disabled, false);
     assert.equal(form.request().ssid, "slow-network");
 
-    el("wifi-open").handlers.click();
+    pick("settings-wifi", "configure");
     pendingTest = new Promise(resolve => { finishTest = resolve; });
     const obsolete = el("wifi-connect").handlers.click();
     form.reset();

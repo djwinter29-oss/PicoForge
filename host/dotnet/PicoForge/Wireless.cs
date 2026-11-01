@@ -114,7 +114,7 @@ internal static partial class HidProtocol
             Encoding.ASCII.GetBytes(password).CopyTo(report, 38);
         }
         if (settings.BleKey is null) report[4] |= 2;
-        else
+        else if (settings.BleKey.Length != 0) // an empty key erases the saved key; the report field stays zero
         {
             if (settings.BleKey.Length != 64 || settings.BleKey.Any(c => !Uri.IsHexDigit(c)))
                 throw new ArgumentException("BLE key must contain 64 hexadecimal characters and be nonzero");

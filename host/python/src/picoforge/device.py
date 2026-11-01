@@ -266,8 +266,10 @@ class PicoForgeHid:
                             "ble_enabled": settings["ble_enabled"],
                             "ssid": command[5:38].split(b"\0", 1)[0].decode("utf-8"),
                             "password_configured": (True if settings.get("use_tested_wifi")
-                                else previous["password_configured"] if command[4] & 1 else True),
-                            "ble_key_configured": previous["ble_key_configured"] if command[4] & 2 else True,
+                                else previous["password_configured"] if command[4] & 1
+                                else bool(settings["password"])),
+                            "ble_key_configured": (previous["ble_key_configured"] if command[4] & 2
+                                else bool(settings["ble_key"])),
                         }
                         if any(result[key] != value for key, value in expected.items()):
                             raise RuntimeError("Wireless saved configuration was not confirmed; outcome is uncertain")

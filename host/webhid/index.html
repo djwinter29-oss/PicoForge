@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light">
   <title>PicoForge Dashboard | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
-  <link rel="stylesheet" href="css/webhid.css?v=12">
-  <script type="module" src="js/app.mjs?v=24"></script>
+  <link rel="stylesheet" href="css/webhid.css?v=13">
+  <script type="module" src="js/app.mjs?v=26"></script>
 </head>
 <body>
   <header class="topbar">
@@ -80,18 +80,16 @@
           <select id="settings-wifi" disabled>
             <option value="1">Enabled</option>
             <option value="0">Disabled</option>
+            <option value="configure">Configure…</option>
           </select>
         </label>
         <label for="settings-ble" hidden>Bluetooth
           <select id="settings-ble" disabled>
             <option value="1">Enabled</option>
             <option value="0">Disabled</option>
+            <option value="configure">Configure…</option>
           </select>
         </label>
-      </div>
-      <div class="wireless-actions" id="wireless-actions" hidden>
-        <button class="button button-secondary" id="wifi-open" type="button">Configure Wi-Fi…</button>
-        <button class="button button-secondary" id="ble-open" type="button">Configure Bluetooth…</button>
       </div>
       <p id="wireless-summary" role="status" aria-live="polite"></p>
       <details class="pin-map-disclosure">

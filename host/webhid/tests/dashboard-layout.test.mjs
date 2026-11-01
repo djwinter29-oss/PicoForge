@@ -10,11 +10,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=12"/);
-  assert.match(html, /src="js\/app\.mjs\?v=23"/);
+  assert.match(html, /href="css\/webhid\.css\?v=13"/);
+  assert.match(html, /src="js\/app\.mjs\?v=26"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=6"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=9"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=10"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
     assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));
@@ -34,9 +34,9 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     const settings = dashboard.split('aria-labelledby="settings-title"')[1].split("</section>")[0];
     const footer = dashboard.split('<footer class="status-line"')[1].split("</footer>")[0];
     assert.doesNotMatch(settings, /id="settings-note"/);
-    assert.match(settings, /id="wireless-actions" hidden/);
-    assert.match(settings, /id="wifi-open"[^>]*>Configure Wi-Fi/);
-    assert.match(settings, /id="ble-open"[^>]*>Configure Bluetooth/);
+    assert.doesNotMatch(settings, /wireless-actions|wifi-open|ble-open/);
+    assert.match(settings, /id="settings-wifi"[\s\S]*?<option value="configure">Configure…<\/option>/);
+    assert.match(settings, /id="settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
     const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
     assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
       ["settings-clock", "settings-storage", "settings-wifi", "settings-ble"]);
