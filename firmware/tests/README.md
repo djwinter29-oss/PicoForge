@@ -66,7 +66,7 @@ The callbacks only record dispatch, so the byte-count boundary test does not all
 Shared CRC7, command-frame, CSD and address-conversion tests live in
 [test_sd_protocol.c](drivers/sdcard/test_sd_protocol.c); native wire-codec tests remain in
 [test_sd_protocol_native.c](drivers/sdcard/test_sd_protocol_native.c).
-Production transport code lives in [sdio/](../src/drivers/sdcard/sdio/) and [spi/](../src/drivers/sdcard/spi/).
+Production transport code lives in [sdio/](../src/drivers/sdcard/sdio) and [spi/](../src/drivers/sdcard/spi).
 The existing native-init and SPI behavior suites compile `sd_backend_sdio.c` and `sd_backend_spi.c` respectively;
 both implementations use the shared `sd_backend.h` contract. Physical-engine layer checks exclude the protocol and
 board-binding files even though they now share these directories.
@@ -118,7 +118,7 @@ the production translation unit rather than copying functions out of source
 strings. Assertions use Unity so failures appear in Ceedling results.
 
 Project-level contracts, PIO instruction models and validation-tool regression
-tests live under the root [tests/](../../tests/) directory, along with build-artifact
+tests live under the root [tests/](../../tests) directory, along with build-artifact
 tests, not alongside validation tooling. See
 [test ownership and commands](../../tests/README.md) for their roles and requirements.
 These checks complement, rather than replace, C behavior tests.
@@ -149,5 +149,5 @@ python3 -m pytest tests/contracts/test_tinyusb_dcd_contract.py -q
 These checks validate integration synchronization, not the real controller or an SMP-enabled firmware image.
 
 Application CLI tests compile the pinned Embedded CLI submodule, so initialize
-submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/guides/usb-cdc-cli.md#validation)
+submodules before running Ceedling. See [the CDC CLI validation notes](../../docs/development/console-integration.md#validation)
 for the focused command and board-only checks.

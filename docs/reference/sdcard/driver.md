@@ -3,8 +3,8 @@
 This document describes the SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
-[SD-card driver guide](sdcard-physical-links.md#memory-and-storage-connections); filesystem
-commands and mounting policy remain in [the CDC CLI guide](../../guides/usb-cdc-cli.md).
+[SD-card driver guide](../../guides/hardware.md#memory-and-storage-connections); filesystem
+commands and mounting policy remain in [the CDC CLI guide](../../guides/console.md).
 
 ## Guide
 
@@ -13,9 +13,9 @@ commands and mounting policy remain in [the CDC CLI guide](../../guides/usb-cdc-
 | Layers and interfaces | [Architecture](#architecture), [block-device boundary](#filesystem-block-device-boundary), [transport and port selection](#interfacing-with-the-driver) |
 | Protocol workflows | [Initialization](#initialization-workflow), [reads](#read-workflow), [writes](#write-workflow), [ownership](#ownership-workflow) |
 | Resources and performance | [Hardware resources](#hardware-resource-inventory), [status and MSC batching](#performance-controls-and-status) |
-| Test scope | [Validation limits](#validation-and-limits), [SD-card performance test](../../guides/sdcard-performance-test.md) |
-| Review status | [SD remediation matrix](../../tests/sd-design-remediation.md) |
-| History and measurements | [Historical records](#historical-records) and [test records](../../tests/records/README.md) |
+| Test scope | [Validation limits](#validation-and-limits), [SD-card performance test](../../guides/sdcard-benchmark.md) |
+| Review status | [SD remediation matrix](../../validation/sd-review.md) |
+| History and measurements | [Historical records](#historical-records) and [test records](../../validation/records/README.md) |
 
 Sections above describe current implementation; dated measurements and review narratives live only in test records.
 
@@ -135,7 +135,7 @@ uses the newly selected clock/timing mode; it is not transactional rollback to t
 Both backends use the same configuration shape, borrowing a `pf_sd_link_t` descriptor plus the protocol
 transfer-clock target. The descriptor's mode is validated against the build-selected backend. Configuration contains
 no GPIO, PIO/SPI controllers, DET settings, or concrete backend state.
-See [pin allocation and runtime state](sdcard-physical-links.md#pin-allocation-and-runtime-state)
+See [pin allocation and runtime state](physical-links.md#pin-allocation-and-runtime-state)
 for authoritative physical ownership and configuration details.
 The execution port requests optional waits through `pf_sd_link_enable_wait`, without PIO/IRQ knowledge.
 `pf_sd_port_init` returns `bool`; callers must handle failure when optional waits were requested. Application
@@ -150,7 +150,7 @@ invalidates the card and returns immediately without exchanging bytes, issuing c
 
 ### Physical Link
 
-The [SD-card driver guide](sdcard-physical-links.md#physical-link) owns the physical
+The [SD-card driver guide](physical-links.md#physical-link) owns the physical
 engine layout, lifecycle, typed transfer interfaces, and shared-pin restrictions. This document covers the SD protocol
 and its integration above those engines.
 
@@ -191,14 +191,14 @@ The driver layout above ends at raw sectors. Integration above it lives in these
 
 | Responsibility | Implementation |
 | --- | --- |
-| Worker and file benchmark / CLI command executor | [app/storage/](../../../firmware/src/app/storage/), [cli_storage.c](../../../firmware/src/app/cli/cli_storage.c) |
+| Worker and file benchmark / CLI command executor | [app/storage/](../../../firmware/src/app/storage), [cli_storage.c](../../../firmware/src/app/cli/cli_storage.c) |
 | Media lifecycle, automount/recovery, diagnostics and firmware/USB ownership | [storage.c](../../../firmware/src/platform/storage/storage.c), [storage.h](../../../firmware/src/platform/storage/storage.h) |
 | Filesystem-independent sectors and geometry | [block_device.h](../../../firmware/src/platform/storage/block_device.h) |
 | FatFs lifecycle / disk-I/O binding | [fatfs_volume.c](../../../firmware/src/platform/storage/fatfs_volume.c), [fatfs_disk.c](../../../firmware/src/platform/storage/fatfs_disk.c) |
 
-Application policy lives in [app/storage/](../../../firmware/src/app/storage/): the sole storage-owner task handles USB
+Application policy lives in [app/storage/](../../../firmware/src/app/storage): the sole storage-owner task handles USB
 command sessions and runs the storage service's debounce/automount and recovery policy. The fixed-file benchmark lives
-alongside it; command execution lives in [app/cli/](../../../firmware/src/app/cli/). The worker accepts the CLI executor
+alongside it; command execution lives in [app/cli/](../../../firmware/src/app/cli). The worker accepts the CLI executor
 as a callback, without depending on CLI headers. CMake builds the worker and benchmark as `pf_app_storage`,
 which depends on reusable `pf_storage`, not the reverse.
 The generic volume module owns FatFs mount/unmount state
@@ -509,7 +509,7 @@ The saved storage profile supplies the target for both SDIO and SPI. A 25 MHz ta
 For a 50 MHz target at or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default
 Speed and records the host limit. Above 100 MHz it requests 50 MHz and the transport clamps to its PIO ceiling (SYSCLK / 4):
 at most 37.5 MHz at 150 MHz CPU and up to 50 MHz at 250 MHz CPU. Negotiation and divider calculations do not
-qualify a board, card, wiring, or overclock; see [release qualification](../../deployment/release.md).
+qualify a board, card, wiring, or overclock; see [release qualification](../../release.md).
 Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
 group-1 support, busy status and selected function. After DAT0 is ready, it leaves
 CLK running at the old rate for 1 ms before targeting up to 50 MHz. This bounded
@@ -522,12 +522,12 @@ confirmed. Runtime read/write errors never trigger speed negotiation or replay.
 
 Use the saved Default profile for Default-Speed operation or High-Speed to request negotiation.
 Neither profile qualifies an overclock. Historical measurements are in the
-[test records](../../tests/records/README.md).
+[test records](../../validation/records/README.md).
 
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
 20.833 MHz. High-Speed dividers are even and limited to 3.0 so the cycle-locked TX and shortened RX programs stay valid;
-the [clock planning table](sdcard-physical-links.md#clock-planning) lists each rule. This deterministic divider
+the [clock planning table](physical-links.md#clock-planning) lists each rule. This deterministic divider
 rounding is not adaptive speed selection.
 Use SDK-supported clock settings and check
 effective-clock telemetry; an accepted divider does not qualify an overclock.
@@ -590,10 +590,10 @@ command that completes before a delayed poll is not reported as a timeout.
 In-PIO timeouts are not used because the command (20) and receive (12) programs
 use all 32 PIO instructions. Receive start detection qualifies DAT0 at the same
 settled edge used for payload rather than treating any asynchronous low level as
-the start bit. The [physical transport reference](sdcard-physical-links.md#physical-link)
+the start bit. The [physical transport reference](physical-links.md#physical-link)
 defines Default-Speed and High-Speed sampling phases. Command responses retain
 falling-edge sampling and framing/CRC validation; see the historical
-[Class 4 read-only check](sdcard-physical-links.md#class-4-read-only-bring-up-2026-10-15).
+[Class 4 read-only check](../../validation/records/sdcard-bringup-observations.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
 
@@ -607,7 +607,7 @@ CMD24 and CMD25 share TX DMA control-bit setup. CMD25 constructs those invariant
 bits once per call; payload DMA addresses/counts and completion/abort handling
 remain per sector. This reduces setup work but has no measured throughput claim.
 Successful native CMD25 streams remain open across consecutive facade writes.
-The [same-card A/B benchmark](../../tests/records/2026-10-15-cmd25-persistence.md)
+The [same-card A/B benchmark](../../validation/records/2026-10-15-cmd25-persistence.md)
 measured 40.93% higher median write throughput with persistence, so this is
 unconditional behavior rather than a build option. Non-contiguous operations,
 synchronization, failures, removal, and reinitialization retain checked stream
@@ -705,8 +705,8 @@ The default CMake transport is SDIO-PIO. The saved storage-speed setting request
 it is a target, not a guaranteed bus rate. At 150 MHz SYSCLK, native Default Speed is exactly 25 MHz and a 50 MHz
 High-Speed request is limited to 37.5 MHz. Negotiation and the controlled default-speed fallback are described in
 [native transfer clock](#native-transfer-clock). SPI's zero clock request selects 25 MHz. See
-[board configuration](../../../firmware/src/config/) for authoritative pin/controller assignments
-and [storage wiring](sdcard-physical-links.md#memory-and-storage-connections) for header
+[board configuration](../../../firmware/src/config) for authoritative pin/controller assignments
+and [storage wiring](../../guides/hardware.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 
 | Resource | SDIO-PIO | SD-SPI |
@@ -776,7 +776,7 @@ negotiated High-Speed timing, effective bus clock, capacity, CID, and the last f
 result. Both SPI and native SD report negotiated timing independently of the achieved clock; a clamped clock does
 not imply Default-Speed timing. SPI clears this status when media is not initialized. The CLI
 `storage get status` and HID storage report are built from that snapshot only. Measure throughput with the
-[file benchmark](../../guides/sdcard-performance-test.md) and an external trace; the driver's always-on CRC, timeout and
+[file benchmark](../../guides/sdcard-benchmark.md) and an external trace; the driver's always-on CRC, timeout and
 stall counters remain internal error evidence, not latency measurements.
 
 After debounced removal, the storage service invalidates cached filesystem-format telemetry and unregisters any
@@ -815,7 +815,7 @@ driver bus-reset processing. GNU linker wrappers in `firmware/src/app/usb/usb_ms
 references from `usbd.c`; the vendored stack is unchanged and no ISR or enqueue-time hook mutates the cache. Rejected
 requests, skipped SETUP events, and DATA/ACK stages do not clear it. `python3 -m pytest tests -m contracts` checks
 the pinned source ordering; the Ceedling model does not link TinyUSB. Review details:
-[2026-10-15 follow-up](../../tests/records/2026-10-15-static-sd-review-followup.md).
+[2026-10-15 follow-up](../../validation/records/2026-10-15-static-sd-review-followup.md).
 
 Cross-callback write aggregation is not implemented: TinyUSB's completion hook
 runs after CSW is queued, too late to fail the command on a flush error, and the
@@ -856,8 +856,8 @@ preallocated files), and card busy time before choosing further optimizations.
 | Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
 | Interrupt-backed synchronous native waits | Opt-in `PF_SDCARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
 | SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; SB128 filesystem tests qualified at 25 MHz, not 50 MHz |
-| Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](../../tests/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
-| Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD-card performance test](../../guides/sdcard-performance-test.md) |
+| Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](../../validation/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
+| Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD-card performance test](../../guides/sdcard-benchmark.md) |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
 | SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
@@ -891,7 +891,7 @@ combinations, alternating order where practical; vary only these two options:
 | ON | ON | FreeRTOS IRQ wait |
 
 Keep the supported clock, card, filesystem, file size, and timing boundary fixed.
-The saved [CMD25 persistence A/B](../../tests/records/2026-10-15-cmd25-persistence.md)
+The saved [CMD25 persistence A/B](../../validation/records/2026-10-15-cmd25-persistence.md)
 uses fused OFF and IRQ wait OFF in both variants (150 MHz CPU, 25 MHz SDIO,
 Release, preallocation ON); it measures persistence only. Earlier throughput
 records compare other source/configuration changes and do not supply a matched
@@ -940,7 +940,7 @@ application, a statically
 allocated FreeRTOS recursive mutex
 serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
-[CDC recovery workflow](../../guides/usb-cdc-cli.md#faulted-msc-recovery) revokes access to faulted MSC media
+[CDC recovery workflow](../../guides/console.md#faulted-msc-recovery) revokes access to faulted MSC media
 before returning ownership and queues worker-only reinitialization. It never
 reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
 inhibited until a successful explicit `storage mount`; presence debounce continues.
@@ -954,7 +954,7 @@ FatFs transaction. The storage worker's exclusive workflow and busy gating
 protect filesystem operations across multiple facade calls; the per-call mutex
 alone cannot do that. Profile snapshots use the same mutex. Returning ownership sets a reinitialization
 request because the host may have changed the filesystem. See
-[HID report contract and MSC lifecycle](../usb/usb-hid-report-reference.md) for transition rules.
+[HID report contract and MSC lifecycle](../usb-hid.md) for transition rules.
 
 Backend headers remain available to their implementation and focused transport
 tests. Application filesystem and MSC I/O must use the storage service; telemetry may query the serialized raw driver.
@@ -980,8 +980,8 @@ Use the existing [test guidance](../../../firmware/tests/README.md) and
 
 Host tests and timing models do not establish electrical margins or target
 hardware safety. Physical qualification is card, board, wiring, and clock
-specific; see [hardware records](sdcard-physical-links.md#sd-card-breakout),
-[SD-card performance test](../../guides/sdcard-performance-test.md), and [test records](../../tests/records).
+specific; see [hardware records](../../guides/hardware.md#sd-card-breakout),
+[SD-card performance test](../../guides/sdcard-benchmark.md), and [test records](../../validation/records/README.md).
 Read-only initialization success does not qualify high-speed writes. Power-loss
 recovery, complete MSC lifecycles, and sustained endurance require separate
 qualification. CSD v1/v2 capacity must fit the 32-bit block contract; SDUC,
@@ -998,12 +998,12 @@ for those hardware records.
 ## Historical Records
 
 Dated, configuration-specific observations and review follow-ups are kept out of this reference in
-[test records](../../tests/records/README.md); they may describe earlier clocking, recovery, and qualification algorithms and
+[test records](../../validation/records/README.md); they may describe earlier clocking, recovery, and qualification algorithms and
 do not qualify the current firmware or other cards. Most relevant:
 
-- [Earlier SDIO observations (undated)](../../tests/records/earlier-sdio-qualification-undated.md): card/clock throughput
+- [Earlier SDIO observations (undated)](../../validation/records/earlier-sdio-qualification-undated.md): card/clock throughput
   table and why 50 MHz needs high-speed TX.
-- [2026-10-16 fixed-25-MHz follow-up](../../tests/records/2026-10-16-sdio-fixed-25mhz-followup.md): receive-integrity failures.
-- [2026-10-15 static SD review follow-up](../../tests/records/2026-10-15-static-sd-review-followup.md): MSC reset-sense review.
-- [2026-10-18 speed matrix](../../tests/records/2026-10-18-sdio-speed-matrix.md) and
-  [repeat](../../tests/records/2026-10-18-sdio-speed-matrix-repeat.md): latest controlled comparisons.
+- [2026-10-16 fixed-25-MHz follow-up](../../validation/records/2026-10-16-sdio-fixed-25mhz-followup.md): receive-integrity failures.
+- [2026-10-15 static SD review follow-up](../../validation/records/2026-10-15-static-sd-review-followup.md): MSC reset-sense review.
+- [2026-10-18 speed matrix](../../validation/records/2026-10-18-sdio-speed-matrix.md) and
+  [repeat](../../validation/records/2026-10-18-sdio-speed-matrix-repeat.md): latest controlled comparisons.

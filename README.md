@@ -5,36 +5,47 @@
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
 ![Targets: RP2040 and RP2350](https://img.shields.io/badge/Targets-RP2040%20%7C%20RP2350-2674b8)
 
-**A host-controlled development platform for Raspberry Pi Pico-family boards.**
+**A reusable firmware-and-host foundation for Raspberry Pi Pico-family products.**
 
-PicoForge bridges embedded hardware and host applications through reusable firmware services and a common device
-interface. It helps developers monitor, configure and control their boards while reducing the need to build custom
-firmware and host-side tooling for every project.
+Start a specialized device with board management, diagnostics, USB communication, persistent configuration, and
+optional SD storage and W-board wireless already integrated. Keep the services your application needs, then add its
+own hardware behavior and host controls.
 
-Start with board management, diagnostics and storage operations, then extend the platform towards host-controlled
-peripheral access and hardware experimentation.
+PicoForge also runs as a standalone board-management and storage tool. Product-specific hardware behavior belongs in
+downstream projects, not this project's feature scope.
 
-**Explore the project:** [Firmware](firmware/) · [Host tools](docs/development/host-tools.md) ·
-[Planned APIs and examples](docs/design/vision.md) ·
-[Architecture](docs/design/architecture.md) · [Getting Started](docs/guides/getting-started.md)
+**Start here:** [Get started](docs/guides/getting-started.md) · [Build on PicoForge](docs/project-scope.md) ·
+[Architecture](docs/reference/architecture.md) · [Documentation](#documentation)
 
 ## Available Today
 
-| Capability | What you get today |
+| Foundation | Included |
 | --- | --- |
-| **Board status at a glance** | Board identity, uptime, system clock, temperature, runtime metrics, and SD-card state. |
-| **Configuration and control** | Board LED control, reboot, and persistent system-clock and storage-speed settings. |
-| **Storage without removing the card** | Automatically mount existing FAT/exFAT storage at startup for file access through the USB console. |
-| **Use the card from your computer** | Temporarily share an attached card as a USB mass-storage drive, with explicit ownership handoff. |
-| **Check card I/O** | On supporting firmware, test the mounted filesystem by writing and verifying a temporary file, with measured speeds. |
-| **Choose your interface** | Use the hosted Direct dashboard (USB or Bluetooth), local Python or .NET dashboard, or USB serial console. |
-| **W-board wireless** | Optional Wi-Fi network connection with a raw TCP CLI (port 2323, trusted LAN only) and authenticated BLE diagnostics/LED/benchmark control; [hardware qualification pending](docs/design/wireless.md). |
+| **Board management** | Identity, live diagnostics, persistent settings, LED control, and reboot. |
+| **SD storage** | SPI or SDIO-PIO, FAT/exFAT file access, USB drive handoff, and optional I/O self-test. |
+| **Host access** | USB HID management, CDC console, and Direct, Python, or .NET dashboards. |
+| **W-board wireless** | Wi-Fi TCP CLI and BLE diagnostics with key-authenticated LED/benchmark control. |
 
-SD storage uses either SDIO-PIO or SPI, selected when building firmware. An external SD-card breakout is required for
-storage features; basic board monitoring and LED control do not require one.
+Storage requires an external 3.3 V SD-card breakout; basic board management does not.
+See the [storage guide](docs/guides/console.md) and [wireless scope](docs/guides/wireless.md) for operation and limits.
 
-USB HID carries management commands and status, CDC provides the console, and MSC provides optional host block access.
-The browser, Python, and .NET dashboards are companion interfaces to the same firmware.
+### Why SD Storage?
+
+Pico-family boards' native USB connection operates at Full Speed: 12 Mbit/s signaling, with lower usable application
+throughput. Data-heavy applications can generate information faster than the host connection can carry it.
+SD storage provides a local destination, separating data collection from later retrieval.
+
+This supports downstream acquisition tools, not an implemented capture engine or a guaranteed recording rate.
+Sustained recording requires adequate buffering, handling SD-card write stalls, and measured end-to-end performance.
+Local storage does not make USB downloads faster.
+
+### Validation Status
+
+Implemented does not mean fully hardware-qualified. Radio qualification, sustained SD reliability, USB mass-storage
+compatibility, and power-loss recovery remain limited; see [qualification gaps](docs/validation/qualification-gaps.md)
+and the configuration-specific [test records](docs/validation/records/README.md).
+The Wi-Fi TCP CLI is unauthenticated and unencrypted, for trusted LANs only. BLE diagnostics are public; control-key
+authentication does not encrypt the BLE link.
 
 ## Get Started
 
@@ -54,59 +65,68 @@ eject before returning USB storage to the board.
 ![Python dashboard connected to a Pico 2, showing board controls, live diagnostics, and SDIO storage](docs/images/dashboard-python.jpg)
 
 The Python dashboard connected to a real Pico 2: live board telemetry, configuration controls, and SDIO/exFAT storage.
-See the [capture details](docs/development/demonstrations.md#captured-dashboard) for the recorded configuration and scope.
+See the [capture details](docs/validation/records/dashboard-capture.md#captured-dashboard) for the recorded configuration and scope.
 
 ## Use It or Extend It
 
 - **Use it:** manage the board and attached storage through a dashboard or USB console.
-- **Extend it:** build on the Pico SDK, FreeRTOS, and existing firmware/host interfaces for a specialized application.
-  SD transport is selectable today; broader capability selection and peripheral host libraries are future goals.
+- **Build a product:** pin a tested PicoForge revision, retain useful services, and add application-specific firmware
+  and host behavior. Start with [project scope](docs/project-scope.md) and
+  [layer responsibilities](docs/reference/architecture.md#layer-responsibilities).
+- **Budget resources:** define GPIO, PIO, DMA, IRQ, memory, and timing ownership before combining a new workload with
+  USB, storage, or radios. Reuse does not guarantee arbitrary combinations or unchanged application protocols.
 
 Low-cost Pico hardware provides the starting point; reusable services aim to reduce repeated integration work.
 FreeRTOS SMP manages both cores, allowing application tasks alongside platform services without implying dedicated-core
-isolation or hard real-time guarantees. See the [architecture](docs/design/architecture.md) for runtime boundaries.
+isolation or hard real-time guarantees. SD transport is selected at build time.
+Direct and the Python/.NET dashboard must not share components. Python and .NET share only their own frontend;
+see [dashboard isolation](docs/development/host-tools.md#dashboard-component-isolation).
 
 ## Project Direction
 
-The lead use case is **evaluate one I²C sensor from Python or C#**: follow documented wiring, configure the sensor,
-read measurements, and diagnose transaction errors without custom firmware. This workflow is planned.
-
-SPI access is also planned. Recording, PWM and broader build selection are optional future extensions,
-not prerequisites. Sensor-specific logic belongs in host examples or application extensions.
-
-See the [project vision](docs/design/vision.md) for intended workflows and scope, and the
-[demonstration plan](docs/development/demonstrations.md) for walkthroughs and examples still to add.
+Feature expansion is closed. This project focuses on maintaining, documenting, and qualifying the existing foundation;
+new product features belong in downstream projects. See [project scope](docs/project-scope.md) for the maintenance
+boundary and [demonstration records](docs/validation/records/dashboard-capture.md) for observed behavior.
 
 ## Documentation
 
-**Set up and use**
+See [reading order and document ownership](docs/README.md) for the folder layout and authoritative topic boundaries.
+
+### Use PicoForge
 
 - [Getting started](docs/guides/getting-started.md): firmware, flashing, dashboard connections, and first storage operations.
-- [Hardware setup](docs/guides/hardware-setup.md): supported boards, wiring, power, and bring-up.
+- [Hardware setup](docs/guides/hardware.md): supported boards, wiring, power, and bring-up.
 - [Direct](host/direct/README.md), [Python](host/python/README.md), and [.NET](host/dotnet/PicoForge/README.md):
   host-specific setup and usage.
-- [USB CDC console guide](docs/guides/usb-cdc-cli.md): terminal setup, file commands, mounting, and recovery.
-- [SD-card self-test guide](docs/guides/sdcard-performance-test.md): safe test procedure and result interpretation.
+- [Console guide](docs/guides/console.md): USB/Wi-Fi terminals, file commands, mounting, and recovery.
+- [SD-card self-test guide](docs/guides/sdcard-benchmark.md): safe test procedure and result interpretation.
+- [Wi-Fi and BLE](docs/guides/wireless.md): provisioning, radio operation, access restrictions, and qualification limits.
 
-**Design and implementation**
+### Build a Specialized Product
 
-- [Project vision](docs/design/vision.md): developer experience, intended capabilities, and scope boundaries.
-- [Architecture](docs/design/architecture.md): firmware layers, runtime, and storage ownership.
-- [Persistent settings](docs/design/settings.md): supported profiles, persistence, and API.
-- [SD-card driver design](docs/design/sdcard/sdcard-driver-design.md): driver layers, protocol, and ownership.
-- [SD-card physical links](docs/design/sdcard/sdcard-physical-links.md): transport engines, wiring, and clock planning.
-- [USB HID report reference](docs/design/usb/usb-hid-report-reference.md): report layouts and command semantics.
+- [Project scope](docs/project-scope.md): maintained baseline and downstream responsibilities.
+- [Architecture](docs/reference/architecture.md): firmware layers, runtime, and storage ownership.
+- [Persistent settings](docs/reference/settings.md): supported profiles, persistence, and API.
+- [SD-card driver design](docs/reference/sdcard/driver.md): driver layers, protocol, and ownership.
+- [SD-card physical links](docs/reference/sdcard/physical-links.md): transport engines, wiring, and clock planning.
+- [USB HID report reference](docs/reference/usb-hid.md): report layouts and command semantics.
+- [Wireless reference](docs/reference/wireless.md): radio integration, USB provisioning, and BLE authorization.
+- [Host tools development](docs/development/host-tools.md): frontend ownership, dashboard isolation, and host tests.
 
-**Development and validation**
+### Develop and Validate
 
-- [Demonstration plan](docs/development/demonstrations.md): screenshots, walkthroughs, and runnable examples to add.
+- [Demonstration records](docs/validation/records/dashboard-capture.md): captured interface and its evidence limits.
 - [Firmware development and testing](docs/development/firmware-testing.md): build, unit tests, and hardware limits.
-- [Host tools development](docs/development/host-tools.md): dashboards, tests, and shared frontend boundaries.
-- [Qualification gaps](docs/tests/qualification-gaps.md): development status and limits of existing validation.
-- [Test records](docs/tests/records/README.md): dated measurements and reviews, not current-firmware qualification.
-- [SD remediation matrix](docs/tests/sd-design-remediation.md): current review dispositions.
-- [Release guide](docs/deployment/release.md): packages, publication setup, and release validation.
+- [Console integration](docs/development/console-integration.md): dependency, command registration, and transport internals.
+- [Test ownership index](tests/README.md): which suite owns a check and how to run it.
+- [Qualification gaps](docs/validation/qualification-gaps.md): development status and limits of existing validation.
+- [Test records](docs/validation/records/README.md): dated measurements and reviews, not current-firmware qualification.
+- [SD remediation matrix](docs/validation/sd-review.md): current review dispositions.
 - [Contributing](CONTRIBUTING.md): development and validation guidance.
+
+### Release and Maintain
+
+- [Release guide](docs/release.md): readiness checks, packages, publication setup, and release validation.
 - [Security reporting](SECURITY.md): report vulnerabilities privately.
 
 ## License

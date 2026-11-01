@@ -1,6 +1,7 @@
 # Qualification Gaps
 
-PicoForge is under active development. A successful build or short test does not qualify sustained SD-card
+PicoForge's existing feature set is maintained, with hardware qualification still incomplete.
+A successful build or short test does not qualify sustained SD-card
 reliability, USB mass-storage compatibility, or power-loss recovery. Back up important card data before use and
 follow the [getting-started safety precautions](../guides/getting-started.md#before-you-connect).
 
@@ -12,13 +13,15 @@ follow the [getting-started safety precautions](../guides/getting-started.md#bef
   behavior across host operating systems, including eject, disconnect, reset, and error recovery.
 - **Power-loss recovery:** existing validation does not establish filesystem integrity or data durability after
   interrupted writes or unexpected power loss.
+- **W-board radios:** physical Wi-Fi association/reconnect, BLE access/control, and coexistence with USB and storage
+  remain unqualified. See the [wireless qualification scope](../guides/wireless.md).
 
 These are evidence gaps, not a claim that every listed scenario fails.
 
 ## Evidence and Follow-up
 
 - [Test and review records](records/README.md): dated measurements and reviews with configuration-specific scope.
-- [SD remediation matrix](sd-design-remediation.md): detailed review dispositions and outstanding measurement needs.
+- [SD remediation matrix](sd-review.md): detailed review dispositions and outstanding measurement needs.
 - [Firmware development and testing](../development/firmware-testing.md): validation procedures and hardware limits.
 
 Keep detailed findings and test results in those authoritative documents rather than duplicating them here.

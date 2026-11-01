@@ -1,24 +1,12 @@
-# USB CDC CLI
+# Console: USB and Wi-Fi
 
 This guide owns terminal usage, CLI commands, and CDC/storage behavior. For interface roles and the
-authoritative HID contract, see the [USB HID report reference](../design/usb/usb-hid-report-reference.md).
+authoritative HID contract, see the [USB HID report reference](../reference/usb-hid.md).
 
 USB CDC ACM is the interactive command interface. UART remains the independent
 debug-log transport. Normal storage commands do not change MSC ownership;
 explicit confirmed fault recovery is the exception described below. The periodic
 CDC greeting has been removed.
-
-## Dependency
-
-[Embedded CLI](https://github.com/funbiscuit/embedded-cli) is an MIT-licensed Git
-submodule at `firmware/third_party/embedded-cli`, pinned to v0.1.4, commit
-`ffa8014c6230ba809c6a655ccc611a6c4689113f`. Its license remains in the submodule's
-`LICENSE.txt`. Firmware compiles the upstream C source directly, not the upstream
-examples or test dependencies. Initialize dependencies from the repository root:
-
-```sh
-git submodule update --init --recursive
-```
 
 ## Terminal
 
@@ -142,7 +130,7 @@ storage operation held the media at the time of the snapshot. Card identity and 
 through the HID dashboard.
 Every `fs` command is refused
 until the host safely ejects and disables MSC. Follow the authoritative
-[default-mounted storage lifecycle](../design/architecture.md#storage-ownership-lifecycle):
+[default-mounted storage lifecycle](../reference/architecture.md#storage-ownership-lifecycle):
 mounting happens at startup, after insertion, and after normal MSC return, not on a self-test click or CDC connection.
 Wait for `mounted` status before reading/writing; `ready` means initialized but unmounted.
 Normal mount failures are retried five seconds after each attempt finishes, except when recovery blocks retries.
@@ -198,21 +186,6 @@ drops a vanished client after about 50 seconds idle.
 
 The TCP terminal has no authentication or encryption; anyone on the network can run every command, including
 `--confirm` destructive ones. Use it only on a trusted LAN, and disable Wi-Fi when that is not acceptable.
-
-## Extending commands
-
-Keep device command grammar and formatting in `app/cli`, transport/session queues in `app/usb/usb_task`, and hardware,
-configuration and storage operations in their owning services. CLI dispatch runs on the USB owner task for both CDC
-and TCP. Never perform FatFs operations directly there; submit them to the sole storage worker.
-Validate a complete request before changing state, keep each synchronous response within the 1024-byte output reserve,
-and report request admission separately from asynchronous completion. Full top-level help must fit that reserve too.
-The transport pauses CLI dispatch during pending HID save/reboot or benchmark admission, and services CDC/Wi-Fi while
-draining reboot acknowledgements. Add command contract tests in `firmware/tests/app/cli`, plus ownership/transport
-regressions when those boundaries change.
-
-```sh
-tools/validation/setup-ceedling-testing.sh test:cli test:cli_device test:usb_hid_wireless
-```
 
 ## Faulted MSC Recovery
 
@@ -284,68 +257,10 @@ These modification commands change the card. The example leaves the empty
 FatFs currently has no RTC integration: newly modified files receive the fixed
 timestamp `2026-01-01 00:00:00`. `fs stat` reports the stored timestamp, not the
 board's current time. See
-[the hardware validation record](../design/sdcard/sdcard-physical-links.md#sd-card-breakout)
+[the hardware validation record](hardware.md#sd-card-breakout)
 for the tested SPI CLI workflow and remaining qualification limits.
 
-## Integration
-
-[Application CLI](../../firmware/src/app/cli/cli.c) owns the static Embedded
-CLI instance and command bindings. It has no TinyUSB, board, or FreeRTOS
-dependency. Its output callback and input/process API are documented in
-[cli.h](../../firmware/src/app/cli/cli.h). Add session bindings using
-`pf_cli_add_binding()` after initialization; argument-tokenization helpers
-come from the upstream framework. Callbacks execute in the USB task, so keep
-them bounded and non-blocking; do not run long operations there.
-
-[The USB task](../../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI; the Wi-Fi
-[TCP transport](../../firmware/src/app/wireless/tcp_cli.c) is polled by the same task, so the session pump
-treats CDC and TCP as interchangeable byte streams.
-The CLI uses a 4 KiB aligned static arena, 64-byte RX buffer, 128-byte command
-buffer, 256-byte history buffer, and eight application-binding slots. The session
-has a 2 KiB output ring. It processes at most 32 received characters
-per task iteration and pauses input when less than 1 KiB of output space remains.
-It never waits for the host to consume output. Each process call must emit at
-most 1 KiB; adding commands requires preserving that output budget. Exceeding the
-ring fails explicitly rather than silently dropping output. HID/MSC continue to
-be serviced by the same task.
-
-[The static storage worker](../../firmware/src/app/storage/storage_worker.c)
-is the sole FatFs caller for CLI operations. It uses an 8 KiB stack, a one-request
-queue, and eight 256-byte reply slots. [The command dispatcher](../../firmware/src/app/cli/cli_storage.c)
-has no RTOS or USB dependency; the USB task registers it with the worker at startup. The worker sends bounded lines through the queue;
-only the USB task calls CLI print APIs. Replies carry a session ID so old output
-does not leak into a newly opened terminal. Backpressure suspends the worker,
-not the USB task. Disconnect cancellation releases read-only output backpressure;
-accepted mutations are not abandoned midway. MSC transitions are rejected while
-the worker is busy; enabling from a mounted filesystem queues worker unmount before ownership transfer. New application
-filesystem clients must also be routed through this worker, not a second task.
-
-## Validation
-
-Run the hardware-independent platform tests:
-
-```sh
-tools/validation/setup-ceedling-testing.sh test:test_cli
-tools/validation/setup-ceedling-testing.sh test:test_cli_storage
-```
-
-They cover prompt/help, commands, invalid arguments, unknown commands, session
-reset, completion/history, asynchronous binding registration, and the output
-reserve. Mocked FatFs tests cover commands, ownership/mount guards, safe paths,
-create-new/append modes, close/sync and partial-write errors, bounded cat output,
-directory cleanup, confirmed deletion, and cancellation. They do not verify actual
-card I/O, FreeRTOS queue scheduling, USB CDC enumeration, or host backpressure.
-
-For a board check, safely eject and disable any active MSC drive before flashing.
-Open CDC and run `help` and `board get version`. Close/reopen to verify a
-fresh prompt, and check that HID reports continue during commands. Stop reading
-CDC briefly, resume, and confirm output arrives without a board reset. No
-formatting or card writes are needed for the read-only check. Verify the storage
-commands first using an existing file and `storage unmount`; only test mutations on a
-disposable file after backing up the card. Follow the
-[storage lifecycle board checks](../development/firmware-testing.md#storage-lifecycle-board-checks) for startup mounting,
-automatic USB handoff/remount, busy rejection, and failure cases. Do not reset while a filesystem command is in progress.
-### Stalled output
+## Stalled output
 
 USB tracks successful transfers from the CLI ring to TinyUSB. After five seconds with buffered output and no
 progress, it cancels reply production for that DTR session and drains the worker queue, including completion,
@@ -358,3 +273,8 @@ This is a bounded-memory protocol trade-off: a slow host can receive incomplete 
 stops display producers, not completed filesystem mutations; file close/cleanup still precedes completion.
 A missing success reply does not mean a write or format failed. Inspect state before retrying a mutation.
 The timeout measures firmware buffer progress, not proof of host application consumption.
+
+## Integration Reference
+
+See [console integration](../development/console-integration.md) for dependency setup, command registration,
+transport/session internals, and software validation.

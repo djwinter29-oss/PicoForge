@@ -4,7 +4,7 @@ Historical record, not current validation. The table and findings below describe
 edits made on top of `bde8d7e` before they were committed as `ac4ae7a`; the former "edits remain uncommitted"
 statement was true only at that time. Later changes (for example the DeviceMonitor command-write locking and the
 `tools/firmware/load.sh` Tcl quoting) are not covered by these results. For current procedures and commands, see the
-[test guide](../../tests/README.md). Software-only checks, including cross-compiled target builds; no hardware
+[test guide](../../../tests/README.md). Software-only checks, including cross-compiled target builds; no hardware
 qualification claimed.
 
 | Command | Final outcome |
@@ -36,7 +36,7 @@ publication, admission release, and disconnect cleanup. Completion is simulated 
 cancellation; this is not a scheduler or FatFs end-to-end test. Existing file producer loops close opened files
 when a reply returns false; mutation commands retain their own close/sync behavior. Worker completion remains
 queued after execution/cleanup and admission remains held until done is drained. The explicit CLI truncation
-notice and DTR reopen requirement are documented in [CDC CLI](../guides/usb-cdc-cli.md#stalled-output).
+notice and DTR reopen requirement are documented in [CDC CLI](../../guides/console.md#stalled-output).
 
 Finding 2: DeviceMonitor reads under a device-handle lock and publishes under the snapshot lock. Commands,
 handle publication and disposal acquire the device lock first; disposal releases the snapshot lock before I/O.
@@ -58,7 +58,7 @@ Finding 5: The boot-only enumeration wait is preserved with a source `ponytail:`
 
 Finding 6: Both tasks periodically log their own FreeRTOS minimum untouched stack in words. Configuration/source
 contracts pass. Sampling is observational and does not certify margin; no target measurements were taken.
-See [architecture validation limits](../design/architecture.md#review-remediation-software-checks) for remaining MSC,
+See [architecture validation limits](../../reference/architecture.md#stack-observations) for remaining MSC,
 power-loss, dual-core stress and stack qualification gaps.
 
 ## Follow-up remediation (software checks only)
@@ -66,7 +66,7 @@ power-loss, dual-core stress and stack qualification gaps.
 Not a hardware result; the sections above remain historical.
 
 * Input Report 7 (filesystem format in the implementation at the time of this record) is described in the
-  [HID Report Reference](../design/usb/usb-hid-report-reference.md); the implemented design combines it into report 10.
+  [HID Report Reference](../../reference/usb-hid.md); the implemented design combines it into report 10.
   `test_usb_protocol_documents_filesystem_input_report` was RED (no section), then GREEN.
 * `release.yml` now runs the BAREMETAL `tests/artifacts/test_sd_ports.py` check between build and package, as
   `pr-check.yml` does. `test_workflows_validate_baremetal_artifacts_after_build` is parameterized over both

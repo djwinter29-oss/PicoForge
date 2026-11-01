@@ -1,6 +1,6 @@
 # Persistent settings
 
-Settings live in one reserved flash sector. Each image has a compile-time transport (Pico/Pico 2 × SPI/SDIO_PIO);
+Settings live in one reserved flash sector. Each supported Pico-family image has a compile-time SPI or SDIO-PIO transport;
 there is no runtime transport selector.
 
 | Setting | Values | Default | Applied |
@@ -10,7 +10,7 @@ there is no runtime transport selector.
 | W-board Wi-Fi/BLE | Radio switches, SSID, passphrase and BLE key | On; no credentials | At boot |
 
 Wireless provisioning, private credential storage, BLE authorization and client support are defined in the
-[wireless design](wireless.md).
+[wireless design](../guides/wireless.md).
 
 Builds use the SDK stock clock; select a different clock through the saved system-clock profile, not a CMake
 override. The former `PF_SYS_CLK_MHZ` option is rejected, including in existing caches. The build/load scripts clear
@@ -61,7 +61,7 @@ HID Feature report `2` reads persisted settings as transport-neutral profiles; F
 profiles. The profile payload is two-byte little-endian `system_clock_mhz` followed by one-byte `sdcard_profile`
 (`0` Standard, `1` High-Speed) and one-byte `radios` (bit 0 Wi-Fi, bit 1 BLE). Report `2` also returns the selected
 board's GPIO configuration. See the exact
-offsets and validation rules in the [HID Report Reference](usb/usb-hid-report-reference.md).
+offsets and validation rules in the [HID Report Reference](usb-hid.md).
 
 The Python, .NET, and Direct dashboards map these values to select options and verify the saved values returned in
 the Feature `20` completion result. **Save&Reboot** sends only opcode `6`; firmware queues its existing deferred
@@ -92,7 +92,7 @@ fields. Only explicit `true` requests the forced path. Firmware must successfull
 detach USB before programming flash; confirmation does not bypass busy work, self-tests, transitions, sync failures,
 or detach failures. Saving success reconnects HID for verification while card I/O remains blocked until reset.
 Failure does not schedule reboot. Host clients verify the original transaction after reconnect without resending
-the save. See the [wire lifecycle](usb/usb-hid-report-reference.md#confirmed-save-and-reboot-while-shared).
+the save. See the [wire lifecycle](usb-hid.md#confirmed-save-and-reboot-while-shared).
 
 Device sync cannot flush the computer's cached writes. This is an explicitly accepted unsafe interruption, not a
 safe-eject guarantee or filesystem repair. After successful reboot, MSC defaults off and automatic mounting resumes.

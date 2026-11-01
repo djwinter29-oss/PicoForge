@@ -95,8 +95,8 @@ MSC disabled, benchmark inactive and passed, with no benchmark file remaining.
 Each image lives under `build/sdio-matrix-cpu<MHz>-ds` or `build/sdio-matrix-cpu<MHz>-hs`.
 On the recorded revision, use `PF_SYS_CLK_MHZ=150|200|250` and `PF_SDIO_PIO_HIGH_SPEED=OFF|ON`, respectively,
 with the fixed flags above. Both build-time overrides have since been removed; current firmware uses
-[saved clock and storage-speed profiles](../../design/settings.md), not these historical build flags.
-The [performance-test procedure](../../guides/sdcard-performance-test.md) describes host control, cleanup and timing boundaries.
+[saved clock and storage-speed profiles](../../reference/settings.md), not these historical build flags.
+The [performance-test procedure](../../guides/sdcard-benchmark.md) describes host control, cleanup and timing boundaries.
 
 | Image | ELF SHA-256 |
 |---|---|

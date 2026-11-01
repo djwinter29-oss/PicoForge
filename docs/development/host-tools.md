@@ -29,9 +29,9 @@ tools/host/run-direct.sh
 
 Python and .NET serve the shared dashboard at `http://127.0.0.1:5000/` by default; run only one server on that port at
 a time. The Direct dashboard is served at `http://localhost:8000/`. USB connections require WebHID support and local
-USB permission. The CDC console is documented in the [CDC CLI guide](../guides/usb-cdc-cli.md).
+USB permission. The CDC console is documented in the [CDC CLI guide](../guides/console.md).
 The Python/.NET Live diagnostics Wi-Fi link opens a separate web console through the local raw TCP bridge;
-setup, session limits and security notes are authoritative in the [CLI guide](../guides/usb-cdc-cli.md#wi-fi-tcp-terminal).
+setup, session limits and security notes are authoritative in the [CLI guide](../guides/console.md#wi-fi-tcp-terminal).
 
 The Python launcher provisions its environment on first use. To install the package explicitly for development and
 tests:
@@ -89,7 +89,7 @@ symlinks, shared component directories, or build-time copying from one dashboard
 be implemented and maintained independently within each dashboard.
 
 Python and .NET may continue sharing their own frontend in `host/web`; this does not include Direct. The firmware
-[HID Report Reference](../design/usb/usb-hid-report-reference.md) remains their common specification, not a shared
+[HID Report Reference](../reference/usb-hid.md) remains their common specification, not a shared
 dashboard implementation. Repository CI may run both independent test suites.
 The [dashboard isolation contracts](../../tests/contracts/test_dashboard_isolation.py) check local module/asset
 boundaries and ensure the native hosts do not package or serve Direct components.
@@ -108,10 +108,10 @@ Enable USB drive opens the same styled confirmation pattern as reboot and return
 The dialog explains exclusive host ownership, uninterrupted HID/CDC, unavailable self-test, confirmed forced saving, and safe eject.
 Cancel, Escape, or disconnect sends no enable request; confirmation rechecks current storage safety gates.
 Local settings edits remain available while shared. Supporting firmware permits **Save&Reboot** only through the
-[forced-save confirmation](../design/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
+[forced-save confirmation](../reference/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
 
 Current host behavior follows the firmware's implemented HID reports. The
-[HID Report Reference](../design/usb/usb-hid-report-reference.md) is the authoritative protocol contract; host
+[HID Report Reference](../reference/usb-hid.md) is the authoritative protocol contract; host
 changes must preserve its framing, validation, and asynchronous-operation semantics.
 
 Only one active HID monitor per board should be used at a time. Separate host processes do not share device readers

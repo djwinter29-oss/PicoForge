@@ -38,7 +38,7 @@ uint8_t pf_system_reset_cause(void);
  * Does nothing for 0 (keep the build clock), for a frequency the SDK cannot derive from the crystal, and when the
  * clock already runs at the requested rate. Never changes the core voltage, so clocks above the SDK default rely on
  * the voltage already configured. Keeps clk_peri on clk_sys and refreshes clk_hstx on RP2350.
- * Not hardware-qualified (record measurements under docs/tests/records and link them here); 150 MHz on RP2040 and
+ * Not hardware-qualified (record measurements under docs/validation/records and link them here); 150 MHz on RP2040 and
  * 200/250 MHz are out of specification. If 250 MHz is unstable on a board, treat that profile as unsupported there.
  * @return true if the clock was changed; false if nothing was done, without saying why.
  */

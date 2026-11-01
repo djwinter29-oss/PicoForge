@@ -5,7 +5,7 @@ The Direct dashboard connects from the browser straight to the board over USB (W
 
 Open the hosted [Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
 The hosted site is deployed from successful releases after the initial
-[Pages setup](../../docs/deployment/release.md#publishing-setup).
+[Pages setup](../../docs/release.md#publishing-setup).
 For offline/local hosting, download the Direct dashboard ZIP (`picoforge-direct-vX.Y.Z.zip`) from
 [Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest), extract it, and serve the extracted directory
 on localhost. Opening `index.html` directly as a file is not supported.
@@ -28,7 +28,7 @@ before connecting; the chooser cannot override another application's HID access.
 ## Protocol compatibility
 
 This Direct dashboard targets layout version 1 of the authoritative
-[HID Report Reference](../../docs/design/usb/usb-hid-report-reference.md), implemented by firmware and the Python,
+[HID Report Reference](../../docs/reference/usb-hid.md), implemented by firmware and the Python,
 .NET, shared dashboard, and Direct dashboard clients. Physical USB qualification remains outstanding.
 It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
 (9), and Input 3 telemetry (22), 10 storage (34), and optionally 11 self-test (32, capability bit 5).
@@ -53,7 +53,7 @@ samples clear retained details. Retained values are display-only and never autho
 
 ## Controls
 
-Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/design/wireless.md).
+Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/guides/wireless.md).
 Use USB to provision radio settings and a random BLE key, then open **Bluetooth** for public diagnostics and
 key-authorized LED/benchmark controls. See the linked wireless guide for scanning and entering the key.
 Privileged management remains USB-only.
@@ -77,22 +77,22 @@ Storage shows the actual selected timing and effective bus clock.
 While shared, local settings editing remains available. Supporting firmware permits **Save&Reboot** with
 an additional explicit host-cache data-loss confirmation; sync/detach must succeed before flash programming.
 The reconnect path verifies the original transaction and saved values without replaying SET. See the
-[forced-save policy](../../docs/design/settings.md#forced-save-and-reboot). Older firmware keeps saving blocked
+[forced-save policy](../../docs/reference/settings.md#forced-save-and-reboot). Older firmware keeps saving blocked
 until storage returns to Pico; self-test and transition gates still apply.
 
 USB ownership transitions leave CDC, HID and MSC connected; Pico-owned storage reports no medium through MSC.
-See the [storage lifecycle](../../docs/design/architecture.md#storage-ownership-lifecycle).
+See the [storage lifecycle](../../docs/reference/architecture.md#storage-ownership-lifecycle).
 For reboot or older firmware's ownership reconnects, the dashboard identifies a reconnect candidate by reading
 Feature 1 and matching its stable device UID before resuming; it never replays the prior command.
 **Return to Pico** is explicitly confirmed force return, not an OS eject.
 **Enable USB drive** first opens a matching storage-handoff dialog explaining exclusive host access and safe eject;
 Cancel or Escape sends no command, and confirmation rechecks the current safety gates.
 Stop host file activity and safely eject whenever possible first. See the
-[force-return risks](../../docs/design/usb/usb-hid-report-reference.md#msc-force-return-safety).
+[force-return risks](../../docs/reference/usb-hid.md#msc-force-return-safety).
 The card is not automatically formatted or repaired, and reconnect does not prove successful remount.
 
 Firmware mounts at startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal
-safe USB return; see the [storage lifecycle](../../docs/design/architecture.md#storage-ownership-lifecycle).
+safe USB return; see the [storage lifecycle](../../docs/reference/architecture.md#storage-ownership-lifecycle).
 Sharing transfers exclusive access to the host; neither firmware files nor self-test are available then.
 The optional self-test requires fresh, known self-test status and an already-mounted filesystem.
 Start authorizes temporary `/PFTEST.BIN` writes, not mounting; an existing file is rejected, never replaced.

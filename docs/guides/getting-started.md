@@ -12,7 +12,7 @@ For the project overview and documentation index, see the [README](../../README.
 - High-speed SD-card operation depends on the board, card, breakout, wiring, and clock. A short successful test does
   not guarantee sustained reliability.
 - Physical USB mass-storage workflows and power-loss recovery are not fully qualified. See the
-  [test records](../tests/records/README.md) for the scope and limits of existing measurements.
+  [test records](../validation/records/README.md) for the scope and limits of existing measurements.
 
 ## 1. Get or Build the Firmware
 
@@ -33,14 +33,14 @@ breakout wiring. Transport is selected at build time, not when connecting a dash
 
 The build creates a separate directory for each board/transport pair, such as `build/firmware-pico2-SDIO_PIO/`.
 Stock-clock Pico 2 builds produce a dated image named `pico_forge_rp2350_150_<YYYYMMDD>.uf2`; Pico builds use
-`pico_forge_rp2040_125_<YYYYMMDD>.uf2`. See the [release guide](../deployment/release.md) for published packages and
+`pico_forge_rp2040_125_<YYYYMMDD>.uf2`. See the [release guide](../release.md) for published packages and
 build configurations. The build script enables the storage self-test; direct CMake builds disable it by default.
 Builds automatically clear the retired `PF_SYS_CLK_MHZ` and `PF_SDIO_PIO_HIGH_SPEED` options from reused CMake
 caches, including builds invoked by `tools/firmware/load.sh`. Select clock and SD-speed profiles through the
-[dashboard settings](../design/settings.md#host-dashboard-settings), not build options.
+[dashboard settings](../reference/settings.md#host-dashboard-settings), not build options.
 
 Publication links may be unavailable before the first successful publication. Maintainers should follow the
-[release setup](../deployment/release.md#publishing-setup) before announcing downloads.
+[release setup](../release.md#publishing-setup) before announcing downloads.
 
 ## 2. Flash the Board
 
@@ -51,7 +51,7 @@ Publication links may be unavailable before the first successful publication. Ma
 ## 3. Connect the Hardware
 
 Basic monitoring works without SD-card hardware. For storage, wire a compatible 3.3 V SD-card breakout and card
-using the [hardware setup guide](hardware-setup.md). Verify the breakout pinout and board connections before
+using the [hardware setup guide](hardware.md). Verify the breakout pinout and board connections before
 enabling storage.
 
 The hardware guide also covers independent monitor UART logging and SWD debugging. Monitor UART wiring follows
@@ -91,14 +91,14 @@ Native HID dependencies and operating-system permissions still apply. From a sou
 ### USB Serial Console
 
 Open the PicoForge USB CDC port in a serial terminal and enter `help` to list commands. Choose the PicoForge CDC
-port, not a Debug Probe's UART port. See the [console guide](usb-cdc-cli.md) for terminal settings, commands,
+port, not a Debug Probe's UART port. See the [console guide](console.md) for terminal settings, commands,
 and recovery behavior.
 
 ### Connection Troubleshooting
 
 For Pico W/Pico 2 W wireless enablement and the browser Bluetooth connection, see the
-[wireless guide and limits](../design/wireless.md#configuration-and-operation). USB remains the configuration
-and recovery path; wireless radios default off.
+[wireless guide and limits](wireless.md#configuration-and-operation). USB remains the configuration
+and recovery path. Radio switches default enabled; Wi-Fi needs a network and BLE can advertise view-only.
 
 Python and .NET dashboards both default to port 5000; run one at a time or choose another port. Use only one
 dashboard connection per board at a time. On Linux, if HID access is denied, run
@@ -108,7 +108,7 @@ dashboard connection per board at a time. On Linux, if HID access is denied, run
 
 With a correctly wired card, firmware attempts to mount its existing FAT/exFAT filesystem automatically at startup,
 without opening a dashboard or starting a self-test. It stays mounted for firmware use unless explicitly unmounted
-or shared over USB; see the [storage lifecycle](../design/architecture.md#storage-ownership-lifecycle).
+or shared over USB; see the [storage lifecycle](../reference/architecture.md#storage-ownership-lifecycle).
 Mounting never formats the card. Wait for `storage get status` to report `mounted` before file operations:
 
 ```text
@@ -123,9 +123,9 @@ To share the card with your computer:
 2. Enable USB mass storage (MSC) in the dashboard; the medium becomes available without disconnecting HID or CDC.
 3. Use the card from your computer.
 4. Safely eject the drive before returning ownership to PicoForge. The legacy safe-disable API is documented in the
-   [HID reference](../design/usb/usb-hid-report-reference.md). The dashboard's **Return to Pico** action requests a
+   [HID reference](../reference/usb-hid.md). The dashboard's **Return to Pico** action requests a
    confirmed Pico-side host-access revocation/remount, not an OS eject; read the
-   [force-return risks](../design/usb/usb-hid-report-reference.md#msc-force-return-safety) before using it.
+   [force-return risks](../reference/usb-hid.md#msc-force-return-safety) before using it.
 5. Wait for fresh mounted status before using files or starting a self-test. Normal safe return remounts automatically;
    do not click Start to mount the card. A failed forced-return mount requires inspection and deliberate
    `storage mount`.
@@ -134,4 +134,4 @@ On supporting firmware, the dashboard self-test writes and verifies `/PFTEST.BIN
 existing file at that path. Starting a test authorizes card writes and contributes to card wear. Back up important
 data first. Start runs the test against the existing mount, leaving it mounted afterward; checking free space can
 delay acceptance before write progress appears. The test is not filesystem repair or a guarantee of card reliability.
-Read the [self-test guide](sdcard-performance-test.md) for safeguards and result interpretation.
+Read the [self-test guide](sdcard-benchmark.md) for safeguards and result interpretation.

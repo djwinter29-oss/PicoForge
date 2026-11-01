@@ -104,7 +104,7 @@ Changed paths:
 - `tools/validation/check-storage-automount.py`
 - `tools/validation/host/regression_msc.c`
 - `tools/validation/host/regression_spi_write.c`
-- `docs/tests/records/2026-10-15-sd-msc-independent-audit.md`
+- `docs/validation/records/2026-10-15-sd-msc-independent-audit.md`
 
 Remaining physical validation: card init stability, signal timing, USB host eject
 interoperability, power-loss behavior, and comparable throughput. No physical

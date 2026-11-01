@@ -2,11 +2,15 @@
 
 Dated, configuration-specific records. Each states its date, hardware/firmware configuration, and scope; none
 qualifies the current firmware or other cards unless it says so. Current design lives in
-[SD-card driver design](../../design/sdcard/sdcard-driver-design.md); current review dispositions in the
-[SD remediation matrix](../sd-design-remediation.md).
+[SD-card driver design](../../reference/sdcard/driver.md); current review dispositions in the
+[SD remediation matrix](../sd-review.md).
 
 | Record | Kind |
 | --- | --- |
+| [Dashboard capture](dashboard-capture.md) | Interface observation, not hardware qualification |
+| [SD-card bring-up observations](sdcard-bringup-observations.md) | Historical SPI/SDIO investigations extracted from the transport reference |
+| [Benchmark observations](benchmark-observations.md) | Historical filesystem measurements extracted from the operating guide |
+| [Static review remediation](static-review-remediation.md) | Historical software checks, not current validation instructions |
 | [Earlier SDIO observations (undated)](earlier-sdio-qualification-undated.md) | Hardware measurements, pre-2026-10-13 |
 | [2026-10-13 SDIO 25 MHz](2026-10-13-sdio-25mhz.md) | Hardware measurements |
 | [2026-10-13 SDIO read throughput](2026-10-13-sdio-read-throughput.md) ([data](2026-10-13-sdio-read-throughput.json)) | Hardware measurements |

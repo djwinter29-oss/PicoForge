@@ -1,7 +1,7 @@
 # USB HID Report Reference
 
 This document is the authoritative HID wire contract. For CDC CLI behavior, see the
-[USB CDC CLI guide](../../guides/usb-cdc-cli.md).
+[USB CDC CLI guide](../guides/console.md).
 
 ## Report ID Allocation
 
@@ -25,7 +25,7 @@ Storage ownership changes medium availability, not the USB configuration. The de
 The USB manufacturer string is `djwinter29` and the product string is `PicoForge`; its serial string is the Pico SDK
 unique board ID.
 
-CDC ACM is the [Embedded CLI console](../../guides/usb-cdc-cli.md). UART debug logs use the board monitor UART, independently of
+CDC ACM is the [Embedded CLI console](../guides/console.md). UART debug logs use the board monitor UART, independently of
 USB CDC. HID carries no CLI text, file data, or SD block data. MSC is the host-facing block interface while it owns
 the card.
 
@@ -75,7 +75,7 @@ value. Validate the exact payload length after normalization. Multi-byte integer
 use two's complement. Wireless Features 31, 34 and 35 use 137-, 102- and 221-byte HIDAPI buffers over control
 transfers, not oversized interrupt endpoints. The layouts use version `1`, independent of firmware semantic version.
 
-The [wireless design](../wireless.md#usb-contract) owns Feature 30/31/34/35 layouts and the restricted BLE transport.
+The [wireless design](wireless.md#usb-contract) owns Feature 30/31/34/35 layouts and the restricted BLE transport.
 
 ### Connection and Read Flow
 
@@ -348,7 +348,7 @@ be displayed or logged where the user needs it; do not use it as the device UID 
 Filesystem format values: `0` Unknown, `1` FAT12, `2` FAT16, `3` FAT32, `4` exFAT. This is the last successfully
 mounted filesystem, not live mounted state. It returns to Unknown when mounting/formatting starts, after successful
 unmount, on card removal, when an uninitialized card forces unmount, or when MSC ownership is acquired. A failed
-unmount leaves the cached value unchanged. Use the [CDC CLI](../../guides/usb-cdc-cli.md) to query live mounted state.
+unmount leaves the cached value unchanged. Use the [CDC CLI](../guides/console.md) to query live mounted state.
 
 ## Report ID 11: Self-Test Status
 
@@ -393,7 +393,7 @@ error `10` (cleanup), it contains the FatFs result only when the cleanup failure
 otherwise it is zero. It is zero for every other execution error and in all states other than Failed. Unknown enum
 values must be retained and displayed as unknown, but treated as invalid for state transitions and safety decisions.
 
-The self-test uses the [default-mounted filesystem](../architecture.md#storage-ownership-lifecycle); startup and
+The self-test uses the [default-mounted filesystem](architecture.md#storage-ownership-lifecycle); startup and
 normal USB return trigger mounting independently of opcode `4`. The test never mounts or unmounts it.
 A start request is accepted only after preflight checks succeed and storage is reserved; acceptance publishes Queued,
 after which the operation
@@ -540,13 +540,13 @@ access, and reports Failed without reboot; flash may nevertheless have partially
 After verified saving, reconnect HID without usable MSC and keep media USB-reserved until reset so neither the host
 nor the worker starts new card I/O. Publish Completed with the original transaction and verified settings.
 Reboot waits for that result GET, or a five-second fallback deadline, followed by the existing one-second USB result
-grace period. Boot then follows the [default-mounted storage lifecycle](../architecture.md#storage-ownership-lifecycle).
+grace period. Boot then follows the [default-mounted storage lifecycle](architecture.md#storage-ownership-lifecycle).
 Additional control writes while the forced transaction is outstanding are ignored with a UART warning to preserve
 its result slot; hosts must serialize writes. GET never replays a save.
 
 Clients reconnect only to the same verified device UID and poll the original opcode/transaction result. Never replay
 SET or infer completion from reconnection. Timeout, mismatched identity, or invalid result leaves outcome uncertain
-and blocks further writes. The [settings safety policy](../settings.md#forced-save-and-reboot) explains confirmation
+and blocks further writes. The [settings safety policy](settings.md#forced-save-and-reboot) explains confirmation
 and host-cache risks. This workflow has host/model coverage, not physical USB/power-loss qualification.
 
 ### Cross-Interface Resource Arbitration
@@ -569,7 +569,7 @@ originating from CDC.
 ### MSC Force-Return Safety
 
 MSC is disabled at boot; firmware automatically mounts configured media according to the
-[storage lifecycle](../architecture.md#storage-ownership-lifecycle). Only explicit USB enable transfers ownership;
+[storage lifecycle](architecture.md#storage-ownership-lifecycle). Only explicit USB enable transfers ownership;
 starting a self-test or opening a dashboard does not. For opcode `3`, action `1` enables MSC only when the SD card is
 initialized and no storage command or reply is outstanding. If firmware has mounted the filesystem, the storage worker unmounts it before
 ownership transfer. A successful unmount pauses automount before USB ownership moves to the host. An unmount failure

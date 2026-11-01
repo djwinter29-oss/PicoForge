@@ -4,7 +4,7 @@ This directory structure separates firmware unit tests, repository-level contrac
 
 ## Firmware Unit Tests
 
-[firmware/tests/](../firmware/tests/) is the home for Ceedling tests of C modules under `firmware/src/`, including board profiles, drivers, platform services and USB callbacks.
+[firmware/tests/](../firmware/tests) is the home for Ceedling tests of C modules under `firmware/src/`, including board profiles, drivers, platform services and USB callbacks.
 
 - Name test files `test_*.c`.
 - Use Unity assertions and CMock for hardware-facing collaborators.
@@ -87,7 +87,9 @@ the corresponding input fails explicitly; missing files are never silently skipp
 
 ## Hardware Test Documentation
 
-`docs/tests/` is for hardware test plans, fixture and wiring procedures, and qualification evidence. Procedures requiring a board or probe should state the hardware setup and distinguish a partial run from a complete pass.
+`docs/validation/` tracks qualification gaps, review dispositions, and historical evidence.
+Current procedures live in `docs/development/` and wiring in `docs/guides/hardware.md`.
+Procedures requiring a board or probe should distinguish a partial run from a complete pass.
 
 ## Project Validation
 
@@ -112,4 +114,4 @@ RP2040/RP2350 firmware builds. Run
 [coverage-firmware.sh](../tools/validation/coverage-firmware.sh) for firmware coverage.
 
 Keep test assertions and regression fixtures here; keep setup, orchestration
-and benchmark analysis tools in [tools/validation/](../tools/validation/).
+and benchmark analysis tools in [tools/validation/](../tools/validation).
