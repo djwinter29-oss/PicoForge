@@ -122,7 +122,7 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
     ++queued;
     return pdPASS;
 }
-void pf_usb_msc_request_recovery(void) { ++recovery_requests; }
+bool pf_usb_msc_request_recovery(void) { ++recovery_requests; return true; }
 bool pf_usb_msc_is_enabled(void) { return msc_enabled; }
 bool pf_usb_msc_transition_pending(void) { return msc_transition_pending; }
 bool pf_usb_msc_request_rejected(void) { return false; }
@@ -174,9 +174,12 @@ void tud_cdc_read_flush(void) {}
 bool tud_cdc_write_clear(void) { return true; }
 bool pf_cli_init(pf_cli_write_char_t writer, void *context) { (void)writer; (void)context; return true; }
 bool pf_cli_add_binding(CliCommandBinding binding) { (void)binding; return true; }
-bool pf_cli_device_register(void (*request_reboot)(void)) { TEST_ASSERT_NOT_NULL(request_reboot); return true; }
-static bool device_storage_handled; /**< Fake pf_cli_device_storage result; false queues to the worker. */
-bool pf_cli_device_storage(const char *args) { TEST_ASSERT_NOT_NULL(args); return device_storage_handled; }
+bool pf_cli_board_register(void (*request_reboot)(void)) { TEST_ASSERT_NOT_NULL(request_reboot); return true; }
+bool pf_cli_config_register(void (*request_reboot)(void)) { TEST_ASSERT_NOT_NULL(request_reboot); return true; }
+bool pf_cli_storage_register(pf_cli_worker_submit_fn_t submit, void *context)
+{ TEST_ASSERT_NOT_NULL(submit); (void)context; return true; }
+bool pf_cli_fs_register(pf_cli_worker_submit_fn_t submit, void *context)
+{ TEST_ASSERT_NOT_NULL(submit); (void)context; return true; }
 void pf_cli_process(void) {}
 void pf_cli_receive_char(char character) { (void)character; }
 void panic(const char *format, ...) { (void)format; TEST_FAIL_MESSAGE("Unexpected panic"); }

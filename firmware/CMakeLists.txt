@@ -228,12 +228,11 @@ target_include_directories(embedded_cli PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
 
 add_library(pf_cli STATIC
     src/app/cli/cli.c
-    src/app/cli/cli_storage.c
 )
 target_include_directories(pf_cli PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
 )
-target_link_libraries(pf_cli PUBLIC embedded_cli pf_storage)
+target_link_libraries(pf_cli PUBLIC embedded_cli)
 
 add_library(pf_storage STATIC
     src/platform/storage/block_device.c
@@ -293,7 +292,11 @@ add_executable(pico_forge
     src/app/usb/usb_hid.c
     src/app/usb/usb_msc.c
     src/app/usb/usb_task.c
-    src/app/cli/cli_device.c
+    src/app/cli/cli_board.c
+    src/app/cli/cli_config.c
+    src/app/cli/cli_storage.c
+    src/app/cli/cli_fs.c
+    src/app/cli/cli_internal.c
 )
 
 target_include_directories(pico_forge PRIVATE

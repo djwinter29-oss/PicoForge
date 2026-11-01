@@ -14,7 +14,9 @@
 #include "usb_msc.h"
 #include "usb_task.h"
 #include "app/cli/cli.h"
-#include "app/cli/cli_device.h"
+#include "app/cli/cli_board.h"
+#include "app/cli/cli_config.h"
+#include "app/cli/cli_fs.h"
 #include "app/cli/cli_storage.h"
 #include "app/storage/storage_worker.h"
 #if PF_ENABLE_WIRELESS
@@ -39,18 +41,6 @@
 #define USB_HID_STORAGE_REPORT_INTERVAL (pdMS_TO_TICKS(500U)) /**< Storage input report period. */
 #define USB_HID_SELF_TEST_INTERVAL (pdMS_TO_TICKS(500U)) /**< Benchmark input report period. */
 #define USB_STACK_SAMPLE_INTERVAL (pdMS_TO_TICKS(30000u)) /**< Period of the stack high-water log line. */
-
-/** CLI "fs" command help; the grammar itself is implemented in app/cli/cli_storage. */
-#define USB_CLI_FS_HELP \
-    "ls [path]\r\n" \
-    "\tstat <path>\r\n" \
-    "\tcat <path> [limit]\r\n" \
-    "\tdf\r\n" \
-    "\tmkdir <path>\r\n" \
-    "\twrite <path> <text>\r\n" \
-    "\tappend <path> <text>\r\n" \
-    "\tmv <source> <destination>\r\n" \
-    "\trm <path> --confirm"
 
 static StaticTask_t usb_task_control_block; /**< Static TCB for the USB task. */
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE]; /**< Static stack for the USB task. */
@@ -90,19 +80,10 @@ static void cli_request_reboot(void)
     cli_reboot_requested = true;
 }
 
-static void storage_command(EmbeddedCli *instance, char *args, void *context)
+static bool submit_storage_command(const char *family, const char *args, void *context)
 {
-    (void)instance;
-    const char *family = context;
-    if (strcmp(family, "storage") == 0 && pf_cli_device_storage(args)) {
-        return;
-    }
-    if (!pf_storage_worker_submit(family, args != NULL ? args : "",
-                                  pf_usb_msc_is_enabled(), cli_session)) {
-        pf_cli_print("Storage busy or command too long; wait for completion and retry.");
-    } else {
-        pf_cli_print("Storage command queued.");
-    }
+    (void)context;
+    return pf_storage_worker_submit(family, args, pf_usb_msc_is_enabled(), cli_session);
 }
 
 static void cli_write_character(char character, void *context)
@@ -226,13 +207,10 @@ static void cli_connect(const cli_transport_t *transport)
     if (!pf_cli_init(cli_write_character, NULL)) {
         panic("Failed to initialize CLI");
     }
-    if (!pf_cli_add_binding((CliCommandBinding){
-            "storage", PF_CLI_STORAGE_HELP, false,
-            "storage", storage_command
-        }) || !pf_cli_add_binding((CliCommandBinding){
-            "fs", USB_CLI_FS_HELP, false,
-            "fs", storage_command
-        }) || !pf_cli_device_register(cli_request_reboot)) {
+    if (!pf_cli_storage_register(submit_storage_command, NULL) ||
+        !pf_cli_fs_register(submit_storage_command, NULL) ||
+        !pf_cli_board_register(cli_request_reboot) ||
+        !pf_cli_config_register(cli_request_reboot)) {
         panic("Failed to register CLI commands");
     }
     ++cli_session;

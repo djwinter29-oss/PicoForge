@@ -14,6 +14,8 @@ The adapter reuses the pinned editor/parser internals because the public API has
 It rejects editor or RX overflow through the next line ending, before dispatch, without changing vendor files.
 RX overflow discards the queued backlog because its line endings cannot identify which command lost bytes.
 Review the adapter's flag allocation and input-pump semantics when updating the dependency.
+The [adapter dependency contract](../../tests/contracts/test_cli_adapter.py) checks reviewed upstream source/header
+digests and fails on changes. Update those digests only after reviewing the adapter and running its regression suites.
 Initialize dependencies from the repository root:
 
 ```sh
@@ -32,7 +34,8 @@ draining reboot acknowledgements. Add command contract tests in `firmware/tests/
 regressions when those boundaries change.
 
 ```sh
-tools/validation/setup-ceedling-testing.sh test:cli test:cli_device test:usb_hid_wireless
+tools/validation/setup-ceedling-testing.sh test:cli \
+    test:cli_groups test:cli_board test:cli_config test:cli_storage test:cli_fs test:usb_hid_wireless
 ```
 
 ## Integration
@@ -59,8 +62,9 @@ be serviced by the same task.
 
 [The static storage worker](../../firmware/src/app/storage/storage_worker.c)
 is the sole FatFs caller for CLI operations. It uses an 8 KiB stack, a one-request
-queue, and eight 256-byte reply slots. [The command dispatcher](../../firmware/src/app/cli/cli_storage.c)
-has no RTOS or USB dependency; the USB task registers it with the worker at startup. The worker sends bounded lines through the queue;
+queue, and eight 256-byte reply slots. The [storage dispatcher](../../firmware/src/app/cli/cli_storage.c)
+and [filesystem command group](../../firmware/src/app/cli/cli_fs.c) have no RTOS or USB dependency; the USB task
+registers the command groups and connects the worker at startup. The worker sends bounded lines through the queue;
 only the USB task calls CLI print APIs. Replies carry a session ID so old output
 does not leak into a newly opened terminal. Backpressure suspends the worker,
 not the USB task. Disconnect cancellation releases read-only output backpressure;
@@ -73,7 +77,8 @@ filesystem clients must also be routed through this worker, not a second task.
 Run the hardware-independent platform tests:
 
 ```sh
-tools/validation/setup-ceedling-testing.sh test:cli test:cli_device test:cli_storage
+tools/validation/setup-ceedling-testing.sh test:cli \
+    test:cli_groups test:cli_board test:cli_config test:cli_storage test:cli_fs
 ```
 
 They cover prompt/help, commands, invalid arguments, unknown commands, session

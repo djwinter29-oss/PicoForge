@@ -70,7 +70,9 @@ are actions such as `board reboot` or `storage benchmark 64`. There are five gro
 and `radio`; use `help <group>` for its syntax. `storage` owns device management (status, USB drive ownership,
 formatting, benchmark, recovery and maintenance mounting), while `fs` works with files on the mounted volume.
 Use `board get version` for the firmware version.
-Device mutations return `OK` or `ERR`; queued USB drive/benchmark responses acknowledge admission, not completion.
+Mutation replies use consistent prefixes: `OK` means completed, `QUEUED` means accepted but incomplete, `ERR` means
+rejected/failed, and `WARN` means partial output or an uncertain/partial result. Status and data replies have no
+prefix. A queued USB drive or benchmark response acknowledges admission, not completion.
 
 ```text
 PicoForge> board get clock
@@ -78,7 +80,8 @@ clock=150000000 Hz
 PicoForge> config get clock
 clock=default (next boot)
 PicoForge> config set clock=150, storage=high
-OK config saved; rebooting
+OK config saved
+QUEUED reboot; waiting for CLI output to flush
 ```
 
 `clock` accepts `default`, `150`, `200`, or `250` MHz. `storage` accepts `default` (25 MHz target) or `high` (50 MHz
@@ -124,6 +127,8 @@ bytes and must fit the CLI's command buffer. Double-quote paths or text containi
 spaces. There is no current-directory state, recursive deletion, or file overwrite.
 Directory listings display up to 200 filename bytes without splitting UTF-8 characters and append
 `[name truncated]` when shortened. The marker is not part of the filename.
+If any entry is outside the CLI's ASCII/100-byte path limits, one summary `WARN` follows the listing; use host file
+tools for those entries. Listing a name does not imply it can be used as a CLI path.
 File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
@@ -274,6 +279,9 @@ Disconnect clears buffered output and drains completion as before. USB continues
 
 This is a bounded-memory protocol trade-off: a slow host can receive incomplete command output. Cancellation
 stops display producers, not completed filesystem mutations; file close/cleanup still precedes completion.
+Listing and cat handlers attempt an explicit interrupted-output notice before the final FatFs status when their
+reply callback stops accepting data. A disconnected client may receive neither; `OK FatFs: OK` describes filesystem
+operations, not proof of complete output delivery.
 A missing success reply does not mean a write or format failed. Inspect state before retrying a mutation.
 The timeout measures firmware buffer progress, not proof of host application consumption.
 

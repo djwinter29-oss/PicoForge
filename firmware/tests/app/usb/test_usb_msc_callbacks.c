@@ -500,7 +500,7 @@ void test_prevent_disconnect_allows_absent_disable_and_unavailable_recovery(void
  TEST_ASSERT_TRUE(tud_msc_prevent_allow_medium_removal_cb(0,1,0));
  __wrap_mscd_reset(0);
  recover_accepted=true;
- pf_usb_msc_request_recovery(); pf_usb_msc_task();
+ TEST_ASSERT_TRUE(pf_usb_msc_request_recovery()); pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled || request_rejected);
  TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 }
@@ -572,7 +572,7 @@ void test_failed_recovery_release_preserves_usb_owner_without_disconnect(void)
  msc_enabled=true; owner=OWNER_USB; initialized=false; mounted=false; worker_busy=false;
  recover_accepted=true; owner_result=PF_BLOCK_NOT_READY;
  test_time_us=1000u;
- pf_usb_msc_request_recovery(); pf_usb_msc_task();
+ TEST_ASSERT_TRUE(pf_usb_msc_request_recovery()); pf_usb_msc_task();
  TEST_ASSERT_TRUE(request_rejected && msc_enabled && !reconnect_pending);
  pf_usb_msc_task();
  TEST_ASSERT_FALSE(reconnect_pending);
@@ -599,7 +599,7 @@ void test_recovery_request_during_a_forced_return_remount_is_reported_rejected(v
 {
  remount_pending=true;
  request_rejected=false;
- pf_usb_msc_request_recovery();
+ TEST_ASSERT_FALSE(pf_usb_msc_request_recovery());
  TEST_ASSERT_TRUE(request_rejected && !recovery_requested && !request_pending);
  remount_pending=false;
 }

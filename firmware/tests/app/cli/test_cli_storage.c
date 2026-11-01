@@ -1,133 +1,22 @@
 #include "unity.h"
 TEST_SOURCE_FILE("embedded_cli_adapter.c")
+#include "app/cli/cli.h"
+#include "app/cli/cli_fs.h"
 #include "app/cli/cli_storage.h"
+#include "app/cli/cli_internal.h"
+#include "app/usb/usb_msc.h"
 #include "embedded_cli.h"
 #include "Mockff.h"
 #include "Mockfatfs_volume.h"
 #include "Mockstorage.h"
-
+#include "Mockusb_msc.h"
+#include <stdio.h>
 #include <string.h>
 
-static char output[2048];
-static FRESULT open_result;
-static BYTE expected_mode;
-static UINT written_size;
-static FRESULT write_result;
-static bool directory_entry;
-static const pf_block_device_t device = {0};
+#include "cli/storage_fixture.inc"
 
-static FRESULT open_file(FIL *file, const TCHAR *path, BYTE mode, int calls)
-{
-    (void)calls;
-    TEST_ASSERT_EQUAL_STRING("0:/a", path);
-    TEST_ASSERT_EQUAL_HEX8(expected_mode, mode);
-    memset(file, 0, sizeof(*file));
-    file->obj.objsize = 100u;
-    return open_result;
-}
-
-static FRESULT write_file(FIL *file, const void *buffer, UINT size, UINT *written, int calls)
-{
-    (void)file;
-    (void)calls;
-    TEST_ASSERT_EQUAL_STRING("hello world", buffer);
-    TEST_ASSERT_EQUAL_UINT(11u, size);
-    *written = written_size;
-    return write_result;
-}
-
-static FRESULT read_file(FIL *file, void *buffer, UINT size, UINT *received, int calls)
-{
-    (void)file;
-    (void)calls;
-    const unsigned char text[] = { 'a', '\n', 0x1bu, 'z' };
-    TEST_ASSERT_EQUAL_UINT(4u, size);
-    memcpy(buffer, text, sizeof(text));
-    *received = sizeof(text);
-    return FR_OK;
-}
-
-static FRESULT read_directory(DIR *directory, FILINFO *info, int calls)
-{
-    (void)directory;
-    memset(info, 0, sizeof(*info));
-    if (calls == 0) {
-        memcpy(info->fname, "folder", 7u);
-        info->fattrib = AM_DIR;
-        info->fsize = 10u;
-    }
-
-    return FR_OK;
-}
-
-static FRESULT read_long_directory_name(DIR *directory, FILINFO *info, int calls)
-{
-    (void)directory;
-    memset(info, 0, sizeof(*info));
-    if (calls == 0) {
-        memset(info->fname, 'a', 199u);
-        memcpy(info->fname + 199u, "\xe2\x82\xac" "tail", 8u);
-    }
-    return FR_OK;
-}
-
-static FRESULT read_exact_directory_name(DIR *directory, FILINFO *info, int calls)
-{
-    (void)directory;
-    memset(info, 0, sizeof(*info));
-    if (calls == 0) memset(info->fname, 'a', 200u);
-    return FR_OK;
-}
-
-static FRESULT file_stat(const TCHAR *path, FILINFO *info, int calls)
-{
-    (void)calls;
-    TEST_ASSERT_EQUAL_STRING("0:/a", path);
-    memset(info, 0, sizeof(*info));
-    info->fattrib = directory_entry ? AM_DIR : AM_ARC;
-    info->fsize = 42u;
-    return FR_OK;
-}
-
-static FRESULT rename_file(const TCHAR *source, const TCHAR *target, int calls)
-{
-    (void)calls;
-    TEST_ASSERT_EQUAL_STRING("0:/a", source);
-    TEST_ASSERT_EQUAL_STRING("0:/b", target);
-    return FR_EXIST;
-}
-
-static bool reply(const char *line, void *context)
-{
-    (void)context;
-    TEST_ASSERT_LESS_THAN(sizeof(output), strlen(output) + strlen(line) + 2u);
-    strcat(output, line);
-    strcat(output, "\n");
-    return true;
-}
-
-static void run(const char *arguments)
-{
-    pf_cli_storage_execute(false, "fs", arguments, reply, NULL);
-}
-
-static FRESULT mkdir_denied(const TCHAR *path, int calls)
-{
-    (void)calls;
-    TEST_ASSERT_EQUAL_STRING("0:/new", path);
-    return FR_DENIED;
-}
-
-void setUp(void)
-{
-    output[0] = '\0';
-    open_result = FR_OK;
-    expected_mode = FA_READ;
-    written_size = 11u;
-    write_result = FR_OK;
-    directory_entry = false;
-}
-void tearDown(void) {}
+void setUp(void) { storage_set_up(); }
+void tearDown(void) { storage_tear_down(); }
 
 void test_refuses_filesystem_access_while_usb_owns_card(void)
 {
@@ -135,44 +24,17 @@ void test_refuses_filesystem_access_while_usb_owns_card(void)
     TEST_ASSERT_NOT_NULL(strstr(output, "Media owned by USB"));
 }
 
+void test_empty_storage_arguments_report_usage_without_a_missing_token(void)
+{
+    pf_cli_storage_execute(false, "storage", "", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "ERR Usage: storage get"));
+}
+
 void test_requires_mount_before_file_operations(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
-    run("ls");
+    pf_cli_storage_execute(false, "fs", "ls", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "not mounted"));
-}
-
-void test_rejects_unsafe_paths_and_unconfirmed_removal(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    run("stat /../a");
-    TEST_ASSERT_NOT_NULL(strstr(output, "Invalid path"));
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    run("rm /a");
-    TEST_ASSERT_NOT_NULL(strstr(output, "requires fs rm"));
-}
-
-void test_reports_existing_file_without_overwriting(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_ExpectAnyArgsAndReturn(FR_EXIST);
-    run("write /existing text");
-    TEST_ASSERT_NOT_NULL(strstr(output, "EXIST"));
-}
-
-void test_rejects_invalid_cat_limits(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    run("cat /a 4097");
-    TEST_ASSERT_NOT_NULL(strstr(output, "1..4096"));
-}
-
-void test_creates_directory_and_reports_fatfs_errors(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_mkdir_StubWithCallback(mkdir_denied);
-    run("mkdir /new");
-    TEST_ASSERT_NOT_NULL(strstr(output, "DENIED"));
 }
 
 void test_mount_and_unmount_report_success(void)
@@ -226,9 +88,9 @@ void test_mount_reports_card_initialization_failure_without_binding(void)
 
 void test_volume_maintenance_is_no_longer_a_filesystem_command(void)
 {
-    run("mount");
-    run("unmount");
-    run("format --confirm");
+    pf_cli_storage_execute(false, "fs", "mount", reply, NULL);
+    pf_cli_storage_execute(false, "fs", "unmount", reply, NULL);
+    pf_cli_storage_execute(false, "fs", "format --confirm", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Volume maintenance moved to storage"));
 }
 
@@ -276,132 +138,6 @@ void test_storage_format_failure_is_reported_without_mounting(void)
     TEST_ASSERT_NULL(strstr(output, "Filesystem mounted"));
 }
 
-void test_lists_directory_and_closes_handle(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_opendir_ExpectAnyArgsAndReturn(FR_OK);
-    f_readdir_StubWithCallback(read_directory);
-    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    run("ls");
-    TEST_ASSERT_NOT_NULL(strstr(output, "d 10 folder"));
-}
-
-void test_directory_failure_still_closes_handle(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_opendir_ExpectAnyArgsAndReturn(FR_OK);
-    f_readdir_ExpectAnyArgsAndReturn(FR_DISK_ERR);
-    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    run("ls /a");
-    TEST_ASSERT_NOT_NULL(strstr(output, "DISK_ERR"));
-}
-
-void test_stat_reports_size_and_attributes(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_stat_StubWithCallback(file_stat);
-    run("stat /a");
-    TEST_ASSERT_NOT_NULL(strstr(output, "size=42 attributes=0x20"));
-}
-
-void test_cat_bounds_read_and_escapes_terminal_controls(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_read_StubWithCallback(read_file);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    run("cat /a 4");
-    TEST_ASSERT_NOT_NULL(strstr(output, "a\\x0a\\x1bz"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "Output limit reached"));
-}
-
-void test_cat_closes_file_after_read_failure(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_read_ExpectAnyArgsAndReturn(FR_DISK_ERR);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    run("cat /a");
-    TEST_ASSERT_NOT_NULL(strstr(output, "DISK_ERR"));
-}
-
-void test_write_uses_create_new_then_syncs_and_closes(void)
-{
-    expected_mode = FA_WRITE | FA_CREATE_NEW;
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_write_StubWithCallback(write_file);
-    f_sync_ExpectAnyArgsAndReturn(FR_OK);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    run("write /a \"hello world\"");
-    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
-}
-
-void test_append_uses_append_mode_and_reports_sync_failure(void)
-{
-    expected_mode = FA_WRITE | FA_OPEN_APPEND;
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_write_StubWithCallback(write_file);
-    f_sync_ExpectAnyArgsAndReturn(FR_DISK_ERR);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    run("append /a \"hello world\"");
-    TEST_ASSERT_NOT_NULL(strstr(output, "partially changed file may remain"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "DISK_ERR"));
-}
-
-void test_short_write_is_an_error_and_still_syncs_and_closes(void)
-{
-    expected_mode = FA_WRITE | FA_CREATE_NEW;
-    written_size = 3u;
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_write_StubWithCallback(write_file);
-    f_sync_ExpectAnyArgsAndReturn(FR_OK);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    run("write /a \"hello world\"");
-    TEST_ASSERT_NOT_NULL(strstr(output, "DISK_ERR"));
-}
-
-void test_move_preserves_existing_destination(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_rename_StubWithCallback(rename_file);
-    run("mv /a /b");
-    TEST_ASSERT_NOT_NULL(strstr(output, "EXIST"));
-}
-
-void test_remove_requires_confirmation_and_rejects_directories(void)
-{
-    directory_entry = true;
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_stat_StubWithCallback(file_stat);
-    run("rm /a --confirm");
-    TEST_ASSERT_NOT_NULL(strstr(output, "Refusing directory removal"));
-}
-
-void test_confirmed_file_removal_calls_unlink(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_stat_StubWithCallback(file_stat);
-    f_unlink_ExpectAnyArgsAndReturn(FR_OK);
-    run("rm /a --confirm");
-    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
-}
-
-void test_df_reports_64_bit_capacity(void)
-{
-    DWORD clusters = 1000u;
-    FATFS filesystem = { .n_fatent = 2000002u, .csize = 32u };
-    FATFS *pointer = &filesystem;
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_getfree_ExpectAnyArgsAndReturn(FR_OK);
-    f_getfree_ReturnThruPtr_nclst(&clusters);
-    f_getfree_ReturnThruPtr_fatfs(&pointer);
-    run("df");
-    TEST_ASSERT_NOT_NULL(strstr(output, "total=32768000000 bytes free=16384000 bytes"));
-}
-
 void test_status_is_available_during_host_ownership(void)
 {
     pf_storage_status_t status = {
@@ -423,52 +159,13 @@ void test_removed_sd_family_reports_usage(void)
     TEST_ASSERT_NOT_NULL(strstr(output, "Usage: storage get [status]"));
 }
 
-static bool disconnected_reply(const char *line, void *context)
-{
-    (void)line;
-    (void)context;
-    return false;
-}
-
-void test_cancelled_listing_still_closes_directory(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_opendir_ExpectAnyArgsAndReturn(FR_OK);
-    f_readdir_StubWithCallback(read_directory);
-    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    pf_cli_storage_execute(false, "fs", "ls", disconnected_reply, NULL);
-}
-
-void test_disconnected_output_does_not_skip_write_sync_or_close(void)
-{
-    expected_mode = FA_WRITE | FA_CREATE_NEW;
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_write_StubWithCallback(write_file);
-    f_sync_ExpectAnyArgsAndReturn(FR_OK);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    pf_cli_storage_execute(false, "fs", "write /a \"hello world\"", disconnected_reply, NULL);
-}
-
 void test_rejects_long_arguments_without_truncation(void)
 {
     char arguments[129];
     memset(arguments, 'a', sizeof(arguments) - 1u);
     arguments[sizeof(arguments) - 1u] = '\0';
-    run(arguments);
+    pf_cli_storage_execute(false, "fs", arguments, reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Arguments too long"));
-}
-void test_argument_count_boundaries_are_rejected(void)
-{
-    const char *const invalid[] = { "stat", "stat /a x", "mkdir", "cat", "cat /a 1 x", "write /a", "write /a b c",
-                                    "append /a", "mv /a", "mv /a /b /c", "rm /a", "ls /a /b" };
-
-    for (size_t index = 0u; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
-        output[0] = '\0';
-        pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-        run(invalid[index]);
-        TEST_ASSERT_NOT_NULL_MESSAGE(strstr(output, "Invalid arguments"), invalid[index]);
-    }
 }
 
 void test_out_of_range_status_values_print_unknown(void)
@@ -482,84 +179,138 @@ void test_out_of_range_status_values_print_unknown(void)
     TEST_ASSERT_NOT_NULL(strstr(output, "last_error=unknown:"));
 }
 
-static FRESULT read_full_chunk(FIL *file, void *buffer, UINT size, UINT *received, int calls)
+void test_storage_and_fs_bindings_queue_commands_and_report_admission(void)
 {
-    (void)file;
-    TEST_ASSERT_EQUAL_UINT(48u, size);
-    memset(buffer, 0x01, size);
-    *received = size;
-    return calls == 0 ? FR_OK : FR_DISK_ERR;
+    send_cli("help\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, " * storage\r\n\tget [status | usb | benchmark]"));
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, " * fs\r\n\tls [path]"));
+
+    send_cli("storage get status\r");
+    TEST_ASSERT_EQUAL_UINT(1u, queued_commands);
+    TEST_ASSERT_EQUAL_STRING("storage", queued_family);
+    TEST_ASSERT_EQUAL_STRING("get status", queued_arguments);
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "QUEUED Storage command"));
+
+    send_cli("fs ls /data\r");
+    TEST_ASSERT_EQUAL_UINT(2u, queued_commands);
+    TEST_ASSERT_EQUAL_STRING("fs", queued_family);
+    TEST_ASSERT_EQUAL_STRING("ls /data", queued_arguments);
+
+    queue_ok = false;
+    send_cli("fs ls /data\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR Storage busy"));
 }
 
-void test_cat_of_all_control_bytes_fits_one_reply_line(void)
+void test_usb_ownership_reports_admission_and_refusal_without_claiming_completion(void)
 {
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_read_StubWithCallback(read_full_chunk);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    run("cat /a 48");
-    TEST_ASSERT_NOT_NULL(strstr(output, "\\x01\\x01"));
-    TEST_ASSERT_EQUAL_UINT(48u * 4u + 1u, (unsigned)(strchr(output, '\n') - output) + 1u);
+    send_cli("storage set usb on\r");
+    TEST_ASSERT_EQUAL_UINT(1u, msc_requests);
+    TEST_ASSERT_TRUE(msc_enabled);
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "QUEUED USB ownership request"));
+
+    worker_busy = true;
+    send_cli("storage set usb off\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR storage busy"));
+    TEST_ASSERT_EQUAL_UINT(1u, msc_requests);
+
+    worker_busy = false;
+    msc_request_ok = false;
+    send_cli("storage set usb off\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR USB request refused"));
+    TEST_ASSERT_EQUAL_UINT(2u, msc_requests);
+    TEST_ASSERT_TRUE(msc_enabled);
 }
 
-void test_move_rejects_an_invalid_destination_path(void)
+void test_status_is_queued_and_recovery_requires_confirmation_and_admission(void)
 {
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    run("mv /a /b/../c");
-    TEST_ASSERT_NOT_NULL(strstr(output, "Invalid path"));
+    send_cli("storage get status\r");
+    TEST_ASSERT_EQUAL_UINT(1u, queued_commands);
+    TEST_ASSERT_EQUAL_STRING("storage", queued_family);
+    TEST_ASSERT_EQUAL_STRING("get status", queued_arguments);
+
+    send_cli("storage recover\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR storage "));
+    TEST_ASSERT_EQUAL_UINT(0u, recovery_requests);
+
+    send_cli("storage recover --confirm\r");
+    TEST_ASSERT_EQUAL_UINT(1u, recovery_requests);
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "QUEUED fault recovery"));
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "not a clean eject"));
+
+    recovery_ok = false;
+    send_cli("storage recover --confirm\r");
+    TEST_ASSERT_EQUAL_UINT(2u, recovery_requests);
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR fault recovery request refused"));
 }
 
-void test_cat_limit_accepts_4096_and_rejects_4097(void)
+void test_storage_maintenance_queues_only_valid_commands(void)
 {
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    run("cat /a 4097");
-    TEST_ASSERT_NOT_NULL(strstr(output, "1..4096"));
-    output[0] = '\0';
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_open_StubWithCallback(open_file);
-    f_read_ExpectAnyArgsAndReturn(FR_DISK_ERR);
-    f_close_ExpectAnyArgsAndReturn(FR_OK);
-    run("cat /a 4096");
-    TEST_ASSERT_NULL(strstr(output, "1..4096"));
+    send_cli("storage mount\r");
+    TEST_ASSERT_EQUAL_STRING("mount", queued_arguments);
+    send_cli("storage unmount\r");
+    TEST_ASSERT_EQUAL_STRING("unmount", queued_arguments);
+    TEST_ASSERT_EQUAL_UINT(2u, queued_commands);
+
+    send_cli("storage format\r");
+    send_cli("storage format --confirm extra\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR storage "));
+    TEST_ASSERT_EQUAL_UINT(2u, queued_commands);
+
+    send_cli("storage format --confirm\r");
+    TEST_ASSERT_EQUAL_UINT(3u, queued_commands);
+    TEST_ASSERT_EQUAL_STRING("format --confirm", queued_arguments);
 }
 
-static FRESULT open_directory_root(DIR *directory, const TCHAR *path, int calls)
+void test_benchmark_size_boundaries_ownership_and_cancellation(void)
 {
-    (void)directory;
-    (void)calls;
-    TEST_ASSERT_EQUAL_STRING("0:/", path);
-    return FR_OK;
+    send_cli("storage benchmark 0\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "1..1024 MiB"));
+    TEST_ASSERT_EQUAL_UINT(0u, benchmark_size);
+
+    send_cli("storage benchmark 1\r");
+    TEST_ASSERT_EQUAL_UINT(1u, benchmark_size);
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "QUEUED benchmark request"));
+
+    send_cli("storage benchmark 1024\r");
+    TEST_ASSERT_EQUAL_UINT(1024u, benchmark_size);
+    send_cli("storage benchmark 1025\r");
+    TEST_ASSERT_EQUAL_UINT(1024u, benchmark_size);
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "1..1024 MiB"));
+
+    msc_enabled = true;
+    send_cli("storage benchmark 4\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "USB owns storage"));
+    TEST_ASSERT_EQUAL_UINT(1024u, benchmark_size);
+
+    msc_enabled = false;
+    send_cli("storage benchmark cancel\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "QUEUED benchmark cancellation"));
+    benchmark_cancel_ok = false;
+    send_cli("storage benchmark cancel\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR no cancellable run"));
 }
 
-void test_ls_without_a_path_lists_the_volume_root(void)
+void test_benchmark_status_includes_failure_cleanup_and_request_details(void)
 {
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_opendir_StubWithCallback(open_directory_root);
-    f_readdir_StubWithCallback(read_directory);
-    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    run("ls");
-    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
-}
+    benchmark_status = (pf_file_benchmark_status_t){
+        .state = PF_FILE_BENCHMARK_FAILED,
+        .target_bytes = 4096u,
+        .written_bytes = 2048u,
+        .read_bytes = 1024u,
+        .mismatch_count = 3u,
+        .write_elapsed_ms = 25u,
+        .read_elapsed_ms = 12u,
+        .error = PF_FILE_BENCHMARK_ERROR_CLEANUP,
+        .filesystem_result = FR_DISK_ERR,
+        .request_error = PF_FILE_BENCHMARK_ERROR_BUSY,
+        .flags = PF_FILE_BENCHMARK_FILE_REMAINS | PF_FILE_BENCHMARK_VOLUME_MOUNTED,
+    };
+    send_cli("storage get benchmark\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "benchmark=failed target=4096 written=2048 read=1024 mismatches=3"));
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "write_ms=25 read_ms=12 error=10 filesystem_result=1 request_error=1 flags=3"));
 
-void test_long_listing_name_is_marked_and_not_split_inside_utf8(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_opendir_ExpectAnyArgsAndReturn(FR_OK);
-    f_readdir_StubWithCallback(read_long_directory_name);
-    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    run("ls");
-    TEST_ASSERT_NOT_NULL(strstr(output, " [name truncated]"));
-    TEST_ASSERT_NULL(strchr(output, (char)0xe2));
-    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
-}
-
-void test_listing_name_at_display_limit_is_not_marked(void)
-{
-    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    f_opendir_ExpectAnyArgsAndReturn(FR_OK);
-    f_readdir_StubWithCallback(read_exact_directory_name);
-    f_closedir_ExpectAnyArgsAndReturn(FR_OK);
-    run("ls");
-    TEST_ASSERT_NULL(strstr(output, "[name truncated]"));
-    TEST_ASSERT_NOT_NULL(strstr(output, "FatFs: OK"));
+    benchmark_ok = false;
+    send_cli("storage benchmark 8\r");
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "ERR benchmark request refused"));
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "benchmark=failed target=4096"));
 }

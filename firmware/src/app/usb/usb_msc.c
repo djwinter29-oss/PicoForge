@@ -235,11 +235,11 @@ bool pf_usb_msc_request(bool enabled)
     return true;
 }
 
-void pf_usb_msc_request_recovery(void)
+bool pf_usb_msc_request_recovery(void)
 {
     if (remount_pending) {
         request_rejected = true;
-        return;
+        return false;
     }
     clear_hid_deferral();
     force_return_requested = false;
@@ -247,6 +247,7 @@ void pf_usb_msc_request_recovery(void)
     request_pending = true;
     transition_pending = true;
     request_rejected = false;
+    return true;
 }
 
 bool pf_usb_msc_request_force_return(void)

@@ -191,7 +191,7 @@ The driver layout above ends at raw sectors. Integration above it lives in these
 
 | Responsibility | Implementation |
 | --- | --- |
-| Worker and file benchmark / CLI command executor | [app/storage/](../../../firmware/src/app/storage), [cli_storage.c](../../../firmware/src/app/cli/cli_storage.c) |
+| Worker, benchmark and CLI dispatch | [app/storage/](../../../firmware/src/app/storage), [cli_storage.c](../../../firmware/src/app/cli/cli_storage.c), [cli_fs.c](../../../firmware/src/app/cli/cli_fs.c) |
 | Media lifecycle, automount/recovery, diagnostics and firmware/USB ownership | [storage.c](../../../firmware/src/platform/storage/storage.c), [storage.h](../../../firmware/src/platform/storage/storage.h) |
 | Filesystem-independent sectors and geometry | [block_device.h](../../../firmware/src/platform/storage/block_device.h) |
 | FatFs lifecycle / disk-I/O binding | [fatfs_volume.c](../../../firmware/src/platform/storage/fatfs_volume.c), [fatfs_disk.c](../../../firmware/src/platform/storage/fatfs_disk.c) |
