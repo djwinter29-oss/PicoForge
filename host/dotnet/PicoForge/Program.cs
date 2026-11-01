@@ -12,6 +12,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddSingleton<DashboardBoards>();
 builder.Services.AddSingleton<IDashboardBoards>(services => services.GetRequiredService<DashboardBoards>());
+builder.Services.AddSingleton<ConsoleBridge>();
 
 var app = builder.Build();
 app.UseExceptionHandler();
@@ -39,5 +40,7 @@ var indexHtml = await File.ReadAllTextAsync(Path.Combine(webRoot, "index.html"))
 app.MapGet("/", () => Results.Content(
     indexHtml.Replace("{{ dashboard_type }}", ".NET"), "text/html; charset=utf-8"));
 app.MapDeviceStatus();
+app.MapGet("/console", () => Results.File(Path.Combine(webRoot, "console.html"), "text/html; charset=utf-8"));
+ConsoleBridge.MapEndpoints(app);
 if (app.Environment.IsDevelopment()) app.MapOpenApi();
 await app.RunAsync();

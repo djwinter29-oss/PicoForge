@@ -16,7 +16,7 @@
  * Mutations finish and close their files even if the reply callback stops accepting replies. A listing or `cat`
  * stops when the callback returns false, but the final status line is still sent.
  *
- * @param host_owned True while USB owns the medium; all fs commands are then refused.
+ * @param host_owned True while USB owns the medium; file commands and volume maintenance are then refused.
  * @param family Command family, "storage" or "fs"; borrowed for this call.
  * @param arguments Space-separated arguments after the family; borrowed for this call.
  * @param reply Output callback; must not be NULL.

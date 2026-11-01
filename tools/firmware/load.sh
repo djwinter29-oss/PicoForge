@@ -21,12 +21,13 @@ Usage: tools/firmware/load.sh [options]
 
 Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
 Builds use build.sh, which explicitly enables the storage benchmark; --skip-build leaves the image unchanged.
+Rebuilding clears retired clock/speed CMake options; clock and SD speed now use saved dashboard profiles.
 
 Options:
 --board NAME                 Supported board: pico or pico2 (default: pico)
---build-dir PATH             Build directory (default: build/firmware-NAME)
+--build-dir PATH             Build directory (default: build/firmware-NAME-TRANSPORT)
 --elf PATH                   ELF to flash (default: generated pico_forge_elf.txt path in build dir)
---openocd-exe PATH           OpenOCD executable (default: openocd)
+--openocd-exe PATH           OpenOCD executable (default: $OPENOCD_EXE or openocd; RP2350 needs rp2350.cfg)
 --openocd-target PATH        OpenOCD target config (default: inferred from board)
 --adapter-speed-khz KHZ      Debug probe speed (default: 5000)
 --probe-serial SERIAL        Select a CMSIS-DAP probe by serial number
@@ -205,10 +206,18 @@ tcl_escape() {
 }
 
 ELF_PATH_TCL=$(tcl_escape "$ELF_PATH")
+DEBUG_PROBE_SERIAL_TCL=$(tcl_escape "$DEBUG_PROBE_SERIAL")
+OPENOCD_TARGET_TCL=$(tcl_escape "$OPENOCD_TARGET")
+# Fail before probing when the OpenOCD install predates the target (e.g. distro 0.12.0 lacks rp2350.cfg).
+if ! "$OPENOCD_EXE" -c "find $OPENOCD_TARGET_TCL" -c shutdown >/dev/null 2>&1; then
+    echo "OpenOCD '$OPENOCD_EXE' cannot find $OPENOCD_TARGET; it is likely too old for this board." >&2
+    echo "Use an RP2350-capable OpenOCD with --openocd-exe PATH or OPENOCD_EXE=PATH." >&2
+    exit 1
+fi
+
 set -- "$OPENOCD_EXE" -f interface/cmsis-dap.cfg
 
 if [ -n "$DEBUG_PROBE_SERIAL" ]; then
-    DEBUG_PROBE_SERIAL_TCL=$(tcl_escape "$DEBUG_PROBE_SERIAL")
     set -- "$@" -c "adapter serial $DEBUG_PROBE_SERIAL_TCL"
 fi
 

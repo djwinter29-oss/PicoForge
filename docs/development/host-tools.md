@@ -1,9 +1,9 @@
 # Host Tools Development
 
-PicoForge has Python and .NET dashboards that share the frontend in `host/web`, plus an independent browser-only
-WebHID dashboard in `host/webhid`. For installation and everyday use, see the
-[Python host guide](../../host/python/README.md), [.NET host guide](../../host/dotnet/PicoForge/README.md), and
-[WebHID guide](../../host/webhid/README.md).
+PicoForge has Python and .NET dashboards that share the frontend in `host/web`, plus the independent Direct dashboard
+in `host/webhid`, which connects over USB (WebHID) or Bluetooth LE (Web Bluetooth). For installation and everyday use,
+see the [Python host guide](../../host/python/README.md), [.NET host guide](../../host/dotnet/PicoForge/README.md),
+and [Direct dashboard guide](../../host/webhid/README.md).
 
 Run commands from the repository root. Host unit tests do not require a board; physical device checks require an
 identified board and appropriate USB permissions.
@@ -28,8 +28,10 @@ tools/host/run-webhid.sh
 ```
 
 Python and .NET serve the shared dashboard at `http://127.0.0.1:5000/` by default; run only one server on that port at
-a time. WebHID serves the standalone browser app at `http://localhost:8000/`. A browser dashboard requires WebHID
-support and local USB permission. The CDC console is documented in the [CDC CLI guide](../guides/usb-cdc-cli.md).
+a time. The Direct dashboard is served at `http://localhost:8000/`. USB connections require WebHID support and local
+USB permission. The CDC console is documented in the [CDC CLI guide](../guides/usb-cdc-cli.md).
+The Python/.NET Live diagnostics Wi-Fi link opens a separate web console through the local raw TCP bridge;
+setup, session limits and security notes are authoritative in the [CLI guide](../guides/usb-cdc-cli.md#wi-fi-tcp-terminal).
 
 The Python launcher provisions its environment on first use. To install the package explicitly for development and
 tests:
@@ -73,6 +75,22 @@ See the [test ownership index](../../tests/README.md) for cross-project checks a
 Python and .NET serve the same assets from `host/web`; keep shared UI behavior backend-neutral and preserve the common
 API response contract. WebHID is independent and owns its renderer and assets under `host/webhid`. Keep browser-specific
 USB handling there rather than creating a second Python/.NET frontend.
+
+In the shared dashboard, active or pending self-tests disable board configuration and reboot controls without
+adding an automatic test warning above Pin configuration. The Save button state indicates unsaved changes without
+a separate notice. Explicit settings results/errors remain visible, and reboot confirmation still warns about
+discarding unsaved changes; test progress belongs in the storage benchmark section.
+Self-test controls stay pending throughout HTTP command delivery, even when idle telemetry sequences advance or
+wrap. After delivery, wait for a newer self-test report before releasing the pending gate; an active report then
+keeps conflicting controls disabled through cleanup.
+USB sharing keeps the benchmark hidden and conflicting controls disabled from request submission until telemetry
+confirms the requested owner with no transition pending, or reports rejection, including with older firmware that reconnects.
+Intermediate disconnected or old firmware-owned snapshots must not briefly restore the benchmark.
+Enable USB drive opens the same styled confirmation pattern as reboot and return on both dashboard frontends.
+The dialog explains exclusive host ownership, uninterrupted HID/CDC, unavailable self-test, confirmed forced saving, and safe eject.
+Cancel, Escape, or disconnect sends no enable request; confirmation rechecks current storage safety gates.
+Local settings edits remain available while shared. Supporting firmware permits **Save&Reboot** only through the
+[forced-save confirmation](../design/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
 
 Current host behavior follows the firmware's implemented HID reports. The
 [HID Report Reference](../design/usb/usb-hid-report-reference.md) is the authoritative protocol contract; host

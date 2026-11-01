@@ -4,9 +4,11 @@
 #define SCSI_SENSE_NOT_READY 2
 #define SCSI_SENSE_ILLEGAL_REQUEST 5
 #define SCSI_SENSE_MEDIUM_ERROR 3
+#define SCSI_SENSE_UNIT_ATTENTION 6
 bool tud_msc_set_sense(uint8_t, uint8_t, uint8_t, uint8_t);
-static inline bool tud_disconnect(void) { return true; }
-static inline bool tud_connect(void) { return true; }
+extern unsigned test_usb_disconnects, test_usb_connects;
+static inline bool tud_disconnect(void) { ++test_usb_disconnects; return true; }
+static inline bool tud_connect(void) { ++test_usb_connects; return true; }
 void tud_mount_cb(void);
 void tud_umount_cb(void);
 enum { CONTROL_STAGE_SETUP, CONTROL_STAGE_DATA, CONTROL_STAGE_ACK };

@@ -14,8 +14,9 @@ static bool pf_storage_worker_return_from_usb(void);
 static bool pf_storage_worker_unmount_for_usb(void);
 #include "app/usb/usb_msc.c"
 uint64_t test_time_us;
+unsigned test_usb_disconnects, test_usb_connects;
 static bool initialized=true, worker_busy, mounted, media_absent, recover_accepted;
-static unsigned locks, syncs, sense, asc;
+static unsigned locks, lock_calls, syncs, sense, asc, reads, writes;
 static pf_block_result_t read_result=PF_BLOCK_OK, write_result=PF_BLOCK_OK;
 static pf_block_result_t sync_result=PF_BLOCK_OK, owner_result=PF_BLOCK_OK;
 static enum { OWNER_FIRMWARE, OWNER_USB } owner=OWNER_USB;
@@ -27,7 +28,7 @@ static bool pf_storage_worker_recover_media(void) { return recover_accepted; }
 static bool pf_storage_worker_return_from_usb(void) { worker_busy = true; return true; }
 static bool pf_storage_worker_unmount_for_usb(void) { worker_busy = true; return true; }
 bool pf_storage_try_lock(void) { ++locks; return true; }
-void pf_storage_lock(void) { ++locks; }
+void pf_storage_lock(void) { ++locks; ++lock_calls; }
 void pf_storage_unlock(void) { TEST_ASSERT_TRUE(locks); --locks; }
 bool pf_storage_msc_ready(void) { return initialized; }
 uint32_t pf_storage_msc_count(void) { return 128; }
@@ -38,9 +39,10 @@ pf_block_result_t pf_storage_msc_release(void)
 pf_block_result_t pf_storage_msc_release_for_recovery(void)
 { TEST_ASSERT_FALSE(initialized); return pf_storage_msc_release(); }
 pf_block_result_t pf_storage_msc_sync(void) { ++syncs; return sync_result; }
-pf_block_result_t pf_storage_msc_read(uint32_t l, void *b, uint32_t n) { (void)l;(void)b;(void)n; return read_result; }
+pf_block_result_t pf_storage_msc_read(uint32_t l, void *b, uint32_t n)
+{ (void)l;(void)b;(void)n; ++reads; return read_result; }
 pf_block_result_t pf_storage_msc_write(uint32_t l, const void *b, uint32_t n)
-{ (void)l;(void)b;(void)n; return write_result; }
+{ (void)l;(void)b;(void)n; ++writes; return write_result; }
 bool tud_msc_set_sense(uint8_t l, uint8_t s, uint8_t a, uint8_t q) { (void)l;(void)q; sense=s; asc=a; return true; }
 /* Callback-boundary model of the pinned source ordering, not a BOT test. */
 static void request_sense(unsigned expected_key, unsigned expected_asc)
@@ -186,10 +188,12 @@ static void sense_lifecycle(void)
 void setUp(void)
 {
  initialized=true; worker_busy=mounted=media_absent=recover_accepted=false;
- locks=syncs=sense=asc=0;
+ locks=lock_calls=syncs=sense=asc=reads=writes=test_usb_disconnects=test_usb_connects=0;
  read_result=write_result=sync_result=owner_result=PF_BLOCK_OK;
  owner=OWNER_USB;
- msc_enabled=true;
+ msc_enabled=true; medium_changed=false;
+ save_detached = false;
+ reconnect_pending = false;
  msc_ejected=removal_prevented=request_pending=requested_enabled=false;
  transition_pending=request_rejected=recovery_requested=false;
  transfer_sense_pending=false;
@@ -205,6 +209,37 @@ void setUp(void)
 void tearDown(void)
 {
  TEST_ASSERT_EQUAL_UINT(0, locks);
+}
+
+void test_confirmed_save_detaches_after_sync_and_keeps_owner_until_reboot(void)
+{
+ TEST_ASSERT_TRUE(pf_usb_msc_prepare_save());
+ TEST_ASSERT_EQUAL_UINT(1u, syncs);
+ TEST_ASSERT_TRUE(save_detached && transition_pending);
+ TEST_ASSERT_EQUAL_UINT(1u, test_usb_disconnects);
+ TEST_ASSERT_EQUAL(OWNER_USB, owner);
+ pf_usb_msc_finish_save(true);
+ TEST_ASSERT_FALSE(msc_enabled);
+ TEST_ASSERT_TRUE(transition_pending && reconnect_pending);
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+ TEST_ASSERT_EQUAL(OWNER_USB, owner);
+}
+
+void test_confirmed_save_failure_restores_host_and_busy_or_sync_failure_keeps_it(void)
+{
+ worker_busy = true;
+ TEST_ASSERT_FALSE(pf_usb_msc_prepare_save());
+ TEST_ASSERT_EQUAL_UINT(0u, syncs);
+ worker_busy = false;
+ sync_result = PF_BLOCK_IO_ERROR;
+ TEST_ASSERT_FALSE(pf_usb_msc_prepare_save());
+ TEST_ASSERT_FALSE(save_detached);
+ TEST_ASSERT_TRUE(msc_enabled);
+ sync_result = PF_BLOCK_OK;
+ TEST_ASSERT_TRUE(pf_usb_msc_prepare_save());
+ pf_usb_msc_finish_save(false);
+ TEST_ASSERT_TRUE(msc_enabled && !transition_pending && reconnect_pending);
+ TEST_ASSERT_EQUAL(OWNER_USB, owner);
 }
 
 void test_transfer_errors_survive_tinyusb_sense_overwrite(void)
@@ -285,6 +320,10 @@ void test_enable_queues_unmount_and_waits_before_sd_ownership_handoff(void)
  pf_usb_msc_task();
  TEST_ASSERT_TRUE(msc_enabled && !transition_pending && !request_rejected);
  TEST_ASSERT_EQUAL(OWNER_USB,owner);
+ TEST_ASSERT_EQUAL_UINT(0u,test_usb_disconnects);
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+ request_sense(SCSI_SENSE_UNIT_ATTENTION,ASC_MEDIUM_CHANGED);
+ TEST_ASSERT_TRUE(tud_msc_test_unit_ready_cb(0));
 }
 
 void test_force_return_bypasses_only_host_eject_and_waits_for_worker_mount(void)
@@ -299,6 +338,8 @@ void test_force_return_bypasses_only_host_eject_and_waits_for_worker_mount(void)
  TEST_ASSERT_TRUE(remount_pending && transition_pending && worker_busy);
  TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
  TEST_ASSERT_EQUAL_UINT(1u,syncs);
+ TEST_ASSERT_EQUAL_UINT(0u,test_usb_disconnects);
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
  pf_usb_msc_request(true);
  pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled);
@@ -464,7 +505,7 @@ void test_prevent_disconnect_allows_absent_disable_and_unavailable_recovery(void
  TEST_ASSERT_EQUAL(OWNER_FIRMWARE,owner);
 }
 
-void test_request_during_the_reconnect_window_restarts_the_deadline_and_umount_keeps_it(void)
+void test_repeated_ownership_changes_keep_usb_connected_and_notify_new_media(void)
 {
  msc_enabled=false;
  owner=OWNER_FIRMWARE;
@@ -473,21 +514,47 @@ void test_request_during_the_reconnect_window_restarts_the_deadline_and_umount_k
  pf_usb_msc_task();
  worker_busy=false;
  pf_usb_msc_task();
- TEST_ASSERT_TRUE(msc_enabled && reconnect_pending);
- test_time_us=100000u;
+ TEST_ASSERT_TRUE(msc_enabled && medium_changed);
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+ request_sense(SCSI_SENSE_UNIT_ATTENTION,ASC_MEDIUM_CHANGED);
+ TEST_ASSERT_TRUE(tud_msc_test_unit_ready_cb(0));
  msc_ejected=true;
  pf_usb_msc_request(false);
  pf_usb_msc_task();
  TEST_ASSERT_FALSE(msc_enabled);
- TEST_ASSERT_TRUE(reconnect_pending);
- TEST_ASSERT_EQUAL_UINT64(100000u+MSC_RECONNECT_DETACH_US,reconnect_at_us);
- tud_umount_cb();
- test_time_us=reconnect_at_us-1u;
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+ request_sense(SCSI_SENSE_NOT_READY,ASC_MEDIUM_NOT_PRESENT);
+ pf_usb_msc_request(true);
  pf_usb_msc_task();
- TEST_ASSERT_TRUE(reconnect_pending);
- test_time_us=reconnect_at_us;
- pf_usb_msc_task();
+ uint8_t block[512]={0};
+ TEST_ASSERT_EQUAL_INT(-1,tud_msc_read10_cb(0,0,0,block,sizeof(block)));
+ tud_msc_set_sense(0,SCSI_SENSE_NOT_READY,ASC_MEDIUM_NOT_PRESENT,0);
+ request_sense(SCSI_SENSE_UNIT_ATTENTION,ASC_MEDIUM_CHANGED);
+ TEST_ASSERT_EQUAL_INT(512,tud_msc_read10_cb(0,0,0,block,sizeof(block)));
  TEST_ASSERT_FALSE(reconnect_pending);
+ TEST_ASSERT_EQUAL_UINT(0u,test_usb_disconnects);
+ TEST_ASSERT_EQUAL_UINT(0u,test_usb_connects);
+}
+
+void test_firmware_owned_or_returning_media_rejects_all_host_block_access(void)
+{
+ msc_enabled=false; owner=OWNER_FIRMWARE; mounted=true; worker_busy=true;
+ uint8_t block[512]={0}, cmd[16]={0x35};
+ uint32_t count=128; uint16_t size=0;
+ TEST_ASSERT_FALSE(tud_msc_test_unit_ready_cb(0));
+ tud_msc_capacity_cb(0,&count,&size);
+ TEST_ASSERT_EQUAL_UINT(0u,count);
+ TEST_ASSERT_EQUAL_UINT(512u,size);
+ TEST_ASSERT_FALSE(tud_msc_is_writable_cb(0));
+ TEST_ASSERT_EQUAL_INT(-1,tud_msc_read10_cb(0,0,0,block,sizeof(block)));
+ TEST_ASSERT_EQUAL_INT(-1,tud_msc_write10_cb(0,0,0,block,sizeof(block)));
+ TEST_ASSERT_EQUAL_INT(-1,tud_msc_scsi_cb(0,cmd,NULL,0));
+ TEST_ASSERT_FALSE(tud_msc_start_stop_cb(0,0,true,true));
+ TEST_ASSERT_EQUAL_UINT(0u,reads);
+ TEST_ASSERT_EQUAL_UINT(0u,writes);
+ TEST_ASSERT_EQUAL_UINT(0u,syncs);
+ TEST_ASSERT_EQUAL_UINT(0u,lock_calls);
+ request_sense(SCSI_SENSE_NOT_READY,ASC_MEDIUM_NOT_PRESENT);
 }
 
 void test_inquiry_fields_are_fixed_width_and_space_padded(void)
@@ -500,16 +567,17 @@ void test_inquiry_fields_are_fixed_width_and_space_padded(void)
  TEST_ASSERT_EQUAL_MEMORY("1.0 ",revision,4);
 }
 
-void test_failed_recovery_release_reconnects_through_the_deadline_path(void)
+void test_failed_recovery_release_preserves_usb_owner_without_disconnect(void)
 {
  msc_enabled=true; owner=OWNER_USB; initialized=false; mounted=false; worker_busy=false;
  recover_accepted=true; owner_result=PF_BLOCK_NOT_READY;
  test_time_us=1000u;
  pf_usb_msc_request_recovery(); pf_usb_msc_task();
- TEST_ASSERT_TRUE(request_rejected && msc_enabled && reconnect_pending);
- TEST_ASSERT_EQUAL_UINT64(1000u,reconnect_at_us);
+ TEST_ASSERT_TRUE(request_rejected && msc_enabled && !reconnect_pending);
  pf_usb_msc_task();
  TEST_ASSERT_FALSE(reconnect_pending);
+ TEST_ASSERT_EQUAL_UINT(0u,test_usb_disconnects);
+ TEST_ASSERT_EQUAL_UINT(0u,test_usb_connects);
  owner_result=PF_BLOCK_OK;
 }
 

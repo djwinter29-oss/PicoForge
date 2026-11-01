@@ -35,17 +35,33 @@ UART speed. Opening the port produces `PicoForge> `. Enter sends a command; Tab
 completes command names, Backspace edits input, and arrow keys navigate history
 and the current line. Live completion is disabled; Tab completion is enabled.
 CR, LF, and CRLF are accepted.
+The editor accepts at most 126 command-line bytes and ignores additional printable bytes. Stay within this limit:
+submitting an overlong line can execute its accepted prefix.
+
+`help` groups commands by name, with one indented subcommand per line. Prefix each subcommand with its group name:
+`get clock` under `board` means `board get clock`. Use `help <command>` or `<command> --help` to show only that group's
+usage. Angle brackets mark required arguments, square brackets mark optional arguments, and `|` separates choices.
+The web console uses the same eight-column tab stops as a normal terminal to preserve help indentation.
 
 | Command | Behavior |
 | --- | --- |
 | `help` | List commands; `help <command>` displays command help. |
-| `version` | Show the PicoForge CLI and Embedded CLI version. |
-| `echo <text>` | Echo text for non-destructive transport checks. |
-| `storage status` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
-| `storage recover --confirm` | Request explicit faulted-MSC detach and worker reinitialization without mounting; not a clean eject, sync, or repair. |
-| `fs mount` | Initialize the card and mount the existing FAT/exFAT volume; never format. |
-| `fs unmount` | Unmount after preceding commands finish, allowing MSC handoff. |
-| `fs format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
+| `board get <clock\|led\|version\|uptime>` | Read the actual system clock in Hz, LED state, firmware version, or uptime. |
+| `board set led <on\|off>` | Set the board-owned LED through the same platform service as the dashboard. |
+| `board reboot` | Schedule a reboot; refused while storage is busy, USB-owned, or changing ownership. |
+| `config get [clock\|storage\|wifi\|bluetooth]` | Read saved next-boot targets, not actual running hardware values. |
+| `config set <key=value>[, key=value...]` | Validate every assignment, save all targets together, then reboot. |
+| `radio status` | Read live Wi-Fi state and IP address, and Bluetooth state. |
+| `storage get [status]` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
+| `storage get usb` | Read USB drive enabled, ejected, pending and rejected ownership flags. |
+| `storage set usb <on\|off>` | Queue normal USB drive ownership transfer; check `storage get usb` for completion or rejection. |
+| `storage get benchmark` | Read retained benchmark progress, timings, mismatches, run/admission errors and cleanup flags. |
+| `storage benchmark <MiB>` | Queue a 1..1024 MiB file benchmark on the storage worker; preflight can still reject it. |
+| `storage benchmark cancel` | Request cancellation; wait for cleanup to finish before other storage work. |
+| `storage recover --confirm` | Revoke access to faulted MSC media and request worker reinitialization without mounting; not a clean eject, sync, or repair. |
+| `storage mount` | Maintenance only: manually initialize/mount after inspection or explicit unmount; normally startup/return mounting is automatic. Never format. |
+| `storage unmount` | Maintenance only: suppress automatic mounting until insertion or normal MSC return. USB enable also unmounts automatically. |
+| `storage format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
 | `fs stat <path>` | Show size, attributes, and filesystem timestamps. |
 | `fs cat <path> [limit]` | Read at most 1024 bytes by default; limit accepts 1..4096 bytes. |
@@ -58,7 +74,62 @@ CR, LF, and CRLF are accepted.
 
 Recovery completion or failure is reported through the UART logger; neither outcome mounts a volume.
 
-Storage commands require absolute ASCII paths on volume 0, with no drive
+### Board configuration
+
+Every group follows PicoPWM's `group verb parameters` convention: `get` reads, `set` changes a value, and other verbs
+are actions such as `board reboot` or `storage benchmark 64`. There are five groups: `board`, `config`, `storage`, `fs`
+and `radio`; use `help <group>` for its syntax. `storage` owns device management (status, USB drive ownership,
+formatting, benchmark, recovery and maintenance mounting), while `fs` works with files on the mounted volume.
+Use `board get version` for the firmware version.
+Device mutations return `OK` or `ERR`; queued USB drive/benchmark responses acknowledge admission, not completion.
+
+```text
+PicoForge> board get clock
+clock=150000000 Hz
+PicoForge> config get clock
+clock=default (next boot)
+PicoForge> config set clock=150, storage=high
+OK config saved; rebooting
+```
+
+`clock` accepts `default`, `150`, `200`, or `250` MHz. `storage` accepts `default` (25 MHz target) or `high` (50 MHz
+target); the backend/card may fall back. On W boards, `wifi` and `bluetooth` accept `enabled` or `disabled`.
+These radio master switches preserve existing credentials, matching the HID boot-profile controls. Enabling a switch
+does not provision a network or Bluetooth key. To configure or erase credentials, use the USB dashboard's radio
+configuration dialogs. Passwords and keys are deliberately not accepted/read back by the CLI: command input is echoed,
+retained in history, and the raw TCP connection is unencrypted.
+
+Assignments are comma-separated, may contain whitespace around `=`, and must fit in 99 bytes after `config set `.
+Unknown keys, duplicate keys, missing values, empty assignments, and invalid values reject the whole request before
+staging. Successful persistence schedules reboot automatically; no separate save step is needed. A failed/unconfirmed
+save discards staged targets and does not reboot, but flash may already have changed: inspect `config get` before retrying.
+The running clock does not change until reboot. A `default` target means the SDK/build clock, not a fixed board frequency.
+150 MHz on RP2040 and 200/250 MHz profiles are not hardware-qualified; use them only with the stability risks understood.
+See the [system clock API](../../firmware/src/platform/system.h) for the platform constraints.
+
+Saving/resetting is refused while storage work, MSC ownership or an ownership transition is outstanding. Safely eject
+USB storage, run `storage set usb off`, and wait for `storage get usb` to show `usb=disabled pending=0 rejected=0`
+before saving. There is no CLI forced save or unsafe MSC return. Radio-disabled firmware rejects radio
+commands/settings. Benchmark-disabled firmware reports `ERR benchmark unavailable in this build`.
+
+`storage get benchmark` reports lifecycle names and numeric errors from the
+[benchmark API](../../firmware/src/app/storage/file_benchmark.h); `flags=1` means the test file remains after cleanup.
+Flags can be combined; bit 1 records that the caller's volume was mounted. `storage benchmark <MiB>` uses the existing
+mounted volume, never formats, and refuses an existing `PFTEST.BIN`. A queued start can still fail worker preflight;
+inspect `request_error` as well as the run's `error`. Cancellation is a request, not a completed cleanup.
+
+### Storage and filesystem commands
+
+Mounting/unmounting is automatic during normal startup and USB drive handoff. `storage mount` and `storage unmount`
+remain maintenance commands for manual retry, safe removal, formatting and post-recovery inspection; they are not
+routine prerequisites. These are live operations, not saved boot settings under `config`.
+
+Formatting is destructive and still requires an unmounted, Pico-owned volume. After backing up the card and safely
+ejecting/disabling USB storage, run `storage unmount` and wait for completion before `storage format --confirm`.
+A successful format mounts the new filesystem automatically. The old `fs mount`, `fs unmount` and `fs format` names
+are no longer accepted; `fs` contains only file/directory operations.
+
+File commands require absolute ASCII paths on volume 0, with no drive
 prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
 bytes and must fit the CLI's command buffer. Double-quote paths or text containing
 spaces. There is no current-directory state, recursive deletion, or file overwrite.
@@ -66,16 +137,18 @@ File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
 
-`storage status` is available while USB owns the card and never sends commands to the card; `busy` means another
+`storage get status` is available while USB owns the card and never sends commands to the card; `busy` means another
 storage operation held the media at the time of the snapshot. Card identity and backend details are exposed only
 through the HID dashboard.
 Every `fs` command is refused
-until the host safely ejects and disables MSC. The storage worker automatically
-attempts to mount detected cards at boot, after insertion, and after MSC returns
-ownership. Failed attempts are retried five seconds after each attempt finishes.
+until the host safely ejects and disables MSC. Follow the authoritative
+[default-mounted storage lifecycle](../design/architecture.md#storage-ownership-lifecycle):
+mounting happens at startup, after insertion, and after normal MSC return, not on a self-test click or CDC connection.
+Wait for `mounted` status before reading/writing; `ready` means initialized but unmounted.
+Normal mount failures are retried five seconds after each attempt finishes, except when recovery blocks retries.
 Enabling MSC from the dashboard automatically queues `fs` volume unregistration on the sole storage worker;
-manual `fs unmount` is optional. A successful unmount pauses
-automatic mounting until the next insertion or return from MSC. `fs mount`
+manual `storage unmount` is optional. A successful unmount pauses
+automatic mounting until the next insertion or return from MSC. `storage mount`
 remains available for a manual retry.
 
 When board support provides card detect, the storage worker debounces presence
@@ -94,13 +167,60 @@ write or sync/close failure is reported; a new or partially modified file may
 remain. Commands do not roll back writes. Only explicit fault recovery changes
 MSC ownership.
 
+### Wi-Fi TCP terminal
+
+Pico W and Pico 2 W boards with Wi-Fi enabled also serve the same CLI as a raw TCP stream on port 2323. Find the board
+IP in the dashboard's live diagnostics. In PuTTY choose connection type **Raw**, host `<board IP>`, port `2323`, and
+set **Terminal > Local echo** and **Local line editing** to **Force off**; the CLI echoes and edits input itself.
+PuTTY's default **Auto** enables both for Raw connections, which shows each command twice and sends it only on Enter,
+so Tab completion and history keys do not work. Save the settings as a named session. On Linux,
+`nc <board IP> 2323` also works after `stty raw -echo` in the local terminal.
+
+In the Python and .NET dashboards, the connected **SSID (IP)** label in Live diagnostics becomes a link when the
+firmware reports that the TCP CLI listener has started. Clicking it opens a separate web console tab and connects
+automatically. Type in the terminal; there is no local echo. Use **Disconnect** to release it or **Connect** to
+reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser request.
+The local host relays bounded raw bytes over TCP, using same-origin HTTP polling between browser and host; browsers
+cannot open raw TCP sockets themselves. Targets come only from the selected USB board's wireless status, not a
+user-supplied host or port. Once connected, the console does not require the USB connection to remain open.
+The Direct dashboard has no local bridge, so use PuTTY there. Flash the updated firmware and restart the local
+dashboard to enable the link; older firmware that does not report listener state retains the plain-text label.
+
+The web console supports the Embedded CLI's cursor movement, character insertion/deletion and saved cursor escapes.
+It keeps at most 1000 lines of 512 columns; it is not a general-purpose VT100/color terminal. Input is limited to
+1024 bytes per pending batch. Pasting text containing Enter asks for confirmation before executing it.
+
+One CLI session exists at a time. The first transport to connect owns it: a TCP client connecting while a CDC terminal
+holds DTR receives `PicoForge CLI busy: a USB CDC session is active.` and is closed; a CDC terminal opened during a
+TCP session receives a busy line and its input is discarded. A second TCP client is turned away the same way. Closing
+the owning connection ends the session and cancels its pending output, exactly like dropping DTR. TCP keepalive
+drops a vanished client after about 50 seconds idle.
+
+The TCP terminal has no authentication or encryption; anyone on the network can run every command, including
+`--confirm` destructive ones. Use it only on a trusted LAN, and disable Wi-Fi when that is not acceptable.
+
+## Extending commands
+
+Keep device command grammar and formatting in `app/cli`, transport/session queues in `app/usb/usb_task`, and hardware,
+configuration and storage operations in their owning services. CLI dispatch runs on the USB owner task for both CDC
+and TCP. Never perform FatFs operations directly there; submit them to the sole storage worker.
+Validate a complete request before changing state, keep each synchronous response within the 1024-byte output reserve,
+and report request admission separately from asynchronous completion. Full top-level help must fit that reserve too.
+The transport pauses CLI dispatch during pending HID save/reboot or benchmark admission, and services CDC/Wi-Fi while
+draining reboot acknowledgements. Add command contract tests in `firmware/tests/app/cli`, plus ownership/transport
+regressions when those boundaries change.
+
+```sh
+tools/validation/setup-ceedling-testing.sh test:cli test:cli_device test:usb_hid_wireless
+```
+
 ## Faulted MSC Recovery
 
 Use normal host eject followed by HID MSC disable whenever possible. If an I/O
 failure invalidates a still-connected card, eject/sync and normal disable may
 all fail. For that faulted state only:
 
-1. Stop host access to the drive and record `storage status` before recovery.
+1. Stop host access to the drive and record `storage get status` before recovery.
    Unsaved host data and partially accepted writes may already be lost.
 2. Enter exactly `storage recover --confirm` in the CDC CLI. This is a request, not
    a successful clean eject or a promise that initialization will succeed.
@@ -108,19 +228,19 @@ all fail. For that faulted state only:
    removal is prevented by the host, storage work is busy, or the recovery
    request cannot be queued. The existing HID MSC status exposes pending and
    rejected requests; rejected requests do not detach the device.
-4. Once accepted, USB detaches before returning card ownership to firmware.
-   CDC/HID reconnect without MSC; reopen the same board if necessary.
+4. Once accepted, MSC access is revoked before returning card ownership to firmware.
+   CDC and HID stay connected; MSC reports no medium.
    The worker attempts card initialization only. It does not retry the failed
    payload, report a successful SCSI sync/eject, mount, format, or repair.
-5. After reconnect, use `storage status` to check that the state is `ready`, not
+5. After the worker finishes, use `storage get status` to check that the state is `ready`, not
    `mounted`, and to inspect the retained `last_error`. Successful
    initialization does not erase the original I/O diagnostic. A new failed
    initialization replaces it with the latest failure.
 6. Inspect/repair the filesystem with appropriate host tools before deliberately
-   running `fs mount`. An initialized card can be handed to MSC again for
+   running `storage mount`. An initialized card can be handed to MSC again for
    inspection using normal enable/eject/disable. Automatic mounting remains
    suppressed even across reinsertion and subsequent MSC returns until a
-   successful explicit `fs mount`. This suppression is not persistent over
+   successful explicit `storage mount`. This suppression is not persistent over
    MCU reset or loss of power.
 
 Reinitialization retains checked cleanup of unresolved native streams; it can
@@ -137,25 +257,25 @@ prevents MSC handoff until it is complete and its replies are drained.
 Read-only bring-up sequence:
 
 ```text
-storage status
-fs mount
+storage get status
+storage mount
 fs ls /
 fs stat /existing.txt
 fs cat /existing.txt 256
 fs df
-fs unmount
+storage unmount
 ```
 
 To exercise changes, use a disposable new path and wait for each result:
 
 ```text
-fs mount
+storage mount
 fs mkdir /cli-test
 fs write /cli-test/new.txt "hello world"
 fs append /cli-test/new.txt " more text"
 fs mv /cli-test/new.txt /cli-test/renamed.txt
 fs rm /cli-test/renamed.txt --confirm
-fs unmount
+storage unmount
 ```
 
 These modification commands change the card. The example leaves the empty
@@ -177,10 +297,12 @@ dependency. Its output callback and input/process API are documented in
 come from the upstream framework. Callbacks execute in the USB task, so keep
 them bounded and non-blocking; do not run long operations there.
 
-[The USB task](../../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI.
+[The USB task](../../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI; the Wi-Fi
+[TCP transport](../../firmware/src/app/wireless/tcp_cli.c) is polled by the same task, so the session pump
+treats CDC and TCP as interchangeable byte streams.
 The CLI uses a 4 KiB aligned static arena, 64-byte RX buffer, 128-byte command
-buffer, 256-byte history buffer, and eight application-binding slots. The CDC
-adapter has a 2 KiB output ring. It processes at most 32 received characters
+buffer, 256-byte history buffer, and eight application-binding slots. The session
+has a 2 KiB output ring. It processes at most 32 received characters
 per task iteration and pauses input when less than 1 KiB of output space remains.
 It never waits for the host to consume output. Each process call must emit at
 most 1 KiB; adding commands requires preserving that output budget. Exceeding the
@@ -195,7 +317,7 @@ only the USB task calls CLI print APIs. Replies carry a session ID so old output
 does not leak into a newly opened terminal. Backpressure suspends the worker,
 not the USB task. Disconnect cancellation releases read-only output backpressure;
 accepted mutations are not abandoned midway. MSC transitions are rejected while
-the worker is busy and enabling is rejected while FatFs is mounted. New application
+the worker is busy; enabling from a mounted filesystem queues worker unmount before ownership transfer. New application
 filesystem clients must also be routed through this worker, not a second task.
 
 ## Validation
@@ -215,19 +337,20 @@ directory cleanup, confirmed deletion, and cancellation. They do not verify actu
 card I/O, FreeRTOS queue scheduling, USB CDC enumeration, or host backpressure.
 
 For a board check, safely eject and disable any active MSC drive before flashing.
-Open CDC and run `help`, `version`, and `echo CDC test`. Close/reopen to verify a
+Open CDC and run `help` and `board get version`. Close/reopen to verify a
 fresh prompt, and check that HID reports continue during commands. Stop reading
 CDC briefly, resume, and confirm output arrives without a board reset. No
 formatting or card writes are needed for the read-only check. Verify the storage
-commands first using an existing file and `fs unmount`; only test mutations on a
-disposable file after backing up the card. Verify that MSC enable is rejected
-while mounted or busy and allowed after unmount; after host eject/disable, confirm
-that `fs mount` works again. Do not reset while a filesystem command is in progress.
+commands first using an existing file and `storage unmount`; only test mutations on a
+disposable file after backing up the card. Follow the
+[storage lifecycle board checks](../development/firmware-testing.md#storage-lifecycle-board-checks) for startup mounting,
+automatic USB handoff/remount, busy rejection, and failure cases. Do not reset while a filesystem command is in progress.
 ### Stalled output
 
 USB tracks successful transfers from the CLI ring to TinyUSB. After five seconds with buffered output and no
 progress, it cancels reply production for that DTR session and drains the worker queue, including completion,
-even while the host is not reading. The session accepts no further input until DTR closes and reopens.
+even while the host is not reading. The session accepts no further input until DTR closes and reopens. A stalled TCP session is closed instead, because
+its client cannot read the notice.
 Buffered output keeps its order; when space becomes available an explicit truncation notice follows it.
 Disconnect clears buffered output and drains completion as before. USB continues its paced service loop.
 

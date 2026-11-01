@@ -354,7 +354,7 @@ static void mount_or_format(bool formatting, pf_storage_worker_reply_fn_t reply,
     pf_fatfs_volume_result_t storage_result;
 
     if (pf_fatfs_volume_is_mounted()) {
-        (void)reply(formatting ? "Unmount first with fs unmount; format refused." : "Filesystem already mounted.",
+        (void)reply(formatting ? "Unmount first with storage unmount; format refused." : "Filesystem already mounted.",
                     context);
         return;
     }
@@ -458,6 +458,7 @@ void pf_cli_storage_execute(bool host_owned, const char *family, const char *arg
     const char *operation; /* host_owned is the caller's snapshot; see the header for the no-transition rule. */
     uint16_t count;
     bool formatting;
+    bool maintenance;
 
     if ((reply == NULL) || (family == NULL) || (arguments == NULL)) {
         return;
@@ -470,31 +471,43 @@ void pf_cli_storage_execute(bool host_owned, const char *family, const char *arg
     embeddedCliTokenizeArgs(tokens);
     count = embeddedCliGetTokenCount(tokens);
     operation = embeddedCliGetToken(tokens, 1u);
-    if ((strcmp(family, "storage") == 0) && (count == 1u) && (strcmp(operation, "status") == 0)) {
+    if ((strcmp(family, "storage") == 0) && (strcmp(operation, "get") == 0) &&
+        ((count == 1u) || ((count == 2u) && (strcmp(embeddedCliGetToken(tokens, 2u), "status") == 0)))) {
         status_command(host_owned, reply, context);
         return;
     }
-    if ((strcmp(family, "fs") != 0) || (count == 0u)) {
-        (void)reply("Usage: storage status | fs <mount|unmount|format|ls|stat|cat|df|mkdir|write|append|mv|rm>",
-                    context);
+    maintenance = (strcmp(family, "storage") == 0) && (count > 0u) &&
+                  (strcmp(operation, "mount") == 0 || strcmp(operation, "unmount") == 0 ||
+                   strcmp(operation, "format") == 0);
+    if ((!maintenance && strcmp(family, "fs") != 0) || count == 0u) {
+        (void)reply("Usage: storage get [status] | storage <mount|unmount|format --confirm> | fs <verb> [args]", context);
+        return;
+    }
+    if (!maintenance && (strcmp(operation, "mount") == 0 || strcmp(operation, "unmount") == 0 ||
+                         strcmp(operation, "format") == 0)) {
+        (void)reply("Volume maintenance moved to storage. Use help storage.", context);
         return;
     }
     if (host_owned) {
         (void)reply("Media owned by USB. Safely eject and disable MSC first.", context);
         return;
     }
-    formatting = strcmp(operation, "format") == 0;
+    formatting = maintenance && strcmp(operation, "format") == 0;
     if (formatting && ((count != 2u) || (strcmp(embeddedCliGetToken(tokens, 2u), "--confirm") != 0))) {
-        (void)reply("Usage: fs format --confirm (destroys all files on selected logical volume)", context);
+        (void)reply("Usage: storage format --confirm (destroys all files on selected logical volume)", context);
         return;
     }
-    if (formatting || ((count == 1u) && (strcmp(operation, "mount") == 0))) {
+    if (maintenance && !formatting && count != 1u) {
+        (void)reply("Invalid arguments. Use help storage.", context);
+        return;
+    }
+    if (formatting || (maintenance && strcmp(operation, "mount") == 0)) {
         mount_or_format(formatting, reply, context);
         return;
     }
     if (!pf_fatfs_volume_is_mounted()) {
-        (void)reply("Filesystem not mounted. Run fs mount first.", context);
-    } else if ((count == 1u) && (strcmp(operation, "unmount") == 0)) {
+        (void)reply("Filesystem not mounted. Run storage mount first.", context);
+    } else if (maintenance && strcmp(operation, "unmount") == 0) {
         unmount_command(reply, context);
     } else if ((count == 1u) && (strcmp(operation, "df") == 0)) {
         df_command(reply, context);

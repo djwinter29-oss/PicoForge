@@ -12,9 +12,18 @@ internal interface IDashboardBoards
     StatusResponse Snapshot(string? boardId);
     bool SetLed(string? boardId, bool on);
     MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false);
-    BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings);
+    BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false);
     bool Reboot(string? boardId);
     bool SetSelfTest(string? boardId, string action, uint sizeMib);
+    WirelessResponse ReadWireless(string? boardId) => throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessResponse SetWireless(string? boardId, WirelessRequest settings) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    bool CancelWirelessTest(string? boardId) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 internal sealed class DashboardBoards : IDisposable, IDashboardBoards
@@ -28,9 +37,9 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
     private readonly Dictionary<string, DeviceMonitor> monitors = new();
     private bool closed;
 
-    public DashboardBoards(string? serialNumber = null, string? devicePath = null)
+    public DashboardBoards(string? serialNumber = null, string? devicePath = null, ILoggerFactory? loggerFactory = null)
         : this(serialNumber, devicePath, PicoForgeHid.Discover,
-            (serial, path) => new DeviceMonitor(serial, path)) { }
+            (serial, path) => new DeviceMonitor(serial, path, loggerFactory?.CreateLogger<DeviceMonitor>())) { }
 
     internal DashboardBoards(string? serialNumber, string? devicePath, Func<HidBoard[]> discover,
         Func<string?, string?, DeviceMonitor> createMonitor)
@@ -72,11 +81,18 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
         : Reader(boardId).Snapshot;
 
     public bool SetLed(string? boardId, bool on) => Reader(boardId).SetLed(on);
+    public WirelessResponse ReadWireless(string? boardId) => Reader(boardId).ReadWireless();
+    public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => Reader(boardId).SetWireless(settings);
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
+        Reader(boardId).ScanWireless();
+    public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+        Reader(boardId).TestWireless(ssid, password);
+    public bool CancelWirelessTest(string? boardId) => Reader(boardId).CancelWirelessTest();
 
     public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
         Reader(boardId).SetMsc(enabled, force);
-    public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings) =>
-        Reader(boardId).SetSettings(settings);
+    public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false) =>
+        Reader(boardId).SetSettings(settings, force);
     public bool Reboot(string? boardId) => Reader(boardId).Reboot();
     public bool SetSelfTest(string? boardId, string action, uint sizeMib) =>
         Reader(boardId).SetSelfTest(action, sizeMib);

@@ -388,7 +388,7 @@ bool pf_storage_recover(void)
     pf_sd_result_t result = initialize_media();
     pf_sd_unlock();
     if (result == PF_SD_OK) {
-        PF_LOGGING_INFO("storage", "Media recovery completed; volume remains unmounted pending explicit fs mount");
+        PF_LOGGING_INFO("storage", "Media recovery completed; volume remains unmounted pending explicit storage mount");
     } else {
         PF_LOGGING_ERROR("storage", "Media recovery failed: result=%u; volume remains unmounted", (unsigned)result);
     }
@@ -403,7 +403,7 @@ bool pf_storage_return_from_usb(void)
     auto_mount_blocked = auto_mount_pending;
     auto_mount_pending = false;
     if (auto_mount_blocked) {
-        PF_LOGGING_ERROR("storage", "Forced USB return failed; volume remains unmounted; inspect before fs mount");
+        PF_LOGGING_ERROR("storage", "Forced USB return failed; volume remains unmounted; inspect before storage mount");
     } else {
         PF_LOGGING_WARNING("storage", "Forced USB return mounted; host cache was not flushed; filesystem may be damaged");
     }

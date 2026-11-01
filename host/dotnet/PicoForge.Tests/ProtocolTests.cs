@@ -44,6 +44,46 @@ public sealed class ProtocolTests
         config[14] = 4;
         Assert.Throws<InvalidOperationException>(() =>
             HidProtocol.ParseConfigurationReport(config, hardware));
+        config = ConfigurationReport();
+        config[14] |= 0x10;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
+        var wireless = IdentityReport();
+        wireless[18] |= HidProtocol.CapabilityWireless;
+        Assert.Equal(new BootSettingsResponse(200, 1, 2), HidProtocol.ToBootSettings(
+            HidProtocol.ParseConfigurationReport(config, HidProtocol.ParseIdentityReport(wireless))));
+    }
+
+    [Fact]
+    public void IdentityAcceptsForcedSaveAndWirelessCapabilities()
+    {
+        var report = IdentityReport();
+        report[18] |= HidProtocol.CapabilityForcedSave;
+        Assert.Equal((byte)0x77, HidProtocol.ParseIdentityReport(report).Capabilities);
+        report[18] |= 0x80;
+        Assert.True(HidProtocol.ParseIdentityReport(report).WirelessSupported);
+        report[18] |= HidProtocol.CapabilitySpi | HidProtocol.CapabilitySdio;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(report));
+    }
+
+    [Theory]
+    [InlineData(1, 4)]
+    [InlineData(2, 3)]
+    public void ConfigurationAcceptsNonGpioLedAndPreservesGpioValidation(byte mcu, byte board)
+    {
+        var report = IdentityReport();
+        report[15] = mcu;
+        report[16] = board;
+        report[18] |= HidProtocol.CapabilityWireless;
+        var hardware = HidProtocol.ParseIdentityReport(report);
+        var config = ConfigurationReport();
+        config[14] &= unchecked((byte)~2);
+        config[16] = byte.MaxValue;
+        Assert.Equal(byte.MaxValue, HidProtocol.ParseConfigurationReport(config, hardware).LedGpio);
+        report[18] &= unchecked((byte)~HidProtocol.CapabilityLed);
+        var noLed = HidProtocol.ParseIdentityReport(report);
+        Assert.Equal(byte.MaxValue, HidProtocol.ParseConfigurationReport(config, noLed).LedGpio);
+        Assert.Throws<InvalidOperationException>(() =>
+            HidProtocol.ParseConfigurationReport(ConfigurationReport(), noLed));
     }
 
     [Fact]
@@ -146,6 +186,11 @@ public sealed class ProtocolTests
         var parsed = HidProtocol.ParseControlResult(result);
         HidProtocol.RequireCompleted(parsed, 7, 6);
         Assert.Equal((byte)1, parsed.ResultData[2]);
+        result[9] = 3;
+        Assert.Equal((byte)3, HidProtocol.ParseControlResult(result).ResultData[3]);
+        result[9] = 4;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(result));
+        result[9] = 0;
 
         result[4] = 4;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(result));
@@ -201,7 +246,7 @@ public sealed class ProtocolTests
         return report;
     }
 
-    private static byte[] ConfigurationReport()
+    internal static byte[] ConfigurationReport()
     {
         var report = new byte[HidProtocol.ConfigurationPayloadSize + 1];
         report[0] = HidProtocol.ConfigurationReportId;
@@ -256,7 +301,7 @@ public sealed class ProtocolTests
         public bool SetLed(string? boardId, bool on) => true;
         public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
             new(enabled, false, false);
-        public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings)
+        public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false)
         {
             LastSettings = settings;
             return settings;

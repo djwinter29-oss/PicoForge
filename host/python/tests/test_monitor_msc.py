@@ -16,6 +16,31 @@ class MonitorMscTests(unittest.TestCase):
         self.monitor._active_client.set_led.return_value = {"status": "completed", "error": "none"}
         self.monitor._snapshot = {"msc": {"enabled": True, "force_return_supported": True}}
 
+    def test_forced_settings_require_confirmed_capable_idle_host_ownership(self):
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
+        snapshot = {"connected": True, "settings_supported": True,
+                    "hardware": {"capabilities": 68, "storage_transport": "sdio"},
+                    "msc": {"enabled": True, "transition_pending": False},
+                    "self_test": {"active": False}}
+        self.monitor._snapshot = snapshot
+        self.monitor._active_client.set_settings.return_value = settings
+        self.assertEqual(self.monitor.set_settings(settings, force=True), settings)
+        self.monitor._active_client.set_settings.assert_called_once_with(settings, force=True)
+        for mutate in [
+            {"hardware": {"capabilities": 4, "storage_transport": "sdio"}},
+            {"msc": {"enabled": False, "transition_pending": False}},
+            {"msc": {"enabled": True, "transition_pending": True}},
+            {"self_test": {"active": True}},
+        ]:
+            self.monitor._snapshot = {**snapshot, **mutate}
+            self.monitor._active_client.reset_mock()
+            with self.assertRaises(RuntimeError):
+                self.monitor.set_settings(settings, force=True)
+            self.monitor._active_client.set_settings.assert_not_called()
+        self.monitor._snapshot = snapshot
+        with self.assertRaisesRegex(RuntimeError, "Disable"):
+            self.monitor.set_settings(settings)
+
     def test_led_disconnect_after_command_preserves_disconnected_snapshot(self):
         self.monitor._snapshot = {**_empty_snapshot(), "connected": True,
                                   "hardware": {"led_available": True},
@@ -62,6 +87,8 @@ class MonitorMscTests(unittest.TestCase):
     def test_enable_keeps_existing_command(self):
         self.monitor.set_msc(True)
         self.monitor._active_client.set_msc.assert_called_once_with(True)
+        self.assertEqual(self.monitor._msc_reconnect_deadline, 0.0)
+        self.assertIsNone(self.monitor._msc_reconnect_enabled)
 
     def test_reboot_exposes_control_result(self):
         result = {"status": "completed", "opcode": 2, "transaction_id": 1}
@@ -90,6 +117,75 @@ class MonitorMscTests(unittest.TestCase):
 
 
 class MonitorReconnectTests(unittest.TestCase):
+    def test_monitor_yields_outside_the_hid_lock_between_nonblocking_input_batches(self):
+        monitor = DeviceMonitor.__new__(DeviceMonitor)
+        monitor._device_lock = threading.RLock()
+        monitor._lock = threading.RLock()
+        monitor._stop = threading.Event()
+        monitor._active_client = None
+        monitor._snapshot = _empty_snapshot()
+        monitor._input_received_at = {}
+        client = Mock()
+        client.read_info.return_value = {"supported": True}
+        client.read_configuration.return_value = {"system_clock_mhz": 0, "sdcard_profile": 0}
+        client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
+        monitor._client_factory = lambda: client
+        waits = []
+
+        def wait(timeout):
+            waits.append(timeout)
+            if timeout != 0.01:
+                return
+            acquired = []
+
+            def acquire():
+                locked = monitor._device_lock.acquire(blocking=False)
+                acquired.append(locked)
+                if locked:
+                    monitor._device_lock.release()
+
+            worker = threading.Thread(target=acquire)
+            worker.start()
+            worker.join(timeout=1)
+            self.assertEqual(acquired, [True], "Commands must be able to acquire HID between input batches")
+
+        monitor._stop.wait = wait
+        monitor._run()
+        client.read_input_report.assert_called_once_with(timeout_ms=0)
+        self.assertIn(0.01, waits)
+
+    def test_confirmed_msc_reconnect_is_bounded_and_does_not_hide_other_errors(self):
+        cases = [
+            (OSError("read error"), 104.0, True, False, True),
+            (RuntimeError("PicoForge HID interface not found; check USB"), 104.0, True, False, True),
+            (OSError("read error"), 105.0, True, False, False),
+            (OSError("read error"), 104.0, False, False, False),
+            (OSError("read error"), 104.0, True, True, False),
+            (ValueError("invalid report"), 104.0, True, False, False),
+            (RuntimeError("unexpected failure"), 104.0, True, False, False),
+        ]
+        for error, now, confirmed, uncertain, reconnecting in cases:
+            with self.subTest(error=error, now=now, confirmed=confirmed, uncertain=uncertain):
+                monitor = DeviceMonitor.__new__(DeviceMonitor)
+                monitor._device_lock = threading.RLock()
+                monitor._lock = threading.RLock()
+                monitor._stop = threading.Event()
+                monitor._stop.wait = lambda timeout: monitor._stop.set()
+                monitor._active_client = Mock()
+                monitor._active_client.set_msc.return_value = {"status": "completed", "error": "none"}
+                monitor._snapshot = {**_empty_snapshot(), "msc": {"enabled": False}}
+                if confirmed:
+                    with patch("picoforge.monitor.time.monotonic", return_value=100.0):
+                        monitor.set_msc(True)
+                monitor._command_outcome_uncertain = uncertain
+                monitor._client_factory = Mock(side_effect=error)
+                with patch("picoforge.monitor.time.monotonic", return_value=now):
+                    monitor._run()
+                snapshot = monitor.snapshot()
+                self.assertFalse(snapshot["connected"])
+                self.assertEqual(snapshot["reconnecting"], reconnecting)
+                self.assertEqual(snapshot["error"], None if reconnecting else str(error))
+
     def test_reconnect_snapshot_keeps_stable_api_shape(self):
         monitor = DeviceMonitor.__new__(DeviceMonitor)
         monitor._device_lock = threading.RLock()
@@ -113,7 +209,7 @@ class MonitorReconnectTests(unittest.TestCase):
         monitor._run()
         snapshot = monitor.snapshot()
         self.assertTrue(snapshot["connected"])
-        self.assertEqual(snapshot["settings"], {"system_clock_mhz": 200, "sdcard_profile": 1})
+        self.assertEqual(snapshot["settings"], {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0})
         self.assertEqual(snapshot["board_configuration"], client.read_configuration.return_value)
         self.assertTrue(snapshot["settings_supported"])
         self.assertIn("filesystem_format", snapshot)
@@ -220,16 +316,22 @@ class MonitorSettingsTests(unittest.TestCase):
         saved = self.monitor.set_settings(settings)
         self.assertEqual(saved["sdcard_profile"], 1)
         self.monitor._active_client.set_settings.assert_called_once_with(
-            {"system_clock_mhz": 200, "sdcard_profile": 1}
+            {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         )
         self.assertIn("Waiting for the board to reboot", self.monitor.snapshot()["settings_message"])
 
     def test_canonical_settings_are_saved_and_returned_without_transport_fields(self):
-        settings = {"system_clock_mhz": 150, "sdcard_profile": 0}
+        settings = {"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 0}
         self.monitor._active_client.set_settings.return_value = settings
         self.monitor._active_client.configuration = {"system_clock_mhz": 150, "sdcard_profile": 0}
         self.assertEqual(self.monitor.set_settings(settings), settings)
         self.monitor._active_client.set_settings.assert_called_once_with(settings)
+
+    def test_settings_without_radios_keep_the_saved_radio_enables(self):
+        self.monitor._snapshot["board_configuration"] = {"radios": 3}
+        self.monitor.set_settings({"system_clock_mhz": 150, "sdcard_profile": 0})
+        self.monitor._active_client.set_settings.assert_called_once_with(
+            {"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 3})
 
     def test_rejects_settings_when_storage_state_is_unknown_or_busy(self):
         settings = {"system_clock_mhz": 150, "sdio_bus_mhz": 0, "spi_bus_mhz": 0}

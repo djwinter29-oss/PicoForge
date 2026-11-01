@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace PicoForge;
 
@@ -7,27 +8,44 @@ internal interface IDeviceMonitor
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
     MscStatusResponse? SetMsc(bool enabled, bool force = false);
-    BootSettingsResponse? SetSettings(BootSettingsResponse settings);
+    BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false);
     bool Reboot();
     bool SetSelfTest(string action, uint sizeMib);
+    WirelessResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless() =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessOperationResponse TestWireless(string ssid, string password) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    bool CancelWirelessTest() => throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
-/// <summary>HID command writes used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
+/// <summary>Serialized HID operations used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
 internal interface IHidCommands
 {
     bool CommandOutcomeUncertain { get; }
+    InputReport? ReadInputReport(int timeoutMilliseconds = 250) =>
+        throw new InvalidOperationException("HID input unavailable");
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
     BoardConfigurationResponse ReadConfiguration();
     BootSettingsResponse ReadSettings();
-    BootSettingsResponse SetSettings(BootSettingsResponse settings);
+    BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false);
     void Reboot();
     void SetSelfTest(string action, uint sizeMib);
+    WirelessStatusResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null) =>
+        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
+        Action<string>? onProgress = null) => throw new InvalidOperationException("Wireless provisioning unavailable");
+    void CancelWirelessTest() => throw new InvalidOperationException("Wireless provisioning unavailable");
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
     private readonly Func<PicoForgeHid> createClient;
+    private readonly ILogger<DeviceMonitor> logger;
     private readonly object gate = new();
     // Handle operations always acquire deviceGate before the snapshot gate.
     private readonly object deviceGate = new();
@@ -36,13 +54,16 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private long storageReceipt;
     private long selfTestReceipt;
     private bool commandOutcomeUncertain;
+    private long mscReconnectDeadline;
+    private bool? mscReconnectEnabled;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
     public DeviceMonitor() : this(null, null) { }
 
-    public DeviceMonitor(string? serialNumber, string? devicePath)
+    public DeviceMonitor(string? serialNumber, string? devicePath, ILogger<DeviceMonitor>? logger = null)
     {
         createClient = () => new PicoForgeHid(serialNumber, devicePath);
+        this.logger = logger ?? NullLogger<DeviceMonitor>.Instance;
     }
 
     public StatusResponse Snapshot
@@ -83,19 +104,23 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             ExecuteCommand(client, () => client.SetMsc(enabled, force));
             lock (gate)
             {
+                var changingOwner = (snapshot.Msc?.Enabled ?? false) != enabled;
                 snapshot = snapshot with
                 {
                     Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false,
                         snapshot.Msc?.ForceReturnSupported ?? false)
                 };
+                mscReconnectDeadline = changingOwner ? Environment.TickCount64 + 5000 : 0;
+                mscReconnectEnabled = changingOwner ? enabled : null;
                 return snapshot.Msc;
             }
         }
     }
 
-    public BootSettingsResponse? SetSettings(BootSettingsResponse settings)
+    public BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false)
     {
-        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1)
+        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1 ||
+            settings.Radios is < 0 or > 3)
             throw new ArgumentOutOfRangeException(nameof(settings));
         lock (deviceGate)
         {
@@ -103,20 +128,101 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             lock (gate)
             {
                 if (activeClient is null || snapshot.Settings is null || snapshot.Msc is null ||
-                    snapshot.Msc.Enabled || snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true)
+                    snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true ||
+                    (force ? !snapshot.Connected || !snapshot.Msc.Enabled ||
+                        (snapshot.Hardware?.Capabilities & HidProtocol.CapabilityForcedSave) !=
+                            HidProtocol.CapabilityForcedSave : snapshot.Msc.Enabled))
                     return null;
                 client = activeClient;
             }
-            var saved = ExecuteCommand(client, () => client.SetSettings(settings));
+            var saved = ExecuteCommand(client, () => client.SetSettings(settings, force));
             lock (gate)
             {
                 snapshot = snapshot with
                 {
-                    Settings = saved
+                    Settings = saved,
+                    RebootPending = true,
+                    Msc = force ? snapshot.Msc! with { Enabled = false } : snapshot.Msc
                 };
                 return saved;
             }
         }
+    }
+
+    public WirelessResponse ReadWireless()
+    {
+        lock (deviceGate)
+        {
+            if (activeClient is null) throw new InvalidOperationException("PicoForge HID is not connected");
+            return new(activeClient.ReadWireless(), Snapshot.RebootPending);
+        }
+    }
+
+    public WirelessResponse SetWireless(WirelessRequest settings)
+    {
+        HidProtocol.BuildWirelessRequest(settings, 1);
+        lock (deviceGate)
+        {
+            var current = Snapshot;
+            if (activeClient is null || !current.Connected || current.Hardware?.WirelessSupported != true)
+                throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
+            if (current.CommandOutcomeUncertain || current.StorageStale ||
+                current.Msc is not { Enabled: false, TransitionPending: false } ||
+                current.RebootPending || current.SelfTest?.Active == true ||
+                ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 &&
+                    (current.SelfTest is null || current.SelfTestStale)))
+                throw new InvalidOperationException("Wireless provisioning is unavailable while storage or the board is busy");
+            var saved = ExecuteCommand(activeClient, () => activeClient.SetWireless(settings));
+            lock (gate) snapshot = snapshot with { Settings = settings.Board, RebootPending = true };
+            return new(saved, true, settings.Board);
+        }
+    }
+
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless()
+    {
+        lock (deviceGate)
+        {
+            var client = RequireWirelessIdle();
+            return ExecuteCommand(client, () => client.ScanWireless(() => PollInputs(client)));
+        }
+    }
+
+    public WirelessOperationResponse TestWireless(string ssid, string password)
+    {
+        lock (deviceGate)
+        {
+            var client = RequireWirelessIdle();
+            try
+            {
+                return ExecuteCommand(client, () => client.TestWireless(ssid, password, () => PollInputs(client),
+                    SetWirelessPhase));
+            }
+            finally { SetWirelessPhase(null); }
+        }
+    }
+
+    public bool CancelWirelessTest()
+    {
+        lock (deviceGate)
+        {
+            var client = RequireWirelessIdle();
+            client.CancelWirelessTest();
+            return true;
+        }
+    }
+
+    private IHidCommands RequireWirelessIdle()
+    {
+        var current = Snapshot;
+        if (activeClient is null || !current.Connected || current.Hardware?.WirelessSupported != true)
+            throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
+        if (current.CommandOutcomeUncertain || current.StorageStale ||
+            current.Msc is not { Enabled: false, TransitionPending: false } ||
+            current.RebootPending || current.SelfTest?.Active == true ||
+            ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 &&
+                (current.SelfTest is null || current.SelfTestStale)))
+            throw new InvalidOperationException("Wireless scan and connection test require idle firmware-owned storage");
+        return activeClient;
     }
 
     public bool Reboot()
@@ -163,58 +269,14 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 {
                     lock (deviceGate)
                     {
-                        var report = client.ReadInputReport();
-                        var now = DateTimeOffset.UtcNow;
-                        if (report?.Runtime is not null) telemetryReceipt = Stopwatch.GetTimestamp();
-                        if (report?.Memory is not null) storageReceipt = Stopwatch.GetTimestamp();
-                        if (report?.SelfTest is not null) selfTestReceipt = Stopwatch.GetTimestamp();
-                        lock (gate)
-                        {
-                            var telemetryStale = IsStale(telemetryReceipt, 750);
-                            var storageStale = IsStale(storageReceipt, 1500);
-                            var selfTestStale = IsStale(selfTestReceipt, 1500);
-                            var runtime = telemetryStale ? null : report?.Runtime ?? snapshot.Runtime;
-                            var memory = storageStale ? null : report?.Memory ?? snapshot.Memory;
-                            var msc = storageStale ? null : report?.Msc ?? snapshot.Msc;
-                            snapshot = snapshot with
-                            {
-                                Connected = true,
-                                Error = commandOutcomeUncertain
-                                    ? "A prior HID command outcome is uncertain; further writes are blocked" : null,
-                                Runtime = runtime,
-                                BoardStatus = runtime?.ToBoardStatus(),
-                                Memory = memory,
-                                Msc = msc,
-                                SelfTest = selfTestStale ? null : report?.SelfTest ?? snapshot.SelfTest,
-                                FilesystemFormat = storageStale ? null
-                                    : report?.FilesystemFormat ?? snapshot.FilesystemFormat,
-                                UpdatedAt = report is null ? snapshot.UpdatedAt : now,
-                                TelemetryUpdatedAt = report?.Runtime is null
-                                    ? snapshot.TelemetryUpdatedAt : now,
-                                StorageUpdatedAt = report?.Memory is null
-                                    ? snapshot.StorageUpdatedAt : now,
-                                SelfTestUpdatedAt = report?.SelfTest is null
-                                    ? snapshot.SelfTestUpdatedAt : now,
-                                TelemetryStale = telemetryStale,
-                                StorageStale = storageStale,
-                                SelfTestStale = selfTestStale
-                            };
-                        }
+                        PollInputs(client);
                     }
+                    await Task.Delay(10, stoppingToken);
                 }
             }
             catch (Exception error) when (IsDeviceError(error))
             {
-                lock (deviceGate)
-                lock (gate)
-                {
-                    activeClient = null;
-                    telemetryReceipt = storageReceipt = selfTestReceipt = 0;
-                    snapshot = new(false, commandOutcomeUncertain
-                            ? "A prior HID command outcome is uncertain; further writes are blocked" : error.Message,
-                        null, null, null, null, null, null,
-                        CommandOutcomeUncertain: commandOutcomeUncertain);
-                }
+                HandleDisconnect(error);
             }
             finally
             {
@@ -230,6 +292,84 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
             try { await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+        }
+    }
+
+    private void SetWirelessPhase(string? phase)
+    {
+        lock (gate) snapshot = snapshot with { WirelessPhase = phase };
+    }
+
+    private void PollInputs(IHidCommands client)
+    {
+        for (var i = 0; i < 16; i++)
+        {
+            var report = client.ReadInputReport(0);
+            ApplyInputReport(report);
+            if (report is null) break;
+        }
+    }
+
+    private void ApplyInputReport(InputReport? report)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (report?.Runtime is not null) telemetryReceipt = Stopwatch.GetTimestamp();
+        if (report?.Memory is not null) storageReceipt = Stopwatch.GetTimestamp();
+        if (report?.SelfTest is not null) selfTestReceipt = Stopwatch.GetTimestamp();
+        lock (gate)
+        {
+            if (report?.Msc is { TransitionPending: false } ownership &&
+                ownership.Enabled == mscReconnectEnabled)
+            {
+                mscReconnectDeadline = 0;
+                mscReconnectEnabled = null;
+            }
+            var telemetryStale = IsStale(telemetryReceipt, 750);
+            var storageStale = IsStale(storageReceipt, 1500);
+            var selfTestStale = IsStale(selfTestReceipt, 1500);
+            var runtime = telemetryStale ? null : report?.Runtime ?? snapshot.Runtime;
+            var memory = storageStale ? null : report?.Memory ?? snapshot.Memory;
+            var msc = storageStale ? null : report?.Msc ?? snapshot.Msc;
+            snapshot = snapshot with
+            {
+                Connected = true,
+                Error = commandOutcomeUncertain
+                    ? "A prior HID command outcome is uncertain; further writes are blocked" : null,
+                Runtime = runtime,
+                BoardStatus = runtime?.ToBoardStatus(),
+                Memory = memory,
+                Msc = msc,
+                SelfTest = selfTestStale ? null : report?.SelfTest ?? snapshot.SelfTest,
+                FilesystemFormat = storageStale ? null : report?.FilesystemFormat ?? snapshot.FilesystemFormat,
+                UpdatedAt = report is null ? snapshot.UpdatedAt : now,
+                TelemetryUpdatedAt = report?.Runtime is null ? snapshot.TelemetryUpdatedAt : now,
+                StorageUpdatedAt = report?.Memory is null ? snapshot.StorageUpdatedAt : now,
+                SelfTestUpdatedAt = report?.SelfTest is null ? snapshot.SelfTestUpdatedAt : now,
+                TelemetryStale = telemetryStale,
+                StorageStale = storageStale,
+                SelfTestStale = selfTestStale
+            };
+        }
+    }
+
+    private void HandleDisconnect(Exception error)
+    {
+        lock (deviceGate)
+        lock (gate)
+        {
+            var reconnecting = !commandOutcomeUncertain && Environment.TickCount64 < mscReconnectDeadline &&
+                (error is IOException or TimeoutException ||
+                    error is InvalidOperationException && error.Message.StartsWith(
+                        "PicoForge HID interface not found;", StringComparison.Ordinal));
+            if (reconnecting)
+                logger.LogInformation(error, "USB-drive mode change: waiting for HID reconnection");
+            activeClient = null;
+            telemetryReceipt = storageReceipt = selfTestReceipt = 0;
+            snapshot = new(false, commandOutcomeUncertain
+                    ? "A prior HID command outcome is uncertain; further writes are blocked"
+                    : reconnecting ? null : error.Message,
+                null, null, null, null, null, null,
+                CommandOutcomeUncertain: commandOutcomeUncertain, Reconnecting: reconnecting);
         }
     }
 

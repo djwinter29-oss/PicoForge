@@ -22,3 +22,7 @@ class PackagingTests(unittest.TestCase):
         self.assertTrue(assets)
         for asset in assets:
             self.assertTrue(any(fnmatch(asset, pattern) for pattern in patterns), asset)
+        wireless = (PROJECT / setuptools["package-dir"]["picoforge.wireless_ui"]).resolve()
+        self.assertEqual(wireless, PROJECT.parent / "webhid" / "js")
+        self.assertIn("picoforge.wireless_ui", setuptools["packages"])
+        self.assertIn("wireless-form.mjs", setuptools["package-data"]["picoforge.wireless_ui"])

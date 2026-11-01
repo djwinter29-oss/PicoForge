@@ -46,7 +46,7 @@ jobs:
         run: |
           version=$(tools/firmware/release-version.sh "$RELEASE_TAG")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "10.0.x"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -94,7 +94,7 @@ jobs:
                       assert process.poll() is None, "Standalone host exited before readiness"
                       try:
                           with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as response:
-                              assert b"PicoForge Diagnostics | .NET" in response.read()
+                              assert b"PicoForge Dashboard | .NET" in response.read()
                           break
                       except urllib.error.URLError:
                           time.sleep(0.1)

@@ -68,3 +68,18 @@ def test_invalid_adapter_speed_fails_before_openocd(tmp_path, speed):
     assert result.returncode != 0
     assert "adapter speed must be a strictly positive decimal integer" in result.stderr
     assert not out.exists()
+
+
+def test_openocd_without_target_config_fails_before_programming(tmp_path):
+    _, out, _ = run_load(tmp_path, "fw.elf", "plain")
+    (tmp_path / "fake-openocd").write_text(
+        '#!/bin/sh\ncase "$*" in *find*) exit 1;; esac\nprintf x > "$FAKE_OPENOCD_ARGS"\n')
+    out.unlink()
+    result = subprocess.run(
+        ["sh", str(ROOT / "tools/firmware/load.sh"), "--skip-build", "--board", "pico2_w", "--elf",
+         str(tmp_path / "fw.elf"), "--openocd-exe", str(tmp_path / "fake-openocd")],
+        capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "FAKE_OPENOCD_ARGS": str(out)}, check=False)
+    assert result.returncode != 0
+    assert "cannot find target/rp2350.cfg" in result.stderr
+    assert "--openocd-exe" in result.stderr
+    assert not out.exists()

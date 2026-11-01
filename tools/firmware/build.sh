@@ -52,6 +52,7 @@ Options:
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
     --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
     This development build explicitly enables the storage benchmark (CMake default: OFF).
+    Reused CMake caches have retired clock/speed options cleared; profiles are saved through the dashboard.
 EOF
             exit 0
             ;;
@@ -107,6 +108,7 @@ elif [ "${BUILD_DIR#/}" = "$BUILD_DIR" ]; then
 fi
 
 cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
+    -U PF_SYS_CLK_MHZ -U PF_SDIO_PIO_HIGH_SPEED \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DPICO_SDK_PATH="$PICO_SDK_PATH_VALUE" \
     -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \

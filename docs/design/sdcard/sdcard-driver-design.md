@@ -485,7 +485,7 @@ SPI initialization stage 10 identifies CMD6 failures; existing stage numbers are
 The SDK chooses the highest realizable SPI rate not exceeding the selected ceiling, using `clk_peri` and an even
 prescaler multiplied by an integer post-divider. With `clk_peri` equal to SYSCLK, a 50 MHz ceiling yields 37.5 MHz at
 150 MHz, exactly 50 MHz at 200 MHz, and 41.67 MHz at 250 MHz. These are divider calculations, not hardware qualification
-of High-Speed SPI. HID and `storage status` report the actual configured rate, not the requested ceiling.
+of High-Speed SPI. HID and `storage get status` report the actual configured rate, not the requested ceiling.
 Class 10 is a write-performance class, not a guarantee of 50 MHz SPI support. Runtime I/O errors do not lower clocks
 or replay uncertain writes.
 
@@ -775,7 +775,7 @@ The driver has no phase-profiling instrumentation. Above the driver, `pf_storage
 negotiated High-Speed timing, effective bus clock, capacity, CID, and the last failed storage operation with its block
 result. Both SPI and native SD report negotiated timing independently of the achieved clock; a clamped clock does
 not imply Default-Speed timing. SPI clears this status when media is not initialized. The CLI
-`storage status` and HID storage report are built from that snapshot only. Measure throughput with the
+`storage get status` and HID storage report are built from that snapshot only. Measure throughput with the
 [file benchmark](../../guides/sdcard-performance-test.md) and an external trace; the driver's always-on CRC, timeout and
 stall counters remain internal error evidence, not latency measurements.
 
@@ -906,13 +906,20 @@ are not assumed improvements, and no new hardware throughput claim is made.
 
 ## Ownership Workflow
 
+The [default-mounted storage lifecycle](../architecture.md#storage-ownership-lifecycle) is authoritative for startup,
+normal firmware use, automatic remount, and maintenance/recovery exceptions. Mounting belongs to the storage worker,
+not the driver or self-test. USB sharing is an explicit temporary ownership change.
+
 ```mermaid
 sequenceDiagram
     participant FW as Storage owner task
     participant Card as Storage service
     participant USB as USB/MSC integration
     participant Host as USB host
+    FW->>Card: Startup initialization (MSC disabled)
+    FW->>FW: Mount existing filesystem; keep mounted for firmware use
     FW->>Card: Firmware block operations and sync
+    Host->>USB: Explicit enable USB drive request
     FW->>FW: Finish work, close files, unmount filesystem
     USB->>Card: pf_storage_msc_acquire after integration checks
     Host->>USB: Sector read/write or synchronize
@@ -921,7 +928,7 @@ sequenceDiagram
     Host->>USB: Safely eject and allow removal
     USB->>Card: pf_storage_msc_release after checked eject/sync
     Card-->>FW: Reinitialization request available
-    FW->>FW: Invalidate cached filesystem state and reinitialize before remount
+    FW->>FW: Invalidate cached filesystem state, reinitialize and automatically remount
 ```
 
 The raw SD driver exposes serialized card operations without application ownership policy.
@@ -933,10 +940,10 @@ application, a statically
 allocated FreeRTOS recursive mutex
 serializes those integration checks with the ownership transition.
 Explicit fault recovery is the exception to clean eject: the confirmed
-[CDC recovery workflow](../../guides/usb-cdc-cli.md#faulted-msc-recovery) detaches faulted MSC
+[CDC recovery workflow](../../guides/usb-cdc-cli.md#faulted-msc-recovery) revokes access to faulted MSC media
 before returning ownership and queues worker-only reinitialization. It never
 reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
-inhibited until a successful explicit `fs mount`; presence debounce continues.
+inhibited until a successful explicit `storage mount`; presence debounce continues.
 The recovery latch is runtime-only and resets on reboot. The workflow cannot
 repair filesystem damage or guarantee recovery from an unresolved card stream.
 The same mutex serializes all facade operations for both transports, including

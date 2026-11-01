@@ -86,6 +86,10 @@ def test_firmware_scripts_pass_version_to_cmake(tmp_path, environment_version, a
     )
     assert f"-DPF_FIRMWARE_VERSION={expected}" in log.read_text().splitlines()
     assert "-DPF_ENABLE_STORAGE_BENCHMARK=ON" in log.read_text().splitlines()
+    configure_arguments = log.read_text().splitlines()
+    for option in ("PF_SYS_CLK_MHZ", "PF_SDIO_PIO_HIGH_SPEED"):
+        index = configure_arguments.index(option)
+        assert configure_arguments[index - 1] == "-U"
 
 
 @pytest.mark.parametrize("policy", ["ON", "OFF"])

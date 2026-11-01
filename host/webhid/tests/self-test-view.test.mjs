@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderStatus, renderSelfTest } from "../js/view.mjs";
+import { renderStatus as renderServerStatus, renderSelfTest as renderServerSelfTest } from "../../web/js/dashboard.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -8,7 +9,7 @@ function withDocument(run) {
   const saved = globalThis.document;
   const elements = new Map();
   const element = selector => {
-    if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", value: "0",
+    if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", value: "0", open: false,
       valueAsNumber: 32, setAttribute(name, value) { this[name] = value; },
       replaceChildren(...children) { this.children = children; } });
     return elements.get(selector);
@@ -25,6 +26,55 @@ function snapshot() {
     memory: { sample_valid: true, initialized: true, configured: true, presence_known: true, present: true },
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
+
+test("both dashboards show live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () => withDocument(el => {
+  for (const render of [renderStatus, renderServerStatus]) {
+    const state = { ...snapshot(), hardware: { ...snapshot().hardware, capabilities: 128,
+      serial_number: "892BA313F9BB56E1" } };
+    for (const [wireless, expected] of [
+      [{ wifi_enabled: false, ssid: "saved", wifi_state: "connected" }, "Disabled"],
+      [{ wifi_enabled: true, ssid: "", wifi_state: "failed" }, "Disabled"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connected", ipv4: "192.168.1.9" }, "HomeDev (192.168.1.9)"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connecting" }, "HomeDev (connecting)"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "failed" }, "HomeDev (disconnected)"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "disabled" }, "HomeDev (disconnected)"],
+      [{ wifi_enabled: true, ssid: "<script>", wifi_state: "connected", ipv4: "10.0.0.2" }, "<script> (10.0.0.2)"],
+      [null, "--"],
+    ]) {
+      render({ ...state, wireless });
+      assert.equal(el("#wifi-state").textContent, expected);
+      assert.equal(el("#wifi-diagnostics").hidden, false);
+    }
+    for (const [wireless, expected] of [
+      [{ ble_enabled: false, ble_key_configured: true, ble_state: "advertising" }, "Disabled"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "advertising" },
+        "PicoForge-892BA313F9BB56E1 (advertising)"],
+      [{ ble_enabled: true, ble_key_configured: true, ble_state: "connected" }, "PicoForge-892BA313F9BB56E1 (connected)"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "connected" }, "PicoForge-892BA313F9BB56E1 (connected)"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "advertising" },
+        "PicoForge-892BA313F9BB56E1 (advertising)"],
+      [null, "--"],
+    ]) {
+      render({ ...state, wireless });
+      assert.equal(el("#ble-state").textContent, expected);
+      assert.equal(el("#ble-diagnostics").hidden, false);
+    }
+    render({ ...state, hardware: { capabilities: 128 },
+      wireless: { ble_enabled: true, ble_state: "connected" } });
+    assert.equal(el("#ble-state").textContent, "PicoForge (connected)");
+    render({ ...state, wireless_error: "Wi-Fi status read failed: disconnected" });
+    assert.equal(el("#ble-state").textContent, "Unavailable");
+    assert.equal(el("#wifi-state").textContent, "Unavailable");
+    assert.match(el("#wifi-state").title, /read failed/);
+    render({ ...state, connected: false });
+    assert.equal(el("#wifi-state").textContent, "--");
+    render({ ...state, hardware: { capabilities: 16 } });
+    assert.equal(el("#wifi-diagnostics").hidden, true);
+    assert.equal(el("#ble-diagnostics").hidden, true);
+  }
+}));
 
 test("self-test writes require fresh, known, mounted, firmware-owned state and valid size", () => withDocument(el => {
   const state = snapshot();
@@ -55,6 +105,7 @@ test("self-test writes require fresh, known, mounted, firmware-owned state and v
   renderSelfTest(state); assert.equal(el("#self-test-start").disabled, false);
   state.self_test = { ...state.self_test, state: "writing", active: true };
   renderSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
   assert.equal(el("#self-test-cancel").disabled, false);
   assert.equal(el("#self-test-start").disabled, true);
   state.self_test.state = "cleanup"; renderSelfTest(state);
@@ -66,7 +117,9 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   state.self_test = decodeSelfTestReport(selfTest(6));
   state.self_test.request_error = 11;
   renderSelfTest(state);
-  assert.equal(el("#self-test-state").textContent, "Passed");
+  assert.equal(el("#self-test-disclosure").open, false);
+  assert.equal(el("#self-test-state").textContent, "Passed · 100%");
+  assert.equal(el("#self-test-meter").dataset.result, "passed");
   assert.equal(el("#self-test-write-speed").textContent, "2.00 MiB/s");
   assert.equal(el("#self-test-read-speed").textContent, "4.00 MiB/s");
   assert.equal(el("#self-test-progress").value, 100);
@@ -74,9 +127,33 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   state.self_test = decodeSelfTestReport(selfTest(99));
   state.self_test.request_error = 255;
   renderSelfTest(state);
-  assert.equal(el("#self-test-state").textContent, "Unknown state (99)");
+  assert.match(el("#self-test-state").textContent, /^Unknown state \(99\) · \d+%$/);
+  assert.equal(el("#self-test-meter").dataset.result, "");
   assert.match(el("#self-test-message").textContent, /Unknown error \(255\)/);
   assert.equal(el("#self-test-start").disabled, true);
+  state.self_test = { ...state.self_test, state: "failed", active: false };
+  renderSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
+  el("#self-test-disclosure").open = false;
+  renderSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, false);
+}));
+
+test("server dashboard opens the benchmark disclosure on active and failed transitions", () => withDocument(el => {
+  const state = snapshot();
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, false);
+
+  state.self_test = { ...state.self_test, state: "writing", active: true };
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
+  el("#self-test-disclosure").open = false;
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, false);
+
+  state.self_test = { ...state.self_test, state: "failed", active: false };
+  renderServerSelfTest(state);
+  assert.equal(el("#self-test-disclosure").open, true);
 }));
 
 test("identity RAM stays build accounting while stale inputs show no current values", () => withDocument(el => {
@@ -125,6 +202,41 @@ test("storage does not infer absence from an unavailable sample or mount from ca
   assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
 }));
 
+test("both dashboards retain storage visibility through stale reports without showing cached readings", () =>
+  withDocument(el => {
+    for (const render of [renderStatus, renderServerStatus]) {
+      render({ connected: false });
+      const state = snapshot();
+      state.memory.present = false;
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, true);
+      assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
+
+      state.memory = null;
+      state.msc = null;
+      state.storage_stale = true;
+      state.freshness[10] = "stale";
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, true, "A missing report must not reveal absent storage");
+      assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
+
+      state.memory = { sample_valid: true, presence_known: true, present: true, initialized: true, configured: true };
+      state.storage_stale = false;
+      state.freshness[10] = "fresh";
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, false, "Confirmed card insertion must update layout");
+      state.memory = null;
+      state.storage_stale = true;
+      state.freshness[10] = "stale";
+      render(state);
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, false);
+      assert.equal(el("#memory-size").textContent, "--", "Stale readings must not be presented as live");
+
+      render({ connected: false });
+      assert.equal(el('[aria-labelledby="memory-title"]').hidden, false, "Disconnect must clear confirmed presence");
+    }
+  }));
+
 test("busy storage retains card details without a message, but stale or replaced media clears them", () =>
   withDocument(el => {
     const state = snapshot();
@@ -133,10 +245,10 @@ test("busy storage retains card details without a message, but stale or replaced
         manufacture_year: 2020, manufacture_month: 1, serial_number: 4089330880 } };
     const busy = { ...state, memory: { configured: true, sample_valid: false } };
     renderStatus(state);
-    const ids = ["#memory-mode", "#memory-speed", "#memory-size", "#memory-filesystem",
+    const ids = ["#memory-speed", "#memory-size", "#memory-filesystem",
       "#memory-manufacturer", "#memory-product", "#memory-serial"];
     const details = ids.map(id => el(id).textContent);
-    assert.equal(el("#memory-speed").textContent, "50 MHz (High-Speed)");
+    assert.equal(el("#memory-speed").textContent, "50 MHz");
     assert.equal(el("#storage-freshness").hidden, true);
     for (let sample = 0; sample < 3; sample++) {
       renderStatus(busy);
@@ -148,8 +260,8 @@ test("busy storage retains card details without a message, but stale or replaced
       { ...state, connected: false, memory: null },
       { ...state, memory: null, freshness: { 10: "stale" } },
       { ...state, memory: { configured: true, sample_valid: true, initialized: false, present: false } },
-      { ...state, msc: { enabled: true }, memory: { configured: true, sample_valid: false } },
-      { ...state, msc: { transition_pending: true }, memory: { configured: true, sample_valid: false } },
+      { ...state, msc: { enabled: true } },
+      { ...state, msc: { transition_pending: true } },
     ]) {
       renderStatus(state);
       renderStatus(invalidation);
@@ -164,6 +276,7 @@ test("SPI pin table has two rows and keeps card detect after the four bus signal
   state.settings = decodeConfigReport(config("spi"), state.hardware);
   state.settings.card_detect_gpio = 255;
   renderStatus(state);
+  assert.equal(el("#product-name").textContent, "PicoForge (SPI)");
   assert.equal(el("#board-storage-title").textContent, "Storage (SPI)");
   const rows = el("#board-storage-pins").children;
   assert.equal(rows.length, 2);
