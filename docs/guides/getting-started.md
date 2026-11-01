@@ -109,10 +109,10 @@ dashboard connection per board at a time. On Linux, if HID access is denied, run
 With a correctly wired card, firmware attempts to mount its existing FAT/exFAT filesystem automatically at startup,
 without opening a dashboard or starting a self-test. It stays mounted for firmware use unless explicitly unmounted
 or shared over USB; see the [storage lifecycle](../design/architecture.md#storage-ownership-lifecycle).
-Mounting never formats the card. Wait for `storage status` to report `mounted` before file operations:
+Mounting never formats the card. Wait for `storage get status` to report `mounted` before file operations:
 
 ```text
-storage status
+storage get status
 fs ls /
 fs cat /example.txt
 ```

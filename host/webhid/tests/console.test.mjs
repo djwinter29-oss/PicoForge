@@ -36,6 +36,22 @@ test("CLI terminal bounds scrollback and line size and forwards terminal keys wi
   assert.equal(consoleKey({ key: "a", altKey: true }), null);
 });
 
+test("CLI help tabs align subcommands at eight-column stops, including fragmented output", () => {
+  const terminal = new ConsoleTerminal();
+  terminal.write(" * board\r\n");
+  terminal.write("\tget <clock | led>\r\n\t");
+  terminal.write("set led <on | off>\r\n * config\r\n\tset key=value");
+  assert.deepEqual(terminal.lines, [
+    " * board", "        get <clock | led>", "        set led <on | off>",
+    " * config", "        set key=value",
+  ]);
+  terminal.write("\r12345678\tX");
+  assert.equal(terminal.lines[4][16], "X");
+  terminal.write("\r" + "\t".repeat(100) + "Z");
+  assert.equal(terminal.column, 511);
+  assert.equal(terminal.lines[4].length, 512);
+});
+
 test("Wi-Fi label links only with a connected board, a started listener and a local console URL", () => {
   const saved = globalThis.document;
   const elements = new Map();

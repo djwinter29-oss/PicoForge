@@ -28,6 +28,7 @@ export class ConsoleTerminal {
         this.column = 0;
         if (!this.lines[this.row]) this.lines[this.row] = "";
       } else if (character === "\b") this.column = Math.max(0, this.column - 1);
+      else if (character === "\t") this.column = Math.min(511, (Math.floor(this.column / 8) + 1) * 8);
       else if (character >= " " && character !== "\x7f") {
         const line = this.lines[this.row].padEnd(this.column, " ");
         this.lines[this.row] = (line.slice(0, this.column) + character + line.slice(this.column + 1)).slice(0, 512);

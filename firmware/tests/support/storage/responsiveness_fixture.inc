@@ -176,6 +176,8 @@ bool tud_cdc_write_clear(void) { return true; }
 bool pf_cli_init(pf_cli_write_char_t writer, void *context) { (void)writer; (void)context; return true; }
 bool pf_cli_add_binding(CliCommandBinding binding) { (void)binding; return true; }
 bool pf_cli_device_register(void (*request_reboot)(void)) { TEST_ASSERT_NOT_NULL(request_reboot); return true; }
+static bool device_storage_handled; /**< Fake pf_cli_device_storage result; false queues to the worker. */
+bool pf_cli_device_storage(const char *args) { TEST_ASSERT_NOT_NULL(args); return device_storage_handled; }
 void pf_cli_process(void) {}
 void pf_cli_receive_char(char character) { (void)character; }
 void panic(const char *format, ...) { (void)format; TEST_FAIL_MESSAGE("Unexpected panic"); }

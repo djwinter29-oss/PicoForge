@@ -195,7 +195,7 @@ exclusive firmware/USB MSC ownership. Its static firmware descriptor gates FatFs
 backend-neutral snapshot (state, medium, bus and pins, presence, clock, capacity, identity, last failure); its header
 includes no driver headers so another medium can implement the same API.
 Layers above platform storage treat storage as a filesystem that can be exported as USB MSC, and use only this service:
-the CLI `storage status` and the HID board/storage reports are built from that snapshot.
+the CLI `storage get status` and the HID board/storage reports are built from that snapshot.
 The CDC `storage`/`fs` commands live in `app/cli/cli_storage.c/.h`; the USB task registers `pf_cli_storage_execute`
 with `pf_storage_worker_init()`, so the worker runs commands without depending on the CLI. Application storage
 stays in `app/storage`: `file_benchmark.c/.h` verifies and times a dedicated file, and `storage_worker.c/.h` is the sole FatFs executor that

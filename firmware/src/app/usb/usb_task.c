@@ -40,12 +40,17 @@
 #define USB_HID_SELF_TEST_INTERVAL (pdMS_TO_TICKS(500U)) /**< Benchmark input report period. */
 #define USB_STACK_SAMPLE_INTERVAL (pdMS_TO_TICKS(30000u)) /**< Period of the stack high-water log line. */
 
-/** CLI "storage" and "fs" command help; the grammar itself is implemented in app/cli/cli_storage. */
-#define USB_CLI_STORAGE_HELP "storage status | storage recover --confirm"
+/** CLI "fs" command help; the grammar itself is implemented in app/cli/cli_storage. */
 #define USB_CLI_FS_HELP \
-    "fs mount|unmount|format --confirm|ls [path]|stat <path>|cat <path> [limit]|df\r\n" \
-    "fs mkdir <path>|write <path> <text>|append <path> <text>\r\n" \
-    "fs mv <source> <destination>|rm <path> --confirm"
+    "ls [path]\r\n" \
+    "\tstat <path>\r\n" \
+    "\tcat <path> [limit]\r\n" \
+    "\tdf\r\n" \
+    "\tmkdir <path>\r\n" \
+    "\twrite <path> <text>\r\n" \
+    "\tappend <path> <text>\r\n" \
+    "\tmv <source> <destination>\r\n" \
+    "\trm <path> --confirm"
 
 static StaticTask_t usb_task_control_block; /**< Static TCB for the USB task. */
 static StackType_t usb_task_stack[USB_TASK_STACK_SIZE]; /**< Static stack for the USB task. */
@@ -89,11 +94,7 @@ static void storage_command(EmbeddedCli *instance, char *args, void *context)
 {
     (void)instance;
     const char *family = context;
-    if (strcmp(family, "storage") == 0 && args != NULL &&
-        strcmp(args, "recover --confirm") == 0) {
-        pf_usb_msc_request_recovery();
-        pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect before fs mount. "
-                     "Check UART recovery result and fresh storage status.");
+    if (strcmp(family, "storage") == 0 && pf_cli_device_storage(args)) {
         return;
     }
     if (!pf_storage_worker_submit(family, args != NULL ? args : "",
@@ -226,7 +227,7 @@ static void cli_connect(const cli_transport_t *transport)
         panic("Failed to initialize CLI");
     }
     if (!pf_cli_add_binding((CliCommandBinding){
-            "storage", USB_CLI_STORAGE_HELP, false,
+            "storage", PF_CLI_STORAGE_HELP, false,
             "storage", storage_command
         }) || !pf_cli_add_binding((CliCommandBinding){
             "fs", USB_CLI_FS_HELP, false,

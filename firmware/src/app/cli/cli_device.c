@@ -17,16 +17,17 @@
 #include <stdio.h>
 #include <string.h>
 
-/** Compact help keeps top-level help within the transport's 1024-byte output reservation. */
-#define BOARD_HELP "board get clock|led|version|uptime | set led on|off | reboot"
+/** Indented subcommands keep help readable within the transport's 1024-byte output reservation. */
+#define BOARD_HELP \
+    "get <clock | led | version | uptime>\r\n" \
+    "\tset led <on | off>\r\n" \
+    "\treboot"
 /** Configuration values are saved targets, not running hardware state. */
-#define CONFIG_HELP "config get [clock|storage|wifi|bluetooth] | set key=value[,key=value...]"
-/** MSC requests complete asynchronously; status, not admission, confirms ownership. */
-#define MSC_HELP "msc status | enable | disable"
-/** Benchmark execution and its preflight belong to the storage worker. */
-#define BENCHMARK_HELP "benchmark status | start <1..1024 MiB> | cancel"
+#define CONFIG_HELP \
+    "get [clock | storage | wifi | bluetooth]\r\n" \
+    "\tset key=value[,key=value...] (saves and reboots)"
 /** Radio diagnostics never expose credentials. */
-#define RADIO_HELP "radio status"
+#define RADIO_HELP "status"
 
 static void (*reboot_callback)(void); /**< Borrowed USB owner task reset scheduler. */
 
@@ -65,7 +66,7 @@ static void board_command(EmbeddedCli *instance, char *args, void *context)
             }
             snprintf(line, sizeof(line), "led=%s", pf_led_is_on() ? "on" : "off");
         } else {
-            pf_cli_print("ERR " BOARD_HELP);
+            pf_cli_print("ERR board " BOARD_HELP);
             return;
         }
         pf_cli_print(line);
@@ -81,7 +82,7 @@ static void board_command(EmbeddedCli *instance, char *args, void *context)
         pf_cli_print("OK rebooting");
         reboot_callback();
     } else {
-        pf_cli_print("ERR " BOARD_HELP);
+        pf_cli_print("ERR board " BOARD_HELP);
     }
 }
 
@@ -208,7 +209,7 @@ static void config_command(EmbeddedCli *instance, char *args, void *context)
     const uint16_t count = embeddedCliGetTokenCount(args);
     if ((count == 1u || count == 2u) && strcmp(embeddedCliGetToken(args, 1u), "get") == 0) {
         if (count == 2u) {
-            if (!print_config(embeddedCliGetToken(args, 2u))) pf_cli_print("ERR " CONFIG_HELP);
+            if (!print_config(embeddedCliGetToken(args, 2u))) pf_cli_print("ERR config " CONFIG_HELP);
         } else {
             print_config("clock");
             print_config("storage");
@@ -217,30 +218,27 @@ static void config_command(EmbeddedCli *instance, char *args, void *context)
             print_config("bluetooth");
 #endif
         }
-    } else pf_cli_print("ERR " CONFIG_HELP);
+    } else pf_cli_print("ERR config " CONFIG_HELP);
 }
 
-/** @brief Queue normal MSC ownership requests, never bypassing clean host eject. */
-static void msc_command(EmbeddedCli *instance, char *args, void *context)
+/** @brief Report USB mass-storage ownership; requests complete asynchronously. */
+static void print_usb(void)
 {
-    (void)instance;
-    (void)context;
-    const char *verb = embeddedCliGetToken(args, 1u);
-    if (embeddedCliGetTokenCount(args) != 1u) {
-        pf_cli_print("ERR " MSC_HELP);
-    } else if (strcmp(verb, "status") == 0) {
-        char line[80];
-        snprintf(line, sizeof(line), "msc=%s ejected=%u pending=%u rejected=%u",
-                 pf_usb_msc_is_enabled() ? "enabled" : "disabled", pf_usb_msc_is_ejected(),
-                 pf_usb_msc_transition_pending(), pf_usb_msc_request_rejected());
-        pf_cli_print(line);
-    } else if (strcmp(verb, "enable") == 0 || strcmp(verb, "disable") == 0) {
-        if (pf_storage_worker_busy() || pf_usb_msc_transition_pending()) {
-            pf_cli_print("ERR storage busy");
-        } else if (!pf_usb_msc_request(strcmp(verb, "enable") == 0)) {
-            pf_cli_print("ERR MSC request refused");
-        } else pf_cli_print("OK MSC request queued; check msc status for completion/rejection");
-    } else pf_cli_print("ERR " MSC_HELP);
+    char line[80];
+    snprintf(line, sizeof(line), "usb=%s ejected=%u pending=%u rejected=%u",
+             pf_usb_msc_is_enabled() ? "enabled" : "disabled", pf_usb_msc_is_ejected(),
+             pf_usb_msc_transition_pending(), pf_usb_msc_request_rejected());
+    pf_cli_print(line);
+}
+
+/** @brief Queue a normal MSC ownership request, never bypassing clean host eject. */
+static void set_usb(bool enabled)
+{
+    if (pf_storage_worker_busy() || pf_usb_msc_transition_pending()) {
+        pf_cli_print("ERR storage busy");
+    } else if (!pf_usb_msc_request(enabled)) {
+        pf_cli_print("ERR USB request refused");
+    } else pf_cli_print("OK USB request queued; check storage get usb for completion/rejection");
 }
 
 #if PF_ENABLE_STORAGE_BENCHMARK
@@ -265,55 +263,89 @@ static void print_benchmark(void)
 }
 #endif
 
-/** @brief Start/cancel through worker admission; status reports asynchronous preflight and run outcomes. */
-static void benchmark_command(EmbeddedCli *instance, char *args, void *context)
+/** @brief Start or cancel through worker admission; `storage get benchmark` reports asynchronous outcomes. */
+static void benchmark_request(const char *value)
 {
-    (void)instance;
-    (void)context;
 #if PF_ENABLE_STORAGE_BENCHMARK
-    const uint16_t count = embeddedCliGetTokenCount(args);
-    const char *verb = embeddedCliGetToken(args, 1u);
-    if (count == 1u && strcmp(verb, "status") == 0) {
-        print_benchmark();
-    } else if (count == 1u && strcmp(verb, "cancel") == 0) {
+    if (strcmp(value, "cancel") == 0) {
         pf_cli_print(pf_storage_worker_benchmark_cancel() ? "OK cancellation requested; wait for cleanup" :
                                                           "ERR no cancellable run or admission/cleanup busy");
-    } else if (count == 2u && strcmp(verb, "start") == 0) {
-        const char *value = embeddedCliGetToken(args, 2u);
-        uint32_t size = 0u;
-        for (const char *p = value; *p != '\0'; ++p) {
-            if (*p < '0' || *p > '9' || size > PF_FILE_BENCHMARK_MAX_MIB) {
-                pf_cli_print("ERR benchmark size must be 1..1024 MiB");
-                return;
-            }
-            size = size * 10u + (unsigned)(*p - '0');
-        }
-        if (size == 0u || size > PF_FILE_BENCHMARK_MAX_MIB) {
+        return;
+    }
+    uint32_t size = 0u;
+    for (const char *p = value; *p != '\0'; ++p) {
+        if (*p < '0' || *p > '9' || size > PF_FILE_BENCHMARK_MAX_MIB) {
             pf_cli_print("ERR benchmark size must be 1..1024 MiB");
             return;
         }
-        if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
-            pf_cli_print("ERR USB owns storage or ownership transition pending");
-        } else if (pf_storage_worker_benchmark_start(size, false)) {
-            pf_cli_print("OK benchmark queued, not yet admitted; check benchmark status");
-        } else {
-            pf_cli_print("ERR benchmark request refused");
-            print_benchmark();
-        }
-    } else pf_cli_print("ERR " BENCHMARK_HELP);
+        size = size * 10u + (unsigned)(*p - '0');
+    }
+    if (size == 0u || size > PF_FILE_BENCHMARK_MAX_MIB) {
+        pf_cli_print("ERR benchmark size must be 1..1024 MiB");
+    } else if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
+        pf_cli_print("ERR USB owns storage or ownership transition pending");
+    } else if (pf_storage_worker_benchmark_start(size, false)) {
+        pf_cli_print("OK benchmark queued, not yet admitted; check storage get benchmark");
+    } else {
+        pf_cli_print("ERR benchmark request refused");
+        print_benchmark();
+    }
 #else
-    (void)args;
+    (void)value;
     pf_cli_print("ERR benchmark unavailable in this build");
 #endif
 }
 
-/** @brief Render sanitized radio state without SSID control characters or credential readback. */
+bool pf_cli_device_storage(const char *args)
+{
+    char tokens[PF_CLI_DEVICE_ARGS_SIZE] = { 0 };
+    const size_t length = args != NULL ? strlen(args) : 0u;
+    if (length > sizeof(tokens) - 2u) {
+        pf_cli_print("ERR storage arguments too long");
+        return true;
+    }
+    if (length > 0u) memcpy(tokens, args, length);
+    embeddedCliTokenizeArgs(tokens);
+    const uint16_t count = embeddedCliGetTokenCount(tokens);
+    const char *verb = count > 0u ? embeddedCliGetToken(tokens, 1u) : "";
+    const char *item = count > 1u ? embeddedCliGetToken(tokens, 2u) : "";
+    const char *value = count > 2u ? embeddedCliGetToken(tokens, 3u) : "";
+
+    if ((strcmp(verb, "get") == 0 && (count == 1u || (count == 2u && strcmp(item, "status") == 0))) ||
+        (count == 1u && (strcmp(verb, "mount") == 0 || strcmp(verb, "unmount") == 0)) ||
+        (count == 2u && strcmp(verb, "format") == 0 && strcmp(item, "--confirm") == 0)) {
+        return false; /* Status and volume maintenance belong to the storage worker. */
+    }
+    if (count == 2u && strcmp(verb, "get") == 0 && strcmp(item, "usb") == 0) {
+        print_usb();
+    } else if (count == 2u && strcmp(verb, "get") == 0 && strcmp(item, "benchmark") == 0) {
+#if PF_ENABLE_STORAGE_BENCHMARK
+        print_benchmark();
+#else
+        pf_cli_print("ERR benchmark unavailable in this build");
+#endif
+    } else if (count == 3u && strcmp(verb, "set") == 0 && strcmp(item, "usb") == 0 &&
+               (strcmp(value, "on") == 0 || strcmp(value, "off") == 0)) {
+        set_usb(strcmp(value, "on") == 0);
+    } else if (count == 2u && strcmp(verb, "benchmark") == 0) {
+        benchmark_request(item);
+    } else if (count == 2u && strcmp(verb, "recover") == 0 && strcmp(item, "--confirm") == 0) {
+        pf_usb_msc_request_recovery();
+        pf_cli_print("Fault recovery requested, not clean eject. Data may be lost; inspect before storage mount. "
+                     "Check UART recovery result and fresh storage get status.");
+    } else {
+        pf_cli_print("ERR storage " PF_CLI_STORAGE_HELP);
+    }
+    return true;
+}
+
+/** @brief Print live Wi-Fi and Bluetooth state; never the SSID or credential information. */
 static void radio_command(EmbeddedCli *instance, char *args, void *context)
 {
     (void)instance;
     (void)context;
     if (embeddedCliGetTokenCount(args) != 1u || strcmp(embeddedCliGetToken(args, 1u), "status") != 0) {
-        pf_cli_print("ERR " RADIO_HELP);
+        pf_cli_print("ERR radio " RADIO_HELP);
         return;
     }
 #if PF_ENABLE_WIRELESS
@@ -322,12 +354,10 @@ static void radio_command(EmbeddedCli *instance, char *args, void *context)
     uint8_t report[PF_WIRELESS_STATUS_SIZE];
     char line[120];
     pf_wireless_status(report);
-    snprintf(line, sizeof(line), "wifi=%s ip=%u.%u.%u.%u tcp_cli=%s error=%u",
-             report[4] < 4u ? wifi_states[report[4]] : "unknown", report[5], report[6], report[7], report[8],
-             report[46] != 0u ? "started" : "stopped", report[44]);
+    snprintf(line, sizeof(line), "wifi=%s ip=%u.%u.%u.%u",
+             report[4] < 4u ? wifi_states[report[4]] : "unknown", report[5], report[6], report[7], report[8]);
     pf_cli_print(line);
-    snprintf(line, sizeof(line), "bluetooth=%s wifi_password_configured=%u bluetooth_key_configured=%u",
-             report[45] < 3u ? ble_states[report[45]] : "unknown", report[42], report[43]);
+    snprintf(line, sizeof(line), "bluetooth=%s", report[45] < 3u ? ble_states[report[45]] : "unknown");
     pf_cli_print(line);
 #else
     pf_cli_print("ERR radios unavailable in this build");
@@ -340,7 +370,5 @@ bool pf_cli_device_register(void (*request_reboot)(void))
     reboot_callback = request_reboot;
     return pf_cli_add_binding((CliCommandBinding){ "board", BOARD_HELP, true, NULL, board_command }) &&
            pf_cli_add_binding((CliCommandBinding){ "config", CONFIG_HELP, false, NULL, config_command }) &&
-           pf_cli_add_binding((CliCommandBinding){ "msc", MSC_HELP, true, NULL, msc_command }) &&
-           pf_cli_add_binding((CliCommandBinding){ "benchmark", BENCHMARK_HELP, true, NULL, benchmark_command }) &&
            pf_cli_add_binding((CliCommandBinding){ "radio", RADIO_HELP, true, NULL, radio_command });
 }

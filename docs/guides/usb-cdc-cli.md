@@ -38,23 +38,26 @@ CR, LF, and CRLF are accepted.
 The editor accepts at most 126 command-line bytes and ignores additional printable bytes. Stay within this limit:
 submitting an overlong line can execute its accepted prefix.
 
+`help` groups commands by name, with one indented subcommand per line. Prefix each subcommand with its group name:
+`get clock` under `board` means `board get clock`. Use `help <command>` or `<command> --help` to show only that group's
+usage. Angle brackets mark required arguments, square brackets mark optional arguments, and `|` separates choices.
+The web console uses the same eight-column tab stops as a normal terminal to preserve help indentation.
+
 | Command | Behavior |
 | --- | --- |
 | `help` | List commands; `help <command>` displays command help. |
-| `version` | Show the PicoForge CLI and Embedded CLI version. |
-| `echo <text>` | Echo text for non-destructive transport checks. |
 | `board get <clock\|led\|version\|uptime>` | Read the actual system clock in Hz, LED state, firmware version, or uptime. |
 | `board set led <on\|off>` | Set the board-owned LED through the same platform service as the dashboard. |
 | `board reboot` | Schedule a reboot; refused while storage is busy, USB-owned, or changing ownership. |
 | `config get [clock\|storage\|wifi\|bluetooth]` | Read saved next-boot targets, not actual running hardware values. |
 | `config set <key=value>[, key=value...]` | Validate every assignment, save all targets together, then reboot. |
-| `msc status` | Read enabled, ejected, pending and rejected ownership flags. |
-| `msc enable` / `msc disable` | Queue normal ownership transfer; check status for completion or rejection. |
-| `benchmark start <MiB>` | Queue a 1..1024 MiB file benchmark on the storage worker; preflight can still reject it. |
-| `benchmark status` | Read retained progress, timings, mismatches, run/admission errors and cleanup flags. |
-| `benchmark cancel` | Request cancellation; wait for cleanup to finish before other storage work. |
-| `radio status` | Read sanitized live Wi-Fi/IP/TCP listener and Bluetooth state plus credential-presence flags. |
-| `storage status` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
+| `radio status` | Read live Wi-Fi state and IP address, and Bluetooth state. |
+| `storage get [status]` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
+| `storage get usb` | Read USB drive enabled, ejected, pending and rejected ownership flags. |
+| `storage set usb <on\|off>` | Queue normal USB drive ownership transfer; check `storage get usb` for completion or rejection. |
+| `storage get benchmark` | Read retained benchmark progress, timings, mismatches, run/admission errors and cleanup flags. |
+| `storage benchmark <MiB>` | Queue a 1..1024 MiB file benchmark on the storage worker; preflight can still reject it. |
+| `storage benchmark cancel` | Request cancellation; wait for cleanup to finish before other storage work. |
 | `storage recover --confirm` | Revoke access to faulted MSC media and request worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Manually initialize/mount the existing FAT/exFAT volume after inspection or explicit unmount; normally startup/return mounting is automatic. Never format. |
 | `fs unmount` | Explicit maintenance unmount; suppress automatic mounting until insertion or normal MSC return. USB enable also unmounts automatically. |
@@ -73,9 +76,12 @@ Recovery completion or failure is reported through the UART logger; neither outc
 
 ### Board configuration
 
-The device groups follow PicoPWM's `group verb parameters` convention. Use `help board`, `help config`, `help msc`,
-`help benchmark`, or `help radio` for their syntax. The existing `version`, `echo`, `storage` and `fs` commands remain.
-Device mutations return `OK` or `ERR`; queued MSC/benchmark responses acknowledge admission, not completion.
+Every group follows PicoPWM's `group verb parameters` convention: `get` reads, `set` changes a value, and other verbs
+are actions such as `board reboot` or `storage benchmark 64`. There are five groups: `board`, `config`, `storage`, `fs`
+and `radio`; use `help <group>` for its syntax. `storage` owns the card as a device (status, USB drive ownership,
+benchmark, recovery), while `fs` works with files on the mounted volume. Use `board get version` for the firmware
+version.
+Device mutations return `OK` or `ERR`; queued USB drive/benchmark responses acknowledge admission, not completion.
 
 ```text
 PicoForge> board get clock
@@ -102,15 +108,15 @@ The running clock does not change until reboot. A `default` target means the SDK
 See the [system clock API](../../firmware/src/platform/system.h) for the platform constraints.
 
 Saving/resetting is refused while storage work, MSC ownership or an ownership transition is outstanding. Safely eject
-USB storage, run `msc disable`, and wait for `pending=0`, `rejected=0`, `msc=disabled` before saving. There is no CLI forced
-save or unsafe MSC return. Radio-disabled firmware rejects radio commands/settings. Benchmark-disabled firmware reports
-`ERR benchmark unavailable in this build`.
+USB storage, run `storage set usb off`, and wait for `storage get usb` to show `usb=disabled pending=0 rejected=0`
+before saving. There is no CLI forced save or unsafe MSC return. Radio-disabled firmware rejects radio
+commands/settings. Benchmark-disabled firmware reports `ERR benchmark unavailable in this build`.
 
-`benchmark status` reports lifecycle names and numeric errors from the
+`storage get benchmark` reports lifecycle names and numeric errors from the
 [benchmark API](../../firmware/src/app/storage/file_benchmark.h); `flags=1` means the test file remains after cleanup.
-Flags can be combined; bit 1 records that the caller's volume was mounted. `benchmark start` uses the existing mounted
-volume, never formats, and refuses an existing `PFTEST.BIN`. A queued start can still fail worker preflight; inspect
-`request_error` as well as the run's `error`. Cancellation is a request, not a completed cleanup.
+Flags can be combined; bit 1 records that the caller's volume was mounted. `storage benchmark <MiB>` uses the existing
+mounted volume, never formats, and refuses an existing `PFTEST.BIN`. A queued start can still fail worker preflight;
+inspect `request_error` as well as the run's `error`. Cancellation is a request, not a completed cleanup.
 
 ### Filesystem commands
 
@@ -122,7 +128,7 @@ File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
 
-`storage status` is available while USB owns the card and never sends commands to the card; `busy` means another
+`storage get status` is available while USB owns the card and never sends commands to the card; `busy` means another
 storage operation held the media at the time of the snapshot. Card identity and backend details are exposed only
 through the HID dashboard.
 Every `fs` command is refused
@@ -205,7 +211,7 @@ Use normal host eject followed by HID MSC disable whenever possible. If an I/O
 failure invalidates a still-connected card, eject/sync and normal disable may
 all fail. For that faulted state only:
 
-1. Stop host access to the drive and record `storage status` before recovery.
+1. Stop host access to the drive and record `storage get status` before recovery.
    Unsaved host data and partially accepted writes may already be lost.
 2. Enter exactly `storage recover --confirm` in the CDC CLI. This is a request, not
    a successful clean eject or a promise that initialization will succeed.
@@ -217,7 +223,7 @@ all fail. For that faulted state only:
    CDC and HID stay connected; MSC reports no medium.
    The worker attempts card initialization only. It does not retry the failed
    payload, report a successful SCSI sync/eject, mount, format, or repair.
-5. After the worker finishes, use `storage status` to check that the state is `ready`, not
+5. After the worker finishes, use `storage get status` to check that the state is `ready`, not
    `mounted`, and to inspect the retained `last_error`. Successful
    initialization does not erase the original I/O diagnostic. A new failed
    initialization replaces it with the latest failure.
@@ -242,7 +248,7 @@ prevents MSC handoff until it is complete and its replies are drained.
 Read-only bring-up sequence:
 
 ```text
-storage status
+storage get status
 fs mount
 fs ls /
 fs stat /existing.txt
@@ -322,7 +328,7 @@ directory cleanup, confirmed deletion, and cancellation. They do not verify actu
 card I/O, FreeRTOS queue scheduling, USB CDC enumeration, or host backpressure.
 
 For a board check, safely eject and disable any active MSC drive before flashing.
-Open CDC and run `help`, `version`, and `echo CDC test`. Close/reopen to verify a
+Open CDC and run `help` and `board get version`. Close/reopen to verify a
 fresh prompt, and check that HID reports continue during commands. Stop reading
 CDC briefly, resume, and confirm output arrives without a board reset. No
 formatting or card writes are needed for the read-only check. Verify the storage

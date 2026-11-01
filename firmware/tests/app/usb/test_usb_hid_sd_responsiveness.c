@@ -45,6 +45,7 @@ void setUp(void)
     reset_requests = 0u;
     led_requests = msc_requests = force_requests = 0u;
     queries = queued = recovery_requests = normal_submissions = messages = 0u;
+    device_storage_handled = false;
     reply_count = drained_replies = 0u;
     fake_ticks = 0u;
     reply_session_skew = 0u;
@@ -447,15 +448,18 @@ void test_stalled_cdc_session_reports_truncation_once_when_buffer_space_returns(
     cli_tx_count = 0u;
 }
 
-void test_cdc_storage_command_routes_recover_to_msc_and_everything_else_to_the_worker(void)
+void test_cdc_storage_command_queues_only_verbs_the_device_handler_leaves_to_the_worker(void)
 {
     cli_session = 1u;
-    storage_command(NULL, (char *)"recover --confirm", (void *)"storage");
-    TEST_ASSERT_EQUAL_UINT(1u, recovery_requests);
+    device_storage_handled = true;
+    storage_command(NULL, (char *)"set usb on", (void *)"storage");
     TEST_ASSERT_EQUAL_UINT(0u, normal_submissions);
-    storage_command(NULL, (char *)"recover", (void *)"storage");
-    TEST_ASSERT_EQUAL_UINT(1u, recovery_requests);
+    device_storage_handled = false;
+    storage_command(NULL, (char *)"get status", (void *)"storage");
     TEST_ASSERT_EQUAL_UINT(1u, normal_submissions);
+    device_storage_handled = true;
+    storage_command(NULL, (char *)"ls /", (void *)"fs");
+    TEST_ASSERT_EQUAL_UINT(2u, normal_submissions);
 }
 
 void test_cdc_task_drops_worker_replies_from_an_older_session(void)

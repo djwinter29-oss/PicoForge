@@ -485,7 +485,7 @@ SPI initialization stage 10 identifies CMD6 failures; existing stage numbers are
 The SDK chooses the highest realizable SPI rate not exceeding the selected ceiling, using `clk_peri` and an even
 prescaler multiplied by an integer post-divider. With `clk_peri` equal to SYSCLK, a 50 MHz ceiling yields 37.5 MHz at
 150 MHz, exactly 50 MHz at 200 MHz, and 41.67 MHz at 250 MHz. These are divider calculations, not hardware qualification
-of High-Speed SPI. HID and `storage status` report the actual configured rate, not the requested ceiling.
+of High-Speed SPI. HID and `storage get status` report the actual configured rate, not the requested ceiling.
 Class 10 is a write-performance class, not a guarantee of 50 MHz SPI support. Runtime I/O errors do not lower clocks
 or replay uncertain writes.
 
@@ -775,7 +775,7 @@ The driver has no phase-profiling instrumentation. Above the driver, `pf_storage
 negotiated High-Speed timing, effective bus clock, capacity, CID, and the last failed storage operation with its block
 result. Both SPI and native SD report negotiated timing independently of the achieved clock; a clamped clock does
 not imply Default-Speed timing. SPI clears this status when media is not initialized. The CLI
-`storage status` and HID storage report are built from that snapshot only. Measure throughput with the
+`storage get status` and HID storage report are built from that snapshot only. Measure throughput with the
 [file benchmark](../../guides/sdcard-performance-test.md) and an external trace; the driver's always-on CRC, timeout and
 stall counters remain internal error evidence, not latency measurements.
 

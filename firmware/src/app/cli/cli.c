@@ -16,8 +16,8 @@
 #define CLI_COMMAND_BUFFER_SIZE 128u
 /** Command history size in bytes. */
 #define CLI_HISTORY_BUFFER_SIZE 256u
-/** Binding slots besides the library help command; the built-in version and echo commands use two. */
-#define CLI_MAX_BINDINGS 9u
+/** Binding slots besides the library help command: storage, fs, board, config and radio. */
+#define CLI_MAX_BINDINGS 5u
 
 static CLI_UINT cli_storage[BYTES_TO_CLI_UINTS(CLI_STORAGE_SIZE)]; /**< Application-lifetime CLI allocation. */
 static EmbeddedCli *cli; /**< Active singleton using cli_storage. */
@@ -29,24 +29,6 @@ static void write_character(EmbeddedCli *instance, char character)
 {
     (void)instance;
     output(character, output_context); /* Only installed after pf_cli_init() verified a non-NULL callback. */
-}
-
-/** @brief `version`: print the CLI banner; takes no arguments. */
-static void version_command(EmbeddedCli *instance, char *args, void *context)
-{
-    (void)context;
-    if (embeddedCliGetTokenCount(args) != 0u) {
-        embeddedCliPrint(instance, "Usage: version");
-        return;
-    }
-    embeddedCliPrint(instance, "PicoForge CLI (Embedded CLI)");
-}
-
-/** @brief `echo <text>`: print the arguments; bounded by CLI_COMMAND_BUFFER_SIZE. */
-static void echo_command(EmbeddedCli *instance, char *args, void *context)
-{
-    (void)context;
-    embeddedCliPrint(instance, args != NULL ? args : "");
 }
 
 bool pf_cli_init(pf_cli_write_char_t write_char, void *context)
@@ -73,12 +55,7 @@ bool pf_cli_init(pf_cli_write_char_t write_char, void *context)
         return false;
     }
     cli->writeChar = write_character;
-    return embeddedCliAddBinding(cli, (CliCommandBinding){
-               "version", "Show CLI version", true, NULL, version_command
-           }) &&
-           embeddedCliAddBinding(cli, (CliCommandBinding){
-               "echo", "echo <text>: print text", false, NULL, echo_command
-           });
+    return true;
 }
 
 void pf_cli_receive_char(char character)

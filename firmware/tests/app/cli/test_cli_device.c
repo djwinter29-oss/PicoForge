@@ -60,6 +60,8 @@ bool pf_storage_worker_benchmark_start(uint32_t size_mib, bool owned)
 bool pf_storage_worker_benchmark_cancel(void) { return cancel_ok; }
 void pf_storage_worker_benchmark_status(pf_file_benchmark_status_t *status) { *status = benchmark; }
 void pf_wireless_status(uint8_t *report) { memcpy(report, radio_report, sizeof(radio_report)); }
+static unsigned recoveries, worker_queries;
+void pf_usb_msc_request_recovery(void) { ++recoveries; }
 
 static void request_reboot(void) { ++reboots; }
 static void capture(char character, void *context)
@@ -83,13 +85,21 @@ static void send(const char *command)
     }
 }
 
+/** Mirrors usb_task's storage binding: synchronous verbs first, status queued to the worker. */
+static void storage(EmbeddedCli *instance, char *args, void *context)
+{
+    (void)instance;
+    (void)context;
+    if (!pf_cli_device_storage(args)) ++worker_queries;
+}
+
 void setUp(void)
 {
     captured_size = largest_response = 0u;
     clock_profile = saved_clock = PF_SYSCLK_DEFAULT;
     speed_profile = saved_speed = PF_STORAGE_SPEED_DEFAULT;
     radio_flags = saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
-    saves = discards = setters = reboots = led_changes = msc_changes = 0u;
+    saves = discards = setters = reboots = led_changes = msc_changes = recoveries = worker_queries = 0u;
     stage_failure_at = 0u;
     worker_busy = host_owned = transition = led_on = false;
     save_ok = stage_ok = led_available = msc_ok = benchmark_ok = cancel_ok = true;
@@ -98,6 +108,7 @@ void setUp(void)
     memset(radio_report, 0, sizeof(radio_report));
     TEST_ASSERT_TRUE(pf_cli_init(capture, NULL));
     TEST_ASSERT_TRUE(pf_cli_device_register(request_reboot));
+    TEST_ASSERT_TRUE(pf_cli_add_binding((CliCommandBinding){ "storage", PF_CLI_STORAGE_HELP, false, NULL, storage }));
     pf_cli_process();
 }
 
@@ -109,20 +120,24 @@ static void noop(EmbeddedCli *instance, char *args, void *context)
 void test_help_with_every_production_binding_fits_output_reserve(void)
 {
     TEST_ASSERT_TRUE(pf_cli_add_binding((CliCommandBinding){
-        "storage", "storage status | storage recover --confirm", false, NULL, noop
-    }));
-    TEST_ASSERT_TRUE(pf_cli_add_binding((CliCommandBinding){
-        "fs", "fs mount|unmount|format --confirm|ls [path]|stat <path>|cat <path> [limit]|df\r\n"
-              "fs mkdir <path>|write <path> <text>|append <path> <text>\r\n"
-              "fs mv <source> <destination>|rm <path> --confirm", false, NULL, noop
+        "fs", "mount\r\n\tunmount\r\n\tformat --confirm (destroys files)\r\n"
+              "\tls [path]\r\n\tstat <path>\r\n\tcat <path> [limit]\r\n\tdf\r\n"
+              "\tmkdir <path>\r\n\twrite <path> <text>\r\n\tappend <path> <text>\r\n"
+              "\tmv <source> <destination>\r\n\trm <path> --confirm", false, NULL, noop
     }));
     send("help\r");
-    TEST_ASSERT_NOT_NULL(strstr(captured, "config get"));
-    TEST_ASSERT_NOT_NULL(strstr(captured, "benchmark status"));
-    TEST_ASSERT_NOT_NULL(strstr(captured, "storage recover"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, " * config\r\n\tget [clock | storage | wifi | bluetooth]"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, " * storage\r\n\tget [status | usb | benchmark]\r\n\tset usb <on | off>"));
+    TEST_ASSERT_NULL(strstr(captured, " * msc"));
+    TEST_ASSERT_NULL(strstr(captured, " * benchmark"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "\tformat --confirm (destroys files)\r\n\tls [path]"));
     TEST_ASSERT_LESS_OR_EQUAL_UINT(1024u, largest_response);
     send("help config\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "key=value"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "(saves and reboots)"));
+    send("board --help\r");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "\tget <clock | led | version | uptime>\r\n\tset led <on | off>\r\n\treboot"));
+    TEST_ASSERT_EQUAL_UINT(0u, reboots);
 }
 
 void test_board_reads_actual_clock_led_uptime_and_build_version(void)
@@ -260,53 +275,72 @@ void test_config_and_reboot_refuse_busy_usb_ownership_and_transitions(void)
     TEST_ASSERT_EQUAL_UINT(1u, reboots);
 }
 
-void test_msc_distinguishes_request_admission_from_completion_and_refusal(void)
+void test_storage_usb_distinguishes_request_admission_from_completion_and_refusal(void)
 {
-    send("msc enable\r");
+    send("storage set usb on\r");
     TEST_ASSERT_TRUE(host_owned);
     TEST_ASSERT_NOT_NULL(strstr(captured, "request queued"));
-    send("msc status\r");
-    TEST_ASSERT_NOT_NULL(strstr(captured, "msc=enabled"));
-    send("msc disable\r");
+    send("storage get usb\r");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "usb=enabled"));
+    send("storage set usb off\r");
     TEST_ASSERT_FALSE(host_owned);
     worker_busy = true;
-    send("msc enable\r");
+    send("storage set usb on\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "ERR storage busy"));
     worker_busy = false;
     msc_ok = false;
+    send("storage set usb on\r");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "ERR USB request refused"));
+    send("storage set usb on extra\r");
+    send("storage set usb maybe\r");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "ERR storage get [status"));
     send("msc enable\r");
-    TEST_ASSERT_NOT_NULL(strstr(captured, "ERR MSC request refused"));
-    send("msc enable extra\r");
+    TEST_ASSERT_NOT_NULL(strstr(captured, "Unknown command"));
     TEST_ASSERT_EQUAL_UINT(3u, msc_changes);
+}
+
+void test_storage_status_is_queued_and_recovery_requires_confirmation(void)
+{
+    send("storage get\r");
+    send("storage get status\r");
+    TEST_ASSERT_EQUAL_UINT(2u, worker_queries);
+    send("storage get status extra\r");
+    send("storage recover\r");
+    send("storage\r");
+    TEST_ASSERT_EQUAL_UINT(2u, worker_queries);
+    TEST_ASSERT_EQUAL_UINT(0u, recoveries);
+    send("storage recover --confirm\r");
+    TEST_ASSERT_EQUAL_UINT(1u, recoveries);
+    TEST_ASSERT_NOT_NULL(strstr(captured, "not clean eject"));
 }
 
 void test_benchmark_start_size_boundaries_rejection_and_cancellation(void)
 {
-    send("benchmark start 1\r");
+    send("storage benchmark 1\r");
     TEST_ASSERT_EQUAL_UINT(1u, benchmark_size);
     TEST_ASSERT_NOT_NULL(strstr(captured, "not yet admitted"));
-    send("benchmark start 1024\r");
+    send("storage benchmark 1024\r");
     TEST_ASSERT_EQUAL_UINT(1024u, benchmark_size);
     benchmark_size = 0u;
-    send("benchmark start 1025\r");
-    send("benchmark start 4294967296\r");
-    send("benchmark start -1\r");
-    send("benchmark start 1x\r");
-    send("benchmark start 0\r");
+    send("storage benchmark 1025\r");
+    send("storage benchmark 4294967296\r");
+    send("storage benchmark -1\r");
+    send("storage benchmark 1x\r");
+    send("storage benchmark 0\r");
     TEST_ASSERT_EQUAL_UINT(0u, benchmark_size);
     host_owned = true;
-    send("benchmark start 1\r");
+    send("storage benchmark 1\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "ERR USB owns"));
     host_owned = false;
     benchmark_ok = false;
     benchmark.request_error = PF_FILE_BENCHMARK_ERROR_SPACE;
-    send("benchmark start 1\r");
+    send("storage benchmark 1\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "ERR benchmark request refused"));
     TEST_ASSERT_NOT_NULL(strstr(captured, "request_error=6"));
-    send("benchmark cancel\r");
+    send("storage benchmark cancel\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "wait for cleanup"));
     cancel_ok = false;
-    send("benchmark cancel\r");
+    send("storage benchmark cancel\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "ERR no cancellable run"));
 }
 
@@ -318,7 +352,7 @@ void test_benchmark_status_reports_failure_and_cleanup_details(void)
     benchmark.mismatch_count = 7u;
     benchmark.written_bytes = 1024u;
     benchmark.read_bytes = 512u;
-    send("benchmark status\r");
+    send("storage get benchmark\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "benchmark=failed"));
     TEST_ASSERT_NOT_NULL(strstr(captured, "mismatches=7"));
     TEST_ASSERT_NOT_NULL(strstr(captured, "error=9"));
@@ -336,8 +370,8 @@ void test_radio_status_uses_sanitized_state_and_never_prints_ssid_or_secrets(voi
     radio_report[42] = radio_report[43] = radio_report[46] = 1u;
     radio_report[45] = 2u;
     send("radio status\r");
-    TEST_ASSERT_NOT_NULL(strstr(captured, "wifi=connected ip=192.168.66.87 tcp_cli=started"));
-    TEST_ASSERT_NOT_NULL(strstr(captured, "bluetooth=connected"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "wifi=connected ip=192.168.66.87\r\nbluetooth=connected\r\n"));
+    TEST_ASSERT_NULL(strstr(captured, "configured"));
     TEST_ASSERT_NULL(strstr(captured, "private-ssid"));
     send("radio missing\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "ERR radio status"));

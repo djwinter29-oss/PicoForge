@@ -338,7 +338,7 @@ void test_status_is_available_during_host_ownership(void)
     };
     pf_storage_get_status_ExpectAnyArgs();
     pf_storage_get_status_ReturnThruPtr_status(&status);
-    pf_cli_storage_execute(true, "storage", "status", reply, NULL);
+    pf_cli_storage_execute(true, "storage", "get status", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "state=usb owner=USB medium=sd bus=sdio present=yes"));
     TEST_ASSERT_NOT_NULL(strstr(output, "bytes=15808331776"));
     TEST_ASSERT_NOT_NULL(strstr(output, "last_error=write:"));
@@ -347,7 +347,7 @@ void test_status_is_available_during_host_ownership(void)
 void test_removed_sd_family_reports_usage(void)
 {
     pf_cli_storage_execute(false, "sd", "info", reply, NULL);
-    TEST_ASSERT_NOT_NULL(strstr(output, "Usage: storage status"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "Usage: storage get [status]"));
 }
 
 static bool disconnected_reply(const char *line, void *context)
@@ -404,7 +404,7 @@ void test_out_of_range_status_values_print_unknown(void)
 
     pf_storage_get_status_ExpectAnyArgs();
     pf_storage_get_status_ReturnThruPtr_status(&status);
-    pf_cli_storage_execute(false, "storage", "status", reply, NULL);
+    pf_cli_storage_execute(false, "storage", "get", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "state=unknown"));
     TEST_ASSERT_NOT_NULL(strstr(output, "last_error=unknown:"));
 }

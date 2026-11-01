@@ -75,7 +75,7 @@ bool pf_storage_worker_media_absent(void);
  * @note The caller reserves media until MSC access is revoked and firmware ownership is restored.
  *       Reinitializes only, never mounts. Initialization failure is retained in backend diagnostics/logging;
  *       telemetry reports readiness.
- *       Automatic mounting is blocked until a successful explicit fs mount.
+ *       Automatic mounting is blocked until a successful explicit storage mount.
  */
 bool pf_storage_worker_recover_media(void);
 
