@@ -57,7 +57,9 @@ This is an instruction model, not electrical or sustained-transfer qualification
 
 ## Host Applications
 
-Host-side tests live with their implementation: Python tests under `host/python/tests/`, .NET tests under `host/dotnet/PicoForge.Tests/`, and browser protocol tests under `host/webhid/tests/`. These tests validate HID protocol decoding and status presentation without requiring a connected board.
+Host-side tests live with their implementation: Python tests under `host/python/tests/`, .NET tests under
+`host/dotnet/PicoForge.Tests/`, Direct browser tests under `host/direct/tests/`, and Python/.NET frontend tests under
+`host/web/tests/`. These tests validate HID protocol decoding and status presentation without requiring a connected board.
 
 ## Build-Artifact Tests
 

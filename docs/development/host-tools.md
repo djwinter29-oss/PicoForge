@@ -1,9 +1,9 @@
 # Host Tools Development
 
 PicoForge has Python and .NET dashboards that share the frontend in `host/web`, plus the independent Direct dashboard
-in `host/webhid`, which connects over USB (WebHID) or Bluetooth LE (Web Bluetooth). For installation and everyday use,
+in `host/direct`, which connects over USB (WebHID) or Bluetooth LE (Web Bluetooth). For installation and everyday use,
 see the [Python host guide](../../host/python/README.md), [.NET host guide](../../host/dotnet/PicoForge/README.md),
-and [Direct dashboard guide](../../host/webhid/README.md).
+and [Direct dashboard guide](../../host/direct/README.md).
 
 Run commands from the repository root. Host unit tests do not require a board; physical device checks require an
 identified board and appropriate USB permissions.
@@ -12,7 +12,7 @@ identified board and appropriate USB permissions.
 
 - Python 3.10+ for the Python host and repository contracts
 - .NET 10 SDK for the .NET host and tests
-- Node.js with the built-in test runner for WebHID tests
+- Node.js with the built-in test runner for Direct dashboard tests
 - A WebHID-capable desktop browser for physical browser use
 
 Install only the toolchain needed for the host or checks you are changing.
@@ -24,7 +24,7 @@ The launchers start the respective dashboard:
 ```sh
 tools/host/run-python.sh
 tools/host/run-dotnet.sh
-tools/host/run-webhid.sh
+tools/host/run-direct.sh
 ```
 
 Python and .NET serve the shared dashboard at `http://127.0.0.1:5000/` by default; run only one server on that port at
@@ -52,15 +52,17 @@ python3 -m pip install --editable host/python
 tools/validation/test-host.sh
 ```
 
-The wrapper runs Python `unittest`, WebHID Node tests, and .NET tests. They can also be run individually:
+The wrapper runs Python `unittest`, separate Direct and Python/.NET frontend Node tests, and .NET tests.
+They can also be run individually:
 
 ```sh
 python3 -m unittest discover -s host/python/tests -v
-node --test host/webhid/tests/*.test.mjs
+node --test host/direct/tests/*.test.mjs
+node --test host/web/tests/*.test.mjs
 dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo
 ```
 
-Python tests cover the package and local web API; .NET tests cover the protocol and host behavior; WebHID tests cover
+Python tests cover the package and local web API; .NET tests cover the protocol and host behavior; Direct tests cover
 browser-side decoding and presentation. None opens a physical USB device. Repository-wide Python contracts are separate:
 
 ```sh
@@ -73,8 +75,11 @@ See the [test ownership index](../../tests/README.md) for cross-project checks a
 ## Shared Frontend and Protocol Boundaries
 
 Python and .NET serve the same assets from `host/web`; keep shared UI behavior backend-neutral and preserve the common
-API response contract. WebHID is independent and owns its renderer and assets under `host/webhid`. Keep browser-specific
+API response contract. Direct is independent and owns its renderer and assets under `host/direct`. Keep browser-specific
 USB handling there rather than creating a second Python/.NET frontend.
+The dashboards do not import or package each other's assets. Each owns its wireless form module and its Node tests;
+matching firmware protocol behavior does not imply shared frontend code. Python/.NET build and run without `host/direct`,
+and Direct can be served and tested without `host/web`, `host/python`, or `host/dotnet`.
 
 In the shared dashboard, active or pending self-tests disable board configuration and reboot controls without
 adding an automatic test warning above Pin configuration. The Save button state indicates unsaved changes without

@@ -55,9 +55,10 @@ class WirelessTests(unittest.TestCase):
         self.assertIn('id="wifi-ssid"', page.text)
         self.assertIn('id="wifi-password"', page.text)
         self.assertIn('id="ble-secret"', page.text)
-        form = client.get("/webhid/js/wireless-form.mjs")
+        form = client.get("/js/wireless-form.mjs")
         self.assertEqual(form.status_code, 200)
         self.assertIn("export function bindWirelessForm", form.text)
+        self.assertEqual(client.get("/direct/js/wireless-form.mjs").status_code, 404)
         self.assertEqual(client.get("/ble").status_code, 404)
 
     def test_identity_accepts_wireless_without_relaxing_transport_validation(self):

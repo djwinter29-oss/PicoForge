@@ -337,7 +337,7 @@ Ceedling is configured by the repository-root `project.yml`. Host unit tests bel
 host-testable application, board, driver, integration and platform modules. The configuration excludes `main.c`;
 board tests use scoped SDK fakes.
 
-`host/python/tests/`, `host/dotnet/PicoForge.Tests/`, and `host/webhid/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and WebHID tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
+`host/python/tests/`, `host/dotnet/PicoForge.Tests/`, and `host/direct/tests/` contain hardware-free host protocol/API tests. `tools/validation/validate.sh` checks shell syntax, validates the Ceedling project, runs firmware unit tests when present, and builds both MCU targets. Run the Python, .NET, and Direct tests using the commands in the README. `tools/validation/coverage-firmware.sh` generates gcovr reports for firmware unit tests; it does not measure target timing or prove hardware behavior.
 
 Physical wiring, pinout qualification, and tests requiring a board or probe belong in the hardware documentation and validation flow.
 The pinout document records standard Pico/Pico 2 targets and the SD breakout mappings. Board support constructs the
@@ -354,7 +354,7 @@ Unused fill bytes are an observation, not certified margin (unwritten stack rese
 No target stack observations were collected during remediation.
 
 The canonical hardware-free filesystem HID vectors live in `tests/fixtures/hid-filesystem.csv`. Python, .NET,
-and WebHID consume all valid/invalid vectors directly. Firmware produces reports rather than parsing host input
+and Direct consume all valid/invalid vectors directly. Firmware produces reports rather than parsing host input
 filesystem reports: Ceedling checks its exFAT encoder against the same fixture. Invalid telemetry vectors apply
 to the host decoders, not the firmware's separate command parser. This small fixture covers format, version,
 length and padding boundaries; it is not exhaustive coverage of every HID report family.

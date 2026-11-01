@@ -25,10 +25,10 @@ The release also includes:
 - `picoforge-X.Y.Z-py3-none-any.whl`: Python CLI and local dashboard.
 - `picoforge-host-vX.Y.Z-linux-x64.tar.gz`, `picoforge-host-vX.Y.Z-win-x64.zip`, and
   `picoforge-host-vX.Y.Z-osx-arm64.tar.gz`: self-contained .NET hosts, including dashboard assets.
-- `picoforge-webhid-vX.Y.Z.zip`: Direct dashboard.
+- `picoforge-direct-vX.Y.Z.zip`: Direct dashboard.
 - `SHA256SUMS.txt`: SHA-256 checksums for all attached packages.
 
-The release workflow builds the Python wheel and WebHID archive directly and calls `publish-dotnet.yml` to build
+The release workflow builds the Python wheel and Direct archive directly and calls `publish-dotnet.yml` to build
 standalone hosts. Like [PicoUart](https://github.com/djwinter29-oss/PicoUart/blob/main/.github/workflows/release.yml),
 tag pushes publish with the pinned `softprops/action-gh-release` action after all required builds and tests pass.
 The action creates or updates the tag's public release, including one created through GitHub's release editor.
@@ -36,8 +36,8 @@ Rerunning the publication job can replace matching assets; do not move a publish
 Prefer pushing a tag and letting the workflow create the release so downloads are not announced before builds pass.
 Manual preflight produces Actions artifacts only and never publishes to GitHub Releases, PyPI, or Pages.
 After tag-driven release publication, separate jobs publish the same tested wheel to PyPI using Trusted Publishing
-and deploy the same WebHID archive to GitHub Pages. They do not rebuild packages from a moving branch.
-`publish-pypi.yml` and `publish-webhid.yml` run independently when **Release build packages** completes successfully
+and deploy the same Direct archive to GitHub Pages. They do not rebuild packages from a moving branch.
+`publish-pypi.yml` and `publish-direct.yml` run independently when **Release build packages** completes successfully
 in this repository for a tag push, not a manual preflight. Both require a public, stable release, match its tag to
 the originating workflow commit, and verify the downloaded asset against the release checksums.
 A failure in either workflow does not remove the release.
@@ -49,7 +49,7 @@ An existing empty public release does not need to be returned to draft. If publi
 job to complete uploads. Publish corrections to distributed packages under a new version; PyPI cannot replace versions.
 
 Packaging is gated on the reusable host-validation workflow: Ceedling firmware tests, Python host tests on
-3.10 and 3.12, and WebHID and .NET host tests. Each PR/release matrix entry performs one firmware build; runtime
+3.10 and 3.12, and Direct and .NET host tests. Each PR/release matrix entry performs one firmware build; runtime
 clock selection remains a boot setting and does not multiply CI artifacts.
 
 ## Publishing setup

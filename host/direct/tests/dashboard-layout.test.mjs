@@ -10,7 +10,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/webhid\.css\?v=13"/);
+  assert.match(html, /href="css\/direct\.css\?v=13"/);
   assert.match(html, /src="js\/app\.mjs\?v=27"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=6"/);
@@ -29,7 +29,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /value="1">High-Speed/);
   assert.match(html, /id="settings-save"[^>]*>Save&amp;Reboot/);
   assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
-  for (const path of ["../index.html", "../../web/index.html"]) {
+  for (const path of ["../index.html"]) {
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
     const settings = dashboard.split('aria-labelledby="settings-title"')[1].split("</section>")[0];
     const footer = dashboard.split('<footer class="status-line"')[1].split("</footer>")[0];
@@ -88,7 +88,6 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     assert.match(html, new RegExp(`id="${name}-freshness" role="status"`));
   }
 });
-
 test("Direct UI preserves unsaved profiles, separates confirmed reboot, and confirms force return", async context => {
   const saved = {
     document: globalThis.document, window: globalThis.window,
@@ -446,15 +445,4 @@ test("connection dialogs scan before prompting for a key and preserve transport 
       else delete globalThis[name];
     }
   }
-});
-
-test("server dashboard imports only the WebHID module the Python and .NET servers publish", () => {
-  for (const name of ["app.mjs", "dashboard.mjs"]) {
-    const source = readFileSync(new URL(`../../web/js/${name}`, import.meta.url), "utf8");
-    for (const [, path] of source.matchAll(/from "\.\.\/\.\.\/webhid\/js\/([^"?]+)/g)) {
-      assert.equal(path, "wireless-form.mjs", `${name} imports unpublished ${path}`);
-    }
-  }
-  const form = readFileSync(new URL("../js/wireless-form.mjs", import.meta.url), "utf8");
-  assert.doesNotMatch(form, /^import /m);
 });

@@ -17,8 +17,11 @@ done
 printf '%s\n' '=== Python host tests ==='
 "$PYTHON" -m unittest discover -s "$REPO_ROOT/host/python/tests" -v
 
-printf '%s\n' '=== WebHID tests ==='
-"$NODE" --test "$REPO_ROOT"/host/webhid/tests/*.test.mjs
+printf '%s\n' '=== Direct dashboard tests ==='
+"$NODE" --test "$REPO_ROOT"/host/direct/tests/*.test.mjs
+
+printf '%s\n' '=== Python/.NET dashboard tests ==='
+"$NODE" --test "$REPO_ROOT"/host/web/tests/*.test.mjs
 
 printf '%s\n' '=== .NET host tests ==='
 "$DOTNET" test "$REPO_ROOT/host/dotnet/PicoForge.sln" \

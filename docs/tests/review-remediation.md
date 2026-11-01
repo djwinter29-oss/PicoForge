@@ -11,7 +11,7 @@ qualification claimed.
 |---|---|
 | `PATH="$PWD/build/coverage-tools/bin:$PATH" "$(ruby -rrubygems -e 'print Gem.user_dir')/bin/ceedling" test:usb_hid_sd_responsiveness test:storage_worker_automount` | Exit 0; 7 USB/HID tests and 3 automount tests passed. |
 | `PYTHONPATH=host/python/src /usr/bin/python3 -m pytest tests/contracts/test_workflows.py host/python/tests/test_protocol.py -q` | Exit 0; 19 passed, 36 subtests passed. Includes Ruby YAML parsing of both build workflows. |
-| `node --test host/webhid/tests/protocol.test.mjs` | Exit 0; 20 tests passed. |
+| `node --test host/direct/tests/protocol.test.mjs` | Exit 0; 20 tests passed. |
 | `dotnet build host/dotnet/PicoForge.Tests --no-restore --verbosity quiet` | Exit 0; zero warnings/errors. |
 | `dotnet test host/dotnet/PicoForge.Tests --no-restore --verbosity normal` | Exit 0; 20 passed. |
 | `sh -n tools/firmware/build.sh` | Exit 0. |

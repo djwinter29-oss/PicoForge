@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ConsoleTerminal, consoleKey } from "../../web/js/console-terminal.mjs";
+import { ConsoleTerminal, consoleKey } from "../js/console-terminal.mjs";
 import { renderWirelessStatus } from "../js/wireless-form.mjs";
 
 test("CLI terminal handles fragmented editing escapes, insert/delete and saved cursor during asynchronous output", () => {

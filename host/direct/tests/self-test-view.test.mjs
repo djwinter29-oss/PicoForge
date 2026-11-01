@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderStatus, renderSelfTest } from "../js/view.mjs";
-import { renderStatus as renderServerStatus, renderSelfTest as renderServerSelfTest } from "../../web/js/dashboard.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -27,8 +26,8 @@ function snapshot() {
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
 
-test("both dashboards show live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () => withDocument(el => {
-  for (const render of [renderStatus, renderServerStatus]) {
+test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () => withDocument(el => {
+  for (const render of [renderStatus]) {
     const state = { ...snapshot(), hardware: { ...snapshot().hardware, capabilities: 128,
       serial_number: "892BA313F9BB56E1" } };
     for (const [wireless, expected] of [
@@ -139,23 +138,6 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   assert.equal(el("#self-test-disclosure").open, false);
 }));
 
-test("server dashboard opens the benchmark disclosure on active and failed transitions", () => withDocument(el => {
-  const state = snapshot();
-  renderServerSelfTest(state);
-  assert.equal(el("#self-test-disclosure").open, false);
-
-  state.self_test = { ...state.self_test, state: "writing", active: true };
-  renderServerSelfTest(state);
-  assert.equal(el("#self-test-disclosure").open, true);
-  el("#self-test-disclosure").open = false;
-  renderServerSelfTest(state);
-  assert.equal(el("#self-test-disclosure").open, false);
-
-  state.self_test = { ...state.self_test, state: "failed", active: false };
-  renderServerSelfTest(state);
-  assert.equal(el("#self-test-disclosure").open, true);
-}));
-
 test("identity RAM stays build accounting while stale inputs show no current values", () => withDocument(el => {
   const state = snapshot();
   state.runtime = { uptime_ms: 9007199254740993n, system_clock_hz: 200000000,
@@ -202,9 +184,9 @@ test("storage does not infer absence from an unavailable sample or mount from ca
   assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
 }));
 
-test("both dashboards retain storage visibility through stale reports without showing cached readings", () =>
+test("Direct dashboard retains storage visibility through stale reports without showing cached readings", () =>
   withDocument(el => {
-    for (const render of [renderStatus, renderServerStatus]) {
+    for (const render of [renderStatus]) {
       render({ connected: false });
       const state = snapshot();
       state.memory.present = false;

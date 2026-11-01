@@ -18,7 +18,7 @@ body:
         - SD-card storage (SPI/SDIO)
         - Host Python
         - Host .NET
-        - WebHID
+        - Direct dashboard (USB/Bluetooth)
         - Build/CI/release tooling
         - Documentation
     validations:

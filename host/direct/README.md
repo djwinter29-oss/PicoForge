@@ -6,7 +6,7 @@ The Direct dashboard connects from the browser straight to the board over USB (W
 Open the hosted [Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
 The hosted site is deployed from successful releases after the initial
 [Pages setup](../../docs/deployment/release.md#publishing-setup).
-For offline/local hosting, download the Direct dashboard ZIP (`picoforge-webhid-vX.Y.Z.zip`) from
+For offline/local hosting, download the Direct dashboard ZIP (`picoforge-direct-vX.Y.Z.zip`) from
 [Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest), extract it, and serve the extracted directory
 on localhost. Opening `index.html` directly as a file is not supported.
 
@@ -14,11 +14,12 @@ Serve the dashboard directory directly so `index.html` is the site root and the 
 origin:
 
 ```sh
-python3 -m http.server 8000 --directory host/webhid
+python3 -m http.server 8000 --directory host/direct
 ```
 
 Open `http://localhost:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
 The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or a host server API.
+Its modules, assets, and tests are independent of the Python/.NET dashboard; no frontend code is shared with it.
 Choose **USB**, then **Select board** to open the browser device chooser, including when devices were previously authorized,
 so the user selects which board to open. Cancel leaves the page disconnected. Close other clients using that board
 before connecting; the chooser cannot override another application's HID access.
@@ -100,7 +101,7 @@ instead of clicking Start again. Cleanup leaves the filesystem mounted.
 ## Checks
 
 ```sh
-node --test host/webhid/tests/*.test.mjs
+node --test host/direct/tests/*.test.mjs
 ```
 
 These are host-only protocol, transaction, freshness, and UI checks. Physical WebHID/USB behavior still requires

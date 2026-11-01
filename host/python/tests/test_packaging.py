@@ -18,11 +18,10 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(web, PROJECT.parent / "web")
         self.assertIn("picoforge.web", setuptools["packages"])
         patterns = setuptools["package-data"]["picoforge.web"]
-        assets = [p.relative_to(web).as_posix() for p in web.rglob("*") if p.is_file() and "__pycache__" not in p.parts]
+        assets = [p.relative_to(web).as_posix() for p in web.rglob("*")
+                  if p.is_file() and not {"__pycache__", "tests"}.intersection(p.parts)]
         self.assertTrue(assets)
         for asset in assets:
             self.assertTrue(any(fnmatch(asset, pattern) for pattern in patterns), asset)
-        wireless = (PROJECT / setuptools["package-dir"]["picoforge.wireless_ui"]).resolve()
-        self.assertEqual(wireless, PROJECT.parent / "webhid" / "js")
-        self.assertIn("picoforge.wireless_ui", setuptools["packages"])
-        self.assertIn("wireless-form.mjs", setuptools["package-data"]["picoforge.wireless_ui"])
+        self.assertIn("js/wireless-form.mjs", assets)
+        self.assertEqual(setuptools["packages"], ["picoforge", "picoforge.web"])

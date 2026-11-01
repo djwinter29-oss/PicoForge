@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { renderStatus } from "../../web/js/dashboard.mjs";
+import { renderStatus } from "../js/dashboard.mjs";
 
 test("server dashboard presents expected USB reconnection without hiding real errors", () => {
   const saved = globalThis.document;
@@ -158,7 +158,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     return { ok: false, status: 503, json: async () => ({ error: "HID command delivery failed" }) };
   };
   try {
-    await import("../../web/js/app.mjs");
+    await import("../js/app.mjs");
     await new Promise(resolve => setImmediate(resolve));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(typeof handlers.get("#reboot-control:click"), "function");
@@ -347,7 +347,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     renderStatus(connected);
     assert.equal(elements.get("#board-model").textContent, "Pico 2 (RP2350)");
     assert.equal(elements.get("#ram-usage").textContent, "118.2 / 520 KiB (22.7%)");
-    const html = readFileSync(new URL("../../web/index.html", import.meta.url), "utf8");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     const identity = html.split('aria-label="Hardware identity"')[1].split("</section>")[0];
     assert.deepEqual([...identity.matchAll(/<strong id="([^"]+)"/g)].map(match => match[1]),
       ["product-name", "board-model", "serial", "identity-clock", "ram-usage", "firmware-version"]);

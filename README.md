@@ -83,7 +83,7 @@ See the [project vision](docs/design/vision.md) for intended workflows and scope
 
 - [Getting started](docs/guides/getting-started.md): firmware, flashing, dashboard connections, and first storage operations.
 - [Hardware setup](docs/guides/hardware-setup.md): supported boards, wiring, power, and bring-up.
-- [Direct](host/webhid/README.md), [Python](host/python/README.md), and [.NET](host/dotnet/PicoForge/README.md):
+- [Direct](host/direct/README.md), [Python](host/python/README.md), and [.NET](host/dotnet/PicoForge/README.md):
   host-specific setup and usage.
 - [USB CDC console guide](docs/guides/usb-cdc-cli.md): terminal setup, file commands, mounting, and recovery.
 - [SD-card self-test guide](docs/guides/sdcard-performance-test.md): safe test procedure and result interpretation.
