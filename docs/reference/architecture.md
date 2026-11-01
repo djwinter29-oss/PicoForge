@@ -155,7 +155,15 @@ The firmware currently uses the USB device role; a USB host role is not selected
 
 ### Drivers
 
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Multi-file drivers are grouped by subsystem under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in platform storage; media lifecycle and firmware/USB ownership policy belongs in the application. Board support only supplies numbers: sources in `firmware/src/config/` define assignment objects, declared `extern` in driver headers. CMake selects the storage assignment source alongside its transport binding. Each driver initializes its own hardware (`pf_led_init()`, `pf_logging_init()`), and [sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card detect. FatFs consumes the [logical block interface](../../firmware/src/platform/storage/block_device.h) through an application owner-gated descriptor. See the [hardware setup options](../guides/hardware.md).
+Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Multi-file drivers are grouped by subsystem
+under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in platform storage; media lifecycle and
+firmware/USB ownership policy belongs in the application. Sources in `firmware/src/config/` define build-selected
+assignment objects, declared `extern` in driver headers, including the optional CYW43 LED writer. CMake selects the
+storage assignment source alongside its transport binding. Each driver initializes its own hardware
+(`pf_led_init()`, `pf_logging_init()`); the CYW43 owner initializes the W-board LED before accepting writes.
+[sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card
+detect. FatFs consumes the [logical block interface](../../firmware/src/platform/storage/block_device.h) through an
+application owner-gated descriptor. See the [hardware setup options](../guides/hardware.md).
 
 ### SD-Card Driver Structure
 

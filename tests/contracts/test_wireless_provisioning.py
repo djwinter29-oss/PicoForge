@@ -42,10 +42,10 @@ static bool storage_busy;
 static bool staged_test;
 static unsigned cleared_tests, enabled_sta;
 static unsigned chip_inits;
+static int chip_init_result;
 static bool wifi_prepared;
 static unsigned wifi_starts, tcp_cli_starts;
 static int led_level = -1;
-static void (*attached_led)(bool on);
 bool pf_boot_config_set_sysclk(pf_sysclk_profile_t p) { if ((unsigned)p > 3u) return false; clock = (int)p; return true; }
 bool pf_boot_config_set_storage_speed(pf_storage_speed_t s) { if ((unsigned)s > 1u) return false; speed = (int)s; return true; }
 bool pf_boot_config_set_radios(uint8_t r) { if (r > 3u) return false; radios = r; return true; }
@@ -87,10 +87,9 @@ void pf_wifi_clear_tested_credentials(void) { staged_test = false; ++cleared_tes
 bool pf_bluetooth_prepare(void) { return false; }
 bool pf_bluetooth_start(void) { return false; }
 uint8_t pf_bluetooth_state(void) { return 2; }
-int cyw43_arch_init(void) { ++chip_inits; return 0; }
+int cyw43_arch_init(void) { ++chip_inits; return chip_init_result; }
 void cyw43_arch_poll(void) {}
 void cyw43_arch_gpio_put(unsigned wl_gpio, bool value) { assert(wl_gpio == CYW43_WL_GPIO_LED_PIN); led_level = value; }
-void pf_led_attach(void (*put)(bool on)) { attached_led = put; put(false); }
 void vTaskCoreAffinitySet(void *task, UBaseType_t mask) { (void)task; (void)mask; }
 unsigned get_core_num(void) { return 0; }
 bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *format, ...)
@@ -106,12 +105,17 @@ int main(void)
 {
     uint8_t report[PF_WIRELESS_REQUEST_SIZE], status[PF_WIRELESS_STATUS_SIZE];
     /* With both radios off, the chip still starts for the W-board LED, but no radio is enabled. */
+    assert(!pf_wireless_led_put(true) && led_level == -1);
+    chip_init_result = -1;
     pf_wireless_start();
-    assert(chip_inits == 1 && enabled_sta == 0 && attached_led != NULL && led_level == 0);
+    assert(chip_inits == 1 && !pf_wireless_led_put(true) && led_level == -1);
+    chip_init_result = 0;
+    pf_wireless_start();
+    assert(chip_inits == 2 && enabled_sta == 0 && led_level == 0);
     assert(wifi_starts == 0 && tcp_cli_starts == 0);
     pf_wireless_status(status);
     assert(status[46] == 0);
-    attached_led(true);
+    assert(pf_wireless_led_put(true));
     assert(led_level == 1);
     request(report, 250, 1);
     assert(pf_wireless_configure(report) && saves == 1 && discards == 0);
@@ -151,7 +155,7 @@ int main(void)
     pf_wireless_result_report(result);
     wifi_prepared = true;
     pf_wireless_start();
-    assert(chip_inits == 1 && wifi_starts == 1 && tcp_cli_starts == 1);
+    assert(chip_inits == 2 && wifi_starts == 1 && tcp_cli_starts == 1);
     pf_wireless_status(status);
     assert(status[46] == 1);
     return 0;

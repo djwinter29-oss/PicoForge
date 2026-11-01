@@ -143,7 +143,6 @@ bool tud_mounted(void) { return true; }
 bool tud_cdc_connected(void) { return fake_connected; }
 bool pf_temperature_read_centidegrees(int16_t *temperature)
 { *temperature = 2500; return true; }
-bool pf_led_is_available(void) { return true; }
 bool pf_led_is_on(void) { return false; }
 void pico_get_unique_board_id(pico_unique_board_id_t *id)
 { for (size_t i = 0; i < sizeof(id->id); ++i) id->id[i] = (uint8_t)i; }

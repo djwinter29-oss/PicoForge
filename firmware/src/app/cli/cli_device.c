@@ -60,10 +60,6 @@ static void board_command(EmbeddedCli *instance, char *args, void *context)
             snprintf(line, sizeof(line), "version=%u.%u.%u", PF_FIRMWARE_VERSION_MAJOR,
                      PF_FIRMWARE_VERSION_MINOR, PF_FIRMWARE_VERSION_PATCH);
         } else if (strcmp(item, "led") == 0) {
-            if (!pf_led_is_available()) {
-                pf_cli_print("ERR LED unavailable");
-                return;
-            }
             snprintf(line, sizeof(line), "led=%s", pf_led_is_on() ? "on" : "off");
         } else {
             pf_cli_print("ERR board " BOARD_HELP);

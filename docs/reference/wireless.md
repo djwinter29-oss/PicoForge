@@ -18,6 +18,11 @@ task drives the CYW43 LED. Non-wireless builds keep the existing all-core task a
 and benchmark admission helpers. USB and BLE retain separate command-result slots, with the original benchmark
 admission tied to its source. Storage ownership remains exclusive.
 
+All supported boards advertise LED control. `config/board.c` selects direct GPIO for Pico/Pico 2 and a CYW43 writer
+for W boards at build time. The wireless owner initializes the chip and clears its LED even with both radios disabled.
+LED writes fail explicitly if that initialization failed; LED support
+is not a dynamically detected capability. Existing HID LED capability and telemetry bits remain set for compatibility.
+
 SDK BTstack's default flash-TLV initializer is interposed to select its nonpersistent TLV implementation before
 any bank access. Its default Pico W flash banks otherwise overlap the settings sector. No OS bonds are persisted;
 application proof authorization does not rely on Bluetooth pairing. Only the existing boot configuration service

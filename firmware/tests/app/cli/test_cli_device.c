@@ -50,7 +50,6 @@ bool pf_usb_msc_is_ejected(void) { return false; }
 bool pf_usb_msc_transition_pending(void) { return transition; }
 bool pf_usb_msc_request_rejected(void) { return !msc_ok; }
 bool pf_usb_msc_request(bool enabled) { ++msc_changes; host_owned = enabled; return msc_ok; }
-bool pf_led_is_available(void) { return led_available; }
 bool pf_led_is_on(void) { return led_on; }
 bool pf_led_set(bool on) { ++led_changes; if (!led_available) return false; led_on = on; return true; }
 uint32_t pf_system_clock_hz(void) { return 125000000u; }
@@ -166,7 +165,7 @@ void test_board_invalid_requests_have_no_side_effects(void)
     TEST_ASSERT_EQUAL_UINT(0u, reboots);
     led_available = false;
     send("board get led\r");
-    TEST_ASSERT_NOT_NULL(strstr(captured, "ERR LED unavailable"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "led=off"));
     send("board set led on\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "ERR LED unavailable"));
 }

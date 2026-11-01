@@ -27,6 +27,12 @@
 
 /** @brief Initialize the W-board CYW43 for its LED, then start only enabled radios on the USB owner task. */
 void pf_wireless_start(void);
+/**
+ * @brief Drive the CYW43 LED from the USB owner task after SDK initialization.
+ * @param on true to light the LED.
+ * @return false when the SDK is not initialized; true when the write is issued.
+ */
+bool pf_wireless_led_put(bool on);
 /** @brief Poll SDK Wi-Fi/BLE work from the USB owner task; never call concurrently. */
 void pf_wireless_poll(void);
 /** @brief Copy sanitized wireless status into a PF_WIRELESS_STATUS_SIZE buffer. */

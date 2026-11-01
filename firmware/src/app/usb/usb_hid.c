@@ -213,11 +213,10 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     report->firmware_patch = PF_FIRMWARE_VERSION_PATCH;
     report->mcu = pf_system_mcu_id();
     report->board_model = board_model();
-    report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS | PF_HID_CAP_FORCE_SAVE;
+    report->capabilities = PF_HID_CAP_LED | PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS | PF_HID_CAP_FORCE_SAVE;
 #if PF_ENABLE_WIRELESS
     report->capabilities |= PF_HID_CAP_WIRELESS;
 #endif
-    if (pf_led_is_available()) report->capabilities |= PF_HID_CAP_LED;
     pf_storage_status_t storage;
     pf_storage_get_status(&storage);
     if (storage.bus == PF_STORAGE_BUS_SPI) report->capabilities |= PF_HID_CAP_SPI;
@@ -268,10 +267,8 @@ void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t se
     /* PF_RUNTIME_CPU_UNAVAILABLE (0xFFFF) is passed through as the wire value for "not sampled yet". */
     report->core0_service_load_basis_points = stats.cpu_usage_basis_points[0];
     report->core1_service_load_basis_points = stats.cpu_usage_basis_points[1];
-    if (pf_led_is_available()) {
-        report->picoforge_flags |= PF_HID_TELEMETRY_LED_AVAILABLE;
-        if (pf_led_is_on()) report->led_flags = 1u;
-    }
+    report->picoforge_flags |= PF_HID_TELEMETRY_LED_AVAILABLE;
+    if (pf_led_is_on()) report->led_flags = 1u;
     if (tud_mounted()) report->picoforge_flags |= PF_HID_TELEMETRY_USB_MOUNTED;
     if (tud_cdc_connected()) report->picoforge_flags |= PF_HID_TELEMETRY_CDC_OPEN;
     if (pf_temperature_read_centidegrees(&temperature)) {
@@ -369,9 +366,6 @@ static outcome_t handle_led(const pf_hid_control_request_t *request)
     }
     if (request->arguments[0] > 1u) {
         return invalid(PF_HID_ERROR_ARGUMENT);
-    }
-    if (!pf_led_is_available()) {
-        return outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
     }
     return pf_led_set(request->arguments[0] != 0u) ? completed() : failed();
 }

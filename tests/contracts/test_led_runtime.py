@@ -1,4 +1,4 @@
-"""Compile the real LED driver against lightweight GPIO stubs and exercise polarity and validation."""
+"""Exercise build-selected LED writers, polarity, readiness, and GPIO validation without hardware."""
 
 from pathlib import Path
 import shutil
@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
         ["-DPF_TEST_LED_GPIO=255u"],
         ["-DPF_TEST_LED_GPIO=30u"],
     ],
-    ids=["active-high", "active-low", "no-led", "invalid-gpio"],
+    ids=["active-high", "active-low", "wireless-led", "invalid-gpio"],
 )
-def test_led_polarity_availability_and_gpio_validation(tmp_path, defines):
+def test_led_polarity_writer_readiness_and_gpio_validation(tmp_path, defines):
     compiler = shutil.which("gcc")
     if compiler is None:
         pytest.skip("gcc is required for the host-side LED runtime check")

@@ -15,35 +15,26 @@
 typedef struct {
     uint8_t gpio; /**< LED GPIO, or PF_LED_GPIO_NONE (255). */
     bool active_high; /**< LED drive polarity. */
+    bool (*put)(bool on); /**< Build-selected non-GPIO writer; NULL uses gpio and active_high. Returns true on success. */
 } pf_led_board_t;
 
 /** Build-selected assignment, defined in config/board.c. */
 extern const pf_led_board_t pf_led_board;
 
 /**
- * @brief Configure the pf_led_board GPIO and clear it; later calls are no-ops.
- * @return true when the board has no LED or it was configured; false for an invalid GPIO.
+ * @brief Configure and clear the direct GPIO LED; non-GPIO writers initialize with their owning service.
+ * @return true when configured or awaiting the non-GPIO driver; false for an invalid GPIO.
  */
 bool pf_led_init(void);
 
 /**
- * @brief Drive the LED through a runtime-owned driver, such as the Pico W CYW43 LED, once that driver is ready.
- * @param put Sets the physical LED level (true lights it); called on the LED writer task only.
- * @note Ignored when a GPIO LED is already configured. The LED starts off.
- */
-void pf_led_attach(void (*put)(bool on));
-
-/** Return whether a board LED has been configured. */
-bool pf_led_is_available(void);
-
-/**
  * @brief Set the logical LED state.
  * @param on true to light the LED, regardless of the board polarity.
- * @return false when the board has no LED.
+ * @return true when applied; false when the non-GPIO writer rejects it or the GPIO is invalid.
  */
 bool pf_led_set(bool on);
 
-/** Return the logical LED state, or false when unavailable/off. */
+/** Return the last successfully applied logical LED state. */
 bool pf_led_is_on(void);
 
 #endif
