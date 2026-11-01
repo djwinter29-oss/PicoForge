@@ -3,7 +3,7 @@
 #include <string.h>
 
 TEST_INCLUDE_PATH("firmware/tests/support/lwip")
-#include "app/wireless/tcp_cli.c"
+#include "app/wireless/wifi/tcp_cli.c"
 
 static struct tcp_pcb listen_pcb, client_pcb, extra_pcb;
 static tcp_accept_fn accept_callback;

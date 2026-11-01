@@ -18,7 +18,7 @@
 #include "app/cli/cli_storage.h"
 #include "app/storage/storage_worker.h"
 #if PF_ENABLE_WIRELESS
-#include "app/wireless/tcp_cli.h"
+#include "app/wireless/wifi/tcp_cli.h"
 #include "app/wireless/wireless.h"
 #endif
 

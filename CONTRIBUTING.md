@@ -2,7 +2,7 @@
 
 Thanks for helping maintain PicoForge. Feature expansion is closed; contributions should focus on defects,
 reliability, compatibility, documentation, and qualification of existing behavior. Keep new product features in
-downstream projects and follow the [project scope](docs/project-scope.md) and existing layer boundaries.
+downstream projects and follow the [project scope](README.md#project-scope) and existing layer boundaries.
 
 ## Before Opening a Pull Request
 

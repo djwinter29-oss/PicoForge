@@ -2,7 +2,7 @@
  * @file tcp_cli.c
  * @brief Single-client raw TCP transport for the shared CLI, built on the lwIP raw API in poll mode.
  */
-#include "app/wireless/tcp_cli.h"
+#include "app/wireless/wifi/tcp_cli.h"
 
 #include <string.h>
 

@@ -33,14 +33,14 @@ breakout wiring. Transport is selected at build time, not when connecting a dash
 
 The build creates a separate directory for each board/transport pair, such as `build/firmware-pico2-SDIO_PIO/`.
 Stock-clock Pico 2 builds produce a dated image named `pico_forge_rp2350_150_<YYYYMMDD>.uf2`; Pico builds use
-`pico_forge_rp2040_125_<YYYYMMDD>.uf2`. See the [release guide](../release.md) for published packages and
+`pico_forge_rp2040_125_<YYYYMMDD>.uf2`. See the [release guide](../deployment/release.md) for published packages and
 build configurations. The build script enables the storage self-test; direct CMake builds disable it by default.
 Builds automatically clear the retired `PF_SYS_CLK_MHZ` and `PF_SDIO_PIO_HIGH_SPEED` options from reused CMake
 caches, including builds invoked by `tools/firmware/load.sh`. Select clock and SD-speed profiles through the
 [dashboard settings](../reference/settings.md#host-dashboard-settings), not build options.
 
 Publication links may be unavailable before the first successful publication. Maintainers should follow the
-[release setup](../release.md#publishing-setup) before announcing downloads.
+[release setup](../deployment/release.md#publishing-setup) before announcing downloads.
 
 ## 2. Flash the Board
 

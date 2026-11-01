@@ -1,12 +1,12 @@
 # Demonstration Records
 
-This document records observed interface behavior within the [project scope](../../project-scope.md).
+This document records observed interface behavior within the [project scope](../../../README.md#project-scope).
 The connected screenshot is included in the [README](../../../README.md).
 Demonstrations are not hardware qualification.
 
 ## Captured Dashboard
 
-[Python dashboard screenshot](../../images/dashboard-python.jpg), captured on 2026-10-26 from the running Python host:
+[Python dashboard screenshot](../../assets/dashboard-python.jpg), captured on 2026-10-26 from the running Python host:
 
 - Pico 2 (RP2350), UID `575393D4D2C8C043`, system clock 150 MHz.
 - Reported firmware version `0.0.0`; the running firmware source revision was not established by this capture.

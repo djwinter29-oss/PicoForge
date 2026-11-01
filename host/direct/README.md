@@ -5,7 +5,7 @@ The Direct dashboard connects from the browser straight to the board over USB (W
 
 Open the hosted [Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
 The hosted site is deployed from successful releases after the initial
-[Pages setup](../../docs/release.md#publishing-setup).
+[Pages setup](../../docs/deployment/release.md#publishing-setup).
 For offline/local hosting, download the Direct dashboard ZIP (`picoforge-direct-vX.Y.Z.zip`) from
 [Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest), extract it, and serve the extracted directory
 on localhost. Opening `index.html` directly as a file is not supported.

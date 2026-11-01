@@ -2,7 +2,7 @@
  * @file bluetooth.c
  * @brief BLE GATT diagnostics, per-command authorization and nonpersistent advertising.
  */
-#include "app/wireless/bluetooth.h"
+#include "app/wireless/bluetooth/bluetooth.h"
 #include "app/wireless/wireless.h"
 
 #include <string.h>
@@ -10,7 +10,7 @@
 #include "btstack.h"
 #include "btstack_tlv_none.h"
 #include "btstack_tlv_flash_bank.h"
-#include "app/wireless/bluetooth_auth.h"
+#include "app/wireless/bluetooth/bluetooth_auth.h"
 #include "pico/rand.h"
 #include "pico/unique_id.h"
 #include "platform/boot_config.h"

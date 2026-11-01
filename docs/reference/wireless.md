@@ -5,9 +5,10 @@ For user setup and restrictions, see [the wireless guide](../guides/wireless.md)
 
 ## Execution and storage safety
 
-The application stays flat under `firmware/src/app/wireless`: `wifi.c/.h` owns station connection and reconnects;
-`bluetooth.c/.h` owns BLE GATT and authorization state, with `bluetooth_auth.c/.h` for proof verification and
-`bluetooth_profile.gatt` for the service definition. The common `wireless.c/.h` owns shared SDK initialization/polling,
+The application groups radio-specific code under `firmware/src/app/wireless`: `wifi/` contains `wifi.c/.h` for station
+connection and reconnects, plus `tcp_cli.c/.h` for the raw TCP console. `bluetooth/` contains `bluetooth.c/.h` for BLE
+GATT and authorization state, `bluetooth_auth.c/.h` for proof verification, and `bluetooth_profile.gatt` for the service
+definition. The common `wireless.c/.h` remains at the wireless root and owns shared SDK initialization/polling,
 combined status and atomic USB provisioning. Radio-specific modules keep their boot-applied secrets private.
 
 SDK poll-mode wireless work runs on the existing USB owner task. It creates no additional FreeRTOS tasks, preserves
@@ -99,4 +100,3 @@ Authentication (`0x05`), which would make the central start OS pairing and drop 
 replay; UID binding prevents cross-board reuse; request binding prevents
 changing an authorized command. This is application authorization, **not encrypted BLE transport** or protection
 against radio jamming/connection denial. Use USB for privileged management and credentials.
-

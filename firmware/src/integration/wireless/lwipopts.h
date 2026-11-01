@@ -7,7 +7,7 @@
 #define LWIP_SOCKET 0
 #define LWIP_NETCONN 0
 #define LWIP_TCP 1
-/* TCP serves only the single-client raw CLI (app/wireless/tcp_cli.c); keep its buffers bounded. */
+/* TCP serves only the single-client raw CLI (app/wireless/wifi/tcp_cli.c); keep its buffers bounded. */
 #define TCP_MSS 1460
 #define TCP_WND (2 * TCP_MSS)
 #define TCP_SND_BUF (2 * TCP_MSS)

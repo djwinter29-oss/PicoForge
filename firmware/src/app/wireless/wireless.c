@@ -8,9 +8,9 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
-#include "app/wireless/bluetooth.h"
-#include "app/wireless/tcp_cli.h"
-#include "app/wireless/wifi.h"
+#include "app/wireless/bluetooth/bluetooth.h"
+#include "app/wireless/wifi/tcp_cli.h"
+#include "app/wireless/wifi/wifi.h"
 #include "pico/cyw43_arch.h"
 #include "platform/boot_config.h"
 #include "platform/led.h"

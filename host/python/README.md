@@ -29,7 +29,7 @@ Native HID access still requires the operating system's usual libraries, drivers
 
 Packages are published to [PyPI](https://pypi.org/project/picoforge/) and
 [GitHub Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest) after successful
-[release setup and publication](../../docs/release.md#publishing-setup); downloads may be unavailable before then.
+[release setup and publication](../../docs/deployment/release.md#publishing-setup); downloads may be unavailable before then.
 For firmware installation and wiring, start with [Getting Started](../../docs/guides/getting-started.md).
 
 ### Run from a source checkout

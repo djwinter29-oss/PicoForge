@@ -1,4 +1,20 @@
-# Release packages and prerequisites
+# Release and Publishing
+
+This deployment guide owns release readiness, GitHub Actions packaging, publication setup, and download verification.
+
+## GitHub Actions Workflow Overview
+
+| Workflow | Trigger and role |
+| --- | --- |
+| [PR Check](../../.github/workflows/pr-check.yml) | Pull requests and configured branch pushes: firmware builds and repository checks. |
+| [Host Validation](../../.github/workflows/host-validation.yml) | Reused by CI: firmware unit tests and independent host/frontend suites. |
+| [Release build packages](../../.github/workflows/release.yml) | Version-tag pushes publish validated packages; manual dispatch is artifact-only preflight. |
+| [Publish .NET Packages](../../.github/workflows/publish-dotnet.yml) | Called by release packaging; manual dispatch packages an existing tag without publishing a release. |
+| [Publish Python to PyPI](../../.github/workflows/publish-pypi.yml) | Successful tag-release workflow completion or manual retry: publishes the verified released wheel. |
+| [Publish Direct Pages](../../.github/workflows/publish-direct.yml) | Successful tag-release workflow completion or manual retry: deploys the verified released Direct archive. |
+
+The publication flow is **validate → build packages → GitHub Release → independent PyPI and Pages publication**.
+The detailed gates, permissions, retry rules, and package contents are defined below.
 
 ## Baseline Release Readiness
 
@@ -6,14 +22,14 @@ Treat a release as a versioned foundation, not a promise that every downstream w
 Before tagging:
 
 - Confirm the intended revision passes the relevant firmware, host, and repository checks described in
-  [firmware testing](development/firmware-testing.md) and [host development](development/host-tools.md).
-- Review [qualification gaps](validation/qualification-gaps.md) and link applicable evidence in the release notes.
+  [firmware testing](../development/firmware-testing.md) and [host development](../development/host-tools.md).
+- Review [qualification gaps](../validation/qualification-gaps.md) and link applicable evidence in the release notes.
   Distinguish implemented features from physical qualification.
-- Confirm the [README](../README.md) and guides describe the packaged revision, supported configurations, and
+- Confirm the [README](../../README.md) and guides describe the packaged revision, supported configurations, and
   known access/safety restrictions.
 - Use immutable tags and preserve dependency pins so downstream products can reproduce their chosen baseline.
   New product capabilities belong in downstream projects, not this release; see
-  [project scope](project-scope.md).
+  [project scope](../../README.md#project-scope).
 
 ## Version and Firmware Packages
 
@@ -108,7 +124,7 @@ The wheel attached to the release can also be installed directly with pip.
 For the .NET host, extract the entire archive and run `PicoForge.exe` (Windows x64) or `./PicoForge`
 (Linux x64/macOS ARM64), then open <http://127.0.0.1:5000/>. No .NET SDK/runtime installation is required.
 Pass `--port 5001` if port 5000 is occupied. Linux still needs native HIDAPI (`libhidapi-hidraw0` on Debian/Ubuntu)
-and [HID permissions](development/host-tools.md); macOS needs HIDAPI (`brew install hidapi`).
+and [HID permissions](../development/host-tools.md); macOS needs HIDAPI (`brew install hidapi`).
 Unsigned binaries may trigger Windows SmartScreen or macOS Gatekeeper warnings; no code-signing/notarization is claimed.
 Only run trusted, verified downloads and follow local security policy.
 
@@ -131,7 +147,7 @@ SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON i
 highest supported safe planned rate up to 50 MHz, clamped by the PIO ceiling of SYSCLK/4: at most 37.5 MHz at
 150 MHz CPU, and up to 50 MHz at 250 MHz CPU. Unsupported High Speed or failed faster-bus validation retains the
 bounded 25 MHz safe fallback policy; failed fallback aborts initialization. Actual rates depend on card support and
-divider planning. SPI follows its separate card-rate and divider policy. See [SD design](reference/sdcard/driver.md).
+divider planning. SPI follows its separate card-rate and divider policy. See [SD design](../reference/sdcard/driver.md).
 
 Product release remains blocked on allocation/owner approval of a USB identity. `0xCAFE:0x4011` is the documented
 development VID/PID and remains unchanged; it must not be represented as an allocated product identity.

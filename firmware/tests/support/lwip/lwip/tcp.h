@@ -1,6 +1,6 @@
 /**
  * @file tcp.h
- * @brief Minimal host fake of the lwIP raw TCP API used by app/wireless/tcp_cli.c.
+ * @brief Minimal host fake of the lwIP raw TCP API used by app/wireless/wifi/tcp_cli.c.
  */
 #ifndef PF_TEST_FAKE_LWIP_TCP_H
 #define PF_TEST_FAKE_LWIP_TCP_H

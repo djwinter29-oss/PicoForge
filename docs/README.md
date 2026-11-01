@@ -8,11 +8,11 @@ Start with [getting started](guides/getting-started.md); do not begin with old m
 1. **Use the device:** [hardware](guides/hardware.md), your dashboard's guide, then the
    [console](guides/console.md), [wireless](guides/wireless.md), or
    [storage benchmark](guides/sdcard-benchmark.md) procedure you need.
-2. **Understand the foundation:** [project scope](project-scope.md), [architecture](reference/architecture.md),
+2. **Understand the foundation:** [project scope](../README.md#project-scope), [architecture](reference/architecture.md),
    then the relevant reference. These describe implemented behavior, not a feature roadmap.
 3. **Maintain and validate:** [firmware testing](development/firmware-testing.md) or
    [host development](development/host-tools.md), followed by [qualification gaps](validation/qualification-gaps.md).
-4. **Publish:** use the [release procedure](release.md). Historical passes do not qualify a new revision.
+4. **Publish:** use the [release procedure](deployment/release.md). Historical passes do not qualify a new revision.
 
 ## Document Ownership
 
@@ -32,9 +32,11 @@ Keep each topic in one authoritative document; other guides link to it rather th
 | Benchmark safety, timing boundaries and interpretation | [Benchmark guide](guides/sdcard-benchmark.md) |
 | Dashboard component isolation and host checks | [Host development](development/host-tools.md) |
 | Build/test commands and hardware acceptance | [Firmware testing](development/firmware-testing.md) |
+| GitHub Actions release packaging, publication and download verification | [Release and publishing](deployment/release.md) |
 | Current evidence gaps and SD review dispositions | [Qualification gaps](validation/qualification-gaps.md), [SD review](validation/sd-review.md) |
 | Dated observations, measurements and superseded reviews | [Records](validation/records/README.md) |
 
 `guides/` contains operating procedures, `reference/` implementation contracts, `development/` maintenance workflows,
-and `validation/` evidence and its limits. Records retain their original configuration and may mention retired
+`deployment/` release and publishing procedures, and `validation/` evidence and its limits.
+Records retain their original configuration and may mention retired
 commands or build options; use current guides to operate the current firmware.

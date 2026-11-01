@@ -14,7 +14,7 @@ own hardware behavior and host controls.
 PicoForge also runs as a standalone board-management and storage tool. Product-specific hardware behavior belongs in
 downstream projects, not this project's feature scope.
 
-**Start here:** [Get started](docs/guides/getting-started.md) · [Build on PicoForge](docs/project-scope.md) ·
+**Start here:** [Get started](docs/guides/getting-started.md) · [Build on PicoForge](#project-scope) ·
 [Architecture](docs/reference/architecture.md) · [Documentation](#documentation)
 
 ## Available Today
@@ -62,7 +62,7 @@ eject before returning USB storage to the board.
 
 ## See It in Action
 
-![Python dashboard connected to a Pico 2, showing board controls, live diagnostics, and SDIO storage](docs/images/dashboard-python.jpg)
+![Python dashboard connected to a Pico 2, showing board controls, live diagnostics, and SDIO storage](docs/assets/dashboard-python.jpg)
 
 The Python dashboard connected to a real Pico 2: live board telemetry, configuration controls, and SDIO/exFAT storage.
 See the [capture details](docs/validation/records/dashboard-capture.md#captured-dashboard) for the recorded configuration and scope.
@@ -70,23 +70,31 @@ See the [capture details](docs/validation/records/dashboard-capture.md#captured-
 ## Use It or Extend It
 
 - **Use it:** manage the board and attached storage through a dashboard or USB console.
-- **Build a product:** pin a tested PicoForge revision, retain useful services, and add application-specific firmware
-  and host behavior. Start with [project scope](docs/project-scope.md) and
+- **Build a product:** pin a tested PicoForge revision and its dependencies, retain useful services, and implement
+  and test application-specific hardware behavior, processing, commands, and host UI downstream. Start with
   [layer responsibilities](docs/reference/architecture.md#layer-responsibilities).
 - **Budget resources:** define GPIO, PIO, DMA, IRQ, memory, and timing ownership before combining a new workload with
   USB, storage, or radios. Reuse does not guarantee arbitrary combinations or unchanged application protocols.
 
 Low-cost Pico hardware provides the starting point; reusable services aim to reduce repeated integration work.
 FreeRTOS SMP manages both cores, allowing application tasks alongside platform services without implying dedicated-core
-isolation or hard real-time guarantees. SD transport is selected at build time.
+isolation or hard real-time guarantees; neither core is permanently reserved for an application.
+See the [runtime policy](docs/reference/architecture.md#core-and-runtime-policy). SD transport is selected at build time.
 Direct and the Python/.NET dashboard must not share components. Python and .NET share only their own frontend;
 see [dashboard isolation](docs/development/host-tools.md#dashboard-component-isolation).
 
-## Project Direction
+## Project Scope
 
-Feature expansion is closed. This project focuses on maintaining, documenting, and qualifying the existing foundation;
-new product features belong in downstream projects. See [project scope](docs/project-scope.md) for the maintenance
-boundary and [demonstration records](docs/validation/records/dashboard-capture.md) for observed behavior.
+PicoForge maintains the existing board-management, diagnostics, communication, persistence, storage, and W-board
+wireless services described above. **Feature expansion is closed.** Work here focuses on bug fixes, reliability,
+compatibility, documentation, and qualification—not a peripheral-bridge, acquisition, or general-purpose framework
+roadmap. Application-specific capabilities belong in downstream products.
+
+Maintenance must preserve existing public contracts and safety gates, include focused regression checks, and document
+necessary compatibility changes. Report foundation defects with a focused reproduction and affected configuration.
+Hardware evidence must identify the revision, board, host environment, wiring, and workload; a pinned revision or
+software pass does not qualify every product. See [qualification gaps](docs/validation/qualification-gaps.md) and
+[records](docs/validation/records/README.md) for evidence and limits.
 
 ## Documentation
 
@@ -104,7 +112,7 @@ See [reading order and document ownership](docs/README.md) for the folder layout
 
 ### Build a Specialized Product
 
-- [Project scope](docs/project-scope.md): maintained baseline and downstream responsibilities.
+- [Project scope](#project-scope): maintained baseline and downstream responsibilities.
 - [Architecture](docs/reference/architecture.md): firmware layers, runtime, and storage ownership.
 - [Persistent settings](docs/reference/settings.md): supported profiles, persistence, and API.
 - [SD-card driver design](docs/reference/sdcard/driver.md): driver layers, protocol, and ownership.
@@ -126,7 +134,7 @@ See [reading order and document ownership](docs/README.md) for the folder layout
 
 ### Release and Maintain
 
-- [Release guide](docs/release.md): readiness checks, packages, publication setup, and release validation.
+- [Release guide](docs/deployment/release.md): readiness checks, packages, publication setup, and release validation.
 - [Security reporting](SECURITY.md): report vulnerabilities privately.
 
 ## License

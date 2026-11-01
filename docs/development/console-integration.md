@@ -41,7 +41,7 @@ come from the upstream framework. Callbacks execute in the USB task, so keep
 them bounded and non-blocking; do not run long operations there.
 
 [The USB task](../../firmware/src/app/usb/usb_task.c) is the sole owner of CDC and the CLI; the Wi-Fi
-[TCP transport](../../firmware/src/app/wireless/tcp_cli.c) is polled by the same task, so the session pump
+[TCP transport](../../firmware/src/app/wireless/wifi/tcp_cli.c) is polled by the same task, so the session pump
 treats CDC and TCP as interchangeable byte streams.
 The CLI uses a 4 KiB aligned static arena, 64-byte RX buffer, 128-byte command
 buffer, 256-byte history buffer, and eight application-binding slots. The session

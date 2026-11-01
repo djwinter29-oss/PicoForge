@@ -352,7 +352,7 @@ Unused fill bytes are an observation, not certified margin (unwritten stack rese
 Use [firmware testing](../development/firmware-testing.md) for builds and hardware acceptance,
 [host development](../development/host-tools.md) for dashboard tests, and the
 [test ownership index](../../tests/README.md) for fixtures and suite boundaries.
-The [release guide](../release.md) owns current CI matrices, package contents, and publication.
+The [release guide](../deployment/release.md) owns current CI matrices, package contents, and publication.
 Historical software checks belong in [review records](../validation/records/static-review-remediation.md); their old matrix and command
 results are not current build instructions. Outstanding physical validation is tracked in
 [qualification gaps](../validation/qualification-gaps.md).

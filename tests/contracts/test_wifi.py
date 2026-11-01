@@ -57,7 +57,7 @@ int cyw43_tcpip_link_status(cyw43_t *, int);
     harness.write_text("""
 #include <assert.h>
 #include <string.h>
-#include "app/wireless/wifi.h"
+#include "app/wireless/wifi/wifi.h"
 #include "platform/boot_config.h"
 #include "platform/logging.h"
 #include "pico/cyw43_arch.h"
@@ -298,6 +298,6 @@ int main(void) {
     subprocess.run([
         "gcc", "-std=c11", "-Wall", "-Wextra", "-Werror",
         "-I", str(tmp_path), "-I", str(ROOT / "firmware/src"),
-        str(harness), str(ROOT / "firmware/src/app/wireless/wifi.c"), "-o", str(binary),
+        str(harness), str(ROOT / "firmware/src/app/wireless/wifi/wifi.c"), "-o", str(binary),
     ], check=True, capture_output=True, text=True)
     subprocess.run([str(binary)], check=True)

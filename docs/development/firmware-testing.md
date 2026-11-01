@@ -71,7 +71,7 @@ python3 -m pytest tests -m contracts
 
 The local validation wrapper runs shell checks, repository contracts, Ceedling checks and tests, SDIO PIO
 timing models, the `pico`/`pico2` × SDIO/SPI FreeRTOS build matrix, and MSC artifact checks.
-PR/release workflows additionally build `pico_w` and `pico2_w`; see the [release guide](../release.md).
+PR/release workflows additionally build `pico_w` and `pico2_w`; see the [release guide](../deployment/release.md).
 
 ```sh
 tools/validation/validate.sh

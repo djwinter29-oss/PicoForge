@@ -2,7 +2,7 @@
  * @file wifi.c
  * @brief Asynchronous WPA2 station connection, DHCP diagnostics and paced reconnects.
  */
-#include "app/wireless/wifi.h"
+#include "app/wireless/wifi/wifi.h"
 
 #include <string.h>
 
