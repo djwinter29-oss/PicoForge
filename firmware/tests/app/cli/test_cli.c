@@ -119,14 +119,14 @@ static void noop_command(EmbeddedCli *cli, char *args, void *context)
     (void)context;
 }
 
-void test_cli_binding_table_holds_six_application_commands_and_rejects_more(void)
+void test_cli_binding_table_holds_seven_application_commands_and_rejects_more(void)
 {
-    static const char *const names[] = { "a1", "a2", "a3", "a4", "a5", "a6", "a7" };
+    static const char *const names[] = { "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8" };
 
-    for (size_t index = 0u; index < 6u; ++index) {
+    for (size_t index = 0u; index < 7u; ++index) {
         TEST_ASSERT_TRUE(pf_cli_add_binding((CliCommandBinding){ names[index], "x", false, NULL, noop_command }));
     }
-    TEST_ASSERT_FALSE(pf_cli_add_binding((CliCommandBinding){ names[6], "x", false, NULL, noop_command }));
+    TEST_ASSERT_FALSE(pf_cli_add_binding((CliCommandBinding){ names[7], "x", false, NULL, noop_command }));
 }
 
 void test_cli_reinit_switches_output_and_drops_history(void)

@@ -17,7 +17,7 @@
 /** Command history size in bytes. */
 #define CLI_HISTORY_BUFFER_SIZE 256u
 /** Binding slots besides the library help command; the built-in version and echo commands use two. */
-#define CLI_MAX_BINDINGS 8u
+#define CLI_MAX_BINDINGS 9u
 
 static CLI_UINT cli_storage[BYTES_TO_CLI_UINTS(CLI_STORAGE_SIZE)]; /**< Application-lifetime CLI allocation. */
 static EmbeddedCli *cli; /**< Active singleton using cli_storage. */

@@ -144,6 +144,15 @@ bool pf_hid_take_reboot_request(void)
     return requested;
 }
 
+bool pf_hid_control_pending(void)
+{
+    return reboot_requested || force_save_pending || force_save_reboot_waiting
+#if PF_ENABLE_STORAGE_BENCHMARK
+        || self_test_result_pending
+#endif
+        ;
+}
+
 void pf_hid_poll_async_commands(void)
 {
     if (force_save_pending && time_us_64() >= force_save_at_us) {
@@ -475,11 +484,7 @@ bool pf_hid_ble_control(const pf_hid_control_request_t *request)
     if (request->version != PF_HID_REPORT_VERSION || request->transaction_id == 0u ||
         (request->opcode != PF_HID_OPCODE_LED && request->opcode != PF_HID_OPCODE_SELF_TEST)) return false;
     outcome_t result = busy_outcome();
-    if (!reboot_requested && !force_save_pending && !force_save_reboot_waiting
-#if PF_ENABLE_STORAGE_BENCHMARK
-        && !self_test_result_pending
-#endif
-    ) {
+    if (!pf_hid_control_pending()) {
         ble_dispatch = true;
         result = request->opcode == PF_HID_OPCODE_LED ? handle_led(request)
 #if PF_ENABLE_STORAGE_BENCHMARK

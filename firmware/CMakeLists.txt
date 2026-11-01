@@ -292,6 +292,7 @@ add_executable(pico_forge
     src/app/usb/usb_hid.c
     src/app/usb/usb_msc.c
     src/app/usb/usb_task.c
+    src/app/cli/cli_device.c
 )
 
 target_include_directories(pico_forge PRIVATE

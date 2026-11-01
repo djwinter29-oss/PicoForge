@@ -35,12 +35,25 @@ UART speed. Opening the port produces `PicoForge> `. Enter sends a command; Tab
 completes command names, Backspace edits input, and arrow keys navigate history
 and the current line. Live completion is disabled; Tab completion is enabled.
 CR, LF, and CRLF are accepted.
+The editor accepts at most 126 command-line bytes and ignores additional printable bytes. Stay within this limit:
+submitting an overlong line can execute its accepted prefix.
 
 | Command | Behavior |
 | --- | --- |
 | `help` | List commands; `help <command>` displays command help. |
 | `version` | Show the PicoForge CLI and Embedded CLI version. |
 | `echo <text>` | Echo text for non-destructive transport checks. |
+| `board get <clock\|led\|version\|uptime>` | Read the actual system clock in Hz, LED state, firmware version, or uptime. |
+| `board set led <on\|off>` | Set the board-owned LED through the same platform service as the dashboard. |
+| `board reboot` | Schedule a reboot; refused while storage is busy, USB-owned, or changing ownership. |
+| `config get [clock\|storage\|wifi\|bluetooth]` | Read saved next-boot targets, not actual running hardware values. |
+| `config set <key=value>[, key=value...]` | Validate every assignment, save all targets together, then reboot. |
+| `msc status` | Read enabled, ejected, pending and rejected ownership flags. |
+| `msc enable` / `msc disable` | Queue normal ownership transfer; check status for completion or rejection. |
+| `benchmark start <MiB>` | Queue a 1..1024 MiB file benchmark on the storage worker; preflight can still reject it. |
+| `benchmark status` | Read retained progress, timings, mismatches, run/admission errors and cleanup flags. |
+| `benchmark cancel` | Request cancellation; wait for cleanup to finish before other storage work. |
+| `radio status` | Read sanitized live Wi-Fi/IP/TCP listener and Bluetooth state plus credential-presence flags. |
 | `storage status` | Show the backend-neutral storage state (`not_configured`, `busy`, `absent`, `uninitialized`, `ready`, `mounted`, `usb`), Pico/USB ownership, medium, bus, presence, bus clock, capacity, and the last retained failure as `<operation>:<result>`. |
 | `storage recover --confirm` | Revoke access to faulted MSC media and request worker reinitialization without mounting; not a clean eject, sync, or repair. |
 | `fs mount` | Manually initialize/mount the existing FAT/exFAT volume after inspection or explicit unmount; normally startup/return mounting is automatic. Never format. |
@@ -57,6 +70,49 @@ CR, LF, and CRLF are accepted.
 | `fs rm <path> --confirm` | Delete one file with explicit confirmation; directories are refused. |
 
 Recovery completion or failure is reported through the UART logger; neither outcome mounts a volume.
+
+### Board configuration
+
+The device groups follow PicoPWM's `group verb parameters` convention. Use `help board`, `help config`, `help msc`,
+`help benchmark`, or `help radio` for their syntax. The existing `version`, `echo`, `storage` and `fs` commands remain.
+Device mutations return `OK` or `ERR`; queued MSC/benchmark responses acknowledge admission, not completion.
+
+```text
+PicoForge> board get clock
+clock=150000000 Hz
+PicoForge> config get clock
+clock=default (next boot)
+PicoForge> config set clock=150, storage=high
+OK config saved; rebooting
+```
+
+`clock` accepts `default`, `150`, `200`, or `250` MHz. `storage` accepts `default` (25 MHz target) or `high` (50 MHz
+target); the backend/card may fall back. On W boards, `wifi` and `bluetooth` accept `enabled` or `disabled`.
+These radio master switches preserve existing credentials, matching the HID boot-profile controls. Enabling a switch
+does not provision a network or Bluetooth key. To configure or erase credentials, use the USB dashboard's radio
+configuration dialogs. Passwords and keys are deliberately not accepted/read back by the CLI: command input is echoed,
+retained in history, and the raw TCP connection is unencrypted.
+
+Assignments are comma-separated, may contain whitespace around `=`, and must fit in 99 bytes after `config set `.
+Unknown keys, duplicate keys, missing values, empty assignments, and invalid values reject the whole request before
+staging. Successful persistence schedules reboot automatically; no separate save step is needed. A failed/unconfirmed
+save discards staged targets and does not reboot, but flash may already have changed: inspect `config get` before retrying.
+The running clock does not change until reboot. A `default` target means the SDK/build clock, not a fixed board frequency.
+150 MHz on RP2040 and 200/250 MHz profiles are not hardware-qualified; use them only with the stability risks understood.
+See the [system clock API](../../firmware/src/platform/system.h) for the platform constraints.
+
+Saving/resetting is refused while storage work, MSC ownership or an ownership transition is outstanding. Safely eject
+USB storage, run `msc disable`, and wait for `pending=0`, `rejected=0`, `msc=disabled` before saving. There is no CLI forced
+save or unsafe MSC return. Radio-disabled firmware rejects radio commands/settings. Benchmark-disabled firmware reports
+`ERR benchmark unavailable in this build`.
+
+`benchmark status` reports lifecycle names and numeric errors from the
+[benchmark API](../../firmware/src/app/storage/file_benchmark.h); `flags=1` means the test file remains after cleanup.
+Flags can be combined; bit 1 records that the caller's volume was mounted. `benchmark start` uses the existing mounted
+volume, never formats, and refuses an existing `PFTEST.BIN`. A queued start can still fail worker preflight; inspect
+`request_error` as well as the run's `error`. Cancellation is a request, not a completed cleanup.
+
+### Filesystem commands
 
 Storage commands require absolute ASCII paths on volume 0, with no drive
 prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
@@ -127,6 +183,21 @@ drops a vanished client after about 50 seconds idle.
 
 The TCP terminal has no authentication or encryption; anyone on the network can run every command, including
 `--confirm` destructive ones. Use it only on a trusted LAN, and disable Wi-Fi when that is not acceptable.
+
+## Extending commands
+
+Keep device command grammar and formatting in `app/cli`, transport/session queues in `app/usb/usb_task`, and hardware,
+configuration and storage operations in their owning services. CLI dispatch runs on the USB owner task for both CDC
+and TCP. Never perform FatFs operations directly there; submit them to the sole storage worker.
+Validate a complete request before changing state, keep each synchronous response within the 1024-byte output reserve,
+and report request admission separately from asynchronous completion. Full top-level help must fit that reserve too.
+The transport pauses CLI dispatch during pending HID save/reboot or benchmark admission, and services CDC/Wi-Fi while
+draining reboot acknowledgements. Add command contract tests in `firmware/tests/app/cli`, plus ownership/transport
+regressions when those boundaries change.
+
+```sh
+tools/validation/setup-ceedling-testing.sh test:cli test:cli_device test:usb_hid_wireless
+```
 
 ## Faulted MSC Recovery
 

@@ -14,6 +14,7 @@
 #include "usb_msc.h"
 #include "usb_task.h"
 #include "app/cli/cli.h"
+#include "app/cli/cli_device.h"
 #include "app/cli/cli_storage.h"
 #include "app/storage/storage_worker.h"
 #if PF_ENABLE_WIRELESS
@@ -76,6 +77,13 @@ static uint32_t cli_session; /**< Session counter; worker replies from older ses
 static TickType_t cli_last_progress; /**< Tick of the last output drain progress or idle moment. */
 static bool cli_stall_reported; /**< The timeout notice was already queued for this session. */
 static bool cli_stalled; /**< Timed-out CDC session; drain completion until DTR closes. */
+static bool cli_reboot_requested; /**< Device command saved settings or requested a deferred reset. */
+
+/** @brief Schedule a reset on the owner task, after the CLI acknowledgement is drained. */
+static void cli_request_reboot(void)
+{
+    cli_reboot_requested = true;
+}
 
 static void storage_command(EmbeddedCli *instance, char *args, void *context)
 {
@@ -211,7 +219,7 @@ static void cli_reset(void)
     cli_tx_count = 0u;
 }
 
-/** @brief Open a new CLI session on a transport: initialize the CLI, register storage commands and bump the session. */
+/** @brief Open a transport session, register command groups and bump the worker reply session. */
 static void cli_connect(const cli_transport_t *transport)
 {
     if (!pf_cli_init(cli_write_character, NULL)) {
@@ -223,8 +231,8 @@ static void cli_connect(const cli_transport_t *transport)
         }) || !pf_cli_add_binding((CliCommandBinding){
             "fs", USB_CLI_FS_HELP, false,
             "fs", storage_command
-        })) {
-        panic("Failed to register storage CLI commands");
+        }) || !pf_cli_device_register(cli_request_reboot)) {
+        panic("Failed to register CLI commands");
     }
     ++cli_session;
     cli_owner = transport;
@@ -318,7 +326,8 @@ static void cli_task(void)
         }
     }
     for (uint32_t count = 0u; count < USB_CLI_RX_BUDGET; ++count) {
-        if ((USB_CLI_TX_SIZE - cli_tx_count) < USB_CLI_OUTPUT_RESERVE) {
+        if (cli_reboot_requested || pf_hid_control_pending() ||
+            (USB_CLI_TX_SIZE - cli_tx_count) < USB_CLI_OUTPUT_RESERVE) {
             break;
         }
         char character;
@@ -338,6 +347,10 @@ static void reboot_after_usb_flush(void)
     do {
         tud_task_ext(0u, false);
         pf_usb_msc_task();
+#if PF_ENABLE_WIRELESS
+        pf_wireless_poll();
+#endif
+        if (cli_owner != NULL && cli_owner->connected()) cli_drain_output();
         vTaskDelay(pdMS_TO_TICKS(1u));
     } while ((TickType_t)(xTaskGetTickCount() - started) < pdMS_TO_TICKS(PF_HID_REBOOT_DELAY_MS));
     pf_system_reset();
@@ -362,7 +375,7 @@ static void usb_task(void *context)
             last_stack_sample = xTaskGetTickCount();
         }
         tud_task();
-        if (pf_hid_take_reboot_request()) {
+        if (cli_reboot_requested || pf_hid_take_reboot_request()) {
             reboot_after_usb_flush();
         }
         pf_usb_msc_task();

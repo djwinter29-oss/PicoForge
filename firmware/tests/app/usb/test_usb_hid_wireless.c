@@ -20,10 +20,30 @@ static uint8_t rejected_transaction;
 static bool tcp_client;
 static const char *tcp_close_notice;
 static unsigned tcp_closes;
+static const char *tcp_input;
+static unsigned tcp_reads;
+static uint32_t tcp_output_space;
+static char tcp_output[128];
+static uint32_t tcp_output_size;
 bool pf_tcp_cli_connected(void) { return tcp_client; }
-bool pf_tcp_cli_read(char *character) { (void)character; return false; }
-uint32_t pf_tcp_cli_write_available(void) { return 0u; }
-uint32_t pf_tcp_cli_write(const char *data, uint32_t size) { (void)data; (void)size; return 0u; }
+bool pf_tcp_cli_read(char *character)
+{
+    if (tcp_input == NULL || *tcp_input == '\0') return false;
+    *character = *tcp_input++;
+    ++tcp_reads;
+    return true;
+}
+uint32_t pf_tcp_cli_write_available(void) { return tcp_output_space; }
+uint32_t pf_tcp_cli_write(const char *data, uint32_t size)
+{
+    if (size > tcp_output_space) size = tcp_output_space;
+    TEST_ASSERT_LESS_THAN(sizeof(tcp_output), tcp_output_size + size);
+    memcpy(tcp_output + tcp_output_size, data, size);
+    tcp_output_size += size;
+    tcp_output[tcp_output_size] = '\0';
+    tcp_output_space -= size;
+    return size;
+}
 void pf_tcp_cli_flush(void) {}
 void pf_tcp_cli_close(const char *notice)
 {
@@ -75,6 +95,11 @@ void setUp(void)
     fake_connected = tcp_client = false;
     tcp_close_notice = NULL;
     tcp_closes = 0u;
+    tcp_input = NULL;
+    tcp_reads = tcp_output_space = tcp_output_size = 0u;
+    tcp_output[0] = '\0';
+    cli_reboot_requested = false;
+    reset_requests = reboot_usb_polls = fake_ticks = 0u;
 }
 
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
@@ -238,4 +263,38 @@ void test_stalled_tcp_session_is_closed_instead_of_waiting_for_the_client(void)
     TEST_ASSERT_NULL(cli_owner);
     TEST_ASSERT_FALSE(tcp_client || cli_stalled);
     TEST_ASSERT_EQUAL_UINT(0u, cli_tx_count);
+}
+
+void test_cli_pauses_dispatch_during_hid_save_reboot_and_benchmark_admission(void)
+{
+    tcp_client = true;
+    cli_task();
+    tcp_input = "x";
+    bool *gates[] = { &force_save_pending, &force_save_reboot_waiting, &reboot_requested, &self_test_result_pending };
+    for (unsigned i = 0u; i < sizeof(gates) / sizeof(gates[0]); ++i) {
+        *gates[i] = true;
+        cli_task();
+        TEST_ASSERT_EQUAL_UINT(0u, tcp_reads);
+        *gates[i] = false;
+    }
+    cli_task();
+    TEST_ASSERT_EQUAL_UINT(1u, tcp_reads);
+}
+
+void test_cli_reboot_stops_new_input_and_flushes_tcp_acknowledgement_before_reset(void)
+{
+    tcp_client = true;
+    cli_task();
+    static const char ack[] = "OK config saved; rebooting\r\n";
+    for (size_t i = 0u; i < sizeof(ack) - 1u; ++i) cli_write_character(ack[i], NULL);
+    tcp_input = "board set led on\r";
+    cli_request_reboot();
+    cli_task();
+    TEST_ASSERT_EQUAL_UINT(0u, tcp_reads);
+    tcp_output_space = sizeof(tcp_output) - 1u;
+    reboot_after_usb_flush();
+    TEST_ASSERT_EQUAL_STRING(ack, tcp_output);
+    TEST_ASSERT_EQUAL_UINT(0u, cli_tx_count);
+    TEST_ASSERT_EQUAL_UINT(1u, reset_requests);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT(PF_HID_REBOOT_DELAY_MS, fake_ticks);
 }

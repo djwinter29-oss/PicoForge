@@ -280,6 +280,9 @@ bool pf_hid_self_test_supported(void);
  */
 bool pf_hid_take_reboot_request(void);
 
+/** @brief Return whether a save, reboot or benchmark admission blocks another control interface. USB task only. */
+bool pf_hid_control_pending(void);
+
 /**
  * @brief Publish completion of an asynchronous command preflight when the worker resolves it.
  * @note USB task only; call every cycle.
