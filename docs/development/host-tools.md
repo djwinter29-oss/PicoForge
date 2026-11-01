@@ -81,6 +81,19 @@ The dashboards do not import or package each other's assets. Each owns its wirel
 matching firmware protocol behavior does not imply shared frontend code. Python/.NET build and run without `host/direct`,
 and Direct can be served and tested without `host/web`, `host/python`, or `host/dotnet`.
 
+### Dashboard component isolation
+
+Direct and the Python/.NET dashboard **must not share any dashboard components**. This includes HTML, CSS, JavaScript
+modules, renderers, controls, transport adapters, assets, and test helpers. Do not introduce cross-dashboard imports,
+symlinks, shared component directories, or build-time copying from one dashboard into the other. Similar behavior must
+be implemented and maintained independently within each dashboard.
+
+Python and .NET may continue sharing their own frontend in `host/web`; this does not include Direct. The firmware
+[HID Report Reference](../design/usb/usb-hid-report-reference.md) remains their common specification, not a shared
+dashboard implementation. Repository CI may run both independent test suites.
+The [dashboard isolation contracts](../../tests/contracts/test_dashboard_isolation.py) check local module/asset
+boundaries and ensure the native hosts do not package or serve Direct components.
+
 In the shared dashboard, active or pending self-tests disable board configuration and reboot controls without
 adding an automatic test warning above Pin configuration. The Save button state indicates unsaved changes without
 a separate notice. Explicit settings results/errors remain visible, and reboot confirmation still warns about

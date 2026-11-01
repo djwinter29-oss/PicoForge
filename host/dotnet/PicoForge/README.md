@@ -2,6 +2,9 @@
 
 The .NET 10 host monitors the vendor HID interface and serves the shared local dashboard at `http://127.0.0.1:5000/` by default. Override the port with `tools/host/run-dotnet.sh --port PORT`; only one dashboard server can bind to port 5000 at a time.
 
+Python and .NET share their own frontend, but must not share any dashboard components with Direct. See the
+[dashboard component isolation policy](../../../docs/development/host-tools.md#dashboard-component-isolation).
+
 ```sh
 dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 ```

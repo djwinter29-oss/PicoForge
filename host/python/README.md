@@ -16,6 +16,9 @@ and successful release. For source development, use `python -m pip install --edi
 
 ## Usage
 
+Python and .NET share their own frontend, but must not share any dashboard components with Direct. See the
+[dashboard component isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
+
 The Python host reads the PicoForge vendor-defined HID interface and can serve a local status dashboard. The dashboard and `status` command include SD-card presence, transport, bus speed, capacity, and CID identity when available. From the repository root, `tools/host/run-python.sh` creates `build/picoforge`, installs this package on first run, and starts the dashboard. Pass `status` or `web` to select a command. Set `PYTHON` to choose the base interpreter or `VENV_DIR` to choose the environment path.
 
 The dashboard defaults to `127.0.0.1:5000`. Use **Rescan** and the board selector in Device identity to switch between attached boards; `--serial SERIAL` or `--device-path PATH` can set the preferred initial selection. Override the port with `tools/host/run-python.sh web --port PORT`. Only one dashboard server can bind to port 5000 at a time. On Linux, if the launcher reports a permission error, run `tools/host/hid-permissions-setup.sh` and reconnect the Pico. The rule grants access to `plugdev` and the active desktop session.

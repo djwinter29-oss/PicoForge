@@ -133,6 +133,13 @@ Dependencies should flow toward the hardware-facing layers. Avoid circular depen
 
 ## Layer Responsibilities
 
+### Host dashboards
+
+The Direct dashboard in `host/direct` and the Python/.NET dashboard in `host/web` must not share any dashboard
+components. Python and .NET may share their own frontend; Direct remains independently implemented, packaged, and
+tested. See the authoritative
+[dashboard component isolation policy](../development/host-tools.md#dashboard-component-isolation).
+
 ### Application
 
 Own product behavior, startup, and composition of the services needed by a firmware target. Keep policy and hardware register details out of application code where a reusable service or driver is appropriate.

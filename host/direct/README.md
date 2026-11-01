@@ -19,7 +19,8 @@ python3 -m http.server 8000 --directory host/direct
 
 Open `http://localhost:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
 The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or a host server API.
-Its modules, assets, and tests are independent of the Python/.NET dashboard; no frontend code is shared with it.
+It must not share any dashboard components with Python/.NET; see the authoritative
+[dashboard component isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
 Choose **USB**, then **Select board** to open the browser device chooser, including when devices were previously authorized,
 so the user selects which board to open. Cancel leaves the page disconnected. Close other clients using that board
 before connecting; the chooser cannot override another application's HID access.
