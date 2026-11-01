@@ -48,3 +48,14 @@ def test_ble_advertising_payload_outlives_start():
     assert "static uint8_t scan_response[2u + 10u + 2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES];" in source
     assert 'memcpy(scan_response + 2u, "PicoForge-", 10u);' in start
     assert "gap_scan_response_set_data(sizeof(scan_response), scan_response);" in start
+
+
+def test_ble_without_control_key_is_diagnostics_only():
+    source = (ROOT / "firmware/src/app/wireless/bluetooth.c").read_text()
+    prepare = source.split("bool pf_bluetooth_prepare(void)")[1].split("uint8_t pf_bluetooth_state(void)")[0]
+    authenticate = source.split("static bool authenticate(")[1].split("static int write_callback(")[0]
+    proof_write = source.split("if (handle == BLE_HANDLE(0021))")[1].split("if (handle != BLE_HANDLE(0014))")[0]
+    assert "control_key_available = key_bits != 0u;" in prepare
+    assert "return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;" in prepare
+    assert "!control_key_available" in authenticate
+    assert "!control_key_available" in proof_write

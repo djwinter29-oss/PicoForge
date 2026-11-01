@@ -7,7 +7,7 @@
   <title>PicoForge Dashboard | WebHID</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
   <link rel="stylesheet" href="css/webhid.css?v=12">
-  <script type="module" src="js/app.mjs?v=20"></script>
+  <script type="module" src="js/app.mjs?v=21"></script>
 </head>
 <body>
   <header class="topbar">
@@ -40,6 +40,7 @@
             aria-haspopup="dialog">Bluetooth</button>
         </div>
       </div>
+      <p class="sample-time" id="ble-access-status" role="status" aria-live="polite" hidden></p>
       <div class="identity" aria-label="Hardware identity">
       <div class="metric"><span>Product</span><strong id="product-name">--</strong></div>
       <div class="metric"><span>Board model</span><strong id="board-model">--</strong></div>
@@ -263,17 +264,19 @@
     aria-labelledby="bluetooth-connection-title">
     <h2 id="bluetooth-connection-title">Connect through Bluetooth</h2>
     <p>Scan uses this computer's Bluetooth adapter and opens the browser's nearby-device picker.
-      The board must have Bluetooth enabled and a control key saved through USB.</p>
+      The board must have Bluetooth enabled. A saved control key is needed only for controls.</p>
     <button class="button button-secondary" id="bluetooth-scan" type="button">Scan for boards</button>
     <p id="bluetooth-connection-status" role="status" aria-live="polite"></p>
-    <div id="bluetooth-key-step" hidden>
+    <div id="bluetooth-access-step" hidden>
+      <p>Choose <strong>View only</strong> to read public diagnostics without a key. Controls require the key saved
+        through USB; Bluetooth is not encrypted.</p>
+      <button class="button button-secondary" id="ble-view-only" type="button">Continue view only</button>
       <label for="ble-control-key">Control key
         <input id="ble-control-key" type="password" maxlength="64" autocomplete="off" spellcheck="false"></label>
-      <p>Enter the 64-digit hexadecimal key saved through USB. It is checked by the board on each control command,
-        not when entered here. Close without a key to view diagnostics only.</p>
+      <p>Enter the 64-digit hexadecimal key saved through USB to enable the LED and benchmark controls.</p>
     </div>
     <div class="dialog-actions">
-      <button class="button" id="ble-authorize" type="button" disabled>Use control key</button>
+      <button class="button" id="ble-authorize" type="button" disabled>Enable controls</button>
       <button class="button button-secondary" id="bluetooth-disconnect" type="button" disabled>Disconnect</button>
       <button class="button button-secondary" id="bluetooth-connection-close" type="button">Close</button>
     </div>

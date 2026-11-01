@@ -25,7 +25,7 @@
 /** Scan/test result payload size, including six paged AP results. */
 #define PF_WIRELESS_RESULT_SIZE 220u
 
-/** @brief Start saved radios on the USB owner task; disabled radios are not initialized until requested. */
+/** @brief Initialize the W-board CYW43 for its LED, then start only enabled radios on the USB owner task. */
 void pf_wireless_start(void);
 /** @brief Poll SDK Wi-Fi/BLE work from the USB owner task; never call concurrently. */
 void pf_wireless_poll(void);

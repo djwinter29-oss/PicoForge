@@ -22,6 +22,7 @@
 #define BLE_HANDLE(id) ATT_CHARACTERISTIC_50fc##id##_7c91_4d70_8b32_6e856443f501_01_VALUE_HANDLE
 
 static uint8_t ble_key[32]; /**< Boot-applied private control key. */
+static bool control_key_available; /**< False when BLE is enabled for public diagnostics only. */
 static bool challenge_valid; /**< Nonce issued once and usable for one authentication attempt. */
 static bool proof_valid; /**< A 16-byte proof is ready for exactly one subsequent control request. */
 static uint8_t proof[16]; /**< Submitted per-command MAC, cleared on use or disconnect. */
@@ -141,7 +142,7 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
 /** @brief Verify a one-use, UID-bound HMAC proof; compare in constant time and rate-limit failures. */
 static bool authenticate(const uint8_t *request)
 {
-    if (!challenge_valid || !proof_valid || time_us_64() < auth_retry_us) return false;
+    if (!control_key_available || !challenge_valid || !proof_valid || time_us_64() < auth_retry_us) return false;
     challenge_valid = false;
     proof_valid = false;
     pico_unique_board_id_t uid;
@@ -164,7 +165,8 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
     if (transaction_mode != ATT_TRANSACTION_MODE_NONE || offset != 0u) return ATT_ERROR_REQUEST_NOT_SUPPORTED;
     if (handle == BLE_HANDLE(0021)) {
         if (size != 16u) return ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH;
-        if (!challenge_valid || time_us_64() < auth_retry_us) return ATT_ERROR_INSUFFICIENT_AUTHENTICATION;
+        if (!control_key_available || !challenge_valid || time_us_64() < auth_retry_us)
+            return ATT_ERROR_INSUFFICIENT_AUTHENTICATION;
         memcpy(proof, buffer, sizeof(proof));
         proof_valid = true;
         return 0;
@@ -183,7 +185,8 @@ bool pf_bluetooth_prepare(void)
     pf_boot_config_ble_key(ble_key);
     uint8_t key_bits = 0u;
     for (size_t i = 0u; i < sizeof(ble_key); ++i) key_bits |= ble_key[i];
-    return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u && key_bits != 0u;
+    control_key_available = key_bits != 0u;
+    return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;
 }
 
 /** @copydoc pf_bluetooth_state */

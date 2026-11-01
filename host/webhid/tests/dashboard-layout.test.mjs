@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PicoForgeWebHid } from "../js/device.mjs?v=5";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=3";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=4";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -11,7 +11,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/webhid\.css\?v=12"/);
-  assert.match(html, /src="js\/app\.mjs\?v=20"/);
+  assert.match(html, /src="js\/app\.mjs\?v=21"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=5"/);
   assert.match(app, /from "\.\/view\.mjs\?v=9"/);
@@ -21,7 +21,9 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     assert.match(html, new RegExp(`<dialog[^>]*id="${name}-connection-dialog"[\\s\\S]*?aria-labelledby=`));
     assert.match(html, new RegExp(`id="${name}-connection-status" role="status" aria-live="polite"`));
   }
-  assert.match(html, /id="bluetooth-key-step" hidden/);
+  assert.match(html, /id="bluetooth-access-step" hidden/);
+  assert.match(html, /id="ble-view-only"[^>]*>Continue view only<\/button>/);
+  assert.match(html, /id="ble-access-status" role="status" aria-live="polite" hidden/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
@@ -288,7 +290,7 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
     secure: Object.getOwnPropertyDescriptor(globalThis, "isSecureContext"),
   };
-  const prototypes = new Map(["connect", "disconnect", "setControlKey"].map(name =>
+  const prototypes = new Map(["connect", "disconnect", "setControlKey", "setViewOnly"].map(name =>
     [name, PicoForgeBluetooth.prototype[name]]));
   const elements = new Map();
   const el = selector => {
@@ -321,6 +323,7 @@ test("connection dialogs scan before prompting for a key and preserve transport 
       return;
     }
     this.bleDevice = { name: "Nearby PicoForge" };
+    this.accessMode = null;
     this.update({ connected: true, busy: false, transport: "ble", hardware: decodeIdentityReport(identity()),
       board_status: { led_available: true, led_on: false }, freshness: { 10: "fresh", 11: "fresh" },
       msc: { enabled: false }, self_test: decodeSelfTestReport(selfTest()) });
@@ -330,9 +333,15 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     if (pauseKey) await new Promise(resolve => { finishKey = resolve; });
     loadedKey = key;
     this.bleKey = {};
+    this.accessMode = "control";
+  };
+  PicoForgeBluetooth.prototype.setViewOnly = function () {
+    this.bleKey = null;
+    this.accessMode = "view-only";
   };
   PicoForgeBluetooth.prototype.disconnect = async function () {
     this.bleKey = null;
+    this.accessMode = null;
     this.clearConnection();
   };
   try {
@@ -343,7 +352,7 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     el("#bluetooth-open").click();
     assert.equal(el("#bluetooth-connection-dialog").open, true);
     assert.equal(scans, 0, "opening a dialog must not scan without another user gesture");
-    assert.equal(el("#bluetooth-key-step").hidden, true);
+    assert.equal(el("#bluetooth-access-step").hidden, true);
     assert.equal(el("#ble-authorize").disabled, true);
     failure = true;
     let scan = el("#bluetooth-scan").click();
@@ -353,17 +362,29 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     assert.equal(prevented, true, "do not dismiss while a picker/connection is pending");
     finishScan(); await scan;
     assert.match(el("#bluetooth-connection-status").textContent, /No board selected/);
-    assert.equal(el("#bluetooth-key-step").hidden, true);
+    assert.equal(el("#bluetooth-access-step").hidden, true);
     assert.equal(el("#bluetooth-scan").disabled, false);
     failure = false;
     scan = el("#bluetooth-scan").click();
     finishScan(); await scan;
     assert.equal(scans, 2);
-    assert.equal(el("#bluetooth-key-step").hidden, false);
-    assert.equal(el("#ble-control-key").focused, true);
+    assert.equal(el("#bluetooth-access-step").hidden, false);
+    assert.equal(el("#ble-view-only").focused, true);
     assert.match(el("#bluetooth-connection-status").textContent, /Nearby PicoForge/);
+    assert.match(el("#ble-access-status").textContent, /choose View only/);
     assert.equal(el("#usb-open").disabled, true);
     assert.equal(el("#led-control").disabled, true);
+    assert.equal(el("#bluetooth-connection-close").disabled, true, "choose an access mode or disconnect");
+    prevented = false;
+    el("#bluetooth-connection-dialog").cancel({ preventDefault() { prevented = true; } });
+    assert.equal(prevented, true, "access choice cannot be dismissed implicitly");
+    await el("#ble-view-only").click();
+    assert.equal(client.accessMode, "view-only");
+    assert.equal(el("#bluetooth-connection-dialog").open, false);
+    assert.match(el("#ble-access-status").textContent, /View only/);
+    assert.equal(el("#led-control").disabled, true, "view-only mode keeps commands disabled");
+    assert.equal(el("#self-test-start").disabled, true);
+    el("#bluetooth-open").click();
     el("#self-test-size").input();
     assert.equal(el("#self-test-start").disabled, true);
     el("#ble-control-key").value = "bad";
@@ -372,16 +393,18 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     assert.equal(el("#bluetooth-connection-dialog").open, true);
     assert.equal(el("#ble-control-key").value, "");
     el("#ble-control-key").value = "ab".repeat(32);
-    el("#bluetooth-connection-dialog").keydown({ key: "Escape", preventDefault() {} });
+    await el("#ble-view-only").click();
     assert.equal(el("#bluetooth-connection-dialog").open, false);
-    assert.equal(el("#ble-control-key").value, "", "dismissal clears unsubmitted secrets");
-    assert.equal(client.state.connected, true, "closing without a key retains read-only diagnostics");
+    assert.equal(el("#ble-control-key").value, "", "selecting view-only clears unsubmitted secrets");
+    assert.equal(client.state.connected, true, "view-only mode retains diagnostics");
     assert.equal(client.bleKey, null);
     el("#bluetooth-open").click();
     el("#ble-control-key").value = "ab".repeat(32);
     await el("#ble-authorize").click();
     assert.equal(loadedKey, "ab".repeat(32));
+    assert.equal(client.accessMode, "control");
     assert.equal(el("#bluetooth-connection-dialog").open, false);
+    assert.match(el("#ble-access-status").textContent, /control mode/);
     assert.equal(el("#ble-control-key").value, "");
     assert.equal(el("#led-control").disabled, false);
     client.outstanding = { opcode: 1, transaction_id: 1 };
@@ -390,7 +413,8 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     el("#bluetooth-open").click();
     await el("#bluetooth-disconnect").click();
     assert.equal(client.bleKey, null);
-    assert.equal(el("#bluetooth-key-step").hidden, true);
+    assert.equal(client.accessMode, null);
+    assert.equal(el("#bluetooth-access-step").hidden, true);
     assert.equal(el("#usb-open").disabled, true, "disconnect must not discard a pending command to switch transport");
     client.outstanding = null;
     client.update({ outcome_uncertain: false });
@@ -404,6 +428,7 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     await client.disconnect();
     finishKey(); await authorization;
     assert.equal(client.bleKey, null, "a key imported after disconnect must not survive");
+    assert.equal(client.accessMode, null, "a late key import must not retain control mode");
     assert.match(el("#bluetooth-connection-status").textContent, /disconnected while loading/);
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
     el("#bluetooth-open").click();

@@ -59,17 +59,19 @@ standalone WebHID page: its **USB** and **Bluetooth** buttons open separate conn
 nearby-device picker using the browser computer's Bluetooth adapter, filtered to the PicoForge service or name.
 Each board advertises the PicoForge service UUID and returns the name `PicoForge-<USB serial>` in its scan response
 and GAP Device Name, so the picker can tell boards apart.
-Select a board, then enter its control key. The browser must be within radio range and support Web
+The board must have Bluetooth enabled, but does not need a saved key to advertise. After connecting, choose
+**Continue view only** for public diagnostics, or enter the USB-provisioned control key and select **Enable controls**
+to toggle the LED or start/cancel a benchmark. View-only mode needs no key; controls stay disabled until a valid
+key is entered. The key is checked by the board on every command, not when entered. The browser must be within radio
+range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.
 
-BLE diagnostics are public. To control the LED or start/cancel a benchmark, enter the USB-provisioned control key
-and select **Use control key**. The key field appears only after connection; closing without a key leaves diagnostics
-available but disables control buttons. A key is validated locally for format and checked by the board on each command,
-not when entered. Reopen **Bluetooth** to change the key or disconnect; use **USB** to disconnect a USB board.
+BLE diagnostics are public and the link is not encrypted. Reopen **Bluetooth** to change access mode or disconnect;
+use **USB** to disconnect a USB board.
 Transport switching is blocked during a connection, reconnection, pending command, or uncertain command outcome.
-The key is held only as a non-exportable browser CryptoKey and forgotten on disconnect; the input is cleared on
-submission, dialog dismissal, and disconnect.
+The key is held only as a non-exportable browser CryptoKey and forgotten on disconnect or when switching to view-only;
+the input is cleared on submission, dialog dismissal, and disconnect.
 This generated 32-byte key authenticates commands; it is not a Bluetooth pairing password and does not encrypt the link.
 BLE cannot save configuration, provision credentials, reboot, or transfer USB storage ownership.
 Only one BLE connection is supported; disconnects never replay a command or reconnect automatically.

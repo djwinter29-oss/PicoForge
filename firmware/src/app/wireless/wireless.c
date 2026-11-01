@@ -19,7 +19,7 @@
 #include "app/storage/storage_worker.h"
 
 static bool wifi_enabled; /**< Wi-Fi master switch and credentials allow startup. */
-static bool ble_enabled; /**< BLE master switch and key allow startup. */
+static bool ble_enabled; /**< BLE master switch allows advertising; a key is required only for control. */
 static bool started; /**< Shared SDK context initialized successfully. */
 static uint8_t error_code; /**< 0 none, 1 initialization, 2 join failure, 3 connection timeout. */
 static uint8_t save_status; /**< Last provisioning result, using Feature 20 status values. */

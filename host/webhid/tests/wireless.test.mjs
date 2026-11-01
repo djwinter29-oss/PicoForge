@@ -306,9 +306,15 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     await client.connect();
     assert.equal(client.state.connected, true);
     assert.equal(client.state.transport, "ble");
+    assert.equal(client.accessMode, null, "access requires an explicit choice after connecting");
     await assert.rejects(client.command(1, { args: [1] }), /key/);
     assert.equal(writes.length, 0);
+    client.setViewOnly();
+    assert.equal(client.accessMode, "view-only");
+    await assert.rejects(client.command(1, { args: [1] }), /Control/);
+    assert.equal(writes.length, 0);
     await client.setControlKey("ab".repeat(32));
+    assert.equal(client.accessMode, "control");
     await client.command(1, { args: [1] });
     assert.deepEqual(writes.map(item => item[0]), [33, 20]);
     const uid = Buffer.from(client.state.hardware.serial_number, "hex");
@@ -319,6 +325,7 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     assert.equal(writes.length, 2);
     await client.disconnect();
     assert.equal(client.bleKey, null);
+    assert.equal(client.accessMode, null);
     assert.equal(client.state.connected, false);
   } finally {
     if (client?.state.connected) await client.disconnect();

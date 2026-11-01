@@ -8,8 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/** @brief Load the boot control key once before SDK initialization.
- * @return true when the Bluetooth master switch and nonzero key allow startup.
+/** @brief Load the optional boot control key once before SDK initialization.
+ * @return true when the Bluetooth master switch allows startup, with or without a control key.
  */
 bool pf_bluetooth_prepare(void);
 
