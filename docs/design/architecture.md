@@ -261,8 +261,8 @@ are in [Storage Worker State](#storage-worker-state); the
   the existing five-second interval after each failed attempt completes. With board-provided card detect, debounce
   presence before acting. Never format, repair, or replay a failed write automatically.
 
-Explicit maintenance is an exception to the default: `fs unmount` suppresses automatic mounting until an insertion
-or normal USB return; `fs mount` permits deliberate manual mounting. Faulted-MSC recovery and failed forced return
+Explicit maintenance is an exception to the default: `storage unmount` suppresses automatic mounting until an insertion
+or normal USB return; `storage mount` permits deliberate manual mounting. Faulted-MSC recovery and failed forced return
 leave automatic mounting blocked for inspection until an explicit successful mount. These runtime-only safeguards
 are not persistent boot settings. A safe return does not clear an existing fault-recovery block.
 
@@ -280,8 +280,8 @@ stateDiagram-v2
     Mounting --> FirmwareOwned: initialization and mount succeed
     Mounting --> FirmwareUnavailable: card absent or initialization/mount fails
     FirmwareOwned --> FirmwareOwned: commands, self-test / keep mounted
-    FirmwareOwned --> FirmwareUnmounted: explicit fs unmount
-    FirmwareUnmounted --> Mounting: explicit fs mount or card insertion
+    FirmwareOwned --> FirmwareUnmounted: explicit storage unmount
+    FirmwareUnmounted --> Mounting: explicit storage mount or card insertion
     FirmwareUnmounted --> ToHost: admitted MSC enable
     FirmwareOwned --> ToHost: admitted MSC enable / worker unmount
     ToHost --> HostOwned: MSC medium becomes available
@@ -298,7 +298,7 @@ stateDiagram-v2
     ForcedReturn --> FirmwareOwned: single mount attempt succeeds
     ForcedReturn --> FirmwareBlocked: single mount attempt fails
     Recovering --> FirmwareBlocked: initialization only / no automatic mount
-    FirmwareBlocked --> FirmwareOwned: explicit fs mount succeeds
+    FirmwareBlocked --> FirmwareOwned: explicit storage mount succeeds
     FirmwareUnavailable --> Mounting: paced retry or card insertion
 ```
 
@@ -327,7 +327,7 @@ and USB task publish admission/completion state under critical sections; command
 `busy` and `media_service_busy` exclude each other. `benchmark_finished` implies `benchmark_active`, which implies
 `busy` until USB observes completion. Recovery and commands share the admission gate but not reply completion:
 recovery has no CDC session. Mount-policy flags are independent of operation admission. Recovery sets
-`auto_mount_blocked`; a successful explicit `fs mount` or confirmed force-return mount clears it.
+`auto_mount_blocked`; a successful explicit `storage mount` or confirmed force-return mount clears it.
 A failed initialization or mount leaves it set.
 Per-block reservations alone never authorize USB takeover while file cleanup or reply draining is outstanding.
 

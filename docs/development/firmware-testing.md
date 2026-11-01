@@ -95,7 +95,7 @@ Use backed-up or expendable FAT/exFAT media and record the board, card, transpor
 Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS pass does not qualify the others.
 
 1. Boot with a valid card and no dashboard/CDC session. Connect afterward and verify fresh `mounted` storage status
-   without sending `fs mount` or Start. Read an existing file, then create/read/delete a disposable file via CDC.
+   without sending `storage mount` or Start. Read an existing file, then create/read/delete a disposable file via CDC.
    Confirm CDC, HID and MSC enumerate with fixed interface numbers and MSC reports no medium while Pico owns the card.
 2. Start one small self-test from mounted idle status. Verify that the first click runs write/verify/cleanup rather
    than only mounting, and that storage remains mounted afterward. Record command-acceptance delay separately from
@@ -105,7 +105,7 @@ Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS p
    Check rejection while a storage command or self-test is outstanding; do not interrupt live card writes.
    Keep HID monitoring and a CDC session open across enable/return and verify neither disconnects nor restarts.
 4. Safely eject through the host OS, then use normal disable (opcode `3`, action `0`) and verify automatic remount
-   without Start or `fs mount`. Read a disposable file changed by the host to check that stale filesystem state
+   without Start or `storage mount`. Read a disposable file changed by the host to check that stale filesystem state
    was discarded. Verify MSC reports no medium while firmware uses the card. Re-enable sharing after firmware changes
    a disposable file and verify the host observes the new contents/capacity rather than cached metadata; inspect
    the SCSI Unit Attention/media-change response where host tracing is available.

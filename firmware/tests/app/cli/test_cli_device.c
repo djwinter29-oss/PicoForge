@@ -120,8 +120,7 @@ static void noop(EmbeddedCli *instance, char *args, void *context)
 void test_help_with_every_production_binding_fits_output_reserve(void)
 {
     TEST_ASSERT_TRUE(pf_cli_add_binding((CliCommandBinding){
-        "fs", "mount\r\n\tunmount\r\n\tformat --confirm (destroys files)\r\n"
-              "\tls [path]\r\n\tstat <path>\r\n\tcat <path> [limit]\r\n\tdf\r\n"
+        "fs", "ls [path]\r\n\tstat <path>\r\n\tcat <path> [limit]\r\n\tdf\r\n"
               "\tmkdir <path>\r\n\twrite <path> <text>\r\n\tappend <path> <text>\r\n"
               "\tmv <source> <destination>\r\n\trm <path> --confirm", false, NULL, noop
     }));
@@ -130,7 +129,8 @@ void test_help_with_every_production_binding_fits_output_reserve(void)
     TEST_ASSERT_NOT_NULL(strstr(captured, " * storage\r\n\tget [status | usb | benchmark]\r\n\tset usb <on | off>"));
     TEST_ASSERT_NULL(strstr(captured, " * msc"));
     TEST_ASSERT_NULL(strstr(captured, " * benchmark"));
-    TEST_ASSERT_NOT_NULL(strstr(captured, "\tformat --confirm (destroys files)\r\n\tls [path]"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "\tformat --confirm (destroys files)\r\n\tmount (maintenance)"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, " * fs\r\n\tls [path]"));
     TEST_ASSERT_LESS_OR_EQUAL_UINT(1024u, largest_response);
     send("help config\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "key=value"));
@@ -312,6 +312,22 @@ void test_storage_status_is_queued_and_recovery_requires_confirmation(void)
     send("storage recover --confirm\r");
     TEST_ASSERT_EQUAL_UINT(1u, recoveries);
     TEST_ASSERT_NOT_NULL(strstr(captured, "not clean eject"));
+}
+
+void test_storage_maintenance_queues_only_complete_confirmed_commands(void)
+{
+    send("storage mount\r");
+    send("storage unmount\r");
+    send("storage format --confirm\r");
+    TEST_ASSERT_EQUAL_UINT(3u, worker_queries);
+    send("storage format\r");
+    send("storage format --confirm extra\r");
+    send("storage mount extra\r");
+    send("storage unmount extra\r");
+    TEST_ASSERT_EQUAL_UINT(3u, worker_queries);
+    TEST_ASSERT_NOT_NULL(strstr(captured, "ERR storage"));
+    TEST_ASSERT_EQUAL_UINT(0u, msc_changes);
+    TEST_ASSERT_EQUAL_UINT(0u, recoveries);
 }
 
 void test_benchmark_start_size_boundaries_rejection_and_cancellation(void)

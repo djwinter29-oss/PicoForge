@@ -59,9 +59,9 @@ The web console uses the same eight-column tab stops as a normal terminal to pre
 | `storage benchmark <MiB>` | Queue a 1..1024 MiB file benchmark on the storage worker; preflight can still reject it. |
 | `storage benchmark cancel` | Request cancellation; wait for cleanup to finish before other storage work. |
 | `storage recover --confirm` | Revoke access to faulted MSC media and request worker reinitialization without mounting; not a clean eject, sync, or repair. |
-| `fs mount` | Manually initialize/mount the existing FAT/exFAT volume after inspection or explicit unmount; normally startup/return mounting is automatic. Never format. |
-| `fs unmount` | Explicit maintenance unmount; suppress automatic mounting until insertion or normal MSC return. USB enable also unmounts automatically. |
-| `fs format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
+| `storage mount` | Maintenance only: manually initialize/mount after inspection or explicit unmount; normally startup/return mounting is automatic. Never format. |
+| `storage unmount` | Maintenance only: suppress automatic mounting until insertion or normal MSC return. USB enable also unmounts automatically. |
+| `storage format --confirm` | Destroy files on the selected logical device, create FAT12/16/32 (automatically selected by FatFs) without a partition table, then mount. Requires Pico ownership and an unmounted volume. |
 | `fs ls [path]` | List names, sizes, and directory flags; default path is `/`. |
 | `fs stat <path>` | Show size, attributes, and filesystem timestamps. |
 | `fs cat <path> [limit]` | Read at most 1024 bytes by default; limit accepts 1..4096 bytes. |
@@ -78,9 +78,9 @@ Recovery completion or failure is reported through the UART logger; neither outc
 
 Every group follows PicoPWM's `group verb parameters` convention: `get` reads, `set` changes a value, and other verbs
 are actions such as `board reboot` or `storage benchmark 64`. There are five groups: `board`, `config`, `storage`, `fs`
-and `radio`; use `help <group>` for its syntax. `storage` owns the card as a device (status, USB drive ownership,
-benchmark, recovery), while `fs` works with files on the mounted volume. Use `board get version` for the firmware
-version.
+and `radio`; use `help <group>` for its syntax. `storage` owns device management (status, USB drive ownership,
+formatting, benchmark, recovery and maintenance mounting), while `fs` works with files on the mounted volume.
+Use `board get version` for the firmware version.
 Device mutations return `OK` or `ERR`; queued USB drive/benchmark responses acknowledge admission, not completion.
 
 ```text
@@ -118,9 +118,18 @@ Flags can be combined; bit 1 records that the caller's volume was mounted. `stor
 mounted volume, never formats, and refuses an existing `PFTEST.BIN`. A queued start can still fail worker preflight;
 inspect `request_error` as well as the run's `error`. Cancellation is a request, not a completed cleanup.
 
-### Filesystem commands
+### Storage and filesystem commands
 
-Storage commands require absolute ASCII paths on volume 0, with no drive
+Mounting/unmounting is automatic during normal startup and USB drive handoff. `storage mount` and `storage unmount`
+remain maintenance commands for manual retry, safe removal, formatting and post-recovery inspection; they are not
+routine prerequisites. These are live operations, not saved boot settings under `config`.
+
+Formatting is destructive and still requires an unmounted, Pico-owned volume. After backing up the card and safely
+ejecting/disabling USB storage, run `storage unmount` and wait for completion before `storage format --confirm`.
+A successful format mounts the new filesystem automatically. The old `fs mount`, `fs unmount` and `fs format` names
+are no longer accepted; `fs` contains only file/directory operations.
+
+File commands require absolute ASCII paths on volume 0, with no drive
 prefixes, wildcards, backslashes, or `.`/`..` segments. Paths are limited to 100
 bytes and must fit the CLI's command buffer. Double-quote paths or text containing
 spaces. There is no current-directory state, recursive deletion, or file overwrite.
@@ -138,8 +147,8 @@ mounting happens at startup, after insertion, and after normal MSC return, not o
 Wait for `mounted` status before reading/writing; `ready` means initialized but unmounted.
 Normal mount failures are retried five seconds after each attempt finishes, except when recovery blocks retries.
 Enabling MSC from the dashboard automatically queues `fs` volume unregistration on the sole storage worker;
-manual `fs unmount` is optional. A successful unmount pauses
-automatic mounting until the next insertion or return from MSC. `fs mount`
+manual `storage unmount` is optional. A successful unmount pauses
+automatic mounting until the next insertion or return from MSC. `storage mount`
 remains available for a manual retry.
 
 When board support provides card detect, the storage worker debounces presence
@@ -228,10 +237,10 @@ all fail. For that faulted state only:
    initialization does not erase the original I/O diagnostic. A new failed
    initialization replaces it with the latest failure.
 6. Inspect/repair the filesystem with appropriate host tools before deliberately
-   running `fs mount`. An initialized card can be handed to MSC again for
+   running `storage mount`. An initialized card can be handed to MSC again for
    inspection using normal enable/eject/disable. Automatic mounting remains
    suppressed even across reinsertion and subsequent MSC returns until a
-   successful explicit `fs mount`. This suppression is not persistent over
+   successful explicit `storage mount`. This suppression is not persistent over
    MCU reset or loss of power.
 
 Reinitialization retains checked cleanup of unresolved native streams; it can
@@ -249,24 +258,24 @@ Read-only bring-up sequence:
 
 ```text
 storage get status
-fs mount
+storage mount
 fs ls /
 fs stat /existing.txt
 fs cat /existing.txt 256
 fs df
-fs unmount
+storage unmount
 ```
 
 To exercise changes, use a disposable new path and wait for each result:
 
 ```text
-fs mount
+storage mount
 fs mkdir /cli-test
 fs write /cli-test/new.txt "hello world"
 fs append /cli-test/new.txt " more text"
 fs mv /cli-test/new.txt /cli-test/renamed.txt
 fs rm /cli-test/renamed.txt --confirm
-fs unmount
+storage unmount
 ```
 
 These modification commands change the card. The example leaves the empty
@@ -332,7 +341,7 @@ Open CDC and run `help` and `board get version`. Close/reopen to verify a
 fresh prompt, and check that HID reports continue during commands. Stop reading
 CDC briefly, resume, and confirm output arrives without a board reset. No
 formatting or card writes are needed for the read-only check. Verify the storage
-commands first using an existing file and `fs unmount`; only test mutations on a
+commands first using an existing file and `storage unmount`; only test mutations on a
 disposable file after backing up the card. Follow the
 [storage lifecycle board checks](../development/firmware-testing.md#storage-lifecycle-board-checks) for startup mounting,
 automatic USB handoff/remount, busy rejection, and failure cases. Do not reset while a filesystem command is in progress.

@@ -599,7 +599,7 @@ The storage worker makes one initialization and mount
 attempt, and `msc_transition_pending` remains set until that attempt finishes; pending is clear in either terminal
 outcome. On success, MSC is disabled and firmware owns the mounted storage. On initialization or mount failure,
 MSC remains disabled, `msc_request_rejected` is set, and storage remains unmounted with automatic retries blocked
-until an explicit successful `fs mount`. No automatic
+until an explicit successful `storage mount`. No automatic
 formatting, filesystem repair, or failed-write replay is performed. A connected HID device does
 not prove that the filesystem remounted; hosts wait for pending to clear, inspect rejection, and verify storage
 state. Faulted-media recovery is a separate explicit workflow and is not a clean eject.

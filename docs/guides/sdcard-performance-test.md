@@ -32,7 +32,7 @@ capability to disable self-test controls. Normal storage, filesystem commands, a
 
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
 2. Wait for automatic mounting and fresh mounted-filesystem status. If mounting fails or was deliberately suppressed,
-   inspect the storage error first; `fs mount` is a manual retry, not a routine prerequisite for each test.
+   inspect the storage error first; `storage mount` is a manual retry, not a routine prerequisite for each test.
 3. Open one dashboard and connect to its vendor HID interface.
 4. Choose an integer file size from 1 to 1024 MiB; the default is 32 MiB.
    The test streams through its fixed buffer, not a file-sized RAM allocation. Larger tests take longer and

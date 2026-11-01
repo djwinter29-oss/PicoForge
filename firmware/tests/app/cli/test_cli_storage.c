@@ -160,11 +160,11 @@ void test_mount_and_unmount_report_success(void)
     pf_storage_initialize_ExpectAndReturn(PF_BLOCK_OK);
     pf_storage_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
-    pf_cli_storage_execute(false, "fs", "mount", reply, NULL);
+    pf_cli_storage_execute(false, "storage", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
     pf_fatfs_volume_unmount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
-    run("unmount");
+    pf_cli_storage_execute(false, "storage", "unmount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "handoff is now allowed"));
 }
 
@@ -176,14 +176,14 @@ void test_mount_reports_fatfs_failure(void)
     pf_storage_firmware_device_ExpectAndReturn(&device);
     pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_FILESYSTEM_ERROR);
     pf_fatfs_volume_mount_ReturnThruPtr_filesystem_result(&result);
-    pf_cli_storage_execute(false, "fs", "mount", reply, NULL);
+    pf_cli_storage_execute(false, "storage", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "NO_FILESYSTEM"));
 }
 
 void test_mount_does_not_initialize_an_already_mounted_device(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
-    run("mount");
+    pf_cli_storage_execute(false, "storage", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "already mounted"));
 }
 
@@ -191,7 +191,7 @@ void test_mount_rejects_missing_configuration_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
     pf_storage_initialize_ExpectAndReturn(PF_BLOCK_NOT_READY);
-    run("mount");
+    pf_cli_storage_execute(false, "storage", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "configuration unavailable"));
 }
 
@@ -199,8 +199,60 @@ void test_mount_reports_card_initialization_failure_without_binding(void)
 {
     pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
     pf_storage_initialize_ExpectAndReturn(PF_BLOCK_IO_ERROR);
-    pf_cli_storage_execute(false, "fs", "mount", reply, NULL);
+    pf_cli_storage_execute(false, "storage", "mount", reply, NULL);
     TEST_ASSERT_NOT_NULL(strstr(output, "storage initialization"));
+}
+
+void test_volume_maintenance_is_no_longer_a_filesystem_command(void)
+{
+    run("mount");
+    run("unmount");
+    run("format --confirm");
+    TEST_ASSERT_NOT_NULL(strstr(output, "Volume maintenance moved to storage"));
+}
+
+void test_storage_maintenance_rejects_usb_ownership_and_invalid_arguments(void)
+{
+    pf_cli_storage_execute(true, "storage", "format --confirm", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Media owned by USB"));
+    pf_cli_storage_execute(true, "storage", "mount", reply, NULL);
+    pf_cli_storage_execute(true, "storage", "unmount", reply, NULL);
+    pf_cli_storage_execute(false, "storage", "format", reply, NULL);
+    pf_cli_storage_execute(false, "storage", "format --confirm extra", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Usage: storage format --confirm"));
+    pf_cli_storage_execute(false, "storage", "mount extra", reply, NULL);
+    pf_cli_storage_execute(false, "storage", "unmount extra", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Invalid arguments"));
+}
+
+void test_storage_format_refuses_a_mounted_volume(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(true);
+    pf_cli_storage_execute(false, "storage", "format --confirm", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Unmount first with storage unmount; format refused"));
+}
+
+void test_storage_format_formats_and_mounts_the_existing_device(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_storage_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_storage_firmware_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_format_ExpectAndReturn(&device, FR_OK);
+    pf_fatfs_volume_mount_ExpectAnyArgsAndReturn(PF_FATFS_VOLUME_OK);
+    pf_cli_storage_execute(false, "storage", "format --confirm", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem formatted; mounting"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "Filesystem mounted"));
+}
+
+void test_storage_format_failure_is_reported_without_mounting(void)
+{
+    pf_fatfs_volume_is_mounted_ExpectAndReturn(false);
+    pf_storage_initialize_ExpectAndReturn(PF_BLOCK_OK);
+    pf_storage_firmware_device_ExpectAndReturn(&device);
+    pf_fatfs_volume_format_ExpectAndReturn(&device, FR_DISK_ERR);
+    pf_cli_storage_execute(false, "storage", "format --confirm", reply, NULL);
+    TEST_ASSERT_NOT_NULL(strstr(output, "Format failed; volume contents may be partially changed"));
+    TEST_ASSERT_NULL(strstr(output, "Filesystem mounted"));
 }
 
 void test_lists_directory_and_closes_handle(void)
