@@ -29,6 +29,7 @@ def test_board_and_wireless_configuration_saves_once_or_discards(tmp_path):
 #include "app/usb/usb_hid.h"
 #include "app/usb/usb_msc.h"
 #include "app/wireless/bluetooth.h"
+#include "app/wireless/tcp_cli.h"
 #include "app/wireless/wifi.h"
 #include "app/wireless/wireless.h"
 #include "platform/boot_config.h"
@@ -41,6 +42,8 @@ static bool storage_busy;
 static bool staged_test;
 static unsigned cleared_tests, enabled_sta;
 static unsigned chip_inits;
+static bool wifi_prepared;
+static unsigned wifi_starts, tcp_cli_starts;
 static int led_level = -1;
 static void (*attached_led)(bool on);
 bool pf_boot_config_set_sysclk(pf_sysclk_profile_t p) { if ((unsigned)p > 3u) return false; clock = (int)p; return true; }
@@ -64,8 +67,9 @@ void pf_boot_config_ble_key(uint8_t out[32]) { memset(out, 0, 32); }
 bool pf_usb_msc_is_enabled(void) { return false; }
 bool pf_usb_msc_transition_pending(void) { return false; }
 bool pf_storage_worker_busy(void) { return storage_busy; }
-bool pf_wifi_prepare(void) { return false; }
-void pf_wifi_start(uint8_t *error) { (void)error; }
+bool pf_wifi_prepare(void) { return wifi_prepared; }
+void pf_wifi_start(uint8_t *error) { (void)error; ++wifi_starts; }
+bool pf_tcp_cli_start(void) { ++tcp_cli_starts; return true; }
 void pf_wifi_poll(uint8_t *error) { (void)error; }
 uint8_t pf_wifi_state(void) { return 0; }
 void pf_wifi_ip_address(uint8_t address[4]) { (void)address; }
@@ -104,6 +108,9 @@ int main(void)
     /* With both radios off, the chip still starts for the W-board LED, but no radio is enabled. */
     pf_wireless_start();
     assert(chip_inits == 1 && enabled_sta == 0 && attached_led != NULL && led_level == 0);
+    assert(wifi_starts == 0 && tcp_cli_starts == 0);
+    pf_wireless_status(status);
+    assert(status[46] == 0);
     attached_led(true);
     assert(led_level == 1);
     request(report, 250, 1);
@@ -142,6 +149,11 @@ int main(void)
     assert(enabled_sta == 1);
     uint8_t result[PF_WIRELESS_RESULT_SIZE];
     pf_wireless_result_report(result);
+    wifi_prepared = true;
+    pf_wireless_start();
+    assert(chip_inits == 1 && wifi_starts == 1 && tcp_cli_starts == 1);
+    pf_wireless_status(status);
+    assert(status[46] == 1);
     return 0;
 }
 """)
