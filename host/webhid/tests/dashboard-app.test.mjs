@@ -347,9 +347,10 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       ["product-name", "board-model", "serial", "identity-clock", "ram-usage", "firmware-version"]);
     assert.doesNotMatch(html, /id="ram-reserved"|id="ram-total"/);
     assert.doesNotMatch(html, /id="mcu"|Microcontroller/);
-    assert.match(html, />Save and Reboot<\/button>/);
+    assert.match(html, />Save&amp;Reboot<\/button>/);
     assert.match(html, />Reboot Board<\/button>/);
-    assert.match(html, /id="settings-title">Board configuration<\/h2>/);
+    assert.match(html, /id="settings-title">Boot configuration<\/h2>/);
+    assert.doesNotMatch(html, /Board configuration/);
     assert.doesNotMatch(html, /BOOT CONFIGURATION/);
     assert.doesNotMatch(html, /class="eyebrow"/);
     assert.doesNotMatch(html, /metric-product/);

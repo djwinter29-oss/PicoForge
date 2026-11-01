@@ -87,7 +87,7 @@ Intermediate disconnected or old firmware-owned snapshots must not briefly resto
 Enable USB drive opens the same styled confirmation pattern as reboot and return on both dashboard frontends.
 The dialog explains exclusive host ownership, uninterrupted HID/CDC, unavailable self-test, confirmed forced saving, and safe eject.
 Cancel, Escape, or disconnect sends no enable request; confirmation rechecks current storage safety gates.
-Local settings edits remain available while shared. Supporting firmware permits Save and Reboot only through the
+Local settings edits remain available while shared. Supporting firmware permits **Save&Reboot** only through the
 [forced-save confirmation](../design/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
 
 Current host behavior follows the firmware's implemented HID reports. The

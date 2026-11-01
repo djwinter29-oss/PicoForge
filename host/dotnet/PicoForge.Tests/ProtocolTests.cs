@@ -65,6 +65,27 @@ public sealed class ProtocolTests
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(report));
     }
 
+    [Theory]
+    [InlineData(1, 4)]
+    [InlineData(2, 3)]
+    public void ConfigurationAcceptsNonGpioLedAndPreservesGpioValidation(byte mcu, byte board)
+    {
+        var report = IdentityReport();
+        report[15] = mcu;
+        report[16] = board;
+        report[18] |= HidProtocol.CapabilityWireless;
+        var hardware = HidProtocol.ParseIdentityReport(report);
+        var config = ConfigurationReport();
+        config[14] &= unchecked((byte)~2);
+        config[16] = byte.MaxValue;
+        Assert.Equal(byte.MaxValue, HidProtocol.ParseConfigurationReport(config, hardware).LedGpio);
+        report[18] &= unchecked((byte)~HidProtocol.CapabilityLed);
+        var noLed = HidProtocol.ParseIdentityReport(report);
+        Assert.Equal(byte.MaxValue, HidProtocol.ParseConfigurationReport(config, noLed).LedGpio);
+        Assert.Throws<InvalidOperationException>(() =>
+            HidProtocol.ParseConfigurationReport(ConfigurationReport(), noLed));
+    }
+
     [Fact]
     public void ParsesTelemetryAndValidatesSentinels()
     {

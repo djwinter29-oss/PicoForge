@@ -107,6 +107,19 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "LED"):
             parse_configuration_report(config, self.identity)
 
+    def test_configuration_accepts_non_gpio_led_and_preserves_gpio_validation(self):
+        config = bytearray(configuration_report())
+        config[14] &= ~2
+        config[16] = 255
+        for mcu, board in ((1, 4), (2, 3)):
+            with self.subTest(board=board):
+                wireless = parse_identity_report(identity_report(capabilities=0xB5, mcu=mcu, board=board))
+                self.assertEqual(parse_configuration_report(config, wireless)["led_gpio"], 255)
+        no_led = parse_identity_report(identity_report(capabilities=0x34))
+        self.assertEqual(parse_configuration_report(config, no_led)["led_gpio"], 255)
+        with self.assertRaisesRegex(ValueError, "LED"):
+            parse_configuration_report(configuration_report(), no_led)
+
     def test_telemetry_decodes_shared_values_and_rejects_invalid_flags_and_values(self):
         result = parse_status_report(telemetry_report(), self.identity)
         self.assertEqual(result["sequence"], 9)

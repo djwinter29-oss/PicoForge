@@ -121,7 +121,7 @@ Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS p
    confirm it remains unmounted for inspection and does not replay failed writes or clear its recovery block on
    insertion/normal return.
 8. On expendable media, stop host writes and safely eject while MSC remains enabled. Edit settings locally and
-   verify the forced-save risk warning appears before Save and Reboot. Cancel/Escape must send no command.
+   verify the forced-save risk warning appears before **Save&Reboot**. Cancel/Escape must send no command.
    Confirm once; verify sync/detach precede flash programming, the original result is checked after HID reconnect
    without SET replay, no card I/O resumes before reset, and boot returns to automatic firmware mounting.
    Use controlled sync/detach/flash-failure fixtures to verify no reboot on failure and explicit diagnostics.

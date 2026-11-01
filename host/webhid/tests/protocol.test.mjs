@@ -89,6 +89,21 @@ test("configuration validates profiles, selected-transport GPIOs, flags and LED 
   assert.equal(decodeConfigReport(unknownReset, id).reset_cause, 255);
 });
 
+test("configuration accepts non-GPIO LEDs and preserves GPIO validation", () => {
+  const report = config();
+  report[13] &= ~2;
+  report[15] = 255;
+  for (const [mcu, board] of [[1, 4], [2, 3]]) {
+    const raw = identity(1 | 2 | 4 | 16 | 32 | 128);
+    raw[14] = mcu;
+    raw[15] = board;
+    assert.equal(decodeConfigReport(report, decodeIdentityReport(raw)).led_gpio, 255);
+  }
+  const noLed = decodeIdentityReport(identity(2 | 4 | 16 | 32));
+  assert.equal(decodeConfigReport(report, noLed).led_gpio, 255);
+  assert.throws(() => decodeConfigReport(config(), noLed));
+});
+
 test("telemetry preserves 64-bit uptime, load sentinels, temperature and exact length", () => {
   const report = telemetry();
   const view = new DataView(report.buffer);

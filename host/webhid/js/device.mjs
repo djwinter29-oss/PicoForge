@@ -69,7 +69,7 @@ export function decodeConfigReport(report, identity) {
     && [0, 1, 255].includes(uart)
     && (tx === 255) === (rx === 255) && (!(flags & 4) || (uart !== 255 && tx !== 255))
     && Boolean(flags & 1) === (detect !== 255) && Boolean(flags & 2) === (led !== 255)
-    && Boolean(identity.capabilities & 1) === (led !== 255)
+    && (!(flags & 2) || Boolean(identity.capabilities & 1))
     && [tx, rx, led, detect, ...gpios].every(pin => pin === 255 || pin <= maxGpio)
     && (identity.transport === "spi"
       ? gpios.slice(0, 4).every(pin => pin !== 255) && gpios.slice(4).every(pin => pin === 255)

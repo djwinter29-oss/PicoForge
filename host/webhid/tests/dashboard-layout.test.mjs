@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=5";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=4";
+import { PicoForgeWebHid } from "../js/device.mjs?v=6";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=5";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -11,9 +11,9 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| WebHID<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/webhid\.css\?v=12"/);
-  assert.match(html, /src="js\/app\.mjs\?v=21"/);
+  assert.match(html, /src="js\/app\.mjs\?v=23"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
-  assert.match(app, /from "\.\/device\.mjs\?v=5"/);
+  assert.match(app, /from "\.\/device\.mjs\?v=6"/);
   assert.match(app, /from "\.\/view\.mjs\?v=9"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
@@ -27,7 +27,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
-  assert.match(html, /id="settings-save"[^>]*>Save and Reboot/);
+  assert.match(html, /id="settings-save"[^>]*>Save&amp;Reboot/);
   assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
   for (const path of ["../index.html", "../../web/index.html"]) {
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
@@ -59,7 +59,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
       ["Written / target", "Write duration", "Average write speed", "Verified / target", "Read duration",
         "Average read speed"]);
   }
-  assert.doesNotMatch(html, /Save &amp; Reboot|25 MHz|50 MHz|Core 1 \/ Core 2/);
+  assert.doesNotMatch(html, /25 MHz|50 MHz|Core 1 \/ Core 2/);
   assert.match(html, /Firmware RAM reserved \/ total/);
   assert.match(html, /Service load \(Core 0 \/ Core 1\)/);
   assert.match(html, /<dt>Filesystem<\/dt>/);

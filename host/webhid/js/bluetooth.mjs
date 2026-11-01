@@ -47,8 +47,14 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
           const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
           const message = new Uint8Array([...nonce, ...uid, ...report]);
           const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
-          await this.characteristics.get(33).writeValueWithResponse(mac.slice(0, 16));
-          await this.characteristics.get(20).writeValueWithResponse(report);
+          try {
+            await this.characteristics.get(33).writeValueWithResponse(mac.slice(0, 16));
+            await this.characteristics.get(20).writeValueWithResponse(report);
+          } catch (error) {
+            // Firmware answers a bad, missing or rate-limited proof with an ATT application error.
+            if (!this.bleDevice.gatt.connected) throw error;
+            throw new Error("The board rejected the BLE control key. Check the key, wait 2 s, and retry.");
+          }
         } });
       if (this.outstanding && this.bleUid) this.reconnectUid = this.bleUid;
       await this.attachDevice(adapter);

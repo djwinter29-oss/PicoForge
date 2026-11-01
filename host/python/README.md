@@ -24,7 +24,7 @@ The shared Python/.NET page refreshes automatically. Its Device information row 
 product, board model, serial / UID, system clock, firmware RAM reserved / total, and firmware version
 (`Unknown` for legacy firmware). The six fields share one desktop row and wrap on smaller screens.
 The **Board LED** toggle is in Device information; SD sharing is beside the self-test.
-The **Pin configuration** disclosure under Board configuration is collapsed by default; expand it to view
+The **Pin configuration** disclosure under Boot configuration is collapsed by default; expand it to view
 separate Monitor UART and Storage tables, each with signal names across the first row and GPIO values across
 the second row, including card detect. Monitor UART appears above Storage, with both tables spanning the area.
 Reset cause stays visible beside the clock and SD-card settings.
@@ -39,12 +39,12 @@ Selecting Start authorizes temporary self-test writes, not a mount-only step. Pr
 delay acceptance before progress appears; wait for its command result rather than clicking again.
 An existing `/PFTEST.BIN` file or directory is rejected and never replaced. Test cleanup leaves storage mounted.
 
-**Save and Reboot** asks for confirmation and sends one HID settings command. Firmware saves the settings and
+**Save&Reboot** asks for confirmation and sends one HID settings command. Firmware saves the settings and
 queues its own reboot only on success; the host verifies the saved values in the command result without sending
 a separate reboot command. **Reboot Board** confirms a reboot using the
 already saved settings and warns when unsaved dashboard changes will be lost. Both use Pico UART-style modal
 dialogs with Cancel and explicit action buttons; Escape cancels without sending a command.
-Local settings edits are also available while USB owns the card. Supporting firmware enables **Save and Reboot**
+Local settings edits are also available while USB owns the card. Supporting firmware enables **Save&Reboot**
 with an additional host-cache data-loss warning and explicit forced-save confirmation. Device sync and USB detach
 must succeed before saving; self-tests and transitions still block saving. See the
 [forced-save safety policy](../../docs/design/settings.md#forced-save-and-reboot). Older firmware requires returning
@@ -84,7 +84,7 @@ Saving requires idle, firmware-owned storage and no active self-test or outstand
 The host sends Feature 31 once and verifies its transaction, saved flags, SSID, and credential-presence booleans
 using Feature 30, then reads back the board settings before marking reboot pending. The response adds `settings`. A mismatched saved configuration leaves the outcome uncertain.
 Timeouts or disconnects leave the outcome uncertain and block further writes; commands are not replayed.
-The local dashboards expose **Board configuration > Wi-Fi and Bluetooth** settings for the selected USB-attached W board, including
+The local dashboards expose **Boot configuration > Wi-Fi and Bluetooth** settings for the selected USB-attached W board, including
 SSID, password and a generated BLE control key. See the
 [wireless configuration and security policy](../../docs/design/wireless.md).
 Bluetooth LE connections remain available only from the standalone WebHID page.

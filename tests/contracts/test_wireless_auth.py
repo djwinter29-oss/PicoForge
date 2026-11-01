@@ -59,3 +59,10 @@ def test_ble_without_control_key_is_diagnostics_only():
     assert "return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;" in prepare
     assert "!control_key_available" in authenticate
     assert "!control_key_available" in proof_write
+
+
+def test_ble_rejected_proof_does_not_request_os_pairing():
+    source = (ROOT / "firmware/src/app/wireless/bluetooth.c").read_text()
+    assert "ATT_ERROR_INSUFFICIENT_AUTHENTICATION" not in source
+    assert "#define BLE_ERROR_CONTROL_REJECTED 0x80" in source
+    assert source.count("return BLE_ERROR_CONTROL_REJECTED;") == 2

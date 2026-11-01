@@ -361,7 +361,7 @@ def parse_configuration_report(
         raise ValueError("card-detect flag and GPIO disagree")
     if bool(flags & 0x02) != (led_gpio != 255):
         raise ValueError("LED flag and GPIO disagree")
-    if bool(flags & 0x02) != bool(identity["led_available"]):
+    if flags & 0x02 and not identity["led_available"]:
         raise ValueError("identity and configuration LED availability disagree")
     if flags & 0x04 and uart_index == 255:
         raise ValueError("enabled monitor UART is unavailable")

@@ -57,6 +57,8 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     await form.load();
     assert.equal(el("wifi-ssid").value, "saved");
     assert.equal(form.dirty(), false);
+    assert.equal(el("wireless-summary").textContent, "");
+    assert.equal(el("wireless-summary").hidden, true, "live connection status belongs in diagnostics");
     await form.load();
     assert.equal(loadCount, 1, "wireless status should load once per board connection");
     el("wifi-open").handlers.click();
@@ -73,6 +75,8 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     assert.deepEqual(form.request(), { wifi_enabled: true, ble_enabled: false, ssid: "nearby",
       confirm_reboot: true, use_tested_wifi: true });
     assert.equal(form.dirty(), true);
+    assert.equal(el("wireless-summary").textContent, "Wi-Fi “nearby” tested; save to apply.");
+    assert.equal(el("wireless-summary").hidden, false);
     assert.equal(el("wifi-dialog").open, false);
     form.finish(null, "rejected");
     assert.equal(el("wifi-password").value, "");
@@ -86,6 +90,8 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     assert.equal(el("ble-secret").type, "password");
     assert.equal(form.dirty(), false);
     el("wifi-open").handlers.click();
+    assert.equal(el("wireless-summary").textContent, "");
+    assert.equal(el("wireless-summary").hidden, true, "saving clears the staged-configuration notice");
     el("wifi-ssid").value = "second-network";
     el("wifi-password").value = "";
     await el("wifi-connect").handlers.click();
@@ -323,6 +329,10 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     assert.deepEqual(writes[0][1], [...expected]);
     for (const opcode of [2, 3, 6]) await assert.rejects(client.command(opcode), /requires USB/);
     assert.equal(writes.length, 2);
+    characteristics.get(20).writeValueWithResponse = async () => { throw new Error("GATT Error Unknown."); };
+    await assert.rejects(client.command(1, { args: [0] }), /rejected the BLE control key/);
+    assert.equal(client.state.connected, true, "a rejected key must not drop the link");
+    assert.equal(Boolean(client.state.outcome_uncertain), false);
     await client.disconnect();
     assert.equal(client.bleKey, null);
     assert.equal(client.accessMode, null);

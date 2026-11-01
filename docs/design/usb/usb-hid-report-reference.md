@@ -198,9 +198,9 @@ storage transport.
 | 5 | 1 | `monitor_uart_tx_gpio` | TX GPIO number; `255` if unassigned. |
 | 6 | 1 | `monitor_uart_rx_gpio` | RX GPIO number; `255` if unassigned. |
 | 7 | 6 | `storage_gpios` | SDIO/SPI GPIO numbers, selected-transport order below. |
-| 13 | 1 | `board_flags` | Bit 0 card detect configured; bit 1 LED configured; bit 2 monitor UART enabled; bit 3 Wi-Fi enabled for next boot; bit 4 BLE enabled for next boot; other bits zero. |
+| 13 | 1 | `board_flags` | Bit 0 card detect configured; bit 1 direct GPIO LED configured; bit 2 monitor UART enabled; bit 3 Wi-Fi enabled for next boot; bit 4 BLE enabled for next boot; other bits zero. |
 | 14 | 1 | `reset_cause` | Cause of the reset that began this boot. |
-| 15 | 1 | `led_gpio` | LED GPIO number; `255` if unavailable. |
+| 15 | 1 | `led_gpio` | Direct LED GPIO number; `255` if no direct GPIO LED, including CYW43-driven LEDs. |
 | 16 | 1 | `card_detect_gpio` | Card-detect GPIO number; `255` if not configured. |
 | **Total** | **17** | | **18 bytes including report ID.** |
 
@@ -222,8 +222,9 @@ Configuration validity rules: reserved `board_flags` bits must be zero. Bits 3-4
 switches; they default on and may be set only when Report `1` capability bit 7 is set.
 The card-detect flag is set exactly when
 `card_detect_gpio` is assigned; otherwise that field is `255`. The LED-configured flag is set exactly when
-`led_gpio` is assigned, and Report `1` bit 0 agrees with whether that configured LED is available for identification
-control. `monitor_uart_index` is `0` or `1` when available and `255` when unavailable; TX and RX are either both
+`led_gpio` is assigned. A configured GPIO LED requires Report `1` capability bit 0. A non-GPIO LED, such as the
+CYW43-driven Pico W/Pico 2 W LED, also advertises that capability but leaves the GPIO flag clear and `led_gpio` at `255`.
+`monitor_uart_index` is `0` or `1` when available and `255` when unavailable; TX and RX are either both
 assigned or both `255`. If the monitor-UART-enabled flag is set, the index and both GPIOs must be assigned; when
 clear, those pins may still describe a configured but disabled UART. Every assigned GPIO must be valid for the
 reported MCU and configured board. For SDIO-PIO all six storage GPIOs must be assigned; for SPI the first four must

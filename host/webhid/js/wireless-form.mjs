@@ -19,7 +19,7 @@ export function renderWirelessStatus(snapshot) {
       : "Starting");
 }
 
-/** Bind the staged Wi-Fi/Bluetooth dialogs to one atomic Board configuration save. */
+/** Bind the staged Wi-Fi/Bluetooth dialogs to one atomic boot configuration save. */
 export function bindWirelessForm({ load, scan, test, cancelTest, ready, supported, changed = () => {} }) {
   const el = id => document.querySelector(`#${id}`);
   const wifiDialog = el("wifi-dialog");
@@ -49,14 +49,9 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     for (const id of ["wifi-cancel", "wifi-ssid", "wifi-password"]) el(id).disabled = busy;
     for (const button of el("wifi-networks").children) button.disabled = busy;
     el("ble-copy").disabled ||= !el("ble-secret").value;
-    const ssid = wifiStage?.ssid ?? status?.ssid ?? "";
-    const pending = dirty();
-    el("wireless-summary").textContent = !available ? ""
-      : wifiStage?.use_tested_wifi ? `Wi-Fi “${ssid}” tested; save to apply.`
-        : status?.wifi_state === "connected" ? `Wi-Fi connected to “${ssid}”.`
-          : status?.ssid ? `Wi-Fi “${ssid}” is saved; radio ${status.wifi_enabled ? "enabled" : "disabled"}.`
-            : "Wi-Fi is not configured.";
-    el("wireless-summary").hidden = !available || !pending && !ssid;
+    el("wireless-summary").textContent = available && wifiStage?.use_tested_wifi
+      ? `Wi-Fi “${wifiStage.ssid}” tested; save to apply.` : "";
+    el("wireless-summary").hidden = !el("wireless-summary").textContent;
   };
   const dirty = () => Boolean(wifiStage || keyDirty);
   const clearBleKey = () => {
@@ -166,7 +161,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       wifiStage = { ssid, use_tested_wifi: true };
       wifiEdited = false;
       clearWifiInputs();
-      setStatus("wifi-status", `Connected to “${ssid}” (${result.ipv4 || "IP assigned"}). Click Save and Reboot.`);
+      setStatus("wifi-status", `Connected to “${ssid}” (${result.ipv4 || "IP assigned"}). Click Save&Reboot.`);
       wifiDialog.close();
       changed();
     } catch (error) {
@@ -204,7 +199,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   el("ble-copy").addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(el("ble-secret").value);
-      setStatus("ble-status", "Key copied. Save and Reboot to apply it.");
+      setStatus("ble-status", "Key copied. Save&Reboot to apply it.");
     } catch (error) { setStatus("ble-status", `Could not copy key: ${error.message}`); }
   });
   el("ble-cancel").addEventListener("click", () => bleDialog.close());

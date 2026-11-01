@@ -64,7 +64,7 @@ board's GPIO configuration. See the exact
 offsets and validation rules in the [HID Report Reference](usb/usb-hid-report-reference.md).
 
 The Python, .NET, and WebHID dashboards map these values to select options and verify the saved values returned in
-the Feature `20` completion result. **Save and Reboot** sends only opcode `6`; firmware queues its existing deferred
+the Feature `20` completion result. **Save&Reboot** sends only opcode `6`; firmware queues its existing deferred
 reboot after a successful save. Failed or rejected saves do not reboot. Opcode `2` remains the standalone reboot
 command. Reconnection refreshes Feature `2`. The Python/.NET
 `GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
@@ -81,7 +81,7 @@ omitting it keeps the saved switches.
 ### Forced Save and Reboot
 
 Local profile editing is permitted while the computer owns the USB drive. Normal saving and standalone reboot
-remain blocked then. Supporting firmware advertises forced-save capability bit 6; **Save and Reboot** becomes
+remain blocked then. Supporting firmware advertises forced-save capability bit 6; **Save&Reboot** becomes
 available after an edit, and its confirmation dialog additionally warns that rebooting disconnects host storage,
 may lose cached host writes, and may corrupt the filesystem. Safely eject through the host OS first whenever possible.
 Cancel or Escape sends no command. Confirmation rechecks ownership, capability, and idle storage, and requires

@@ -171,7 +171,7 @@ internal static partial class HidProtocol
             "enabled monitor UART requires assigned pins");
         Require(((flags & 0x01) != 0) == (detectGpio != byte.MaxValue)
             && ((flags & 0x02) != 0) == (ledGpio != byte.MaxValue)
-            && (((identity.Capabilities & CapabilityLed) != 0) == ((flags & 0x02) != 0)),
+            && ((flags & 0x02) == 0 || (identity.Capabilities & CapabilityLed) != 0),
             "board flags and GPIO assignments disagree");
         var gpioLimit = identity.McuId == 1 ? 30 : identity.McuId == 2 ? 48 : 256;
         foreach (var pin in gpios.Concat([tx, rx, ledGpio, detectGpio]))

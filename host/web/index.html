@@ -56,10 +56,10 @@
     <section class="runtime" aria-labelledby="settings-title">
       <div class="section-heading">
         <div>
-          <h2 id="settings-title">Board configuration</h2>
+          <h2 id="settings-title">Boot configuration</h2>
         </div>
         <div class="settings-actions">
-          <button class="button" id="settings-save" type="button" disabled>Save and Reboot</button>
+          <button class="button" id="settings-save" type="button" disabled>Save&amp;Reboot</button>
           <button class="button button-secondary" id="reboot-control" type="button" disabled>Reboot Board</button>
         </div>
       </div>
@@ -194,7 +194,7 @@
       </p>
       <div class="dialog-actions">
         <button class="button button-cancel" id="cancel-configuration" type="button" autofocus>Cancel</button>
-        <button class="button button-danger" id="confirm-configuration" type="button">Save and Reboot</button>
+        <button class="button button-danger" id="confirm-configuration" type="button">Save&amp;Reboot</button>
       </div>
     </dialog>
 
@@ -218,7 +218,7 @@
       <p class="configuration-warning" id="share-warning">
         Pico will unmount its filesystem and give your computer exclusive access to the SD card.
         Updated firmware keeps HID and the serial console connected. Self-test is unavailable while shared;
-        Save and Reboot requires a data-loss confirmation on supporting firmware.
+        Save&amp;Reboot requires a data-loss confirmation on supporting firmware.
         Safely eject the drive on your computer before returning storage to Pico.
       </p>
       <div class="dialog-actions">
@@ -264,7 +264,7 @@
   </dialog>
   <dialog class="confirmation-dialog wireless-dialog" id="ble-dialog" aria-labelledby="ble-dialog-title">
     <h2 id="ble-dialog-title">Bluetooth control key</h2>
-    <p>Generate a new key and save it with Board configuration. The key authenticates control commands; it does not
+    <p>Generate a new key and save it with Boot configuration. The key authenticates control commands; it does not
       encrypt the Bluetooth connection. The board cannot show a saved key again.</p>
     <label for="ble-secret">New control key
       <input id="ble-secret" type="password" readonly autocomplete="off"></label>

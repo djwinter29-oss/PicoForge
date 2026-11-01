@@ -20,6 +20,11 @@
 
 /** Generated handles are owned by the pinned SDK GATT compiler. */
 #define BLE_HANDLE(id) ATT_CHARACTERISTIC_50fc##id##_7c91_4d70_8b32_6e856443f501_01_VALUE_HANDLE
+/**
+ * Application ATT error for a missing, rejected or rate-limited control proof. Standard Insufficient
+ * Authentication (0x05) makes centrals start OS pairing, which PicoForge does not use, and they then disconnect.
+ */
+#define BLE_ERROR_CONTROL_REJECTED 0x80
 
 static uint8_t ble_key[32]; /**< Boot-applied private control key. */
 static bool control_key_available; /**< False when BLE is enabled for public diagnostics only. */
@@ -166,14 +171,14 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
     if (handle == BLE_HANDLE(0021)) {
         if (size != 16u) return ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH;
         if (!control_key_available || !challenge_valid || time_us_64() < auth_retry_us)
-            return ATT_ERROR_INSUFFICIENT_AUTHENTICATION;
+            return BLE_ERROR_CONTROL_REJECTED;
         memcpy(proof, buffer, sizeof(proof));
         proof_valid = true;
         return 0;
     }
     if (handle != BLE_HANDLE(0014)) return ATT_ERROR_WRITE_NOT_PERMITTED;
     if (size != sizeof(pf_hid_control_request_t)) return ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH;
-    if (!authenticate(buffer)) return ATT_ERROR_INSUFFICIENT_AUTHENTICATION;
+    if (!authenticate(buffer)) return BLE_ERROR_CONTROL_REJECTED;
     pf_hid_control_request_t request;
     memcpy(&request, buffer, sizeof(request));
     return pf_hid_ble_control(&request) ? 0 : ATT_ERROR_REQUEST_NOT_SUPPORTED;
