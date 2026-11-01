@@ -1,8 +1,8 @@
 /**
  * @file
- * @brief Private helpers shared by application CLI command groups.
+ * @brief FatFs result reporting shared by storage and filesystem CLI groups.
  */
-#include "cli_internal.h"
+#include "cli_fatfs_result.h"
 
 #include <stdio.h>
 

@@ -18,7 +18,8 @@
     "\twrite <path> <text>\r\n" \
     "\tappend <path> <text>\r\n" \
     "\tmv <source> <destination>\r\n" \
-    "\trm <path> --confirm"
+    "\trm <path> --confirm\r\n" \
+    "\tCommands are queued; results follow when the worker completes"
 
 /**
  * @brief Register the `fs` group; commands are submitted to the storage worker.

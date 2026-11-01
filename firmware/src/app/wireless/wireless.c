@@ -82,20 +82,22 @@ void pf_wireless_status(uint8_t *report)
     pf_boot_config_wifi_password(saved_password);
     pf_boot_config_ble_key(saved_key);
     memset(report, 0, PF_WIRELESS_STATUS_SIZE);
-    report[0] = 1u;
-    report[1] = pf_boot_config_radios() & (PF_WIRELESS_WIFI | PF_WIRELESS_BLE);
+    report[PF_WIRELESS_STATUS_VERSION_OFFSET] = 1u;
+    report[PF_WIRELESS_STATUS_RADIOS_OFFSET] = pf_boot_config_radios() & (PF_WIRELESS_WIFI | PF_WIRELESS_BLE);
     uint8_t key_bits = 0u;
     for (size_t i = 0u; i < sizeof(saved_key); ++i) key_bits |= saved_key[i];
-    report[2] = save_status;
-    report[3] = save_transaction;
-    report[4] = !started && wifi_enabled ? 3u : pf_wifi_state();
-    if (started && report[4] == 2u) pf_wifi_ip_address(report + 5u);
-    memcpy(report + 9u, saved_ssid, sizeof(saved_ssid));
-    report[42] = saved_password[0] != '\0';
-    report[43] = key_bits != 0u;
-    report[44] = error_code;
-    report[45] = started && ble_enabled ? pf_bluetooth_state() : 0u;
-    report[46] = tcp_cli_started;
+    report[PF_WIRELESS_STATUS_SAVE_STATUS_OFFSET] = save_status;
+    report[PF_WIRELESS_STATUS_SAVE_TRANSACTION_OFFSET] = save_transaction;
+    report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] = !started && wifi_enabled ? 3u : pf_wifi_state();
+    if (started && report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] == 2u) {
+        pf_wifi_ip_address(report + PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET);
+    }
+    memcpy(report + PF_WIRELESS_STATUS_SSID_OFFSET, saved_ssid, sizeof(saved_ssid));
+    report[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] = saved_password[0] != '\0';
+    report[PF_WIRELESS_STATUS_BLE_KEY_CONFIGURED_OFFSET] = key_bits != 0u;
+    report[PF_WIRELESS_STATUS_ERROR_OFFSET] = error_code;
+    report[PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET] = started && ble_enabled ? pf_bluetooth_state() : 0u;
+    report[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] = tcp_cli_started;
     memset(saved_ssid, 0, sizeof(saved_ssid));
     memset(saved_password, 0, sizeof(saved_password));
     memset(saved_key, 0, sizeof(saved_key));

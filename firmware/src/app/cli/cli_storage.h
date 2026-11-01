@@ -16,7 +16,8 @@
     "\tmount (maintenance)\r\n" \
     "\tunmount (maintenance)\r\n" \
     "\tbenchmark <MiB: 1..1024 | cancel>\r\n" \
-    "\trecover --confirm (fault recovery, not clean eject)"
+    "\trecover --confirm (fault recovery, not clean eject)\r\n" \
+    "\tQueued worker results follow; USB: get usb, benchmark: get benchmark"
 
 /** Largest `storage` argument string handled synchronously. */
 #define PF_CLI_STORAGE_ARGS_SIZE 128u

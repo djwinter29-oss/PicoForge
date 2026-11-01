@@ -8,7 +8,6 @@
 #include "app/cli/cli.h"
 #include "app/storage/storage_worker.h"
 #include "app/usb/usb_msc.h"
-#include "ff.h"
 
 /**
  * @brief Dispatch the configuration binding while preserving raw assignment whitespace.
@@ -27,13 +26,5 @@ static inline bool pf_cli_restart_allowed(void)
     }
     return true;
 }
-
-/**
- * @brief Reply with a named FatFs result and numeric code.
- * @param result FatFs result.
- * @param reply Output callback; must not be NULL.
- * @param context Borrowed callback context.
- */
-void pf_cli_report_result(FRESULT result, pf_storage_worker_reply_fn_t reply, void *context);
 
 #endif

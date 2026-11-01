@@ -5,6 +5,7 @@ TEST_SOURCE_FILE("embedded_cli_adapter.c")
 #include "app/cli/cli_config.h"
 #include "app/cli/cli_fs.h"
 #include "app/cli/cli_storage.h"
+#include "app/cli/cli_fatfs_result.h"
 #include "app/cli/cli_internal.h"
 #include "embedded_cli.h"
 #include "Mockboot_config.h"

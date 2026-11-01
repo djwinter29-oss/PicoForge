@@ -5,6 +5,7 @@
 #include "cli_storage.h"
 #include "cli.h"
 #include "cli_fs.h"
+#include "cli_fatfs_result.h"
 #include "cli_internal.h"
 #include "app/usb/usb_msc.h"
 #include "platform/storage/fatfs_volume.h"

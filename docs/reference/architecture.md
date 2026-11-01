@@ -216,7 +216,7 @@ Layers above platform storage treat storage as a filesystem that can be exported
 the CLI `storage get status` and the HID board/storage reports are built from that snapshot.
 CLI command groups are split under `app/cli`: board/radio in `cli_board.c/.h`, boot settings in `cli_config.c/.h`,
 storage ownership and worker routing in `cli_storage.c/.h`, filesystem commands in `cli_fs.c/.h`, and private
-shared helpers such as FatFs result reporting in `cli_internal.c/.h`. The USB task
+shared FatFs result reporting in `cli_fatfs_result.c/.h`. The USB task
 registers these groups and connects `pf_cli_storage_execute` to `pf_storage_worker_init()`; the worker runs commands
 without depending on the CLI. Application storage stays in `app/storage`: `file_benchmark.c/.h` verifies and times a
 dedicated file, and `storage_worker.c/.h` is the sole FatFs executor that serializes requests and runs the storage

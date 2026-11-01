@@ -5,6 +5,7 @@ TEST_SOURCE_FILE("embedded_cli_adapter.c")
 #include "app/cli/cli_config.h"
 #include "app/cli/cli_fs.h"
 #include "app/cli/cli_storage.h"
+#include "app/cli/cli_fatfs_result.h"
 #include "app/cli/cli_internal.h"
 #include "embedded_cli.h"
 #include "Mockboot_config.h"
@@ -26,6 +27,8 @@ void test_help_with_every_production_binding_fits_output_reserve(void)
     TEST_ASSERT_NULL(strstr(captured, " * benchmark"));
     TEST_ASSERT_NOT_NULL(strstr(captured, "\tformat --confirm (destroys files)\r\n\tmount (maintenance)"));
     TEST_ASSERT_NOT_NULL(strstr(captured, " * fs\r\n\tls [path]"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "Commands are queued; results follow when the worker completes"));
+    TEST_ASSERT_NOT_NULL(strstr(captured, "USB: get usb, benchmark: get benchmark"));
     TEST_ASSERT_LESS_OR_EQUAL_UINT(1024u, largest_response);
     send("help config\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "key=value"));

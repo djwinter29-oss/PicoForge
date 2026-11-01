@@ -5,6 +5,7 @@ TEST_SOURCE_FILE("embedded_cli_adapter.c")
 #include "app/cli/cli_config.h"
 #include "app/cli/cli_fs.h"
 #include "app/cli/cli_storage.h"
+#include "app/cli/cli_fatfs_result.h"
 #include "app/cli/cli_internal.h"
 #include "embedded_cli.h"
 #include "Mockboot_config.h"
@@ -49,14 +50,16 @@ void test_board_invalid_requests_have_no_side_effects(void)
 
 void test_radio_status_uses_sanitized_state_and_never_prints_ssid_or_secrets(void)
 {
-    radio_report[4] = 2u;
-    radio_report[5] = 192u;
-    radio_report[6] = 168u;
-    radio_report[7] = 66u;
-    radio_report[8] = 87u;
-    memcpy(radio_report + 9u, "\x1b[2Jprivate-ssid", 16u);
-    radio_report[42] = radio_report[43] = radio_report[46] = 1u;
-    radio_report[45] = 2u;
+    radio_report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] = 2u;
+    radio_report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET] = 192u;
+    radio_report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 1u] = 168u;
+    radio_report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 2u] = 66u;
+    radio_report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 3u] = 87u;
+    memcpy(radio_report + PF_WIRELESS_STATUS_SSID_OFFSET, "\x1b[2Jprivate-ssid", 16u);
+    radio_report[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] = 1u;
+    radio_report[PF_WIRELESS_STATUS_BLE_KEY_CONFIGURED_OFFSET] = 1u;
+    radio_report[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] = 1u;
+    radio_report[PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET] = 2u;
     send("radio status\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "wifi=connected ip=192.168.66.87\r\nbluetooth=connected\r\n"));
     TEST_ASSERT_NULL(strstr(captured, "configured"));

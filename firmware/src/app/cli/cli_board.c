@@ -83,9 +83,14 @@ static void radio_command(EmbeddedCli *instance, char *args, void *context)
     char line[120];
     pf_wireless_status(report);
     snprintf(line, sizeof(line), "wifi=%s ip=%u.%u.%u.%u",
-             report[4] < 4u ? wifi_states[report[4]] : "unknown", report[5], report[6], report[7], report[8]);
+             report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] < 4u ?
+                 wifi_states[report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET]] : "unknown",
+             report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET], report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 1u],
+             report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 2u], report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 3u]);
     pf_cli_print(line);
-    snprintf(line, sizeof(line), "bluetooth=%s", report[45] < 3u ? ble_states[report[45]] : "unknown");
+    snprintf(line, sizeof(line), "bluetooth=%s",
+             report[PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET] < 3u ?
+                 ble_states[report[PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET]] : "unknown");
     pf_cli_print(line);
 #else
     pf_cli_print("ERR radios unavailable in this build");

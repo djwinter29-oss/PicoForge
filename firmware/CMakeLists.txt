@@ -296,7 +296,7 @@ add_executable(pico_forge
     src/app/cli/cli_config.c
     src/app/cli/cli_storage.c
     src/app/cli/cli_fs.c
-    src/app/cli/cli_internal.c
+    src/app/cli/cli_fatfs_result.c
 )
 
 target_include_directories(pico_forge PRIVATE
