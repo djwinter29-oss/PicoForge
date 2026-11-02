@@ -57,6 +57,10 @@ Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](
 Use USB to provision radio settings and a random BLE key, then open **Bluetooth** for public diagnostics and
 key-authorized LED/benchmark controls. See the linked wireless guide for scanning and entering the key.
 Privileged management remains USB-only.
+Feature 30 status versions 1-4 and Feature 35 result versions 1-2 are accepted. Newer status versions add the saved
+TCP CLI switch and optional BLE-key authentication; result version 2 adds scan security labels and staged-test
+lifetime. Successful temporary tests must be saved within ten minutes. Settings unavailable on older firmware remain
+unchanged.
 
 All operations serialize Feature 20 SET/GET transactions, matching both transaction ID and opcode.
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for

@@ -13,6 +13,7 @@ def test_board_and_wireless_configuration_saves_once_or_discards(tmp_path):
         "FreeRTOS.h": "typedef unsigned UBaseType_t;\n",
         "task.h": "void vTaskCoreAffinitySet(void *, UBaseType_t);\n",
         "pico/cyw43_arch.h": "#include <stdbool.h>\n#define CYW43_WL_GPIO_LED_PIN 0\n"
+                             "#include <stdint.h>\nuint64_t time_us_64(void);\n"
                              "int cyw43_arch_init(void);\nvoid cyw43_arch_poll(void);\nunsigned get_core_num(void);\n"
                              "void cyw43_arch_gpio_put(unsigned wl_gpio, bool value);\n",
         "pico/unique_id.h": "#define PICO_UNIQUE_BOARD_ID_SIZE_BYTES 8\n",
@@ -45,7 +46,14 @@ static unsigned chip_inits;
 static int chip_init_result;
 static bool wifi_prepared;
 static unsigned wifi_starts, tcp_cli_starts;
+static uint64_t now;
+static uint64_t tcp_retry_us;
+static bool tcp_cli_enabled = true, tcp_listener, tcp_start_result = true;
+static bool tcp_auth_required, shared_key_available, restart_required;
 static int led_level = -1;
+uint64_t time_us_64(void) { return now; }
+bool pf_boot_config_tcp_cli_enabled(void) { return tcp_cli_enabled; }
+bool pf_boot_config_set_tcp_cli_enabled(bool enabled) { tcp_cli_enabled = enabled; return true; }
 bool pf_boot_config_set_sysclk(pf_sysclk_profile_t p) { if ((unsigned)p > 3u) return false; clock = (int)p; return true; }
 bool pf_boot_config_set_storage_speed(pf_storage_speed_t s) { if ((unsigned)s > 1u) return false; speed = (int)s; return true; }
 bool pf_boot_config_set_radios(uint8_t r) { if (r > 3u) return false; radios = r; return true; }
@@ -56,6 +64,12 @@ bool pf_boot_config_set_wifi_password(const char *p) {
     return true;
 }
 bool pf_boot_config_set_ble_key(const uint8_t key[32]) { (void)key; return true; }
+void pf_boot_config_ble_key(uint8_t key[32]) { memset(key, 0, 32u); }
+bool pf_boot_config_tcp_cli_auth_required(void) { return tcp_auth_required; }
+bool pf_boot_config_set_tcp_cli_auth_required(bool required) { tcp_auth_required = required; return true; }
+bool pf_boot_config_wireless_restart_required(void) { return restart_required; }
+bool pf_boot_config_set_wifi_auth_state(pf_wifi_auth_state_t state) { (void)state; return true; }
+pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void) { return PF_WIFI_AUTH_TRY_WPA2; }
 bool pf_boot_config_save(void) { ++saves; return true; }
 void pf_boot_config_discard(void) {
     ++discards; clock = speed = radios = -1; ssid[0] = 0; saved_password[0] = 0;
@@ -70,27 +84,44 @@ bool pf_usb_msc_transition_pending(void) { return false; }
 bool pf_storage_worker_busy(void) { return storage_busy; }
 bool pf_wifi_prepare(void) { return wifi_prepared; }
 void pf_wifi_start(void) { ++wifi_starts; }
-bool pf_tcp_cli_start(void) { ++tcp_cli_starts; return true; }
 static bool saved_link_up = true, tcp_serving_set;
-bool pf_tcp_cli_serving(void) { return tcp_cli_starts != 0u && tcp_serving_set; }
-void pf_tcp_cli_set_serving(bool enabled) { tcp_serving_set = enabled; }
+bool pf_tcp_cli_serving(void) { return tcp_listener && tcp_serving_set; }
+bool pf_tcp_cli_set_auth_required(bool required) { return !required || shared_key_available; }
+bool pf_tcp_cli_auth_required(void) { return tcp_auth_required; }
+void pf_tcp_cli_poll(bool serving) {
+    tcp_serving_set = serving;
+    if (serving && !tcp_listener && now >= tcp_retry_us) {
+        ++tcp_cli_starts;
+        tcp_listener = tcp_start_result;
+        tcp_retry_us = tcp_listener ? 0u : now + 5000000u;
+    }
+    if (!serving) { tcp_listener = false; tcp_retry_us = 0u; }
+}
+void pf_wireless_auth_set_key(const uint8_t key[32]) {
+    shared_key_available = false;
+    if (key) for (unsigned i = 0u; i < 32u; ++i) shared_key_available |= key[i] != 0u;
+}
+void pf_wifi_mdns_poll(bool saved_up, bool tcp_up) { (void)saved_up; (void)tcp_up; }
 bool pf_wifi_saved_link_up(void) { return saved_link_up; }
 static uint8_t wifi_error;
 static bool ble_prepared, ble_start_result;
 void pf_wifi_poll(void) {}
 uint8_t pf_wifi_error(void) { return wifi_error; }
-uint8_t pf_wifi_state(void) { return 0; }
-void pf_wifi_ip_address(uint8_t address[4]) { (void)address; }
+uint8_t pf_wifi_state(void) { return 2; }
+void pf_wifi_ip_address(uint8_t address[4]) { memset(address, 42, 4u); }
 static unsigned wifi_commands, wifi_rejects;
 bool pf_wifi_command(const uint8_t report[101]) { ++wifi_commands; return report[0] == 1u; }
 void pf_wifi_reject_command(uint8_t transaction) { assert(transaction != 0u); ++wifi_rejects; }
-void pf_wifi_result(uint8_t report[220]) { memset(report, 0, 220); }
+void pf_wifi_result(uint8_t report[PF_WIRELESS_RESULT_SIZE]) { memset(report, 0, PF_WIRELESS_RESULT_SIZE); }
 bool pf_wifi_tested_credentials(char out_ssid[33], char out_password[64]) {
     if (!staged_test) return false;
     strcpy(out_ssid, "network");
     strcpy(out_password, "tested-pass");
     return true;
 }
+pf_wifi_auth_state_t pf_wifi_tested_auth_state(void) { return PF_WIFI_AUTH_WPA2; }
+void pf_wifi_link_diagnostics(pf_wifi_auth_state_t *auth_state, uint16_t *reconnects, int8_t *rssi)
+{ *auth_state = PF_WIFI_AUTH_TRY_WPA2; *reconnects = 0u; *rssi = PF_WIFI_RSSI_UNAVAILABLE; }
 void pf_wifi_clear_tested_credentials(void) { staged_test = false; ++cleared_tests; }
 bool pf_bluetooth_prepare(void) { return ble_prepared; }
 bool pf_bluetooth_start(void) { return ble_start_result; }
@@ -114,9 +145,13 @@ int main(void)
     uint8_t report[PF_WIRELESS_REQUEST_SIZE], status[PF_WIRELESS_STATUS_SIZE];
     /* With both radios off, the chip still starts for the W-board LED, but no radio is enabled. */
     assert(!pf_wireless_led_put(true) && led_level == -1);
+    tcp_auth_required = true;
     chip_init_result = -1;
     pf_wireless_start();
     assert(chip_inits == 1 && !pf_wireless_led_put(true) && led_level == -1);
+    pf_wireless_status(status);
+    assert((status[47] & 1u) != 0u && status[46] == 0u);
+    tcp_auth_required = false;
     chip_init_result = 0;
     pf_wireless_start();
     assert(chip_inits == 2 && led_level == 0);
@@ -130,6 +165,7 @@ int main(void)
     assert(clock == PF_SYSCLK_250MHZ && speed == 1 && radios == PF_WIRELESS_WIFI && strcmp(ssid, "network") == 0);
     pf_wireless_status(status);
     assert(status[2] == PF_HID_COMMAND_COMPLETED && status[3] == 7);
+    assert(status[0] == 4u && status[52] == 0u);
     request(report, 175, 1);
     assert(!pf_wireless_configure(report) && saves == 1 && discards == 1 && ssid[0] == 0);
     request(report, 150, 2);
@@ -173,15 +209,28 @@ int main(void)
     pf_wireless_result_report(result);
     wifi_prepared = true;
     pf_wireless_start();
-    assert(chip_inits == 2 && wifi_starts == 1 && tcp_cli_starts == 1);
+    assert(chip_inits == 2 && wifi_starts == 1 && tcp_cli_starts == 0);
     /* The TCP CLI serves, and status reports it, only while the saved network is up. */
-    pf_wireless_poll();
     pf_wireless_status(status);
-    assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 1);
+    assert((status[47] & 1u) == 0u);
+    tcp_start_result = false;
+    pf_wireless_poll();
+    assert(tcp_cli_starts == 1 && !pf_tcp_cli_serving());
+    now = 4999999u;
+    pf_wireless_poll();
+    assert(tcp_cli_starts == 1);
+    now = 5000000u;
+    tcp_start_result = true;
+    pf_wireless_poll();
+    assert(tcp_cli_starts == 2);
+    pf_wireless_status(status);
+    assert(status[0] == 4u && status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 1);
+    assert(status[5] == 42 && status[47] == 0);
     saved_link_up = false;
     pf_wireless_poll();
     pf_wireless_status(status);
     assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0);
+    assert(status[4] == 2 && status[5] == 0 && status[6] == 0 && status[7] == 0 && status[8] == 0);
     saved_link_up = true;
     pf_wireless_poll();
 
@@ -200,6 +249,27 @@ int main(void)
     strcpy(saved_password, "configured");
     pf_wireless_status(status);
     assert(status[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] == 1 && strcmp((char *)status + 9, "network") == 0);
+
+    /* A save can disable, preserve, or enable the service independently of the radio switches. */
+    request(report, 150, 0);
+    report[3] |= 8u;
+    assert(pf_wireless_configure(report) && !tcp_cli_enabled);
+    pf_wireless_start();
+    pf_wireless_poll();
+    pf_wireless_status(status);
+    assert(status[47] == 1u && status[46] == 0u);
+    request(report, 150, 0);
+    report[3] |= 16u;
+    assert(pf_wireless_configure(report) && !tcp_cli_enabled);
+    request(report, 150, 0);
+    report[3] |= 24u;
+    const unsigned before_invalid = saves;
+    assert(!pf_wireless_configure(report) && saves == before_invalid);
+    request(report, 150, 0);
+    report[3] |= 96u;
+    assert(!pf_wireless_configure(report) && saves == before_invalid);
+    request(report, 150, 0);
+    assert(pf_wireless_configure(report) && tcp_cli_enabled);
     return 0;
 }
 """)

@@ -65,7 +65,7 @@ HARNESS = r"""
 #include <string.h>
 #include "btstack.h"
 #include "app/wireless/bluetooth/bluetooth.h"
-#include "app/wireless/bluetooth/bluetooth_auth.h"
+#include "app/wireless/wireless_auth.h"
 #include "app/wireless/wireless.h"
 #include "app/usb/usb_hid.h"
 #include "platform/boot_config.h"
@@ -81,7 +81,7 @@ static const uint8_t *advertising, *scan_response;
 static uint8_t advertising_length, scan_response_length;
 static uint8_t key[32];
 static uint64_t now, random_value = 0x0102030405060708ull;
-static unsigned controls, advertising_enables;
+static unsigned controls, advertising_enables, telemetry_builds, storage_builds, benchmark_builds;
 
 uint16_t att_read_callback_handle_blob(const uint8_t *blob, uint16_t blob_size, uint16_t offset, uint8_t *buffer,
                                        uint16_t buffer_size)
@@ -116,18 +116,32 @@ bool pf_boot_config_ble_key_configured(void)
 { uint8_t bits = 0u; for (unsigned i = 0u; i < 32u; ++i) bits |= key[i]; return bits != 0u; }
 uint8_t pf_boot_config_radios(void) { return PF_WIRELESS_BLE; }
 /* Fake verifier: the proof echoes the nonce; the real HMAC is covered by test_wireless_auth.py. */
-bool pf_wireless_auth_verify(const uint8_t k[32], const uint8_t nonce[16], const uint8_t uid[8],
-                             const uint8_t request[9], const uint8_t proof[16])
-{ (void)k; (void)uid; (void)request; return memcmp(nonce, proof, 16u) == 0; }
+void pf_wireless_auth_set_key(const uint8_t k[32]) { (void)k; }
+bool pf_wireless_auth_available(void) { return key[0] != 0u; }
+bool pf_wireless_auth_new_nonce(uint8_t nonce[16])
+{
+    for (unsigned i = 0u; i < 16u; i += sizeof(uint64_t)) {
+        uint64_t random = get_rand_64();
+        memcpy(nonce + i, &random, sizeof(random));
+    }
+    return true;
+}
+void pf_wireless_auth_device_id(uint8_t uid[8]) { memset(uid, 0x5a, 8u); }
+bool pf_wireless_auth_verify(const uint8_t nonce[16], const uint8_t domain[9], const uint8_t request[9],
+                             const uint8_t proof[16])
+{
+    (void)request;
+    return memcmp(domain, "PFBLECTL1", 9u) == 0 && memcmp(nonce, proof, 16u) == 0;
+}
 void pf_wireless_status(uint8_t *report) { memset(report, 0xa5, PF_WIRELESS_STATUS_SIZE); }
 void pf_hid_build_identity_report(pf_hid_identity_report_t *report) { memset(report, 1, sizeof(*report)); }
 void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report) { memset(report, 2, sizeof(*report)); }
 void pf_hid_build_telemetry_report(pf_hid_telemetry_report_t *report, uint8_t sequence)
-{ memset(report, sequence, sizeof(*report)); }
+{ ++telemetry_builds; memset(report, sequence, sizeof(*report)); }
 void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequence)
-{ memset(report, sequence, sizeof(*report)); }
+{ ++storage_builds; memset(report, sequence, sizeof(*report)); }
 void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t sequence)
-{ memset(report, sequence, sizeof(*report)); }
+{ ++benchmark_builds; memset(report, sequence, sizeof(*report)); }
 bool pf_hid_self_test_supported(void) { return true; }
 bool pf_hid_ble_control(const pf_hid_control_request_t *request) { (void)request; ++controls; return true; }
 void pf_hid_ble_result(pf_hid_control_result_t *report) { memset(report, 0, sizeof(*report)); }
@@ -156,6 +170,23 @@ int main(void)
 {
     uint8_t request[sizeof(pf_hid_control_request_t)] = {1u, 7u, 4u};
     uint8_t nonce[16], other[16], buffer[64];
+
+    /* BTstack length probes, including discovery, must not build reports or advance sequence numbers. */
+    assert(pf_bluetooth_prepare() && pf_bluetooth_start());
+    for (unsigned i = 0; i < 2u; ++i) {
+        assert(read_cb(1u, HANDLE(0003), 0u, NULL, 0u) == sizeof(pf_hid_telemetry_report_t));
+        assert(read_cb(1u, HANDLE(000a), 0u, NULL, 0u) == sizeof(pf_hid_storage_report_t));
+        assert(read_cb(1u, HANDLE(000b), 0u, NULL, 0u) == sizeof(pf_hid_self_test_report_t));
+    }
+    assert(telemetry_builds == 0u && storage_builds == 0u && benchmark_builds == 0u);
+    assert(read_cb(1u, HANDLE(0003), 0u, buffer, 8u) == 8u && buffer[0] == 0u);
+    assert(read_cb(1u, HANDLE(0003), 8u, NULL, 0u) == sizeof(pf_hid_telemetry_report_t));
+    /* A length query for another handle must not invalidate an in-progress long read. */
+    assert(read_cb(1u, HANDLE(000a), 0u, NULL, 0u) == sizeof(pf_hid_storage_report_t));
+    assert(read_cb(1u, HANDLE(0003), 8u, buffer, 8u) == 8u && buffer[0] == 0u);
+    assert(read_cb(1u, HANDLE(000a), 0u, buffer, 8u) == 8u && buffer[0] == 1u);
+    assert(read_cb(1u, HANDLE(000b), 0u, buffer, 8u) == 8u && buffer[0] == 2u);
+    assert(telemetry_builds == 1u && storage_builds == 1u && benchmark_builds == 1u);
 
     /* Without a key, BLE is diagnostics-only: proofs and controls are refused with the non-pairing error. */
     assert(pf_bluetooth_prepare());
@@ -250,4 +281,3 @@ def test_ble_authorization_redaction_and_disconnect_reset(tmp_path):
     ], check=False, capture_output=True, text=True)
     assert compiled.returncode == 0, compiled.stderr
     subprocess.run([str(binary)], check=True)
-

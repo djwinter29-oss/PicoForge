@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import hmac
 import socket
 import time
 import unittest
@@ -86,4 +88,24 @@ class ConsoleTests(unittest.TestCase):
         for ip in ("127.0.0.1", "224.0.0.1", "0.0.0.0", "255.255.255.255", "bad", "::1"):
             self.monitor.wireless = {**self.monitor.wireless, "ipv4": ip}
             self.assertEqual(self.client.post("/api/console", json={}).status_code, 400)
+        self.connect.assert_not_called()
+
+    def test_tcp_authentication_uses_the_ble_key_challenge_before_opening_a_session(self):
+        key = bytes(range(1, 33))
+        self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
+        nonce = bytes(range(16))
+        uid = bytes(range(8))
+        self.peer.sendall(f"PicoForge AUTH {nonce.hex()} {uid.hex()}\r\n".encode("ascii"))
+        response = self.client.post("/api/console?board=board-a", json={"ble_key": key.hex()})
+        self.assertEqual(response.status_code, 200)
+        proof = hmac.new(key, nonce + uid + b"PFTCPCLI1" + b"TCPCLI001", hashlib.sha256).digest()[:16]
+        self.assertEqual(self.peer.recv(64), b"AUTH " + proof.hex().encode() + b"\r\n")
+        endpoint = "/api/console?session=" + response.json["session"]
+        self.assertEqual(self.client.delete(endpoint).status_code, 200)
+
+    def test_tcp_authentication_rejects_missing_or_invalid_keys_before_connecting(self):
+        self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
+        self.assertEqual(self.client.post("/api/console", json={}).status_code, 400)
+        self.assertEqual(self.client.post("/api/console", json={"ble_key": "00" * 32}).status_code, 400)
+        self.assertEqual(self.client.post("/api/console", json={"ble_key": "invalid"}).status_code, 400)
         self.connect.assert_not_called()

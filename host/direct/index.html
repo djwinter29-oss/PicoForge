@@ -91,6 +91,12 @@
           </select>
         </label>
       </div>
+      <label hidden><input id="settings-tcp-cli" type="checkbox" checked disabled> TCP CLI enabled
+        <small>Allows LAN access to the board CLI.</small>
+      </label>
+      <label hidden><input id="settings-tcp-auth" type="checkbox" disabled> Require BLE key for TCP CLI
+        <small>Authenticates clients; TCP traffic is still unencrypted.</small>
+      </label>
       <p id="wireless-summary" role="status" aria-live="polite"></p>
       <details class="pin-map-disclosure">
         <summary>Pin configuration</summary>

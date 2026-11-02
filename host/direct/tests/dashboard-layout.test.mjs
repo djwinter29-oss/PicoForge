@@ -240,8 +240,8 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
       reads++;
       if (failure) throw new Error("device read failed");
       if (delayed) return delayed;
-      const report = new Uint8Array(48);
-      report.set([1, 1, 0, 0, wifiState, 192, 168, 1, 9]);
+      const report = new Uint8Array(52);
+      report.set([3, 1, 0, 0, wifiState, 192, 168, 1, 9]);
       report.set(new TextEncoder().encode("HomeDev"), 9);
       return report;
     };
@@ -270,7 +270,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     now += 2000;
     client.update({});
     client.clearConnection();
-    finishRead(new Uint8Array(48));
+    finishRead(new Uint8Array(52));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(client.state.wireless, null, "a late report must not repopulate a disconnected board");
     assert.equal(el("#wifi-state").textContent, "--");

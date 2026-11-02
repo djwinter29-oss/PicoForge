@@ -1,4 +1,4 @@
-"""Compile the production BLE proof verifier against the pinned SDK crypto and compare independent HMAC vectors."""
+"""Compile the production wireless proof verifier and compare independent HMAC vectors."""
 import ctypes
 import hashlib
 import hmac
@@ -11,25 +11,50 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.contracts
 
 
-def test_ble_proof_is_bound_to_nonce_board_and_every_command_byte(tmp_path):
+def test_wireless_proof_is_bound_to_nonce_board_protocol_and_command(tmp_path):
     crypto = ROOT / "firmware/third_party/pico-sdk/lib/mbedtls"
+    sdk = ROOT / "firmware/third_party/pico-sdk"
     output = tmp_path / "wireless_auth.so"
+    pico = tmp_path / "pico"
+    pico.mkdir()
+    (pico / "rand.h").write_text("#include <stdint.h>\nuint64_t get_rand_64(void);\n")
+    (pico / "unique_id.h").write_text(
+        "#include <stdint.h>\ntypedef struct { uint8_t id[8]; } pico_unique_board_id_t;\n"
+        "void pico_get_unique_board_id(pico_unique_board_id_t *);\n")
+    support = tmp_path / "platform.c"
+    support.write_text("""
+#include <stdint.h>
+#include "pico/unique_id.h"
+uint64_t get_rand_64(void) { return 0; }
+void pico_get_unique_board_id(pico_unique_board_id_t *uid) {
+    for (unsigned i = 0; i < 8; ++i) uid->id[i] = (uint8_t)i;
+}
+""")
     subprocess.run([
         "gcc", "-shared", "-fPIC", "-Werror", "-DMBEDTLS_CONFIG_FILE=\"pf_mbedtls_config.h\"",
+        "-I", str(tmp_path),
+        "-I", str(ROOT / "firmware/src"),
         "-I", str(ROOT / "firmware/src/integration/wireless"),
+        "-I", str(sdk / "src/rp2_common/pico_rand/include"),
+        "-I", str(sdk / "src/rp2_common/pico_unique_id/include"),
         "-I", str(crypto / "include"), "-I", str(crypto / "library"),
-        str(ROOT / "firmware/src/app/wireless/bluetooth/bluetooth_auth.c"),
+        str(ROOT / "firmware/src/app/wireless/wireless_auth.c"), str(support),
         *(str(crypto / "library" / name) for name in ["md.c", "sha256.c", "platform_util.c"]),
         "-o", str(output),
     ], check=True, capture_output=True, text=True)
-    verify = ctypes.CDLL(str(output)).pf_wireless_auth_verify
-    verify.argtypes = [ctypes.c_char_p] * 5
+    library = ctypes.CDLL(str(output))
+    set_key = library.pf_wireless_auth_set_key
+    set_key.argtypes = [ctypes.c_char_p]
+    verify = library.pf_wireless_auth_verify
+    verify.argtypes = [ctypes.c_char_p] * 4
     verify.restype = ctypes.c_bool
     key, nonce, uid = bytes(range(32)), bytes(range(16)), bytes(range(8))
     command = bytes([1, 7, 4, 0, 1, 32, 0, 0, 0])
-    proof = hmac.new(key, nonce + uid + command, hashlib.sha256).digest()[:16]
-    assert verify(key, nonce, uid, command, proof)
-    inputs = [key, nonce, uid, command, proof]
+    domain = b"PFBLECTL1"
+    proof = hmac.new(key, nonce + uid + domain + command, hashlib.sha256).digest()[:16]
+    set_key(key)
+    assert verify(nonce, domain, command, proof)
+    inputs = [nonce, domain, command, proof]
     for field, data in enumerate(inputs):
         for index in range(len(data)):
             changed = bytearray(data)
@@ -37,6 +62,8 @@ def test_ble_proof_is_bound_to_nonce_board_and_every_command_byte(tmp_path):
             altered = inputs.copy()
             altered[field] = bytes(changed)
             assert not verify(*altered)
+    set_key(bytes(32))
+    assert not verify(nonce, domain, command, proof)
 
 
 def test_ble_rejected_proof_does_not_request_os_pairing():

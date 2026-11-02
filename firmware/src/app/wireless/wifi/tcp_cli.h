@@ -15,21 +15,25 @@
 #define PF_TCP_CLI_PORT 2323u
 
 /**
- * @brief Start listening on PF_TCP_CLI_PORT on every IPv4 address; safe to call before the link is up.
- * @return False when the listener could not be allocated or bound; the CLI then stays USB-only.
+ * @brief Own listener availability, retry pacing, authentication deadlines and idle-session cleanup.
+ * @param serving True only while clients may join the saved Wi-Fi network.
  */
-bool pf_tcp_cli_start(void);
+void pf_tcp_cli_poll(bool serving);
 
 /**
- * @brief Allow or refuse TCP clients; refusing also closes the current client with a notice.
- * @param enabled True while the station is up on the saved network; false on a test network or without a link.
+ * @brief Configure challenge-response authentication using the shared wireless control key.
+ * @param required True to require a proof for each client.
+ * @return False when authentication is requested without a loaded key.
  */
-void pf_tcp_cli_set_serving(bool enabled);
+bool pf_tcp_cli_set_auth_required(bool required);
 
-/** @brief Report whether the listener is running and currently accepts clients. */
+/** @brief Return whether accepted TCP sessions require a control proof. @return True when enabled. */
+bool pf_tcp_cli_auth_required(void);
+
+/** @brief Report whether the listener is running. @return True while the listener accepts connections. */
 bool pf_tcp_cli_serving(void);
 
-/** @brief Report whether a client connection is currently open. */
+/** @brief Report whether a client connection is currently open. @return True while a client PCB is open. */
 bool pf_tcp_cli_connected(void);
 
 /**

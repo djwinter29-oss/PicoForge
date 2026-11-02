@@ -10,8 +10,7 @@
 #include "btstack.h"
 #include "btstack_tlv_none.h"
 #include "btstack_tlv_flash_bank.h"
-#include "app/wireless/bluetooth/bluetooth_auth.h"
-#include "pico/rand.h"
+#include "app/wireless/wireless_auth.h"
 #include "pico/unique_id.h"
 #include "platform/boot_config.h"
 #include "platform/logging.h"
@@ -25,17 +24,18 @@
  * Authentication (0x05) makes centrals start OS pairing, which PicoForge does not use, and they then disconnect.
  */
 #define BLE_ERROR_CONTROL_REJECTED 0x80
+#define BLE_AUTH_RETRY_DELAY_US 2000000u /**< Minimum interval between rejected authentication attempts. */
 /* BLE status blanks one range, so the IPv4 address and SSID must stay adjacent and end at the password flag. */
 _Static_assert(PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 4u == PF_WIRELESS_STATUS_SSID_OFFSET, "IP must precede SSID");
-_Static_assert(PF_WIRELESS_STATUS_SSID_OFFSET + 33u == PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET,
+_Static_assert(PF_WIRELESS_STATUS_SSID_OFFSET + PF_WIFI_SSID_SIZE == PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET,
                "SSID must precede the password flag");
 
-static uint8_t ble_key[32]; /**< Boot-applied private control key. */
 static bool control_key_available; /**< False when BLE is enabled for public diagnostics only. */
 static bool challenge_valid; /**< Nonce issued once and usable for one authentication attempt. */
 static bool proof_valid; /**< A 16-byte proof is ready for exactly one subsequent control request. */
 static uint8_t proof[16]; /**< Submitted per-command MAC, cleared on use or disconnect. */
 static uint8_t nonce[16]; /**< Fresh random challenge, invalidated by use or disconnect. */
+static const uint8_t ble_auth_domain[9] = {'P', 'F', 'B', 'L', 'E', 'C', 'T', 'L', '1'};
 static uint64_t auth_retry_us; /**< Failed authentication rate limit; never blocks the owner task. */
 /** Properly aligned typed report storage, frozen for the current ATT long read. */
 static union {
@@ -109,6 +109,19 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
         return att_read_callback_handle_blob(scan_response + 2u, sizeof(scan_response) - 2u, offset, buffer,
                                              buffer_size);
     }
+    if (buffer == NULL) {
+        switch (handle) {
+        case BLE_HANDLE(0001): return sizeof(pf_hid_identity_report_t);
+        case BLE_HANDLE(0002): return sizeof(pf_hid_configuration_report_t);
+        case BLE_HANDLE(0003): return sizeof(pf_hid_telemetry_report_t);
+        case BLE_HANDLE(000a): return sizeof(pf_hid_storage_report_t);
+        case BLE_HANDLE(000b): return pf_hid_self_test_supported() ? sizeof(pf_hid_self_test_report_t) : 0u;
+        case BLE_HANDLE(0014): return sizeof(pf_hid_control_result_t);
+        case BLE_HANDLE(001e): return PF_WIRELESS_STATUS_SIZE;
+        case BLE_HANDLE(0020): return sizeof(nonce);
+        default: return 0u;
+        }
+    }
     if (offset == 0u) {
         read_handle = handle;
         read_length = 0u;
@@ -137,14 +150,9 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
                    PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET - PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET);
             read_length = PF_WIRELESS_STATUS_SIZE;
         } else if (handle == BLE_HANDLE(0020)) {
-            if (buffer != NULL) {
-                for (size_t i = 0u; i < sizeof(nonce); i += sizeof(uint64_t)) {
-                    uint64_t random = get_rand_64();
-                    memcpy(nonce + i, &random, sizeof(random));
-                }
-                challenge_valid = true;
-                proof_valid = false;
-            }
+            if (!pf_wireless_auth_new_nonce(nonce)) return 0u;
+            challenge_valid = true;
+            proof_valid = false;
             memcpy(read_buffer.bytes, nonce, sizeof(nonce));
             read_length = sizeof(nonce);
         }
@@ -159,13 +167,11 @@ static bool authenticate(const uint8_t *request)
     if (!control_key_available || !challenge_valid || !proof_valid || time_us_64() < auth_retry_us) return false;
     challenge_valid = false;
     proof_valid = false;
-    pico_unique_board_id_t uid;
-    pico_get_unique_board_id(&uid);
-    bool accepted = pf_wireless_auth_verify(ble_key, nonce, uid.id, request, proof);
+    bool accepted = pf_wireless_auth_verify(nonce, ble_auth_domain, request, proof);
     memset(nonce, 0, sizeof(nonce));
     memset(proof, 0, sizeof(proof));
     if (!accepted) {
-        auth_retry_us = time_us_64() + 2000000u;
+        auth_retry_us = time_us_64() + BLE_AUTH_RETRY_DELAY_US;
         PF_LOGGING_WARNING("ble", "BLE authorization rejected");
     }
     return accepted;
@@ -196,8 +202,7 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
 /** @copydoc pf_bluetooth_prepare */
 bool pf_bluetooth_prepare(void)
 {
-    pf_boot_config_ble_key(ble_key);
-    control_key_available = pf_boot_config_ble_key_configured();
+    control_key_available = pf_wireless_auth_available();
     return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;
 }
 

@@ -177,8 +177,14 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         var previous = ReadWireless();
         if (previous.Status is "pending" or "busy")
             throw new InvalidOperationException("Wireless provisioning is busy");
+        var authRequired = settings.TcpCliAuthRequired ??
+            (settings.BleKey == "" ? false : previous.TcpCliAuthRequired);
+        var keyAvailable = settings.BleKey is null ? previous.BleKeyConfigured : settings.BleKey.Length > 0;
+        if (authRequired && !keyAvailable)
+            throw new ArgumentException("TCP CLI authentication requires a configured BLE control key");
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
-        var request = HidProtocol.BuildWirelessRequest(settings, transactionId);
+        var request = HidProtocol.BuildWirelessRequest(settings, transactionId, previous.TcpCliConfigurable,
+            previous.TcpCliAuthConfigurable);
         CommandOutcomeUncertain = true;
         writeFeature(request);
         var deadline = Environment.TickCount64 + 5000;
@@ -189,7 +195,9 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             {
                 if (result.Status == "completed")
                 {
-                    if (result.WifiEnabled != settings.WifiEnabled || result.BleEnabled != settings.BleEnabled ||
+                    if (result.TcpCliEnabled != (settings.TcpCliEnabled ?? previous.TcpCliEnabled) ||
+                        result.TcpCliAuthRequired != authRequired ||
+                        result.WifiEnabled != settings.WifiEnabled || result.BleEnabled != settings.BleEnabled ||
                         result.Ssid != settings.Ssid ||
                         result.PasswordConfigured != (settings.UseTestedWifi ||
                             (settings.Password is null ? previous.PasswordConfigured : settings.Password.Length != 0)) ||

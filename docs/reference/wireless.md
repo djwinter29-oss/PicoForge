@@ -6,10 +6,11 @@ For user setup and restrictions, see [the wireless guide](../guides/wireless.md)
 ## Execution and storage safety
 
 The application groups radio-specific code under `firmware/src/app/wireless`: `wifi/` contains `wifi.c/.h` for station
-connection and reconnects, plus `tcp_cli.c/.h` for the raw TCP console. `bluetooth/` contains `bluetooth.c/.h` for BLE
-GATT and authorization state, `bluetooth_auth.c/.h` for proof verification, and `bluetooth_profile.gatt` for the service
-definition. The common `wireless.c/.h` remains at the wireless root and owns shared SDK initialization/polling,
-combined status and atomic USB provisioning. Radio-specific modules keep their boot-applied secrets private.
+connection and reconnects, `mdns.c/.h` for saved-network hostname discovery, and `tcp_cli.c/.h` for the raw TCP console.
+`bluetooth/` contains `bluetooth.c/.h` for BLE GATT and authorization state plus `bluetooth_profile.gatt` for the
+service definition. `wireless_auth.c/.h` at the wireless root owns the shared key, nonce, board UID and
+protocol-separated proof verification. The common `wireless.c/.h` owns SDK initialization/polling, combined status
+and atomic USB provisioning.
 
 SDK poll-mode wireless work runs on the existing USB owner task. It creates no additional FreeRTOS tasks, preserves
 the static-allocation policy, and never invokes FatFs from a radio callback. On W images that owner task is pinned to
@@ -28,7 +29,11 @@ any bank access. Its default Pico W flash banks otherwise overlap the settings s
 application proof authorization does not rely on Bluetooth pairing. Only the existing boot configuration service
 writes flash; persistent Bluetooth bonding is not supported.
 
-The unchanged 16-byte version-1 clock/speed record is followed by a 144-byte wireless extension in the same page:
+The 16-byte version-1 clock/speed record uses byte 10 bits 0/1 to disable Wi-Fi/BLE and bit 2 to disable the TCP CLI.
+The CLI switch defaults enabled for erased and older records, is independent of the radio bits returned by Report 2,
+and is preserved by ordinary clock/speed/radio updates. Firmware predating this service bit rejects records with
+bit 2 set and loads defaults; reprovision after such a downgrade.
+The record is followed by a 144-byte wireless extension in the same page:
 little-endian magic `0x4c574650`, version `1`, size `144`, a reserved byte/SSID[33]/password[64]/key[32], two
 reserved zero bytes, and CRC-32 over its first 140 bytes. The first byte was a pair of provisioning flags in earlier
 firmware; it is ignored when loading those records and written as zero on the next save. Old records retain
@@ -48,38 +53,58 @@ Identity capability bit 7 denotes wireless provisioning. The radio master switch
 bits 3-4 and opcode 6 argument byte 3; see [USB HID report reference](usb-hid.md). Feature 30
 reports the saved radio switches; its separate booleans indicate whether credentials are configured.
 
-- Feature **30 GET**, 48 payload bytes: version at 0, saved radio-switch flags at 1 (Wi-Fi bit 0, BLE bit 1), last
+- Feature **30 GET**, version 4 is 53 payload bytes: version at 0, saved radio-switch flags at 1 (Wi-Fi bit 0, BLE bit
+  1), last
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4
-  (disabled/connecting/connected/failed = 0/1/2/3), IPv4 bytes at 5-8, NUL-terminated SSID at 9-41,
+  (disabled/connecting/connected/failed = 0/1/2/3, including temporary tests), saved-network IPv4 bytes at 5-8
+  (zero on test networks or without a saved link), NUL-terminated saved SSID at 9-41,
   password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3; a radio init failure
   takes precedence over Wi-Fi join errors until a later start succeeds), BLE link at 45
   (off/advertising/connected = 0/1/2; off until the controller is working), TCP CLI serving boolean
   at 46 (listener started and the saved network joined; zero during a connection test, without a link, and on older
-  firmware), zero at 47. Older hosts that reject reserved byte 46 must be updated
-  alongside firmware that starts the TCP listener.
+  firmware), service flags at 47 (bit 0 disables the saved-LAN TCP CLI; bit 1 requires HMAC authentication),
+  saved-network auth mode at 48, little-endian reconnect count at 49-50, signed RSSI at 51 (`127` unavailable), and
+  restart-required at 52 (`1` when saved wireless settings differ from boot-applied values).
+  Versions 1-3 retain the 52-byte payload and zero/omit fields added by later versions; updated hosts accept versions
+  1-4.
 - Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
   bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
-  credentials bit 2), SSID at 4-36, password at 37-100, key at 101-132, little-endian clock MHz at 133-134
+  credentials bit 2, disable TCP CLI bit 3, preserve TCP CLI switch bit 4, require TCP HMAC authentication bit 5,
+  preserve TCP authentication setting bit 6), SSID at 4-36, password at 37-100,
+  key at 101-132, little-endian clock MHz at 133-134
   (opcode 6 values) and SD profile at 135. A cleared preserve flag with an empty password or all-zero key erases
-  that credential. Other versions or radio flags inconsistent with the settings are rejected.
+  that credential. TCP disable/preserve and require-auth/preserve-auth pairs are mutually exclusive; neither means
+  enable/disable authentication, respectively. Unknown flags,
+  other versions or radio flags inconsistent with the settings are rejected.
   There is **no Feature 31 readback**; hosts confirm the board fields through Report 2.
 - Feature **34 SET**, 101 payload bytes: version `1` at 0, operation at 1 (scan `1`, select page `2`, test join
   `3`, clear staged test `4`), nonzero transaction at 2, page at 3, SSID/password byte lengths at 4/5, SSID bytes
   at 6-37 and temporary password at 38-100. Unused fields are zero. Password data is never returned.
   Clear leaves the station link and rejoins the saved network only when a test owns the link; otherwise the saved
   connection is untouched. New scans and tests are rejected while a driver scan is still running.
-- Feature **35 GET**, 220 payload bytes: version, transaction, operation state, page/detail, total scan count and
+- Feature **35 GET**, 220 payload bytes: version `2`, transaction, operation state, page/detail, total scan count and
   Wi-Fi state at offsets 0-5. Byte 3 is the selected page (0-2) in scan states and the test detail in states 4-6:
   none `0`, searching `1`, checking password `2`, waiting for DHCP `3`, network not found `4`, password rejected
-  `5`, no DHCP address `6`, timed out `7`, connection start failed `8`. Six entries of 35 bytes each start at 6:
-  SSID length, a 32-byte SSID, signed RSSI and secured flag. Bytes 216-219 contain the IPv4 address only after a
+  `5`, no DHCP address `6`, timed out `7`, connection start failed `8`, tested link lost `9`, staged credentials
+  expired `10`. Six entries of 35 bytes each start at 6:
+  SSID length, a 32-byte SSID, signed RSSI and the SDK security bitmask (privacy bit 0, WPA bit 1, RSN bit 2).
+  RSN means WPA2/WPA3-family advertisement, not verified WPA3 support; enterprise modes are not distinguished.
+  Hosts accept legacy version `1`, where this byte is only a secured boolean and details end at `8`.
+  Bytes 216-219 contain the IPv4 address only after a
   successful test join. Operation states are idle `0`, scanning `1`, scan complete `2`, scan failed `3`, joining
-  `4`, joined `5`, and failed `6`. The scan list is capped at 18 strongest unique SSIDs (three pages). A scan that
-  does not complete within 10 seconds reports scan failed. If the tested link drops, joined returns to idle; the
-  tested credentials stay staged for **Save&Reboot**.
+  `  `4`, joined `5`, and failed `6`. Bytes 220-221 contain remaining staged-test lifetime in seconds (0-600); it
+  remains available after test-link loss (state 6/detail 9). The scan list is capped at 18 strongest unique SSIDs
+  (three pages). A scan that
+  does not complete within 10 seconds reports scan failed; the driver must finish before releasing station mode or
+  retrying the saved network. If the tested link drops, joined becomes failed/detail `9`; credentials stay staged
+  until ten minutes after the successful test, then are wiped and cannot be saved (failed/detail `10`).
+  Expiry restores the saved network when enabled or releases station mode otherwise. It does not interrupt an
+  active scan or overwrite its result; saving expired credentials is still rejected.
+  A failed test with saved Wi-Fi disabled reports station disabled/error none; its failure remains in this report.
 - Native-host `GET /api/wireless` returns `{wireless, reboot_pending}` with sanitized fields. Confirmed
   `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled` (credential intent), `ssid`, optional `password`,
-  optional 64-hex-digit `ble_key`, required `board` (the `/api/settings` clock, profile and radios object) and
+  optional `tcp_cli_enabled`, optional `tcp_cli_auth_required`, optional 64-hex-digit `ble_key`,
+  required `board` (the `/api/settings` clock, profile and radios object) and
   required `confirm_reboot:true`. It returns `{wireless, settings, reboot_pending}` after verifying both reports.
   Omitted secrets are preserved; secrets are never returned.
   Existing board query selection and error handling apply.
@@ -87,6 +112,21 @@ reports the saved radio switches; its separate booleans indicate whether credent
   accepts an SSID and temporary password and returns join state/IP without saving credentials.
   `POST /api/wireless/cancel` clears a successful temporary test. Passwords are accepted only in the request and
   are never included in the response.
+
+## Saved-network service discovery
+
+The pinned SDK `pico_lwip_mdns` responder answers IPv4 hostname queries for `picoforge-<USB serial>.local` only on
+the saved network. It is removed before a credential test or station shutdown and re-registered after reconnect.
+While the TCP CLI listens, DNS-SD advertises `_picoforge._tcp` on port 2323 with TXT values `v=1` and
+`auth=0`/`auth=1` for the configured authentication policy. No outbound resolver is enabled. Registration and
+listener allocation failures are logged and retried at five-second intervals. Name conflicts are logged rather than
+silently changing the device identity. mDNS requires multicast support on the LAN and an mDNS-capable host resolver;
+direct IPv4 access remains available.
+
+The integration cancels the pinned responder's five additional IPv4 timers before removing its netif, since its
+removal API cancels only probing. Retained truncated queries are disabled: their private callbacks cannot be canceled
+through this pinned API. Ordinary hostname queries are supported, but multi-packet truncated-query handling is not.
+Six extra lwIP timer slots bound probing and delayed IPv4 replies. Recheck this teardown when updating the SDK.
 
 ## BLE contract and authorization
 
@@ -101,14 +141,21 @@ assumption is needed.
 For **every** command:
 
 1. Read `0020` to obtain a new random 16-byte nonce, invalidating any earlier proof.
-2. Compute HMAC-SHA256 with the provisioned 32-byte key over `nonce[16] || board_UID[8] || request[9]`.
-   UID is the raw identity bytes, in report order; request includes version/transaction/opcode/flags/arguments.
+2. Compute HMAC-SHA256 with the provisioned 32-byte key over
+   `nonce[16] || board_UID[8] || "PFBLECTL1" || request[9]`. UID is the raw identity bytes, in report order;
+   request includes version/transaction/opcode/flags/arguments.
 3. Write the first 16 MAC bytes to `0021`, then write that exact request to `0014`.
 4. Read the original matching result; never replay SET following timeout/disconnect.
 
 The device consumes a challenge/proof once, compares MAC bytes without early exit, and rate-limits failed proofs
 for two seconds. A missing, rejected or rate-limited proof returns ATT application error `0x80`, not Insufficient
 Authentication (`0x05`), which would make the central start OS pairing and drop the link. Fresh nonces prevent
-replay; UID binding prevents cross-board reuse; request binding prevents
-changing an authorized command. This is application authorization, **not encrypted BLE transport** or protection
-against radio jamming/connection denial. Use USB for privileged management and credentials.
+replay; protocol-domain separation prevents cross-service proof reuse; UID binding prevents cross-board reuse; request
+binding prevents changing an authorized command. This is application authorization, **not encrypted BLE transport**
+or protection against radio jamming/connection denial. Use USB for privileged management and credentials.
+
+The TCP CLI uses a separate domain (`"PFTCPCLI1"`) and request (`"TCPCLI001"`). When authentication is enabled,
+each connection receives a one-use nonce and board UID challenge and must answer with the first 16 bytes of the
+matching HMAC-SHA256 proof. Proofs expire after ten seconds; rejected proofs are rate-limited for two seconds.
+Authenticated or not, the listener accepts one CLI client, closes sessions idle for 15 minutes, and is exposed only
+on the saved Wi-Fi network. The TCP stream itself is not encrypted.

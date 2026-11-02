@@ -165,8 +165,10 @@ MSC ownership.
 
 ### Wi-Fi TCP terminal
 
-Pico W and Pico 2 W boards with Wi-Fi enabled also serve the same CLI as a raw TCP stream on port 2323. Find the board
-IP in the dashboard's live diagnostics. In PuTTY choose connection type **Raw**, host `<board IP>`, port `2323`, and
+Pico W and Pico 2 W boards with Wi-Fi and the saved **TCP CLI enabled** switch on serve the same CLI as a raw TCP
+stream on port 2323. Find the board IP in the dashboard's live diagnostics, or use `picoforge-<USB serial>.local`
+with an mDNS-capable host resolver on the same multicast-capable LAN.
+In PuTTY choose connection type **Raw**, host `<board IP>` (or the mDNS name), port `2323`, and
 set **Terminal > Local echo** and **Local line editing** to **Force off**; the CLI echoes and edits input itself.
 PuTTY's default **Auto** enables both for Raw connections, which shows each command twice and sends it only on Enter,
 so Tab completion and history keys do not work. Save the settings as a named session. On Linux,
@@ -192,8 +194,13 @@ TCP session receives a busy line and its input is discarded. A second TCP client
 the owning connection ends the session and cancels its pending output, exactly like dropping DTR. TCP keepalive
 drops a vanished client after about 50 seconds idle.
 
-The TCP terminal has no authentication or encryption; anyone on the network can run every command, including
-`--confirm` destructive ones. Use it only on a trusted LAN, and disable Wi-Fi when that is not acceptable.
+TCP authentication is optional and uses the board's saved BLE control key. When enabled, clients must answer a
+one-use challenge within ten seconds; the Python and .NET web consoles ask for the key and perform the proof. Raw
+PuTTY/`nc` sessions need a client that implements the proof described in the
+[wireless reference](../reference/wireless.md#ble-contract-and-authorization). Rejected proofs are rate-limited for
+two seconds. The firmware closes an otherwise authenticated session after 15 minutes without traffic; keepalive
+still detects a vanished peer after about 50 seconds. Authentication does not encrypt TCP traffic, and anyone who
+can connect can run every CLI command, including `--confirm` destructive ones. Use only a trusted LAN.
 
 ## Faulted MSC Recovery
 

@@ -18,7 +18,7 @@ its saved credentials (SSID and password, or control key) on **Save&Reboot**. Th
 selected USB-attached board; the browser does not need Bluetooth access.
 
 Both dashboards show Wi-Fi in live diagnostics on wireless-capable boards, refreshing the saved SSID and runtime
-state every two seconds while no wireless operation is pending. The value is `SSID (IP address)` when connected,
+state every two seconds while no wireless operation is pending. The value is `SSID (IP address)` on the saved network,
 `SSID (connecting)`, or `SSID (disconnected)`; Wi-Fi switched off or an empty saved SSID shows `Disabled`.
 A Bluetooth row shows the advertised name `PicoForge-<USB serial>` followed by `(connected)` while a central is
 attached, `(advertising)` when discoverable, or `(starting)` while the controller is not yet working.
@@ -33,6 +33,11 @@ The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter
 password when required and test the connection. Credentials are staged in RAM only after the board joins
 successfully; they are not saved to flash until **Save&Reboot**. Cancel or Escape discards staged credentials and
 reconnects the saved network only if a test had replaced it; an untested saved connection is left alone.
+Successful test credentials expire after ten minutes, even without a dashboard connected. Expiry wipes the staged
+passphrase and restores the saved network, or disables station mode when saved Wi-Fi is off. Test again before saving.
+Losing the tested link is reported explicitly but does not erase the tested credentials before that deadline.
+Scan entries label open, WEP, WPA, and RSN advertisements; RSN includes WPA2/WPA3 and does not prove WPA3 support.
+WEP, WPA-only and enterprise networks are not supported for joining.
 Connection testing shows the live phase (searching, checking password, waiting for an IP address) and elapsed time;
 the firmware deadline is 30 seconds. A failed test names the reason: network not found, password rejected, no DHCP
 address, timed out, or the radio could not start the connection. The firmware drops an existing station link before
@@ -57,18 +62,32 @@ settings save while USB owns storage is available only without credential edits.
 sends nothing. Save is a single USB SET followed by matching-transaction status polling, never automatic replay.
 The existing deferred reboot follows verified persistence; failed saves do not reboot.
 
-Wi-Fi joins an existing 2.4 GHz open or WPA/WPA2-PSK network and obtains an IPv4 address through DHCP.
-WPA3-only networks and 64-hex-digit raw PSKs are not supported; use WPA2 or WPA2/WPA3 transition mode.
-Association/DHCP has a 30-second deadline; failures and dropped connections are reported and retried after five
-seconds. A failed connection test leaves the tested network and retries only the saved network, if one is enabled,
-after five seconds. Scans time out after 10 seconds; the saved network is rejoined after the scan finishes.
+Wi-Fi joins an existing 2.4 GHz open, WPA2-PSK, WPA2/WPA3 transition or WPA3-SAE network and obtains an IPv4
+address through DHCP. Scan results cannot identify SAE, so firmware tries WPA2 first. When WPA2 finds no network or
+association fails before authentication, a connection test retries once with WPA3-SAE within the same 30-second
+deadline; the saved network alternates between WPA2 and SAE after such failures and keeps the mode that worked until
+reboot. A rejected password or a DHCP timeout never triggers the fallback. 64-hex-digit raw PSKs are not supported.
+Association/DHCP has a 30-second deadline; failures and dropped saved-network connections are reported and retried
+with capped exponential backoff from five to 60 seconds, reset after a successful link. A failed connection test
+leaves the tested network and retries only the saved network, if one is enabled. Scans time out after 10 seconds;
+the saved network is rejoined after the scan finishes.
 lwIP uses 4-byte heap alignment, required by Cortex-M multi-word stores into received packet buffers. While Wi-Fi
-is enabled, a single-client raw TCP listener on port 2323 serves the same CLI as USB CDC; see the
-[CLI guide](console.md#wi-fi-tcp-terminal). It is unauthenticated and unencrypted, for trusted LANs
-only, so it serves only while joined to the saved network: a connection test, a lost link or a rejoin closes the
+is enabled and the persisted **TCP CLI enabled** switch is on, a single-client raw TCP listener on port 2323 serves
+the same CLI as USB CDC; see the
+[CLI guide](console.md#wi-fi-tcp-terminal). It is unencrypted and serves only while joined to the saved network:
+a connection test, a lost link or a rejoin closes the
 client and turns new clients away until the saved network is back. Scan and test commands enable the station
-interface only after validation; with saved Wi-Fi disabled, it is released again when the scan finishes, the test
-fails or the staged test is cleared. lwIP TCP is sized for that one client: 1460-byte MSS, 2 × MSS window and send
+interface only after validation; with saved Wi-Fi disabled, it is released again when the driver scan finishes
+(including after its timeout), the test fails or the staged test is cleared or expires. The service switch defaults
+on for compatibility and can be saved off without disabling Wi-Fi or changing its credentials. TCP authentication
+can be enabled with the saved BLE control key; the host config dialog requires a configured or newly generated key.
+Authenticated sessions still use unencrypted TCP. The normal Wi-Fi
+state describes the station, including a test; the status IP is zero on a test network to avoid pairing it with the
+saved SSID. Only the test-result report carries the tested address.
+The board also answers `picoforge-<USB serial>.local` on the saved network and advertises the CLI via
+`_picoforge._tcp` while the listener is available; multicast-capable networking and an mDNS host resolver are
+required. No web server is exposed at that name. lwIP TCP is sized for that one client:
+1460-byte MSS, 2 × MSS window and send
 buffer, three PCBs and an 8 KiB heap. This does not provide a web server, network filesystem, Bluetooth Classic,
 internet management API or Wi-Fi dashboard transport.
 
@@ -107,8 +126,13 @@ Radio task ownership, persistence, USB report layouts, native-host APIs, and BLE
 
 Host checks cover flash migration/validation, HMAC vectors and byte mutations, payload boundaries, missing keys,
 restricted BLE writes, single-SET behavior, secret-free status and API errors. The production Wi-Fi state-machine
-check covers boot gating, the exact 30-second DHCP deadline, five-second retries, link loss, join failures and IPv4
-bytes. Firmware builds cover both W MCUs.
+check covers boot gating, the exact 30-second DHCP deadline, capped exponential saved-network retries, link loss, join
+failures, the WPA3-SAE fallback and IPv4 bytes, exact ten-minute staged-credential expiry, scan security flags, delayed scan
+cleanup, listener retry pacing, and mDNS registration/removal. BLE checks assert one report build per read and stable
+read-blob snapshots. Firmware builds cover both W MCUs.
 Hardware acceptance still requires both boards, simultaneous Wi-Fi/BLE with SPI and SDIO benchmarks, reconnects,
-wrong keys/replays, DHCP timeout, wrong WPA2 password, Wi-Fi loss/retry, USB sharing exclusion, stack high-water
-measurements, and confirming that BTstack never mutates the settings sector.
+wrong keys/replays, DHCP timeout, wrong WPA2 and WPA3 passwords, a WPA3-only network join, Wi-Fi loss/retry, USB
+sharing exclusion, stack high-water measurements, and confirming that BTstack never mutates the settings sector.
+Also check mDNS resolution after DHCP and reconnect, absence on the test network, a name conflict, and disconnect
+with delayed mDNS replies pending. Verify the persisted TCP switch blocks clients after reboot, then re-enable it;
+exercise staged-test link loss and ten-minute expiry with the dashboard both connected and absent.

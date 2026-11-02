@@ -17,7 +17,7 @@
 /** Sanitized scan and connection-test result Feature report ID. */
 #define PF_WIRELESS_RESULT_REPORT_ID 35u
 /** Sanitized status payload size; no credential readback. */
-#define PF_WIRELESS_STATUS_SIZE 48u
+#define PF_WIRELESS_STATUS_SIZE 53u
 /**
  * @brief Byte offsets in the sanitized wireless status payload.
  *
@@ -36,6 +36,11 @@ typedef enum {
     PF_WIRELESS_STATUS_ERROR_OFFSET = 44u, /**< Last wireless error code. */
     PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET = 45u, /**< Bluetooth connection state. */
     PF_WIRELESS_STATUS_TCP_CLI_OFFSET = 46u, /**< Whether the TCP CLI accepts clients on the saved network. */
+    PF_WIRELESS_STATUS_SERVICES_OFFSET = 47u, /**< Version 3: bit 0 disables CLI; bit 1 requires its HMAC proof. */
+    PF_WIRELESS_STATUS_AUTH_STATE_OFFSET = 48u, /**< pf_wifi_auth_state_t for the saved network. */
+    PF_WIRELESS_STATUS_RECONNECT_COUNT_OFFSET = 49u, /**< Little-endian saved-link loss count. */
+    PF_WIRELESS_STATUS_RSSI_OFFSET = 51u, /**< Signed dBm; 127 when unavailable. */
+    PF_WIRELESS_STATUS_RESTART_REQUIRED_OFFSET = 52u, /**< Version 4: saved wireless settings differ from boot state. */
 } pf_wireless_status_offset_t;
 /** @brief Feature 30 byte 44 error codes; an initialization failure takes precedence over Wi-Fi errors. */
 typedef enum {
@@ -50,8 +55,10 @@ typedef enum {
 #define PF_WIRELESS_COMMAND_SIZE 101u
 /** Byte offset of the nonzero host transaction in the scan/test command payload. */
 #define PF_WIRELESS_COMMAND_TRANSACTION_OFFSET 2u
+/** RSSI sentinel used when the saved link is down or the driver cannot report it. */
+#define PF_WIFI_RSSI_UNAVAILABLE INT8_MAX
 /** Scan/test result payload size, including six paged AP results. */
-#define PF_WIRELESS_RESULT_SIZE 220u
+#define PF_WIRELESS_RESULT_SIZE 222u
 
 /** @brief Initialize the W-board CYW43 for its LED, then start only enabled radios on the USB owner task. */
 void pf_wireless_start(void);

@@ -45,7 +45,8 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
           const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
           if (nonce.length !== 16) throw new Error("Invalid BLE authorization challenge");
           const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
-          const message = new Uint8Array([...nonce, ...uid, ...report]);
+          const domain = new TextEncoder().encode("PFBLECTL1");
+          const message = new Uint8Array([...nonce, ...uid, ...domain, ...report]);
           const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
           try {
             await this.characteristics.get(33).writeValueWithResponse(mac.slice(0, 16));

@@ -7,6 +7,9 @@ Python and .NET share their own frontend in `host/web`. The Direct dashboard is 
 components are shared with Direct**. See the
 [dashboard isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
 This Python host connects over USB HID, not Bluetooth LE.
+The dashboard supports Feature 30 status versions 1-4 and Feature 35 result versions 1-2, including TCP CLI
+enable/authentication settings and scan security labels. It blocks saving expired temporary test credentials after
+ten minutes; legacy firmware keeps its existing CLI settings.
 
 ## Install
 
@@ -88,7 +91,7 @@ tools/host/hid-permissions-setup.sh
 - **W-board wireless:** provision Wi-Fi and a BLE control key over USB. Bluetooth connections use the independent
   Direct dashboard. See [wireless setup and security limits](../../docs/guides/wireless.md).
 - **Wi-Fi console:** a connected SSID/IP link opens the local TCP console when supported by firmware. The board's TCP
-  service is unauthenticated and unencrypted; use only on a trusted LAN. See
+  service can require its saved BLE control key, but traffic is always unencrypted; use only on a trusted LAN. See
   [console setup and session limits](../../docs/guides/console.md#wi-fi-tcp-terminal).
 
 Commands can be rejected or remain uncertain after a timeout/disconnect; delivery is not completion.

@@ -112,7 +112,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       testedWireless.push(JSON.parse(options.body));
       await wirelessTestGate;
       if (wirelessTestError) throw wirelessTestError;
-      return { ok: true, json: async () => ({ test: { ipv4: "192.168.1.9" } }) };
+      return { ok: true, json: async () => ({ test: { ipv4: "192.168.1.9", remaining_seconds: 600 } }) };
     }
     if (url.startsWith("/api/wireless?board=")) {
       if (options.method !== "POST") await wirelessReadGate;

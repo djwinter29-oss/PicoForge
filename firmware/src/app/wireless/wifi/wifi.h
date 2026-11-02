@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "app/wireless/wireless.h"
+#include "platform/boot_config.h"
 
 /** @brief Station diagnostic state reported in Feature 30 byte 4 and Feature 35 byte 5. */
 typedef enum {
@@ -74,13 +75,19 @@ void pf_wifi_reject_command(uint8_t transaction);
  */
 void pf_wifi_result(uint8_t report[PF_WIRELESS_RESULT_SIZE]);
 
-/** @brief Return true and copy tested credentials after a successful connection test.
+/** @brief Return true and copy tested credentials before their ten-minute successful-test deadline.
  * @param ssid Output buffer of at least 33 bytes.
  * @param password Output buffer of at least 64 bytes.
  */
-bool pf_wifi_tested_credentials(char ssid[33], char password[64]);
+bool pf_wifi_tested_credentials(char ssid[PF_WIFI_SSID_SIZE], char password[PF_WIFI_PASSWORD_SIZE]);
 
-/** @brief Clear staged test credentials after save, cancellation, or failed persistence. */
+/** @brief Return the successful test authentication mode for saving alongside those credentials. */
+pf_wifi_auth_state_t pf_wifi_tested_auth_state(void);
+
+/** @brief Copy saved-link diagnostics; RSSI is 127 when unavailable. */
+void pf_wifi_link_diagnostics(pf_wifi_auth_state_t *auth_state, uint16_t *reconnects, int8_t *rssi);
+
+/** @brief Wipe staged test credentials after a successful save; the caller immediately schedules reboot. */
 void pf_wifi_clear_tested_credentials(void);
 
 #endif

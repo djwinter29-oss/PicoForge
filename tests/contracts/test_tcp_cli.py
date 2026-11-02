@@ -68,13 +68,18 @@ HARNESS = r"""
 #include <string.h>
 #include "lwip/tcp.h"
 #include "app/wireless/wifi/tcp_cli.h"
+#include "app/wireless/wireless_auth.h"
 #include "platform/logging.h"
 
-static struct tcp_pcb pcbs[8];
-static unsigned allocated, frees, bound_port;
+static struct tcp_pcb pcbs[20];
+static struct tcp_pcb listeners[4];
+static unsigned allocated, listener_count, frees, bound_port;
 static err_t close_result = ERR_OK;
+static uint64_t fake_time;
+static bool key_available;
 
-struct tcp_pcb *tcp_new_ip_type(u8_t type) { assert(type == IPADDR_TYPE_V4); return &pcbs[allocated++]; }
+struct tcp_pcb *tcp_new_ip_type(u8_t type)
+{ assert(type == IPADDR_TYPE_V4); ++allocated; return &listeners[listener_count++]; }
 err_t tcp_bind(struct tcp_pcb *pcb, const void *address, u16_t port)
 { (void)pcb; assert(address == NULL); bound_port = port; return ERR_OK; }
 struct tcp_pcb *tcp_listen_with_backlog(struct tcp_pcb *pcb, u8_t backlog) { assert(backlog == 1u); return pcb; }
@@ -99,6 +104,22 @@ u16_t pbuf_copy_partial(const struct pbuf *buffer, void *data, u16_t length, u16
 u8_t pbuf_free(struct pbuf *buffer) { (void)buffer; ++frees; return 1u; }
 bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *format, ...)
 { (void)level; (void)format; assert(strcmp(tag, "tcp-cli") == 0); return true; }
+uint64_t time_us_64(void) { return fake_time; }
+void pf_wireless_auth_set_key(const uint8_t key[32]) { key_available = key != NULL && key[0] == 0x42u; }
+bool pf_wireless_auth_available(void) { return key_available; }
+bool pf_wireless_auth_new_nonce(uint8_t nonce[16])
+{
+    for (unsigned i = 0u; i < 16u; ++i) nonce[i] = (uint8_t)i;
+    return true;
+}
+void pf_wireless_auth_device_id(uint8_t uid[8])
+{ for (unsigned i = 0u; i < 8u; ++i) uid[i] = (uint8_t)i; }
+bool pf_wireless_auth_verify(const uint8_t nonce[16], const uint8_t domain[9], const uint8_t request[9],
+                             const uint8_t proof[16])
+{
+    return key_available && memcmp(domain, "PFTCPCLI1", 9u) == 0 &&
+        memcmp(request, "TCPCLI001", 9u) == 0 && memcmp(nonce, proof, 16u) == 0;
+}
 
 static err_t deliver(struct tcp_pcb *pcb, const char *text, uint16_t length)
 {
@@ -109,8 +130,11 @@ static err_t deliver(struct tcp_pcb *pcb, const char *text, uint16_t length)
 int main(void)
 {
     char c;
-    assert(pf_tcp_cli_start() && pf_tcp_cli_start() && allocated == 1u && bound_port == PF_TCP_CLI_PORT);
-    struct tcp_pcb *listener = &pcbs[0], *client = &pcbs[1], *extra = &pcbs[2];
+    pf_tcp_cli_poll(true);
+    pf_tcp_cli_poll(true);
+    assert(allocated == 1u && bound_port == PF_TCP_CLI_PORT);
+    assert(pf_tcp_cli_serving());
+    struct tcp_pcb *listener = &listeners[0], *client = &pcbs[1], *extra = &pcbs[2];
     assert(!pf_tcp_cli_connected() && !pf_tcp_cli_read(&c) && pf_tcp_cli_write_available() == 0u);
 
     client->snd_buf = 10u;
@@ -172,19 +196,69 @@ int main(void)
     pf_tcp_cli_close("bye\r\n");
     assert(last->closed && strcmp(last->written, "bye\r\n") == 0 && !pf_tcp_cli_connected());
 
-    /* Leaving the saved network closes the client with a notice and turns new clients away until it is back. */
-    struct tcp_pcb *served = &pcbs[5], *refused = &pcbs[6], *restored = &pcbs[7];
-    served->snd_buf = refused->snd_buf = restored->snd_buf = 100u;
+    /* Leaving the saved network closes the client and listener, freeing the TCP PCB slot. */
+    struct tcp_pcb *served = &pcbs[5];
+    served->snd_buf = 100u;
     assert(pf_tcp_cli_serving());
     assert(listener->accept(NULL, served, ERR_OK) == ERR_OK && pf_tcp_cli_connected());
-    pf_tcp_cli_set_serving(false);
-    assert(served->closed && strstr(served->written, "unavailable") != NULL && !pf_tcp_cli_connected());
+    pf_tcp_cli_poll(false);
+    assert(served->closed && !pf_tcp_cli_connected());
     assert(!pf_tcp_cli_serving());
-    assert(listener->accept(NULL, refused, ERR_OK) == ERR_OK && refused->closed && !pf_tcp_cli_connected());
-    assert(strstr(refused->written, "unavailable") != NULL);
-    pf_tcp_cli_set_serving(true);
+    assert(listener->closed && listener->accept == NULL);
+    pf_tcp_cli_poll(true);
+    listener = &listeners[1];
+    struct tcp_pcb *restored = &pcbs[9];
+    restored->snd_buf = 100u;
     assert(pf_tcp_cli_serving());
     assert(listener->accept(NULL, restored, ERR_OK) == ERR_OK && pf_tcp_cli_connected() && !restored->closed);
+    pf_tcp_cli_poll(false);
+
+    /* Authenticated mode sends one nonce+UID challenge, withholds CLI I/O, then admits only the HMAC proof. */
+    uint8_t key[32] = {0x42u};
+    pf_wireless_auth_set_key(key);
+    assert(pf_tcp_cli_set_auth_required(true));
+    pf_tcp_cli_poll(true);
+    listener = &listeners[2];
+    struct tcp_pcb *auth_client = &pcbs[11];
+    auth_client->snd_buf = 128u;
+    assert(listener->accept(NULL, auth_client, ERR_OK) == ERR_OK);
+    assert(!pf_tcp_cli_connected() && strstr(auth_client->written, "PicoForge AUTH ") == auth_client->written);
+    char auth_line[40] = "AUTH ";
+    memcpy(auth_line + 5u, auth_client->written + 15u, 32u);
+    memcpy(auth_line + 37u, "\r\n", 2u);
+    assert(deliver(auth_client, auth_line, 20u) == ERR_OK && !pf_tcp_cli_connected());
+    assert(deliver(auth_client, auth_line + 20u, 19u) == ERR_OK && pf_tcp_cli_connected());
+    assert(pf_tcp_cli_write_available() != 0u);
+    pf_tcp_cli_poll(false);
+
+    assert(pf_tcp_cli_set_auth_required(true));
+    pf_tcp_cli_poll(true);
+    listener = &listeners[3];
+    struct tcp_pcb *expired = &pcbs[13];
+    expired->snd_buf = 128u;
+    assert(listener->accept(NULL, expired, ERR_OK) == ERR_OK);
+    fake_time += 10000000u;
+    pf_tcp_cli_poll(true);
+    assert(expired->closed && !pf_tcp_cli_connected());
+    struct tcp_pcb *rejected = &pcbs[14];
+    rejected->snd_buf = 128u;
+    assert(listener->accept(NULL, rejected, ERR_OK) == ERR_OK);
+    assert(deliver(rejected, "AUTH 00000000000000000000000000000000\r\n", 39u) == ERR_OK);
+    assert(rejected->closed);
+    struct tcp_pcb *rate_limited = &pcbs[15];
+    rate_limited->snd_buf = 128u;
+    assert(listener->accept(NULL, rate_limited, ERR_OK) == ERR_OK && rate_limited->closed);
+    fake_time += 2000000u;
+    struct tcp_pcb *idle = &pcbs[16];
+    idle->snd_buf = 128u;
+    assert(listener->accept(NULL, idle, ERR_OK) == ERR_OK);
+    char valid_proof[40] = "AUTH ";
+    memcpy(valid_proof + 5u, idle->written + 15u, 32u);
+    memcpy(valid_proof + 37u, "\r\n", 2u);
+    assert(deliver(idle, valid_proof, sizeof(valid_proof)) == ERR_OK && pf_tcp_cli_connected());
+    fake_time += 900000000u;
+    pf_tcp_cli_poll(true);
+    assert(idle->closed);
     return 0;
 }
 """
@@ -193,6 +267,12 @@ int main(void)
 def test_tcp_cli_single_session_window_and_backpressure(tmp_path):
     (tmp_path / "lwip").mkdir()
     (tmp_path / "lwip/tcp.h").write_text(FAKE_LWIP)
+    for name, text in {
+        "pico/time.h": "#include <stdint.h>\nuint64_t time_us_64(void);\n",
+    }.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
     harness = tmp_path / "harness.c"
     harness.write_text(HARNESS)
     binary = tmp_path / "tcp_cli"

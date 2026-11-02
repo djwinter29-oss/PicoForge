@@ -3,9 +3,15 @@ import { decodeConfigReport, withTimeout } from "./device.mjs?v=5";
 export function decodeWireless(report) {
   const bytes = report instanceof DataView
     ? new Uint8Array(report.buffer, report.byteOffset, report.byteLength) : report;
-  if (!(bytes instanceof Uint8Array) || bytes.length !== 48 || bytes[0] !== 1 || bytes[1] > 3
+  const restartFlag = bytes instanceof Uint8Array && bytes.length === 53 ? bytes[52] : 0;
+  if (!(bytes instanceof Uint8Array) || ![52, 53].includes(bytes.length)
+    || ![1, 2, 3, 4].includes(bytes[0]) || bytes.length !== (bytes[0] >= 4 ? 53 : 52) || bytes[1] > 3
     || bytes[2] > 6 || bytes[4] > 3 || bytes[42] > 1 || bytes[43] > 1 || bytes[44] > 3
-    || bytes[45] > 2 || bytes[46] > 1 || bytes[47] || bytes.slice(9, 42).indexOf(0) < 0) {
+    || bytes[45] > 2 || bytes[46] > 1
+    || bytes[47] > (bytes[0] === 1 ? 0 : bytes[0] === 2 ? 1 : 3)
+    || bytes[0] < 3 && bytes.subarray(48, 52).some(Boolean) || bytes[0] >= 3 && bytes[48] > 3
+    || restartFlag > 1
+    || bytes.slice(9, 42).indexOf(0) < 0) {
     throw new Error("Invalid wireless status report");
   }
   const ssid = bytes.slice(9, 42);
@@ -13,7 +19,13 @@ export function decodeWireless(report) {
     status: bytes[2], transaction_id: bytes[3], wifi_state: ["disabled", "connecting", "connected", "failed"][bytes[4]],
     ipv4: [...bytes.slice(5, 9)].join("."), ssid: new TextDecoder("utf-8", { fatal: true }).decode(ssid.slice(0, ssid.indexOf(0))),
     password_configured: Boolean(bytes[42]), ble_key_configured: Boolean(bytes[43]), error: bytes[44],
-    ble_state: ["off", "advertising", "connected"][bytes[45]], tcp_cli_started: Boolean(bytes[46]) };
+    ble_state: ["off", "advertising", "connected"][bytes[45]], tcp_cli_started: Boolean(bytes[46]),
+    tcp_cli_enabled: !(bytes[47] & 1), tcp_cli_configurable: bytes[0] >= 2,
+    tcp_cli_auth_required: Boolean(bytes[47] & 2), tcp_cli_auth_configurable: bytes[0] >= 3,
+    wifi_auth_state: bytes[0] < 3 ? null : ["try_wpa2", "try_sae", "wpa2", "sae"][bytes[48]],
+    reconnect_count: bytes[0] < 3 ? 0 : new DataView(bytes.buffer, bytes.byteOffset).getUint16(49, true),
+    rssi: bytes[0] < 3 || bytes[51] === 127 ? null : new DataView(bytes.buffer, bytes.byteOffset).getInt8(51),
+    restart_required: bytes[0] >= 4 && Boolean(restartFlag) };
 }
 
 export function buildWirelessCommand(transaction, operation, settings = {}) {
@@ -52,13 +64,14 @@ export function buildWirelessCommand(transaction, operation, settings = {}) {
 /** Feature 35 byte 3 while testing (states 4..6): join phase or failure reason. */
 export const WIRELESS_TEST_DETAILS = ["", "Searching for network", "Checking password", "Waiting for IP address",
   "Network not found", "Password rejected", "Connected but no IP address from DHCP", "Timed out",
-  "Could not start connection"];
+  "Could not start connection", "Test connection lost", "Test credentials expired"];
 
 export function decodeWirelessResult(report) {
   const bytes = report instanceof DataView
     ? new Uint8Array(report.buffer, report.byteOffset, report.byteLength) : report;
-  if (!(bytes instanceof Uint8Array) || bytes.length !== 220 || bytes[0] !== 1 || bytes[2] > 6
-    || bytes[3] > (bytes[2] >= 4 ? WIRELESS_TEST_DETAILS.length - 1 : 2) || bytes[4] > 18 || bytes[5] > 3) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== 222 || ![1, 2].includes(bytes[0]) || bytes[2] > 6
+    || bytes[3] > (bytes[2] >= 4 ? bytes[0] === 1 ? 8 : WIRELESS_TEST_DETAILS.length - 1 : 2)
+    || bytes[4] > 18 || bytes[5] > 3) {
     throw new Error("Invalid wireless scan/test result");
   }
   const results = [];
@@ -69,21 +82,36 @@ export function decodeWirelessResult(report) {
       if (entry.some(Boolean)) throw new Error("Invalid empty wireless scan result");
       continue;
     }
-    if (length > 32 || entry[34] > 1 || entry.subarray(1 + length, 33).some(Boolean)) {
+    if (length > 32 || entry[34] > (bytes[0] === 1 ? 1 : 7) || entry.subarray(1 + length, 33).some(Boolean)) {
       throw new Error("Invalid wireless scan entry");
     }
     results.push({ ssid: new TextDecoder("utf-8", { fatal: true }).decode(entry.subarray(1, 1 + length)),
-      rssi: new DataView(entry.buffer, entry.byteOffset).getInt8(33), secured: Boolean(entry[34]) });
+      rssi: new DataView(entry.buffer, entry.byteOffset).getInt8(33), secured: Boolean(entry[34]),
+      security: bytes[0] === 1 ? entry[34] ? "Secured" : "Open"
+        : ["Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)", "RSN (WPA2/WPA3)", "WPA/RSN", "WPA/RSN"][entry[34]] });
   }
-  if (results.length > bytes[4] || bytes.subarray(216).some((value, i) => bytes[2] !== 5 && value !== 0 && i < 4)) {
+  const remainingSeconds = new DataView(bytes.buffer, bytes.byteOffset).getUint16(220, true);
+  const staged = bytes[2] === 5 || bytes[2] === 6 && bytes[3] === 9;
+  if (results.length > bytes[4] || bytes.subarray(216, 220).some(value => bytes[2] !== 5 && value !== 0)
+    || remainingSeconds > 600 || !staged && remainingSeconds !== 0) {
     throw new Error("Invalid wireless scan/test result fields");
   }
   const detail = bytes[2] >= 4 ? bytes[3] : 0;
-  return { transaction_id: bytes[1], state: bytes[2], page: detail ? 0 : bytes[3], detail,
-    phase: WIRELESS_TEST_DETAILS[detail], count: bytes[4], wifi_state: bytes[5], networks: results, ipv4: [...bytes.subarray(216, 220)].join(".") };
+  return { transaction_id: bytes[1], state: bytes[2], page: bytes[2] >= 4 ? 0 : bytes[3], detail,
+    phase: WIRELESS_TEST_DETAILS[detail], count: bytes[4], wifi_state: bytes[5], networks: results,
+    ipv4: [...bytes.subarray(216, 220)].join("."),
+    remaining_seconds: staged ? remainingSeconds : 0 };
 }
 
-export function buildWireless(transaction, settings) {
+export function buildWireless(transaction, settings, tcpCliConfigurable = true, tcpCliAuthConfigurable = true) {
+  if (settings.tcp_cli_enabled !== undefined
+    && (typeof settings.tcp_cli_enabled !== "boolean" || !tcpCliConfigurable)) {
+    throw new Error("TCP CLI setting requires a boolean and wireless status v2");
+  }
+  if (settings.tcp_cli_auth_required !== undefined
+    && (typeof settings.tcp_cli_auth_required !== "boolean" || !tcpCliAuthConfigurable)) {
+    throw new Error("TCP CLI authentication setting requires wireless status v3");
+  }
   if (!Number.isInteger(transaction) || transaction < 1 || transaction > 255 ||
     typeof settings.wifi_enabled !== "boolean" || typeof settings.ble_enabled !== "boolean") {
     throw new Error("Invalid wireless configuration");
@@ -99,7 +127,10 @@ export function buildWireless(transaction, settings) {
   const report = new Uint8Array(136);
   report.set([2, transaction, board.radios,
     Number(settings.password === undefined && !settings.use_tested_wifi)
-      | Number(settings.ble_key === undefined) << 1 | Number(Boolean(settings.use_tested_wifi)) << 2]);
+      | Number(settings.ble_key === undefined) << 1 | Number(Boolean(settings.use_tested_wifi)) << 2
+      | (tcpCliConfigurable ? settings.tcp_cli_enabled === undefined ? 16 : settings.tcp_cli_enabled ? 0 : 8 : 0)
+      | (tcpCliAuthConfigurable ? settings.tcp_cli_auth_required === undefined
+        ? settings.ble_key === "" ? 32 : 64 : settings.tcp_cli_auth_required ? 32 : 0 : 0)]);
   report.set([board.system_clock_mhz & 255, board.system_clock_mhz >> 8, board.sdcard_profile], 133);
   report.set(ssid, 4);
   if (settings.password !== undefined) {
@@ -196,12 +227,19 @@ export async function saveWireless(client, settings) {
     throw new Error("Wireless configuration requires fresh idle USB storage, with sharing disabled.");
   }
   const transaction = client.transaction % 255 + 1;
-  const report = buildWireless(transaction, settings);
+  let report;
   client.transaction = transaction;
   client.update({ busy: true, error: null });
   let attempted = false;
   try {
     const previous = decodeWireless(await withTimeout(client.device.receiveFeatureReport(30), 1000));
+    const authRequired = settings.tcp_cli_auth_required
+      ?? (settings.ble_key === "" ? false : previous.tcp_cli_auth_required);
+    const keyAvailable = settings.ble_key === undefined
+      ? previous.ble_key_configured : Boolean(settings.ble_key);
+    if (authRequired && !keyAvailable) throw new Error("TCP CLI authentication requires a configured BLE control key");
+    report = buildWireless(transaction, settings, previous.tcp_cli_configurable,
+      previous.tcp_cli_auth_configurable);
     attempted = true;
     await withTimeout(client.device.sendFeatureReport(31, report), 5000);
     const deadline = Date.now() + 5000;
@@ -212,7 +250,9 @@ export async function saveWireless(client, settings) {
           attempted = false;
           throw new Error(`Wireless configuration rejected: status ${saved.status}`);
         }
-        if (saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled ||
+        if (saved.tcp_cli_enabled !== (settings.tcp_cli_enabled ?? previous.tcp_cli_enabled) ||
+          saved.tcp_cli_auth_required !== authRequired ||
+          saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled ||
           saved.ssid !== settings.ssid ||
           saved.password_configured !== (settings.use_tested_wifi
             || (settings.password !== undefined ? Boolean(settings.password) : previous.password_configured)) ||
@@ -235,5 +275,5 @@ export async function saveWireless(client, settings) {
   } catch (error) {
     client.update({ outcome_uncertain: attempted, error: error.message });
     throw error;
-  } finally { report.fill(0); client.update({ busy: false }); }
+  } finally { report?.fill(0); client.update({ busy: false }); }
 }

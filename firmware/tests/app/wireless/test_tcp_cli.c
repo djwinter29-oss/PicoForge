@@ -10,11 +10,35 @@ static tcp_accept_fn accept_callback;
 static tcp_recv_fn recv_callback;
 static tcp_err_fn err_callback;
 static err_t close_result;
+static bool auth_accept;
+static uint64_t fake_time_us;
+static bool key_available;
 
 bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *format, ...)
 {
     (void)level; (void)tag; (void)format;
     return true;
+}
+uint64_t time_us_64(void) { return fake_time_us; }
+void pf_wireless_auth_set_key(const uint8_t key[32])
+{
+    key_available = key != NULL && key[0] != 0u;
+}
+bool pf_wireless_auth_available(void) { return key_available; }
+bool pf_wireless_auth_new_nonce(uint8_t nonce[16])
+{
+    for (size_t i = 0u; i < 16u; ++i) nonce[i] = (uint8_t)i;
+    return true;
+}
+void pf_wireless_auth_device_id(uint8_t uid[8])
+{
+    for (size_t i = 0u; i < 8u; ++i) uid[i] = (uint8_t)i;
+}
+bool pf_wireless_auth_verify(const uint8_t nonce[16], const uint8_t domain[9], const uint8_t request[9],
+                             const uint8_t proof[16])
+{
+    return auth_accept && memcmp(domain, "PFTCPCLI1", 9u) == 0 &&
+        memcmp(request, "TCPCLI001", 9u) == 0 && memcmp(nonce, proof, 16u) == 0;
 }
 struct tcp_pcb *tcp_new_ip_type(u8_t type) { (void)type; return &listen_pcb; }
 err_t tcp_bind(struct tcp_pcb *pcb, const void *ipaddr, u16_t port)
@@ -61,13 +85,19 @@ static err_t deliver(struct tcp_pcb *pcb, const char *text)
 void setUp(void)
 {
     listener = client = NULL;
+    auth_accept = true;
+    fake_time_us = 0u;
+    auth_retry_us = listener_retry_us = client_activity_us = 0u;
     reset_input();
+    pf_wireless_auth_set_key(NULL);
+    TEST_ASSERT_TRUE(pf_tcp_cli_set_auth_required(false));
     memset(&listen_pcb, 0, sizeof(listen_pcb));
     memset(&client_pcb, 0, sizeof(client_pcb));
     memset(&extra_pcb, 0, sizeof(extra_pcb));
     client_pcb.snd_buf = extra_pcb.snd_buf = sizeof(client_pcb.sent);
     close_result = ERR_OK;
-    TEST_ASSERT_TRUE(pf_tcp_cli_start());
+    pf_tcp_cli_poll(true);
+    TEST_ASSERT_TRUE(pf_tcp_cli_serving());
     TEST_ASSERT_EQUAL_INT(ERR_OK, accept_callback(NULL, &client_pcb, ERR_OK));
 }
 
@@ -116,6 +146,62 @@ void test_second_client_gets_a_busy_notice_and_is_closed(void)
     TEST_ASSERT_TRUE(extra_pcb.closed);
     TEST_ASSERT_EQUAL_STRING_LEN(TCP_CLI_BUSY_NOTICE, extra_pcb.sent, extra_pcb.sent_size);
     TEST_ASSERT_TRUE(pf_tcp_cli_connected());
+}
+
+void test_lost_saved_link_closes_client_and_rejects_new_sessions_until_restored(void)
+{
+    pf_tcp_cli_poll(false);
+    TEST_ASSERT_FALSE(pf_tcp_cli_connected());
+    TEST_ASSERT_FALSE(pf_tcp_cli_serving());
+    TEST_ASSERT_TRUE(client_pcb.closed);
+    TEST_ASSERT_EQUAL_UINT16(0u, client_pcb.sent_size);
+}
+
+void test_authentication_requires_a_nonzero_key_and_verifies_before_cli_io(void)
+{
+    uint8_t key[32] = {0x42u};
+    uint8_t zero_key[32] = {0u};
+    TEST_ASSERT_FALSE(pf_tcp_cli_set_auth_required(true));
+    pf_wireless_auth_set_key(zero_key);
+    TEST_ASSERT_FALSE(pf_tcp_cli_set_auth_required(true));
+    pf_wireless_auth_set_key(key);
+    TEST_ASSERT_TRUE(pf_tcp_cli_set_auth_required(true));
+    pf_tcp_cli_close(NULL);
+    memset(&client_pcb, 0, sizeof(client_pcb));
+    client_pcb.snd_buf = sizeof(client_pcb.sent);
+    TEST_ASSERT_EQUAL_INT(ERR_OK, accept_callback(NULL, &client_pcb, ERR_OK));
+    TEST_ASSERT_FALSE(pf_tcp_cli_connected());
+    TEST_ASSERT_EQUAL_STRING_LEN("PicoForge AUTH 000102030405060708090a0b0c0d0e0f 0001020304050607\r\n",
+                                 client_pcb.sent, client_pcb.sent_size);
+    TEST_ASSERT_FALSE(pf_tcp_cli_read(&(char){0}));
+    TEST_ASSERT_EQUAL_INT(ERR_OK, deliver(&client_pcb, "AUTH 000102030405060708090a0b0c0d0e0f\r\nhelp\r"));
+    TEST_ASSERT_TRUE(pf_tcp_cli_connected());
+    char command[6] = {0};
+    for (size_t i = 0u; i < 5u; ++i) TEST_ASSERT_TRUE(pf_tcp_cli_read(&command[i]));
+    TEST_ASSERT_EQUAL_STRING("help\r", command);
+}
+
+void test_rejected_tcp_authentication_closes_the_client_with_a_notice(void)
+{
+    uint8_t key[32] = {0x42u};
+    pf_wireless_auth_set_key(key);
+    TEST_ASSERT_TRUE(pf_tcp_cli_set_auth_required(true));
+    pf_tcp_cli_close(NULL);
+    memset(&client_pcb, 0, sizeof(client_pcb));
+    client_pcb.snd_buf = sizeof(client_pcb.sent);
+    TEST_ASSERT_EQUAL_INT(ERR_OK, accept_callback(NULL, &client_pcb, ERR_OK));
+    auth_accept = false;
+    TEST_ASSERT_EQUAL_INT(ERR_OK, deliver(&client_pcb, "AUTH 00000000000000000000000000000000\r\n"));
+    TEST_ASSERT_FALSE(pf_tcp_cli_connected());
+    TEST_ASSERT_TRUE(client_pcb.closed);
+    TEST_ASSERT_EQUAL_STRING_LEN(TCP_CLI_AUTH_FAILED_NOTICE, client_pcb.sent + 66u,
+                                 client_pcb.sent_size - 66u);
+    fake_time_us = 1000000u;
+    struct tcp_pcb rejected = {0};
+    rejected.snd_buf = sizeof(rejected.sent);
+    TEST_ASSERT_EQUAL_INT(ERR_OK, accept_callback(NULL, &rejected, ERR_OK));
+    TEST_ASSERT_TRUE(rejected.closed);
+    fake_time_us = 2000000u;
 }
 
 void test_writes_respect_send_space_and_queue_limits(void)

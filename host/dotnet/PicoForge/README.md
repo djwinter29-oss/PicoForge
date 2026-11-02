@@ -35,6 +35,9 @@ Self-tests and transitions still block saving; standalone reboot remains blocked
 Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
+Feature 30 status versions 1-4 and Feature 35 result versions 1-2 are supported, including the saved TCP CLI switch,
+optional BLE-key authentication, scan security labels, and staged-test lifetime. The dashboard blocks saving
+temporary test credentials after ten minutes and preserves legacy firmware's CLI settings.
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.

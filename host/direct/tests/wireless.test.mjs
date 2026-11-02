@@ -9,6 +9,55 @@ import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, r
 /** Board settings matching the config() fixture readback. */
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
 
+test("v2 TCP switch, security masks and test lifecycle details retain legacy compatibility", () => {
+  const settings = { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD };
+  assert.equal(buildWireless(1, settings)[3], 83);
+  assert.equal(buildWireless(1, settings, false, false)[3], 3);
+  assert.equal(buildWireless(1, { ...settings, tcp_cli_enabled: false })[3], 75);
+  assert.equal(buildWireless(1, { ...settings, tcp_cli_enabled: true })[3], 67);
+  assert.equal(buildWireless(1, { ...settings, tcp_cli_auth_required: true })[3], 51);
+  assert.throws(() => buildWireless(1, { ...settings, tcp_cli_enabled: false }, false, false));
+  assert.throws(() => buildWireless(1, { ...settings, tcp_cli_enabled: 0 }));
+  const status = new Uint8Array(52);
+  status[0] = 3;
+  status[47] = 1;
+  assert.equal(decodeWireless(status).tcp_cli_enabled, false);
+  assert.equal(decodeWireless(status).tcp_cli_configurable, true);
+  const statusV4 = new Uint8Array(53);
+  statusV4[0] = 4;
+  statusV4[47] = 2;
+  statusV4[49] = 7;
+  statusV4[52] = 1;
+  assert.equal(decodeWireless(statusV4).tcp_cli_auth_configurable, true);
+  assert.equal(decodeWireless(statusV4).reconnect_count, 7);
+  assert.equal(decodeWireless(statusV4).restart_required, true);
+  status[47] = 4;
+  assert.throws(() => decodeWireless(status));
+  const report = new Uint8Array(222);
+  report.set([2, 1, 2, 0, 1]);
+  report.set([1, 120], 6);
+  const labels = ["Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)", "RSN (WPA2/WPA3)", "WPA/RSN", "WPA/RSN"];
+  labels.forEach((label, mask) => {
+    report[40] = mask;
+    const network = decodeWirelessResult(report).networks[0];
+    assert.equal(network.security, label);
+    assert.equal(network.secured, Boolean(mask));
+  });
+  report[40] = 8;
+  assert.throws(() => decodeWirelessResult(report));
+  report.fill(0);
+  report.set([2, 1, 6, 9]);
+  assert.equal(decodeWirelessResult(report).phase, "Test connection lost");
+  report[3] = 10;
+  assert.equal(decodeWirelessResult(report).phase, "Test credentials expired");
+  report[3] = 11;
+  assert.throws(() => decodeWirelessResult(report));
+  for (const state of [4, 5, 6]) {
+    report.set([2, 1, state, 0]);
+    assert.equal(decodeWirelessResult(report).page, 0);
+  }
+});
+
 test("disabling a saved radio erases its credentials; Wi-Fi Enabled needs a network", async () => {
   const previous = globalThis.document;
   const elements = new Map();
@@ -39,7 +88,7 @@ test("disabling a saved radio erases its credentials; Wi-Fi Enabled needs a netw
     assert.deepEqual(form.request(), { wifi_enabled: false, ble_enabled: false, ssid: "", confirm_reboot: true,
       password: "", ble_key: "" });
     assert.equal(buildWireless(1, { ...form.request(), board: { system_clock_mhz: 0, sdcard_profile: 0,
-      radios: 0 } })[3], 0, "erase clears both keep flags");
+      radios: 0 } })[3], 48, "erasing the BLE key also disables TCP authentication");
     pick("settings-ble", "1");
     assert.equal(Object.hasOwn(form.request(), "ble_key"), false, "Enabled keeps the saved key");
     saved = { ssid: "", password_configured: false, wifi_enabled: false, ble_enabled: false,
@@ -102,11 +151,14 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
   try {
     const form = bindWirelessForm({ load: async () => { loadCount++; return fresh; },
       supported: () => true, ready: () => true,
-      scan: async () => { scanned.push(true); return [{ ssid: "nearby", rssi: -40, secured: true }]; },
+      scan: async () => {
+        scanned.push(true);
+        return [{ ssid: "nearby", rssi: -40, secured: true, security: "WPA/RSN" }];
+      },
       test: async (credentials, onProgress) => {
         tested.push(credentials);
         reportPhase = onProgress;
-        return pendingTest ?? { ipv4: "192.168.1.9" };
+        return pendingTest ?? { ipv4: "192.168.1.9", remaining_seconds: 600 };
       },
       cancelTest: async () => { cancelled++; } });
     await form.load();
@@ -127,6 +179,7 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     pick("settings-wifi", "configure");
     await el("wifi-scan").handlers.click();
     assert.deepEqual(scanned, [true]);
+    assert.match(el("wifi-networks").children[0].children[1].textContent, /WPA\/RSN/);
     el("wifi-networks").children[0].handlers.click();
     assert.equal(el("wifi-ssid").value, "nearby");
     await form.load();
@@ -138,7 +191,7 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     assert.deepEqual(form.request(), { wifi_enabled: true, ble_enabled: false, ssid: "nearby",
       confirm_reboot: true, use_tested_wifi: true });
     assert.equal(form.dirty(), true);
-    assert.equal(el("wireless-summary").textContent, "Wi-Fi “nearby” tested; save to apply.");
+    assert.equal(el("wireless-summary").textContent, "Wi-Fi “nearby” tested; expires in 600s.");
     assert.equal(el("wireless-summary").hidden, false);
     assert.equal(el("wifi-dialog").open, false);
     form.finish(null, "rejected");
@@ -182,7 +235,7 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     assert.match(el("wifi-status").textContent, /Checking password… 31s; waiting for the final result/);
     el("wifi-dialog").handlers.cancel({ preventDefault() {} });
     assert.equal(el("wifi-dialog").open, true, "Escape must not dismiss an in-flight test");
-    finishTest({ ipv4: "192.168.1.10" });
+    finishTest({ ipv4: "192.168.1.10", remaining_seconds: 600 });
     await waiting;
     assert.equal(tick, null);
     assert.equal(form.operationBusy(), false);
@@ -194,7 +247,7 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
     pendingTest = new Promise(resolve => { finishTest = resolve; });
     const obsolete = el("wifi-connect").handlers.click();
     form.reset();
-    finishTest({ ipv4: "192.168.1.10" });
+    finishTest({ ipv4: "192.168.1.10", remaining_seconds: 600 });
     await obsolete;
     assert.equal(form.dirty(), false, "a late result after disconnect must not stage credentials");
     assert.equal(tick, null);
@@ -218,7 +271,7 @@ test("wireless scan/test command and result reports have consistent bounded layo
     { ssid: "x".repeat(33), password: "passphrase" }]) {
     assert.throws(() => buildWirelessCommand(1, 3, settings));
   }
-  const report = new Uint8Array(220);
+  const report = new Uint8Array(222);
   report.set([1, 7, 2, 0, 1, 3]);
   report.set([4, ...new TextEncoder().encode("test")], 6);
   report[39] = 0xd8;
@@ -230,7 +283,7 @@ test("wireless scan/test command and result reports have consistent bounded layo
   report[2] = 5;
   report.set([192, 168, 1, 9], 216);
   assert.equal(decodeWirelessResult(report).ipv4, "192.168.1.9");
-  const failed = new Uint8Array(220);
+  const failed = new Uint8Array(222);
   failed.set([1, 7, 6, 5]);
   assert.deepEqual([decodeWirelessResult(failed).detail, decodeWirelessResult(failed).phase], [5, "Password rejected"]);
   failed[3] = 8;
@@ -247,19 +300,19 @@ test("USB wireless payloads preserve omitted secrets and reject malformed creden
     ble_key: "ab".repeat(32), board };
   const request = buildWireless(7, settings);
   assert.equal(request.length, 136);
-  assert.deepEqual([...request.slice(0, 4)], [2, 7, 3, 0]);
+  assert.deepEqual([...request.slice(0, 4)], [2, 7, 3, 80]);
   assert.equal(request[101], 0xab);
   assert.deepEqual([...request.slice(133)], [250, 0, 1]);
   const keep = buildWireless(8, { wifi_enabled: false, ble_enabled: true, ssid: "", board: { ...board, radios: 2 } });
-  assert.equal(keep[3], 3);
+  assert.equal(keep[3], 83);
   for (const change of [{ ssid: "x".repeat(33) }, { ssid: "bad\0ssid" }, { password: "short" },
     { password: "é".repeat(8) }, { ble_key: "0".repeat(64) }, { wifi_enabled: 1 }, { board: undefined },
     { wifi_enabled: false },
     { board: { ...board, system_clock_mhz: 175 } }, { board: { ...board, radios: 4 } }]) {
     assert.throws(() => buildWireless(1, { ...settings, ...change }));
   }
-  const bytes = new Uint8Array(48);
-  bytes.set([1, 3, 2, 7, 2, 192, 168, 1, 9]);
+  const bytes = new Uint8Array(52);
+  bytes.set([3, 3, 2, 7, 2, 192, 168, 1, 9]);
   bytes.set(new TextEncoder().encode("test"), 9);
   bytes[42] = bytes[43] = 1;
   const decoded = decodeWireless(bytes);
@@ -274,7 +327,7 @@ test("USB wireless payloads preserve omitted secrets and reject malformed creden
   bytes[45] = 0;
   bytes[46] = 1;
   assert.equal(decodeWireless(bytes).tcp_cli_started, true);
-  for (const [offset, value] of [[0, 2], [1, 4], [2, 7], [4, 4], [42, 2], [44, 4], [45, 3], [46, 2], [47, 1]]) {
+  for (const [offset, value] of [[0, 4], [1, 4], [2, 7], [4, 4], [42, 2], [44, 4], [45, 3], [46, 2], [47, 4]]) {
     const bad = bytes.slice(); bad[offset] = value;
     assert.throws(() => decodeWireless(bad));
   }
@@ -289,7 +342,7 @@ test("USB wireless save sends once, verifies sanitized readback, and locks write
     device.receiveFeatureReport = async id => {
       if (id !== 30) return receive(id);
       if (failure && sent.length) throw new Error("USB disconnected");
-      const report = new Uint8Array(48); report.set([1, 0, 2, 1]);
+      const report = new Uint8Array(52); report.set([3, 0, 2, 1]);
       return report;
     };
     const operation = saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD });
@@ -311,7 +364,7 @@ test("USB wireless save treats unconfirmed board settings as uncertain", async (
   const receive = device.receiveFeatureReport;
   device.receiveFeatureReport = async id => {
     if (id !== 30) return receive(id);
-    const report = new Uint8Array(48); report.set([1, 1, 2, 1]);
+    const report = new Uint8Array(52); report.set([3, 1, 2, 1]);
     report.set(new TextEncoder().encode("test"), 9);
     return report;
   };
@@ -323,6 +376,30 @@ test("USB wireless save treats unconfirmed board settings as uncertain", async (
   await client.disconnect();
 });
 
+test("USB wireless TCP switch save verifies readback and does not change board radio bits", async () => {
+  for (const mismatch of [false, true]) {
+    const { client, device, sent } = fakeConnection({ capabilities: 128 | 55 });
+    await client.connect();
+    emit(device, 10, storage()); emit(device, 11, selfTest());
+    const receive = device.receiveFeatureReport;
+    device.receiveFeatureReport = async id => {
+      if (id !== 30) return receive(id);
+      const report = new Uint8Array(52);
+      report.set([2, 0, 2, 1]);
+      report[47] = sent.length && !mismatch ? 1 : 0;
+      return report;
+    };
+    const save = saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "",
+      tcp_cli_enabled: false, board: BOARD });
+    if (mismatch) await assert.rejects(save, /did not confirm/);
+    else assert.equal((await save).tcp_cli_enabled, false);
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0].slice(1, 5), [2, 1, 0, 11]);
+    assert.equal(client.state.outcome_uncertain, mismatch);
+    await client.disconnect();
+  }
+});
+
 test("USB wireless save treats loss of a preserved secret as uncertain, never success", async () => {
   const { client, device, sent } = fakeConnection({ capabilities: 128 | 55 });
   await client.connect();
@@ -330,7 +407,7 @@ test("USB wireless save treats loss of a preserved secret as uncertain, never su
   const receive = device.receiveFeatureReport;
   device.receiveFeatureReport = async id => {
     if (id !== 30) return receive(id);
-    const report = new Uint8Array(48);
+    const report = new Uint8Array(52);
     report.set([1, 0, 2, 1]);
     report[42] = sent.length ? 0 : 1;
     return report;
