@@ -471,7 +471,8 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     assert.deepEqual(writes.map(item => item[0]), [33, 20]);
     const uid = Buffer.from(client.state.hardware.serial_number, "hex");
     const expected = createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
-      .update(Buffer.concat([nonce, uid, Buffer.from(writes[1][1])])).digest().subarray(0, 16);
+      .update(Buffer.concat([nonce, uid, Buffer.from("PFBLECTL1"), Buffer.from(writes[1][1])]))
+      .digest().subarray(0, 16);
     assert.deepEqual(writes[0][1], [...expected]);
     for (const opcode of [2, 3, 6]) await assert.rejects(client.command(opcode), /requires USB/);
     assert.equal(writes.length, 2);

@@ -71,7 +71,7 @@ void mdns_send_unicast_msg_delayed_ipv4(void *);
 #include "platform/logging.h"
 cyw43_t cyw43_state;
 struct mdns_service { int unused; };
-static unsigned inits, adds, removes, logs, canceled, service_adds, service_removes, txt_items;
+static unsigned inits, adds, removes, logs, canceled, service_adds, service_removes, txt_items, hostname_reads;
 static uint64_t now;
 static int add_result, service_result, remove_result;
 static bool auth_required = true;
@@ -79,7 +79,7 @@ static void (*name_cb)(struct netif *, u8_t, s8_t);
 bool pf_tcp_cli_auth_required(void) { return auth_required; }
 uint64_t time_us_64(void) { return now; }
 void pico_get_unique_board_id_string(char *out, unsigned length)
-{ assert(length == 17u); memcpy(out, "0123456789ABCDEF", 17u); }
+{ assert(length == 17u); ++hostname_reads; memcpy(out, "0123456789ABCDEF", 17u); }
 void mdns_resp_init(void) { ++inits; }
 void mdns_resp_register_name_result_cb(void (*cb)(struct netif *, u8_t, s8_t)) { name_cb = cb; }
 err_t mdns_resp_add_netif(struct netif *netif, const char *name)
@@ -140,6 +140,7 @@ int main(void)
     assert(adds == 2 && service_adds == 1);
     pf_wifi_mdns_poll(true, false);
     assert(service_removes == 1);
+    assert(hostname_reads == 2u);
     name_cb(&cyw43_state.netif[0], MDNS_PROBING_CONFLICT, -1);
     assert(logs == 3 && txt_items == 2);
     remove_result = -1;

@@ -8,6 +8,7 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
+#include "mbedtls/platform_util.h"
 #include "app/wireless/bluetooth/bluetooth.h"
 #include "app/wireless/wifi/tcp_cli.h"
 #include "app/wireless/wifi/mdns.h"
@@ -120,15 +121,15 @@ void pf_wireless_start(void)
     uint8_t tcp_key[32] = {0};
     pf_boot_config_ble_key(tcp_key);
     pf_wireless_auth_set_key(tcp_key);
-    memset(tcp_key, 0, sizeof(tcp_key));
+    mbedtls_platform_zeroize(tcp_key, sizeof(tcp_key));
     ble_enabled = pf_bluetooth_prepare();
+    /* The chip starts even with both radios off because it owns the board LED; radios stay off unless enabled. */
+    if (!ensure_started()) return;
     if (!pf_tcp_cli_set_auth_required(tcp_cli_auth_required)) {
         init_error = PF_WIRELESS_ERROR_INIT;
         PF_LOGGING_ERROR("wireless", "TCP CLI authentication key unavailable");
         tcp_cli_enabled = false;
     }
-    /* The chip starts even with both radios off because it owns the board LED; radios stay off unless enabled. */
-    if (!ensure_started()) return;
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
     if (wifi_enabled) {
         pf_wifi_start();
@@ -223,26 +224,30 @@ bool pf_wireless_configure(const uint8_t *report)
         memcmp(report + REQUEST_PASSWORD, (uint8_t[PF_WIFI_PASSWORD_SIZE]){0}, PF_WIFI_PASSWORD_SIZE) != 0)) {
         return false;
     }
-    char tested_ssid[PF_WIFI_SSID_SIZE] = {0};
-    char tested_password[PF_WIFI_PASSWORD_SIZE] = {0};
-    char old_ssid[PF_WIFI_SSID_SIZE] = {0};
-    pf_boot_config_wifi_ssid(old_ssid);
+    /** @brief Stack-owned provisioning copies, wiped together on every exit after staging. */
+    struct {
+        char tested_ssid[PF_WIFI_SSID_SIZE]; /**< SSID from the staged credential test. */
+        char tested_password[PF_WIFI_PASSWORD_SIZE]; /**< Passphrase from the staged credential test. */
+        char old_ssid[PF_WIFI_SSID_SIZE]; /**< Saved SSID used to preserve its proven authentication mode. */
+        char next_ssid[PF_WIFI_SSID_SIZE]; /**< Requested SSID. */
+        char next_password[PF_WIFI_PASSWORD_SIZE]; /**< Requested or tested passphrase. */
+        uint8_t next_key[32]; /**< Requested shared control key. */
+    } credentials = {0};
+    pf_boot_config_wifi_ssid(credentials.old_ssid);
     const pf_wifi_auth_state_t old_auth_state = pf_boot_config_wifi_auth_state();
-    if (use_tested && (!pf_wifi_tested_credentials(tested_ssid, tested_password) ||
-                       memcmp(tested_ssid, report + REQUEST_SSID, sizeof(tested_ssid)) != 0)) {
-        memset(tested_ssid, 0, sizeof(tested_ssid));
-        memset(tested_password, 0, sizeof(tested_password));
-        return false;
+    if (use_tested && (!pf_wifi_tested_credentials(credentials.tested_ssid, credentials.tested_password) ||
+        memcmp(credentials.tested_ssid, report + REQUEST_SSID, sizeof(credentials.tested_ssid)) != 0)) {
+        goto cleanup;
     }
-    char next_ssid[PF_WIFI_SSID_SIZE];
-    char next_password[PF_WIFI_PASSWORD_SIZE];
-    uint8_t next_key[32];
-    memcpy(next_ssid, report + REQUEST_SSID, sizeof(next_ssid));
-    if (use_tested) memcpy(next_password, tested_password, sizeof(next_password));
-    else memcpy(next_password, report + REQUEST_PASSWORD, sizeof(next_password));
-    memcpy(next_key, report + REQUEST_KEY, sizeof(next_key));
+    memcpy(credentials.next_ssid, report + REQUEST_SSID, sizeof(credentials.next_ssid));
+    if (use_tested) {
+        memcpy(credentials.next_password, credentials.tested_password, sizeof(credentials.next_password));
+    } else {
+        memcpy(credentials.next_password, report + REQUEST_PASSWORD, sizeof(credentials.next_password));
+    }
+    memcpy(credentials.next_key, report + REQUEST_KEY, sizeof(credentials.next_key));
     const pf_wifi_auth_state_t next_auth_state = use_tested ? pf_wifi_tested_auth_state()
-        : keep_password && memcmp(old_ssid, next_ssid, sizeof(old_ssid)) == 0
+        : keep_password && memcmp(credentials.old_ssid, credentials.next_ssid, sizeof(credentials.old_ssid)) == 0
             ? old_auth_state : PF_WIFI_AUTH_TRY_WPA2;
     const uint16_t clock_mhz = (uint16_t)(report[REQUEST_CLOCK_MHZ] | (uint16_t)report[REQUEST_CLOCK_MHZ + 1] << 8u);
     const bool valid = pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(clock_mhz)) &&
@@ -250,9 +255,9 @@ bool pf_wireless_configure(const uint8_t *report)
         pf_boot_config_set_radios(report[REQUEST_RADIOS]) &&
         ((flags & REQUEST_KEEP_TCP_CLI) != 0u ||
          pf_boot_config_set_tcp_cli_enabled((flags & REQUEST_DISABLE_TCP_CLI) == 0u)) &&
-        pf_boot_config_set_wifi_ssid(next_ssid) &&
-        (keep_password || pf_boot_config_set_wifi_password(next_password)) &&
-        (keep_key || pf_boot_config_set_ble_key(next_key)) &&
+        pf_boot_config_set_wifi_ssid(credentials.next_ssid) &&
+        (keep_password || pf_boot_config_set_wifi_password(credentials.next_password)) &&
+        (keep_key || pf_boot_config_set_ble_key(credentials.next_key)) &&
         ((flags & REQUEST_KEEP_TCP_AUTH) != 0u ||
          pf_boot_config_set_tcp_cli_auth_required((flags & REQUEST_REQUIRE_TCP_AUTH) != 0u)) &&
         pf_boot_config_set_wifi_auth_state(next_auth_state);
@@ -266,12 +271,8 @@ bool pf_wireless_configure(const uint8_t *report)
         save_status = PF_HID_COMMAND_FAILED;
         PF_LOGGING_ERROR("wireless", "Wireless configuration save unconfirmed");
     }
-    memset(next_ssid, 0, sizeof(next_ssid));
-    memset(next_password, 0, sizeof(next_password));
-    memset(next_key, 0, sizeof(next_key));
-    memset(tested_ssid, 0, sizeof(tested_ssid));
-    memset(tested_password, 0, sizeof(tested_password));
-    memset(old_ssid, 0, sizeof(old_ssid));
+cleanup:
+    mbedtls_platform_zeroize(&credentials, sizeof(credentials));
     if (save_status == PF_HID_COMMAND_COMPLETED) refresh_saved_wireless();
     if (save_status == PF_HID_COMMAND_COMPLETED && use_tested) pf_wifi_clear_tested_credentials();
     return save_status == PF_HID_COMMAND_COMPLETED;

@@ -8,6 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.contracts
 
 
+def test_wireless_stack_credentials_use_non_elidable_cleanup():
+    source = (ROOT / "firmware/src/app/wireless/wireless.c").read_text()
+    startup = source.split("void pf_wireless_start(void)", 1)[1].split("/** @copydoc", 1)[0]
+    configure = source.split("bool pf_wireless_configure(const uint8_t *report)", 1)[1]
+    assert "mbedtls_platform_zeroize(tcp_key, sizeof(tcp_key))" in startup
+    assert "mbedtls_platform_zeroize(&credentials, sizeof(credentials))" in configure
+    assert "memset(" not in startup
+    assert "memset(" not in configure
+
+
 def test_board_and_wireless_configuration_saves_once_or_discards(tmp_path):
     for name, text in {
         "FreeRTOS.h": "typedef unsigned UBaseType_t;\n",
@@ -17,6 +27,7 @@ def test_board_and_wireless_configuration_saves_once_or_discards(tmp_path):
                              "int cyw43_arch_init(void);\nvoid cyw43_arch_poll(void);\nunsigned get_core_num(void);\n"
                              "void cyw43_arch_gpio_put(unsigned wl_gpio, bool value);\n",
         "pico/unique_id.h": "#define PICO_UNIQUE_BOARD_ID_SIZE_BYTES 8\n",
+        "mbedtls/platform_util.h": "#include <stddef.h>\nvoid mbedtls_platform_zeroize(void *, size_t);\n",
     }.items():
         (tmp_path / name).parent.mkdir(exist_ok=True)
         (tmp_path / name).write_text(text)
@@ -36,7 +47,13 @@ def test_board_and_wireless_configuration_saves_once_or_discards(tmp_path):
 #include "platform/boot_config.h"
 #include "platform/led.h"
 #include "platform/logging.h"
-static unsigned saves, discards;
+static unsigned saves, discards, zeroizes;
+static bool save_result = true;
+void mbedtls_platform_zeroize(void *buffer, size_t size) {
+    volatile unsigned char *bytes = buffer;
+    while (size-- != 0u) *bytes++ = 0u;
+    ++zeroizes;
+}
 static int clock = -1, speed = -1, radios = -1;
 static char ssid[33], saved_password[64];
 static bool storage_busy;
@@ -70,7 +87,7 @@ bool pf_boot_config_set_tcp_cli_auth_required(bool required) { tcp_auth_required
 bool pf_boot_config_wireless_restart_required(void) { return restart_required; }
 bool pf_boot_config_set_wifi_auth_state(pf_wifi_auth_state_t state) { (void)state; return true; }
 pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void) { return PF_WIFI_AUTH_TRY_WPA2; }
-bool pf_boot_config_save(void) { ++saves; return true; }
+bool pf_boot_config_save(void) { ++saves; return save_result; }
 void pf_boot_config_discard(void) {
     ++discards; clock = speed = radios = -1; ssid[0] = 0; saved_password[0] = 0;
 }
@@ -140,9 +157,20 @@ static void request(uint8_t *report, uint16_t mhz, uint8_t profile)
     strcpy((char *)report + 4, "network");
     report[133] = (uint8_t)mhz; report[134] = (uint8_t)(mhz >> 8); report[135] = profile;
 }
-int main(void)
+int main(int argc, char **argv)
 {
+    (void)argv;
     uint8_t report[PF_WIRELESS_REQUEST_SIZE], status[PF_WIRELESS_STATUS_SIZE];
+    if (argc > 1) {
+        tcp_auth_required = true;
+        pf_wireless_start();
+        pf_wireless_status(status);
+        assert(status[PF_WIRELESS_STATUS_ERROR_OFFSET] == PF_WIRELESS_ERROR_INIT);
+        assert((status[47] & 2u) != 0u && status[46] == 0u);
+        pf_wireless_poll();
+        assert(tcp_cli_starts == 0u && zeroizes == 1u);
+        return 0;
+    }
     /* With both radios off, the chip still starts for the W-board LED, but no radio is enabled. */
     assert(!pf_wireless_led_put(true) && led_level == -1);
     tcp_auth_required = true;
@@ -150,18 +178,22 @@ int main(void)
     pf_wireless_start();
     assert(chip_inits == 1 && !pf_wireless_led_put(true) && led_level == -1);
     pf_wireless_status(status);
-    assert((status[47] & 1u) != 0u && status[46] == 0u);
+    assert(status[46] == 0u);
     tcp_auth_required = false;
     chip_init_result = 0;
     pf_wireless_start();
     assert(chip_inits == 2 && led_level == 0);
+    pf_wireless_status(status);
+    assert(zeroizes == 2u);
     assert(wifi_starts == 0 && tcp_cli_starts == 0);
     pf_wireless_status(status);
     assert(status[46] == 0);
     assert(pf_wireless_led_put(true));
     assert(led_level == 1);
     request(report, 250, 1);
+    const unsigned before_save_zeroizes = zeroizes;
     assert(pf_wireless_configure(report) && saves == 1 && discards == 0);
+    assert(zeroizes == before_save_zeroizes + 1u);
     assert(clock == PF_SYSCLK_250MHZ && speed == 1 && radios == PF_WIRELESS_WIFI && strcmp(ssid, "network") == 0);
     pf_wireless_status(status);
     assert(status[2] == PF_HID_COMMAND_COMPLETED && status[3] == 7);
@@ -175,7 +207,14 @@ int main(void)
     assert(pf_wireless_configure(report) && saves == 2 && discards == 2 && saved_password[0] == 0);
     request(report, 150, 0);
     report[3] = 4;
+    const unsigned before_rejected_zeroizes = zeroizes;
     assert(!pf_wireless_configure(report) && saves == 2 && discards == 2);
+    assert(zeroizes == before_rejected_zeroizes + 1u);
+    staged_test = true;
+    report[4] = 'X';
+    assert(!pf_wireless_configure(report) && saves == 2 && discards == 2);
+    assert(zeroizes == before_rejected_zeroizes + 2u);
+    staged_test = false;
     request(report, 150, 0);
     report[0] = 1;
     assert(!pf_wireless_configure(report) && saves == 2 && discards == 2);
@@ -270,13 +309,22 @@ int main(void)
     assert(!pf_wireless_configure(report) && saves == before_invalid);
     request(report, 150, 0);
     assert(pf_wireless_configure(report) && tcp_cli_enabled);
+    request(report, 150, 0);
+    save_result = false;
+    const unsigned before_failed_save_zeroizes = zeroizes;
+    assert(!pf_wireless_configure(report));
+    pf_wireless_status(status);
+    assert(status[PF_WIRELESS_STATUS_SAVE_STATUS_OFFSET] == PF_HID_COMMAND_FAILED);
+    assert(zeroizes == before_failed_save_zeroizes + 1u);
     return 0;
 }
 """)
     binary = tmp_path / "wireless"
     compiled = subprocess.run([
-        "gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(tmp_path), "-I", str(ROOT / "firmware/src"),
+        "gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+        "-I", str(tmp_path), "-I", str(ROOT / "firmware/src"),
         str(harness), str(ROOT / "firmware/src/app/wireless/wireless.c"), "-o", str(binary),
     ], check=False, capture_output=True, text=True)
     assert compiled.returncode == 0, compiled.stderr
     subprocess.run([str(binary)], check=True)
+    subprocess.run([str(binary), "missing-auth-key"], check=True)

@@ -1,6 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bindWirelessForm } from "../js/wireless-form.mjs";
+import { bindWirelessForm, renderWirelessStatus } from "../js/wireless-form.mjs";
+
+test("missing TCP auth key shows an actionable hint without misdiagnosing other states", () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  globalThis.document = { querySelector(selector) {
+    if (!elements.has(selector)) elements.set(selector, {});
+    return elements.get(selector);
+  } };
+  const snapshot = { connected: true, hardware: { capabilities: 128 }, wireless: {
+    wifi_enabled: true, ssid: "saved", wifi_state: "failed", error: 1,
+    tcp_cli_auth_required: true, ble_key_configured: false, restart_required: false,
+  } };
+  try {
+    renderWirelessStatus(snapshot);
+    assert.match(elements.get("#wifi-state").textContent, /TCP authentication needs a key/);
+    assert.match(elements.get("#wifi-state").title, /Save a BLE control key or disable TCP authentication/);
+    for (const change of [{ error: 0 }, { error: 2 }, { ble_key_configured: true },
+      { tcp_cli_auth_required: false }, { restart_required: true }]) {
+      renderWirelessStatus({ ...snapshot, wireless: { ...snapshot.wireless, ...change } });
+      assert.doesNotMatch(elements.get("#wifi-state").textContent, /needs a key/);
+    }
+    renderWirelessStatus({ ...snapshot, connected: false });
+    assert.equal(elements.get("#wifi-state").textContent, "--");
+    renderWirelessStatus({ ...snapshot, wireless_error: "Read failed" });
+    assert.equal(elements.get("#wifi-state").textContent, "Unavailable");
+    assert.equal(elements.get("#wifi-state").title, "Read failed");
+  } finally { globalThis.document = previous; }
+});
 
 test("TCP switch is saved only on v2 and expired test credentials block saving", async context => {
   const previous = globalThis.document;

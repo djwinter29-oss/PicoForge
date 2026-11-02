@@ -68,7 +68,7 @@ int cyw43_wifi_get_rssi(cyw43_t *, int32_t *);
 #include "pico/cyw43_arch.h"
 cyw43_t cyw43_state;
 static uint64_t now;
-static unsigned joins, sta_calls, logs;
+static unsigned joins, sta_calls, logs, time_reads;
 static int join_result, link;
 static uint8_t radios = PF_WIRELESS_WIFI;
 static pf_wifi_auth_state_t configured_auth = PF_WIFI_AUTH_TRY_WPA2;
@@ -84,7 +84,7 @@ uint8_t pf_boot_config_radios(void) { return radios; }
 pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void) { return configured_auth; }
 void pf_boot_config_wifi_ssid(char out[33]) { strcpy(out, ssid); }
 void pf_boot_config_wifi_password(char out[64]) { strcpy(out, password); }
-uint64_t time_us_64(void) { return now; }
+uint64_t time_us_64(void) { ++time_reads; return now; }
 void cyw43_arch_enable_sta_mode(void) { ++sta_calls; }
 void pf_wifi_mdns_poll(bool saved_link_up) { (void)saved_link_up; }
 static unsigned sta_releases;
@@ -629,6 +629,10 @@ int main(void) {
     assert(pf_wifi_command(command));
     link = CYW43_LINK_UP;
     pf_wifi_poll();
+    const unsigned before_lifetime_reads = time_reads;
+    pf_wifi_result(result);
+    assert(time_reads == before_lifetime_reads + 1u);
+    assert(result[220] == 88u && result[221] == 2u);
     now += 599999999u;
     pf_wifi_poll();
     assert(pf_wifi_tested_credentials(tested_ssid, tested_password));
@@ -662,6 +666,39 @@ int main(void) {
     pf_wifi_poll();
     assert(pf_wifi_saved_link_up() && leaves == leaves_on_saved);
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
+
+    /* Failed credential tests rejoin promptly without increasing the saved-network retry delay. */
+    configured_auth = PF_WIFI_AUTH_WPA2;
+    assert(pf_wifi_prepare());
+    for (unsigned attempt = 0u; attempt < 3u; ++attempt) {
+        link = CYW43_LINK_DOWN;
+        expected_ssid = "dropped-test";
+        expected_password = "dropped-pass";
+        assert(pf_wifi_command(command));
+        link = CYW43_LINK_BADAUTH;
+        const unsigned before_failed_test = joins;
+        pf_wifi_poll();
+        pf_wifi_result(result);
+        assert(result[2] == 6u && result[3] == 5u);
+        assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
+        link = CYW43_LINK_JOIN;
+        pf_wifi_poll();
+        assert(joins == before_failed_test);
+        link = CYW43_LINK_DOWN;
+        expected_ssid = "network";
+        expected_password = "test-password";
+        pf_wifi_poll();
+        assert(joins == before_failed_test + 1u && pf_wifi_state() == 1u);
+    }
+    link = CYW43_LINK_BADAUTH;
+    pf_wifi_poll();
+    const unsigned before_saved_retry = joins;
+    now += 4999999u;
+    pf_wifi_poll();
+    assert(joins == before_saved_retry);
+    ++now;
+    pf_wifi_poll();
+    assert(joins == before_saved_retry + 1u);
     return 0;
 }
 """)

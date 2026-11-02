@@ -201,6 +201,8 @@ PuTTY/`nc` sessions need a client that implements the proof described in the
 two seconds. The firmware closes an otherwise authenticated session after 15 minutes without traffic; keepalive
 still detects a vanished peer after about 50 seconds. Authentication does not encrypt TCP traffic, and anyone who
 can connect can run every CLI command, including `--confirm` destructive ones. Use only a trusted LAN.
+Firmware logs include the peer IP for connections, successful/rejected proofs, cooldown refusals, challenge failures,
+and authentication or idle timeouts. Keys, proofs and command contents are not included in these connection logs.
 
 ## Faulted MSC Recovery
 

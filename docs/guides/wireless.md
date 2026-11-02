@@ -27,6 +27,9 @@ Over a Direct Bluetooth connection the board omits the SSID and IP address, so W
 `Wi-Fi (connecting)` or `Wi-Fi (disconnected)`.
 The firmware does not report a separate connecting state. If the serial is unavailable, the name is `PicoForge`.
 Missing reports show `--`, and read failures show `Unavailable` with the error in the value's tooltip.
+If initialization fails with TCP authentication required but no saved control key, the Wi-Fi value shows
+`TCP authentication needs a key`. Save a BLE control key or disable TCP authentication, then **Save&Reboot**.
+The hint is suppressed when changed settings already require a restart.
 The configuration section shows only a staged Wi-Fi test reminder until saved, not duplicate live connection details.
 
 The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter a hidden one manually. Enter a
@@ -69,7 +72,8 @@ deadline; the saved network alternates between WPA2 and SAE after such failures 
 reboot. A rejected password or a DHCP timeout never triggers the fallback. 64-hex-digit raw PSKs are not supported.
 Association/DHCP has a 30-second deadline; failures and dropped saved-network connections are reported and retried
 with capped exponential backoff from five to 60 seconds, reset after a successful link. A failed connection test
-leaves the tested network and retries only the saved network, if one is enabled. Scans time out after 10 seconds;
+leaves the tested network and rejoins the saved network, if enabled, as soon as the test link disconnects;
+it does not increase the saved-network backoff. Scans time out after 10 seconds;
 the saved network is rejoined after the scan finishes.
 lwIP uses 4-byte heap alignment, required by Cortex-M multi-word stores into received packet buffers. While Wi-Fi
 is enabled and the persisted **TCP CLI enabled** switch is on, a single-client raw TCP listener on port 2323 serves

@@ -33,6 +33,7 @@ typedef err_t (*tcp_recv_fn)(void *, struct tcp_pcb *, struct pbuf *, err_t);
 typedef void (*tcp_err_fn)(void *, err_t);
 typedef err_t (*tcp_accept_fn)(void *, struct tcp_pcb *, err_t);
 struct tcp_pcb {
+    const char *remote_ip;
     u8_t so_options;
     u32_t keep_idle, keep_intvl, keep_cnt;
     u16_t snd_buf, snd_queuelen, recved;
@@ -43,6 +44,7 @@ struct tcp_pcb {
     tcp_err_fn err;
     tcp_accept_fn accept;
 };
+#define ipaddr_ntoa(address) (*(address) ? *(address) : "0.0.0.0")
 #define tcp_sndbuf(pcb) ((pcb)->snd_buf)
 #define tcp_sndqueuelen(pcb) ((pcb)->snd_queuelen)
 #define tcp_nagle_disable(pcb) ((pcb)->nagle_off = true)
@@ -65,6 +67,8 @@ u8_t pbuf_free(struct pbuf *buffer);
 
 HARNESS = r"""
 #include <assert.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include "lwip/tcp.h"
 #include "app/wireless/wifi/tcp_cli.h"
@@ -77,6 +81,8 @@ static unsigned allocated, listener_count, frees, bound_port;
 static err_t close_result = ERR_OK;
 static uint64_t fake_time;
 static bool key_available;
+static char last_log[160];
+static bool timeout_logged;
 
 struct tcp_pcb *tcp_new_ip_type(u8_t type)
 { assert(type == IPADDR_TYPE_V4); ++allocated; return &listeners[listener_count++]; }
@@ -103,7 +109,16 @@ u16_t pbuf_copy_partial(const struct pbuf *buffer, void *data, u16_t length, u16
 { memcpy(data, buffer->payload + offset, length); return length; }
 u8_t pbuf_free(struct pbuf *buffer) { (void)buffer; ++frees; return 1u; }
 bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *format, ...)
-{ (void)level; (void)format; assert(strcmp(tag, "tcp-cli") == 0); return true; }
+{
+    (void)level;
+    assert(strcmp(tag, "tcp-cli") == 0);
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(last_log, sizeof(last_log), format, arguments);
+    va_end(arguments);
+    if (strcmp(last_log, "Client 192.0.2.13 authentication timed out") == 0) timeout_logged = true;
+    return true;
+}
 uint64_t time_us_64(void) { return fake_time; }
 void pf_wireless_auth_set_key(const uint8_t key[32]) { key_available = key != NULL && key[0] == 0x42u; }
 bool pf_wireless_auth_available(void) { return key_available; }
@@ -138,7 +153,9 @@ int main(void)
     assert(!pf_tcp_cli_connected() && !pf_tcp_cli_read(&c) && pf_tcp_cli_write_available() == 0u);
 
     client->snd_buf = 10u;
+    client->remote_ip = "192.0.2.1";
     assert(listener->accept(NULL, client, ERR_OK) == ERR_OK && pf_tcp_cli_connected());
+    assert(strcmp(last_log, "Client 192.0.2.1 connected") == 0);
     assert(client->nagle_off && (client->so_options & SOF_KEEPALIVE) != 0u && client->keep_cnt == 4u);
 
     /* A second client is told the CLI is busy and closed; the first keeps the session. */
@@ -227,7 +244,14 @@ int main(void)
     memcpy(auth_line + 5u, auth_client->written + 15u, 32u);
     memcpy(auth_line + 37u, "\r\n", 2u);
     assert(deliver(auth_client, auth_line, 20u) == ERR_OK && !pf_tcp_cli_connected());
+    char oversized[TCP_WND + 1u];
+    memcpy(oversized, auth_line + 20u, 19u);
+    memset(oversized + 19u, 'x', sizeof(oversized) - 19u);
+    const unsigned before_refusal_frees = frees;
+    assert(deliver(auth_client, oversized, sizeof(oversized)) == ERR_MEM);
+    assert(auth_client->recved == 20u && frees == before_refusal_frees && !pf_tcp_cli_connected());
     assert(deliver(auth_client, auth_line + 20u, 19u) == ERR_OK && pf_tcp_cli_connected());
+    assert(auth_client->recved == 39u);
     assert(pf_tcp_cli_write_available() != 0u);
     pf_tcp_cli_poll(false);
 
@@ -236,15 +260,19 @@ int main(void)
     listener = &listeners[3];
     struct tcp_pcb *expired = &pcbs[13];
     expired->snd_buf = 128u;
+    expired->remote_ip = "192.0.2.13";
     assert(listener->accept(NULL, expired, ERR_OK) == ERR_OK);
     fake_time += 10000000u;
     pf_tcp_cli_poll(true);
     assert(expired->closed && !pf_tcp_cli_connected());
+    assert(timeout_logged);
     struct tcp_pcb *rejected = &pcbs[14];
     rejected->snd_buf = 128u;
+    rejected->remote_ip = "192.0.2.14";
     assert(listener->accept(NULL, rejected, ERR_OK) == ERR_OK);
     assert(deliver(rejected, "AUTH 00000000000000000000000000000000\r\n", 39u) == ERR_OK);
     assert(rejected->closed);
+    assert(strcmp(last_log, "Client 192.0.2.14 authentication failed") == 0);
     struct tcp_pcb *rate_limited = &pcbs[15];
     rate_limited->snd_buf = 128u;
     assert(listener->accept(NULL, rate_limited, ERR_OK) == ERR_OK && rate_limited->closed);

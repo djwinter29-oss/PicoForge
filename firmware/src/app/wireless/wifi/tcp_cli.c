@@ -46,14 +46,22 @@ static uint32_t rx_tail; /**< Ring read index. */
 static uint32_t rx_count; /**< Unread bytes in rx_ring. */
 static uint32_t rx_consumed; /**< Read bytes not yet reported to lwIP with tcp_recved(). */
 
+/** @brief Fixed request binding the proof to TCP CLI session admission. */
 static const uint8_t tcp_auth_request[9] = {'T', 'C', 'P', 'C', 'L', 'I', '0', '0', '1'};
+/** @brief Protocol domain separating TCP CLI proofs from BLE control proofs. */
 static const uint8_t tcp_auth_domain[9] = {'P', 'F', 'T', 'C', 'P', 'C', 'L', 'I', '1'};
 
-static uint8_t hex_digit(uint8_t value)
+/** @brief Encode length bytes as lowercase hex into a caller-owned buffer of at least twice that size. */
+static void hex_encode(uint8_t *destination, const uint8_t *source, size_t length)
 {
-    return value < 10u ? (uint8_t)('0' + value) : (uint8_t)('a' + value - 10u);
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i = 0u; i < length; ++i) {
+        destination[2u * i] = (uint8_t)digits[source[i] >> 4u];
+        destination[2u * i + 1u] = (uint8_t)digits[source[i] & 0x0fu];
+    }
 }
 
+/** @brief Decode one hexadecimal digit; return -1 for non-hex input. */
 static int8_t hex_value(uint8_t character)
 {
     if (character >= '0' && character <= '9') return (int8_t)(character - '0');
@@ -62,6 +70,7 @@ static int8_t hex_value(uint8_t character)
     return -1;
 }
 
+/** @brief Invalidate the current challenge and discard any partial proof. */
 static void reset_auth(void)
 {
     auth_pending = false;
@@ -71,42 +80,32 @@ static void reset_auth(void)
     memset(auth_line, 0, sizeof(auth_line));
 }
 
+/** @brief Queue a fresh board-bound challenge and start the proof deadline; false on transport failure. */
 static bool start_authentication(struct tcp_pcb *pcb)
 {
     static const char prefix[] = "PicoForge AUTH ";
-    static const char separator[] = " ";
     static const char ending[] = "\r\n";
-    uint8_t challenge[sizeof(prefix) - 1u + 32u + sizeof(separator) - 1u + 16u + sizeof(ending) - 1u];
+    uint8_t challenge[sizeof(prefix) - 1u + 32u + 1u + 16u + sizeof(ending) - 1u];
     uint8_t uid[8];
     size_t cursor = 0u;
     memcpy(challenge + cursor, prefix, sizeof(prefix) - 1u);
     cursor += sizeof(prefix) - 1u;
     if (!pf_wireless_auth_new_nonce(auth_nonce)) return false;
     pf_wireless_auth_device_id(uid);
-    for (size_t i = 0u; i < sizeof(auth_nonce); ++i) {
-        challenge[cursor++] = hex_digit(auth_nonce[i] >> 4u);
-        challenge[cursor++] = hex_digit(auth_nonce[i] & 0x0fu);
-    }
+    hex_encode(challenge + cursor, auth_nonce, sizeof(auth_nonce));
+    cursor += 2u * sizeof(auth_nonce);
     challenge[cursor++] = ' ';
-    for (size_t i = 0u; i < sizeof(uid); ++i) {
-        challenge[cursor++] = hex_digit(uid[i] >> 4u);
-        challenge[cursor++] = hex_digit(uid[i] & 0x0fu);
-    }
+    hex_encode(challenge + cursor, uid, sizeof(uid));
+    cursor += 2u * sizeof(uid);
     memcpy(challenge + cursor, ending, sizeof(ending) - 1u);
     cursor += sizeof(ending) - 1u;
     auth_pending = true;
     auth_deadline_us = time_us_64() + TCP_CLI_AUTH_TIMEOUT_US;
-    if (cursor > tcp_sndbuf(pcb) || tcp_write(pcb, challenge, (u16_t)cursor, TCP_WRITE_FLAG_COPY) != ERR_OK ||
-        tcp_output(pcb) != ERR_OK) {
-        memset(challenge, 0, sizeof(challenge));
-        memset(uid, 0, sizeof(uid));
-        return false;
-    }
-    memset(challenge, 0, sizeof(challenge));
-    memset(uid, 0, sizeof(uid));
-    return true;
+    return cursor <= tcp_sndbuf(pcb) && tcp_write(pcb, challenge, (u16_t)cursor, TCP_WRITE_FLAG_COPY) == ERR_OK &&
+        tcp_output(pcb) == ERR_OK;
 }
 
+/** @brief Verify a complete AUTH line against the current one-use challenge. */
 static bool verify_auth_line(void)
 {
     static const uint8_t prefix[] = "AUTH ";
@@ -125,16 +124,15 @@ static bool verify_auth_line(void)
     return accepted;
 }
 
-static bool queue_input(struct pbuf *buffer, u16_t offset, u16_t length)
+/** @brief Copy already-admitted CLI bytes into the receive ring; the caller checks capacity before consuming auth. */
+static void queue_input(struct pbuf *buffer, u16_t offset, u16_t length)
 {
-    if (length > sizeof(rx_ring) - rx_count) return false;
     uint32_t first = sizeof(rx_ring) - rx_head;
     if (first > length) first = length;
     (void)pbuf_copy_partial(buffer, rx_ring + rx_head, (u16_t)first, offset);
     (void)pbuf_copy_partial(buffer, rx_ring, (u16_t)(length - first), (u16_t)(offset + first));
     rx_head = (rx_head + length) % sizeof(rx_ring);
     rx_count += length;
-    return true;
 }
 
 /** @brief Forget all client input state. */
@@ -197,6 +195,8 @@ static err_t client_receive(void *argument, struct tcp_pcb *pcb, struct pbuf *bu
         pbuf_free(buffer);
         return ERR_OK;
     }
+    /* Refusal must not consume authentication state or acknowledge bytes: lwIP redelivers the whole pbuf. */
+    if (buffer->tot_len > sizeof(rx_ring) - rx_count) return ERR_MEM;
     u16_t cli_offset = 0u;
     if (auth_pending) {
         u16_t consumed = 0u;
@@ -216,10 +216,11 @@ static err_t client_receive(void *argument, struct tcp_pcb *pcb, struct pbuf *bu
                 }
                 reset_auth();
                 cli_offset = consumed;
-                PF_LOGGING_INFO("tcp-cli", "Client authenticated");
+                PF_LOGGING_INFO("tcp-cli", "Client %s authenticated", ipaddr_ntoa(&pcb->remote_ip));
             }
         }
         if (rejected) {
+            PF_LOGGING_WARNING("tcp-cli", "Client %s authentication failed", ipaddr_ntoa(&pcb->remote_ip));
             auth_retry_us = time_us_64() + TCP_CLI_AUTH_RETRY_DELAY_US;
             pbuf_free(buffer);
             client = NULL;
@@ -235,10 +236,7 @@ static err_t client_receive(void *argument, struct tcp_pcb *pcb, struct pbuf *bu
     }
     client_activity_us = time_us_64();
     const u16_t cli_length = (u16_t)(buffer->tot_len - cli_offset);
-    if (cli_length > sizeof(rx_ring) - rx_count) {
-        return ERR_MEM; /* Unreachable while the window invariant holds; lwIP redelivers refused data later. */
-    }
-    if (!queue_input(buffer, cli_offset, cli_length)) return ERR_MEM;
+    queue_input(buffer, cli_offset, cli_length);
     pbuf_free(buffer);
     return ERR_OK;
 }
@@ -254,6 +252,7 @@ static err_t accept_client(void *argument, struct tcp_pcb *pcb, err_t error)
         return close_with_notice(pcb, TCP_CLI_BUSY_NOTICE) ? ERR_ABRT : ERR_OK;
     }
     if (auth_required && time_us_64() < auth_retry_us) {
+        PF_LOGGING_WARNING("tcp-cli", "Client %s authentication cooldown", ipaddr_ntoa(&pcb->remote_ip));
         return close_with_notice(pcb, TCP_CLI_AUTH_FAILED_NOTICE) ? ERR_ABRT : ERR_OK;
     }
     client = pcb;
@@ -268,12 +267,14 @@ static err_t accept_client(void *argument, struct tcp_pcb *pcb, err_t error)
     pcb->keep_intvl = TCP_CLI_KEEPALIVE_INTERVAL_MS;
     pcb->keep_cnt = TCP_CLI_KEEPALIVE_COUNT;
     if (auth_required && !start_authentication(pcb)) {
+        PF_LOGGING_WARNING("tcp-cli", "Client %s authentication challenge failed", ipaddr_ntoa(&pcb->remote_ip));
         client = NULL;
         reset_auth();
         return close_with_notice(pcb, TCP_CLI_AUTH_REQUIRED_NOTICE) ? ERR_ABRT : ERR_OK;
     }
     client_activity_us = time_us_64();
-    if (!auth_required) PF_LOGGING_INFO("tcp-cli", "Client connected");
+    PF_LOGGING_INFO("tcp-cli", "Client %s connected%s", ipaddr_ntoa(&pcb->remote_ip),
+                   auth_required ? "; authentication pending" : "");
     return ERR_OK;
 }
 
@@ -417,14 +418,10 @@ void pf_tcp_cli_poll(bool serving)
         listener_retry_us = now + TCP_CLI_RETRY_DELAY_US;
     }
     if (client != NULL && auth_pending && now >= auth_deadline_us) {
-        struct tcp_pcb *pcb = client;
-        client = NULL;
-        reset_input();
-        reset_auth();
-        (void)close_with_notice(pcb, TCP_CLI_AUTH_TIMEOUT_NOTICE);
-        PF_LOGGING_WARNING("tcp-cli", "Client authentication timed out");
+        PF_LOGGING_WARNING("tcp-cli", "Client %s authentication timed out", ipaddr_ntoa(&client->remote_ip));
+        pf_tcp_cli_close(TCP_CLI_AUTH_TIMEOUT_NOTICE);
     } else if (client != NULL && !auth_pending && now - client_activity_us >= TCP_CLI_IDLE_TIMEOUT_US) {
+        PF_LOGGING_INFO("tcp-cli", "Client %s idle session timed out", ipaddr_ntoa(&client->remote_ip));
         pf_tcp_cli_close(TCP_CLI_IDLE_TIMEOUT_NOTICE);
-        PF_LOGGING_INFO("tcp-cli", "Idle client session closed");
     }
 }

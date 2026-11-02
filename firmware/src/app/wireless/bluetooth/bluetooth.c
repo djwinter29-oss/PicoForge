@@ -35,6 +35,7 @@ static bool challenge_valid; /**< Nonce issued once and usable for one authentic
 static bool proof_valid; /**< A 16-byte proof is ready for exactly one subsequent control request. */
 static uint8_t proof[16]; /**< Submitted per-command MAC, cleared on use or disconnect. */
 static uint8_t nonce[16]; /**< Fresh random challenge, invalidated by use or disconnect. */
+/** @brief Protocol domain separating BLE control proofs from TCP CLI proofs. */
 static const uint8_t ble_auth_domain[9] = {'P', 'F', 'B', 'L', 'E', 'C', 'T', 'L', '1'};
 static uint64_t auth_retry_us; /**< Failed authentication rate limit; never blocks the owner task. */
 /** Properly aligned typed report storage, frozen for the current ATT long read. */

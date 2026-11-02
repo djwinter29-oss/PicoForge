@@ -239,12 +239,15 @@ static void connect_wifi(void)
     if (rc != 0) PF_LOGGING_ERROR("wifi", "Wi-Fi connection request failed: %d", rc);
 }
 
-/** @brief End the active test as failed and drop its credentials; the saved network rejoins after the retry delay. */
+/** @brief End a failed test and rejoin the saved network as soon as the test link has disconnected. */
 static void fail_test(uint8_t detail, uint8_t error)
 {
     command_state = PF_WIFI_COMMAND_FAILED;
     join_detail = detail;
-    if (link_owner == PF_WIFI_LINK_TEST) cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+    if (link_owner == PF_WIFI_LINK_TEST) {
+        cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+        test_disconnect_pending = saved_wifi_enabled;
+    }
     link_owner = PF_WIFI_LINK_NONE;
     clear_test_credentials();
     if (saved_wifi_enabled) {
@@ -254,7 +257,7 @@ static void fail_test(uint8_t detail, uint8_t error)
         wifi_state = PF_WIFI_STATE_DISABLED;
         wifi_error = PF_WIRELESS_ERROR_NONE;
     }
-    schedule_retry(time_us_64());
+    retry_us = time_us_64();
     release_station();
 }
 
@@ -642,8 +645,8 @@ void pf_wifi_result(uint8_t report[PF_WIRELESS_RESULT_SIZE])
     if (command_state == PF_WIFI_COMMAND_TEST_JOINED) {
         pf_wifi_ip_address(report + RESULT_ADDRESS);
     }
-    if (test.succeeded && test.expiry_us > time_us_64()) {
-        const uint64_t now = time_us_64();
+    const uint64_t now = time_us_64();
+    if (test.succeeded && test.expiry_us > now) {
         const uint64_t remaining_us = test.expiry_us - now;
         const uint16_t remaining_seconds = (uint16_t)((remaining_us + 999999u) / 1000000u);
         report[RESULT_TEST_LIFETIME] = (uint8_t)remaining_seconds;

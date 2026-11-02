@@ -204,6 +204,31 @@ void test_rejected_tcp_authentication_closes_the_client_with_a_notice(void)
     fake_time_us = 2000000u;
 }
 
+void test_refused_auth_buffer_preserves_partial_proof_and_window_credit_until_redelivery(void)
+{
+    uint8_t key[32] = {0x42u};
+    pf_wireless_auth_set_key(key);
+    TEST_ASSERT_TRUE(pf_tcp_cli_set_auth_required(true));
+    pf_tcp_cli_close(NULL);
+    memset(&client_pcb, 0, sizeof(client_pcb));
+    client_pcb.snd_buf = sizeof(client_pcb.sent);
+    TEST_ASSERT_EQUAL_INT(ERR_OK, accept_callback(NULL, &client_pcb, ERR_OK));
+    TEST_ASSERT_EQUAL_INT(ERR_OK, deliver(&client_pcb, "AUTH 000102"));
+    const uint8_t partial_length = auth_line_length;
+    rx_count = TCP_WND - 1u;
+    TEST_ASSERT_EQUAL_INT(ERR_MEM, deliver(&client_pcb, "030405060708090a0b0c0d0e0f\r\nhelp\r"));
+    TEST_ASSERT_TRUE(auth_pending);
+    TEST_ASSERT_EQUAL_UINT8(partial_length, auth_line_length);
+    TEST_ASSERT_EQUAL_UINT32(11u, client_pcb.recved);
+    rx_count = 0u;
+    TEST_ASSERT_EQUAL_INT(ERR_OK, deliver(&client_pcb, "030405060708090a0b0c0d0e0f\r\nhelp\r"));
+    TEST_ASSERT_TRUE(pf_tcp_cli_connected());
+    TEST_ASSERT_EQUAL_UINT32(39u, client_pcb.recved);
+    char command[6] = {0};
+    for (size_t i = 0u; i < 5u; ++i) TEST_ASSERT_TRUE(pf_tcp_cli_read(&command[i]));
+    TEST_ASSERT_EQUAL_STRING("help\r", command);
+}
+
 void test_writes_respect_send_space_and_queue_limits(void)
 {
     client_pcb.snd_buf = 3u;

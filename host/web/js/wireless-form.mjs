@@ -5,13 +5,15 @@
 export function renderWirelessStatus(snapshot) {
   const wireless = snapshot.wireless;
   const unavailable = !snapshot.connected ? "--" : snapshot.wireless_error ? "Unavailable" : !wireless ? "--" : null;
+  const missingAuthKey = !unavailable && wireless.error === 1 && wireless.tcp_cli_auth_required
+    && !wireless.ble_key_configured && !wireless.restart_required;
   const consoleReady = !unavailable && wireless?.wifi_enabled && wireless.wifi_state === "connected"
     && wireless.tcp_cli_started && snapshot.console_url;
   const render = (name, text) => {
     document.querySelector(`#${name}-diagnostics`).hidden = !(snapshot.hardware?.capabilities & 128);
     const status = document.querySelector(`#${name}-state`);
     const label = unavailable ?? `${text()}${name === "wifi" && wireless?.restart_required
-      ? " · restart required" : ""}`;
+      ? " · restart required" : ""}${name === "wifi" && missingAuthKey ? " · TCP authentication needs a key" : ""}`;
     if (name === "wifi" && consoleReady) {
       const existing = status.querySelector?.("a");
       const link = existing ?? document.createElement("a");
@@ -22,7 +24,9 @@ export function renderWirelessStatus(snapshot) {
       link.title = "Open the Wi-Fi CLI console in a new tab";
       if (!existing) status.replaceChildren(link);
     } else status.textContent = label;
-    status.title = snapshot.wireless_error ?? (name === "wifi" && wireless?.restart_required
+    status.title = snapshot.wireless_error ?? (name === "wifi" && missingAuthKey
+      ? "Wireless initialization failed. Save a BLE control key or disable TCP authentication, then Save&Reboot."
+      : name === "wifi" && wireless?.restart_required
       ? "Saved wireless settings differ from the settings applied at boot; restart required."
       : name === "wifi" && snapshot.hardware?.serial_number
         ? `picoforge-${snapshot.hardware.serial_number}.local` : "");

@@ -78,10 +78,10 @@ void pf_wifi_mdns_poll(bool saved_link_up, bool tcp_cli_up)
         mdns_resp_register_name_result_cb(name_result);
         initialized = true;
     }
-    char hostname[sizeof("picoforge-") + 2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES] = "picoforge-";
-    pico_get_unique_board_id_string(hostname + sizeof("picoforge-") - 1u,
-                                   sizeof(hostname) - sizeof("picoforge-") + 1u);
     if (!registered) {
+        char hostname[sizeof("picoforge-") + 2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES] = "picoforge-";
+        pico_get_unique_board_id_string(hostname + sizeof("picoforge-") - 1u,
+                                       sizeof(hostname) - sizeof("picoforge-") + 1u);
         const err_t rc = mdns_resp_add_netif(netif, hostname);
         if (rc != ERR_OK) {
             retry_us = time_us_64() + MDNS_RETRY_DELAY_US;
