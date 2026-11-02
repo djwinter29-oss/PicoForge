@@ -145,8 +145,8 @@ static err_t deliver(struct tcp_pcb *pcb, const char *text, uint16_t length)
 int main(void)
 {
     char c;
-    pf_tcp_cli_poll(true);
-    pf_tcp_cli_poll(true);
+    pf_tcp_cli_poll(true, fake_time);
+    pf_tcp_cli_poll(true, fake_time);
     assert(allocated == 1u && bound_port == PF_TCP_CLI_PORT);
     assert(pf_tcp_cli_serving());
     struct tcp_pcb *listener = &listeners[0], *client = &pcbs[1], *extra = &pcbs[2];
@@ -218,23 +218,23 @@ int main(void)
     served->snd_buf = 100u;
     assert(pf_tcp_cli_serving());
     assert(listener->accept(NULL, served, ERR_OK) == ERR_OK && pf_tcp_cli_connected());
-    pf_tcp_cli_poll(false);
+    pf_tcp_cli_poll(false, fake_time);
     assert(served->closed && !pf_tcp_cli_connected());
     assert(!pf_tcp_cli_serving());
     assert(listener->closed && listener->accept == NULL);
-    pf_tcp_cli_poll(true);
+    pf_tcp_cli_poll(true, fake_time);
     listener = &listeners[1];
     struct tcp_pcb *restored = &pcbs[9];
     restored->snd_buf = 100u;
     assert(pf_tcp_cli_serving());
     assert(listener->accept(NULL, restored, ERR_OK) == ERR_OK && pf_tcp_cli_connected() && !restored->closed);
-    pf_tcp_cli_poll(false);
+    pf_tcp_cli_poll(false, fake_time);
 
     /* Authenticated mode sends one nonce+UID challenge, withholds CLI I/O, then admits only the HMAC proof. */
     uint8_t key[32] = {0x42u};
     pf_wireless_auth_set_key(key);
     assert(pf_tcp_cli_set_auth_required(true));
-    pf_tcp_cli_poll(true);
+    pf_tcp_cli_poll(true, fake_time);
     listener = &listeners[2];
     struct tcp_pcb *auth_client = &pcbs[11];
     auth_client->snd_buf = 128u;
@@ -253,17 +253,17 @@ int main(void)
     assert(deliver(auth_client, auth_line + 20u, 19u) == ERR_OK && pf_tcp_cli_connected());
     assert(auth_client->recved == 39u);
     assert(pf_tcp_cli_write_available() != 0u);
-    pf_tcp_cli_poll(false);
+    pf_tcp_cli_poll(false, fake_time);
 
     assert(pf_tcp_cli_set_auth_required(true));
-    pf_tcp_cli_poll(true);
+    pf_tcp_cli_poll(true, fake_time);
     listener = &listeners[3];
     struct tcp_pcb *expired = &pcbs[13];
     expired->snd_buf = 128u;
     expired->remote_ip = "192.0.2.13";
     assert(listener->accept(NULL, expired, ERR_OK) == ERR_OK);
     fake_time += 10000000u;
-    pf_tcp_cli_poll(true);
+    pf_tcp_cli_poll(true, fake_time);
     assert(expired->closed && !pf_tcp_cli_connected());
     assert(timeout_logged);
     struct tcp_pcb *rejected = &pcbs[14];
@@ -285,7 +285,7 @@ int main(void)
     memcpy(valid_proof + 37u, "\r\n", 2u);
     assert(deliver(idle, valid_proof, sizeof(valid_proof)) == ERR_OK && pf_tcp_cli_connected());
     fake_time += 900000000u;
-    pf_tcp_cli_poll(true);
+    pf_tcp_cli_poll(true, fake_time);
     assert(idle->closed);
     return 0;
 }

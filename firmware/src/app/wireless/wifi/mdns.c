@@ -47,13 +47,13 @@ static void service_txt(struct mdns_service *service, void *userdata)
 }
 
 /** @copydoc pf_wifi_mdns_poll */
-void pf_wifi_mdns_poll(bool saved_link_up, bool tcp_cli_up)
+void pf_wifi_mdns_poll(bool saved_link_up, bool tcp_cli_up, uint64_t now)
 {
     struct netif *netif = &cyw43_state.netif[CYW43_ITF_STA];
-    const uint64_t now = time_us_64();
     if (!saved_link_up) {
         if (registered && now >= retry_us) {
-            /* The pinned responder removes only its probe timer; delayed IPv4 callbacks also own netif data. */
+            /* ponytail: the pinned IPv4-only responder removes only its probe timer, so cancel all five callbacks
+             * owning netif data here. Recheck on lwIP upgrades; use upstream complete teardown when available. */
             sys_untimeout(mdns_multicast_timeout_reset_ipv4, netif);
             sys_untimeout(mdns_multicast_probe_timeout_reset_ipv4, netif);
             sys_untimeout(mdns_multicast_timeout_25ttl_reset_ipv4, netif);
@@ -84,7 +84,7 @@ void pf_wifi_mdns_poll(bool saved_link_up, bool tcp_cli_up)
                                        sizeof(hostname) - sizeof("picoforge-") + 1u);
         const err_t rc = mdns_resp_add_netif(netif, hostname);
         if (rc != ERR_OK) {
-            retry_us = time_us_64() + MDNS_RETRY_DELAY_US;
+            retry_us = now + MDNS_RETRY_DELAY_US;
             PF_LOGGING_ERROR("mdns", "mDNS registration failed: %d", (int)rc);
             return;
         }
@@ -95,7 +95,7 @@ void pf_wifi_mdns_poll(bool saved_link_up, bool tcp_cli_up)
         const s8_t slot = mdns_resp_add_service(netif, "picoforge-cli", "_picoforge", DNSSD_PROTO_TCP,
                                                 PF_TCP_CLI_PORT, service_txt, NULL);
         if (slot < 0) {
-            retry_us = time_us_64() + MDNS_RETRY_DELAY_US;
+            retry_us = now + MDNS_RETRY_DELAY_US;
             PF_LOGGING_ERROR("mdns", "TCP CLI service registration failed: %d", (int)slot);
             return;
         }
@@ -104,7 +104,7 @@ void pf_wifi_mdns_poll(bool saved_link_up, bool tcp_cli_up)
     } else if (!tcp_cli_up && service_registered) {
         const err_t rc = mdns_resp_del_service(netif, (u8_t)service_slot);
         if (rc != ERR_OK) {
-            retry_us = time_us_64() + MDNS_RETRY_DELAY_US;
+            retry_us = now + MDNS_RETRY_DELAY_US;
             PF_LOGGING_ERROR("mdns", "TCP CLI service removal failed: %d", (int)rc);
             return;
         }

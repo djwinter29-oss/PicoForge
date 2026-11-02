@@ -105,12 +105,12 @@ static bool saved_link_up = true, tcp_serving_set;
 bool pf_tcp_cli_serving(void) { return tcp_listener && tcp_serving_set; }
 bool pf_tcp_cli_set_auth_required(bool required) { return !required || shared_key_available; }
 bool pf_tcp_cli_auth_required(void) { return tcp_auth_required; }
-void pf_tcp_cli_poll(bool serving) {
+void pf_tcp_cli_poll(bool serving, uint64_t poll_now) {
     tcp_serving_set = serving;
-    if (serving && !tcp_listener && now >= tcp_retry_us) {
+    if (serving && !tcp_listener && poll_now >= tcp_retry_us) {
         ++tcp_cli_starts;
         tcp_listener = tcp_start_result;
-        tcp_retry_us = tcp_listener ? 0u : now + 5000000u;
+        tcp_retry_us = tcp_listener ? 0u : poll_now + 5000000u;
     }
     if (!serving) { tcp_listener = false; tcp_retry_us = 0u; }
 }
@@ -118,13 +118,13 @@ void pf_wireless_auth_set_key(const uint8_t key[32]) {
     shared_key_available = false;
     if (key) for (unsigned i = 0u; i < 32u; ++i) shared_key_available |= key[i] != 0u;
 }
-void pf_wifi_mdns_poll(bool saved_up, bool tcp_up) { (void)saved_up; (void)tcp_up; }
+void pf_wifi_mdns_poll(bool saved_up, bool tcp_up, uint64_t poll_now) { (void)saved_up; (void)tcp_up; (void)poll_now; }
 bool pf_wifi_saved_link_up(void) { return saved_link_up; }
 static uint8_t wifi_error;
 static bool ble_prepared, ble_start_result;
-void pf_wifi_poll(void) {}
-uint8_t pf_wifi_error(void) { return wifi_error; }
-uint8_t pf_wifi_state(void) { return 2; }
+void pf_wifi_poll(uint64_t poll_now) { (void)poll_now; }
+pf_wireless_error_t pf_wifi_error(void) { return (pf_wireless_error_t)wifi_error; }
+pf_wifi_state_t pf_wifi_state(void) { return PF_WIFI_STATE_CONNECTED; }
 void pf_wifi_ip_address(uint8_t address[4]) { memset(address, 42, 4u); }
 static unsigned wifi_commands, wifi_rejects;
 bool pf_wifi_command(const uint8_t report[101]) { ++wifi_commands; return report[0] == 1u; }
@@ -166,7 +166,10 @@ int main(int argc, char **argv)
         pf_wireless_start();
         pf_wireless_status(status);
         assert(status[PF_WIRELESS_STATUS_ERROR_OFFSET] == PF_WIRELESS_ERROR_INIT);
-        assert((status[47] & 2u) != 0u && status[46] == 0u);
+        assert(status[PF_WIRELESS_STATUS_VERSION_OFFSET] == PF_WIRELESS_STATUS_VERSION);
+        assert((status[PF_WIRELESS_STATUS_SERVICES_OFFSET] &
+                PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED) != 0u);
+        assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0u);
         pf_wireless_poll();
         assert(tcp_cli_starts == 0u && zeroizes == 1u);
         return 0;
@@ -178,7 +181,7 @@ int main(int argc, char **argv)
     pf_wireless_start();
     assert(chip_inits == 1 && !pf_wireless_led_put(true) && led_level == -1);
     pf_wireless_status(status);
-    assert(status[46] == 0u);
+    assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0u);
     tcp_auth_required = false;
     chip_init_result = 0;
     pf_wireless_start();
@@ -187,7 +190,7 @@ int main(int argc, char **argv)
     assert(zeroizes == 2u);
     assert(wifi_starts == 0 && tcp_cli_starts == 0);
     pf_wireless_status(status);
-    assert(status[46] == 0);
+    assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0u);
     assert(pf_wireless_led_put(true));
     assert(led_level == 1);
     request(report, 250, 1);
@@ -197,7 +200,8 @@ int main(int argc, char **argv)
     assert(clock == PF_SYSCLK_250MHZ && speed == 1 && radios == PF_WIRELESS_WIFI && strcmp(ssid, "network") == 0);
     pf_wireless_status(status);
     assert(status[2] == PF_HID_COMMAND_COMPLETED && status[3] == 7);
-    assert(status[0] == 4u && status[52] == 0u);
+    assert(status[PF_WIRELESS_STATUS_VERSION_OFFSET] == PF_WIRELESS_STATUS_VERSION);
+    assert(status[PF_WIRELESS_STATUS_RESTART_REQUIRED_OFFSET] == 0u);
     request(report, 175, 1);
     assert(!pf_wireless_configure(report) && saves == 1 && discards == 1 && ssid[0] == 0);
     request(report, 150, 2);
@@ -251,7 +255,8 @@ int main(int argc, char **argv)
     assert(chip_inits == 2 && wifi_starts == 1 && tcp_cli_starts == 0);
     /* The TCP CLI serves, and status reports it, only while the saved network is up. */
     pf_wireless_status(status);
-    assert((status[47] & 1u) == 0u);
+    assert((status[PF_WIRELESS_STATUS_SERVICES_OFFSET] &
+            PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED) == 0u);
     tcp_start_result = false;
     pf_wireless_poll();
     assert(tcp_cli_starts == 1 && !pf_tcp_cli_serving());
@@ -263,8 +268,9 @@ int main(int argc, char **argv)
     pf_wireless_poll();
     assert(tcp_cli_starts == 2);
     pf_wireless_status(status);
-    assert(status[0] == 4u && status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 1);
-    assert(status[5] == 42 && status[47] == 0);
+    assert(status[PF_WIRELESS_STATUS_VERSION_OFFSET] == PF_WIRELESS_STATUS_VERSION);
+    assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 1u);
+    assert(status[5] == 42u && status[PF_WIRELESS_STATUS_SERVICES_OFFSET] == 0u);
     saved_link_up = false;
     pf_wireless_poll();
     pf_wireless_status(status);
@@ -296,7 +302,8 @@ int main(int argc, char **argv)
     pf_wireless_start();
     pf_wireless_poll();
     pf_wireless_status(status);
-    assert(status[47] == 1u && status[46] == 0u);
+    assert(status[PF_WIRELESS_STATUS_SERVICES_OFFSET] == PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED);
+    assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0u);
     request(report, 150, 0);
     report[3] |= 16u;
     assert(pf_wireless_configure(report) && !tcp_cli_enabled);

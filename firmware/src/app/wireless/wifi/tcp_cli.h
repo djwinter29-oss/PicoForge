@@ -17,8 +17,9 @@
 /**
  * @brief Own listener availability, retry pacing, authentication deadlines and idle-session cleanup.
  * @param serving True only while clients may join the saved Wi-Fi network.
+ * @param now Owner-task poll timestamp from time_us_64().
  */
-void pf_tcp_cli_poll(bool serving);
+void pf_tcp_cli_poll(bool serving, uint64_t now);
 
 /**
  * @brief Configure challenge-response authentication using the shared wireless control key.

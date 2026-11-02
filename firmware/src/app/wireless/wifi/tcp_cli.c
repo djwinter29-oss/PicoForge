@@ -199,21 +199,18 @@ static err_t client_receive(void *argument, struct tcp_pcb *pcb, struct pbuf *bu
     if (buffer->tot_len > sizeof(rx_ring) - rx_count) return ERR_MEM;
     u16_t cli_offset = 0u;
     if (auth_pending) {
-        u16_t consumed = 0u;
-        bool rejected = false;
-        while (consumed < buffer->tot_len && auth_pending) {
-            uint8_t character;
-            (void)pbuf_copy_partial(buffer, &character, 1u, consumed++);
-            if (auth_line_length >= sizeof(auth_line)) {
-                rejected = true;
-                break;
-            }
-            auth_line[auth_line_length++] = character;
-            if (character == '\n') {
-                if (!verify_auth_line()) {
-                    rejected = true;
-                    break;
-                }
+        u16_t consumed = buffer->tot_len;
+        const size_t available = sizeof(auth_line) - auth_line_length;
+        if (consumed > available) consumed = (u16_t)available;
+        uint8_t *chunk = auth_line + auth_line_length;
+        (void)pbuf_copy_partial(buffer, chunk, consumed, 0u);
+        const uint8_t *newline = memchr(chunk, '\n', consumed);
+        if (newline != NULL) consumed = (u16_t)(newline - chunk + 1u);
+        auth_line_length += consumed;
+        bool rejected = newline == NULL && buffer->tot_len > consumed;
+        if (newline != NULL) {
+            rejected = !verify_auth_line();
+            if (!rejected) {
                 reset_auth();
                 cli_offset = consumed;
                 PF_LOGGING_INFO("tcp-cli", "Client %s authenticated", ipaddr_ntoa(&pcb->remote_ip));
@@ -336,7 +333,6 @@ bool pf_tcp_cli_read(char *character)
         return false;
     }
     *character = (char)rx_ring[rx_tail];
-    client_activity_us = time_us_64();
     rx_tail = (rx_tail + 1u) % sizeof(rx_ring);
     --rx_count;
     ++rx_consumed;
@@ -375,6 +371,7 @@ void pf_tcp_cli_flush(void)
     if (rx_consumed > 0u) {
         tcp_recved(client, (u16_t)rx_consumed);
         rx_consumed = 0u;
+        client_activity_us = time_us_64();
     }
     (void)tcp_output(client);
 }
@@ -407,9 +404,8 @@ bool pf_tcp_cli_auth_required(void)
 }
 
 /** @copydoc pf_tcp_cli_poll */
-void pf_tcp_cli_poll(bool serving)
+void pf_tcp_cli_poll(bool serving, uint64_t now)
 {
-    const uint64_t now = time_us_64();
     if (!serving) {
         stop_listener();
         return;

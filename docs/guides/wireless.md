@@ -44,8 +44,9 @@ WEP, WPA-only and enterprise networks are not supported for joining.
 Connection testing shows the live phase (searching, checking password, waiting for an IP address) and elapsed time;
 the firmware deadline is 30 seconds. A failed test names the reason: network not found, password rejected, no DHCP
 address, timed out, or the radio could not start the connection. The firmware drops an existing station link before
-testing new credentials so the previous network cannot make the test appear successful. The CYW43 driver reports a
-wrong WPA2 password as a handshake timeout and silently re-associates
+testing new credentials so the previous network cannot make the test appear successful. If the driver refuses the
+disconnect request, firmware retries every five seconds until the driver accepts it. The CYW43 driver reports a wrong
+WPA2 password as a handshake timeout and silently re-associates
 rather than reporting a bad-auth status, so firmware fails the test after two dropped handshakes (about 16 seconds).
 Both server dashboards expose the phase as `wireless_phase` in `/api/status` while a test runs. Python and .NET hosts
 continue reading live diagnostics during scan/test polling. Their normal monitors drain nonblocking input batches and

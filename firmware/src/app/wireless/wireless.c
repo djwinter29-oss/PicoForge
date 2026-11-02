@@ -142,22 +142,23 @@ void pf_wireless_poll(void)
 {
     if (!started) return;
     cyw43_arch_poll();
-    pf_wifi_poll();
+    const uint64_t now = time_us_64();
+    pf_wifi_poll(now);
     const bool saved_link_up = pf_wifi_saved_link_up();
     const bool serve = tcp_cli_enabled && saved_link_up;
-    pf_tcp_cli_poll(serve);
-    pf_wifi_mdns_poll(saved_link_up, serve && pf_tcp_cli_serving());
+    pf_tcp_cli_poll(serve, now);
+    pf_wifi_mdns_poll(saved_link_up, serve && pf_tcp_cli_serving(), now);
 }
 
 /** @copydoc pf_wireless_status */
 void pf_wireless_status(uint8_t *report)
 {
     memset(report, 0, PF_WIRELESS_STATUS_SIZE);
-    report[PF_WIRELESS_STATUS_VERSION_OFFSET] = 4u;
+    report[PF_WIRELESS_STATUS_VERSION_OFFSET] = PF_WIRELESS_STATUS_VERSION;
     report[PF_WIRELESS_STATUS_RADIOS_OFFSET] = configured_radios;
     report[PF_WIRELESS_STATUS_SAVE_STATUS_OFFSET] = save_status;
     report[PF_WIRELESS_STATUS_SAVE_TRANSACTION_OFFSET] = save_transaction;
-    const uint8_t wifi_state = !started && wifi_enabled ? PF_WIFI_STATE_FAILED : pf_wifi_state();
+    const pf_wifi_state_t wifi_state = !started && wifi_enabled ? PF_WIFI_STATE_FAILED : pf_wifi_state();
     report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] = wifi_state;
     if (started && pf_wifi_saved_link_up()) {
         pf_wifi_ip_address(report + PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET);
@@ -168,8 +169,9 @@ void pf_wireless_status(uint8_t *report)
     report[PF_WIRELESS_STATUS_ERROR_OFFSET] = init_error != PF_WIRELESS_ERROR_NONE ? init_error : pf_wifi_error();
     report[PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET] = started && ble_enabled ? pf_bluetooth_state() : 0u;
     report[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] = pf_tcp_cli_serving();
-    report[PF_WIRELESS_STATUS_SERVICES_OFFSET] = (tcp_cli_enabled ? 0u : 1u) |
-        (tcp_cli_auth_required ? 2u : 0u);
+    report[PF_WIRELESS_STATUS_SERVICES_OFFSET] =
+        (tcp_cli_enabled ? 0u : PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED) |
+        (tcp_cli_auth_required ? PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED : 0u);
     pf_wifi_auth_state_t auth_state;
     uint16_t reconnects;
     int8_t rssi;

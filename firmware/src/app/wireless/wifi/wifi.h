@@ -35,11 +35,13 @@ bool pf_wifi_prepare(void);
 /** @brief Enable station mode and begin joining after successful shared SDK initialization. */
 void pf_wifi_start(void);
 
-/** @brief Check scan, association and DHCP progress and pace retries without blocking the owner task. */
-void pf_wifi_poll(void);
+/** @brief Check scan, association and DHCP progress and pace retries without blocking the owner task.
+ * @param now Owner-task poll timestamp from time_us_64().
+ */
+void pf_wifi_poll(uint64_t now);
 
-/** @brief Return the current pf_wifi_state_t diagnostic state. */
-uint8_t pf_wifi_state(void);
+/** @brief Return the current station diagnostic state. */
+pf_wifi_state_t pf_wifi_state(void);
 
 /** @brief Return whether the station has an address on the saved network, not on a temporary test network.
  *
@@ -47,8 +49,8 @@ uint8_t pf_wifi_state(void);
  */
 bool pf_wifi_saved_link_up(void);
 
-/** @brief Return the latest Wi-Fi pf_wireless_error_t: none, join failure or connection timeout. */
-uint8_t pf_wifi_error(void);
+/** @brief Return the latest Wi-Fi error: none, join failure or connection timeout. */
+pf_wireless_error_t pf_wifi_error(void);
 
 /** @brief Copy the four IPv4 address bytes; call only after SDK initialization and while connected.
  * @param address Output buffer of at least four bytes.

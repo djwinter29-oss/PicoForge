@@ -16,6 +16,12 @@ def test_lwip_heap_is_word_aligned():
 def test_wifi_boot_gating_deadline_retries_and_ipv4(tmp_path):
     pico = tmp_path / "pico"
     pico.mkdir()
+    mbedtls = tmp_path / "mbedtls"
+    mbedtls.mkdir()
+    (mbedtls / "platform_util.h").write_text("""
+#include <stddef.h>
+void mbedtls_platform_zeroize(void *, size_t);
+""")
     (pico / "cyw43_arch.h").write_text("""
 #ifndef CYW43_ARCH_H
 #define CYW43_ARCH_H
@@ -62,6 +68,7 @@ int cyw43_wifi_get_rssi(cyw43_t *, int32_t *);
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include "mbedtls/platform_util.h"
 #include "app/wireless/wifi/wifi.h"
 #include "platform/boot_config.h"
 #include "platform/logging.h"
@@ -69,6 +76,7 @@ int cyw43_wifi_get_rssi(cyw43_t *, int32_t *);
 cyw43_t cyw43_state;
 static uint64_t now;
 static unsigned joins, sta_calls, logs, time_reads;
+static unsigned zeroizes;
 static int join_result, link;
 static uint8_t radios = PF_WIRELESS_WIFI;
 static pf_wifi_auth_state_t configured_auth = PF_WIFI_AUTH_TRY_WPA2;
@@ -78,15 +86,20 @@ static const char *expected_ssid = "network", *expected_password = "test-passwor
 static uint32_t expected_auth = CYW43_AUTH_WPA2_MIXED_PSK;
 static bool scan_active;
 static unsigned leaves;
+static int leave_result;
 static int scan_status;
 static scan_result_cb_t scan_callback;
+void mbedtls_platform_zeroize(void *buffer, size_t size) {
+    volatile unsigned char *bytes = buffer;
+    while (size-- != 0u) *bytes++ = 0u;
+    ++zeroizes;
+}
 uint8_t pf_boot_config_radios(void) { return radios; }
 pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void) { return configured_auth; }
 void pf_boot_config_wifi_ssid(char out[33]) { strcpy(out, ssid); }
 void pf_boot_config_wifi_password(char out[64]) { strcpy(out, password); }
 uint64_t time_us_64(void) { ++time_reads; return now; }
 void cyw43_arch_enable_sta_mode(void) { ++sta_calls; }
-void pf_wifi_mdns_poll(bool saved_link_up) { (void)saved_link_up; }
 static unsigned sta_releases;
 void cyw43_arch_disable_sta_mode(void) { ++sta_releases; link = CYW43_LINK_DOWN; }
 int cyw43_arch_wifi_connect_async(const char *s, const char *p, uint32_t auth) {
@@ -106,7 +119,7 @@ int cyw43_wifi_scan(cyw43_t *state, cyw43_wifi_scan_options_t *options, void *en
 int cyw43_wifi_leave(cyw43_t *state, int itf) {
     assert(state == &cyw43_state && itf == CYW43_ITF_STA);
     ++leaves;
-    return 0;
+    return leave_result;
 }
 int cyw43_tcpip_link_status(cyw43_t *state, int itf) {
     assert(state == &cyw43_state && itf == CYW43_ITF_STA);
@@ -139,41 +152,45 @@ int main(void) {
     pf_wifi_start();
     assert(joins == 1 && sta_calls == 1 && pf_wifi_state() == 1 && pf_wifi_error() == 0);
     now = 29999999;
-    pf_wifi_poll();
+    unsigned reads_before_poll = time_reads;
+    pf_wifi_poll(now);
+    assert(time_reads == reads_before_poll);
     assert(pf_wifi_state() == 1 && joins == 1);
     now = 30000000;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_state() == 3 && pf_wifi_error() == 3 && logs == 1);
     now = 34999999;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == 1);
     /* No authentication progress may mean a WPA3-only network, so the saved rejoin alternates to SAE. */
     expected_auth = CYW43_AUTH_WPA3_SAE_AES_PSK;
     now = 35000000;
-    pf_wifi_poll();
+    reads_before_poll = time_reads;
+    pf_wifi_poll(now);
+    assert(time_reads == reads_before_poll);
     assert(joins == 2 && pf_wifi_state() == 1 && pf_wifi_error() == 0);
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_state() == 2 && pf_wifi_error() == 0 && pf_wifi_saved_link_up());
     memcpy(&cyw43_state.netif[0].ip.addr, expected, sizeof(expected));
     pf_wifi_ip_address(address);
     assert(memcmp(address, expected, sizeof(expected)) == 0);
     link = 0;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_state() == 3 && logs == 2);
     now += 4999999;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == 2);
     ++now;
     join_result = -1;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == 3 && pf_wifi_state() == 3 && pf_wifi_error() == 2 && logs == 3);
     now += 10000000;
     join_result = 0;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == 4 && pf_wifi_state() == 1);
     link = -1;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_state() == 3 && pf_wifi_error() == 2 && logs == 4);
 
     uint8_t command[101] = {1, 3, 10};
@@ -185,10 +202,12 @@ int main(void) {
     command[5] = (uint8_t)strlen(expected_password);
     memcpy(command + 6, expected_ssid, strlen(expected_ssid));
     memcpy(command + 38, expected_password, strlen(expected_password));
+    unsigned zeroizes_before_test = zeroizes;
     assert(pf_wifi_command(command));
+    assert(zeroizes == zeroizes_before_test + 1u);
     assert(pf_wifi_state() == 1);
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     /* A joined test network is never the trusted saved network that the TCP CLI may serve. */
     assert(pf_wifi_state() == 2 && !pf_wifi_saved_link_up());
     pf_wifi_auth_state_t saved_auth;
@@ -204,13 +223,13 @@ int main(void) {
     cyw43_ev_scan_result_t ap = {0};
     memcpy(ap.ssid, "nearby", 6); ap.ssid_len = 6; ap.rssi = -50; ap.auth_mode = 1;
     scan_callback(NULL, &ap);
+    cyw43_ev_scan_result_t open_ap = {0};
+    memcpy(open_ap.ssid, "open", 4); open_ap.ssid_len = 4; open_ap.rssi = -45; open_ap.auth_mode = CYW43_AUTH_OPEN;
+    scan_callback(NULL, &open_ap);
     ap.rssi = -35;
     scan_callback(NULL, &ap);
-    memset(&ap, 0, sizeof(ap));
-    memcpy(ap.ssid, "open", 4); ap.ssid_len = 4; ap.rssi = -45; ap.auth_mode = CYW43_AUTH_OPEN;
-    scan_callback(NULL, &ap);
     scan_active = false;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     uint8_t result[PF_WIRELESS_RESULT_SIZE];
     pf_wifi_result(result);
     assert(result[1] == 11 && result[2] == 2 && result[4] == 2 && result[5] == 2);
@@ -242,7 +261,7 @@ int main(void) {
         scan_callback(NULL, &ap);
     }
     scan_active = false;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 2 && result[4] == 18);
     assert(result[6] == 6 && memcmp(result + 7, "strong", 6u) == 0);
@@ -253,11 +272,18 @@ int main(void) {
     expected_ssid = "network";
     expected_password = "test-password";
     expected_auth = CYW43_AUTH_WPA3_SAE_AES_PSK;
+    leave_result = -1;
     assert(pf_wifi_command(command));
     assert(leaves == 1 && joins == 5 && pf_wifi_state() == 3);
+    now += 5000000u;
+    leave_result = 0;
+    reads_before_poll = time_reads;
+    pf_wifi_poll(now);
+    assert(time_reads == reads_before_poll);
+    assert(leaves == 2 && joins == 5);
     link = CYW43_LINK_DOWN;
-    pf_wifi_poll();
-    assert(joins == 6 && pf_wifi_state() == 1);
+    pf_wifi_poll(now);
+    assert(joins == 6 && pf_wifi_state() == 1 && leaves == 2);
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
 
     password = "";
@@ -283,21 +309,21 @@ int main(void) {
     assert(pf_wifi_command(command));
     unsigned failed_joins = joins, failed_leaves = leaves;
     link = -2;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     /* WPA2 found no network, so the test retries once with WPA3-SAE before failing. */
     assert(result[2] == 4 && result[3] == 1 && leaves == failed_leaves + 1 && joins == failed_joins);
     expected_auth = CYW43_AUTH_WPA3_SAE_AES_PSK;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == failed_joins + 1);
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 6 && result[3] == 4 && leaves == failed_leaves + 2);
     assert(pf_wifi_state() == 0 && pf_wifi_error() == 0);
     expected_auth = CYW43_AUTH_WPA2_MIXED_PSK;
     link = 0;
     now += 60000000;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == failed_joins + 1 && pf_wifi_state() == 0);
 
     /* Live phases, then a wrong passphrase: the driver re-associates silently after each failed handshake. */
@@ -309,18 +335,18 @@ int main(void) {
     pf_wifi_result(result);
     assert(result[2] == 4 && result[3] == 1);
     cyw43_state.wifi_join_state = 0x0601;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 4 && result[3] == 2);
     cyw43_state.wifi_join_state = 0x0001;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     cyw43_state.wifi_join_state = 0x0601;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 4 && result[3] == 2 && pf_wifi_state() == 1);
     failed_leaves = leaves;
     cyw43_state.wifi_join_state = 0x0001;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 6 && result[3] == 5 && leaves == failed_leaves + 1 && pf_wifi_error() == 0);
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
@@ -330,11 +356,11 @@ int main(void) {
     link = CYW43_LINK_DOWN;
     assert(pf_wifi_command(command));
     link = CYW43_LINK_NOIP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 4 && result[3] == 3);
     now += 30000000;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 6 && result[3] == 6 && pf_wifi_state() == 0 && pf_wifi_error() == 0);
 
@@ -343,16 +369,16 @@ int main(void) {
     cyw43_state.wifi_join_state = 0x0001;
     assert(pf_wifi_command(command));
     link = CYW43_LINK_NONET;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 4 && result[3] == 1);
     /* A WPA3-only network: SAE gets past association, then a wrong key reports the SAE result. */
     expected_auth = CYW43_AUTH_WPA3_SAE_AES_PSK;
     const unsigned sae_joins = joins;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == sae_joins + 1);
     link = CYW43_LINK_BADAUTH;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 6 && result[3] == 5 && pf_wifi_error() == 0);
     expected_auth = CYW43_AUTH_WPA2_MIXED_PSK;
@@ -362,17 +388,19 @@ int main(void) {
     link = CYW43_LINK_DOWN;
     assert(pf_wifi_command(command));
     link = -1;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     expected_auth = CYW43_AUTH_WPA3_SAE_AES_PSK;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 33 && result[2] == 5);
     assert(pf_wifi_tested_credentials(tested_ssid, tested_password));
     expected_auth = CYW43_AUTH_WPA2_MIXED_PSK;
     uint8_t clear_sae[101] = {1u, 4u, 34u};
+    zeroizes_before_test = zeroizes;
     assert(pf_wifi_command(clear_sae));
+    assert(zeroizes == zeroizes_before_test + 1u);
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
 
     memset(command, 0, sizeof(command));
@@ -387,7 +415,7 @@ int main(void) {
     pf_wifi_result(result);
     assert(result[1] == 19u && result[2] == 6u);
     scan_active = false;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 18u && result[2] == 2u);
 
@@ -414,11 +442,11 @@ int main(void) {
     pf_wifi_result(result);
     assert(result[1] == 21u && result[2] == 6u);
     link = CYW43_LINK_JOIN;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 20u && result[2] == 4u);
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 20u && result[2] == 5u);
     assert(pf_wifi_tested_credentials(tested_ssid, tested_password));
@@ -437,14 +465,14 @@ int main(void) {
     const unsigned leaves_before_test = leaves;
     assert(pf_wifi_command(command));
     assert(joins == joins_before_test && leaves == leaves_before_test + 1u);
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 22u && result[2] == 4u && !pf_wifi_tested_credentials(tested_ssid, tested_password));
     link = CYW43_LINK_DOWN;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == joins_before_test + 1u);
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 22u && result[2] == 5u);
     assert(pf_wifi_tested_credentials(tested_ssid, tested_password));
@@ -462,15 +490,15 @@ int main(void) {
     link = CYW43_LINK_UP;
     const unsigned joins_before_failed_test = joins;
     assert(pf_wifi_command(command));
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(joins == joins_before_failed_test && result[1] == 23u && result[2] == 4u);
     link = CYW43_LINK_DOWN;
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == joins_before_failed_test + 1u);
     link = CYW43_LINK_BADAUTH;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 23u && result[2] == 6u && result[3] == 5u);
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
@@ -499,26 +527,26 @@ int main(void) {
     assert(pf_wifi_prepare());
     pf_wifi_start();
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_state() == 2);
     unsigned joins_before_clear = joins, leaves_before_clear = leaves;
     uint8_t clear[101] = {1u, 4u, 25u};
     assert(pf_wifi_command(clear));
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == joins_before_clear && leaves == leaves_before_clear && pf_wifi_state() == 2);
 
     /* Link loss is tracked during a scan, rejoin waits for the scan, and a stuck scan times out. */
     uint8_t scan[101] = {1u, 1u, 26u};
     assert(pf_wifi_command(scan));
     link = CYW43_LINK_DOWN;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_state() == 3);
     now += 9999999;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 1u && joins == joins_before_clear);
     ++now;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 26u && result[2] == 3u && joins == joins_before_clear);
     memset(&ap, 0, sizeof(ap));
@@ -541,11 +569,11 @@ int main(void) {
     link = CYW43_LINK_DOWN;
     assert(pf_wifi_command(command));
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 27u && result[2] == 5u);
     link = CYW43_LINK_DOWN;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[1] == 27u && result[2] == 6u && result[3] == 9u && pf_wifi_state() == 3);
     assert(pf_wifi_tested_credentials(tested_ssid, tested_password));
@@ -575,12 +603,12 @@ int main(void) {
     scan[2] = 30u;
     assert(pf_wifi_command(scan) && sta_calls == sta_before_malformed + 1u);
     scan_active = false;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(sta_releases == releases_before_scan + 1u);
     command[2] = 31;
     assert(pf_wifi_command(command) && sta_calls == sta_before_malformed + 2u);
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(sta_releases == releases_before_scan + 1u);
     clear_staged[2] = 32u;
     assert(pf_wifi_command(clear_staged));
@@ -590,15 +618,15 @@ int main(void) {
     assert(pf_wifi_command(scan));
     const unsigned before_timeout = sta_releases;
     now += 10000000u;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[0] == 2u && result[2] == 3u && sta_releases == before_timeout);
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(sta_releases == before_timeout);
     scan_active = false;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(sta_releases == before_timeout + 1u && pf_wifi_state() == 0);
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(sta_releases == before_timeout + 1u);
 
     /* Refusing to start a scan also releases station mode. */
@@ -619,7 +647,7 @@ int main(void) {
         scan_callback(NULL, &ap);
     }
     scan_active = false;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[0] == 2u && result[4] == 8u);
     for (unsigned security = 0; security < 6u; ++security) assert(result[40u + 35u * security] == security);
@@ -628,17 +656,17 @@ int main(void) {
     link = CYW43_LINK_DOWN;
     assert(pf_wifi_command(command));
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     const unsigned before_lifetime_reads = time_reads;
     pf_wifi_result(result);
     assert(time_reads == before_lifetime_reads + 1u);
     assert(result[220] == 88u && result[221] == 2u);
     now += 599999999u;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_tested_credentials(tested_ssid, tested_password));
     ++now;
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     pf_wifi_result(result);
     assert(result[2] == 6u && result[3] == 10u && pf_wifi_state() == 0 && !pf_wifi_saved_link_up());
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
@@ -651,19 +679,19 @@ int main(void) {
     link = CYW43_LINK_DOWN;
     assert(pf_wifi_command(command));
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     const uint64_t expires = now + 600000000u;
     link = CYW43_LINK_DOWN;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     now += 5000000u;
     expected_ssid = "network";
     expected_password = "test-password";
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     link = CYW43_LINK_UP;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     const unsigned leaves_on_saved = leaves;
     now = expires;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(pf_wifi_saved_link_up() && leaves == leaves_on_saved);
     assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
 
@@ -677,27 +705,27 @@ int main(void) {
         assert(pf_wifi_command(command));
         link = CYW43_LINK_BADAUTH;
         const unsigned before_failed_test = joins;
-        pf_wifi_poll();
+        pf_wifi_poll(now);
         pf_wifi_result(result);
         assert(result[2] == 6u && result[3] == 5u);
         assert(!pf_wifi_tested_credentials(tested_ssid, tested_password));
         link = CYW43_LINK_JOIN;
-        pf_wifi_poll();
+        pf_wifi_poll(now);
         assert(joins == before_failed_test);
         link = CYW43_LINK_DOWN;
         expected_ssid = "network";
         expected_password = "test-password";
-        pf_wifi_poll();
+        pf_wifi_poll(now);
         assert(joins == before_failed_test + 1u && pf_wifi_state() == 1u);
     }
     link = CYW43_LINK_BADAUTH;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     const unsigned before_saved_retry = joins;
     now += 4999999u;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == before_saved_retry);
     ++now;
-    pf_wifi_poll();
+    pf_wifi_poll(now);
     assert(joins == before_saved_retry + 1u);
     return 0;
 }

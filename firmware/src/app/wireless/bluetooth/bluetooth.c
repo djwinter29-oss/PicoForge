@@ -30,6 +30,13 @@ _Static_assert(PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 4u == PF_WIRELESS_STATUS_S
 _Static_assert(PF_WIRELESS_STATUS_SSID_OFFSET + PF_WIFI_SSID_SIZE == PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET,
                "SSID must precede the password flag");
 
+/** @brief BLE controller/link state encoded in the wireless status report. */
+typedef enum {
+    PF_BLUETOOTH_STATE_STARTING = 0, /**< Controller is not yet working. */
+    PF_BLUETOOTH_STATE_ADVERTISING = 1, /**< Controller is advertising without a connected central. */
+    PF_BLUETOOTH_STATE_CONNECTED = 2, /**< A central is connected. */
+} pf_bluetooth_state_t;
+
 static bool control_key_available; /**< False when BLE is enabled for public diagnostics only. */
 static bool challenge_valid; /**< Nonce issued once and usable for one authentication attempt. */
 static bool proof_valid; /**< A 16-byte proof is ready for exactly one subsequent control request. */
@@ -51,7 +58,7 @@ static union {
 static uint16_t read_handle; /**< Characteristic owning the frozen read buffer. */
 static uint16_t read_length; /**< Valid frozen payload length. */
 static uint8_t report_sequence; /**< Sequence for BLE-polled diagnostic snapshots. */
-static uint8_t link_state; /**< 0 controller not working, 1 advertising, 2 central connected. */
+static pf_bluetooth_state_t link_state; /**< Current controller/link state. */
 static btstack_packet_callback_registration_t events; /**< Static HCI state/disconnect registration. */
 /** Scan-response "PicoForge-<USB serial>" local name; BTstack keeps the pointer, and GAP Device Name reads it. */
 static uint8_t scan_response[2u + 10u + 2u * PICO_UNIQUE_BOARD_ID_SIZE_BYTES];
@@ -92,12 +99,12 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
     uint8_t event = hci_event_packet_get_type(packet);
     if ((event == BTSTACK_EVENT_STATE && btstack_event_state_get_state(packet) == HCI_STATE_WORKING) ||
         event == HCI_EVENT_DISCONNECTION_COMPLETE) {
-        link_state = 1u;
+        link_state = PF_BLUETOOTH_STATE_ADVERTISING;
         advertise();
     } else if (event == HCI_EVENT_LE_META && hci_event_le_meta_get_subevent_code(packet) ==
                HCI_SUBEVENT_LE_CONNECTION_COMPLETE &&
                hci_subevent_le_connection_complete_get_status(packet) == ERROR_CODE_SUCCESS) {
-        link_state = 2u;
+        link_state = PF_BLUETOOTH_STATE_CONNECTED;
     }
 }
 

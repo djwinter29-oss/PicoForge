@@ -18,6 +18,12 @@
 #define PF_WIRELESS_RESULT_REPORT_ID 35u
 /** Sanitized status payload size; no credential readback. */
 #define PF_WIRELESS_STATUS_SIZE 53u
+/** Current version of the sanitized status payload. */
+#define PF_WIRELESS_STATUS_VERSION 4u
+/** Status service flag: the saved-LAN TCP CLI is disabled. */
+#define PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED (1u << 0u)
+/** Status service flag: TCP CLI clients must provide an HMAC proof. */
+#define PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED (1u << 1u)
 /**
  * @brief Byte offsets in the sanitized wireless status payload.
  *

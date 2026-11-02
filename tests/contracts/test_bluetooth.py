@@ -173,6 +173,7 @@ int main(void)
 
     /* BTstack length probes, including discovery, must not build reports or advance sequence numbers. */
     assert(pf_bluetooth_prepare() && pf_bluetooth_start());
+    assert(pf_bluetooth_state() == 0u);
     for (unsigned i = 0; i < 2u; ++i) {
         assert(read_cb(1u, HANDLE(0003), 0u, NULL, 0u) == sizeof(pf_hid_telemetry_report_t));
         assert(read_cb(1u, HANDLE(000a), 0u, NULL, 0u) == sizeof(pf_hid_storage_report_t));

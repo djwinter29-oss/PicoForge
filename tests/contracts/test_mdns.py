@@ -123,41 +123,41 @@ bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *for
 { (void)level; (void)format; assert(strcmp(tag, "mdns") == 0); ++logs; return true; }
 int main(void)
 {
-    pf_wifi_mdns_poll(false, false);
+    pf_wifi_mdns_poll(false, false, now);
     assert(inits == 0 && adds == 0 && removes == 0);
     add_result = -1;
-    pf_wifi_mdns_poll(true, false);
+    pf_wifi_mdns_poll(true, false, now);
     assert(inits == 1 && adds == 1 && logs == 1);
     now = 4999999u;
-    pf_wifi_mdns_poll(true, false);
+    pf_wifi_mdns_poll(true, false, now);
     assert(adds == 1);
     now = 5000000u;
     add_result = 0;
-    pf_wifi_mdns_poll(true, true);
+    pf_wifi_mdns_poll(true, true, now);
     assert(inits == 1 && adds == 2);
     assert(service_adds == 1);
-    pf_wifi_mdns_poll(true, true);
+    pf_wifi_mdns_poll(true, true, now);
     assert(adds == 2 && service_adds == 1);
-    pf_wifi_mdns_poll(true, false);
+    pf_wifi_mdns_poll(true, false, now);
     assert(service_removes == 1);
     assert(hostname_reads == 2u);
     name_cb(&cyw43_state.netif[0], MDNS_PROBING_CONFLICT, -1);
     assert(logs == 3 && txt_items == 2);
     remove_result = -1;
-    pf_wifi_mdns_poll(false, false);
-    pf_wifi_mdns_poll(false, false);
+    pf_wifi_mdns_poll(false, false, now);
+    pf_wifi_mdns_poll(false, false, now);
     assert(removes == 1 && logs == 4);
     now += 5000000u;
     remove_result = ERR_OK;
-    pf_wifi_mdns_poll(false, false);
+    pf_wifi_mdns_poll(false, false, now);
     assert(removes == 2);
     now += 5000000u;
-    pf_wifi_mdns_poll(false, false);
+    pf_wifi_mdns_poll(false, false, now);
     assert(removes == 2);
-    pf_wifi_mdns_poll(true, true);
+    pf_wifi_mdns_poll(true, true, now);
     assert(inits == 1 && adds == 3);
     assert(service_adds == 2);
-    pf_wifi_mdns_poll(false, false);
+    pf_wifi_mdns_poll(false, false, now);
     assert(removes == 3);
     return 0;
 }
