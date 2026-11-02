@@ -141,7 +141,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 #wifi-diagnostics, #ble-diagnostics { grid-column: span 3; }
 #wifi-diagnostics[hidden], #ble-diagnostics[hidden] { display: none; }
 .runtime[aria-labelledby="settings-title"] .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 
 .self-test-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 20px; }
@@ -184,8 +184,9 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .button-cancel:hover:not(:disabled) { background: #e8eeeb; }
 .button-danger { background: #fff; border-color: #dbb5aa; color: var(--coral); }
 .button-danger:hover:not(:disabled) { background: #fff3ef; }
-.settings-controls label { min-height: 72px; padding: 12px 14px; display: grid; align-content: space-between; gap: 6px; color: var(--muted); background: var(--paper); font-size: 12px; }
+.settings-controls label { min-height: 72px; padding: 12px 14px; display: grid; align-content: start; gap: 8px; color: var(--muted); background: var(--paper); font-size: 12px; }
 .settings-controls label[hidden] { display: none; }
+.settings-controls label:has(select:disabled) { background: #f2f5f4; }
 .settings-controls select {
   min-width: 0;
   min-height: 38px;
@@ -227,6 +228,10 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .status-line[data-error="true"] { color: var(--coral); }
 .status-line[data-error="true"] .status-mark { background: var(--red); }
 .status-line[data-active="true"] .status-mark { background: var(--teal); }
+
+@media (max-width: 1200px) {
+  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 
 @media (max-width: 960px) {
   .identity, .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }

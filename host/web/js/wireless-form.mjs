@@ -72,15 +72,16 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     : Boolean(status?.ble_key_configured));
   const refresh = () => {
     const available = supported();
+    const tcpReady = available && ready() && !busy && radioOn("settings-wifi");
     const tcp = el("settings-tcp-cli");
     if (tcp) {
-      tcp.disabled = !ready() || busy || !status?.tcp_cli_configurable;
+      tcp.disabled = !tcpReady || !status?.tcp_cli_configurable;
       tcp.closest?.("label")?.toggleAttribute("hidden", !available);
     }
     const tcpAuth = el("settings-tcp-auth");
     if (tcpAuth) {
-      tcpAuth.disabled = !ready() || busy || !status?.tcp_cli_auth_configurable
-        || !tcpAuth.checked && !keyAvailable();
+      tcpAuth.disabled = !tcpReady || !radioOn("settings-ble") || !radioOn("settings-tcp-cli")
+        || !status?.tcp_cli_auth_configurable || !radioOn("settings-tcp-auth") && !keyAvailable();
       tcpAuth.closest?.("label")?.toggleAttribute("hidden", !available || !status?.tcp_cli_auth_configurable);
     }
     for (const id of ["settings-wifi", "settings-ble"]) {
@@ -108,10 +109,11 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     !radioOn("settings-wifi") && status.wifi_enabled && (status.ssid || status.password_configured)
     || !radioOn("settings-ble") && status.ble_enabled && status.ble_key_configured));
   const dirty = () => Boolean(wifiStage || keyDirty || erasing() || status?.tcp_cli_configurable
-    && el("settings-tcp-cli")?.checked !== status.tcp_cli_enabled || status?.tcp_cli_auth_configurable
-    && el("settings-tcp-auth")?.checked !== status.tcp_cli_auth_required);
-  el("settings-tcp-cli")?.addEventListener("change", changed);
-  el("settings-tcp-auth")?.addEventListener("change", changed);
+    && radioOn("settings-tcp-cli") !== status.tcp_cli_enabled || status?.tcp_cli_auth_configurable
+    && radioOn("settings-tcp-auth") !== status.tcp_cli_auth_required);
+  for (const id of ["settings-tcp-cli", "settings-tcp-auth"]) {
+    el(id)?.addEventListener("change", () => { refresh(); changed(); });
+  }
   const enableRadio = id => {
     if (radioOn(id)) return;
     el(id).value = "1";
@@ -302,9 +304,9 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       const ble = radioOn("settings-ble");
       const config = { wifi_enabled: wifi, ble_enabled: ble,
         ssid: wifi ? wifiStage?.ssid ?? status?.ssid ?? "" : "", confirm_reboot: true };
-      if (status?.tcp_cli_configurable) config.tcp_cli_enabled = el("settings-tcp-cli").checked;
+      if (status?.tcp_cli_configurable) config.tcp_cli_enabled = radioOn("settings-tcp-cli");
       if (status?.tcp_cli_auth_configurable) {
-        config.tcp_cli_auth_required = el("settings-tcp-auth").checked && keyAvailable();
+        config.tcp_cli_auth_required = radioOn("settings-tcp-auth") && keyAvailable();
       }
       if (wifi && wifiStage?.use_tested_wifi) config.use_tested_wifi = true;
       if (!wifi && (status?.ssid || status?.password_configured)) config.password = "";
@@ -318,8 +320,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       clearBleKey();
       if (saved) {
         status = saved;
-        if (el("settings-tcp-cli")) el("settings-tcp-cli").checked = saved.tcp_cli_enabled ?? true;
-        if (el("settings-tcp-auth")) el("settings-tcp-auth").checked = saved.tcp_cli_auth_required ?? false;
+        if (el("settings-tcp-cli")) el("settings-tcp-cli").value = (saved.tcp_cli_enabled ?? true) ? "1" : "0";
+        if (el("settings-tcp-auth")) el("settings-tcp-auth").value = saved.tcp_cli_auth_required ? "1" : "0";
         clearInterval(stagedTimer);
         stagedTimer = null;
         loaded = true;
@@ -344,8 +346,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       stagedTimer = null;
       busy = false;
       status = null;
-      if (el("settings-tcp-cli")) el("settings-tcp-cli").checked = true;
-      if (el("settings-tcp-auth")) el("settings-tcp-auth").checked = false;
+      if (el("settings-tcp-cli")) el("settings-tcp-cli").value = "1";
+      if (el("settings-tcp-auth")) el("settings-tcp-auth").value = "0";
       loaded = false;
       retryAfter = 0;
       wifiStage = null;
@@ -368,8 +370,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
         const fresh = await load();
         if (generation !== current) return;
         status = fresh;
-        if (el("settings-tcp-cli")) el("settings-tcp-cli").checked = fresh.tcp_cli_enabled ?? true;
-        if (el("settings-tcp-auth")) el("settings-tcp-auth").checked = fresh.tcp_cli_auth_required ?? false;
+        if (el("settings-tcp-cli")) el("settings-tcp-cli").value = (fresh.tcp_cli_enabled ?? true) ? "1" : "0";
+        if (el("settings-tcp-auth")) el("settings-tcp-auth").value = fresh.tcp_cli_auth_required ? "1" : "0";
         loaded = true;
         if (!wifiStage && !wifiEdited) el("wifi-ssid").value = status.ssid;
       } catch (error) {

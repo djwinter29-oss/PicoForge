@@ -10,8 +10,8 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/direct\.css\?v=13"/);
-  assert.match(html, /src="js\/app\.mjs\?v=27"/);
+  assert.match(html, /href="css\/direct\.css\?v=15"/);
+  assert.match(html, /src="js\/app\.mjs\?v=28"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=6"/);
   assert.match(app, /from "\.\/view\.mjs\?v=11"/);
@@ -39,8 +39,16 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     assert.match(settings, /id="settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
     const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
     assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
-      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble"]);
+      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli", "settings-tcp-auth"]);
     assert.match(board, /<label for="settings-wifi" hidden>[\s\S]*<label for="settings-ble" hidden>/);
+    for (const id of ["settings-tcp-cli", "settings-tcp-auth"]) {
+      assert.match(board, new RegExp(`<label for="${id}" hidden>[\\s\\S]*?<select id="${id}"`));
+      const attributes = board.match(new RegExp(`<select id="${id}"([^>]*)>`))[1];
+      assert.match(attributes, /title="[^"]+"/);
+      assert.match(attributes, new RegExp(`aria-describedby="${id}-help"`));
+      assert.match(board, new RegExp(`<small id="${id}-help" hidden>`));
+    }
+    assert.doesNotMatch(board, /type="checkbox"/);
     assert.doesNotMatch(settings, /id="wifi-ssid"|id="wifi-password"|id="ble-secret"/);
     assert.match(dashboard, /<dialog[^>]*id="wifi-dialog"/);
     assert.match(dashboard, /<dialog[^>]*id="ble-dialog"/);
