@@ -34,6 +34,7 @@ def test_board_and_wireless_configuration_saves_once_or_discards(tmp_path):
     harness = tmp_path / "harness.c"
     harness.write_text(r"""
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 #include "FreeRTOS.h"
 #include "pico/cyw43_arch.h"
@@ -81,7 +82,7 @@ bool pf_boot_config_set_wifi_password(const char *p) {
     return true;
 }
 bool pf_boot_config_set_ble_key(const uint8_t key[32]) { (void)key; return true; }
-void pf_boot_config_ble_key(uint8_t key[32]) { memset(key, 0, 32u); }
+void pf_boot_config_ble_key(uint8_t key[32]) { memset(key, shared_key_available ? 0xA5 : 0, 32u); }
 bool pf_boot_config_tcp_cli_auth_required(void) { return tcp_auth_required; }
 bool pf_boot_config_set_tcp_cli_auth_required(bool required) { tcp_auth_required = required; return true; }
 bool pf_boot_config_wireless_restart_required(void) { return restart_required; }
@@ -137,8 +138,11 @@ bool pf_wifi_tested_credentials(char out_ssid[33], char out_password[64]) {
     return true;
 }
 pf_wifi_auth_state_t pf_wifi_tested_auth_state(void) { return PF_WIFI_AUTH_WPA2; }
+static pf_wifi_auth_state_t link_auth = PF_WIFI_AUTH_TRY_WPA2;
+static uint16_t link_reconnects;
+static int8_t link_rssi = PF_WIFI_RSSI_UNAVAILABLE;
 void pf_wifi_link_diagnostics(pf_wifi_auth_state_t *auth_state, uint16_t *reconnects, int8_t *rssi)
-{ *auth_state = PF_WIFI_AUTH_TRY_WPA2; *reconnects = 0u; *rssi = PF_WIFI_RSSI_UNAVAILABLE; }
+{ *auth_state = link_auth; *reconnects = link_reconnects; *rssi = link_rssi; }
 void pf_wifi_clear_tested_credentials(void) { staged_test = false; ++cleared_tests; }
 bool pf_bluetooth_prepare(void) { return ble_prepared; }
 bool pf_bluetooth_start(void) { return ble_start_result; }
@@ -157,10 +161,41 @@ static void request(uint8_t *report, uint16_t mhz, uint8_t profile)
     strcpy((char *)report + 4, "network");
     report[133] = (uint8_t)mhz; report[134] = (uint8_t)(mhz >> 8); report[135] = profile;
 }
+static void print_status_hex(const uint8_t *status)
+{
+    for (size_t i = 0u; i < PF_WIRELESS_STATUS_SIZE; ++i) printf("%02x", status[i]);
+}
 int main(int argc, char **argv)
 {
-    (void)argv;
     uint8_t report[PF_WIRELESS_REQUEST_SIZE], status[PF_WIRELESS_STATUS_SIZE];
+    if (argc > 1 && strcmp(argv[1], "status-vectors") == 0) {
+        radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+        strcpy(ssid, "PicoForge");
+        strcpy(saved_password, "configured");
+        wifi_prepared = ble_prepared = ble_start_result = true;
+        tcp_auth_required = shared_key_available = restart_required = true;
+        pf_wireless_start();
+        pf_wireless_poll();
+        pf_wireless_status(status);
+        printf("{\"tcp_cli_auth_required\":\"");
+        print_status_hex(status);
+        tcp_cli_enabled = false;
+        tcp_auth_required = false;
+        pf_wireless_start();
+        pf_wireless_poll();
+        pf_wireless_status(status);
+        printf("\",\"tcp_cli_disabled\":\"");
+        print_status_hex(status);
+        wifi_error = PF_WIRELESS_ERROR_JOIN;
+        link_auth = PF_WIFI_AUTH_SAE;
+        link_reconnects = 0x0102u;
+        link_rssi = -61;
+        pf_wireless_status(status);
+        printf("\",\"diagnostics\":\"");
+        print_status_hex(status);
+        puts("\"}");
+        return 0;
+    }
     if (argc > 1) {
         tcp_auth_required = true;
         pf_wireless_start();
@@ -335,3 +370,8 @@ int main(int argc, char **argv)
     assert compiled.returncode == 0, compiled.stderr
     subprocess.run([str(binary)], check=True)
     subprocess.run([str(binary), "missing-auth-key"], check=True)
+    generated_vectors = subprocess.run([str(binary), "status-vectors"], check=True,
+                                       capture_output=True, text=True).stdout
+    # On an intentional status change, regenerate the fixture from this binary's `status-vectors` output.
+    vectors_path = ROOT / "tests/fixtures/wireless-status-v4.json"
+    assert generated_vectors == vectors_path.read_text()

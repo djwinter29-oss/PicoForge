@@ -14,6 +14,42 @@ namespace PicoForge.Tests;
 public sealed class WirelessTests
 {
     [Fact]
+    public void ParsesFirmwareGeneratedFeature30StatusVectors()
+    {
+        using var vectors = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "wireless-status-v4.json")));
+        WirelessStatusResponse Parse(string name)
+        {
+            var report = new byte[54];
+            report[0] = HidProtocol.WirelessReportId;
+            Convert.FromHexString(vectors.RootElement.GetProperty(name).GetString()!).CopyTo(report, 1);
+            return HidProtocol.ParseWirelessStatus(report);
+        }
+
+        foreach (var (name, cliEnabled, authRequired, serving) in new[]
+                 {
+                     ("tcp_cli_auth_required", true, true, true),
+                     ("tcp_cli_disabled", false, false, false),
+                 })
+        {
+            var status = Parse(name);
+            Assert.Equal(cliEnabled, status.TcpCliEnabled);
+            Assert.Equal(authRequired, status.TcpCliAuthRequired);
+            Assert.Equal(serving, status.TcpCliStarted);
+            Assert.Equal("PicoForge", status.Ssid);
+            Assert.Equal("connected", status.WifiState);
+            Assert.True(status.RestartRequired);
+            Assert.Null(status.Rssi);
+        }
+
+        var diagnostics = Parse("diagnostics");
+        Assert.Equal(2, diagnostics.Error);
+        Assert.Equal("sae", diagnostics.WifiAuthState);
+        Assert.Equal(0x0102, diagnostics.ReconnectCount);
+        Assert.Equal(-61, diagnostics.Rssi);
+    }
+
+    [Fact]
     public void V2TcpSwitchSecurityAndExpiryDetails()
     {
         var request = Settings();

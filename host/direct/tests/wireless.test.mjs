@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac, webcrypto } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PicoForgeBluetooth, BLE_SERVICE } from "../js/bluetooth.mjs";
 import { buildWireless, buildWirelessCommand, decodeWireless, decodeWirelessResult, saveWireless } from "../js/wireless.mjs";
@@ -8,6 +9,30 @@ import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, r
 
 /** Board settings matching the config() fixture readback. */
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
+const statusVectors = JSON.parse(readFileSync(
+  new URL("../../../tests/fixtures/wireless-status-v4.json", import.meta.url), "utf8"));
+
+test("parses firmware-generated Feature 30 status vectors", () => {
+  const authenticated = decodeWireless(Buffer.from(statusVectors.tcp_cli_auth_required, "hex"));
+  assert.equal(authenticated.ssid, "PicoForge");
+  assert.equal(authenticated.wifi_state, "connected");
+  assert.equal(authenticated.tcp_cli_started, true);
+  assert.equal(authenticated.tcp_cli_enabled, true);
+  assert.equal(authenticated.tcp_cli_auth_required, true);
+  assert.equal(authenticated.restart_required, true);
+
+  const disabled = decodeWireless(Buffer.from(statusVectors.tcp_cli_disabled, "hex"));
+  assert.equal(disabled.tcp_cli_started, false);
+  assert.equal(disabled.tcp_cli_enabled, false);
+  assert.equal(disabled.tcp_cli_auth_required, false);
+  assert.equal(disabled.rssi, null);
+
+  const diagnostics = decodeWireless(Buffer.from(statusVectors.diagnostics, "hex"));
+  assert.equal(diagnostics.error, 2);
+  assert.equal(diagnostics.wifi_auth_state, "sae");
+  assert.equal(diagnostics.reconnect_count, 0x0102);
+  assert.equal(diagnostics.rssi, -61);
+});
 
 test("v2 TCP switch, security masks and test lifecycle details retain legacy compatibility", () => {
   const settings = { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD };

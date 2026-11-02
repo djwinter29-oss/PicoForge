@@ -24,7 +24,7 @@
 static bool wifi_enabled; /**< Wi-Fi master switch and credentials allow startup. */
 static bool ble_enabled; /**< BLE master switch allows advertising; a key is required only for control. */
 static bool started; /**< Shared SDK context initialized successfully. */
-static uint8_t init_error; /**< Sticky pf_wireless_error_t for SDK or BLE initialization failure. */
+static uint8_t init_error; /**< Sticky SDK or BLE initialization failure. */
 static uint8_t save_status; /**< Last provisioning result, using Feature 20 status values. */
 static uint8_t save_transaction; /**< Last USB provisioning transaction ID. */
 static bool tcp_cli_enabled; /**< Boot-applied saved-LAN console switch. */

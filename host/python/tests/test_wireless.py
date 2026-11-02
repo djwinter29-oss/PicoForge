@@ -1,6 +1,8 @@
+import json
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from picoforge.device import PicoForgeHid
@@ -17,6 +19,9 @@ from picoforge.protocol import parse_identity_report
 
 
 BOARD = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 3}
+STATUS_VECTORS = json.loads(
+    (Path(__file__).resolve().parents[3] / "tests/fixtures/wireless-status-v4.json").read_text()
+)
 
 
 def settings(**overrides):
@@ -48,6 +53,33 @@ def operation_result(state=2, transaction=1, page=0, networks=()):
 
 
 class WirelessTests(unittest.TestCase):
+    def test_parses_firmware_generated_feature_30_status_vectors(self):
+        authenticated = parse_wireless_status_report(
+            bytes((30,)) + bytes.fromhex(STATUS_VECTORS["tcp_cli_auth_required"])
+        )
+        self.assertEqual(authenticated["ssid"], "PicoForge")
+        self.assertEqual(authenticated["wifi_state"], "connected")
+        self.assertTrue(authenticated["tcp_cli_started"])
+        self.assertTrue(authenticated["tcp_cli_enabled"])
+        self.assertTrue(authenticated["tcp_cli_auth_required"])
+        self.assertTrue(authenticated["restart_required"])
+
+        disabled = parse_wireless_status_report(
+            bytes((30,)) + bytes.fromhex(STATUS_VECTORS["tcp_cli_disabled"])
+        )
+        self.assertFalse(disabled["tcp_cli_started"])
+        self.assertFalse(disabled["tcp_cli_enabled"])
+        self.assertFalse(disabled["tcp_cli_auth_required"])
+        self.assertIsNone(disabled["rssi"])
+
+        diagnostics = parse_wireless_status_report(
+            bytes((30,)) + bytes.fromhex(STATUS_VECTORS["diagnostics"])
+        )
+        self.assertEqual(diagnostics["error"], 2)
+        self.assertEqual(diagnostics["wifi_auth_state"], "sae")
+        self.assertEqual(diagnostics["reconnect_count"], 0x0102)
+        self.assertEqual(diagnostics["rssi"], -61)
+
     def test_v2_tcp_switch_security_and_test_expiry_details(self):
         for enabled, flags in ((None, 83), (True, 67), (False, 75)):
             config = settings(**({} if enabled is None else {"tcp_cli_enabled": enabled}))
