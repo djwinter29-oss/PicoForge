@@ -32,6 +32,15 @@ including a host-cache data-loss warning; `POST /api/settings` requests it only 
 Device sync and detach must succeed before saving, and the original result is verified after reconnect without
 SET replay. See the [forced-save policy](../../../docs/reference/settings.md#forced-save-and-reboot).
 Self-tests and transitions still block saving; standalone reboot remains blocked while USB owns storage.
+
+## Source Layout
+
+- `Hosting/` — application startup and dependency registration.
+- `Protocol/` — HID report models, validation, and wireless report codecs.
+- `Hid/` — USB HID transport and serialized device monitoring.
+- `Dashboard/` — board selection, HTTP endpoints, and TCP console bridge.
+
+The folders organize implementation by responsibility while retaining the existing `PicoForge` namespace.
 Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.

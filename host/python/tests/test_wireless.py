@@ -285,8 +285,9 @@ class WirelessTests(unittest.TestCase):
             client._device.get_feature_report.side_effect = lambda report_id, _size: (
                 status(0, 0) if report_id == 30 else operation_result(terminal, 1))
             on_poll = Mock()
-            with self.subTest(terminal=terminal), patch("picoforge.device.monotonic", side_effect=[0, 0, 36]), \
-                    patch("picoforge.device.sleep"):
+            with self.subTest(terminal=terminal), patch(
+                "picoforge.hid.device.monotonic", side_effect=[0, 0, 36]
+            ), patch("picoforge.hid.device.sleep"):
                 if expected_error:
                     with self.assertRaises(expected_error):
                         client.test_wireless("Pico網", "secret12", on_poll=on_poll)
@@ -334,7 +335,7 @@ class WirelessTests(unittest.TestCase):
 
     def test_one_set_poll_matching_transaction_and_terminal_rejections(self):
         client = self.client([status(0, 0), status(2, 255), status(1), status()])
-        with patch("picoforge.device.sleep"):
+        with patch("picoforge.hid.device.sleep"):
             result = client.set_wireless(settings())
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["settings"], BOARD)
@@ -374,7 +375,7 @@ class WirelessTests(unittest.TestCase):
 
         client._device.send_feature_report.side_effect = send
         client._device.get_feature_report.side_effect = receive
-        with patch("picoforge.device.sleep"):
+        with patch("picoforge.hid.device.sleep"):
             self.assertEqual(client.scan_wireless(), [
                 {"ssid": "Pico網", "rssi": -42, "secured": True, "security": "WEP"}])
             self.assertEqual(client.test_wireless("Pico網", "secret12")["ipv4"], "192.168.1.5")
@@ -386,7 +387,7 @@ class WirelessTests(unittest.TestCase):
     def test_disconnect_timeout_and_short_write_block_replays(self):
         for reports in ([status(0, 0), OSError("secret12")], [status(0, 0), status(1)]):
             client = self.client(reports)
-            with patch("picoforge.device.monotonic", side_effect=[0, 6]), self.assertRaises(OSError):
+            with patch("picoforge.hid.device.monotonic", side_effect=[0, 6]), self.assertRaises(OSError):
                 client.set_wireless(settings())
             self.assertTrue(client._command_uncertain)
             with self.assertRaisesRegex(RuntimeError, "uncertain"):
@@ -506,7 +507,7 @@ class WirelessTests(unittest.TestCase):
             on_progress("Checking password")
             self.assertEqual(monitor.snapshot()["wireless_phase"], "Checking password")
             monitor._input_received_at = {3: 0, 10: 0, 11: 0}
-            with patch("picoforge.monitor.time.monotonic", return_value=30):
+            with patch("picoforge.dashboard.monitor.time.monotonic", return_value=30):
                 self.assertTrue(monitor.snapshot()["telemetry_stale"])
                 on_poll()
                 snapshot = monitor.snapshot()

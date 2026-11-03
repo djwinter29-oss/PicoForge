@@ -175,11 +175,11 @@ class MonitorReconnectTests(unittest.TestCase):
                 monitor._active_client.set_msc.return_value = {"status": "completed", "error": "none"}
                 monitor._snapshot = {**_empty_snapshot(), "msc": {"enabled": False}}
                 if confirmed:
-                    with patch("picoforge.monitor.time.monotonic", return_value=100.0):
+                    with patch("picoforge.dashboard.monitor.time.monotonic", return_value=100.0):
                         monitor.set_msc(True)
                 monitor._command_outcome_uncertain = uncertain
                 monitor._client_factory = Mock(side_effect=error)
-                with patch("picoforge.monitor.time.monotonic", return_value=now):
+                with patch("picoforge.dashboard.monitor.time.monotonic", return_value=now):
                     monitor._run()
                 snapshot = monitor.snapshot()
                 self.assertFalse(snapshot["connected"])
@@ -276,7 +276,7 @@ class MonitorReconnectTests(unittest.TestCase):
             "self_test": {"active": True},
         }
         monitor._input_received_at = {3: 99.5, 10: 98.0, 11: 98.0}
-        with patch("picoforge.monitor.time.monotonic", return_value=100.0):
+        with patch("picoforge.dashboard.monitor.time.monotonic", return_value=100.0):
             snapshot = monitor.snapshot()
         freshness = snapshot["report_freshness"]
         self.assertFalse(freshness["3"]["stale"])

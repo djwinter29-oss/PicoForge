@@ -108,3 +108,8 @@ Detailed wire reports and local wireless API semantics belong in the
 The package uses the **BSD-3-Clause** license. Its [LICENSE](LICENSE) mirrors the
 [repository license](../../LICENSE) and is included in built wheels; keep both copies identical.
 Package metadata, dependencies, and the `picoforge` entry point are defined in [pyproject.toml](pyproject.toml).
+
+Python implementations are grouped by responsibility under `src/picoforge/reports`, `src/picoforge/hid`, and
+`src/picoforge/dashboard`.
+The original top-level modules remain as compatibility imports for existing `picoforge.protocol`,
+`picoforge.device`, `picoforge.monitor`, `picoforge.console`, and `picoforge.web` users.

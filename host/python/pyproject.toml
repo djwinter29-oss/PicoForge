@@ -32,7 +32,7 @@ picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
 package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
-packages = ["picoforge", "picoforge.web"]
+packages = ["picoforge", "picoforge.web", "picoforge.reports", "picoforge.hid", "picoforge.dashboard"]
 
 [tool.setuptools.package-data]
 "picoforge.web" = ["index.html", "console.html", "favicon.svg", "css/*.css", "js/*.mjs"]

@@ -25,7 +25,10 @@ class ConsoleTests(unittest.TestCase):
         self.peer.settimeout(1)
         self.addCleanup(self.client_socket.close)
         self.addCleanup(self.peer.close)
-        self.connect = patch("picoforge.console.socket.create_connection", return_value=self.client_socket).start()
+        self.connect = patch(
+            "picoforge.dashboard.console.socket.create_connection",
+            return_value=self.client_socket,
+        ).start()
         self.addCleanup(patch.stopall)
         self.monitor = Monitor()
         self.app = create_app(self.monitor)

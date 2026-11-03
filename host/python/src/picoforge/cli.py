@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 
-from .device import PicoForgeHid
+from .hid.device import PicoForgeHid
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "web":
             if not 1 <= args.port <= 65535:
                 raise ValueError("port must be between 1 and 65535")
-            from .web import run_server
+            from .dashboard.server import run_server
 
             run_server(args.port, args.serial, args.device_path)
             return 0

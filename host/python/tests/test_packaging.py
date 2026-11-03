@@ -11,6 +11,20 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
+    def test_legacy_modules_reexport_domain_implementations(self):
+        from picoforge import console, device, monitor, protocol, web
+        from picoforge.dashboard import console as dashboard_console
+        from picoforge.dashboard import monitor as dashboard_monitor
+        from picoforge.dashboard import server
+        from picoforge.hid import device as hid_device
+        from picoforge.reports import hid as reports
+
+        self.assertIs(device.PicoForgeHid, hid_device.PicoForgeHid)
+        self.assertIs(monitor.DeviceMonitor, dashboard_monitor.DeviceMonitor)
+        self.assertIs(console.ConsoleBridge, dashboard_console.ConsoleBridge)
+        self.assertIs(web.create_app, server.create_app)
+        self.assertIs(protocol.parse_identity_report, reports.parse_identity_report)
+
     @unittest.skipIf(tomllib is None, "tomllib requires Python 3.11")
     def test_package_metadata_includes_repository_license(self):
         project = tomllib.loads((PROJECT / "pyproject.toml").read_text())["project"]
@@ -35,4 +49,7 @@ class PackagingTests(unittest.TestCase):
         for asset in assets:
             self.assertTrue(any(fnmatch(asset, pattern) for pattern in patterns), asset)
         self.assertIn("js/wireless-form.mjs", assets)
-        self.assertEqual(setuptools["packages"], ["picoforge", "picoforge.web"])
+        self.assertEqual(
+            setuptools["packages"],
+            ["picoforge", "picoforge.web", "picoforge.reports", "picoforge.hid", "picoforge.dashboard"],
+        )
