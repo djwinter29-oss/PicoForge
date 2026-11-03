@@ -1,4 +1,4 @@
-import { PicoForgeWebHid } from "./device.mjs?v=5";
+import { PicoForgeWebHid } from "./device.mjs?v=6";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f501";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f501`;
@@ -13,27 +13,28 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     this.bleKey = null;
     this.accessMode = null;
     this.state = { ...this.state, error: bluetooth ? null : "Web Bluetooth is unavailable in this browser." };
+    this.connecting = false;
+    // Stable reference: browsers reuse one BluetoothDevice per board, so repeated scans must not stack handlers.
+    this.onBleDisconnected = () => {
+      // Setup failures report their own error; a late event must not erase it or cancel the next attempt.
+      if (this.connecting || !this.state.connected) return;
+      clearTimeout(this.pollTimer);
+      this.bleKey = null;
+      this.accessMode = null;
+      this.characteristics.clear();
+      this.clearConnection();
+      this.update({ reconnecting: false, error: this.outstanding
+        ? "BLE command outcome uncertain; inspect status before any retry." : null });
+    };
   }
 
   async connect() {
     if (!this.bluetooth || this.state.busy || this.state.connected) return;
     this.update({ busy: true, error: null });
+    this.connecting = true;
     try {
       this.bleDevice = await this.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }], optionalServices: [BLE_SERVICE] });
-      this.bleDevice.addEventListener("gattserverdisconnected", () => {
-        clearTimeout(this.pollTimer);
-        this.bleKey = null;
-        this.accessMode = null;
-        this.characteristics.clear();
-        this.clearConnection();
-        this.update({ reconnecting: false, error: this.outstanding
-          ? "BLE command outcome uncertain; inspect status before any retry." : null });
-      });
-      const server = await this.bleDevice.gatt.connect();
-      const service = await server.getPrimaryService(BLE_SERVICE);
-      for (const id of [1, 2, 3, 10, 11, 20, 30, 32, 33]) {
-        this.characteristics.set(id, await service.getCharacteristic(characteristic(id)));
-      }
+      this.bleDevice.addEventListener("gattserverdisconnected", this.onBleDisconnected);
       const adapter = new EventTarget();
       Object.assign(adapter, { opened: true, open: async () => {},
         close: async () => this.bleDevice.gatt.disconnect(),
@@ -58,15 +59,37 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
           }
         } });
       if (this.outstanding && this.bleUid) this.reconnectUid = this.bleUid;
-      await this.attachDevice(adapter);
-      if (!this.state.connected) throw new Error(this.state.error || "BLE connection initialization failed");
+      // ponytail: the first link to a newly permitted board often fails GATT discovery or the first read; later
+      // links use the browser's cache. Only read-only setup is retried, a fixed 3 times, on the chosen device.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          const server = await this.bleDevice.gatt.connect();
+          const service = await server.getPrimaryService(BLE_SERVICE);
+          for (const id of [1, 2, 3, 10, 11, 20, 30, 32, 33]) {
+            this.characteristics.set(id, await service.getCharacteristic(characteristic(id)));
+          }
+          await this.attachDevice(adapter);
+          if (!this.state.connected) throw new Error(this.state.error || "BLE connection initialization failed");
+          break;
+        } catch (error) {
+          this.bleDevice.gatt.disconnect();
+          if (attempt === 3) throw error;
+          await this.sleep(500);
+        }
+      }
       this.bleUid = this.state.hardware.serial_number;
       this.update({ transport: "ble" });
+      this.connecting = false;
+      if (!this.bleDevice.gatt.connected) return this.onBleDisconnected();
       await this.pollReports();
     } catch (error) {
       this.bleDevice?.gatt.disconnect();
+      this.characteristics.clear();
       this.update({ error: error.message, busy: false });
-    } finally { this.update({ busy: false }); }
+    } finally {
+      this.connecting = false;
+      this.update({ busy: false });
+    }
   }
 
   async setControlKey(hex) {
@@ -112,6 +135,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     clearTimeout(this.pollTimer);
     this.bleKey = null;
     this.accessMode = null;
+    this.characteristics.clear();
     await super.disconnect();
   }
 }

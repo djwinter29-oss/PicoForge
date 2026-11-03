@@ -515,3 +515,48 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     else delete globalThis.crypto;
   }
 });
+
+test("BLE retries first-link discovery on the chosen board and keeps the failure reason", async () => {
+  const ble = new EventTarget();
+  const added = [];
+  const addEventListener = ble.addEventListener.bind(ble);
+  ble.addEventListener = (type, handler) => { added.push(handler); addEventListener(type, handler); };
+  const reads = { 1: identity(128 | 55), 2: config(), 3: telemetry(), 10: storage(), 11: selfTest() };
+  let failures = 1;
+  let connects = 0;
+  ble.gatt = { connected: false,
+    async connect() {
+      connects++;
+      this.connected = true;
+      return { async getPrimaryService() {
+        if (failures-- > 0) throw new Error("No Services matching UUID found in Device.");
+        return { async getCharacteristic(uuid) {
+          const bytes = reads[parseInt(uuid.slice(4, 8), 16)] ?? new Uint8Array(16);
+          return { async readValue() { return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); } };
+        } };
+      } };
+    },
+    disconnect() { this.connected = false; ble.dispatchEvent(new Event("gattserverdisconnected")); },
+  };
+  let prompts = 0;
+  const client = new PicoForgeBluetooth({ async requestDevice() { prompts++; return ble; } }, () => {},
+    { sleep: async () => {} });
+  await client.connect();
+  assert.equal(client.state.connected, true, "the first-link discovery failure is retried");
+  assert.deepEqual([prompts, connects], [1, 2], "retries reuse the chosen board without a new prompt");
+  await client.disconnect();
+
+  failures = 3;
+  connects = 0;
+  await client.connect();
+  assert.equal(client.state.connected, false);
+  assert.equal(connects, 3, "setup is retried a bounded number of times");
+  assert.match(client.state.error, /No Services/, "the late disconnect event must not erase the reason");
+  assert.equal(new Set(added).size, 1, "repeated scans of one board register one disconnect handler");
+
+  failures = 0;
+  await client.connect();
+  assert.equal(client.state.connected, true);
+  ble.gatt.disconnect();
+  assert.equal(client.state.connected, false, "a link loss after setup still clears the connection");
+});

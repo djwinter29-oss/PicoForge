@@ -80,7 +80,9 @@ omitting it keeps the saved switches.
 The wireless boot controls also include **TCP CLI** and **TCP CLI authentication** dropdowns. TCP CLI is greyed out
 when Wi-Fi is disabled; authentication is greyed out when Wi-Fi, Bluetooth, or TCP CLI is disabled. Authentication
 requires a saved or staged BLE key. Disabled controls retain their selection until saving; disabling Bluetooth clears
-its key and therefore disables authentication on save. Pico/Pico 2 builds hide all four wireless boot controls.
+its key and therefore disables authentication on save. Both are also greyed out until the board's wireless status
+confirms support, for example while connected through Bluetooth. Pico/Pico 2 builds hide all four wireless boot
+controls.
 The TCP dropdowns show usage hints on hover; the hints also remain available as screen-reader descriptions.
 
 ### Forced Save and Reboot

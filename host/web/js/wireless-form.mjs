@@ -82,7 +82,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     if (tcpAuth) {
       tcpAuth.disabled = !tcpReady || !radioOn("settings-ble") || !radioOn("settings-tcp-cli")
         || !status?.tcp_cli_auth_configurable || !radioOn("settings-tcp-auth") && !keyAvailable();
-      tcpAuth.closest?.("label")?.toggleAttribute("hidden", !available || !status?.tcp_cli_auth_configurable);
+      tcpAuth.closest?.("label")?.toggleAttribute("hidden", !available);
     }
     for (const id of ["settings-wifi", "settings-ble"]) {
       const configure = option(id, "configure");

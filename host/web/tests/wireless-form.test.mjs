@@ -117,6 +117,9 @@ test("TCP switch is saved only on v2 and expired test credentials block saving",
     assert.equal(Object.hasOwn(disabled, "use_tested_wifi"), false);
     assert.equal(el("wireless-summary").hidden, true);
     form.reset();
+    form.update();
+    assert.equal(el("settings-tcp-auth").label.hidden, false, "W boards show auth before status loads (e.g. BLE)");
+    assert.equal(el("settings-tcp-auth").disabled, true, "auth stays greyed until status confirms support");
     status = { ...status, tcp_cli_configurable: false };
     await form.load();
     assert.equal(el("settings-tcp-cli").disabled, true);

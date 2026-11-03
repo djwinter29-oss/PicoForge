@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "./wireless-form.mjs?v=13";
+import { renderWirelessStatus } from "./wireless-form.mjs?v=15";
 
 function uptimeLabel(milliseconds) {
   if (typeof milliseconds === "bigint") {

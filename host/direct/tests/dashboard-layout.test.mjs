@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PicoForgeWebHid } from "../js/device.mjs?v=6";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=5";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=6";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -11,10 +11,10 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/direct\.css\?v=15"/);
-  assert.match(html, /src="js\/app\.mjs\?v=28"/);
+  assert.match(html, /src="js\/app\.mjs\?v=29"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=6"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=11"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=12"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
     assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));
