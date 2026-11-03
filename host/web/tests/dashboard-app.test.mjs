@@ -62,6 +62,7 @@ test("shared dashboard preserves drafts and command state across status failures
   let gate;
   let ledGate = Promise.resolve();
   let ledTimeout = false;
+  const ledRequestedStates = [];
   let mscGate = Promise.resolve();
   let mscTimeout = false;
   const requestedUrls = [];
@@ -72,6 +73,9 @@ test("shared dashboard preserves drafts and command state across status failures
   let settingsTimeout = false;
   let readbackMismatch = false;
   let rebootFails = false;
+  let rebootResponseError = false;
+  let ledResponseError = false;
+  let selfTestResponseError = false;
   let selfTestSucceeds = false;
   let mscSucceeds = false;
   let wirelessFailure = 0;
@@ -97,6 +101,7 @@ test("shared dashboard preserves drafts and command state across status failures
     querySelector: element,
     createElement: () => ({ value: "", textContent: "", children: [],
       append(...children) { this.children.push(...children); } }),
+    addEventListener: (type, handler) => handlers.set(`document:${type}`, handler),
   };
   globalThis.window = { setInterval: callback => { tick = callback; }, confirm: () => true };
   const saveAndConfirm = async () => {
@@ -159,11 +164,18 @@ test("shared dashboard preserves drafts and command state across status failures
     }
     if (url.startsWith("/api/reboot?board=")) {
       assert.deepEqual(JSON.parse(options.body), { confirm: true });
-      return { ok: !rebootFails, status: rebootFails ? 503 : 200 };
+      return { ok: !rebootFails && !rebootResponseError,
+        status: rebootResponseError ? 409 : rebootFails ? 503 : 200,
+        json: async () => ({ error: rebootResponseError
+          ? "Reboot outcome is uncertain; command was not resent" : "Reboot delivery failed" }) };
     }
     if (url.startsWith("/api/led?board=")) {
       await ledGate;
       if (ledTimeout) throw new DOMException("HTTP deadline", "TimeoutError");
+      ledRequestedStates.push(JSON.parse(options.body).on);
+      if (ledResponseError) return { ok: false, status: 409, json: async () => ({
+        error: "LED outcome is uncertain; command was not resent",
+      }) };
       const board_status = { led_available: true, led_on: JSON.parse(options.body).on };
       return { ok: true, json: async () => ({ board_status }) };
     }
@@ -173,9 +185,14 @@ test("shared dashboard preserves drafts and command state across status failures
       if (mscTimeout) throw new DOMException("HTTP deadline", "TimeoutError");
       return { ok: true, json: async () => ({ msc: { enabled: false } }) };
     }
-    if (url.startsWith("/api/self-test") && selfTestSucceeds) {
-      await gate;
-      return { ok: true, status: 202 };
+    if (url.startsWith("/api/self-test")) {
+      if (selfTestResponseError) return { ok: false, status: 409, json: async () => ({
+        detail: "Benchmark outcome is uncertain; command was not resent",
+      }) };
+      if (selfTestSucceeds) {
+        await gate;
+        return { ok: true, status: 202 };
+      }
     }
     if (url.startsWith("/api/msc?") && mscSucceeds) {
       await gate;
@@ -191,9 +208,21 @@ test("shared dashboard preserves drafts and command state across status failures
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(typeof handlers.get("#reboot-control:click"), "function");
     assert.equal(typeof tick, "function", "startup must register status polling");
-    assert.equal(elements.get("#connection-label").textContent, "Connected");
+    assert.equal(elements.get("#connection-label").textContent, "Connected",
+      elements.get("#status-message").textContent);
     assert.equal(elements.get("#settings-note").textContent, "");
     assert.equal(elements.get("#settings-note").hidden, true);
+    const statusRequests = () => requestedUrls.filter(url => url.startsWith("/api/status?")).length;
+    const visibleStatusRequests = statusRequests();
+    globalThis.document.hidden = true;
+    tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(statusRequests(), visibleStatusRequests, "background tabs pause status polling");
+    globalThis.document.hidden = false;
+    handlers.get("document:visibilitychange")();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(statusRequests(), visibleStatusRequests + 1, "returning to the tab refreshes status immediately");
     elements.get("#settings-clock").value = "250";
     handlers.get("#settings-clock:change")();
     statusFails = true;
@@ -540,6 +569,48 @@ test("shared dashboard preserves drafts and command state across status failures
     await handlers.get("#reboot-control:click")();
     await handlers.get("#confirm-reboot:click")();
     assert.equal(requestedUrls.at(-1), "/api/reboot?board=board-a");
+    ledResponseError = true;
+    const ledBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledBeforeConflict + 1);
+    assert.match(elements.get("#status-message").textContent, /LED outcome is uncertain; command was not resent/);
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledBeforeConflict + 1,
+      "an uncertain LED 409 is not resent");
+    ledResponseError = false;
+    connected.board_status.led_on = ledRequestedStates.at(-1);
+    await new Promise(resolve => setImmediate(resolve));
+    await tick();
+    assert.doesNotMatch(elements.get("#status-message").textContent, /LED outcome is uncertain/,
+      `reconciled LED state: ${connected.board_status.led_on}`);
+    connected.board_status.led_on = false;
+    await tick();
+    rebootResponseError = true;
+    const rebootBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/reboot?")).length;
+    await handlers.get("#reboot-control:click")();
+    await handlers.get("#confirm-reboot:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/reboot?")).length, rebootBeforeConflict + 1,
+      `${elements.get("#reboot-control").disabled}; ${elements.get("#status-message").textContent}; `
+      + elements.get("#settings-note").textContent);
+    assert.match(elements.get("#settings-note").textContent, /Reboot outcome is uncertain; command was not resent/);
+    rebootResponseError = false;
+    connected.reboot_pending = true;
+    await tick();
+    connected.reboot_pending = false;
+    await tick();
+    connected.self_test = { sequence: 5, active: false, state: "idle" };
+    await tick();
+    selfTestResponseError = true;
+    const selfTestBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/self-test")).length;
+    await handlers.get("#self-test-start:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, selfTestBeforeConflict + 1);
+    assert.match(elements.get("#status-message").textContent, /Benchmark outcome is uncertain; command was not resent/);
+    await handlers.get("#self-test-start:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, selfTestBeforeConflict + 1,
+      "an uncertain benchmark 409 is not resent");
+    selfTestResponseError = false;
+    connected.self_test = { sequence: 6, active: false, state: "idle" };
+    await tick();
     for (const name of ["#led-control:click", "#msc-control:click", "#self-test-start:click"]) {
       gate = new Promise(resolve => { release = resolve; });
       statusFails = false;
@@ -594,6 +665,7 @@ test("shared dashboard preserves drafts and command state across status failures
       "an uncertain LED command is not resent");
     ledTimeout = false;
     connected.board_status.led_on = true;
+    await new Promise(resolve => setImmediate(resolve));
     await tick();
     assert.equal(elements.get("#led-control").textContent, "Board LED: On",
       "fresh LED status reconciles the timed-out command");
@@ -673,6 +745,12 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/msc?")).length, mscRequests + 1,
       "an uncertain MSC command is not resent while ownership is unresolved");
     const statusReadsBeforeRefresh = requestedUrls.filter(url => url.startsWith("/api/status?")).length;
+    for (let attempt = 0; elements.get("#msc-status-refresh").disabled && attempt < 10; attempt++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(elements.get("#msc-status-refresh").disabled, false);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
     await handlers.get("#msc-status-refresh:click")();
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/status?")).length, statusReadsBeforeRefresh + 1,
       "the user can explicitly refresh ownership while a command outcome is uncertain");
@@ -736,6 +814,8 @@ test("shared dashboard preserves drafts and command state across status failures
     let finishWirelessTest;
     wirelessTestGate = new Promise(resolve => { finishWirelessTest = resolve; });
     const testing = handlers.get("#wifi-connect:click")();
+    assert.equal(elements.get("#board-select").disabled, true, "board selection locks immediately during a test");
+    assert.equal(elements.get("#rescan-boards").disabled, true, "board rescan locks immediately during a test");
     await tick();
     assert.equal(elements.get("#board-select").disabled, true);
     assert.equal(elements.get("#rescan-boards").disabled, true);
@@ -745,6 +825,7 @@ test("shared dashboard preserves drafts and command state across status failures
     const beforeSwitch = requestedUrls.length;
     elements.get("#board-select").value = "board-a";
     handlers.get("#board-select:change")();
+    assert.equal(elements.get("#board-select").value, "board-b", "a rejected selection restores the actual board");
     assert.equal(requestedUrls.length, beforeSwitch, "board switching must not interrupt a pending test");
     finishWirelessTest();
     await testing;
@@ -753,6 +834,14 @@ test("shared dashboard preserves drafts and command state across status failures
     }
     wirelessTestGate = null;
     assert.deepEqual(testedWireless.at(-1), { ssid: "new-network", password: "new-passphrase" });
+    elements.get("#wifi-ssid").value = "edited-network";
+    handlers.get("#wifi-ssid:input")();
+    elements.get("#wifi-password").value = "edited-passphrase";
+    handlers.get("#wifi-password:input")();
+    assert.equal(elements.get("#settings-save").disabled, true,
+      "editing either credential invalidates the previously tested stage");
+    await handlers.get("#wifi-connect:click")();
+    assert.deepEqual(testedWireless.at(-1), { ssid: "edited-network", password: "edited-passphrase" });
     assert.equal(elements.get("#settings-save").disabled, false);
     assert.equal(elements.get("#settings-save").disabled, false, "staged wireless settings enable combined save");
     configureRadio("ble");
@@ -786,6 +875,7 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(wirelessSettings[1].wifi_enabled, true);
     assert.equal(wirelessSettings[1].ble_enabled, true);
     assert.equal(wirelessSettings[1].use_tested_wifi, true);
+    assert.equal(wirelessSettings[1].ssid, "edited-network");
     assert.equal(Object.hasOwn(wirelessSettings[1], "password"), false);
     assert.deepEqual(wirelessSettings[1].board, { system_clock_mhz: 200, sdcard_profile: 0, radios: 3 });
     assert.match(elements.get("#wifi-status").textContent, /saved/);

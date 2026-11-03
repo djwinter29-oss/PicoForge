@@ -303,6 +303,92 @@ test("wireless dialogs scan, stage tested credentials, and keep them until the c
   }
 });
 
+test("failed temporary Wi-Fi cancellation retains staged state until retry or reconnect confirmation", async () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  const ids = ["wifi-dialog", "ble-dialog", "settings-wifi", "settings-ble", "settings-tcp-cli",
+    "settings-tcp-auth", "wifi-scan", "wifi-other", "wifi-connect", "wifi-cancel", "wifi-ssid",
+    "wifi-password", "wifi-password-label", "wifi-manual-label", "wifi-networks", "wifi-status",
+    "wireless-summary", "ble-generate", "ble-copy", "ble-cancel", "ble-secret", "ble-status"];
+  for (const id of ids) {
+    elements.set(id, { value: "", textContent: "", hidden: false, disabled: false, type: "password",
+      open: false, children: [], handlers: {}, options: ["1", "0", "configure"].map(value => ({ value })),
+      addEventListener(name, callback) { this.handlers[name] = callback; },
+      showModal() { this.open = true; }, close() { this.open = false; }, replaceChildren() {},
+      setAttribute() {}, append() {}, focus() {},
+      closest() { return { toggleAttribute() {} }; } });
+  }
+  elements.get("settings-wifi").value = "1";
+  elements.get("settings-ble").value = "0";
+  elements.get("wifi-networks").replaceChildren = function (...children) { this.children = children; };
+  globalThis.document = { querySelector: selector => elements.get(selector.slice(1)), createElement: () => ({
+    children: [], addEventListener() {}, setAttribute() {}, append(...children) { this.children.push(...children); },
+  }) };
+  const el = id => elements.get(id);
+  const pick = (id, value) => { el(id).handlers.focus(); el(id).value = value; el(id).handlers.input(); };
+  const oldTimers = { setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval };
+  globalThis.setInterval = () => 1;
+  globalThis.clearInterval = () => {};
+  let canReachBoard = true;
+  let cancellation = "rejected";
+  try {
+    const form = bindWirelessForm({
+      load: async () => ({ ssid: "saved", wifi_enabled: true, ble_enabled: false }),
+      supported: () => true,
+      ready: () => canReachBoard,
+      scan: async () => [],
+      test: async () => ({ ipv4: "192.168.1.9", remaining_seconds: 600 }),
+      cancelTest: async () => {
+        if (cancellation === "timeout") {
+          canReachBoard = false;
+          throw new Error("cancel result is uncertain");
+        }
+        if (cancellation === "rejected") throw new Error("cancel rejected");
+      },
+    });
+    await form.load();
+    pick("settings-wifi", "configure");
+    el("wifi-ssid").value = "tested-network";
+    await el("wifi-connect").handlers.click();
+    assert.equal(form.dirty(), true);
+
+    pick("settings-wifi", "configure");
+    await el("wifi-cancel").handlers.click();
+    assert.equal(el("wifi-dialog").open, true, "failed cleanup must leave the Wi-Fi dialog open");
+    assert.equal(el("wifi-cancel").textContent, "Retry clearing test");
+    assert.equal(form.operationBusy(), true);
+    assert.equal(form.canSave(), false, "staged credentials cannot be saved after failed cleanup");
+    assert.match(el("wireless-summary").textContent, /Use Retry clearing test/);
+
+    cancellation = "success";
+    await el("wifi-cancel").handlers.click();
+    assert.equal(el("wifi-dialog").open, false);
+    assert.equal(form.operationBusy(), false);
+    assert.equal(form.dirty(), false);
+
+    pick("settings-wifi", "configure");
+    el("wifi-ssid").value = "uncertain-network";
+    await el("wifi-connect").handlers.click();
+    pick("settings-wifi", "configure");
+    cancellation = "timeout";
+    await el("wifi-cancel").handlers.click();
+    assert.equal(el("wifi-dialog").open, true);
+    assert.equal(el("wifi-cancel").disabled, true, "an uncertain cancel cannot be resent before reconnect");
+    assert.match(el("wireless-summary").textContent, /Reconnect the board/);
+    form.update({ connected: true, outcome_uncertain: true });
+    assert.equal(el("wifi-cancel").disabled, true);
+    form.update({ connected: true, outcome_uncertain: false,
+      recovery_message: "Wireless test cancellation confirmed after reconnect." });
+    assert.equal(form.operationBusy(), false);
+    assert.equal(form.dirty(), false, "confirmed cancellation clears the retained stage");
+    assert.equal(el("wifi-ssid").value, "");
+  } finally {
+    globalThis.document = previous;
+    globalThis.setInterval = oldTimers.setInterval;
+    globalThis.clearInterval = oldTimers.clearInterval;
+  }
+});
+
 test("wireless scan/test command and result reports have consistent bounded layouts", () => {
   const command = buildWirelessCommand(7, 3, { ssid: "network", password: "passphrase" });
   assert.equal(command.length, 101);

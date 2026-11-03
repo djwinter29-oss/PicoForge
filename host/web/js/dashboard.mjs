@@ -134,6 +134,7 @@ function renderSettings(snapshot) {
   // Credentials have no forced-save path: provisioning requires firmware-owned storage.
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready
     || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(snapshot.wireless_dirty && msc?.enabled)
+    || Boolean(snapshot.wireless_dirty && snapshot.wireless_stage_valid === false)
     || !((snapshot.hardware?.capabilities ?? 0) & 2)
     || Boolean(msc?.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64));
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected

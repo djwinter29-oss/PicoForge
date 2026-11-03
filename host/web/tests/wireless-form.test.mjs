@@ -99,6 +99,16 @@ test("TCP switch is saved only on v2 and expired test credentials block saving",
     await el("wifi-connect").handlers.click();
     assert.equal(form.request().use_tested_wifi, true);
     assert.equal(form.canSave(), true);
+    el("wifi-ssid").value = "edited-network";
+    el("wifi-ssid").handlers.input();
+    assert.equal(form.canSave(), false);
+    assert.throws(() => form.request(), /test the connection again/);
+    el("wifi-password").value = "new-passphrase";
+    el("wifi-password").handlers.input();
+    assert.equal(form.canSave(), false);
+    await el("wifi-connect").handlers.click();
+    assert.equal(form.request().ssid, "edited-network");
+    assert.equal(form.request().use_tested_wifi, true);
     now += 600000;
     form.update();
     assert.equal(form.canSave(), false);
@@ -134,5 +144,80 @@ test("TCP switch is saved only on v2 and expired test credentials block saving",
     globalThis.document = previous;
     if (previousCrypto) Object.defineProperty(globalThis, "crypto", previousCrypto);
     else delete globalThis.crypto;
+  }
+});
+
+test("failed temporary Wi-Fi cancellation retains the stage and permits a safe retry", async () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  const el = id => {
+    if (!elements.has(id)) elements.set(id, {
+      value: id === "settings-wifi" ? "1" : "", textContent: "", children: [], handlers: {},
+      options: ["0", "1", "configure"].map(value => ({ value })),
+      label: { hidden: false, toggleAttribute(name, hidden) { this[name] = hidden; } },
+      closest() { return this.label; },
+      addEventListener(event, callback) { this.handlers[event] = callback; },
+      replaceChildren(...children) { this.children = children; },
+      append(...children) { this.children.push(...children); },
+      showModal() { this.open = true; },
+      close() { this.open = false; },
+    });
+    return elements.get(id);
+  };
+  globalThis.document = {
+    querySelector: selector => el(selector.slice(1)),
+    createElement: () => ({ children: [], append(...children) { this.children.push(...children); } }),
+  };
+  let cancelCalls = 0;
+  let cancelFailure = "busy";
+  try {
+    const form = bindWirelessForm({
+      load: async () => ({ ssid: "saved", wifi_enabled: true, ble_key_configured: false }),
+      scan: async () => [],
+      test: async () => ({ ipv4: "192.168.1.2", remaining_seconds: 600 }),
+      cancelTest: async () => {
+        cancelCalls++;
+        if (cancelFailure === "busy") throw new Error("device is busy");
+        if (cancelFailure === "timeout") throw new DOMException("request timed out", "TimeoutError");
+      },
+      ready: () => true,
+      supported: () => true,
+    });
+    await form.load();
+    el("wifi-ssid").value = "tested-network";
+    await el("wifi-connect").handlers.click();
+    el("wifi-dialog").showModal();
+    await el("wifi-cancel").handlers.click();
+
+    assert.equal(cancelCalls, 1);
+    assert.equal(el("wifi-dialog").open, true, "keep the dialog open when cleanup fails");
+    assert.equal(el("wifi-cancel").textContent, "Retry clearing test");
+    assert.match(el("wifi-status").textContent, /device is busy/);
+    assert.match(el("wireless-summary").textContent, /Open Wi-Fi settings to retry/);
+    assert.equal(form.stageValid(), false);
+    assert.equal(form.canSave(), false);
+    assert.equal(form.operationBusy(), true, "board selection stays locked until temporary credentials are cleared");
+    assert.equal(el("wifi-connect").disabled, true, "block another wireless operation until cleanup succeeds");
+    assert.throws(() => form.request(), /Clear the temporary Wi-Fi test/);
+
+    cancelFailure = "";
+    await el("wifi-cancel").handlers.click();
+    assert.equal(cancelCalls, 2);
+    assert.equal(el("wifi-dialog").open, false);
+    assert.equal(form.stageValid(), true);
+    assert.equal(Object.hasOwn(form.request(), "use_tested_wifi"), false);
+    assert.equal(el("wireless-summary").hidden, true);
+
+    el("wifi-ssid").value = "second-network";
+    await el("wifi-connect").handlers.click();
+    el("wifi-dialog").showModal();
+    cancelFailure = "timeout";
+    await el("wifi-cancel").handlers.click();
+    assert.equal(form.operationBusy(), true, "unknown cleanup outcomes keep board operations locked");
+    assert.match(el("wireless-summary").textContent, /Reload the dashboard and reconnect the board/);
+    assert.equal(el("wifi-dialog").open, true);
+    form.reset();
+  } finally {
+    globalThis.document = previous;
   }
 });

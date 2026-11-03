@@ -30,6 +30,29 @@ test("missing TCP auth key shows an actionable hint without misdiagnosing other 
   } finally { globalThis.document = previous; }
 });
 
+test("connected Wi-Fi CLI status becomes an in-dashboard terminal link", () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  const wifi = { textContent: "", title: "", children: [], querySelector() { return this.children[0] ?? null; },
+    replaceChildren(...children) { this.children = children; } };
+  const makeElement = () => ({ textContent: "", title: "", hidden: false, dataset: {} });
+  elements.set("#wifi-diagnostics", makeElement());
+  elements.set("#wifi-state", wifi);
+  elements.set("#ble-diagnostics", makeElement());
+  elements.set("#ble-state", makeElement());
+  globalThis.document = { querySelector: selector => elements.get(selector), createElement: () => ({
+    dataset: {}, textContent: "", href: "", title: "",
+  }) };
+  try {
+    renderWirelessStatus({ connected: true, hardware: { capabilities: 128 }, console_url: "#wifi-terminal",
+      wireless: { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
+        ssid: "HomeDev", ipv4: "192.168.1.9", ble_enabled: false } });
+    assert.equal(wifi.children[0].textContent, "HomeDev (192.168.1.9)");
+    assert.equal(wifi.children[0].href, "#wifi-terminal");
+    assert.equal(wifi.children[0].dataset.consoleLink, "true");
+  } finally { globalThis.document = previous; }
+});
+
 test("TCP switch is saved only on v2 and expired test credentials block saving", async context => {
   const previous = globalThis.document;
   const elements = new Map();

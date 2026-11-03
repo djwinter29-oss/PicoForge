@@ -1,7 +1,8 @@
 import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=7";
-import { renderStatus } from "./view.mjs?v=13";
+import { renderStatus } from "./view.mjs?v=14";
 import { PicoForgeBluetooth } from "./bluetooth.mjs?v=8";
-import { bindWirelessForm } from "./wireless-form.mjs?v=15";
+import { bindWirelessForm } from "./wireless-form.mjs?v=16";
+import { bindDirectTerminal } from "./terminal.mjs?v=1";
 import {
   cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
 } from "./wireless.mjs?v=10";
@@ -22,6 +23,18 @@ const configurationDialog = element("configuration-dialog");
 const rebootDialog = element("reboot-dialog");
 const returnDialog = element("return-dialog");
 const shareDialog = element("share-dialog");
+const terminal = bindDirectTerminal({
+  dialog: element("terminal-dialog"),
+  connect: element("terminal-connect"),
+  disconnect: element("terminal-disconnect"),
+  close: element("terminal-close"),
+  status: element("terminal-status"),
+  output: element("terminal-output"),
+  input: element("terminal-input"),
+  key: element("terminal-key"),
+  keyLabel: element("terminal-key-label"),
+  getWireless: () => client.state.wireless,
+});
 let settingsDirty = false;
 let configurationForceSave = false;
 let client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
@@ -57,7 +70,9 @@ async function refreshWirelessStatus() {
 }
 
 function render(state) {
-  renderStatus(state);
+  const wireless = state.wireless;
+  renderStatus({ ...state, console_url: wireless?.wifi_enabled && wireless.wifi_state === "connected"
+    && wireless.tcp_cli_started ? "#wifi-terminal" : null });
   if (!state.connected) {
     wirelessLoadedAt = 0;
     wirelessForm.reset();
@@ -69,7 +84,8 @@ function render(state) {
     settingsStorage.value = String(state.settings.sdcard_profile);
     settingsRadios.forEach((control, bit) => { control.value = String(state.settings.radios >> bit & 1); });
   }
-  const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected;
+  const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected
+    || wirelessForm.operationBusy();
   const bluetooth = state.transport === "ble";
   const selfTestReady = !(state.hardware?.capabilities & 32)
     || (state.freshness[11] === "fresh" && state.self_test?.valid_for_control);
@@ -155,7 +171,7 @@ function render(state) {
         ? "Waiting for the storage ownership transition result."
         : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
   element("msc-note").hidden = !element("msc-note").textContent;
-  wirelessForm.update();
+  wirelessForm.update(state);
   if (state.connected && state.wireless && storageReady && !state.busy && !bluetooth) {
     void wirelessForm.load();
   }
@@ -163,6 +179,12 @@ function render(state) {
     && !client.outstanding && !wirelessForm.operationBusy() && !wirelessReading
     && (state.hardware?.capabilities & 128)) void refreshWirelessStatus();
 }
+
+element("wifi-state").addEventListener("click", event => {
+  if (!event.target.closest("a[data-console-link]")) return;
+  event.preventDefault();
+  terminal.open();
+});
 
 async function run(operation) {
   try { await operation(); } catch (error) { client.update({ error: error.message }); }

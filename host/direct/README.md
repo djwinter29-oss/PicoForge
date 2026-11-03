@@ -1,29 +1,30 @@
 # PicoForge Direct Dashboard
 
-The Direct dashboard connects from the browser straight to the board over USB (WebHID) or Bluetooth LE
-(Web Bluetooth); no local host service is needed.
+The Direct dashboard connects from the browser to the board over USB (WebHID) or Bluetooth LE
+(Web Bluetooth). The optional Wi-Fi CLI terminal needs the Direct-only local bridge.
 
 Open the hosted [Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome or Edge.
 The hosted site is deployed from successful releases after the initial
 [Pages setup](../../docs/deployment/release.md#publishing-setup).
 For offline/local hosting, download the Direct dashboard ZIP (`picoforge-direct-vX.Y.Z.zip`) from
 [Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest), extract it, and serve the extracted directory
-on localhost. Opening `index.html` directly as a file is not supported.
+on localhost. Opening `index.html` directly as a file is not supported. The hosted dashboard supports USB and
+Bluetooth diagnostics and controls, but cannot access the local Wi-Fi terminal bridge.
 
-Serve the dashboard directory directly so `index.html` is the site root and the browser gets a secure localhost
-origin:
+Run the included Direct-only local server from the extracted directory. It serves the dashboard and binds its terminal
+bridge to loopback only:
 
 ```sh
-python3 -m http.server 8000 --directory host/direct
+python3 server.py --port 8000
 ```
 
-Open `http://localhost:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
-The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or a host server API.
+Open `http://127.0.0.1:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
+The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or any shared-dashboard module.
 It must not share any dashboard components with Python/.NET; see the authoritative
 [dashboard component isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
-Choose **USB**, then **Select board** to open the browser device chooser, including when devices were previously authorized,
-so the user selects which board to open. Cancel leaves the page disconnected. Close other clients using that board
-before connecting; the chooser cannot override another application's HID access.
+Choose **USB**, then **Select board** to open the browser device chooser, including when devices were previously
+authorized, so the user selects which board to open. Cancel leaves the page disconnected. Close other clients
+using that board before connecting; the chooser cannot override another application's HID access.
 
 ## Protocol compatibility
 
@@ -36,7 +37,8 @@ Mandatory identity/configuration failures are explicit connection errors, not le
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.
-Stale measurements are removed, unavailable/stale freshness is shown per report, and disconnect clears connection caches.
+Stale measurements are removed, unavailable/stale freshness is shown per report, and disconnect clears
+connection caches.
 Firmware RAM reserved / total is boot-stable build accounting, not live heap or stack usage.
 
 ## Dashboard layout
@@ -50,6 +52,10 @@ Live diagnostics shows uptime, service load for Core 0 / Core 1, board temperatu
 effective bus clock and timing in one field. Busy sampling retains the last valid card details without inserting
 a message or shifting the table; stale reports, disconnects, ownership transitions, and valid absent/uninitialized
 samples clear retained details. Retained values are display-only and never authorize a command.
+When Wi-Fi and the board TCP CLI are connected, click the Wi-Fi value to open the Direct terminal. It relays raw
+commands over TCP port 2323, which is unencrypted; if the board requires TCP authentication, enter its saved
+64-digit BLE control key. The local bridge permits one terminal session and closes it after 15 seconds without a
+request. Run the included server instead of a generic static-file server to enable this feature.
 
 ## Controls
 
@@ -72,6 +78,8 @@ board UID after reconnect. A mismatched or unavailable result remains uncertain;
 Wireless Feature 34 scans and connection tests likewise retain the operation and transaction, then check Feature 35
 after same-board reconnect. Matching terminal results resolve uncertainty; missing, stale, or nonterminal results
 keep wireless operations blocked. These operations are never resent automatically.
+If clearing temporary Wi-Fi test credentials fails, the Wi-Fi dialog stays open and saving remains blocked until
+the user retries or reconnect confirms cancellation.
 Pending operations are also retained in the current tab's `sessionStorage` so a page reload can resume same-board
 reconciliation. Recovery records contain only allowlisted transaction/readback data; wireless saves store
 a SHA-256 digest of the SSID, never the SSID, Wi-Fi password, or BLE key. Missing, inaccessible, or invalid recovery
@@ -119,6 +127,7 @@ instead of clicking Start again. Cleanup leaves the filesystem mounted.
 
 ```sh
 node --test host/direct/tests/*.test.mjs
+python3 -m unittest discover -s host/direct/tests -p 'test_*.py'
 ```
 
 These are host-only protocol, transaction, freshness, and UI checks. Physical WebHID/USB behavior still requires
