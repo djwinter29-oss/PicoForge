@@ -37,14 +37,15 @@ export function bindDirectTerminal({ dialog, connect, disconnect, close, status,
         body: JSON.stringify(payload),
       });
     } catch (error) {
-      throw new Error(`Could not reach the Direct terminal bridge. Run this dashboard with “python3 server.py”
-to use the local terminal. ${error.message}`);
+      throw new Error(`Could not reach the Direct terminal bridge. Run “tools/host/run-direct.sh” from a checkout
+or “python3 server.py” from the release ZIP. ${error.message}`);
     }
     let result;
     try {
       result = await response.json();
     } catch {
-      throw new Error("The Direct terminal bridge is unavailable. Run this dashboard with “python3 server.py”.");
+      throw new Error("The Direct terminal bridge is unavailable. Run tools/host/run-direct.sh from a checkout "
+        + "or python3 server.py from the release ZIP.");
     }
     if (!result || typeof result !== "object") throw new Error("Invalid response from the Direct terminal bridge.");
     if (!response.ok) throw new Error(result.error || `Terminal request failed (${response.status})`);
@@ -195,7 +196,7 @@ to use the local terminal. ${error.message}`);
         if (probe !== bridgeProbe || !dialog.open) return;
         if (!bridgeAvailable) {
           setStatus("The Direct local terminal bridge is unavailable. Download the dashboard ZIP and run "
-            + "“python3 server.py”.");
+            + "tools/host/run-direct.sh from a checkout or python3 server.py from the release ZIP.");
           return;
         }
         const wireless = getWireless();

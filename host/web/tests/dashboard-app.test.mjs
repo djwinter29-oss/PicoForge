@@ -108,6 +108,13 @@ test("shared dashboard preserves drafts and command state across status failures
     handlers.get("#settings-save:click")();
     await handlers.get("#confirm-configuration:click")();
   };
+  const switchBoard = async id => {
+    elements.get("#board-select").value = id;
+    handlers.get("#board-select:change")();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(elements.get("#board-select").value, id, `board ${id} is selectable after the prior request settles`);
+  };
   globalThis.fetch = async (url, options = {}) => {
     requestedUrls.push(url);
     assert.ok(options.signal instanceof AbortSignal, "dashboard API requests have a deadline");
@@ -537,6 +544,15 @@ test("shared dashboard preserves drafts and command state across status failures
     await saveAndConfirm();
     assert.equal(savedSettings.length, beforeUncertainSave + 1, "an uncertain save is not resent");
     settingsTimeout = false;
+    const oldSettings = { ...connected.settings };
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    assert.equal(elements.get("#settings-save").disabled, true,
+      "switching back restores the unresolved settings outcome");
+    await saveAndConfirm();
+    assert.equal(savedSettings.length, beforeUncertainSave + 1,
+      "the unresolved settings save is not replayed after switching boards");
+    connected.settings = oldSettings;
     connected.connected = false;
     await tick();
     connected.connected = true;
@@ -550,6 +566,10 @@ test("shared dashboard preserves drafts and command state across status failures
     }
     assert.match(elements.get("#settings-note").textContent, /readback matches/);
     assert.equal(elements.get("#settings-save").disabled, true, "matching status resolves the pending save");
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    assert.equal(elements.get("#settings-clock").disabled, false,
+      "reconciliation remains cleared after switching away and back again");
     connected.settings = { ...connected.settings, system_clock_mhz: 200, sdcard_profile: 0 };
     await tick();
     rebootFails = true;
@@ -609,7 +629,13 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, selfTestBeforeConflict + 1,
       "an uncertain benchmark 409 is not resent");
     selfTestResponseError = false;
-    connected.self_test = { sequence: 6, active: false, state: "idle" };
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    const selfTestRequestsAfterSwitch = requestedUrls.filter(url => url.startsWith("/api/self-test")).length;
+    await handlers.get("#self-test-start:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, selfTestRequestsAfterSwitch,
+      "switching back restores the benchmark sequence awaiting reconciliation");
+    connected.self_test = { sequence: 7, active: false, state: "idle" };
     await tick();
     for (const name of ["#led-control:click", "#msc-control:click", "#self-test-start:click"]) {
       gate = new Promise(resolve => { release = resolve; });
@@ -628,26 +654,31 @@ test("shared dashboard preserves drafts and command state across status failures
       await assert.doesNotReject(async () => pending, name);
     }
     assert.ok(requestedUrls.includes("/api/led?board=board-a"));
+    connected.self_test = { sequence: 9, active: false, state: "idle" };
     statusFails = false;
     await tick();
     await new Promise(resolve => setImmediate(resolve));
+    const ledRequestsBeforeGate = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
     let finishLed;
     ledGate = new Promise(resolve => { finishLed = resolve; });
     const pendingLed = handlers.get("#led-control:click")();
     await new Promise(resolve => setImmediate(resolve));
     const ledRequests = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    assert.equal(ledRequests, ledRequestsBeforeGate + 1, "the LED request remains in flight while its response is gated");
     await handlers.get("#led-control:click")();
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledRequests,
       "a second LED action is ignored while the first is pending");
     elements.get("#board-select").value = "board-b";
     handlers.get("#board-select:change")();
+    assert.equal(elements.get("#board-select").value, "board-a",
+      "board selection stays locked while a command request is in flight");
     await new Promise(resolve => setImmediate(resolve));
     await new Promise(resolve => setImmediate(resolve));
     finishLed();
     await pendingLed;
     ledGate = Promise.resolve();
-    assert.equal(elements.get("#led-control").textContent, "Board LED: Off",
-      "a late LED response must not overwrite the newly selected board");
+    assert.equal(elements.get("#led-control").textContent, "Board LED: On",
+      "the in-flight LED response updates its still-selected board");
     elements.get("#board-select").value = "board-a";
     handlers.get("#board-select:change")();
     await new Promise(resolve => setImmediate(resolve));
@@ -664,6 +695,12 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, beforeUncertainLed + 1,
       "an uncertain LED command is not resent");
     ledTimeout = false;
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    const ledRequestsAfterSwitch = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledRequestsAfterSwitch,
+      "switching back restores the unresolved LED outcome and prevents replay");
     connected.board_status.led_on = true;
     await new Promise(resolve => setImmediate(resolve));
     await tick();
@@ -756,6 +793,12 @@ test("shared dashboard preserves drafts and command state across status failures
       "the user can explicitly refresh ownership while a command outcome is uncertain");
     await new Promise(resolve => setImmediate(resolve));
     mscTimeout = false;
+    await switchBoard("board-a");
+    await switchBoard("board-b");
+    const mscRequestsAfterSwitch = requestedUrls.filter(url => url.startsWith("/api/msc?")).length;
+    await handlers.get("#msc-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/msc?")).length, mscRequestsAfterSwitch,
+      "switching back restores unresolved storage ownership and prevents command replay");
     connected.msc = { enabled: true, transition_pending: false };
     await tick();
     assert.equal(elements.get("#msc-control").textContent, "Return to Pico",
@@ -763,6 +806,7 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(elements.get("#msc-status-refresh").hidden, true);
     connected.msc = { enabled: false, transition_pending: false };
     await tick();
+    await switchBoard("board-b");
     let finishWirelessRead;
     wirelessReadGate = new Promise(resolve => { finishWirelessRead = resolve; });
     wirelessNow += 2000;

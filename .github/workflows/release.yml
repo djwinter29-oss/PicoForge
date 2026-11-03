@@ -131,7 +131,7 @@ jobs:
           mkdir -p build/direct dist
           cp host/direct/index.html host/direct/favicon.svg LICENSE build/direct/
           cp -r host/direct/css host/direct/js build/direct/
-          cp host/direct/server.py build/direct/
+          cp tools/host/direct_server.py build/direct/server.py
           cd build/direct
           zip -r "../../dist/picoforge-direct-v$VERSION.zip" .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

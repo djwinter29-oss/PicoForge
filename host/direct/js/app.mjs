@@ -3,6 +3,7 @@ import { renderStatus } from "./view.mjs?v=14";
 import { PicoForgeBluetooth } from "./bluetooth.mjs?v=8";
 import { bindWirelessForm } from "./wireless-form.mjs?v=16";
 import { bindDirectTerminal } from "./terminal.mjs?v=1";
+import { deriveOperationEligibility } from "./eligibility.mjs?v=1";
 import {
   cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
 } from "./wireless.mjs?v=10";
@@ -84,18 +85,18 @@ function render(state) {
     settingsStorage.value = String(state.settings.sdcard_profile);
     settingsRadios.forEach((control, bit) => { control.value = String(state.settings.radios >> bit & 1); });
   }
-  const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected
-    || wirelessForm.operationBusy();
   const bluetooth = state.transport === "ble";
-  const selfTestReady = !(state.hardware?.capabilities & 32)
-    || (state.freshness[11] === "fresh" && state.self_test?.valid_for_control);
-  const storageReady = state.freshness[10] === "fresh" && selfTestReady
-    && !state.msc?.transition_pending && !state.self_test?.active
-    && !state.self_test_command_pending && !state.msc_command_pending;
   const bleClient = client instanceof PicoForgeBluetooth;
-  const connectionLocked = state.connected || state.reconnecting || client.outstanding || state.outcome_uncertain;
-  element("usb-open").disabled = state.busy || Boolean(connectionLocked && bleClient);
-  element("bluetooth-open").disabled = state.busy || Boolean(connectionLocked && !bleClient);
+  const eligibility = deriveOperationEligibility(state, {
+    bluetooth,
+    bleClient,
+    accessMode: bleClient ? client.accessMode : null,
+    outstanding: client.outstanding,
+    wirelessBusy: wirelessForm.operationBusy(),
+  });
+  const { blocked, storageReady, settingsReady } = eligibility;
+  element("usb-open").disabled = state.busy || Boolean(eligibility.connectionLocked && bleClient);
+  element("bluetooth-open").disabled = state.busy || Boolean(eligibility.connectionLocked && !bleClient);
   element("usb-connect").textContent = !bleClient && (state.connected || state.reconnecting)
     ? "Disconnect" : "Select board";
   element("usb-connect").disabled = state.busy || bleClient || !globalThis.isSecureContext || !navigator.hid;
@@ -113,8 +114,7 @@ function render(state) {
       : client.accessMode === "view-only" ? "Bluetooth access: view only; only the board LED can be switched."
         : "Bluetooth access: choose View only or enter the control key.";
   element("usb-connection-close").disabled = state.busy;
-  const bleAccessChoicePending = bleClient && state.connected && client.accessMode === null;
-  element("bluetooth-connection-close").disabled = state.busy || bleAccessChoicePending;
+  element("bluetooth-connection-close").disabled = state.busy || eligibility.bleAccessChoicePending;
   element("usb-connection-status").textContent = !globalThis.isSecureContext || !navigator.hid
     ? "USB HID requires a supported browser on HTTPS or localhost."
     : !bleClient && state.error ? state.error
@@ -141,7 +141,6 @@ function render(state) {
   }
   mscControl.disabled = blocked || !storageReady || bluetooth;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  const settingsReady = !blocked && storageReady && !bluetooth;
   for (const id of ["settings-wifi", "settings-ble"]) {
     document.querySelector(`label[for="${id}"]`).hidden = !(state.hardware?.capabilities & 128);
   }

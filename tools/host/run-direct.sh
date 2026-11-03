@@ -12,7 +12,7 @@ usage() {
     cat <<'EOF'
 Usage: tools/host/run-direct.sh [--bind ADDRESS] [--port PORT]
 
-Serve host/direct at the origin root for browser USB (WebHID) or Bluetooth LE access.
+Serve host/direct with the optional Direct Wi-Fi terminal bridge.
 Defaults: bind 127.0.0.1, port 8000. Set PYTHON to choose Python.
 EOF
 }
@@ -56,4 +56,5 @@ if [ ! -f "$WEB_ROOT/index.html" ]; then
     exit 1
 fi
 
-exec "$PYTHON" -m http.server "$PORT" --bind "$BIND_ADDRESS" --directory "$WEB_ROOT"
+exec "$PYTHON" "$SCRIPT_DIR/direct_server.py" \
+    --directory "$WEB_ROOT" --bind "$BIND_ADDRESS" --port "$PORT"

@@ -52,7 +52,8 @@ test("Direct terminal sends the board address and required key only to the local
     assert.deepEqual(calls.at(-1).payload, {}, "bridge discovery never includes authentication credentials");
     assert.equal(el("key-label").hidden, true);
     assert.equal(el("connect").disabled, true);
-    assert.match(el("status").textContent, /run “python3 server\.py”/);
+    assert.match(el("status").textContent, /tools\/host\/run-direct\.sh from a checkout/);
+    assert.match(el("status").textContent, /python3 server\.py from the release ZIP/);
   } finally {
     globalThis.fetch = previous.fetch;
     globalThis.setTimeout = previous.setTimeout;

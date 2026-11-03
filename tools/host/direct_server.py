@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from functools import partial
 import hashlib
 import hmac
 import ipaddress
@@ -16,6 +17,11 @@ import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+
+
+_SOURCE_ROOT = Path(__file__).resolve().parent
+_DEFAULT_WEB_ROOT = _SOURCE_ROOT if (_SOURCE_ROOT / "index.html").is_file() \
+    else Path(__file__).resolve().parents[2] / "host" / "direct"
 
 
 class DirectTerminal:
@@ -176,23 +182,20 @@ class DirectTerminal:
 
 
 _TERMINAL = DirectTerminal()
-_ROOT = Path(__file__).resolve().parent
 
 
 class DirectHandler(SimpleHTTPRequestHandler):
     """Serve static Direct files and same-origin local terminal requests."""
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, directory=str(_ROOT), **kwargs)
-
     def _same_origin_loopback(self) -> bool:
         host = self.headers.get("Host", "")
         try:
             origin = urlsplit(self.headers.get("Origin", ""))
-            return (origin.scheme == "http" and origin.netloc == host
+            return (ipaddress.ip_address(self.client_address[0]).is_loopback
+                    and origin.scheme == "http" and origin.netloc == host
                     and origin.hostname in {"localhost", "127.0.0.1"}
                     and origin.port == self.server.server_port)
-        except ValueError:
+        except (ValueError, TypeError):
             return False
 
     def _send_json(self, status: int, payload: dict[str, object]) -> None:
@@ -262,13 +265,20 @@ class DirectHandler(SimpleHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bind", default="127.0.0.1", help="Local bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Local HTTP port (default: 8000)")
+    parser.add_argument("--directory", type=Path, default=_DEFAULT_WEB_ROOT,
+                        help="Dashboard directory (defaults to the adjacent files or repository dashboard)")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), DirectHandler)
+    if not args.directory.is_dir() or not (args.directory / "index.html").is_file():
+        parser.error(f"dashboard directory must contain index.html: {args.directory}")
+    server = ThreadingHTTPServer((args.bind, args.port),
+                                 partial(DirectHandler, directory=str(args.directory)))
     server.daemon_threads = True
-    print(f"Direct dashboard: http://127.0.0.1:{args.port}/")
+    host = "127.0.0.1" if args.bind == "0.0.0.0" else args.bind
+    print(f"Direct dashboard: http://{host}:{args.port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

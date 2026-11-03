@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from host.direct.server import DirectHandler, DirectTerminal
+from tools.host.direct_server import DirectHandler, DirectTerminal
 
 
 class DirectTerminalTests(unittest.TestCase):
@@ -51,14 +51,18 @@ class DirectTerminalTests(unittest.TestCase):
     def test_terminal_api_rejects_nonlocal_or_cross_origin_requests(self):
         handler = object.__new__(DirectHandler)
         handler.server = SimpleNamespace(server_port=8000)
+        handler.client_address = ("127.0.0.1", 50000)
         handler.headers = {"Host": "localhost:8000", "Origin": "http://localhost:8000"}
         self.assertTrue(handler._same_origin_loopback())
+        handler.client_address = ("192.168.1.20", 50000)
+        self.assertFalse(handler._same_origin_loopback())
+        handler.client_address = ("127.0.0.1", 50000)
         handler.headers["Origin"] = "http://example.com"
         self.assertFalse(handler._same_origin_loopback())
         handler.headers["Origin"] = "http://localhost"
         self.assertFalse(handler._same_origin_loopback())
 
-    @patch("host.direct.server.socket.create_connection")
+    @patch("tools.host.direct_server.socket.create_connection")
     def test_open_uses_fixed_cli_port_and_closes_duplicate_connection(self, create_connection):
         first = create_connection.return_value
         terminal = DirectTerminal()

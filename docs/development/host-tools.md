@@ -119,6 +119,18 @@ dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo
 Python tests cover the package and local web API; .NET tests cover the protocol and host behavior; Direct tests cover
 browser-side decoding and presentation. None opens a physical USB device. Repository-wide Python contracts are separate:
 
+The shared dashboard also has browser-level checks for modal focus and Escape handling, narrow layouts, and Wi-Fi
+temporary-test cancellation failure/retry. Serve `host/web` with a static HTTP server and open the check page in a
+desktop browser:
+
+```sh
+python3 -m http.server 8000 --directory host/web
+# Open http://127.0.0.1:8000/tests/browser.html
+```
+
+These checks use a mocked board API and do not qualify physical USB, firmware, or radio behavior. Keep device
+qualification separate.
+
 ```sh
 python3 -m pip install -r tests/requirements.txt
 python3 -m pytest tests -m contracts

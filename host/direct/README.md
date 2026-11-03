@@ -11,12 +11,15 @@ For offline/local hosting, download the Direct dashboard ZIP (`picoforge-direct-
 on localhost. Opening `index.html` directly as a file is not supported. The hosted dashboard supports USB and
 Bluetooth diagnostics and controls, but cannot access the local Wi-Fi terminal bridge.
 
-Run the included Direct-only local server from the extracted directory. It serves the dashboard and binds its terminal
-bridge to loopback only:
+From a repository checkout, use the local runner, which serves the Direct files and optional Wi-Fi terminal bridge:
 
 ```sh
-python3 server.py --port 8000
+tools/host/run-direct.sh --port 8000
 ```
+
+The downloadable Direct ZIP also includes `server.py`; run `python3 server.py --port 8000` from the extracted
+directory to enable the same local terminal. The hosted GitHub Pages dashboard is static and does not deploy this
+server. It supports browser USB and Bluetooth diagnostics and controls, but not the Wi-Fi terminal.
 
 Open `http://127.0.0.1:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
 The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or any shared-dashboard module.
@@ -130,5 +133,13 @@ node --test host/direct/tests/*.test.mjs
 python3 -m unittest discover -s host/direct/tests -p 'test_*.py'
 ```
 
-These are host-only protocol, transaction, freshness, and UI checks. Physical WebHID/USB behavior still requires
-compatible firmware and RP2040/RP2350 hardware qualification.
+For browser interaction checks from a repository checkout, serve the Direct dashboard and open
+`http://127.0.0.1:8000/tests/browser.html` in a supported browser:
+
+```sh
+tools/host/run-direct.sh --port 8000
+```
+
+The page reports dialog focus and Escape behavior, narrow viewport overflow, and Wi-Fi cancellation failure/retry
+using mocked device operations. These browser checks do not replace physical WebHID/USB qualification, which still
+requires compatible firmware and RP2040/RP2350 hardware.
