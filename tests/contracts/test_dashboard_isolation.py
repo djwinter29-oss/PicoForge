@@ -33,7 +33,7 @@ def test_dashboard_modules_and_assets_stay_inside_their_dashboard(dashboard):
 
 def test_native_hosts_do_not_package_or_serve_direct_assets():
     project = (ROOT / "host/python/pyproject.toml").read_text()
-    server = (ROOT / "host/python/src/picoforge/web.py").read_text()
+    server = (ROOT / "host/python/src/picoforge/dashboard/server.py").read_text()
     dotnet = (ROOT / "host/dotnet/PicoForge/PicoForge.csproj").read_text()
     for source in (project, server, dotnet):
         for dependency in ("../direct", "/direct/", '"direct"', "'direct'", "wireless_ui"):

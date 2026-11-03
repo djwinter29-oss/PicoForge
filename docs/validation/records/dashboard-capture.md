@@ -13,9 +13,9 @@ capacity, and ready state are sample values. No physical board, SD card, Wi-Fi n
 connected. Every displayed reading and connected state is synthetic; this preview does not demonstrate firmware,
 USB, SD-card, wireless, or benchmark behavior and is not hardware evidence.
 
-## Captured Dashboard
+## Earlier Python Dashboard Observation
 
-[Python dashboard screenshot](../../assets/dashboard-python.jpg), captured on 2026-10-26 from the running Python host:
+The Python dashboard was observed on 2026-10-26. Its screenshot has since been removed from the repository:
 
 - Pico 2 (RP2350), UID `575393D4D2C8C043`, system clock 150 MHz.
 - Reported firmware version `0.0.0`; the running firmware source revision was not established by this capture.
@@ -24,7 +24,7 @@ USB, SD-card, wireless, or benchmark behavior and is not hardware evidence.
 - The page reported a connected board and live HID telemetry. No settings, ownership, or card contents were changed.
 - Self-test results were already displayed, not generated or independently verified during capture.
 
-This image documents the visible interface and reported state, not performance or hardware qualification.
+These notes record the observed interface and reported state, not performance or hardware qualification.
 
 ## Evidence Requirements
 

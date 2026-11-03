@@ -443,6 +443,7 @@ class WirelessTests(unittest.TestCase):
         monitor._device_lock = threading.RLock()
         monitor._lock = threading.RLock()
         monitor._active_client = Mock()
+        monitor._command_outcome_uncertain = False
         monitor._active_client.set_wireless.return_value = {**parse_wireless_status_report(status()),
                                                             "settings": BOARD}
         monitor._snapshot = {"connected": True, "hardware": {"wireless_supported": True},

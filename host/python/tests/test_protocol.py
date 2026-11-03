@@ -7,6 +7,7 @@ from picoforge.reports import (
     build_msc_command_report,
     build_self_test_command_report,
     build_settings_command_report,
+    build_wireless_command_report,
     normalize_legacy_settings,
     parse_configuration_report,
     parse_control_result_report,
@@ -177,6 +178,17 @@ class ProtocolTests(unittest.TestCase):
             build_control_command_report(0, 1)
         with self.assertRaises(ValueError):
             build_settings_command_report({"system_clock_mhz": 100, "sdcard_profile": 0})
+
+    def test_wireless_command_rejects_non_integer_operations(self):
+        for operation in (True, 3.0, "3", 0, 5):
+            with self.subTest(operation=operation), self.assertRaises(ValueError):
+                build_wireless_command_report(1, operation)
+        for operation in (1, 2, 3, 4):
+            with self.subTest(operation=operation):
+                report = build_wireless_command_report(
+                    1, operation, ssid="test-network" if operation == 3 else ""
+                )
+                self.assertEqual(report[2], operation)
 
     def test_control_result_validates_transaction_status_and_data(self):
         result = parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 0]))

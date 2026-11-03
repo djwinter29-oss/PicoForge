@@ -154,7 +154,7 @@ class MonitorReconnectTests(unittest.TestCase):
 
         def wait(timeout):
             waits.append(timeout)
-            if timeout != 0.01:
+            if timeout != 0.05:
                 return
             acquired = []
 
@@ -172,7 +172,7 @@ class MonitorReconnectTests(unittest.TestCase):
         monitor._stop.wait = wait
         monitor._run()
         client.read_input_report.assert_called_once_with(timeout_ms=0)
-        self.assertIn(0.01, waits)
+        self.assertIn(0.05, waits)
 
     def test_confirmed_msc_reconnect_is_bounded_and_does_not_hide_other_errors(self):
         cases = [
@@ -674,3 +674,170 @@ class DashboardBoardsTests(unittest.TestCase):
         self.assertEqual(closed[0].retirement_thread.name, "picoforge-monitor-retirement")
         self.assertFalse(boards._retiring)
         boards.close()
+
+    def test_retirement_retries_failures_and_worker_continues(self):
+        attached = [
+            {"serial_number": "board-A", "device_path": "/hid/a"},
+            {"serial_number": "board-B", "device_path": "/hid/b"},
+        ]
+        now = [0.0]
+        monitors = {}
+        second_closed = threading.Event()
+
+        class FakeMonitor:
+            def __init__(self, serial):
+                self.serial = serial
+                self.close_count = 0
+
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                self.close_count += 1
+                if self.serial == "board-A" and self.close_count <= 3:
+                    raise ValueError("unexpected cleanup failure")
+                if self.serial == "board-B":
+                    second_closed.set()
+
+        def create_monitor(serial, _path):
+            monitors[serial] = FakeMonitor(serial)
+            return monitors[serial]
+
+        boards = DashboardBoards(
+            discover=lambda: attached,
+            monitor_factory=create_monitor,
+            clock=lambda: now[0],
+        )
+        board_ids = {}
+        for board in boards.boards()["boards"]:
+            boards.snapshot(board["id"])
+            board_ids[board["serial_number"]] = board["id"]
+        attached.clear()
+        now[0] = 30.0
+        with patch("picoforge.dashboard.boards._LOGGER.exception"):
+            boards.boards()
+            self.assertTrue(second_closed.wait(1))
+            deadline = time.monotonic() + 1
+            board_a_id = board_ids["board-A"]
+            while board_a_id not in boards._retirement_failures and time.monotonic() < deadline:
+                time.sleep(0.001)
+        self.assertEqual(monitors["board-A"].close_count, 3)
+        self.assertIn(board_a_id, boards._retirement_failures)
+        self.assertNotIn(board_ids["board-B"], boards._retiring)
+
+        attached.append({"serial_number": "board-A", "device_path": "/hid/new-a"})
+        boards.boards()
+        with self.assertRaisesRegex(RuntimeError, "shutdown failed"):
+            boards.snapshot(board_a_id)
+        boards.close()
+        self.assertEqual(monitors["board-A"].close_count, 4)
+
+    def test_managed_monitor_limit_bounds_retirement_backlog(self):
+        attached = [
+            {"serial_number": f"board-{index}", "device_path": f"/hid/{index}"}
+            for index in range(16)
+        ]
+        now = [0.0]
+        first_close_started = threading.Event()
+        release_close = threading.Event()
+        all_closed = threading.Event()
+        close_count = [0]
+        created = []
+
+        class FakeMonitor:
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                close_count[0] += 1
+                if close_count[0] == 1:
+                    first_close_started.set()
+                    release_close.wait()
+                if close_count[0] == 16:
+                    all_closed.set()
+
+        boards = DashboardBoards(
+            discover=lambda: attached,
+            monitor_factory=lambda *_: created.append(FakeMonitor()) or created[-1],
+            clock=lambda: now[0],
+        )
+        for board in boards.boards()["boards"]:
+            boards.snapshot(board["id"])
+        attached.clear()
+        now[0] = 30.0
+        boards.boards()
+        self.assertTrue(first_close_started.wait(1))
+        self.assertEqual(len(boards._retiring), 16)
+        self.assertEqual(boards._retirement_queue.maxsize, 16)
+        attached.append({"serial_number": "board-16", "device_path": "/hid/16"})
+        new_board_id = boards.boards()["boards"][0]["id"]
+        with self.assertRaisesRegex(RuntimeError, "capacity reached"):
+            boards.snapshot(new_board_id)
+        self.assertEqual(len(created), 16)
+
+        release_close.set()
+        self.assertTrue(all_closed.wait(1))
+        deadline = time.monotonic() + 1
+        while boards._retiring and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertFalse(boards._retiring)
+        boards.snapshot(new_board_id)
+        self.assertEqual(len(created), 17)
+        boards.close()
+
+    def test_shutdown_waits_for_monitor_cleanup_to_finish(self):
+        attached = [{"serial_number": "board-A", "device_path": "/hid/a"}]
+        close_started = threading.Event()
+        release_close = threading.Event()
+        close_finished = threading.Event()
+
+        class FakeMonitor:
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                close_started.set()
+                release_close.wait()
+
+        boards = DashboardBoards(discover=lambda: attached, monitor_factory=lambda *_: FakeMonitor())
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.snapshot(board_id)
+
+        closer = threading.Thread(target=lambda: (boards.close(), close_finished.set()))
+        closer.start()
+        self.assertTrue(close_started.wait(1))
+        self.assertFalse(close_finished.is_set())
+        release_close.set()
+        closer.join(1)
+        self.assertTrue(close_finished.is_set())
+
+    def test_shutdown_attempts_all_monitors_after_a_close_failure(self):
+        attached = [
+            {"serial_number": serial, "device_path": f"/hid/{serial}"}
+            for serial in ("board-A", "board-B")
+        ]
+        closed: list[str | None] = []
+
+        class FakeMonitor:
+            def __init__(self, serial: str | None):
+                self.serial = serial
+
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                closed.append(self.serial)
+                if self.serial == "board-A":
+                    raise OSError("close failed")
+
+        boards = DashboardBoards(
+            discover=lambda: attached,
+            monitor_factory=lambda serial, _path: FakeMonitor(serial),
+        )
+        for board in boards.boards()["boards"]:
+            boards.snapshot(board["id"])
+
+        with patch("picoforge.dashboard.boards._LOGGER.exception"):
+            with self.assertRaisesRegex(RuntimeError, "Failed to close 1 dashboard monitor"):
+                boards.close()
+        self.assertCountEqual(closed, ["board-A", "board-B"])

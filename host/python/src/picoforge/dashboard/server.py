@@ -22,6 +22,22 @@ from ..reports import (
 )
 
 
+def _api_error(
+    error: RuntimeError | OSError | ValueError,
+    *,
+    value_error_status: int = 400,
+    unavailable_message: str | None = None,
+):
+    if isinstance(error, RuntimeError):
+        status = 409
+    elif isinstance(error, OSError):
+        status = 503
+    else:
+        status = value_error_status
+    message = unavailable_message if status == 503 and unavailable_message else str(error)
+    return jsonify({"error": message}), status
+
+
 def create_app(monitor: DashboardBackend | None = None, web_root: Path | None = None) -> Flask:
     """Create a testable status app; hardware monitoring starts only by default."""
     installed = Path(__file__).resolve().parents[1] / "web"
@@ -123,16 +139,14 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
         try:
             return jsonify(dashboard.snapshot(request.args.get("board")))
         except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
+            return _api_error(error)
 
     @app.get("/api/boards")
     def boards():
         try:
             return jsonify(dashboard.boards())
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except OSError as error:
-            return jsonify({"error": str(error)}), 503
+        except (RuntimeError, OSError) as error:
+            return _api_error(error)
 
     @app.post("/api/led")
     def set_led():
@@ -143,10 +157,8 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
             board_status = dashboard.set_led(request.args.get("board"), payload["on"])
             snapshot = dashboard.snapshot(request.args.get("board"))
             return jsonify({"board_status": board_status, "control_result": snapshot.get("control_result")}), 200
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except OSError as error:
-            return jsonify({"error": str(error)}), 503
+        except (RuntimeError, OSError) as error:
+            return _api_error(error)
 
     @app.post("/api/settings")
     def set_settings():
@@ -169,7 +181,7 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
         try:
             validator(settings)
         except ValueError as error:
-            return jsonify({"error": str(error)}), 400
+            return _api_error(error)
         if "sdcard_profile" not in settings:
             try:
                 snapshot = dashboard.snapshot(board_id)
@@ -184,18 +196,16 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
                     settings, hardware["storage_transport"], current_profile
                 )
             except ValueError as error:
-                return jsonify({"error": str(error)}), 400
+                return _api_error(error)
             except RuntimeError as error:
-                return jsonify({"error": str(error)}), 409
+                return _api_error(error)
         try:
             saved = (dashboard.set_settings(board_id, settings, force=True) if force
                      else dashboard.set_settings(board_id, settings))
             snapshot = dashboard.snapshot(board_id)
             return jsonify({"settings": saved, "control_result": snapshot.get("control_result")}), 200
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError) as error:
-            return jsonify({"error": str(error)}), 503
+        except (RuntimeError, OSError, ValueError) as error:
+            return _api_error(error, value_error_status=503)
 
     @app.post("/api/msc")
     def set_msc():
@@ -206,10 +216,8 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
             msc = dashboard.set_msc(request.args.get("board"), payload["enabled"])
             snapshot = dashboard.snapshot(request.args.get("board"))
             return jsonify({"msc": msc, "control_result": snapshot.get("control_result")}), 200
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except OSError as error:
-            return jsonify({"error": str(error)}), 503
+        except (RuntimeError, OSError) as error:
+            return _api_error(error)
 
     @app.post("/api/reboot")
     def reboot():
@@ -218,10 +226,8 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
             return jsonify({"error": "Explicit confirm: true is required"}), 400
         try:
             return jsonify({"control_result": dashboard.reboot(request.args.get("board"))}), 200
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except OSError as error:
-            return jsonify({"error": str(error)}), 503
+        except (RuntimeError, OSError) as error:
+            return _api_error(error)
 
     @app.post("/api/self-test")
     def self_test():
@@ -237,11 +243,9 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
             snapshot = dashboard.snapshot(request.args.get("board"))
             return jsonify({"accepted": True, "control_result": snapshot.get("control_result")}), 202
         except ValueError as error:
-            return jsonify({"error": str(error)}), 400
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except OSError as error:
-            return jsonify({"error": str(error)}), 503
+            return _api_error(error)
+        except (RuntimeError, OSError) as error:
+            return _api_error(error)
 
     @app.post("/api/msc/force-return")
     def force_return_msc():
@@ -252,10 +256,8 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
             msc = dashboard.set_msc(request.args.get("board"), False, force=True)
             snapshot = dashboard.snapshot(request.args.get("board"))
             return jsonify({"msc": msc, "control_result": snapshot.get("control_result")}), 200
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except OSError as error:
-            return jsonify({"error": str(error)}), 503
+        except (RuntimeError, OSError) as error:
+            return _api_error(error)
 
 
 def _register_wireless_routes(app: Flask, dashboard: DashboardBackend) -> None:
@@ -264,18 +266,18 @@ def _register_wireless_routes(app: Flask, dashboard: DashboardBackend) -> None:
         try:
             return jsonify(dashboard.read_wireless(request.args.get("board")))
         except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Wireless status unavailable"}), 503
+            return _api_error(error)
+        except (OSError, ValueError) as error:
+            return _api_error(error, value_error_status=503, unavailable_message="Wireless status unavailable")
 
     @app.post("/api/wireless/scan")
     def scan_wireless():
         try:
             return jsonify(dashboard.scan_wireless(request.args.get("board")))
         except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Wireless scan failed"}), 503
+            return _api_error(error)
+        except (OSError, ValueError) as error:
+            return _api_error(error, value_error_status=503, unavailable_message="Wireless scan failed")
 
     @app.post("/api/wireless/test")
     def test_wireless():
@@ -286,27 +288,38 @@ def _register_wireless_routes(app: Flask, dashboard: DashboardBackend) -> None:
             build_wireless_command_report(1, 3, ssid=payload.get("ssid", ""),
                                           password=payload.get("password", ""))
         except ValueError as error:
-            return jsonify({"error": str(error)}), 400
+            return _api_error(error)
         try:
             return jsonify(dashboard.test_wireless(request.args.get("board"), payload["ssid"],
                                                    payload.get("password", "")))
         except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except TimeoutError:
-            return jsonify({"error": "Wi-Fi test timed out; outcome is uncertain. Restart the dashboard "
-                                     "and reconnect the board before retrying."}), 503
-        except (OSError, ValueError):
-            return jsonify({"error": "Wi-Fi test result is uncertain. Restart the dashboard "
-                                     "and reconnect the board before retrying."}), 503
+            return _api_error(error)
+        except TimeoutError as error:
+            return _api_error(
+                error,
+                unavailable_message="Wi-Fi test timed out; outcome is uncertain. Restart the dashboard "
+                                    "and reconnect the board before retrying.",
+            )
+        except (OSError, ValueError) as error:
+            return _api_error(
+                error,
+                value_error_status=503,
+                unavailable_message="Wi-Fi test result is uncertain. Restart the dashboard "
+                                    "and reconnect the board before retrying.",
+            )
 
     @app.post("/api/wireless/cancel")
     def cancel_wireless_test():
         try:
             return jsonify(dashboard.cancel_wireless_test(request.args.get("board")))
         except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Could not clear the wireless test credentials"}), 503
+            return _api_error(error)
+        except (OSError, ValueError) as error:
+            return _api_error(
+                error,
+                value_error_status=503,
+                unavailable_message="Could not clear the wireless test credentials",
+            )
 
     @app.post("/api/wireless")
     def set_wireless():
@@ -314,13 +327,17 @@ def _register_wireless_routes(app: Flask, dashboard: DashboardBackend) -> None:
         try:
             build_wireless_configuration_report(payload)
         except ValueError as error:
-            return jsonify({"error": str(error)}), 400
+            return _api_error(error)
         try:
             return jsonify(dashboard.set_wireless(request.args.get("board"), payload))
         except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Wireless provisioning outcome is uncertain; command was not resent"}), 503
+            return _api_error(error)
+        except (OSError, ValueError) as error:
+            return _api_error(
+                error,
+                value_error_status=503,
+                unavailable_message="Wireless provisioning outcome is uncertain; command was not resent",
+            )
 
 
 def run_server(port: int = 5000, serial_number: str | None = None, device_path: str | None = None) -> None:

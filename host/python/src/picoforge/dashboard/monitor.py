@@ -34,9 +34,11 @@ from .models import (
     WirelessTestResponse,
 )
 from .freshness import calculate_report_freshness
+from .policy import require_wireless_idle
 
 _LOGGER = logging.getLogger(__name__)
 _MSC_RECONNECT_TIMEOUT_SECONDS = 5.0
+_INPUT_POLL_INTERVAL_SECONDS = 0.05
 
 
 def _empty_snapshot() -> DashboardSnapshot:
@@ -306,14 +308,22 @@ class DeviceMonitor:
     def scan_wireless(self) -> WirelessScanResponse:
         with self._device_lock:
             snapshot = self.snapshot()
-            self._require_wireless_idle(snapshot)
+            require_wireless_idle(
+                snapshot,
+                client_connected=self._active_client is not None,
+                command_outcome_uncertain=self._command_outcome_uncertain,
+            )
             return {"networks": self._send_control(self._active_client.scan_wireless,
                                                    on_poll=self._poll_wireless_inputs)}
 
     def test_wireless(self, ssid: str, password: str = "") -> WirelessTestResponse:
         with self._device_lock:
             snapshot = self.snapshot()
-            self._require_wireless_idle(snapshot)
+            require_wireless_idle(
+                snapshot,
+                client_connected=self._active_client is not None,
+                command_outcome_uncertain=self._command_outcome_uncertain,
+            )
             try:
                 return {"test": self._send_control(self._active_client.test_wireless, ssid, password,
                                                    on_poll=self._poll_wireless_inputs,
@@ -369,40 +379,23 @@ class DeviceMonitor:
     def cancel_wireless_test(self) -> WirelessCancelResponse:
         with self._device_lock:
             snapshot = self.snapshot()
-            self._require_wireless_idle(snapshot)
+            require_wireless_idle(
+                snapshot,
+                client_connected=self._active_client is not None,
+                command_outcome_uncertain=self._command_outcome_uncertain,
+            )
             self._send_control(self._active_client.cancel_wireless_test)
             return {"cancelled": True}
-
-    def _require_wireless_idle(self, snapshot: dict[str, object]) -> None:
-        hardware = snapshot.get("hardware") or {}
-        msc = snapshot.get("msc")
-        self_test = snapshot.get("self_test")
-        freshness = snapshot.get("report_freshness")
-        storage_report = freshness.get("10") if isinstance(freshness, dict) else None
-        self_test_report = freshness.get("11") if isinstance(freshness, dict) else None
-        if (self._active_client is None or not snapshot.get("connected")
-                or not hardware.get("wireless_supported")):
-            raise RuntimeError("Wireless provisioning is unavailable on this firmware")
-        if snapshot.get("command_outcome_uncertain"):
-            raise RuntimeError("A prior command outcome is uncertain; no further writes are allowed")
-        if (not isinstance(storage_report, dict) or storage_report.get("available") is not True
-                or storage_report.get("stale") is not False
-                or snapshot.get("storage_stale") is not False
-                or not isinstance(msc, dict) or msc.get("enabled") or msc.get("transition_pending")
-                or snapshot.get("reboot_pending")
-                or (snapshot.get("control_result") or {}).get("status") in ("pending", "busy")
-                or hardware.get("self_test_supported") and (
-                    not isinstance(self_test, dict) or not isinstance(self_test_report, dict)
-                    or self_test_report.get("available") is not True or self_test_report.get("stale") is not False
-                    or snapshot.get("self_test_stale") is not False)
-                or isinstance(self_test, dict) and self_test.get("active")):
-            raise RuntimeError("Wireless scan and connection test require idle firmware-owned storage")
 
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResponse:
         build_wireless_configuration_report(settings)
         with self._device_lock:
             snapshot = self.snapshot()
-            self._require_wireless_idle(snapshot)
+            require_wireless_idle(
+                snapshot,
+                client_connected=self._active_client is not None,
+                command_outcome_uncertain=self._command_outcome_uncertain,
+            )
             result = dict(self._send_control(self._active_client.set_wireless, settings))
             saved = result.pop("settings")
             with self._lock:
@@ -453,7 +446,9 @@ class DeviceMonitor:
                 while not self._stop.is_set():
                     with self._device_lock:
                         self._poll_wireless_inputs()
-                    self._stop.wait(0.01)
+                    # ponytail: 50 ms caps report latency within the 1 s dashboard refresh; shorten if
+                    # measured latency becomes noticeable.
+                    self._stop.wait(_INPUT_POLL_INTERVAL_SECONDS)
             except (OSError, RuntimeError, ValueError) as error:
                 with self._lock:
                     reconnecting = (

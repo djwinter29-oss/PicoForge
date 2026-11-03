@@ -29,6 +29,9 @@ from .models import (
 
 _SERIAL_BOARD_GRACE_SECONDS = 30.0
 _PATH_BOARD_GRACE_SECONDS = 5.0
+_MAX_MANAGED_MONITORS = 16
+_RETIREMENT_ATTEMPTS = 3
+_RETIREMENT_RETRY_DELAYS_SECONDS = (0.05, 0.25)
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -49,7 +52,10 @@ class DashboardBoards(DashboardBackend):
         self._last_seen: dict[str, float] = {}
         self._monitors: dict[str, DeviceMonitor] = {}
         self._retiring: dict[str, DeviceMonitor] = {}
-        self._retirement_queue: queue.Queue[tuple[str, DeviceMonitor] | None] = queue.Queue()
+        self._retirement_failures: dict[str, str] = {}
+        self._retirement_queue: queue.Queue[tuple[str, DeviceMonitor] | None] = queue.Queue(
+            maxsize=_MAX_MANAGED_MONITORS
+        )
         self._closed = False
         self._retirement_thread: threading.Thread | None = None
 
@@ -117,16 +123,28 @@ class DashboardBoards(DashboardBackend):
                 if item is None:
                     return
                 board_id, monitor = item
-                try:
-                    monitor.close()
-                except (OSError, RuntimeError):
-                    _LOGGER.exception("Failed to close expired monitor for board %s", board_id)
+                self._retire_monitor(board_id, monitor)
+            finally:
+                self._retirement_queue.task_done()
+
+    def _retire_monitor(self, board_id: str, monitor: DeviceMonitor) -> None:
+        for attempt in range(_RETIREMENT_ATTEMPTS):
+            try:
+                monitor.close()
+            except Exception as error:
+                _LOGGER.exception("Failed to close expired monitor for board %s", board_id)
+                if attempt < len(_RETIREMENT_RETRY_DELAYS_SECONDS):
+                    time.sleep(_RETIREMENT_RETRY_DELAYS_SECONDS[attempt])
                     continue
                 with self._lock:
                     if self._retiring.get(board_id) is monitor:
-                        self._retiring.pop(board_id)
-            finally:
-                self._retirement_queue.task_done()
+                        self._retirement_failures[board_id] = str(error)
+                return
+            with self._lock:
+                if self._retiring.get(board_id) is monitor:
+                    self._retiring.pop(board_id)
+                    self._retirement_failures.pop(board_id, None)
+            return
 
     def _monitor(self, board_id: str | None) -> DeviceMonitor:
         with self._lock:
@@ -134,9 +152,15 @@ class DashboardBoards(DashboardBackend):
                 raise RuntimeError("dashboard is shutting down")
             if not board_id or board_id not in self._known:
                 raise RuntimeError("unknown board; rescan and select a listed board")
+            if board_id in self._retirement_failures:
+                raise RuntimeError(
+                    "board monitor shutdown failed; restart the dashboard before reconnecting"
+                )
             if board_id in self._retiring:
                 raise RuntimeError("board monitor is shutting down; retry after the next rescan")
             if board_id not in self._monitors:
+                if len(self._monitors) + len(self._retiring) >= _MAX_MANAGED_MONITORS:
+                    raise RuntimeError("monitor capacity reached; wait for cleanup or restart the dashboard")
                 board = self._known[board_id]
                 serial = board["serial_number"]
                 path = None if serial else board["device_path"]
@@ -179,16 +203,22 @@ class DashboardBoards(DashboardBackend):
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
-                return
-            self._closed = True
+            if not self._closed:
+                self._closed = True
+                if self._retirement_thread is not None:
+                    self._retirement_queue.put(None)
             retirement_thread = self._retirement_thread
-            if retirement_thread is not None:
-                self._retirement_queue.put(None)
         if retirement_thread is not None:
             retirement_thread.join()
         with self._lock:
             monitors = list({id(monitor): monitor for monitor in
                              (*self._monitors.values(), *self._retiring.values())}.values())
+        failures: list[Exception] = []
         for monitor in monitors:
-            monitor.close()
+            try:
+                monitor.close()
+            except Exception as error:
+                _LOGGER.exception("Failed to close dashboard monitor during shutdown")
+                failures.append(error)
+        if failures:
+            raise RuntimeError(f"Failed to close {len(failures)} dashboard monitor(s)") from failures[0]

@@ -59,6 +59,7 @@ picoforge status
 picoforge status --serial SERIAL
 picoforge reboot --serial SERIAL --confirm
 picoforge --help
+python -m picoforge --help
 ```
 
 `status` prints JSON diagnostics. `reboot` requires explicit confirmation and uses the board's saved settings.
@@ -117,7 +118,10 @@ envelopes make internal boundaries explicit while JSON dictionaries remain the H
 expires absent serial-numbered boards after a 30-second reconnect grace and path-only boards after 5 seconds; an
 uncertain command keeps its monitor until shutdown so cleanup cannot silently clear the write block. One background
 worker stops expired monitors, and a monitor for a reconnected board is not created until its previous monitor has
-stopped. Server shutdown closes the active TCP console session and stops its board monitors.
+stopped. At most 16 monitors may be active or retiring; if cleanup stalls at capacity, new monitor starts are rejected
+instead of leaking HID handles. Failed retirement is retried three times, then reported as a shutdown failure that
+requires restarting the dashboard. Server shutdown closes the active TCP console session and waits for HID operations
+and monitor cleanup to finish before releasing board monitors; a wireless test can take up to 35 seconds.
 
 Import report codecs from `picoforge.reports`, HID access from `picoforge.hid`, and dashboard services from
 `picoforge.dashboard`.

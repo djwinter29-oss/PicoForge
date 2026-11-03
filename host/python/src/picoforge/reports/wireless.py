@@ -98,7 +98,8 @@ def build_wireless_command_report(
     transaction_id: int, operation: int, *, page: int = 0, ssid: str = "", password: str = ""
 ) -> bytes:
     """Build USB-only wireless scan, paging, test-join or staged-credential clear command."""
-    if type(transaction_id) is not int or not 1 <= transaction_id <= 255 or operation not in (1, 2, 3, 4):
+    if (type(transaction_id) is not int or not 1 <= transaction_id <= 255
+            or type(operation) is not int or operation not in (1, 2, 3, 4)):
         raise ValueError("Invalid wireless command")
     payload = bytearray(WIRELESS_COMMAND_FEATURE_SIZE)
     payload[:4] = bytes([WIRELESS_COMMAND_REPORT_ID, 1, operation, transaction_id])
