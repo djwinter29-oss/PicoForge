@@ -4,6 +4,7 @@ const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");
 const connect = document.querySelector("#connect");
 const disconnect = document.querySelector("#disconnect");
+const authKey = document.querySelector("#console-auth-key");
 const board = new URLSearchParams(location.search).get("board") ?? "";
 const encoder = new TextEncoder();
 let screen = new ConsoleTerminal();
@@ -98,7 +99,8 @@ async function open() {
   connect.disabled = true;
   status.textContent = "Connecting to the board's TCP CLI...";
   try {
-    const result = await request(`/api/console?board=${encodeURIComponent(board)}`, "POST", {});
+    const result = await request(`/api/console?board=${encodeURIComponent(board)}`, "POST",
+      authKey.value ? { ble_key: authKey.value } : {});
     session = result.session;
     screen = new ConsoleTerminal();
     decoder = new TextDecoder();
@@ -112,6 +114,8 @@ async function open() {
   } catch (error) {
     status.textContent = error.message;
     connect.disabled = false;
+  } finally {
+    authKey.value = "";
   }
 }
 
@@ -135,4 +139,3 @@ disconnect.addEventListener("click", () => { void close(); });
 window.addEventListener("pagehide", () => {
   if (session) void fetch(endpoint(session), { method: "DELETE", keepalive: true });
 });
-void open();

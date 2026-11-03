@@ -1,6 +1,6 @@
 /**
  * @file tcp.h
- * @brief Minimal host fake of the lwIP raw TCP API used by app/wireless/tcp_cli.c.
+ * @brief Minimal host fake of the lwIP raw TCP API used by app/wireless/wifi/tcp_cli.c.
  */
 #ifndef PF_TEST_FAKE_LWIP_TCP_H
 #define PF_TEST_FAKE_LWIP_TCP_H
@@ -28,6 +28,7 @@ typedef int8_t err_t;
 
 /** Fake PCB: the lwIP fields tcp_cli.c touches plus recorded fake state. */
 struct tcp_pcb {
+    const char *remote_ip; /**< Printable fake peer address. */
     u8_t so_options; /**< Socket options set by the code under test. */
     u32_t keep_idle; /**< Keepalive idle time. */
     u32_t keep_intvl; /**< Keepalive probe interval. */
@@ -53,6 +54,7 @@ typedef err_t (*tcp_recv_fn)(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
 typedef void (*tcp_err_fn)(void *arg, err_t err);
 
 #define tcp_sndbuf(pcb) ((pcb)->snd_buf)
+#define ipaddr_ntoa(address) (*(address) ? *(address) : "0.0.0.0")
 #define tcp_sndqueuelen(pcb) ((pcb)->snd_queuelen)
 #define tcp_nagle_disable(pcb) ((pcb)->nodelay = true)
 

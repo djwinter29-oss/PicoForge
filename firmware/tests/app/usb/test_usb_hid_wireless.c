@@ -53,7 +53,11 @@ void pf_tcp_cli_close(const char *notice)
 }
 void pf_wireless_start(void) {}
 void pf_wireless_poll(void) {}
-void pf_wireless_status(uint8_t *report) { memset(report, 0, PF_WIRELESS_STATUS_SIZE); report[0] = 1u; }
+void pf_wireless_status(uint8_t *report)
+{
+    memset(report, 0, PF_WIRELESS_STATUS_SIZE);
+    report[PF_WIRELESS_STATUS_VERSION_OFFSET] = 1u;
+}
 bool pf_wireless_configure(const uint8_t *report) { (void)report; ++provisioning_calls; return true; }
 void pf_wireless_command(const uint8_t *report)
 {

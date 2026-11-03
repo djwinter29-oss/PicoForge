@@ -31,7 +31,7 @@ def test_build_matrices_and_compatible_artifact_checks():
 
 
 def test_hid_report_reference_documents_filesystem_storage_field():
-    doc = (ROOT / "docs/design/usb/usb-hid-report-reference.md").read_text()
+    doc = (ROOT / "docs/reference/usb-hid.md").read_text()
     section = " ".join(doc.split("## Report ID 10: Storage Status", 1)[1].split("\n## ", 1)[0].split())
     for text in ("**Total** | **34**", "`filesystem_format`",
                  "Last successfully mounted format", "not proof that a volume is currently mounted",
@@ -71,13 +71,13 @@ def test_release_publishes_only_after_all_packages_succeed():
     assert "actions/upload-artifact@" in workflow
     assert "sha256sum *.elf *.uf2 > SHA256SUMS" in workflow
     assert "if-no-files-found: error" in workflow
-    assert "needs: [validate-tag, firmware, python, webhid, dotnet]" in workflow
+    assert "needs: [validate-tag, firmware, python, direct, dotnet]" in workflow
     assert not (ROOT / ".github/workflows/package-host.yml").exists()
     assert "softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64" in workflow
     assert "sha256sum * > SHA256SUMS.txt" in workflow
     assert "uses: ./.github/workflows/publish-dotnet.yml" in workflow
     assert "gh-action-pypi-publish@" not in workflow
-    assert "publish-webhid.yml" not in workflow
+    assert "publish-direct.yml" not in workflow
 
 
 @pytest.mark.parametrize("event,ref_type,ref_name,input_tag,expected", (
@@ -127,7 +127,7 @@ def test_release_preflight_resolves_version_without_publishing(
     }
 
 
-@pytest.mark.parametrize("name", ("publish-dotnet.yml", "publish-pypi.yml", "publish-webhid.yml"))
+@pytest.mark.parametrize("name", ("publish-dotnet.yml", "publish-pypi.yml", "publish-direct.yml"))
 def test_publication_workflows_have_expected_triggers_and_pinned_actions(name):
     path = ROOT / ".github/workflows" / name
     workflow = path.read_text()
@@ -160,18 +160,18 @@ def test_host_packages_and_publishers_share_validated_artifacts():
     assert 'assert b"PicoForge Dashboard | Python" in response.data' in packages
     for name, artifact, pattern in (
         ("pypi", "release-python", "picoforge-$version-py3-none-any.whl"),
-        ("webhid", "release-webhid", "picoforge-webhid-v$version.zip"),
+        ("direct", "release-direct", "picoforge-direct-v$version.zip"),
     ):
         publish = (ROOT / f".github/workflows/publish-{name}.yml").read_text()
         assert f"name: {artifact}" in packages
         assert f'--pattern "{pattern}"' in publish
         assert "gh release download" in publish
     assert "gh-action-pypi-publish@" in (ROOT / ".github/workflows/publish-pypi.yml").read_text()
-    assert "deploy-pages@" in (ROOT / ".github/workflows/publish-webhid.yml").read_text()
+    assert "deploy-pages@" in (ROOT / ".github/workflows/publish-direct.yml").read_text()
 
 
 @pytest.mark.parametrize("name", (
-    "release.yml", "publish-dotnet.yml", "publish-pypi.yml", "publish-webhid.yml",
+    "release.yml", "publish-dotnet.yml", "publish-pypi.yml", "publish-direct.yml",
 ))
 def test_publication_embedded_scripts_compile(name):
     path = ROOT / ".github/workflows" / name
@@ -233,7 +233,8 @@ def test_release_gates_packages_on_reusable_complete_host_validation():
     assert "tools/validation/setup-ceedling-testing.sh test:all" in host
     assert "tools/validation/test-host.sh" in host
     runner = (ROOT / "tools/validation/test-host.sh").read_text()
-    for suite in ("host/python/tests", "host/webhid/tests/*.test.mjs", "host/dotnet/PicoForge.sln"):
+    for suite in ("host/python/tests", "host/direct/tests/*.test.mjs", "host/web/tests/*.test.mjs",
+                  "host/dotnet/PicoForge.sln"):
         assert suite in runner
 
 

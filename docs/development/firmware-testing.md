@@ -3,11 +3,11 @@
 This guide summarizes firmware build and test workflows for RP2040 and RP2350. The canonical C test placement and
 hardware limits are in [firmware test guidance](../../firmware/tests/README.md) and the
 [test ownership index](../../tests/README.md). System and layer boundaries are in the
-[architecture guide](../design/architecture.md); the software HID protocol is implemented across firmware and host
+[architecture guide](../reference/architecture.md); the software HID protocol is implemented across firmware and host
 clients, while physical USB behavior remains a hardware-qualification item. The
-[HID Report Reference](../design/usb/usb-hid-report-reference.md) is authoritative for the current contract.
+[HID Report Reference](../reference/usb-hid.md) is authoritative for the current contract.
 W-board host checks and target builds do not qualify physical Wi-Fi/BLE; the
-[wireless acceptance scope](../design/wireless.md#qualification) lists the required hardware checks.
+[wireless acceptance scope](../guides/wireless.md#qualification) lists the required hardware checks.
 
 ## Prerequisites
 
@@ -33,7 +33,8 @@ tools/firmware/build.sh --board pico --sdcard-transport SDIO_PIO
 tools/firmware/build.sh --board pico2 --sdcard-transport SPI
 ```
 
-Supported board values are `pico` and `pico2`; transports are `SDIO_PIO` and `SPI`. Use a different `--build-dir`
+Supported build-wrapper board values are `pico`, `pico_w`, `pico2`, and `pico2_w`; transports are `SDIO_PIO` and `SPI`.
+Use a different `--build-dir`
 when comparing configurations. The default image uses the SDK stock clock. A successful cross-build does not qualify
 physical USB, GPIO, card timing, or storage reliability.
 
@@ -68,8 +69,9 @@ python3 -m pip install -r tests/requirements.txt
 python3 -m pytest tests -m contracts
 ```
 
-The complete project validation workflow runs shell checks, repository contracts, Ceedling checks and tests, SDIO PIO
-timing models, the RP2040/RP2350 × SDIO/SPI FreeRTOS build matrix, and MSC artifact checks:
+The local validation wrapper runs shell checks, repository contracts, Ceedling checks and tests, SDIO PIO
+timing models, the `pico`/`pico2` × SDIO/SPI FreeRTOS build matrix, and MSC artifact checks.
+PR/release workflows additionally build `pico_w` and `pico2_w`; see the [release guide](../deployment/release.md).
 
 ```sh
 tools/validation/validate.sh
@@ -82,15 +84,15 @@ need `pioasm` from an SDIO_PIO build. The
 ## Hardware Validation
 
 Host tests and cross-builds do not establish physical behavior. Board validation must use the intended board, card,
-breakout, wiring, and exact firmware image. Follow the [hardware setup guide](../guides/hardware-setup.md), storage
-[transport and qualification notes](../design/sdcard/sdcard-driver-design.md), and the specific procedure for the behavior
+breakout, wiring, and exact firmware image. Follow the [hardware setup guide](../guides/hardware.md), storage
+[transport and qualification notes](../reference/sdcard/driver.md), and the specific procedure for the behavior
 under test. Record partial runs as partial; passing tests do not imply sustained card integrity, safe power-loss
 recovery, or full MSC host compatibility.
 
 ### Storage Lifecycle Board Checks
 
 This is the hardware acceptance procedure for the
-[default-mounted storage design](../design/architecture.md#storage-ownership-lifecycle), not a record of passing tests.
+[default-mounted storage design](../reference/architecture.md#storage-ownership-lifecycle), not a record of passing tests.
 Use backed-up or expendable FAT/exFAT media and record the board, card, transport, firmware image, host OS, and client.
 Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS pass does not qualify the others.
 
@@ -127,6 +129,6 @@ Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS p
    Use controlled sync/detach/flash-failure fixtures to verify no reboot on failure and explicit diagnostics.
    Older firmware must not receive a forced-save request, and self-test/transition busy gates must still apply.
 
-Record preparation/status visibility gaps separately from storage correctness. Richer mounting/checking UI labels
-remain a design requirement until implemented and tested; existing wire states must not be reinterpreted to fake
-those phases. Host mocks cannot establish real flush/eject behavior or filesystem integrity after forced return.
+Record preparation/status visibility separately from storage correctness. The protocol has no distinct
+mounting/checking phase; existing wire states must not be reinterpreted to fake one.
+Host mocks cannot establish real flush/eject behavior or filesystem integrity after forced return.

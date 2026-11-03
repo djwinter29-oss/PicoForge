@@ -89,6 +89,22 @@
             <option value="configure">Configure…</option>
           </select>
         </label>
+        <label for="settings-tcp-cli" hidden>TCP CLI
+          <select id="settings-tcp-cli" aria-describedby="settings-tcp-cli-help"
+            title="LAN access to the board CLI. Requires Wi-Fi." disabled>
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+          <small id="settings-tcp-cli-help" hidden>LAN access to the board CLI. Requires Wi-Fi.</small>
+        </label>
+        <label for="settings-tcp-auth" hidden>TCP CLI authentication
+          <select id="settings-tcp-auth" aria-describedby="settings-tcp-auth-help"
+            title="Requires Bluetooth and a key. TCP traffic is unencrypted." disabled>
+            <option value="1">Require BLE key</option>
+            <option value="0" selected>No authentication</option>
+          </select>
+          <small id="settings-tcp-auth-help" hidden>Requires Bluetooth and a key. TCP traffic is unencrypted.</small>
+        </label>
       </div>
       <p id="wireless-summary" role="status" aria-live="polite"></p>
       <details class="pin-map-disclosure">

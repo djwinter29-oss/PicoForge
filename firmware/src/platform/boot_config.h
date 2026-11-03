@@ -20,11 +20,22 @@
 #define PF_WIRELESS_WIFI 1u
 /** BLE radio master-switch bit. */
 #define PF_WIRELESS_BLE 2u
+/** NUL-terminated SSID storage size, including its terminator. */
+#define PF_WIFI_SSID_SIZE 33u
+/** NUL-terminated passphrase storage size, including its terminator. */
+#define PF_WIFI_PASSWORD_SIZE 64u
+/** Saved Wi-Fi authentication state: unknown modes are probed, confirmed modes persist across reboot. */
+typedef enum {
+    PF_WIFI_AUTH_TRY_WPA2 = 0, /**< Mode unknown; try WPA2 first. */
+    PF_WIFI_AUTH_TRY_SAE = 1, /**< Mode unknown; try WPA3-SAE. */
+    PF_WIFI_AUTH_WPA2 = 2, /**< WPA2 connection was confirmed. */
+    PF_WIFI_AUTH_SAE = 3, /**< WPA3-SAE connection was confirmed. */
+} pf_wifi_auth_state_t;
 /**
  * @brief Copy the saved NUL-terminated SSID (up to 32 UTF-8 bytes).
  * @param ssid Output buffer of at least 33 bytes.
  */
-void pf_boot_config_wifi_ssid(char ssid[33]);
+void pf_boot_config_wifi_ssid(char ssid[PF_WIFI_SSID_SIZE]);
 /**
  * @brief Stage an SSID in RAM; an empty string clears it. Persist with pf_boot_config_save().
  * @param ssid NUL-terminated UTF-8 string of at most 32 bytes.
@@ -32,17 +43,19 @@ void pf_boot_config_wifi_ssid(char ssid[33]);
  */
 bool pf_boot_config_set_wifi_ssid(const char *ssid);
 /**
- * @brief Copy the saved private WPA2 passphrase; never expose it in a host report.
+ * @brief Copy the saved private WPA2/WPA3 passphrase; never expose it in a host report.
  * @param password Output buffer of at least 64 bytes.
  */
-void pf_boot_config_wifi_password(char password[64]);
+void pf_boot_config_wifi_password(char password[PF_WIFI_PASSWORD_SIZE]);
 /**
- * @brief Stage a WPA2 passphrase in RAM; empty clears it, otherwise it must be 8-63 printable ASCII characters.
+ * @brief Stage a WPA2/WPA3 passphrase in RAM; empty clears it, otherwise it must be 8-63 printable ASCII characters.
  * Persist with pf_boot_config_save().
  * @param password NUL-terminated passphrase.
  * @return false for an invalid passphrase or when first-use loading is unsafe.
  */
 bool pf_boot_config_set_wifi_password(const char *password);
+/** @brief Return whether a Wi-Fi passphrase is configured, without copying it. */
+bool pf_boot_config_wifi_password_configured(void);
 /**
  * @brief Copy the saved private BLE HMAC-SHA256 key; never expose it in a host report.
  * @param key Output buffer of at least 32 bytes.
@@ -54,6 +67,8 @@ void pf_boot_config_ble_key(uint8_t key[32]);
  * @return false when the pointer is null or first-use loading is unsafe.
  */
 bool pf_boot_config_set_ble_key(const uint8_t key[32]);
+/** @brief Return whether a nonzero BLE control key is configured, without copying it. */
+bool pf_boot_config_ble_key_configured(void);
 
 /** @brief Return the PF_WIRELESS_* radios allowed to start at boot; both by default, independent of credentials. */
 uint8_t pf_boot_config_radios(void);
@@ -62,6 +77,21 @@ uint8_t pf_boot_config_radios(void);
  * @return false (configuration unchanged) for unknown bits or when first-use loading is unsafe.
  */
 bool pf_boot_config_set_radios(uint8_t radios);
+
+/** @brief Return whether the unauthenticated saved-LAN TCP CLI is enabled; defaults to true for older records. */
+bool pf_boot_config_tcp_cli_enabled(void);
+/** @brief Stage the saved-LAN TCP CLI switch; persist with pf_boot_config_save(), applied at the next boot. */
+bool pf_boot_config_set_tcp_cli_enabled(bool enabled);
+/** @brief Return whether TCP CLI clients must prove possession of the saved BLE HMAC key. */
+bool pf_boot_config_tcp_cli_auth_required(void);
+/** @brief Stage whether TCP CLI clients must prove possession of the saved BLE HMAC key. */
+bool pf_boot_config_set_tcp_cli_auth_required(bool required);
+/** @brief Return the saved Wi-Fi authentication state; older records default to trying WPA2. */
+pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void);
+/** @brief Stage the Wi-Fi authentication state with credentials; persist with pf_boot_config_save(). */
+bool pf_boot_config_set_wifi_auth_state(pf_wifi_auth_state_t state);
+/** @brief Report whether saved wireless settings differ from the values loaded at boot. */
+bool pf_boot_config_wireless_restart_required(void);
 
 /** User-selected storage bus speed profile; the storage backend maps it to its own bus clock. */
 typedef enum {

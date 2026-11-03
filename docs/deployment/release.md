@@ -1,4 +1,37 @@
-# Release packages and prerequisites
+# Release and Publishing
+
+This deployment guide owns release readiness, GitHub Actions packaging, publication setup, and download verification.
+
+## GitHub Actions Workflow Overview
+
+| Workflow | Trigger and role |
+| --- | --- |
+| [PR Check](../../.github/workflows/pr-check.yml) | Pull requests and configured branch pushes: firmware builds and repository checks. |
+| [Host Validation](../../.github/workflows/host-validation.yml) | Reused by CI: firmware unit tests and independent host/frontend suites. |
+| [Release build packages](../../.github/workflows/release.yml) | Version-tag pushes publish validated packages; manual dispatch is artifact-only preflight. |
+| [Publish .NET Packages](../../.github/workflows/publish-dotnet.yml) | Called by release packaging; manual dispatch packages an existing tag without publishing a release. |
+| [Publish Python to PyPI](../../.github/workflows/publish-pypi.yml) | Successful tag-release workflow completion or manual retry: publishes the verified released wheel. |
+| [Publish Direct Pages](../../.github/workflows/publish-direct.yml) | Successful tag-release workflow completion or manual retry: deploys the verified released Direct archive. |
+
+The publication flow is **validate → build packages → GitHub Release → independent PyPI and Pages publication**.
+The detailed gates, permissions, retry rules, and package contents are defined below.
+
+## Baseline Release Readiness
+
+Treat a release as a versioned foundation, not a promise that every downstream workload or hardware combination is supported.
+Before tagging:
+
+- Confirm the intended revision passes the relevant firmware, host, and repository checks described in
+  [firmware testing](../development/firmware-testing.md) and [host development](../development/host-tools.md).
+- Review [qualification gaps](../validation/qualification-gaps.md) and link applicable evidence in the release notes.
+  Distinguish implemented features from physical qualification.
+- Confirm the [README](../../README.md) and guides describe the packaged revision, supported configurations, and
+  known access/safety restrictions.
+- Use immutable tags and preserve dependency pins so downstream products can reproduce their chosen baseline.
+  New product capabilities belong in downstream projects, not this release; see
+  [project scope](../../README.md#project-scope).
+
+## Version and Firmware Packages
 
 After review and software validation, tag the intended commit as `vX.Y.Z` and push that tag through the normal
 publication process. Annotated (`git tag -a v1.2.3 -m 'Release 1.2.3'`) and lightweight (`git tag v1.2.3`) tags
@@ -10,9 +43,9 @@ source ref, create a tag, or publish a release.
 The stripped `X.Y.Z` supplies `PF_FIRMWARE_VERSION` to every build, including HID identity and SDK program metadata.
 Local developer builds retain `0.0.0-dev` unless overridden.
 
-The workflow produces four checksum-bearing artifacts for every combination of:
+The workflow produces eight checksum-bearing firmware artifacts from:
 
-- Board: `pico` and `pico2`.
+- Board: `pico`, `pico_w`, `pico2`, and `pico2_w`.
 - SD transport: `SDIO_PIO` and `SPI`.
 
 All artifacts are FreeRTOS applications using the SDK stock clock. Artifact names are
@@ -20,15 +53,18 @@ All artifacts are FreeRTOS applications using the SDK stock clock. Artifact name
 workflow uploads Actions artifacts, then publishes a
 [GitHub release](https://github.com/djwinter29-oss/PicoForge/releases) only after all firmware and host packages succeed.
 Firmware packages are attached as ZIPs, preserving the board/transport distinction even when image basenames match.
+
+### Host Packages
+
 The release also includes:
 
 - `picoforge-X.Y.Z-py3-none-any.whl`: Python CLI and local dashboard.
 - `picoforge-host-vX.Y.Z-linux-x64.tar.gz`, `picoforge-host-vX.Y.Z-win-x64.zip`, and
   `picoforge-host-vX.Y.Z-osx-arm64.tar.gz`: self-contained .NET hosts, including dashboard assets.
-- `picoforge-webhid-vX.Y.Z.zip`: Direct dashboard.
+- `picoforge-direct-vX.Y.Z.zip`: Direct dashboard.
 - `SHA256SUMS.txt`: SHA-256 checksums for all attached packages.
 
-The release workflow builds the Python wheel and WebHID archive directly and calls `publish-dotnet.yml` to build
+The release workflow builds the Python wheel and Direct archive directly and calls `publish-dotnet.yml` to build
 standalone hosts. Like [PicoUart](https://github.com/djwinter29-oss/PicoUart/blob/main/.github/workflows/release.yml),
 tag pushes publish with the pinned `softprops/action-gh-release` action after all required builds and tests pass.
 The action creates or updates the tag's public release, including one created through GitHub's release editor.
@@ -36,8 +72,8 @@ Rerunning the publication job can replace matching assets; do not move a publish
 Prefer pushing a tag and letting the workflow create the release so downloads are not announced before builds pass.
 Manual preflight produces Actions artifacts only and never publishes to GitHub Releases, PyPI, or Pages.
 After tag-driven release publication, separate jobs publish the same tested wheel to PyPI using Trusted Publishing
-and deploy the same WebHID archive to GitHub Pages. They do not rebuild packages from a moving branch.
-`publish-pypi.yml` and `publish-webhid.yml` run independently when **Release build packages** completes successfully
+and deploy the same Direct archive to GitHub Pages. They do not rebuild packages from a moving branch.
+`publish-pypi.yml` and `publish-direct.yml` run independently when **Release build packages** completes successfully
 in this repository for a tag push, not a manual preflight. Both require a public, stable release, match its tag to
 the originating workflow commit, and verify the downloaded asset against the release checksums.
 A failure in either workflow does not remove the release.
@@ -49,7 +85,8 @@ An existing empty public release does not need to be returned to draft. If publi
 job to complete uploads. Publish corrections to distributed packages under a new version; PyPI cannot replace versions.
 
 Packaging is gated on the reusable host-validation workflow: Ceedling firmware tests, Python host tests on
-3.10 and 3.12, and WebHID and .NET host tests. Each PR/release matrix entry performs one firmware build; runtime
+3.10 and 3.12, independent Direct and Python/.NET frontend tests, and .NET host tests.
+Each PR/release matrix entry performs one firmware build; runtime
 clock selection remains a boot setting and does not multiply CI artifacts.
 
 ## Publishing setup
@@ -110,7 +147,7 @@ SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON i
 highest supported safe planned rate up to 50 MHz, clamped by the PIO ceiling of SYSCLK/4: at most 37.5 MHz at
 150 MHz CPU, and up to 50 MHz at 250 MHz CPU. Unsupported High Speed or failed faster-bus validation retains the
 bounded 25 MHz safe fallback policy; failed fallback aborts initialization. Actual rates depend on card support and
-divider planning. SPI follows its separate card-rate and divider policy. See [SD design](../design/sdcard/sdcard-driver-design.md).
+divider planning. SPI follows its separate card-rate and divider policy. See [SD design](../reference/sdcard/driver.md).
 
 Product release remains blocked on allocation/owner approval of a USB identity. `0xCAFE:0x4011` is the documented
 development VID/PID and remains unchanged; it must not be represented as an allocated product identity.

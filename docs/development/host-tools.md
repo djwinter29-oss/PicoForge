@@ -1,9 +1,9 @@
 # Host Tools Development
 
 PicoForge has Python and .NET dashboards that share the frontend in `host/web`, plus the independent Direct dashboard
-in `host/webhid`, which connects over USB (WebHID) or Bluetooth LE (Web Bluetooth). For installation and everyday use,
+in `host/direct`, which connects over USB (WebHID) or Bluetooth LE (Web Bluetooth). For installation and everyday use,
 see the [Python host guide](../../host/python/README.md), [.NET host guide](../../host/dotnet/PicoForge/README.md),
-and [Direct dashboard guide](../../host/webhid/README.md).
+and [Direct dashboard guide](../../host/direct/README.md).
 
 Run commands from the repository root. Host unit tests do not require a board; physical device checks require an
 identified board and appropriate USB permissions.
@@ -12,7 +12,7 @@ identified board and appropriate USB permissions.
 
 - Python 3.10+ for the Python host and repository contracts
 - .NET 10 SDK for the .NET host and tests
-- Node.js with the built-in test runner for WebHID tests
+- Node.js with the built-in test runner for Direct dashboard tests
 - A WebHID-capable desktop browser for physical browser use
 
 Install only the toolchain needed for the host or checks you are changing.
@@ -24,14 +24,14 @@ The launchers start the respective dashboard:
 ```sh
 tools/host/run-python.sh
 tools/host/run-dotnet.sh
-tools/host/run-webhid.sh
+tools/host/run-direct.sh
 ```
 
 Python and .NET serve the shared dashboard at `http://127.0.0.1:5000/` by default; run only one server on that port at
 a time. The Direct dashboard is served at `http://localhost:8000/`. USB connections require WebHID support and local
-USB permission. The CDC console is documented in the [CDC CLI guide](../guides/usb-cdc-cli.md).
+USB permission. The CDC console is documented in the [CDC CLI guide](../guides/console.md).
 The Python/.NET Live diagnostics Wi-Fi link opens a separate web console through the local raw TCP bridge;
-setup, session limits and security notes are authoritative in the [CLI guide](../guides/usb-cdc-cli.md#wi-fi-tcp-terminal).
+setup, session limits and security notes are authoritative in the [CLI guide](../guides/console.md#wi-fi-tcp-terminal).
 
 The Python launcher provisions its environment on first use. To install the package explicitly for development and
 tests:
@@ -52,15 +52,17 @@ python3 -m pip install --editable host/python
 tools/validation/test-host.sh
 ```
 
-The wrapper runs Python `unittest`, WebHID Node tests, and .NET tests. They can also be run individually:
+The wrapper runs Python `unittest`, separate Direct and Python/.NET frontend Node tests, and .NET tests.
+They can also be run individually:
 
 ```sh
 python3 -m unittest discover -s host/python/tests -v
-node --test host/webhid/tests/*.test.mjs
+node --test host/direct/tests/*.test.mjs
+node --test host/web/tests/*.test.mjs
 dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo
 ```
 
-Python tests cover the package and local web API; .NET tests cover the protocol and host behavior; WebHID tests cover
+Python tests cover the package and local web API; .NET tests cover the protocol and host behavior; Direct tests cover
 browser-side decoding and presentation. None opens a physical USB device. Repository-wide Python contracts are separate:
 
 ```sh
@@ -73,8 +75,24 @@ See the [test ownership index](../../tests/README.md) for cross-project checks a
 ## Shared Frontend and Protocol Boundaries
 
 Python and .NET serve the same assets from `host/web`; keep shared UI behavior backend-neutral and preserve the common
-API response contract. WebHID is independent and owns its renderer and assets under `host/webhid`. Keep browser-specific
+API response contract. Direct is independent and owns its renderer and assets under `host/direct`. Keep browser-specific
 USB handling there rather than creating a second Python/.NET frontend.
+The dashboards do not import or package each other's assets. Each owns its wireless form module and its Node tests;
+matching firmware protocol behavior does not imply shared frontend code. Python/.NET build and run without `host/direct`,
+and Direct can be served and tested without `host/web`, `host/python`, or `host/dotnet`.
+
+### Dashboard component isolation
+
+Direct and the Python/.NET dashboard **must not share any dashboard components**. This includes HTML, CSS, JavaScript
+modules, renderers, controls, transport adapters, assets, and test helpers. Do not introduce cross-dashboard imports,
+symlinks, shared component directories, or build-time copying from one dashboard into the other. Similar behavior must
+be implemented and maintained independently within each dashboard.
+
+Python and .NET may continue sharing their own frontend in `host/web`; this does not include Direct. The firmware
+[HID Report Reference](../reference/usb-hid.md) remains their common specification, not a shared
+dashboard implementation. Repository CI may run both independent test suites.
+The [dashboard isolation contracts](../../tests/contracts/test_dashboard_isolation.py) check local module/asset
+boundaries and ensure the native hosts do not package or serve Direct components.
 
 In the shared dashboard, active or pending self-tests disable board configuration and reboot controls without
 adding an automatic test warning above Pin configuration. The Save button state indicates unsaved changes without
@@ -90,10 +108,10 @@ Enable USB drive opens the same styled confirmation pattern as reboot and return
 The dialog explains exclusive host ownership, uninterrupted HID/CDC, unavailable self-test, confirmed forced saving, and safe eject.
 Cancel, Escape, or disconnect sends no enable request; confirmation rechecks current storage safety gates.
 Local settings edits remain available while shared. Supporting firmware permits **Save&Reboot** only through the
-[forced-save confirmation](../design/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
+[forced-save confirmation](../reference/settings.md#forced-save-and-reboot); standalone reboot remains blocked.
 
 Current host behavior follows the firmware's implemented HID reports. The
-[HID Report Reference](../design/usb/usb-hid-report-reference.md) is the authoritative protocol contract; host
+[HID Report Reference](../reference/usb-hid.md) is the authoritative protocol contract; host
 changes must preserve its framing, validation, and asynchronous-operation semantics.
 
 Only one active HID monitor per board should be used at a time. Separate host processes do not share device readers

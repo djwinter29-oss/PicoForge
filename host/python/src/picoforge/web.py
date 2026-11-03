@@ -62,10 +62,12 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             return jsonify({"error": "Console requests must be same-origin"}), 403
         try:
             if request.method == "POST":
-                if request.get_json(silent=True) != {}:
-                    return jsonify({"error": "Expected an empty JSON object"}), 400
+                payload = request.get_json(silent=True)
+                if (not isinstance(payload, dict) or set(payload) - {"ble_key"}
+                        or "ble_key" in payload and not isinstance(payload["ble_key"], str)):
+                    return jsonify({"error": "Expected an empty object or a BLE control key"}), 400
                 status = dashboard.read_wireless(request.args.get("board"))["wireless"]
-                return jsonify({"session": console.open(status)})
+                return jsonify({"session": console.open(status, payload.get("ble_key"))})
             session = request.args.get("session")
             if request.method == "GET":
                 data, closed = console.read(session)
@@ -101,13 +103,6 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     @app.get("/js/<path:filename>")
     def javascript(filename: str):
         return send_from_directory(root / "js", filename)
-
-    @app.get("/webhid/js/wireless-form.mjs")
-    def wireless_form():
-        installed_form = Path(__file__).with_name("wireless_ui")
-        form_root = (installed_form if installed_form.is_dir()
-                     else Path(__file__).resolve().parents[3] / "webhid" / "js")
-        return send_from_directory(form_root, "wireless-form.mjs")
 
     @app.get("/api/status")
     def status():

@@ -1,12 +1,14 @@
 # Contributing
 
-Thanks for helping improve PicoForge. Contributions should keep changes focused, follow the existing layer boundaries, and distinguish implemented behavior from planned work.
+Thanks for helping maintain PicoForge. Feature expansion is closed; contributions should focus on defects,
+reliability, compatibility, documentation, and qualification of existing behavior. Keep new product features in
+downstream projects and follow the [project scope](README.md#project-scope) and existing layer boundaries.
 
 ## Before Opening a Pull Request
 
 - Search existing issues and pull requests before starting a large or behavior-changing contribution.
 - For a substantial change, open an issue or discussion first so scope and hardware assumptions can be agreed.
-- Do not assume board GPIO assignments. Update the board topology and `docs/guides/hardware-setup.md` only from an identified board schematic and verified wiring.
+- Do not assume board GPIO assignments. Update the board topology and `docs/guides/hardware.md` only from an identified board schematic and verified wiring.
 - Keep board-specific configuration in `firmware/src/config/board.c`, reusable drivers under `firmware/src/drivers/`, platform services (logging, system, LED, temperature, boot config) under `firmware/src/platform/`, FatFs/Pico SDK integration under `firmware/src/integration/`.
 - Keep simple drivers flat in `firmware/src/drivers/`; use a named subdirectory for a multi-file or substantial driver such as SDIO.
 - Preserve third-party provenance and licenses. Do not edit vendored code except for a documented, necessary patch.

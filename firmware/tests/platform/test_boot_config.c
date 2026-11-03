@@ -297,7 +297,7 @@ void test_corrupt_or_unknown_records_give_defaults(void)
 {
     const struct { unsigned offset; uint8_t value; bool reseal; } cases[] = {
         {0u, 'X', true}, {4u, 2u, true}, {6u, 15u, true}, {8u, 4u, true}, {9u, 2u, true},
-        {10u, 4u, true}, {11u, 1u, true}, {11u, 2u, true}, {8u, 1u, false}, {15u, 0u, false},
+        {10u, 8u, true}, {11u, 2u, true}, {8u, 1u, false}, {15u, 0u, false},
     };
     for (unsigned i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         store(PF_SYSCLK_200MHZ, PF_STORAGE_SPEED_HIGH);
@@ -332,7 +332,7 @@ void test_save_only_touches_the_reserved_sector_and_pads_the_page(void)
     TEST_ASSERT_EQUAL_UINT(1u, program_calls);
 }
 
-void test_wireless_credentials_default_empty_migrate_legacy_flags_and_survive_profile_updates(void)
+void test_wireless_credentials_default_empty_and_survive_profile_updates(void)
 {
     store(PF_SYSCLK_200MHZ, PF_STORAGE_SPEED_HIGH);
     char ssid[33];
@@ -343,6 +343,7 @@ void test_wireless_credentials_default_empty_migrate_legacy_flags_and_survive_pr
     pf_boot_config_ble_key(key);
     TEST_ASSERT_EQUAL_STRING("", ssid);
     TEST_ASSERT_EQUAL_STRING("", password);
+    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_TRY_WPA2, pf_boot_config_wifi_auth_state());
     for (size_t i = 0u; i < sizeof(key); ++i) TEST_ASSERT_EQUAL_UINT8(0u, key[i]);
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, pf_boot_config_sysclk());
     TEST_ASSERT_TRUE(pf_boot_config_set_wifi_ssid("test network"));
@@ -351,8 +352,8 @@ void test_wireless_credentials_default_empty_migrate_legacy_flags_and_survive_pr
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
-    TEST_ASSERT_EQUAL_UINT8(0u, stored_wireless()->settings.reserved);
-    stored_wireless()->settings.reserved = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_TRY_WPA2, stored_wireless()->settings.wifi_auth_state);
+    stored_wireless()->settings.wifi_auth_state = PF_WIFI_AUTH_SAE;
     reseal_wireless();
     reboot();
     pf_boot_config_wifi_ssid(ssid);
@@ -360,17 +361,19 @@ void test_wireless_credentials_default_empty_migrate_legacy_flags_and_survive_pr
     pf_boot_config_ble_key(key);
     TEST_ASSERT_EQUAL_STRING("test network", ssid);
     TEST_ASSERT_EQUAL_STRING("test-passphrase", password);
+    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_SAE, pf_boot_config_wifi_auth_state());
     for (size_t i = 0u; i < sizeof(key); ++i) TEST_ASSERT_EQUAL_UINT8(0x5au, key[i]);
     TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_250MHZ));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
-    TEST_ASSERT_EQUAL_UINT8(0u, stored_wireless()->settings.reserved);
+    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_SAE, stored_wireless()->settings.wifi_auth_state);
     reboot();
     pf_boot_config_wifi_ssid(ssid);
     pf_boot_config_wifi_password(password);
     pf_boot_config_ble_key(key);
     TEST_ASSERT_EQUAL_STRING("test network", ssid);
     TEST_ASSERT_EQUAL_STRING("test-passphrase", password);
+    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_SAE, pf_boot_config_wifi_auth_state());
     for (size_t i = 0u; i < sizeof(key); ++i) TEST_ASSERT_EQUAL_UINT8(0x5au, key[i]);
     TEST_ASSERT_EQUAL(PF_SYSCLK_250MHZ, pf_boot_config_sysclk());
     stored_bytes()[sizeof(record_t) + offsetof(wireless_record_t, settings) + 1u] ^= 1u;
@@ -399,12 +402,16 @@ void test_individual_wireless_setters_validate_and_clear_values(void)
     TEST_ASSERT_TRUE(pf_boot_config_set_wifi_password(password));
     password[0] = '\x01';
     TEST_ASSERT_FALSE(pf_boot_config_set_wifi_password(password));
+    TEST_ASSERT_TRUE(pf_boot_config_wifi_password_configured());
     strcpy(password, "");
     TEST_ASSERT_TRUE(pf_boot_config_set_wifi_password(password));
-    key[0] = 1u;
+    TEST_ASSERT_FALSE(pf_boot_config_wifi_password_configured());
+    key[31] = 1u;
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
+    TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
     memset(key, 0, sizeof(key));
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
+    TEST_ASSERT_FALSE(pf_boot_config_ble_key_configured());
 
     const char *invalid_ssids[] = {"\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82", "\xff"};
     for (unsigned i = 0u; i < sizeof(invalid_ssids) / sizeof(invalid_ssids[0]); ++i) {
@@ -422,6 +429,53 @@ void test_unchanged_write_does_not_erase_again(void)
     TEST_ASSERT_TRUE(pf_boot_config_save());
     TEST_ASSERT_TRUE(pf_boot_config_save());
     TEST_ASSERT_EQUAL_UINT(1u, safe_calls);
+}
+
+void test_tcp_cli_switch_defaults_enabled_and_survives_radio_changes_and_reboot(void)
+{
+    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_enabled());
+    store(PF_SYSCLK_DEFAULT, PF_STORAGE_SPEED_DEFAULT);
+    reboot();
+    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_enabled());
+    TEST_ASSERT_TRUE(pf_boot_config_set_tcp_cli_enabled(false));
+    TEST_ASSERT_TRUE(pf_boot_config_set_radios(PF_WIRELESS_WIFI));
+    TEST_ASSERT_FALSE(pf_boot_config_tcp_cli_enabled());
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    reboot();
+    TEST_ASSERT_FALSE(pf_boot_config_tcp_cli_enabled());
+    TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_WIFI, pf_boot_config_radios());
+    TEST_ASSERT_TRUE(pf_boot_config_set_tcp_cli_enabled(true));
+    TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_WIFI, pf_boot_config_radios());
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    reboot();
+    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_enabled());
+    TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_WIFI, pf_boot_config_radios());
+}
+
+void test_tcp_cli_auth_requires_saved_key_and_survives_profile_updates(void)
+{
+    uint8_t key[32] = {0u};
+    store(PF_SYSCLK_DEFAULT, PF_STORAGE_SPEED_DEFAULT);
+    TEST_ASSERT_FALSE(pf_boot_config_set_tcp_cli_auth_required(true));
+    TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
+    TEST_ASSERT_FALSE(pf_boot_config_ble_key_configured());
+    TEST_ASSERT_FALSE(pf_boot_config_set_tcp_cli_auth_required(true));
+    key[0] = 0x42u;
+    TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
+    TEST_ASSERT_TRUE(pf_boot_config_set_tcp_cli_auth_required(true));
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    reboot();
+    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_auth_required());
+    TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
+    TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ));
+    scheduler_state = taskSCHEDULER_RUNNING;
+    TEST_ASSERT_TRUE(pf_boot_config_save());
+    reboot();
+    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_auth_required());
+    TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
 }
 
 void test_unsafe_flash_state_fails_without_writing_and_write_can_retry(void)

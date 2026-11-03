@@ -1,5 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "../../webhid/js/wireless-form.mjs?v=13";
+import { bindWirelessForm } from "./wireless-form.mjs?v=15";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -144,8 +144,11 @@ async function saveCombinedSettings(settings) {
     const saved = result.wireless;
     if (result.reboot_pending !== true || saved?.ssid !== request.ssid
       || saved.wifi_enabled !== request.wifi_enabled || saved.ble_enabled !== request.ble_enabled
-      || (request.password !== undefined && saved.password_configured !== true)
-      || (request.ble_key !== undefined && saved.ble_key_configured !== true)
+      || (request.password !== undefined && saved.password_configured !== Boolean(request.password))
+      || (request.tcp_cli_enabled !== undefined && saved.tcp_cli_enabled !== request.tcp_cli_enabled)
+      || (request.tcp_cli_auth_required !== undefined
+        && saved.tcp_cli_auth_required !== request.tcp_cli_auth_required)
+      || (request.ble_key !== undefined && saved.ble_key_configured !== Boolean(request.ble_key))
       || result.settings?.system_clock_mhz !== settings.system_clock_mhz
       || result.settings?.sdcard_profile !== settings.sdcard_profile || result.settings?.radios !== settings.radios) {
       throw new Error("Wireless readback did not match the requested values");

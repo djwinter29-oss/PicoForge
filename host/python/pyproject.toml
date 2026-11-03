@@ -5,13 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "picoforge"
 version = "0.1.0"
-description = "PicoForge HID diagnostics and local status dashboard"
+description = "PicoForge USB HID control, diagnostics, and local dashboard"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{name = "Ji Dong"}]
+keywords = ["picoforge", "raspberry-pi-pico", "rp2040", "rp2350", "usb", "hid"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Hardware",
+    "Topic :: Utilities",
+]
 dependencies = ["Flask==3.1.3", "hidapi==0.15.0"]
 
 [project.urls]
 Homepage = "https://github.com/djwinter29-oss/PicoForge"
+Documentation = "https://github.com/djwinter29-oss/PicoForge/tree/main/host/python#readme"
+Source = "https://github.com/djwinter29-oss/PicoForge"
 Releases = "https://github.com/djwinter29-oss/PicoForge/releases"
 Issues = "https://github.com/djwinter29-oss/PicoForge/issues"
 
@@ -19,9 +31,8 @@ Issues = "https://github.com/djwinter29-oss/PicoForge/issues"
 picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
-package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web", "picoforge.wireless_ui" = "../webhid/js"}
-packages = ["picoforge", "picoforge.web", "picoforge.wireless_ui"]
+package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
+packages = ["picoforge", "picoforge.web"]
 
 [tool.setuptools.package-data]
 "picoforge.web" = ["index.html", "console.html", "favicon.svg", "css/*.css", "js/*.mjs"]
-"picoforge.wireless_ui" = ["wireless-form.mjs"]

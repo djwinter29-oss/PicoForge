@@ -2,6 +2,9 @@
 
 The .NET 10 host monitors the vendor HID interface and serves the shared local dashboard at `http://127.0.0.1:5000/` by default. Override the port with `tools/host/run-dotnet.sh --port PORT`; only one dashboard server can bind to port 5000 at a time.
 
+Python and .NET share their own frontend, but must not share any dashboard components with Direct. See the
+[dashboard component isolation policy](../../../docs/development/host-tools.md#dashboard-component-isolation).
+
 ```sh
 dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 ```
@@ -15,11 +18,11 @@ MSC reports no medium while Pico owns the card. Safely eject before disabling to
 With older firmware, expected HID disconnects after a confirmed MSC command show **Reconnecting** for up to
 five seconds. Persistent errors, invalid reports, permission failures and uncertain command outcomes remain errors.
 `POST /api/self-test` starts or cancels the SD-card test and acknowledges HID delivery with HTTP 202.
-See [the performance-test guide](../../../docs/guides/sdcard-performance-test.md) for safety and metric definitions.
+See [the performance-test guide](../../../docs/guides/sdcard-benchmark.md) for safety and metric definitions.
 Run with `ASPNETCORE_ENVIRONMENT=Development` to expose `/openapi/v1.json`.
 The dashboard's **Return to Pico** action requires explicit data-loss confirmation and requests Pico-side
 host-access revocation/remount without any host OS eject command. See the
-[force-return design](../../../docs/design/usb/usb-hid-report-reference.md#msc-force-return-safety) for its
+[force-return design](../../../docs/reference/usb-hid.md#msc-force-return-safety) for its
 one-attempt remount policy and host-cache risks. The legacy safe-disable API remains available for manual-eject clients.
 If a HID write times out or its result cannot be matched, the dashboard marks the command outcome uncertain and blocks
 further writes rather than replaying or overwriting the result.
@@ -27,16 +30,19 @@ further writes rather than replaying or overwriting the result.
 Local settings edits are permitted while shared. Capability bit 6 enables confirmed forced **Save&Reboot**,
 including a host-cache data-loss warning; `POST /api/settings` requests it only with `confirm_data_loss:true`.
 Device sync and detach must succeed before saving, and the original result is verified after reconnect without
-SET replay. See the [forced-save policy](../../../docs/design/settings.md#forced-save-and-reboot).
+SET replay. See the [forced-save policy](../../../docs/reference/settings.md#forced-save-and-reboot).
 Self-tests and transitions still block saving; standalone reboot remains blocked while USB owns storage.
 Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
+Feature 30 status versions 1-4 and Feature 35 result versions 1-2 are supported, including the saved TCP CLI switch,
+optional BLE-key authentication, scan security labels, and staged-test lifetime. The dashboard blocks saving
+temporary test credentials after ten minutes and preserves legacy firmware's CLI settings.
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.
 
-The [storage lifecycle](../../../docs/design/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
+The [storage lifecycle](../../../docs/reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
 startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
 USB sharing temporarily grants the host exclusive access; firmware file operations and self-test are unavailable.
 Wait for fresh mounted status after return, not merely HID reconnection. Start uses the existing mount and checks

@@ -66,10 +66,11 @@ void pf_usb_msc_note_hid_result_read(uint8_t transaction_id);
 
 /**
  * @brief Revoke access to faulted USB-owned media so the worker can reinitialize the card; not a clean eject.
+ * @return True when the recovery request was accepted; false when a remount already owns the transition.
  * @note Completion or rejection is exposed through the status queries above; a pending forced-return remount
  *       rejects it.
  */
-void pf_usb_msc_request_recovery(void);
+bool pf_usb_msc_request_recovery(void);
 
 /** @brief Advance deferred results, reconnect timing and pending ownership requests; call every USB-task cycle. */
 void pf_usb_msc_task(void);

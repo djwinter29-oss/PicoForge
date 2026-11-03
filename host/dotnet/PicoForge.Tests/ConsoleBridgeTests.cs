@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using PicoForge;
 using Xunit;
@@ -8,8 +9,9 @@ namespace PicoForge.Tests;
 
 public sealed class ConsoleBridgeTests
 {
-    private static WirelessStatusResponse Wireless(string address) =>
-        new(true, false, "HomeDev", true, false, "idle", 0, "connected", address, 0, TcpCliStarted: true);
+    private static WirelessStatusResponse Wireless(string address, bool authRequired = false) =>
+        new(true, false, "HomeDev", true, true, "idle", 0, "connected", address, 0,
+            TcpCliStarted: true, TcpCliAuthRequired: authRequired);
 
     [Fact]
     public async Task RelaysRawBytesToTheBoardPortAndReleasesTheSessionOnPeerClose()
@@ -23,9 +25,9 @@ public sealed class ConsoleBridgeTests
         {
             using var bridge = new ConsoleBridge();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            var token = bridge.Open(Wireless(address.ToString()));
+            var token = bridge.Open(Wireless(address.ToString()), null);
             using var peer = await listener.AcceptSocketAsync(timeout.Token);
-            Assert.Throws<InvalidOperationException>(() => bridge.Open(Wireless(address.ToString())));
+            Assert.Throws<InvalidOperationException>(() => bridge.Open(Wireless(address.ToString()), null));
             Assert.Throws<InvalidOperationException>(() => bridge.Close("wrong"));
             var command = Encoding.ASCII.GetBytes("help\r\x1b[A");
             bridge.Write(token, command);
@@ -55,14 +57,54 @@ public sealed class ConsoleBridgeTests
     public void DoesNotUseInvalidBoardAddressesAsProxyTargets(string address)
     {
         using var bridge = new ConsoleBridge();
-        Assert.Throws<ArgumentException>(() => bridge.Open(Wireless(address)));
+        Assert.Throws<ArgumentException>(() => bridge.Open(Wireless(address), null));
     }
 
     [Fact]
     public void DoesNotConnectWhenTheListenerHasNotStarted()
     {
         using var bridge = new ConsoleBridge();
-        Assert.Throws<InvalidOperationException>(() => bridge.Open(Wireless("192.168.66.87") with
-            { TcpCliStarted = false }));
+        Assert.Throws<InvalidOperationException>(() =>
+            bridge.Open(Wireless("192.168.66.87") with { TcpCliStarted = false }, null));
+    }
+
+    [Fact]
+    public async Task AuthenticatesTheTcpCliWithTheSavedBleKey()
+    {
+        var address = Dns.GetHostAddresses(Dns.GetHostName()).First(ip =>
+            ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip));
+        var listener = new TcpListener(address, 2323);
+        listener.Start();
+        try
+        {
+            using var bridge = new ConsoleBridge();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var key = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+            var nonce = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
+            var uid = Enumerable.Range(0, 8).Select(value => (byte)value).ToArray();
+            var opening = Task.Run(() => bridge.Open(Wireless(address.ToString(), true), Convert.ToHexString(key)));
+            using var peer = await listener.AcceptSocketAsync(timeout.Token);
+            await peer.SendAsync(Encoding.ASCII.GetBytes(
+                $"PicoForge AUTH {Convert.ToHexString(nonce).ToLowerInvariant()} " +
+                $"{Convert.ToHexString(uid).ToLowerInvariant()}\r\n"), SocketFlags.None, timeout.Token);
+            var token = await opening.WaitAsync(timeout.Token);
+            var input = new byte[64];
+            var count = await peer.ReceiveAsync(input, SocketFlags.None, timeout.Token);
+            var message = nonce.Concat(uid).Concat(Encoding.ASCII.GetBytes("PFTCPCLI1TCPCLI001")).ToArray();
+            var proof = HMACSHA256.HashData(key, message).AsSpan(0, 16).ToArray();
+            Assert.Equal(Encoding.ASCII.GetBytes($"AUTH {Convert.ToHexString(proof).ToLowerInvariant()}\r\n"),
+                input[..count]);
+            bridge.Close(token);
+        }
+        finally { listener.Stop(); }
+    }
+
+    [Fact]
+    public void RequiresANonzeroBleKeyWhenTheBoardRequiresTcpAuthentication()
+    {
+        using var bridge = new ConsoleBridge();
+        Assert.Throws<ArgumentException>(() => bridge.Open(Wireless("192.168.66.87", true), null));
+        Assert.Throws<ArgumentException>(() =>
+            bridge.Open(Wireless("192.168.66.87", true), new string('0', 64)));
     }
 }

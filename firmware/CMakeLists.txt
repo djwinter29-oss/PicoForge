@@ -219,20 +219,20 @@ target_include_directories(pf_logging PUBLIC
 target_link_libraries(pf_logging PUBLIC hardware_uart pico_stdio_uart pico_stdlib)
 
 add_library(embedded_cli STATIC
-    third_party/embedded-cli/lib/src/embedded_cli.c
+    src/integration/cli/embedded_cli_adapter.c
 )
 target_include_directories(embedded_cli PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/third_party/embedded-cli/lib/include"
 )
+target_include_directories(embedded_cli PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
 
 add_library(pf_cli STATIC
     src/app/cli/cli.c
-    src/app/cli/cli_storage.c
 )
 target_include_directories(pf_cli PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/src"
 )
-target_link_libraries(pf_cli PUBLIC embedded_cli pf_storage)
+target_link_libraries(pf_cli PUBLIC embedded_cli)
 
 add_library(pf_storage STATIC
     src/platform/storage/block_device.c
@@ -292,7 +292,11 @@ add_executable(pico_forge
     src/app/usb/usb_hid.c
     src/app/usb/usb_msc.c
     src/app/usb/usb_task.c
-    src/app/cli/cli_device.c
+    src/app/cli/cli_board.c
+    src/app/cli/cli_config.c
+    src/app/cli/cli_storage.c
+    src/app/cli/cli_fs.c
+    src/app/cli/cli_fatfs_result.c
 )
 
 target_include_directories(pico_forge PRIVATE
@@ -319,16 +323,17 @@ target_link_libraries(pico_forge
 if(PICO_CYW43_SUPPORTED)
     target_sources(pico_forge PRIVATE
         src/app/wireless/wireless.c
-        src/app/wireless/wifi.c
-        src/app/wireless/tcp_cli.c
-        src/app/wireless/bluetooth.c
-        src/app/wireless/bluetooth_auth.c)
+        src/app/wireless/wifi/wifi.c
+        src/app/wireless/wifi/mdns.c
+        src/app/wireless/wifi/tcp_cli.c
+        src/app/wireless/bluetooth/bluetooth.c
+        src/app/wireless/wireless_auth.c)
     target_include_directories(pico_forge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/integration/wireless")
     target_compile_definitions(pico_forge PRIVATE PF_ENABLE_WIRELESS=1)
     target_link_libraries(pico_forge pico_cyw43_arch_lwip_poll pico_btstack_ble pico_btstack_cyw43
-                          pico_mbedtls pico_rand)
+                          pico_mbedtls pico_rand pico_lwip_mdns)
     pico_btstack_make_gatt_header(pico_forge PRIVATE
-        "${CMAKE_CURRENT_LIST_DIR}/src/app/wireless/bluetooth_profile.gatt")
+        "${CMAKE_CURRENT_LIST_DIR}/src/app/wireless/bluetooth/bluetooth_profile.gatt")
     target_link_options(pico_forge PRIVATE "LINKER:--wrap=btstack_tlv_flash_bank_init_instance")
 endif()
 

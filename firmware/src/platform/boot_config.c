@@ -16,6 +16,8 @@
 #define FORMAT_VERSION 1u
 #define SAVE_TIMEOUT_MS 1000u
 #define LOCKOUT_RECLAIM_TIMEOUT_MS 1000u
+#define TCP_CLI_DISABLED 4u /**< Private persisted service bit, independent of the two radio switches. */
+#define TCP_CLI_AUTH_REQUIRED 8u /**< Private bit requiring the saved BLE HMAC key for TCP CLI sessions. */
 
 #define BOOT_CONFIG_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 
@@ -34,7 +36,7 @@ typedef struct {
     uint16_t size; /**< sizeof(record_t). */
     uint8_t sysclk_profile; /**< pf_sysclk_profile_t value, independent of enum storage size. */
     uint8_t sdcard_profile; /**< Shared pf_storage_speed_t value for either transport. */
-    uint8_t radios_disabled; /**< PF_WIRELESS_* radios turned off; zero (erased or older record) enables both. */
+    uint8_t radios_disabled; /**< Disabled radios, disabled TCP CLI, and TCP CLI authentication-required bits. */
     uint8_t wireless_required; /**< 1 when the record is only valid with its wireless extension; 0 in older records. */
     uint32_t crc; /**< IEEE CRC-32 of all preceding bytes. */
 } record_t;
@@ -44,9 +46,9 @@ _Static_assert(sizeof(record_t) == 16u && offsetof(record_t, crc) == 12u, "v1 re
 static record_t config; /**< RAM record; zero profiles select defaults, and save refreshes metadata and CRC. */
 /** Private saved wireless credentials; byte zero preserves the legacy extension layout. */
 typedef struct {
-    uint8_t reserved; /**< Former provisioning flags; ignored when loading older records. */
-    char ssid[33]; /**< NUL-terminated Wi-Fi SSID. */
-    char password[64]; /**< NUL-terminated WPA2 passphrase. */
+    uint8_t wifi_auth_state; /**< pf_wifi_auth_state_t; legacy zero means try WPA2. */
+    char ssid[PF_WIFI_SSID_SIZE]; /**< NUL-terminated Wi-Fi SSID. */
+    char password[PF_WIFI_PASSWORD_SIZE]; /**< NUL-terminated WPA2/WPA3 passphrase. */
     uint8_t ble_key[32]; /**< BLE control HMAC-SHA256 key. */
 } wireless_settings_t;
 /** Private extension after the unchanged v1 profile record, within the same flash page. */
@@ -63,7 +65,10 @@ _Static_assert(sizeof(wireless_settings_t) == 130u && sizeof(wireless_record_t) 
                "wireless extension layout");
 _Static_assert(sizeof(record_t) + sizeof(wireless_record_t) <= FLASH_PAGE_SIZE, "settings fit one flash page");
 static wireless_record_t wireless; /**< Private extension; erased/invalid records contain no credentials. */
+static uint8_t boot_radios_disabled; /**< Wireless/radio service flags captured with the boot configuration. */
+static wireless_settings_t boot_wireless_settings; /**< Credential/settings snapshot used for restart diagnostics. */
 static bool loaded; /**< The saved record has been read once. */
+static bool boot_snapshot_valid; /**< Original saved values are available for restart comparison. */
 /** Prevents access while flash_safe_execute is active. */
 static bool save_in_progress;
 /** Task count before flash_safe_execute; valid while lockout_pending. */
@@ -122,7 +127,9 @@ static bool record_valid(const record_t *record)
     return record->magic == MAGIC && record->version == FORMAT_VERSION && record->size == sizeof(record_t) &&
            record->crc == crc32(record, offsetof(record_t, crc)) && record->sysclk_profile <= PF_SYSCLK_250MHZ &&
            record->sdcard_profile <= PF_STORAGE_SPEED_HIGH &&
-           (record->radios_disabled & ~(PF_WIRELESS_WIFI | PF_WIRELESS_BLE)) == 0u && record->wireless_required <= 1u;
+           (record->radios_disabled & ~(PF_WIRELESS_WIFI | PF_WIRELESS_BLE | TCP_CLI_DISABLED |
+                                        TCP_CLI_AUTH_REQUIRED)) == 0u &&
+           record->wireless_required <= 1u;
 }
 
 /** @brief Validate a bounded UTF-8 SSID without reading beyond its fixed-size storage. */
@@ -130,7 +137,7 @@ static bool wifi_ssid_valid(const char *ssid)
 {
     if (ssid == NULL) return false;
     const unsigned char *text = (const unsigned char *)ssid;
-    const unsigned char *terminator = memchr(text, '\0', 33u);
+    const unsigned char *terminator = memchr(text, '\0', PF_WIFI_SSID_SIZE);
     if (terminator == NULL) return false;
     size_t length = (size_t)(terminator - text);
     for (size_t i = 0u; text[i] != 0u;) {
@@ -149,12 +156,12 @@ static bool wifi_ssid_valid(const char *ssid)
     return true;
 }
 
-/** @brief Validate an optional WPA2 passphrase in its fixed-size storage. */
+/** @brief Validate an optional WPA2/WPA3 passphrase in its fixed-size storage. */
 static bool wifi_password_valid(const char *password)
 {
     if (password == NULL) return false;
     const unsigned char *text = (const unsigned char *)password;
-    const unsigned char *terminator = memchr(text, '\0', 64u);
+    const unsigned char *terminator = memchr(text, '\0', PF_WIFI_PASSWORD_SIZE);
     if (terminator == NULL) return false;
     size_t length = (size_t)(terminator - text);
     if (length != 0u && (length < 8u || length > 63u)) return false;
@@ -199,23 +206,32 @@ static void ensure_loaded(void)
     memcpy(&record, stored_data(), sizeof(record));
     memcpy(&extension, stored_data() + sizeof(record), sizeof(extension));
     const bool extension_valid = extension.magic == 0x4c574650u && extension.version == 1u &&
-        extension.size == sizeof(extension) && extension.reserved == 0u &&
+        extension.size == sizeof(extension) && extension.settings.wifi_auth_state <= PF_WIFI_AUTH_SAE &&
+        extension.reserved == 0u &&
         extension.crc == crc32(&extension, offsetof(wireless_record_t, crc)) && wireless_settings_valid(&extension);
+    uint8_t key_bits = 0u;
+    if (extension_valid) {
+        for (size_t i = 0u; i < sizeof(extension.settings.ble_key); ++i) key_bits |= extension.settings.ble_key[i];
+    }
+    const bool auth_valid = (record.radios_disabled & TCP_CLI_AUTH_REQUIRED) == 0u ||
+        (extension_valid && key_bits != 0u);
     memset(&config, 0, sizeof(config));
     memset(&wireless, 0, sizeof(wireless));
     /* A save torn after the profile record loads defaults, never new profiles without their credentials. */
-    if (record_valid(&record) && (extension_valid || record.wireless_required == 0u)) {
+    if (record_valid(&record) && (extension_valid || record.wireless_required == 0u) && auth_valid) {
         config = record;
         if (extension_valid) {
-            extension.settings.reserved = 0u;
             wireless = extension;
         }
     }
+    boot_radios_disabled = config.radios_disabled;
+    boot_wireless_settings = wireless.settings;
+    boot_snapshot_valid = true;
     loaded = true;
 }
 
 /** @copydoc pf_boot_config_wifi_ssid */
-void pf_boot_config_wifi_ssid(char ssid[33])
+void pf_boot_config_wifi_ssid(char ssid[PF_WIFI_SSID_SIZE])
 {
     ensure_loaded();
     memcpy(ssid, wireless.settings.ssid, sizeof(wireless.settings.ssid));
@@ -233,7 +249,7 @@ bool pf_boot_config_set_wifi_ssid(const char *ssid)
 }
 
 /** @copydoc pf_boot_config_wifi_password */
-void pf_boot_config_wifi_password(char password[64])
+void pf_boot_config_wifi_password(char password[PF_WIFI_PASSWORD_SIZE])
 {
     ensure_loaded();
     memcpy(password, wireless.settings.password, sizeof(wireless.settings.password));
@@ -250,6 +266,13 @@ bool pf_boot_config_set_wifi_password(const char *password)
     return true;
 }
 
+/** @copydoc pf_boot_config_wifi_password_configured */
+bool pf_boot_config_wifi_password_configured(void)
+{
+    ensure_loaded();
+    return wireless.settings.password[0] != '\0';
+}
+
 /** @copydoc pf_boot_config_ble_key */
 void pf_boot_config_ble_key(uint8_t key[32])
 {
@@ -264,6 +287,15 @@ bool pf_boot_config_set_ble_key(const uint8_t key[32])
     if (!loaded || key == NULL) return false;
     memcpy(wireless.settings.ble_key, key, sizeof(wireless.settings.ble_key));
     return true;
+}
+
+/** @copydoc pf_boot_config_ble_key_configured */
+bool pf_boot_config_ble_key_configured(void)
+{
+    ensure_loaded();
+    uint8_t bits = 0u;
+    for (size_t i = 0u; i < sizeof(wireless.settings.ble_key); ++i) bits |= wireless.settings.ble_key[i];
+    return bits != 0u;
 }
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void)
@@ -310,7 +342,68 @@ bool pf_boot_config_set_radios(uint8_t radios)
 {
     ensure_loaded();
     if (!loaded || (radios & ~(PF_WIRELESS_WIFI | PF_WIRELESS_BLE)) != 0u) return false;
-    config.radios_disabled = (uint8_t)(~radios & (PF_WIRELESS_WIFI | PF_WIRELESS_BLE));
+    config.radios_disabled = (uint8_t)((config.radios_disabled & (TCP_CLI_DISABLED | TCP_CLI_AUTH_REQUIRED)) |
+                                     (~radios & (PF_WIRELESS_WIFI | PF_WIRELESS_BLE)));
+    return true;
+}
+
+/** @copydoc pf_boot_config_tcp_cli_enabled */
+bool pf_boot_config_tcp_cli_enabled(void)
+{
+    ensure_loaded();
+    return (config.radios_disabled & TCP_CLI_DISABLED) == 0u;
+}
+
+/** @copydoc pf_boot_config_set_tcp_cli_enabled */
+bool pf_boot_config_set_tcp_cli_enabled(bool enabled)
+{
+    ensure_loaded();
+    if (!loaded) return false;
+    config.radios_disabled = (uint8_t)((config.radios_disabled & ~TCP_CLI_DISABLED) |
+                                     (enabled ? 0u : TCP_CLI_DISABLED));
+    return true;
+}
+
+/** @copydoc pf_boot_config_tcp_cli_auth_required */
+bool pf_boot_config_tcp_cli_auth_required(void)
+{
+    ensure_loaded();
+    return (config.radios_disabled & TCP_CLI_AUTH_REQUIRED) != 0u;
+}
+
+/** @copydoc pf_boot_config_set_tcp_cli_auth_required */
+bool pf_boot_config_set_tcp_cli_auth_required(bool required)
+{
+    ensure_loaded();
+    if (!loaded || (required && !pf_boot_config_ble_key_configured())) return false;
+    config.radios_disabled = (uint8_t)((config.radios_disabled & ~TCP_CLI_AUTH_REQUIRED) |
+                                     (required ? TCP_CLI_AUTH_REQUIRED : 0u));
+    return true;
+}
+
+/** @copydoc pf_boot_config_wifi_auth_state */
+pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void)
+{
+    ensure_loaded();
+    return (pf_wifi_auth_state_t)wireless.settings.wifi_auth_state;
+}
+
+/** @copydoc pf_boot_config_wireless_restart_required */
+bool pf_boot_config_wireless_restart_required(void)
+{
+    ensure_loaded();
+    const uint8_t wireless_flags = PF_WIRELESS_WIFI | PF_WIRELESS_BLE | TCP_CLI_DISABLED | TCP_CLI_AUTH_REQUIRED;
+    return loaded && boot_snapshot_valid &&
+        (((config.radios_disabled ^ boot_radios_disabled) & wireless_flags) != 0u ||
+         memcmp(&wireless.settings, &boot_wireless_settings, sizeof(wireless.settings)) != 0);
+}
+
+/** @copydoc pf_boot_config_set_wifi_auth_state */
+bool pf_boot_config_set_wifi_auth_state(pf_wifi_auth_state_t state)
+{
+    ensure_loaded();
+    if (!loaded || state < PF_WIFI_AUTH_TRY_WPA2 || state > PF_WIFI_AUTH_SAE) return false;
+    wireless.settings.wifi_auth_state = (uint8_t)state;
     return true;
 }
 
@@ -332,7 +425,6 @@ bool pf_boot_config_save(void)
     wireless.magic = 0x4c574650u;
     wireless.version = 1u;
     wireless.size = sizeof(wireless);
-    wireless.settings.reserved = 0u;
     wireless.reserved = 0u;
     wireless.crc = crc32(&wireless, offsetof(wireless_record_t, crc));
     memset(page, 0xff, sizeof(page));

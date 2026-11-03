@@ -12,13 +12,17 @@
 <body>
   <main>
     <h1>PicoForge Wi-Fi console</h1>
-    <p>Raw TCP CLI through this local dashboard. Trusted LAN only: no authentication or encryption.</p>
+    <p>Raw TCP CLI through this local dashboard. The board may require its saved BLE control key; TCP traffic is not
+      encrypted.</p>
     <p>Click the terminal to type. Enter runs a command; Tab completes; arrow keys edit and recall history.</p>
     <div class="console-controls">
       <button id="connect" type="button">Connect</button>
       <button id="disconnect" type="button" disabled>Disconnect</button>
       <span id="console-status" role="status" aria-live="polite">Disconnected</span>
     </div>
+    <label for="console-auth-key">BLE control key (only if board authentication is enabled)
+      <input id="console-auth-key" type="password" autocomplete="off" spellcheck="false">
+    </label>
     <pre id="terminal" tabindex="0" role="textbox" aria-label="PicoForge CLI terminal"
       aria-multiline="true" aria-readonly="true"></pre>
     <p>Only one CLI session is allowed. Close other USB CDC or TCP terminals before connecting.</p>

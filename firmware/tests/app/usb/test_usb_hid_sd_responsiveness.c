@@ -45,7 +45,6 @@ void setUp(void)
     reset_requests = 0u;
     led_requests = msc_requests = force_requests = 0u;
     queries = queued = recovery_requests = normal_submissions = messages = 0u;
-    device_storage_handled = false;
     reply_count = drained_replies = 0u;
     fake_ticks = 0u;
     reply_session_skew = 0u;
@@ -448,17 +447,12 @@ void test_stalled_cdc_session_reports_truncation_once_when_buffer_space_returns(
     cli_tx_count = 0u;
 }
 
-void test_cdc_storage_command_queues_only_verbs_the_device_handler_leaves_to_the_worker(void)
+void test_storage_groups_submit_worker_commands_through_the_usb_task(void)
 {
     cli_session = 1u;
-    device_storage_handled = true;
-    storage_command(NULL, (char *)"set usb on", (void *)"storage");
-    TEST_ASSERT_EQUAL_UINT(0u, normal_submissions);
-    device_storage_handled = false;
-    storage_command(NULL, (char *)"get status", (void *)"storage");
+    TEST_ASSERT_TRUE(submit_storage_command("storage", "get status", NULL));
     TEST_ASSERT_EQUAL_UINT(1u, normal_submissions);
-    device_storage_handled = true;
-    storage_command(NULL, (char *)"ls /", (void *)"fs");
+    TEST_ASSERT_TRUE(submit_storage_command("fs", "ls /", NULL));
     TEST_ASSERT_EQUAL_UINT(2u, normal_submissions);
 }
 

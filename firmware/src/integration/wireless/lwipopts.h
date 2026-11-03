@@ -7,7 +7,7 @@
 #define LWIP_SOCKET 0
 #define LWIP_NETCONN 0
 #define LWIP_TCP 1
-/* TCP serves only the single-client raw CLI (app/wireless/tcp_cli.c); keep its buffers bounded. */
+/* TCP serves only the single-client raw CLI (app/wireless/wifi/tcp_cli.c); keep its buffers bounded. */
 #define TCP_MSS 1460
 #define TCP_WND (2 * TCP_MSS)
 #define TCP_SND_BUF (2 * TCP_MSS)
@@ -17,6 +17,17 @@
 #define LWIP_UDP 1
 #define LWIP_DHCP 1
 #define LWIP_DNS 0
+#define LWIP_IGMP 1
+#define LWIP_MDNS_RESPONDER 1
+#define LWIP_MDNS_SEARCH 0
+#define LWIP_NUM_NETIF_CLIENT_DATA 1
+#define LWIP_NETIF_EXT_STATUS_CALLBACK 1
+#define MDNS_MAX_SERVICES 1
+/* ponytail: hostname-only discovery does not retain truncated queries. The pinned responder cannot cancel their
+ * private callbacks during netif removal. Enable this pool after upgrading to a responder with complete teardown. */
+#define MDNS_MAX_STORED_PKTS 0
+/* One interface: probe plus five delayed IPv4 response/holdoff timers. */
+#define MEMP_NUM_SYS_TIMEOUT (LWIP_NUM_SYS_TIMEOUT_INTERNAL + 6)
 #define LWIP_IPV6 0
 #define LWIP_NETIF_HOSTNAME 1
 #define LWIP_NETIF_STATUS_CALLBACK 1

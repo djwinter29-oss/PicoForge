@@ -13,10 +13,153 @@ namespace PicoForge.Tests;
 
 public sealed class WirelessTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void WirelessStatusAcceptsHidBackendPrefixes(byte version)
+    {
+        var report = new byte[version >= 4 ? 54 : 53];
+        Report().CopyTo(report, 0);
+        report[1] = version;
+        var expected = HidProtocol.ParseWirelessStatus(report);
+        Assert.Equal(version >= 2, expected.TcpCliConfigurable);
+        Assert.Equal(version >= 3, expected.TcpCliAuthConfigurable);
+        foreach (var prefix in new byte[] { 0, HidProtocol.WirelessReportId })
+        {
+            var framed = new byte[256];
+            framed[0] = prefix;
+            report.CopyTo(framed, 1);
+            Assert.Equal(expected, HidProtocol.ParseWirelessStatus(framed));
+            framed[report.Length + 1] = 1;
+            Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(framed));
+        }
+    }
+
+    [Fact]
+    public void ParsesFirmwareGeneratedFeature30StatusVectors()
+    {
+        using var vectors = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "wireless-status-v4.json")));
+        WirelessStatusResponse Parse(string name)
+        {
+            var report = new byte[54];
+            report[0] = HidProtocol.WirelessReportId;
+            Convert.FromHexString(vectors.RootElement.GetProperty(name).GetString()!).CopyTo(report, 1);
+            return HidProtocol.ParseWirelessStatus(report);
+        }
+
+        foreach (var (name, cliEnabled, authRequired, serving) in new[]
+                 {
+                     ("tcp_cli_auth_required", true, true, true),
+                     ("tcp_cli_disabled", false, false, false),
+                 })
+        {
+            var status = Parse(name);
+            Assert.Equal(cliEnabled, status.TcpCliEnabled);
+            Assert.Equal(authRequired, status.TcpCliAuthRequired);
+            Assert.Equal(serving, status.TcpCliStarted);
+            Assert.Equal("PicoForge", status.Ssid);
+            Assert.Equal("connected", status.WifiState);
+            Assert.True(status.RestartRequired);
+            Assert.Null(status.Rssi);
+        }
+
+        var diagnostics = Parse("diagnostics");
+        Assert.Equal(2, diagnostics.Error);
+        Assert.Equal("sae", diagnostics.WifiAuthState);
+        Assert.Equal(0x0102, diagnostics.ReconnectCount);
+        Assert.Equal(-61, diagnostics.Rssi);
+    }
+
+    [Fact]
+    public void V2TcpSwitchSecurityAndExpiryDetails()
+    {
+        var request = Settings();
+        Assert.Equal(83, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1, false, false)[4]);
+        request.TcpCliEnabled = false;
+        Assert.Equal(75, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 1, false, false));
+        request.TcpCliEnabled = true;
+        Assert.Equal(67, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        request.TcpCliAuthRequired = true;
+        Assert.Equal(35, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        var status = Report();
+        status[1] = 3;
+        status[48] = 1;
+        Assert.True(HidProtocol.ParseWirelessStatus(status).TcpCliConfigurable);
+        Assert.False(HidProtocol.ParseWirelessStatus(status).TcpCliEnabled);
+        status[48] = 2;
+        Assert.True(HidProtocol.ParseWirelessStatus(status).TcpCliAuthRequired);
+        status[48] = 4;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(status));
+        var statusV4 = new byte[54];
+        Report().CopyTo(statusV4, 0);
+        statusV4[1] = 4;
+        statusV4[50] = 7;
+        statusV4[53] = 1;
+        var parsedV4 = HidProtocol.ParseWirelessStatus(statusV4);
+        Assert.Equal((ushort)7, parsedV4.ReconnectCount);
+        Assert.True(parsedV4.RestartRequired);
+        string[] labels = ["Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)", "RSN (WPA2/WPA3)",
+            "WPA/RSN", "WPA/RSN"];
+        var report = OperationResult();
+        report[1] = 2;
+        report[5] = 1;
+        report[7] = 1;
+        report[8] = (byte)'x';
+        for (byte security = 0; security < 8; security++)
+        {
+            report[41] = security;
+            var network = HidProtocol.ParseWirelessOperation(report).Networks[0];
+            Assert.Equal(labels[security], network.Security);
+            Assert.Equal(security != 0, network.Secured);
+        }
+        report[41] = 8;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
+        foreach (var (detail, phase) in new[] { (9, "Test connection lost"), (10, "Test credentials expired") })
+        {
+            report = OperationResult(state: 6, detail: (byte)detail);
+            report[1] = 2;
+            Assert.Equal(phase, HidProtocol.ParseWirelessOperation(report).Phase);
+        }
+        report[4] = 11;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
+        report = OperationResult(state: 5);
+        report[221] = 88;
+        report[222] = 2;
+        Assert.Equal((ushort)600, HidProtocol.ParseWirelessOperation(report).RemainingSeconds);
+        report[221] = 89;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
+    }
+
     private static WirelessRequest Settings() => new()
     {
         WifiEnabled = true, BleEnabled = true, Ssid = "Pico網", ConfirmReboot = true, Board = Board
     };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TcpSwitchSaveVerifiesReadback(bool mismatch)
+    {
+        var before = Report(0, 0);
+        var after = Report();
+        before[1] = after[1] = 2;
+        after[48] = mismatch ? (byte)0 : (byte)1;
+        var reads = new Queue<byte[]>([before, after]);
+        var writes = new List<byte[]>();
+        using var hid = new PicoForgeHid(Hardware(), (id, _) => id == 2 ? Configuration() : reads.Dequeue(),
+            writes.Add, _ => Assert.Fail("No reconnect"));
+        var request = Settings();
+        request.TcpCliEnabled = false;
+        if (mismatch) Assert.Throws<InvalidOperationException>(() => hid.SetWireless(request));
+        else Assert.False(hid.SetWireless(request).TcpCliEnabled);
+        Assert.Equal(11, Assert.Single(writes)[4]);
+        Assert.Equal(mismatch, hid.CommandOutcomeUncertain);
+    }
 
     private static readonly BootSettingsResponse Board = new(200, 1, 3);
     private const string BoardJson = "\"board\":{\"system_clock_mhz\":200,\"sdcard_profile\":1,\"radios\":3}";
@@ -33,8 +176,8 @@ public sealed class WirelessTests
 
     private static byte[] Report(byte status = 2, byte transaction = 1)
     {
-        var report = new byte[49];
-        new byte[] { 30, 1, 3, status, transaction, 2, 192, 168, 1, 2 }.CopyTo(report, 0);
+        var report = new byte[53];
+        new byte[] { 30, 3, 3, status, transaction, 2, 192, 168, 1, 2 }.CopyTo(report, 0);
         Encoding.UTF8.GetBytes("Pico網").CopyTo(report, 10);
         report[43] = report[44] = 1;
         return report;
@@ -42,9 +185,9 @@ public sealed class WirelessTests
 
     private static byte[] OperationResult(byte state = 2, byte transaction = 1, byte detail = 0)
     {
-        var report = new byte[221];
+        var report = new byte[223];
         report[0] = 35;
-        report[1] = 1;
+        report[1] = 2;
         report[2] = transaction;
         report[3] = state;
         report[4] = detail;
@@ -63,7 +206,7 @@ public sealed class WirelessTests
     {
         var report = HidProtocol.BuildWirelessRequest(Settings(), 255);
         Assert.Equal(137, report.Length);
-        Assert.Equal(new byte[] { 31, 2, 255, 3, 3 }, report[..5]);
+        Assert.Equal(new byte[] { 31, 2, 255, 3, 83 }, report[..5]);
         Assert.Equal(Encoding.UTF8.GetBytes("Pico網"), report[5..12]);
         Assert.All(report[38..134], value => Assert.Equal(0, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
@@ -71,7 +214,7 @@ public sealed class WirelessTests
         request.Password = "secret12";
         request.BleKey = new string('a', 64);
         report = HidProtocol.BuildWirelessRequest(request, 1);
-        Assert.Equal(0, report[4]);
+        Assert.Equal(80, report[4]);
         Assert.Equal(Encoding.ASCII.GetBytes("secret12\0"), report[38..47]);
         Assert.All(report[102..134], value => Assert.Equal(0xaa, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
@@ -85,7 +228,7 @@ public sealed class WirelessTests
         erase.BleKey = "";
         erase.Board = new(200, 1, 0);
         report = HidProtocol.BuildWirelessRequest(erase, 3);
-        Assert.Equal(0, report[4]);
+        Assert.Equal(48, report[4]);
         Assert.All(report[5..134], value => Assert.Equal(0, value));
     }
 
@@ -108,15 +251,21 @@ public sealed class WirelessTests
         result[41] = 1;
         var decoded = HidProtocol.ParseWirelessOperation(result);
         Assert.Single(decoded.Networks);
-        Assert.Equal(new WirelessNetworkResponse("test", -42, true), decoded.Networks[0]);
+        Assert.Equal(new WirelessNetworkResponse("test", -42, true, "WEP"), decoded.Networks[0]);
         Assert.DoesNotContain("secret12", JsonSerializer.Serialize(decoded));
-        result[41] = 2;
+        result[41] = 8;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(result));
+        Assert.Equal("Could not start connection",
+            HidProtocol.ParseWirelessOperation(OperationResult(state: 6, detail: 8)).Phase);
+        Assert.Throws<InvalidOperationException>(
+            () => HidProtocol.ParseWirelessOperation(OperationResult(state: 6, detail: 11)));
     }
 
     [Theory]
     [InlineData("\"wifi_enabled\":1")]
     [InlineData("\"ble_enabled\":null")]
+    [InlineData("\"tcp_cli_enabled\":null")]
+    [InlineData("\"tcp_cli_enabled\":1")]
     [InlineData("\"ssid\":\"\"")]
     [InlineData("\"ssid\":\"\\u0000\"")]
     [InlineData("\"ssid\":\"ééééééééééééééééé\"")]
@@ -160,13 +309,14 @@ public sealed class WirelessTests
         Assert.DoesNotContain("\"Password\":", json);
         Assert.DoesNotContain("\"BleKey\":", json);
         foreach (var (offset, value) in new (int, byte)[]
-                 { (1, 2), (2, 4), (3, 7), (5, 4), (43, 2), (44, 2), (45, 4), (46, 3), (47, 2), (48, 1) })
+                 { (1, 4), (2, 4), (3, 7), (5, 4), (43, 2), (44, 2), (45, 4), (46, 3),
+                   (47, 4), (48, 4), (49, 4) })
         {
             var report = Report();
             report[offset] = value;
             Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(report));
         }
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(Report()[..48]));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(Report()[..52]));
         var noNul = Report();
         noNul.AsSpan(10, 33).Fill(65);
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(noNul));
@@ -184,7 +334,7 @@ public sealed class WirelessTests
         {
             if (id == 2) return Configuration();
             Assert.Equal(30, id);
-            Assert.Equal(49, size);
+            Assert.Equal(54, size);
             return reports.Dequeue();
         }, writes.Add, _ => Assert.Fail("Wireless provisioning must not reconnect or replay"));
         Assert.Equal("completed", hid.SetWireless(Settings()).Status);
@@ -244,7 +394,7 @@ public sealed class WirelessTests
         var phases = new List<string>();
         Assert.Equal(5, hid.TestWireless("Pico網", "secret12", () => polls++, phases.Add).State);
         Assert.Equal(["Checking password"], phases);
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(OperationResult(6, 1, 8)));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(OperationResult(6, 1, 255)));
         Assert.Equal(2, polls);
         Assert.Equal(1, writes);
         Assert.False(hid.CommandOutcomeUncertain);
