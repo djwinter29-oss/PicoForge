@@ -134,8 +134,6 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       const button = document.createElement("button");
       button.type = "button";
       button.className = "wifi-network";
-      button.setAttribute("role", "option");
-      button.setAttribute("aria-selected", String(el("wifi-ssid").value === network.ssid));
       const name = document.createElement("span");
       name.textContent = network.ssid;
       const details = document.createElement("small");

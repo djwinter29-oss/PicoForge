@@ -177,7 +177,10 @@ so Tab completion and history keys do not work. Save the settings as a named ses
 In the Python and .NET dashboards, the connected **SSID (IP)** label in Live diagnostics becomes a link when the
 firmware reports that the TCP CLI is serving. Clicking it opens a separate web console tab and connects
 automatically. Type in the terminal; there is no local echo. Use **Disconnect** to release it or **Connect** to
-reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser request.
+reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser
+request.
+Browser requests have bounded deadlines; disconnect aborts pending requests, and input with an uncertain delivery
+result is never automatically resent.
 The local host relays bounded raw bytes over TCP, using same-origin HTTP polling between browser and host; browsers
 cannot open raw TCP sockets themselves. Targets come only from the selected USB board's wireless status, not a
 user-supplied host or port. Once connected, the console does not require the USB connection to remain open.

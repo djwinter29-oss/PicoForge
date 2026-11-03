@@ -66,6 +66,18 @@ All operations serialize Feature 20 SET/GET transactions, matching both transact
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for
 fresh corresponding Input status. A timeout or disconnect never replays a command; uncertain results block further
 writes. Reconnecting reads the outstanding result without resubmitting it. Do not run competing HID writers.
+Wireless Feature 31 saves follow the same rule: an uncertain save retains its transaction and expected non-secret
+settings, blocks further writes, and is reconciled only against the matching result and board readback from the same
+board UID after reconnect. A mismatched or unavailable result remains uncertain; the save is never resent.
+Wireless Feature 34 scans and connection tests likewise retain the operation and transaction, then check Feature 35
+after same-board reconnect. Matching terminal results resolve uncertainty; missing, stale, or nonterminal results
+keep wireless operations blocked. These operations are never resent automatically.
+Pending operations are also retained in the current tab's `sessionStorage` so a page reload can resume same-board
+reconciliation. Recovery records contain only allowlisted transaction/readback data; wireless saves store
+a SHA-256 digest of the SSID, never the SSID, Wi-Fi password, or BLE key. Missing, inaccessible, or invalid recovery
+storage fails closed and blocks writes rather than allowing an untracked operation. Completed scan/test results and
+staged test credentials are not restored; the status message tells the user to explicitly repeat the scan or test.
+Keep the tab open until an uncertain operation is resolved; recovery does not survive ending the browser tab's session.
 USB sharing hides the benchmark from submission until fresh status confirms the requested
 ownership and a finished transition, or an explicit rejection. Self-test acceptance keeps controls pending until
 a newer status report, including sequence rollover. Active/pending tests disable settings controls without a

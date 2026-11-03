@@ -10,7 +10,7 @@ function withDocument(run) {
   const element = selector => {
     if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", value: "0", open: false,
       valueAsNumber: 32, setAttribute(name, value) { this[name] = value; },
-      replaceChildren(...children) { this.children = children; } });
+      replaceChildren(...children) { this.children = children; this.replaceCount = (this.replaceCount ?? 0) + 1; } });
     return elements.get(selector);
   };
   globalThis.document = { querySelector: element, createElement: () => ({ children: [],
@@ -25,6 +25,25 @@ function snapshot() {
     memory: { sample_valid: true, initialized: true, configured: true, presence_known: true, present: true },
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
+
+test("board pin tables are reused until the displayed configuration changes", () => withDocument(el => {
+  const state = snapshot();
+  renderStatus(state);
+  const uartRows = el("#board-uart").children;
+  const storageRows = el("#board-storage-pins").children;
+  assert.equal(el("#board-uart").replaceCount, 1);
+  assert.equal(el("#board-storage-pins").replaceCount, 1);
+
+  renderStatus(snapshot());
+  assert.strictEqual(el("#board-uart").children, uartRows);
+  assert.strictEqual(el("#board-storage-pins").children, storageRows);
+  assert.equal(el("#board-uart").replaceCount, 1);
+
+  state.settings = { ...state.settings, reset_cause: 2 };
+  renderStatus(state);
+  assert.equal(el("#board-uart").replaceCount, 2);
+  assert.equal(el("#board-storage-pins").replaceCount, 2);
+}));
 
 test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () => withDocument(el => {
   for (const render of [renderStatus]) {

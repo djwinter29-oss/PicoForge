@@ -1,4 +1,4 @@
-import { decodeConfigReport, withTimeout } from "./device.mjs?v=6";
+import { decodeConfigReport, withTimeout } from "./device.mjs?v=7";
 
 export function decodeWireless(report) {
   const bytes = report instanceof DataView
@@ -151,9 +151,7 @@ export function buildWireless(transaction, settings, tcpCliConfigurable = true, 
 }
 
 async function wirelessCommand(client, operation, settings = {}, terminalStates = [2], onProgress = null) {
-  if (client.state.transport === "ble" || !(client.state.hardware?.capabilities & 128) ||
-    !client.storageReady() || client.state.msc.enabled || client.state.self_test?.active ||
-    client.state.busy || client.state.outcome_uncertain || client.state.reboot_pending || client.outstanding) {
+  if (!client.wirelessReady() || !(client.state.hardware?.capabilities & 128)) {
     throw new Error("Wireless scan and connection test require fresh idle USB storage, with sharing disabled.");
   }
   const transaction = client.transaction % 255 + 1;
@@ -161,27 +159,30 @@ async function wirelessCommand(client, operation, settings = {}, terminalStates 
   client.transaction = transaction;
   const device = client.device;
   const generation = client.generation;
-  client.update({ busy: true, error: null });
-  let sent = false;
-  let resultKnown = false;
+  const pending = { uid: client.state.hardware.serial_number, transaction, operation, terminalStates,
+    timeout: operation === 3 ? 35000 : 15000 };
+  client.reconcileWirelessCommand = (target, command) => reconcileWirelessCommand(target, command);
+  client.update({ busy: true, error: null, recovery_message: null });
+  let persisted = false;
   try {
+    client.pendingWirelessCommand = pending;
+    client.persistPendingOperation();
+    persisted = true;
     await withTimeout(device.sendFeatureReport(34, report), 5000);
-    sent = true;
-    const deadline = Date.now() + (operation === 3 ? 35000 : 15000);
+    const deadline = Date.now() + pending.timeout;
     while (Date.now() < deadline) {
       if (device !== client.device || generation !== client.generation) {
         throw new Error("Wireless request interrupted by disconnect.");
       }
       const result = decodeWirelessResult(await withTimeout(device.receiveFeatureReport(35), 1500));
       if (result.transaction_id === transaction) {
-        if (result.state === 6) {
-          resultKnown = true;
-          throw new Error(operation === 3
-            ? `Could not connect: ${result.phase || "Timed out"}.` : "Wireless operation failed.");
-        }
-        if (terminalStates.includes(result.state)) {
-          resultKnown = true;
-          return result;
+        const outcome = wirelessCommandOutcome(result, pending);
+        if (outcome) {
+          client.clearPersistedOperation();
+          pending.outcome = outcome;
+          client.pendingWirelessCommand = null;
+          if (outcome.kind === "failed") throw new Error(outcome.message);
+          return outcome.result;
         }
         if (result.state === 4) onProgress?.(result.phase);
       }
@@ -189,14 +190,45 @@ async function wirelessCommand(client, operation, settings = {}, terminalStates 
     }
     throw new Error("Wireless operation timed out; do not retry until its result is checked.");
   } catch (error) {
-    if (sent && !resultKnown) {
-      client.update({ outcome_uncertain: true });
+    if (pending.outcome?.kind === "completed") return pending.outcome.result;
+    if (pending.outcome?.kind === "failed") throw new Error(pending.outcome.message);
+    if (!persisted && generation === client.generation) {
+      client.pendingWirelessCommand = null;
+      client.update({ outcome_uncertain: false, error: error.message });
+      throw error;
+    }
+    if (generation === client.generation) {
+      client.update({ outcome_uncertain: true, error: error.message });
     }
     throw error;
   } finally {
     report.fill(0);
-    client.update({ busy: false });
+    if (generation === client.generation) client.update({ busy: false });
   }
+}
+
+function wirelessCommandOutcome(result, pending) {
+  if (result.state === 6) return { kind: "failed", message: pending.operation === 3
+    ? `Could not connect: ${result.phase || "Timed out"}.` : "Wireless operation failed." };
+  return pending.terminalStates.includes(result.state) ? { kind: "completed", result } : null;
+}
+
+export async function reconcileWirelessCommand(device, pending) {
+  const deadline = Date.now() + pending.timeout;
+  while (Date.now() < deadline) {
+    const result = decodeWirelessResult(await withTimeout(device.receiveFeatureReport(35), 1500));
+    if (result.transaction_id === pending.transaction) {
+      const outcome = wirelessCommandOutcome(result, pending);
+      if (outcome) return outcome;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+export function registerWirelessRecovery(client) {
+  client.reconcileWirelessCommand = (device, pending) => reconcileWirelessCommand(device, pending);
+  client.reconcileWirelessSave = (device, pending) => reconcileWirelessSave(client, device, pending);
 }
 
 export async function scanWireless(client) {
@@ -220,19 +252,57 @@ export async function cancelWireless(client) {
   client.update({ wireless_tested: false });
 }
 
+async function digestText(value) {
+  const bytes = new TextEncoder().encode(value);
+  try {
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    return [...digest].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  } finally { bytes.fill(0); }
+}
+
+async function wirelessSaveMatches(wireless, expected) {
+  return wireless.tcp_cli_enabled === expected.tcp_cli_enabled
+    && wireless.tcp_cli_auth_required === expected.tcp_cli_auth_required
+    && wireless.wifi_enabled === expected.wifi_enabled
+    && wireless.ble_enabled === expected.ble_enabled
+    && await digestText(wireless.ssid) === expected.ssid_digest
+    && wireless.password_configured === expected.password_configured
+    && wireless.ble_key_configured === expected.ble_key_configured;
+}
+
+function boardSaveMatches(board, expected) {
+  return board.system_clock_mhz === expected.system_clock_mhz
+    && board.sdcard_profile === expected.sdcard_profile && board.radios === expected.radios;
+}
+
+export async function reconcileWirelessSave(client, device, pending) {
+  const wireless = decodeWireless(await withTimeout(device.receiveFeatureReport(30), 1000));
+  if (wireless.transaction_id !== pending.transaction || wireless.status <= 1) return null;
+  if (wireless.status !== 2) {
+    return { kind: "rejected", message: `Wireless configuration rejected: status ${wireless.status}` };
+  }
+  if (!await wirelessSaveMatches(wireless, pending.expected.wireless)) return null;
+  const board = decodeConfigReport(await withTimeout(device.receiveFeatureReport(2), 1000), client.state.hardware);
+  if (!boardSaveMatches(board, pending.expected.board)) return null;
+  return { kind: "saved", wireless, board };
+}
+
 export async function saveWireless(client, settings) {
-  if (client.state.transport === "ble" || !(client.state.hardware?.capabilities & 128) ||
-    !client.storageReady() || client.state.msc.enabled || client.state.self_test?.active ||
-    client.state.busy || client.state.outcome_uncertain || client.state.reboot_pending || client.outstanding) {
+  if (!client.wirelessReady() || !(client.state.hardware?.capabilities & 128)) {
     throw new Error("Wireless configuration requires fresh idle USB storage, with sharing disabled.");
   }
   const transaction = client.transaction % 255 + 1;
   let report;
   client.transaction = transaction;
-  client.update({ busy: true, error: null });
-  let attempted = false;
+  const device = client.device;
+  const generation = client.generation;
+  let pending = null;
+  client.reconcileWirelessSave = (target, operation) => reconcileWirelessSave(client, target, operation);
+  client.update({ busy: true, error: null, recovery_message: null });
+  let persisted = false;
   try {
-    const previous = decodeWireless(await withTimeout(client.device.receiveFeatureReport(30), 1000));
+    const previous = decodeWireless(await withTimeout(device.receiveFeatureReport(30), 1000));
+    if (device !== client.device || generation !== client.generation) throw new Error("Wireless save interrupted by disconnect.");
     const authRequired = settings.tcp_cli_auth_required
       ?? (settings.ble_key === "" ? false : previous.tcp_cli_auth_required);
     const keyAvailable = settings.ble_key === undefined
@@ -240,40 +310,66 @@ export async function saveWireless(client, settings) {
     if (authRequired && !keyAvailable) throw new Error("TCP CLI authentication requires a configured BLE control key");
     report = buildWireless(transaction, settings, previous.tcp_cli_configurable,
       previous.tcp_cli_auth_configurable);
-    attempted = true;
-    await withTimeout(client.device.sendFeatureReport(31, report), 5000);
+    pending = { uid: client.state.hardware.serial_number, transaction,
+      expected: { wireless: {
+        tcp_cli_enabled: settings.tcp_cli_enabled ?? previous.tcp_cli_enabled,
+        tcp_cli_auth_required: authRequired,
+        wifi_enabled: settings.wifi_enabled, ble_enabled: settings.ble_enabled,
+        ssid_digest: await digestText(settings.ssid),
+        password_configured: settings.use_tested_wifi
+          || (settings.password !== undefined ? Boolean(settings.password) : previous.password_configured),
+        ble_key_configured: settings.ble_key !== undefined ? Boolean(settings.ble_key)
+          : previous.ble_key_configured,
+      }, board: { system_clock_mhz: settings.board.system_clock_mhz,
+        sdcard_profile: settings.board.sdcard_profile, radios: settings.board.radios } } };
+    client.pendingWirelessSave = pending;
+    client.persistPendingOperation();
+    persisted = true;
+    await withTimeout(device.sendFeatureReport(31, report), 5000);
+    if (device !== client.device || generation !== client.generation) throw new Error("Wireless save interrupted by disconnect.");
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
-      const saved = decodeWireless(await withTimeout(client.device.receiveFeatureReport(30), 1000));
+      const saved = decodeWireless(await withTimeout(device.receiveFeatureReport(30), 1000));
+      if (device !== client.device || generation !== client.generation) throw new Error("Wireless save interrupted by disconnect.");
       if (saved.transaction_id === transaction && saved.status > 1) {
         if (saved.status !== 2) {
-          attempted = false;
+          client.clearPersistedOperation();
+          pending.outcome = { kind: "rejected",
+            message: `Wireless configuration rejected: status ${saved.status}` };
+          client.pendingWirelessSave = null;
+          client.update({ outcome_uncertain: false });
           throw new Error(`Wireless configuration rejected: status ${saved.status}`);
         }
-        if (saved.tcp_cli_enabled !== (settings.tcp_cli_enabled ?? previous.tcp_cli_enabled) ||
-          saved.tcp_cli_auth_required !== authRequired ||
-          saved.wifi_enabled !== settings.wifi_enabled || saved.ble_enabled !== settings.ble_enabled ||
-          saved.ssid !== settings.ssid ||
-          saved.password_configured !== (settings.use_tested_wifi
-            || (settings.password !== undefined ? Boolean(settings.password) : previous.password_configured)) ||
-          saved.ble_key_configured !== (settings.ble_key !== undefined ? Boolean(settings.ble_key)
-            : previous.ble_key_configured)) {
+        if (!await wirelessSaveMatches(saved, pending.expected.wireless)) {
           throw new Error("Wireless save did not confirm the requested configuration.");
         }
-        const board = decodeConfigReport(await withTimeout(client.device.receiveFeatureReport(2), 1000),
+        const board = decodeConfigReport(await withTimeout(device.receiveFeatureReport(2), 1000),
           client.state.hardware);
-        if (board.system_clock_mhz !== settings.board.system_clock_mhz
-          || board.sdcard_profile !== settings.board.sdcard_profile || board.radios !== settings.board.radios) {
+        if (device !== client.device || generation !== client.generation) throw new Error("Wireless save interrupted by disconnect.");
+        if (!boardSaveMatches(board, pending.expected.board)) {
           throw new Error("Board configuration save was not confirmed.");
         }
-        client.update({ settings: board, reboot_pending: true, wireless_tested: false });
+        client.clearPersistedOperation();
+        pending.outcome = { kind: "saved", wireless: saved, board };
+        client.pendingWirelessSave = null;
+        client.update({ settings: board, wireless: saved, wireless_error: null, reboot_pending: true,
+          outcome_uncertain: false, wireless_tested: false });
         return saved;
       }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     throw new Error("Wireless save result timed out; inspect after reconnect, never replay.");
   } catch (error) {
-    client.update({ outcome_uncertain: attempted, error: error.message });
+    if (pending?.outcome?.kind === "saved") return pending.outcome.wireless;
+    if (pending?.outcome?.kind === "rejected") throw new Error(pending.outcome.message);
+    if (generation === client.generation) {
+      if (!persisted) client.pendingWirelessSave = null;
+      client.update({ outcome_uncertain: Boolean(pending && client.pendingWirelessSave === pending),
+        error: error.message });
+    }
     throw error;
-  } finally { report?.fill(0); client.update({ busy: false }); }
+  } finally {
+    report?.fill(0);
+    if (generation === client.generation) client.update({ busy: false });
+  }
 }

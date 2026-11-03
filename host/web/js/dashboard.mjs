@@ -12,6 +12,9 @@ function uptimeLabel(milliseconds) {
 
 let lastStorageDetails = null;
 let cardAbsent = false;
+let boardConfigurationSignature = null;
+let boardConfigurationElements = null;
+let boardConfigurationDocument = null;
 
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
@@ -75,7 +78,9 @@ export function renderStatus(snapshot) {
   mscControl.disabled = snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
     || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
     || Boolean(msc?.enabled && !msc.force_return_supported);
-  document.querySelector("#msc-note").textContent = msc?.enabled && !msc.force_return_supported
+  document.querySelector("#msc-note").textContent = snapshot.msc_outcome_uncertain
+    ? "Storage command outcome is uncertain. Check fresh ownership status before taking action."
+    : msc?.enabled && !msc.force_return_supported
     ? "Update firmware to disable the USB drive from Pico; this firmware requires manual host eject."
     : msc?.request_rejected
     ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
@@ -83,6 +88,9 @@ export function renderStatus(snapshot) {
     : msc?.transition_pending ? "Storage handoff in progress; waiting for fresh ownership status."
       : "";
   document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
+  const mscStatusRefresh = document.querySelector("#msc-status-refresh");
+  mscStatusRefresh.hidden = !snapshot.msc_outcome_uncertain;
+  mscStatusRefresh.disabled = Boolean(snapshot.status_read_error || snapshot.status_reading);
   renderBoardConfiguration(snapshot);
   renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc);
   renderSelfTest(snapshot);
@@ -177,10 +185,24 @@ export function storageSpeed(settings) {
 }
 
 function renderBoardConfiguration(snapshot) {
+  if (boardConfigurationDocument !== document) {
+    boardConfigurationDocument = document;
+    boardConfigurationSignature = null;
+    boardConfigurationElements = {
+      uartTitle: document.querySelector("#board-uart-title"),
+      storageTitle: document.querySelector("#board-storage-title"),
+      uartTable: document.querySelector("#board-uart"),
+      storageTable: document.querySelector("#board-storage-pins"),
+      resetCause: document.querySelector("#board-reset-cause"),
+    };
+  }
+  const { uartTitle, storageTitle, uartTable, storageTable, resetCause } = boardConfigurationElements;
   const configuration = snapshot.board_configuration;
-  const set = (selector, value) => { document.querySelector(selector).textContent = value; };
+  const setText = (element, value) => {
+    if (element.textContent !== value) element.textContent = value;
+  };
   const formatPin = pin => pin === 255 || pin == null ? "Unassigned" : `GP${pin}`;
-  const renderPins = (selector, signals, pins) => {
+  const renderPins = (table, signals, pins) => {
     const headings = document.createElement("tr");
     const values = document.createElement("tr");
     signals.forEach((signal, index) => {
@@ -192,24 +214,28 @@ function renderBoardConfiguration(snapshot) {
       headings.append(heading);
       values.append(cell);
     });
-    document.querySelector(selector).replaceChildren(headings, values);
+    table.replaceChildren(headings, values);
   };
   const spi = Boolean(snapshot.hardware?.capabilities & 8);
   const labels = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
-  set("#board-uart-title", configuration && configuration.monitor_uart_index !== 255
-    ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
-  set("#board-storage-title", configuration ? `Storage (${spi ? "SPI" : "SDIO-PIO"})` : "Storage");
-  renderPins("#board-uart", ["TX", "RX"],
-    [configuration?.monitor_uart_tx_gpio, configuration?.monitor_uart_rx_gpio]);
-  renderPins("#board-storage-pins", [...labels, "Card detect"],
-    [...labels.map((_, index) => configuration?.storage_gpios[index]), configuration?.card_detect_gpio]);
+  const signature = JSON.stringify([spi, configuration]);
+  if (signature !== boardConfigurationSignature) {
+    boardConfigurationSignature = signature;
+    setText(uartTitle, configuration && configuration.monitor_uart_index !== 255
+      ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
+    setText(storageTitle, configuration ? `Storage (${spi ? "SPI" : "SDIO-PIO"})` : "Storage");
+    renderPins(uartTable, ["TX", "RX"],
+      [configuration?.monitor_uart_tx_gpio, configuration?.monitor_uart_rx_gpio]);
+    renderPins(storageTable, [...labels, "Card detect"],
+      [...labels.map((_, index) => configuration?.storage_gpios[index]), configuration?.card_detect_gpio]);
+  }
   if (!configuration) {
-    set("#board-reset-cause", "--");
+    setText(resetCause, "--");
     return;
   }
-  const resetCause = ({ 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" })[configuration.reset_cause]
+  const resetCauseLabel = ({ 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" })[configuration.reset_cause]
     ?? `Unassigned (${configuration.reset_cause})`;
-  set("#board-reset-cause", resetCause);
+  setText(resetCause, resetCauseLabel);
 }
 
 function renderMemory(memory, filesystemFormat, stale, msc) {

@@ -205,7 +205,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .actions select:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; }
 .actions #rescan-boards { min-width: auto; }
 .actions #rescan-boards::before { content: none; }
-.actions #rescan-boards::before { content: none; }
 .settings-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 8px; padding: 1px; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 3px 12px #17332e08; }
 .settings-controls > .metric { min-height: 72px; padding: 12px 14px; }
 .settings-controls label { min-height: 72px; padding: 12px 14px; display: grid; align-content: start; gap: 8px; color: var(--muted); background: var(--paper); font-size: 12px; }
@@ -227,7 +226,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .settings-controls select:disabled, .settings-controls input:disabled { opacity: .55; }
 .settings-note { grid-column: 2; margin: 0; color: var(--teal-dark); font-weight: 600; overflow-wrap: anywhere; }
 
-.self-test-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 20px; }
 .self-test-controls { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 12px; margin: 0; }
 .self-test-disclosure { margin: 0; }
 .self-test-disclosure > summary > h2 { display: inline; margin: 0 12px 0 4px; font-size: inherit; }

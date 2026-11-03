@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport, decodeSelfTestReport,
+  PicoForgeWebHid, decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
+  decodeSelfTestReport,
   decodeControlResult, buildControlRequest, matchesPicoForge,
 } from "../js/device.mjs";
 import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit } from "./support/fixtures.mjs";
@@ -25,6 +26,29 @@ test("explicit connect always requests selection regardless of previously author
     assert.equal(other.opened, false);
     await client.disconnect();
   }
+});
+
+test("unavailable recovery storage fails closed and keeps its error visible across disconnect", () => {
+  const unavailable = new PicoForgeWebHid(null, () => {}, { pendingStore: null });
+  assert.equal(unavailable.state.outcome_uncertain, true);
+  assert.match(unavailable.state.error, /session storage is unavailable/);
+  unavailable.clearConnection();
+  assert.equal(unavailable.state.outcome_uncertain, true);
+  assert.match(unavailable.state.error, /session storage is unavailable/);
+});
+
+test("malformed saved operation records fail closed and cannot authorize a write", async () => {
+  const { device, hid, sent, pendingStore } = fakeConnection();
+  pendingStore.setItem("picoforge.direct.pending-operation", JSON.stringify({
+    version: 1, kind: "control", uid: "0102030405060708",
+    request: { transaction_id: 1, opcode: 1 }, password: "unexpected",
+  }));
+  const client = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, pendingStore });
+  assert.match(client.state.error, /invalid/);
+  await client.connect();
+  emit(device, 3, telemetry());
+  await assert.rejects(client.setLed(true), /unavailable/);
+  assert.equal(sent.length, 0);
 });
 
 test("cancelled or denied selection never opens a previously authorized device", async () => {
@@ -248,6 +272,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   await client.connect();
   assert.equal(client.state.freshness[3], "unavailable");
   emit(device, 3, telemetry()); emit(device, 10, storage()); emit(device, 11, selfTest());
+  assert.ok(client.expiryTimer, "fresh reports schedule the next expiry instead of polling");
   now = 749; client.expireReports();
   assert.ok(client.state.runtime);
   now = 750; client.expireReports();
@@ -268,6 +293,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   emit(device, 3, telemetry()); client.expireReports(true);
   assert.equal(client.state.runtime, null);
   hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+  assert.equal(client.expiryTimer, null);
   for (const field of ["hardware", "settings", "runtime", "board_status", "memory", "msc", "self_test"]) {
     assert.equal(client.state[field], null, field);
   }
@@ -389,6 +415,34 @@ test("disconnect during GET clears caches and reconnect resolves only the origin
   assert.equal(client.state.error, null, "old request must not overwrite the reconnected state");
   assert.equal(sent.length, 1);
   await client.disconnect();
+});
+
+test("pending control transactions survive a page reload and reconcile without replay", async () => {
+  const { client, device, hid, sent, pendingStore } = fakeConnection();
+  await client.connect();
+  emit(device, 3, telemetry());
+  const receive = device.receiveFeatureReport;
+  device.receiveFeatureReport = async id => {
+    if (id === 20) {
+      hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+      device.opened = false;
+      throw new Error("USB disconnected");
+    }
+    return receive(id);
+  };
+  await assert.rejects(client.setLed(true), /disconnect/);
+  const saved = JSON.parse(pendingStore.getItem("picoforge.direct.pending-operation"));
+  assert.equal(saved.kind, "control");
+  assert.equal(saved.uid, client.reconnectUid);
+
+  device.receiveFeatureReport = receive;
+  const restored = new client.constructor(hid, () => {}, { sleep: async () => {}, pendingStore });
+  await restored.attachDevice(device);
+  assert.equal(restored.state.outcome_uncertain, false);
+  assert.match(restored.state.recovery_message, /confirmed after reconnect/);
+  assert.equal(pendingStore.getItem("picoforge.direct.pending-operation"), null);
+  assert.equal(sent.length, 1, "recovery reads the result and never resends the command");
+  await restored.disconnect();
 });
 
 test("MSC-style re-enumeration reconnects by Feature 1 UID, not a non-standard serialNumber property", async () => {

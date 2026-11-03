@@ -3,14 +3,33 @@ import { createHmac, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PicoForgeBluetooth, BLE_SERVICE } from "../js/bluetooth.mjs";
-import { buildWireless, buildWirelessCommand, decodeWireless, decodeWirelessResult, saveWireless } from "../js/wireless.mjs";
+import { PicoForgeWebHid } from "../js/device.mjs";
+import {
+  buildWireless, buildWirelessCommand, decodeWireless, decodeWirelessResult, registerWirelessRecovery,
+  saveWireless, scanWireless, testWireless,
+} from "../js/wireless.mjs";
 import { bindWirelessForm } from "../js/wireless-form.mjs";
 import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result } from "./support/fixtures.mjs";
 
 /** Board settings matching the config() fixture readback. */
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
+const memoryPendingStore = () => {
+  const saved = new Map();
+  return { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value),
+    removeItem: key => saved.delete(key) };
+};
 const statusVectors = JSON.parse(readFileSync(
   new URL("../../../tests/fixtures/wireless-status-v4.json", import.meta.url), "utf8"));
+const wirelessStatus = (transaction, status) => {
+  const report = new Uint8Array(52);
+  report.set([3, 0, status, transaction]);
+  return report;
+};
+const wirelessResult = (transaction, state, detail = 0) => {
+  const report = new Uint8Array(222);
+  report.set([2, transaction, state, detail]);
+  return report;
+};
 
 test("parses firmware-generated Feature 30 status vectors", () => {
   const authenticated = decodeWireless(Buffer.from(statusVectors.tcp_cli_auth_required, "hex"));
@@ -382,6 +401,189 @@ test("USB wireless save sends once, verifies sanitized readback, and locks write
   }
 });
 
+test("uncertain wireless saves stay locked and reconcile only a matching same-board result", async () => {
+  for (const outcome of ["saved", "wrong-transaction", "wrong-board", "rejected"]) {
+    const { client, device, hid, sent } = fakeConnection({ capabilities: 128 | 55 });
+    await client.connect();
+    emit(device, 10, storage()); emit(device, 11, selfTest());
+    const receive = device.receiveFeatureReport;
+    let disconnected = false;
+    device.receiveFeatureReport = async id => {
+      if (id === 30) {
+        if (!sent.length) return wirelessStatus(0, 0);
+        if (!disconnected) {
+          disconnected = true;
+          hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+          device.opened = false;
+          throw new Error("USB disconnected");
+        }
+        return wirelessStatus(outcome === "wrong-transaction" ? 2 : 1, outcome === "rejected" ? 3 : 2);
+      }
+      if (id === 2 && outcome === "wrong-board") {
+        const wrong = config();
+        wrong[3] = 0;
+        return wrong;
+      }
+      return receive(id);
+    };
+    const settings = { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD };
+    await assert.rejects(saveWireless(client, settings), /disconnected/);
+    assert.equal(client.state.outcome_uncertain, true);
+    assert.ok(client.pendingWirelessSave);
+    await assert.rejects(saveWireless(client, settings), /fresh idle/);
+    assert.equal(sent.length, 1, "an uncertain save is never submitted a second time");
+
+    hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(client.state.connected, true);
+    if (outcome === "saved") {
+      assert.equal(client.pendingWirelessSave, null);
+      assert.equal(client.state.outcome_uncertain, false);
+      assert.equal(client.state.reboot_pending, true);
+    } else if (outcome === "rejected") {
+      assert.equal(client.pendingWirelessSave, null);
+      assert.equal(client.state.outcome_uncertain, false);
+      assert.match(client.state.error, /rejected/);
+    } else {
+      assert.ok(client.pendingWirelessSave);
+      assert.equal(client.state.outcome_uncertain, true);
+      assert.equal(client.state.reboot_pending, false);
+    }
+    await client.disconnect();
+  }
+});
+
+test("uncertain wireless save reconciliation refuses a different board UID", async () => {
+  const { client, device, hid, sent } = fakeConnection({ capabilities: 128 | 55 });
+  await client.connect();
+  emit(device, 10, storage()); emit(device, 11, selfTest());
+  const receive = device.receiveFeatureReport;
+  let disconnected = false;
+  let wrongUid = false;
+  device.receiveFeatureReport = async id => {
+    if (id === 1 && wrongUid) {
+      const report = identity(128 | 55);
+      report[3]++;
+      return report;
+    }
+    if (id === 30) {
+      if (!sent.length) return wirelessStatus(0, 0);
+      if (!disconnected) {
+        disconnected = true;
+        hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+        device.opened = false;
+        throw new Error("USB disconnected");
+      }
+      return wirelessStatus(1, 2);
+    }
+    return receive(id);
+  };
+  await assert.rejects(saveWireless(client, { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD }),
+    /disconnected/);
+  wrongUid = true;
+  hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(client.device, null);
+  assert.ok(client.pendingWirelessSave);
+  assert.equal(client.state.outcome_uncertain, true);
+
+  wrongUid = false;
+  hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(client.pendingWirelessSave, null);
+  assert.equal(client.state.reboot_pending, true);
+  await client.disconnect();
+});
+
+test("uncertain wireless scan and test results reconcile without replay after reconnect", async () => {
+  for (const scenario of [
+    { operation: 1, resultState: 2, expected: "completed" },
+    { operation: 3, resultState: 5, expected: "completed" },
+    { operation: 3, resultState: 6, expected: "failed" },
+    { operation: 1, resultState: 2, expected: "unresolved", wrongTransaction: true },
+  ]) {
+    const { client, device, hid, sent } = fakeConnection({ capabilities: 128 | 55 });
+    await client.connect();
+    emit(device, 10, storage()); emit(device, 11, selfTest());
+    const receive = device.receiveFeatureReport;
+    let disconnected = false;
+    let reconnectResult = null;
+    device.receiveFeatureReport = async id => {
+      if (id === 35) {
+        if (!disconnected) {
+          disconnected = true;
+          hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+          device.opened = false;
+          throw new Error("USB disconnected");
+        }
+        return reconnectResult;
+      }
+      return receive(id);
+    };
+    const pending = scenario.operation === 1
+      ? scanWireless(client) : testWireless(client, { ssid: "network", password: "passphrase" });
+    await assert.rejects(pending, /disconnected/);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0][0], 34);
+    assert.ok(client.pendingWirelessCommand);
+    assert.equal(client.pendingWirelessCommand.operation, scenario.operation);
+    client.pendingWirelessCommand.timeout = 20;
+    await assert.rejects(scanWireless(client), /fresh idle/);
+    assert.equal(sent.length, 1, "an uncertain operation cannot be submitted again");
+
+    const transaction = sent[0][3];
+    reconnectResult = wirelessResult(transaction + Number(Boolean(scenario.wrongTransaction)), scenario.resultState,
+      scenario.resultState === 6 ? 7 : 0);
+    hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert.equal(client.state.connected, true);
+    if (scenario.expected === "unresolved") {
+      assert.ok(client.pendingWirelessCommand);
+      assert.equal(client.state.outcome_uncertain, true);
+      await assert.rejects(scanWireless(client), /fresh idle/);
+      assert.equal(sent.length, 1);
+    } else {
+      assert.equal(client.pendingWirelessCommand, null);
+      assert.equal(client.state.outcome_uncertain, false);
+      assert.equal(scenario.expected === "failed", /Could not connect/.test(client.state.error ?? ""));
+    }
+    await client.disconnect();
+  }
+});
+
+test("pending wireless scans survive a page reload without resubmitting or storing credentials", async () => {
+  const { client, device, hid, sent, pendingStore } = fakeConnection({ capabilities: 128 | 55 });
+  await client.connect();
+  emit(device, 10, storage()); emit(device, 11, selfTest());
+  const send = device.sendFeatureReport;
+  device.sendFeatureReport = async (id, report) => {
+    await send(id, report);
+    if (id === 34) {
+      hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+      device.opened = false;
+      throw new Error("USB disconnected");
+    }
+  };
+  await assert.rejects(scanWireless(client), /disconnected/);
+  const saved = JSON.parse(pendingStore.getItem("picoforge.direct.pending-operation"));
+  assert.equal(saved.kind, "wireless-command");
+  assert.equal(saved.operation, 1);
+  assert.equal("ssid" in saved, false);
+  assert.equal("password" in saved, false);
+
+  const transaction = saved.transaction;
+  const restored = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, pendingStore });
+  registerWirelessRecovery(restored);
+  device.receiveFeatureReport = async id => id === 35 ? wirelessResult(transaction, 2)
+    : id === 1 ? identity(128 | 55) : id === 2 ? config() : null;
+  await restored.attachDevice(device);
+  assert.equal(restored.state.outcome_uncertain, false);
+  assert.match(restored.state.recovery_message, /scan completed after reconnect/);
+  assert.equal(pendingStore.getItem("picoforge.direct.pending-operation"), null);
+  assert.equal(sent.length, 1, "recovery reads the result and never resends the scan");
+  await restored.disconnect();
+});
+
 test("USB wireless save treats unconfirmed board settings as uncertain", async () => {
   const { client, device, sent } = fakeConnection({ capabilities: 128 | 55 });
   await client.connect();
@@ -399,6 +601,53 @@ test("USB wireless save treats unconfirmed board settings as uncertain", async (
   assert.equal(client.state.outcome_uncertain, true);
   assert.equal(Boolean(client.state.reboot_pending), false);
   await client.disconnect();
+});
+
+test("pending wireless saves survive a page reload using only a non-secret expected-state digest", async () => {
+  const { client, device, hid, sent, pendingStore } = fakeConnection({ capabilities: 128 | 55 });
+  await client.connect();
+  emit(device, 10, storage()); emit(device, 11, selfTest());
+  const receive = device.receiveFeatureReport;
+  device.receiveFeatureReport = async id => id === 30 ? wirelessStatus(0, 0) : receive(id);
+  const send = device.sendFeatureReport;
+  device.sendFeatureReport = async (id, report) => {
+    await send(id, report);
+    if (id === 31) {
+      hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+      device.opened = false;
+      throw new Error("USB disconnected");
+    }
+  };
+  const settings = { wifi_enabled: true, ble_enabled: false, ssid: "reload-network",
+    password: "sensitive-password", ble_key: "ab".repeat(32), board: { ...BOARD, radios: 1 } };
+  await assert.rejects(saveWireless(client, settings), /disconnected/);
+  const raw = pendingStore.getItem("picoforge.direct.pending-operation");
+  const saved = JSON.parse(raw);
+  assert.equal(saved.kind, "wireless-save");
+  assert.equal("ssid" in saved.expected.wireless, false);
+  assert.equal("password" in saved.expected.wireless, false);
+  assert.equal("ble_key" in saved.expected.wireless, false);
+  assert.doesNotMatch(raw, /reload-network|sensitive-password|abababab/);
+  assert.match(saved.expected.wireless.ssid_digest, /^[a-f0-9]{64}$/);
+
+  const status = new Uint8Array(52);
+  status.set([3, 1, 2, saved.transaction]);
+  status.set(new TextEncoder().encode("reload-network"), 9);
+  status[42] = 1;
+  status[43] = 1;
+  const board = config();
+  board[13] |= 8;
+  const restored = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, pendingStore });
+  registerWirelessRecovery(restored);
+  device.receiveFeatureReport = async id => id === 30 ? status : id === 2 ? board
+    : id === 1 ? identity(128 | 55) : null;
+  await restored.attachDevice(device);
+  assert.equal(restored.state.outcome_uncertain, false);
+  assert.equal(restored.state.reboot_pending, true);
+  assert.match(restored.state.recovery_message, /confirmed after reconnect/);
+  assert.equal(pendingStore.getItem("picoforge.direct.pending-operation"), null);
+  assert.equal(sent.length, 1, "recovery verifies readback and never resends the save");
+  await restored.disconnect();
 });
 
 test("USB wireless TCP switch save verifies readback and does not change board radio bits", async () => {
@@ -479,7 +728,7 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
       assert.deepEqual(options, { filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }], optionalServices: [BLE_SERVICE] });
       return ble;
     } };
-    client = new PicoForgeBluetooth(bluetooth, () => {}, { sleep: async () => {} });
+    client = new PicoForgeBluetooth(bluetooth, () => {}, { sleep: async () => {}, pendingStore: memoryPendingStore() });
     await client.connect();
     assert.equal(client.state.connected, true);
     assert.equal(client.state.transport, "ble");
@@ -544,7 +793,7 @@ test("BLE retries first-link discovery on the chosen board and keeps the failure
   };
   let prompts = 0;
   const client = new PicoForgeBluetooth({ async requestDevice() { prompts++; return ble; } }, () => {},
-    { sleep: async () => {} });
+    { sleep: async () => {}, pendingStore: memoryPendingStore() });
   await client.connect();
   assert.equal(client.state.connected, true, "the first-link discovery failure is retried");
   assert.deepEqual([prompts, connects], [1, 2], "retries reuse the chosen board without a new prompt");

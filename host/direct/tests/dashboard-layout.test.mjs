@@ -1,20 +1,26 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=6";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=7";
+import { PicoForgeWebHid } from "../js/device.mjs?v=7";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=8";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
+
+const memorySessionStorage = () => {
+  const saved = new Map();
+  return { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value),
+    removeItem: key => saved.delete(key) };
+};
 
 test("standalone dashboard labels profiles, active measurements, controls and accessible statuses", () => {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/direct\.css\?v=15"/);
-  assert.match(html, /src="js\/app\.mjs\?v=30"/);
+  assert.match(html, /src="js\/app\.mjs\?v=31"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
-  assert.match(app, /from "\.\/device\.mjs\?v=6"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=12"/);
+  assert.match(app, /from "\.\/device\.mjs\?v=7"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=13"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
     assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));
@@ -101,6 +107,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     document: globalThis.document, window: globalThis.window,
     navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
     secure: Object.getOwnPropertyDescriptor(globalThis, "isSecureContext"),
+    sessionStorage: Object.getOwnPropertyDescriptor(globalThis, "sessionStorage"),
   };
   const prototypes = new Map(["connect", "setMsc", "saveSettings", "reboot"].map(name =>
     [name, PicoForgeWebHid.prototype[name]]));
@@ -120,6 +127,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   globalThis.window = { confirm() { assert.fail("Use styled dialogs, not browser confirmations"); } };
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { hid: new EventTarget() } });
   Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
+  Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: memorySessionStorage() });
   PicoForgeWebHid.prototype.connect = async function () {
     client = this;
     const hardware = decodeIdentityReport(identity());
@@ -143,6 +151,9 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     assert.equal(el("#settings-storage").value, "1");
     assert.equal(el("#settings-note").hidden, true);
     assert.equal(el("#status-message").hidden, false);
+    client.update({ recovery_message: "Pending command result confirmed after reconnect." });
+    assert.equal(el("#status-message").textContent, "Pending command result confirmed after reconnect.");
+    client.update({ recovery_message: null });
     assert.equal(el("#settings-save").disabled, true);
     client.update({ self_test_command_pending: true });
     assert.equal(el("#settings-note").hidden, true);
@@ -289,6 +300,8 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     else delete globalThis.navigator;
     if (saved.secure) Object.defineProperty(globalThis, "isSecureContext", saved.secure);
     else delete globalThis.isSecureContext;
+    if (saved.sessionStorage) Object.defineProperty(globalThis, "sessionStorage", saved.sessionStorage);
+    else delete globalThis.sessionStorage;
   }
 });
 
@@ -296,6 +309,7 @@ test("connection dialogs scan before prompting for a key and preserve transport 
   const saved = {
     document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
     secure: Object.getOwnPropertyDescriptor(globalThis, "isSecureContext"),
+    sessionStorage: Object.getOwnPropertyDescriptor(globalThis, "sessionStorage"),
   };
   const prototypes = new Map(["connect", "disconnect", "setControlKey", "setViewOnly"].map(name =>
     [name, PicoForgeBluetooth.prototype[name]]));
@@ -313,6 +327,7 @@ test("connection dialogs scan before prompting for a key and preserve transport 
   Object.defineProperty(globalThis, "navigator", { configurable: true,
     value: { hid: new EventTarget(), bluetooth: {} } });
   Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
+  Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: memorySessionStorage() });
   let client;
   let scans = 0;
   let failure = false;
@@ -449,7 +464,8 @@ test("connection dialogs scan before prompting for a key and preserve transport 
   } finally {
     for (const [name, method] of prototypes) PicoForgeBluetooth.prototype[name] = method;
     globalThis.document = saved.document;
-    for (const [name, descriptor] of [["navigator", saved.navigator], ["isSecureContext", saved.secure]]) {
+    for (const [name, descriptor] of [["navigator", saved.navigator], ["isSecureContext", saved.secure],
+      ["sessionStorage", saved.sessionStorage]]) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
       else delete globalThis[name];
     }

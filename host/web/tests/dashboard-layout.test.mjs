@@ -26,6 +26,9 @@ test("server dashboard keeps radio dialogs, confirmation controls and benchmark 
     assert.doesNotMatch(settings, /id="wifi-ssid"|id="wifi-password"|id="ble-secret"/);
     assert.match(dashboard, /<dialog[^>]*id="wifi-dialog"/);
     assert.match(dashboard, /<dialog[^>]*id="ble-dialog"/);
+    assert.match(dashboard, /id="msc-status-refresh"[^>]*hidden/);
+    assert.match(dashboard, /id="wifi-networks"[^>]*role="group"/);
+    assert.doesNotMatch(dashboard, /role="listbox"|role="option"/);
     assert.doesNotMatch(dashboard, /id="wireless-save"/);
     assert.match(dashboard, /id="configuration-wireless-warning" hidden/);
     assert.match(footer, /role="status" aria-live="polite"/);

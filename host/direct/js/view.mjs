@@ -87,9 +87,9 @@ export function renderStatus(snapshot) {
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = snapshot.error
-    ?? (snapshot.reboot_pending ? "Reboot accepted; waiting for USB reconnection"
-      : snapshot.reconnecting ? "USB device reconnecting; reopening HID automatically"
-      : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
+    ?? (snapshot.reconnecting ? "USB device reconnecting; reopening HID automatically"
+      : snapshot.recovery_message ?? (snapshot.reboot_pending ? "Reboot accepted; waiting for USB reconnection"
+        : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device"));
   for (const [id, label] of [[3, "telemetry"], [10, "storage"], [11, "self-test"]]) {
     const status = document.querySelector(`#${label}-freshness`);
     status.textContent = id === 11 && !(hardware?.capabilities & 32)
@@ -102,6 +102,10 @@ export function renderStatus(snapshot) {
 function renderBoardConfiguration(snapshot) {
   const config = snapshot.settings;
   const spi = Boolean(snapshot.hardware?.capabilities & 8);
+  const signature = JSON.stringify([spi, config?.monitor_uart_index, config?.monitor_uart_tx_gpio,
+    config?.monitor_uart_rx_gpio, config?.storage_gpios, config?.card_detect_gpio, config?.reset_cause]);
+  const uartTable = document.querySelector("#board-uart");
+  if (signature === uartTable.dataset.boardConfiguration) return;
   const signals = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
   const renderPins = (selector, labels, pins) => {
     const headings = document.createElement("tr");
@@ -128,6 +132,7 @@ function renderBoardConfiguration(snapshot) {
   document.querySelector("#board-reset-cause").textContent = config
     ? ["Unknown", "Power-on", "Watchdog", "Software request", "Watchdog after HardFault"][config.reset_cause]
       ?? `Unassigned (${config.reset_cause})` : "--";
+  uartTable.dataset.boardConfiguration = signature;
 }
 
 function updateClockOptions(select, mcu, savedClock) {

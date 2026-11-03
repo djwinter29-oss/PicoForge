@@ -1,8 +1,10 @@
-import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=6";
-import { renderStatus } from "./view.mjs?v=12";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=7";
+import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=7";
+import { renderStatus } from "./view.mjs?v=13";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=8";
 import { bindWirelessForm } from "./wireless-form.mjs?v=15";
-import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=9";
+import {
+  cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
+} from "./wireless.mjs?v=10";
 
 const element = id => document.querySelector(`#${id}`);
 const usbDialog = element("usb-connection-dialog");
@@ -23,15 +25,10 @@ const shareDialog = element("share-dialog");
 let settingsDirty = false;
 let configurationForceSave = false;
 let client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
+registerWirelessRecovery(client);
 const wirelessForm = bindWirelessForm({
   supported: () => Boolean(client.state.hardware?.capabilities & 128),
-  ready: () => client.state.connected && client.state.transport !== "ble" && !client.state.busy &&
-    !client.state.outcome_uncertain && !client.state.reboot_pending &&
-    client.state.freshness[10] === "fresh" && client.state.msc && !client.state.msc.enabled &&
-    !client.state.msc.transition_pending && !client.state.msc_command_pending &&
-    !client.state.self_test_command_pending && !client.state.self_test?.active &&
-    (!(client.state.hardware?.capabilities & 32) ||
-      (client.state.freshness[11] === "fresh" && client.state.self_test?.valid_for_control)),
+  ready: () => client.wirelessReady(),
   load: async () => client.state.wireless ?? decodeWireless(await client.device.receiveFeatureReport(30)),
   scan: () => scanWireless(client),
   test: (settings, onProgress) => testWireless(client, settings, onProgress),
@@ -178,6 +175,7 @@ for (const [id, dialog, bluetooth] of [["usb-open", usbDialog, false],
     if ((client instanceof PicoForgeBluetooth) !== bluetooth) {
       client = bluetooth ? new PicoForgeBluetooth(globalThis.isSecureContext ? navigator.bluetooth : undefined, render)
         : new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
+      registerWirelessRecovery(client);
     }
     render(client.state);
     dialog.showModal();

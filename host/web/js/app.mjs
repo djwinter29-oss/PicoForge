@@ -3,6 +3,7 @@ import { bindWirelessForm } from "./wireless-form.mjs?v=15";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
+const mscStatusRefresh = document.querySelector("#msc-status-refresh");
 const boardSelect = document.querySelector("#board-select");
 const rescanBoardsButton = document.querySelector("#rescan-boards");
 const settingsSave = document.querySelector("#settings-save");
@@ -11,12 +12,18 @@ const rebootDialog = document.querySelector("#reboot-dialog");
 const returnDialog = document.querySelector("#return-dialog");
 const shareDialog = document.querySelector("#share-dialog");
 let configurationForceSave = false;
-const settingsControls = ["#settings-clock", "#settings-storage", "#settings-wifi", "#settings-ble"]
-  .map(selector => document.querySelector(selector));
+const clockControl = document.querySelector("#settings-clock");
+const storageControl = document.querySelector("#settings-storage");
+const wifiControl = document.querySelector("#settings-wifi");
+const bleControl = document.querySelector("#settings-ble");
+const settingsControls = [clockControl, storageControl, wifiControl, bleControl];
+const fetchWithDeadline = (url, options, timeoutMs) =>
+  fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 let requestInProgress = false;
 let currentSnapshot = null;
 let selfTestPendingSequence = null;
 let selfTestRequestInProgress = false;
+let ledRequestInProgress = false;
 let mscRequestInProgress = false;
 let mscPendingEnabled = null;
 let settingsRequestInProgress = false;
@@ -35,10 +42,52 @@ let wirelessProgress = null;
 let wirelessStatus = null;
 let wirelessError = null;
 let wirelessReading = false;
+let statusReadError = null;
+let commandOutcomeUncertain = false;
+let uncertainSettings = null;
+let uncertainSelfTestSequence = null;
+let uncertainLedState = null;
+let ledError = null;
+function hasUnknownOutcome(error) {
+  return ["AbortError", "TimeoutError", "UnknownOutcomeError"].includes(error?.name)
+    || error instanceof TypeError;
+}
+function markCommandOutcomeUncertain(error, message =
+  "Command outcome is uncertain; waiting for the board to reconnect before retrying.") {
+  if (!hasUnknownOutcome(error)) return false;
+  commandOutcomeUncertain = true;
+  if (currentSnapshot) {
+    currentSnapshot.outcome_uncertain = true;
+    currentSnapshot.error = message;
+  }
+  return true;
+}
+function endpointError(response, message) {
+  const error = new Error(message);
+  if ((response.status >= 500 && !/not supported/i.test(message))
+    || /uncertain|outcome.*not resent/i.test(message)) {
+    error.name = "UnknownOutcomeError";
+  }
+  return error;
+}
+function storageCommandPending(snapshot = currentSnapshot) {
+  return mscRequestInProgress || mscPendingEnabled !== null || selfTestRequestInProgress
+    || selfTestPendingSequence !== null || Boolean(snapshot?.msc?.transition_pending
+      || snapshot?.self_test?.active || snapshot?.self_test_command_pending);
+}
+function resetBoardCommandState() {
+  wirelessOutcomeUncertain = false;
+  commandOutcomeUncertain = false;
+  uncertainSettings = null;
+  uncertainSelfTestSequence = null;
+  uncertainLedState = null;
+  mscError = null;
+  ledError = null;
+  selfTestPendingSequence = null;
+  mscPendingEnabled = null;
+}
 async function readWirelessStatus() {
-  const response = await fetch(boardUrl("/api/wireless"), {
-    cache: "no-store", signal: AbortSignal.timeout(5000),
-  });
+  const response = await fetchWithDeadline(boardUrl("/api/wireless"), { cache: "no-store" }, 5000);
   const result = await response.json();
   if (!response.ok) {
     throw new Error(result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`);
@@ -71,7 +120,7 @@ const wirelessForm = bindWirelessForm({
   ready: wirelessReady,
   load: async () => wirelessStatus ?? await readWirelessStatus(),
   scan: async () => {
-    const response = await fetch(boardUrl("/api/wireless/scan"), { method: "POST" });
+    const response = await fetchWithDeadline(boardUrl("/api/wireless/scan"), { method: "POST" }, 10000);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? result.title ?? `Wireless scan returned HTTP ${response.status}`);
     return result.networks;
@@ -82,10 +131,9 @@ const wirelessForm = bindWirelessForm({
     let result;
     wirelessProgress = onProgress;
     try {
-      response = await fetch(boardUrl("/api/wireless/test"), {
+      response = await fetchWithDeadline(boardUrl("/api/wireless/test"), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings),
-        signal: AbortSignal.timeout(40000),
-      });
+      }, 40000);
       result = await response.json();
     } catch (error) {
       if (version === selectionVersion) wirelessOutcomeUncertain = true;
@@ -105,7 +153,7 @@ const wirelessForm = bindWirelessForm({
     return result.test;
   },
   cancelTest: async () => {
-    const response = await fetch(boardUrl("/api/wireless/cancel"), { method: "POST" });
+    const response = await fetchWithDeadline(boardUrl("/api/wireless/cancel"), { method: "POST" }, 10000);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? result.title ?? `Cancel returned HTTP ${response.status}`);
     return result;
@@ -116,6 +164,7 @@ const wirelessForm = bindWirelessForm({
 function wirelessReady() {
   const snapshot = currentSnapshot;
   return snapshot?.connected && Boolean(snapshot.hardware?.capabilities & 128)
+    && statusReadError === null && !commandOutcomeUncertain
     && !settingsRequestInProgress && !wirelessForm.operationBusy() && !snapshot.busy && !snapshot.reboot_pending
     && !snapshot.outcome_uncertain && !snapshot.command_outcome_uncertain && !wirelessOutcomeUncertain
     && !mscRequestInProgress && mscPendingEnabled === null && snapshot.storage_stale === false
@@ -132,9 +181,9 @@ async function saveCombinedSettings(settings) {
     ble_enabled: Boolean(settings.radios & 2), board: settings };
   let rejected = false;
   try {
-    const response = await fetch(boardUrl("/api/wireless"), {
+    const response = await fetchWithDeadline(boardUrl("/api/wireless"), {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
-    });
+    }, 15000);
     const result = await response.json();
     if (!response.ok) {
       const message = result.error ?? result.title ?? `Wireless endpoint returned HTTP ${response.status}`;
@@ -193,15 +242,18 @@ function renderStatus(snapshot) {
     wireless_error: wirelessError,
     console_url: `/console?board=${encodeURIComponent(selectedBoard ?? "")}`,
     busy: snapshot.busy || settingsRequestInProgress || wirelessForm.operationBusy()
-      || snapshot.reboot_pending || snapshot.outcome_uncertain,
+      || snapshot.reboot_pending || snapshot.outcome_uncertain || statusReadError !== null,
     no_board_selected: !selectedBoard,
-    settings_busy: settingsRequestInProgress || wirelessForm.operationBusy()
+    settings_busy: settingsRequestInProgress || wirelessForm.operationBusy() || statusReadError !== null
       || snapshot.reboot_pending || snapshot.outcome_uncertain,
     settings_dirty: settingsDirty,
     wireless_dirty: wirelessForm.dirty(),
     settings_storage_dirty: settingsStorageDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
     msc_command_pending: mscRequestInProgress || mscPendingEnabled !== null,
+    msc_outcome_uncertain: mscError !== null && mscPendingEnabled !== null,
+    status_read_error: statusReadError !== null,
+    status_reading: requestInProgress,
   });
   wirelessForm.update();
   if (wirelessReady() && wirelessStatus) {
@@ -218,19 +270,48 @@ async function updateStatus() {
   requestInProgress = true;
   const version = selectionVersion;
   try {
-    const response = await fetch(boardUrl("/api/status"), { cache: "no-store" });
+    const response = await fetchWithDeadline(boardUrl("/api/status"), { cache: "no-store" }, 5000);
     if (!response.ok) throw new Error(`Status endpoint returned HTTP ${response.status}`);
     const snapshot = await response.json();
     if (version !== selectionVersion) return;
     if (mscRequestInProgress || settingsRequestInProgress) return;
+    statusReadError = null;
+    if ((!snapshot.connected || snapshot.reboot_pending) && !uncertainSettings
+      && uncertainSelfTestSequence === null && uncertainLedState === null) {
+      commandOutcomeUncertain = false;
+    }
+    if (uncertainLedState !== null && snapshot.board_status?.led_on != null) {
+      if (Boolean(snapshot.board_status.led_on) === uncertainLedState) {
+        uncertainLedState = null;
+        ledError = null;
+        commandOutcomeUncertain = false;
+      } else commandOutcomeUncertain = true;
+    }
+    if (uncertainSettings && snapshot.settings?.system_clock_mhz === uncertainSettings.system_clock_mhz
+      && snapshot.settings?.sdcard_profile === uncertainSettings.sdcard_profile
+      && snapshot.settings?.radios === uncertainSettings.radios) {
+      commandOutcomeUncertain = false;
+      uncertainSettings = null;
+      settingsDirty = false;
+      settingsStorageDirty = false;
+      settingsMessage = "Settings readback matches the requested values.";
+    }
+    if (uncertainSelfTestSequence !== null && Number.isInteger(snapshot.self_test?.sequence)
+      && snapshot.self_test.sequence !== uncertainSelfTestSequence) {
+      commandOutcomeUncertain = false;
+      uncertainSelfTestSequence = null;
+    }
     currentSnapshot = snapshot;
-    currentSnapshot.outcome_uncertain ||= wirelessOutcomeUncertain || currentSnapshot.command_outcome_uncertain;
+    currentSnapshot.outcome_uncertain ||= wirelessOutcomeUncertain || commandOutcomeUncertain
+      || currentSnapshot.command_outcome_uncertain;
     if (currentSnapshot.connected && currentSnapshot.msc && !currentSnapshot.msc.transition_pending
       && (currentSnapshot.msc.enabled === mscPendingEnabled || currentSnapshot.msc.request_rejected)) {
       mscPendingEnabled = null;
+      mscError = null;
     }
-    currentSnapshot.error = mscError ?? currentSnapshot.error;
-    if (!selfTestRequestInProgress && currentSnapshot.self_test?.sequence !== selfTestPendingSequence) {
+    currentSnapshot.error = mscError ?? ledError ?? currentSnapshot.error;
+    if (!selfTestRequestInProgress && Number.isInteger(currentSnapshot.self_test?.sequence)
+      && currentSnapshot.self_test.sequence !== selfTestPendingSequence) {
       selfTestPendingSequence = null;
     }
     currentSnapshot.self_test_command_pending = selfTestPendingSequence !== null;
@@ -238,22 +319,25 @@ async function updateStatus() {
     renderStatus(currentSnapshot);
   } catch (error) {
     if (version !== selectionVersion) return;
-    currentSnapshot = null;
-    renderStatus({ connected: false, error: error.message });
+    statusReadError = error.message;
+    const failedSnapshot = currentSnapshot?.connected
+      ? { ...currentSnapshot, error: `Status unavailable: ${error.message}`,
+        telemetry_stale: true, storage_stale: true }
+      : { connected: false, error: error.message };
+    renderStatus(failedSnapshot);
   } finally {
     requestInProgress = false;
+    mscStatusRefresh.disabled = statusReadError !== null;
     const wirelessBusy = wirelessForm.operationBusy();
     boardSelect.disabled = scanningBoards || knownBoards.length === 0
       || mscRequestInProgress || settingsRequestInProgress || wirelessBusy;
     rescanBoardsButton.disabled = scanningBoards || settingsRequestInProgress || wirelessBusy;
     ledControl.disabled = settingsRequestInProgress || wirelessBusy || currentSnapshot?.reboot_pending ||
       currentSnapshot?.outcome_uncertain || !currentSnapshot?.connected ||
-      !currentSnapshot?.board_status?.led_available;
-    mscControl.disabled = settingsRequestInProgress || wirelessBusy || currentSnapshot?.reboot_pending ||
-      currentSnapshot?.outcome_uncertain || mscRequestInProgress || !currentSnapshot?.connected || !currentSnapshot?.msc
-      || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
-      || Boolean(currentSnapshot.self_test?.active)
-      || selfTestPendingSequence !== null
+      !currentSnapshot?.board_status?.led_available || ledRequestInProgress || statusReadError !== null;
+    mscControl.disabled = settingsRequestInProgress || wirelessBusy || currentSnapshot?.reboot_pending
+      || storageCommandPending() || currentSnapshot?.outcome_uncertain || !currentSnapshot?.connected
+      || !currentSnapshot?.msc || statusReadError !== null
       || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
     if (version !== selectionVersion) void updateStatus();
   }
@@ -275,9 +359,7 @@ function selectBoard(boardId) {
   settingsDirty = false;
   settingsStorageDirty = false;
   settingsMessage = null;
-  wirelessOutcomeUncertain = false;
-  selfTestPendingSequence = null;
-  mscPendingEnabled = null;
+  resetBoardCommandState();
   renderStatus({ connected: false });
   void updateStatus();
 }
@@ -288,7 +370,7 @@ async function rescanBoards() {
   boardSelect.disabled = true;
   rescanBoardsButton.disabled = true;
   try {
-    const response = await fetch("/api/boards", { cache: "no-store" });
+    const response = await fetchWithDeadline("/api/boards", { cache: "no-store" }, 10000);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? `Board scan returned HTTP ${response.status}`);
     const previousBoard = selectedBoard;
@@ -320,15 +402,18 @@ async function rescanBoards() {
       currentSnapshot = null;
       settingsDirty = false;
       settingsStorageDirty = false;
-      wirelessOutcomeUncertain = false;
-      selfTestPendingSequence = null;
-      mscPendingEnabled = null;
+      resetBoardCommandState();
       renderStatus({ connected: false });
     }
     await updateStatus();
   } catch (error) {
-    currentSnapshot = null;
-    renderStatus({ connected: false, error: `Board scan failed: ${error.message}` });
+    const message = `Board scan failed: ${error.message}`;
+    if (currentSnapshot?.connected) {
+      currentSnapshot = { ...currentSnapshot, error: message };
+      renderStatus(currentSnapshot);
+    } else {
+      renderStatus({ connected: false, error: message });
+    }
   } finally {
     scanningBoards = false;
     boardSelect.disabled = knownBoards.length === 0;
@@ -345,11 +430,9 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
     if (!returnDialog.open) return;
     returnDialog.close();
   }
-  if (!currentSnapshot?.msc || mscRequestInProgress || mscPendingEnabled !== null
-    || settingsRequestInProgress) return;
+  if (!currentSnapshot?.msc || storageCommandPending() || settingsRequestInProgress) return;
   const force = currentSnapshot.msc.enabled;
-  if (currentSnapshot.msc.transition_pending || currentSnapshot.self_test?.active
-      || selfTestPendingSequence !== null || (confirmReturn && !force) || (confirmShare && force)) return;
+  if ((confirmReturn && !force) || (confirmShare && force)) return;
   if (force) {
     if (!currentSnapshot.msc.force_return_supported) return;
     if (!confirmReturn) {
@@ -360,6 +443,7 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
     shareDialog.showModal();
     return;
   }
+  const version = selectionVersion;
   mscRequestInProgress = true;
   mscPendingEnabled = !force;
   mscError = null;
@@ -369,83 +453,111 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
     : "Preparing storage for USB...";
   document.querySelector("#msc-note").hidden = false;
   try {
-    const response = await fetch(boardUrl(force ? "/api/msc/force-return" : "/api/msc"), {
+    const response = await fetchWithDeadline(boardUrl(force ? "/api/msc/force-return" : "/api/msc"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(force ? { confirm_data_loss: true } : { enabled: !currentSnapshot.msc.enabled }),
-    });
+    }, 15000);
+    if (version !== selectionVersion) return;
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? result.title ?? `MSC endpoint returned HTTP ${response.status}`);
+    if (version !== selectionVersion) return;
+    if (!response.ok) {
+      throw endpointError(response, result.error ?? result.title ?? `MSC endpoint returned HTTP ${response.status}`);
+    }
     const msc = result.msc ?? result;
     if (typeof msc.enabled !== "boolean") throw new Error("MSC endpoint returned invalid ownership status");
-    if (currentSnapshot) {
+    if (version === selectionVersion && currentSnapshot) {
       currentSnapshot.msc = msc;
       currentSnapshot.error = null;
       renderStatus(currentSnapshot);
     }
   } catch (error) {
-    mscPendingEnabled = null;
-    mscError = error.message;
-    if (currentSnapshot) {
-      currentSnapshot.error = mscError;
-      renderStatus(currentSnapshot);
+    if (version === selectionVersion) {
+      const uncertain = hasUnknownOutcome(error);
+      if (!uncertain) mscPendingEnabled = null;
+      mscError = uncertain
+        ? "Storage command outcome is uncertain; waiting for updated ownership status before retrying."
+        : error.message;
+      if (currentSnapshot) {
+        currentSnapshot.error = mscError;
+        renderStatus(currentSnapshot);
+      }
     }
   } finally {
     mscRequestInProgress = false;
-    if (currentSnapshot) renderStatus(currentSnapshot);
-    mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
-      || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
-      || Boolean(currentSnapshot.self_test?.active)
-      || selfTestPendingSequence !== null
-      || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
+    if (version === selectionVersion) {
+      if (currentSnapshot) renderStatus(currentSnapshot);
+      mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
+        || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
+        || Boolean(currentSnapshot.self_test?.active)
+        || selfTestPendingSequence !== null
+        || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
+      if (mscPendingEnabled !== null) void updateStatus();
+    } else void updateStatus();
   }
 }
 
 async function setLed() {
-  if (!currentSnapshot?.board_status?.led_available || settingsRequestInProgress) return;
+  if (!currentSnapshot?.board_status?.led_available || settingsRequestInProgress || ledRequestInProgress
+    || statusReadError !== null || commandOutcomeUncertain) return;
+  const version = selectionVersion;
+  const requestedState = !currentSnapshot.board_status.led_on;
+  ledRequestInProgress = true;
   ledControl.disabled = true;
   try {
-    const response = await fetch(boardUrl("/api/led"), {
+    const response = await fetchWithDeadline(boardUrl("/api/led"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ on: !currentSnapshot.board_status.led_on }),
-    });
-    if (!response.ok) throw new Error(`LED endpoint returned HTTP ${response.status}`);
+      body: JSON.stringify({ on: requestedState }),
+    }, 10000);
+    if (version !== selectionVersion) return;
+    if (!response.ok) throw endpointError(response, `LED endpoint returned HTTP ${response.status}`);
     const result = await response.json();
-    if (currentSnapshot) {
+    if (version === selectionVersion && currentSnapshot) {
+      uncertainLedState = null;
+      ledError = null;
       currentSnapshot.board_status = result.board_status;
       renderStatus(currentSnapshot);
     }
   } catch (error) {
-    if (currentSnapshot) {
-      currentSnapshot.error = error.message;
+    if (version === selectionVersion && currentSnapshot) {
+      if (markCommandOutcomeUncertain(error, "LED command outcome is uncertain; refreshing board status.")) {
+        uncertainLedState = requestedState;
+        ledError = currentSnapshot.error;
+      } else currentSnapshot.error = error.message;
       renderStatus(currentSnapshot);
     }
   } finally {
-    ledControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
+    ledRequestInProgress = false;
+    if (version === selectionVersion) {
+      ledControl.disabled = settingsRequestInProgress || wirelessForm.operationBusy()
+        || currentSnapshot?.reboot_pending || currentSnapshot?.outcome_uncertain
+        || !currentSnapshot?.connected || !currentSnapshot?.board_status?.led_available;
+      if (commandOutcomeUncertain) void updateStatus();
+    } else void updateStatus();
   }
 }
 
 function selectedSettings() {
   const saved = currentSnapshot?.settings;
   return {
-    system_clock_mhz: Number(settingsControls[0].value),
-    sdcard_profile: settingsStorageDirty ? Number(settingsControls[1].value) : (saved?.sdcard_profile ?? 0),
+    system_clock_mhz: Number(clockControl.value),
+    sdcard_profile: settingsStorageDirty ? Number(storageControl.value) : (saved?.sdcard_profile ?? 0),
     radios: selectedRadios(),
   };
 }
 
 function selectedRadios() {
   return currentSnapshot?.hardware?.capabilities & 128
-    ? Number(settingsControls[2].value) | Number(settingsControls[3].value) << 1 : 0;
+    ? Number(wifiControl.value) | Number(bleControl.value) << 1 : 0;
 }
 
 function updateSettingsDirty() {
   const saved = currentSnapshot?.settings;
   if (!saved) return;
-  settingsStorageDirty = Number(settingsControls[1].value)
+  settingsStorageDirty = Number(storageControl.value)
     !== storageSpeed(saved);
-  settingsDirty = Number(settingsControls[0].value) !== saved.system_clock_mhz || settingsStorageDirty
+  settingsDirty = Number(clockControl.value) !== saved.system_clock_mhz || settingsStorageDirty
     || selectedRadios() !== (saved.radios ?? 0);
   settingsMessage = null;
   renderStatus(currentSnapshot);
@@ -458,9 +570,8 @@ async function saveSettings() {
   const force = configurationForceSave;
   if (!currentSnapshot?.connected || !currentSnapshot.settings_supported || !(settingsDirty || wirelessForm.dirty())
       || wirelessForm.operationBusy() || !wirelessForm.canSave()
-      || settingsRequestInProgress || mscRequestInProgress || mscPendingEnabled !== null || !msc
-      || msc.enabled !== force || msc.transition_pending || (force && !(currentSnapshot.hardware?.capabilities & 64))
-      || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending
+      || settingsRequestInProgress || storageCommandPending() || !msc
+      || msc.enabled !== force || (force && !(currentSnapshot.hardware?.capabilities & 64))
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)) return;
   const combined = wirelessForm.dirty();
   if (combined && (force || !wirelessReady())) return;
@@ -478,13 +589,16 @@ async function saveSettings() {
       settingsMessage = "Settings saved. Reboot requested. Waiting for the device to reconnect.";
       return;
     }
-    const response = await fetch(boardUrl("/api/settings"), {
+    const response = await fetchWithDeadline(boardUrl("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(force ? { ...settings, confirm_data_loss: true } : settings),
-    });
+    }, 15000);
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? result.title ?? `Settings endpoint returned HTTP ${response.status}`);
+    if (!response.ok) {
+      throw endpointError(response, result.error ?? result.title
+        ?? `Settings endpoint returned HTTP ${response.status}`);
+    }
     if (result.settings?.system_clock_mhz !== settings.system_clock_mhz
         || result.settings?.sdcard_profile !== settings.sdcard_profile
         || (result.settings?.radios ?? 0) !== settings.radios) {
@@ -496,32 +610,35 @@ async function saveSettings() {
     settingsStorageDirty = false;
     settingsMessage = "Settings saved. Reboot requested. Waiting for the device to reconnect.";
   } catch (error) {
-    settingsMessage = `Save failed: ${error.message}`;
+    if (markCommandOutcomeUncertain(error)) {
+      uncertainSettings = settings;
+      settingsMessage = "Save outcome is uncertain; checking status before allowing another save.";
+    } else settingsMessage = `Save failed: ${error.message}`;
   } finally {
     settingsRequestInProgress = false;
     boardSelect.disabled = scanningBoards || knownBoards.length === 0 || mscRequestInProgress;
     rescanBoardsButton.disabled = scanningBoards;
     if (currentSnapshot) renderStatus(currentSnapshot);
+    if (commandOutcomeUncertain) void updateStatus();
   }
 }
 
 async function requestReboot() {
-  const response = await fetch(boardUrl("/api/reboot"), {
+  const response = await fetchWithDeadline(boardUrl("/api/reboot"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirm: true }),
-  });
-  if (!response.ok) throw new Error(`Reboot endpoint returned HTTP ${response.status}`);
+  }, 15000);
+  if (!response.ok) throw endpointError(response, `Reboot endpoint returned HTTP ${response.status}`);
 }
 
 async function rebootDevice() {
   if (!rebootDialog.open) return;
   rebootDialog.close();
   const msc = currentSnapshot?.msc;
-  if (!currentSnapshot?.connected || settingsRequestInProgress
+  if (!currentSnapshot?.connected || settingsRequestInProgress || storageCommandPending()
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)
-      || !msc || msc.enabled || msc.transition_pending
-      || currentSnapshot.self_test?.active || currentSnapshot.self_test_command_pending) return;
+      || !msc || msc.enabled) return;
   settingsRequestInProgress = true;
   settingsMessage = "Requesting reboot...";
   renderStatus(currentSnapshot);
@@ -529,10 +646,13 @@ async function rebootDevice() {
     await requestReboot();
     settingsMessage = "Reboot requested. Waiting for the device to reconnect.";
   } catch (error) {
-    settingsMessage = `Reboot failed: ${error.message}`;
+    if (markCommandOutcomeUncertain(error)) {
+      settingsMessage = "Reboot outcome is uncertain; waiting for the board to reconnect before retrying.";
+    } else settingsMessage = `Reboot failed: ${error.message}`;
   } finally {
     settingsRequestInProgress = false;
     if (currentSnapshot) renderStatus(currentSnapshot);
+    if (commandOutcomeUncertain) void updateStatus();
   }
 }
 
@@ -545,23 +665,28 @@ async function selfTest(action) {
   currentSnapshot.self_test_command_pending = true;
   renderStatus(currentSnapshot);
   try {
-    const response = await fetch(boardUrl("/api/self-test"), {
+    const response = await fetchWithDeadline(boardUrl("/api/self-test"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, size_mib: document.querySelector("#self-test-size").valueAsNumber }),
-    });
-    if (!response.ok) throw new Error(`Self-test endpoint returned HTTP ${response.status}`);
+    }, 10000);
+    if (!response.ok) throw endpointError(response, `Self-test endpoint returned HTTP ${response.status}`);
     if (version !== selectionVersion) return;
     selfTestPendingSequence = currentSnapshot?.self_test?.sequence ?? selfTestPendingSequence;
   } catch (error) {
     if (version !== selectionVersion) return;
-    selfTestPendingSequence = null;
+    const uncertain = markCommandOutcomeUncertain(error);
+    if (uncertain) uncertainSelfTestSequence = selfTestPendingSequence;
+    else selfTestPendingSequence = null;
     if (currentSnapshot) {
-      currentSnapshot.self_test_command_pending = false;
-      currentSnapshot.error = error.message;
+      currentSnapshot.self_test_command_pending = uncertain;
+      currentSnapshot.error = uncertain
+        ? "Benchmark command outcome is uncertain; checking for a new test sequence."
+        : error.message;
       renderStatus(currentSnapshot);
     }
   } finally {
     selfTestRequestInProgress = false;
+    if (commandOutcomeUncertain) void updateStatus();
   }
 }
 document.querySelector("#self-test-start").addEventListener("click", () => selfTest("start"));
@@ -595,6 +720,7 @@ document.querySelector("#cancel-return").addEventListener("click", () => returnD
 document.querySelector("#cancel-share").addEventListener("click", () => shareDialog.close());
 document.querySelector("#confirm-share").addEventListener("click", () => setMsc(false, true));
 document.querySelector("#confirm-return").addEventListener("click", () => setMsc(true));
+mscStatusRefresh.addEventListener("click", () => { void updateStatus(); });
 for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) {
   dialog.addEventListener("keydown", event => {
     if (event.key === "Escape") {
