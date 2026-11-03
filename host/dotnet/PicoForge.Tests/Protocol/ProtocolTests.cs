@@ -208,6 +208,7 @@ public sealed class ProtocolTests
         builder.Services.AddSingleton<IDashboardBoards>(monitor);
         await using var app = builder.Build();
         app.MapDeviceStatus();
+        app.MapOpenApi();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
 
@@ -225,6 +226,16 @@ public sealed class ProtocolTests
         var reboot = await client.PostAsJsonAsync("/api/reboot?board=board-a", new { confirm = true });
         Assert.Equal(HttpStatusCode.Accepted, reboot.StatusCode);
         Assert.True(monitor.RebootRequested);
+
+        var unknownStatus = await client.GetAsync("/api/status?board=unknown");
+        Assert.Equal(HttpStatusCode.Conflict, unknownStatus.StatusCode);
+        var unknownSettings = await client.PostAsJsonAsync("/api/settings?board=unknown",
+            new { system_clock_mhz = 200, sdcard_profile = 1 });
+        Assert.Equal(HttpStatusCode.Conflict, unknownSettings.StatusCode);
+
+        using var openApi = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        Assert.True(openApi.RootElement.GetProperty("paths").GetProperty("/api/status")
+            .GetProperty("get").GetProperty("responses").TryGetProperty("409", out _));
         await app.StopAsync();
     }
 
@@ -296,8 +307,13 @@ public sealed class ProtocolTests
         public BootSettingsResponse? LastSettings { get; private set; }
         public bool RebootRequested { get; private set; }
         public DashboardBoardList Boards() => new([new("board-a", "PicoForge", "uid", "/hid/a")], "board-a");
-        public StatusResponse Snapshot(string? boardId) => new(true, null, null, null, null, null,
-            null, null, Settings: new BootSettingsResponse(0, 0));
+        public StatusResponse Snapshot(string? boardId)
+        {
+            if (boardId != "board-a")
+                throw new InvalidOperationException("unknown board; rescan and select a listed board");
+            return new(true, null, null, null, null, null, null, null,
+                Settings: new BootSettingsResponse(0, 0));
+        }
         public bool SetLed(string? boardId, bool on) => true;
         public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
             new(enabled, false, false);

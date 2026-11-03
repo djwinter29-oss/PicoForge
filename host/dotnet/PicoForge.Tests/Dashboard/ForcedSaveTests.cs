@@ -307,6 +307,31 @@ public sealed class ForcedSaveTests
     }
 
     [Fact]
+    public void WirelessCancelDeliveryFailureMarksOutcomeUncertain()
+    {
+        var commands = new Commands
+        {
+            CancelUncertain = true,
+            CancelFailure = new TimeoutException("wireless cancel timed out")
+        };
+        using var monitor = new DeviceMonitor();
+        typeof(DeviceMonitor).GetField("activeClient", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(monitor, commands);
+        var snapshot = typeof(DeviceMonitor).GetField("snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        snapshot.SetValue(monitor, Ready(enabled: false, capabilities: 0xec) with
+        {
+            SelfTest = new(1, "idle", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false),
+            SelfTestStale = false,
+            StorageStale = false
+        });
+
+        Assert.Throws<TimeoutException>(() => monitor.CancelWirelessTest());
+        Assert.True(monitor.Snapshot.CommandOutcomeUncertain);
+        Assert.Contains("uncertain", monitor.Snapshot.Error);
+        Assert.Throws<InvalidOperationException>(() => monitor.CancelWirelessTest());
+    }
+
+    [Fact]
     public async Task HttpRequiresBooleanConfirmationAndForceGates()
     {
         var dashboard = new Dashboard();
@@ -376,8 +401,10 @@ public sealed class ForcedSaveTests
     {
         public List<bool> Forces { get; } = [];
         public Exception? Failure { get; set; }
+        public Exception? CancelFailure { get; set; }
+        public bool CancelUncertain { get; set; }
         public int Reboots { get; private set; }
-        public bool CommandOutcomeUncertain => Failure is not null;
+        public bool CommandOutcomeUncertain => Failure is not null || CancelUncertain;
         public InputReport? ReadInputReport(int timeoutMilliseconds = 250) =>
             throw new NotSupportedException();
         public void SetLed(bool on) { }
@@ -398,7 +425,11 @@ public sealed class ForcedSaveTests
             throw new NotSupportedException();
         public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
             Action<string>? onProgress = null) => throw new NotSupportedException();
-        public void CancelWirelessTest() => throw new NotSupportedException();
+        public void CancelWirelessTest()
+        {
+            if (CancelFailure is not null) throw CancelFailure;
+            throw new NotSupportedException();
+        }
     }
 
     private sealed class Dashboard : IDashboardBoards

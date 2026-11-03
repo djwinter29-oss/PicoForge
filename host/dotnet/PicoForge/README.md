@@ -55,6 +55,8 @@ temporary test credentials after ten minutes and preserves legacy firmware's CLI
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.
+The host polls HID input every 50 ms, below firmware's 250 ms telemetry and 500 ms storage/self-test report periods,
+and reuses an input buffer per HID client to reduce idle wakeups and recurring allocations.
 
 The [storage lifecycle](../../../docs/reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
 startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
@@ -62,3 +64,6 @@ USB sharing temporarily grants the host exclusive access; firmware file operatio
 Wait for fresh mounted status after return, not merely HID reconnection. Start uses the existing mount and checks
 free space before accepting temporary writes; that scan can delay progress, but is not a mount-only action.
 Wait for its command result rather than clicking again. Self-test cleanup leaves the filesystem mounted.
+Board monitoring starts asynchronously on first access, so the first status response can briefly show that it is
+waiting for HID while identity and configuration are read in the background. The monitor polls every 50 ms and
+reuses input and feature report buffers per HID client to reduce idle wakeups and recurring allocations.

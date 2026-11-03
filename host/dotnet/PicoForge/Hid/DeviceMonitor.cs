@@ -54,12 +54,18 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private bool? mscReconnectEnabled;
     private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
 
-    public DeviceMonitor() : this(null, null) { }
+    public DeviceMonitor() : this((string?)null, null) { }
 
     public DeviceMonitor(string? serialNumber, string? devicePath, ILogger<DeviceMonitor>? logger = null)
+        : this(() => new PicoForgeHid(serialNumber, devicePath), logger ?? NullLogger<DeviceMonitor>.Instance) { }
+
+    internal DeviceMonitor(Func<PicoForgeHid> createClient)
+        : this(createClient, NullLogger<DeviceMonitor>.Instance) { }
+
+    private DeviceMonitor(Func<PicoForgeHid> createClient, ILogger<DeviceMonitor> logger)
     {
-        createClient = () => new PicoForgeHid(serialNumber, devicePath);
-        this.logger = logger ?? NullLogger<DeviceMonitor>.Instance;
+        this.createClient = createClient;
+        this.logger = logger;
     }
 
     public StatusResponse Snapshot
@@ -202,7 +208,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         lock (deviceGate)
         {
             var client = RequireWirelessIdle();
-            client.CancelWirelessTest();
+            ExecuteCommand(client, client.CancelWirelessTest);
             return true;
         }
     }
@@ -240,6 +246,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // ponytail: Yield before synchronous HID discovery so first API access does not wait for device startup.
+        await Task.Yield();
         while (!stoppingToken.IsCancellationRequested)
         {
             PicoForgeHid? client = null;
@@ -267,7 +275,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     {
                         PollInputs(client);
                     }
-                    await Task.Delay(10, stoppingToken);
+                    // ponytail: 50 ms stays below the 250 ms telemetry cadence and cuts idle wakeups by 80%.
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), stoppingToken);
                 }
             }
             catch (Exception error) when (IsDeviceError(error))

@@ -120,6 +120,127 @@ public sealed class DashboardBoardsTests
         Assert.True(boards.Snapshot(id).CommandOutcomeUncertain);
     }
 
+    [Fact]
+    public async Task DiscoveryDoesNotBlockSnapshotsForKnownBoards()
+    {
+        using var discoveryStarted = new ManualResetEventSlim();
+        using var releaseDiscovery = new ManualResetEventSlim();
+        var blockDiscovery = 0;
+        HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
+        using var boards = new DashboardBoards(null, null, () =>
+        {
+            if (Volatile.Read(ref blockDiscovery) != 0)
+            {
+                discoveryStarted.Set();
+                releaseDiscovery.Wait();
+            }
+            return attached;
+        }, (_, _) => new FakeDeviceMonitor());
+
+        var id = boards.Boards().Boards[0].Id;
+        boards.Snapshot(id);
+        Volatile.Write(ref blockDiscovery, 1);
+        var scan = Task.Run(boards.Boards);
+        try
+        {
+            Assert.True(discoveryStarted.Wait(TimeSpan.FromSeconds(2)));
+            var snapshot = await Task.Run(() => boards.Snapshot(id)).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.NotNull(snapshot);
+        }
+        finally
+        {
+            releaseDiscovery.Set();
+        }
+        await scan;
+    }
+
+    [Fact]
+    public void MonitorStartupDoesNotBlockBoardRegistry()
+    {
+        using var startEntered = new ManualResetEventSlim();
+        using var releaseStart = new ManualResetEventSlim();
+        var monitor = new FakeDeviceMonitor
+        {
+            OnStart = () =>
+            {
+                startEntered.Set();
+                releaseStart.Wait();
+            }
+        };
+        HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
+        using var boards = new DashboardBoards(null, null, () => attached, (_, _) => monitor);
+        var id = boards.Boards().Boards[0].Id;
+        StatusResponse? snapshot = null;
+        Exception? snapshotError = null;
+        using var snapshotFinished = new ManualResetEventSlim();
+        var snapshotThread = new Thread(() =>
+        {
+            try { snapshot = boards.Snapshot(id); }
+            catch (Exception error) { snapshotError = error; }
+            finally { snapshotFinished.Set(); }
+        });
+        snapshotThread.Start();
+        Thread? listingThread = null;
+        try
+        {
+            Assert.True(startEntered.Wait(TimeSpan.FromSeconds(2)));
+            DashboardBoardList? listing = null;
+            Exception? listingError = null;
+            using var listingFinished = new ManualResetEventSlim();
+            listingThread = new Thread(() =>
+            {
+                try { listing = boards.Boards(); }
+                catch (Exception error) { listingError = error; }
+                finally { listingFinished.Set(); }
+            });
+            listingThread.Start();
+            Assert.True(listingFinished.Wait(TimeSpan.FromSeconds(2)));
+            Assert.Null(listingError);
+            Assert.Single(listing!.Boards);
+        }
+        finally
+        {
+            releaseStart.Set();
+        }
+        Assert.True(snapshotFinished.Wait(TimeSpan.FromSeconds(2)));
+        snapshotThread.Join();
+        listingThread?.Join();
+        Assert.Null(snapshotError);
+        Assert.NotNull(snapshot);
+    }
+
+    [Fact]
+    public async Task MonitorStartReturnsBeforeSynchronousHidInitializationCompletes()
+    {
+        using var readEntered = new ManualResetEventSlim();
+        using var releaseRead = new ManualResetEventSlim();
+        var hid = new PicoForgeHid(
+            new HardwareInfoResponse("PicoForge", "RP2350", 2, "board-A"),
+            (_, _) =>
+            {
+                readEntered.Set();
+                releaseRead.Wait();
+                throw new IOException("test disconnect");
+            }, _ => { }, _ => { });
+        using var monitor = new DeviceMonitor(() => hid);
+
+        var startTask = Task.Factory.StartNew(
+            () => monitor.StartAsync(CancellationToken.None),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+        try
+        {
+            await startTask.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(readEntered.Wait(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            releaseRead.Set();
+        }
+        await monitor.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
     private sealed class ManualTimeProvider : TimeProvider
     {
         private DateTimeOffset now = DateTimeOffset.UnixEpoch;
@@ -132,9 +253,14 @@ public sealed class DashboardBoardsTests
     private sealed class FakeDeviceMonitor : IDeviceMonitor
     {
         public bool Disposed { get; private set; }
+        public Action? OnStart { get; init; }
         public StatusResponse Snapshot { get; set; } = new(false, null, null, null, null, null, null, null);
 
-        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            OnStart?.Invoke();
+            return Task.CompletedTask;
+        }
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public void Dispose() => Disposed = true;
         public bool SetLed(bool on) => throw new NotSupportedException();

@@ -43,6 +43,60 @@ python3 -m pip install --editable host/python
 On Linux, HID access can require the repository's
 [permission setup script](../../tools/host/hid-permissions-setup.sh), followed by reconnecting the device.
 
+## Qualify the Python Host with Hardware
+
+The Python monitor polls HID input reports every 50 ms while releasing the device lock between batches. Host tests
+verify that commands can acquire the lock between polls, but they cannot establish real USB report latency, CPU use,
+or device handoff behavior. Before changing this interval or claiming physical qualification, test the packaged or
+source-installed Python host with representative RP2040 and RP2350 boards:
+
+1. Record the OS, Python version, firmware revision, board model, and storage/radio configuration. Start the dashboard
+   with `tools/host/run-python.sh` and leave Live diagnostics visible for at least five minutes. Confirm runtime,
+   storage, and (where supported) self-test reports stay available and do not become stale during idle operation.
+2. Repeat at least ten USB detach/reconnect cycles. Confirm the dashboard shows disconnect/reconnect, recovers to
+   current telemetry, and does not leave a stale or duplicate monitor. Repeat while an unrelated board remains
+   connected if multi-board operation is in scope.
+3. On a board with SD storage, use a backed-up or disposable card. Enable USB storage, verify firmware-owned storage
+   controls are blocked during handoff, safely eject from the computer, and return ownership to the board. Exercise
+   force-return only when the data-loss warning is understood and the card contains no valuable data.
+4. On a W board with a test access point, scan, test a temporary connection, cancel/clear the test credentials, and
+   verify the UI and telemetry recover after completion or timeout. Do not use production credentials.
+5. Shut down the host while idle and during a wireless test. Confirm shutdown completes after any in-flight HID
+   operation and the next launch can reconnect normally.
+6. Record worst observed UI/report update delay, monitor process CPU, reconnect result, and any errors. Treat a failed
+   step as a qualification gap; do not infer reliability from host unit tests.
+
+Keep dated, configuration-specific observations in the [validation records](../validation/records/README.md), and
+summarize outstanding coverage in [qualification gaps](../validation/qualification-gaps.md).
+
+## Qualify the .NET Host with Hardware
+
+The .NET monitor samples HID input every 50 ms; firmware telemetry, storage and self-test reports are emitted every
+250 ms, 500 ms and 500 ms respectively. Host tests verify protocol and lifecycle logic, not real report freshness,
+multi-board CPU use, or USB/storage durability. Before claiming physical qualification, test the packaged or
+source-built host with representative RP2040 and RP2350 boards:
+
+1. Record OS, .NET SDK/runtime, firmware revision, board model, and storage/radio configuration. Run
+   `tools/host/run-dotnet.sh` and leave Live diagnostics visible for at least five minutes. Confirm reports remain
+   current and do not become stale during idle operation.
+2. Repeat at least ten USB detach/reconnect cycles. Confirm the selected board recovers without stale or duplicate
+   monitors. If multi-board use is in scope, keep another board connected and verify it remains responsive during
+   scans and first-time monitor startup.
+3. On a board with SD storage, use a backed-up or disposable card. Enable USB storage, safely eject, return ownership,
+   and confirm fresh mounted status. Exercise forced-save recovery only with no valuable data and after reviewing the
+   [forced-save policy](../reference/settings.md#forced-save-and-reboot).
+4. On a W board with a test access point, scan, test a temporary connection, cancel it, and verify credentials clear
+   and the UI recovers after completion or timeout. Do not use production credentials.
+5. Measure first `/api/status` response latency and time from the first request to connected status with current
+   telemetry. Record worst observed report/UI update delay, host CPU during idle and multi-board operation, command
+   response latency, detach/reconnect results, and errors. To compare polling intervals, use otherwise equivalent host
+   builds with 10 ms, 50 ms, and (if report freshness permits) 100 ms intervals; keep firmware, board, workload,
+   observation duration, and host conditions fixed. Do not infer CPU reduction from wakeup counts alone. Treat failed
+   steps as qualification gaps; host tests alone do not establish physical behavior.
+
+Keep dated, configuration-specific observations in the [validation records](../validation/records/README.md), and
+summarize outstanding coverage in [qualification gaps](../validation/qualification-gaps.md).
+
 ## Run Host Tests
 
 Install the Python package first, then run the three hardware-free host suites together:

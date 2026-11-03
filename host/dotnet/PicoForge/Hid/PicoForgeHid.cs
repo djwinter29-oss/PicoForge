@@ -12,6 +12,8 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     private readonly Func<byte, int, byte[]> readFeature;
     private readonly Action<byte[]> writeFeature;
     private readonly Action<string> reopen;
+    private byte[] inputReport;
+    private byte[] featureReport;
     private HardwareInfoResponse? identity;
     private byte transactionId;
     public bool CommandOutcomeUncertain { get; private set; }
@@ -33,6 +35,9 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         stream = device.Open();
         stream.ReadTimeout = 250;
         stream.WriteTimeout = 1000;
+        inputReport = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
+        featureReport = new byte[Math.Max(
+            HidProtocol.WirelessResultFeatureSize, device.GetMaxFeatureReportLength() + 1)];
         readFeature = GetFeatureReport;
         writeFeature = report => stream.SetFeature(report);
         reopen = ReopenSameBoard;
@@ -45,6 +50,8 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         this.readFeature = readFeature;
         this.writeFeature = writeFeature;
         this.reopen = reopen;
+        inputReport = new byte[HidProtocol.SelfTestPayloadSize + 1];
+        featureReport = new byte[HidProtocol.WirelessResultFeatureSize];
     }
 
     public static HidBoard[] Discover() => MatchingDevices().Select(candidate => new HidBoard(
@@ -88,14 +95,13 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     public InputReport? ReadInputReport(int timeoutMilliseconds = 250)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(timeoutMilliseconds);
-        var report = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
         var previousTimeout = stream.ReadTimeout;
         stream.ReadTimeout = timeoutMilliseconds;
         try
         {
-            var count = stream.Read(report, 0, report.Length);
+            var count = stream.Read(inputReport, 0, inputReport.Length);
             if (count == 0) return null;
-            var data = report.AsSpan(0, count);
+            var data = inputReport.AsSpan(0, count);
             identity ??= ReadInfo();
             return data[0] switch
             {
@@ -300,10 +306,12 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     private byte[] GetFeatureReport(byte reportId, int requiredSize)
     {
-        var report = new byte[Math.Max(requiredSize, device.GetMaxFeatureReportLength() + 1)];
-        report[0] = reportId;
-        stream.GetFeature(report);
-        return report;
+        if (featureReport.Length < requiredSize)
+            featureReport = new byte[requiredSize];
+        Array.Clear(featureReport);
+        featureReport[0] = reportId;
+        stream.GetFeature(featureReport);
+        return featureReport;
     }
 
     private ControlResult SendCommand(byte opcode, byte flags, byte[] arguments)
@@ -376,6 +384,10 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 report[0] = HidProtocol.IdentityReportId;
                 replacement.GetFeature(report);
                 if (HidProtocol.ParseIdentityReport(report).SerialNumber != uid) continue;
+                inputReport = new byte[Math.Max(
+                    HidProtocol.SelfTestPayloadSize + 1, candidate.GetMaxInputReportLength())];
+                featureReport = new byte[Math.Max(
+                    HidProtocol.WirelessResultFeatureSize, candidate.GetMaxFeatureReportLength() + 1)];
                 device = candidate;
                 stream = replacement;
                 replacement = null;

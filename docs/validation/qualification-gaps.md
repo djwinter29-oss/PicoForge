@@ -15,6 +15,12 @@ follow the [getting-started safety precautions](../guides/getting-started.md#bef
   interrupted writes or unexpected power loss.
 - **W-board radios:** physical Wi-Fi association/reconnect, BLE access/control, and coexistence with USB and storage
   remain unqualified. See the [wireless qualification scope](../guides/wireless.md).
+- **Python host timing and lifecycle:** the 50 ms HID polling interval, real report freshness, CPU cost under multiple
+  monitors, USB detach/reconnect, MSC ownership handoff, and shutdown during wireless operations have not yet been
+  qualified on physical boards. Follow the [Python host hardware procedure](../development/host-tools.md#qualify-the-python-host-with-hardware).
+- **.NET host timing and lifecycle:** the 50 ms HID polling interval, report freshness, multi-board CPU cost, USB
+  detach/reconnect, forced-save recovery, and MSC ownership handoff have not yet been qualified on physical boards.
+  Follow the [.NET host hardware procedure](../development/host-tools.md#qualify-the-net-host-with-hardware).
 
 These are evidence gaps, not a claim that every listed scenario fails.
 

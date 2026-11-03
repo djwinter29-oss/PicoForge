@@ -38,7 +38,8 @@ internal static class StatusEndpoints
             .WithName("GetDeviceStatus")
             .WithSummary("Get current PicoForge HID status")
             .WithDescription("Returns the selected board's connection state and latest hardware/runtime reports. Pass its ID from /api/boards as the board query.")
-            .Produces<StatusResponse>(StatusCodes.Status200OK);
+            .Produces<StatusResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status409Conflict);
         endpoints.MapPost("/api/led", SetLed)
             .WithName("SetBoardLed")
             .WithSummary("Set the onboard board LED")
@@ -90,16 +91,15 @@ internal static class StatusEndpoints
     private static IResult GetBoards(IDashboardBoards dashboard)
     {
         try { return Results.Ok(dashboard.Boards()); }
-        catch (IOException error) { return Results.Problem(statusCode: 503, title: error.Message); }
-        catch (UnauthorizedAccessException error) { return Results.Problem(statusCode: 503, title: error.Message); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { return Results.Problem(statusCode: 503, title: error.Message); }
         catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
     }
 
-    private static Ok<StatusResponse> GetStatus(string? board, IDashboardBoards dashboard,
-        CancellationToken cancellationToken)
+    private static IResult GetStatus(string? board, IDashboardBoards dashboard)
     {
-        _ = cancellationToken;
-        return TypedResults.Ok(dashboard.Snapshot(board));
+        try { return Results.Ok(dashboard.Snapshot(board)); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
     }
 
     private static IResult SetLed(SetLedRequest request, string? board, IDashboardBoards dashboard)
@@ -127,13 +127,16 @@ internal static class StatusEndpoints
         if (request.SystemClockMhz is not (0 or 150 or 200 or 250) ||
             request.SdCardProfile is not (0 or 1) || request.Radios is < 0 or > 3)
             return Results.Problem(statusCode: 400, title: "Unsupported boot settings value");
+
+        StatusResponse status;
+        try { status = dashboard.Snapshot(board); }
+        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
         var settings = new BootSettingsResponse(request.SystemClockMhz.Value, request.SdCardProfile.Value,
-            request.Radios ?? dashboard.Snapshot(board).Settings?.Radios ?? 0);
+            request.Radios ?? status.Settings?.Radios ?? 0);
         try
         {
             if (request.ConfirmDataLoss)
             {
-                var status = dashboard.Snapshot(board);
                 if (!status.Connected || status.CommandOutcomeUncertain ||
                     (status.Hardware?.Capabilities & HidProtocol.CapabilityForcedSave) !=
                         HidProtocol.CapabilityForcedSave ||
@@ -147,9 +150,11 @@ internal static class StatusEndpoints
         }
         catch (InvalidOperationException error)
         {
-            return Results.Conflict(new { error = request.ConfirmDataLoss &&
-                dashboard.Snapshot(board).CommandOutcomeUncertain
-                    ? $"Forced save outcome is uncertain: {error.Message}" : error.Message });
+            var uncertain = status.CommandOutcomeUncertain;
+            try { uncertain = dashboard.Snapshot(board).CommandOutcomeUncertain; }
+            catch (InvalidOperationException) { uncertain = true; }
+            return Results.Conflict(new { error = request.ConfirmDataLoss && uncertain
+                ? $"Forced save outcome is uncertain: {error.Message}" : error.Message });
         }
         catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
         {

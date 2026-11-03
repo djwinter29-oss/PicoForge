@@ -135,6 +135,28 @@ public sealed class WirelessTests
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
     }
 
+    [Fact]
+    public void ParsedWirelessResponsesDoNotRetainReusableFeatureBuffer()
+    {
+        var statusReport = Report();
+        var status = HidProtocol.ParseWirelessStatus(statusReport);
+        Array.Clear(statusReport);
+        Assert.Equal("Pico網", status.Ssid);
+        Assert.Equal("connected", status.WifiState);
+
+        var operationReport = OperationResult(state: 2);
+        operationReport[1] = 1;
+        operationReport[5] = 1;
+        operationReport[7] = 1;
+        operationReport[8] = (byte)'x';
+        operationReport[41] = 1;
+        var operation = HidProtocol.ParseWirelessOperation(operationReport);
+        Array.Clear(operationReport);
+        var network = Assert.Single(operation.Networks);
+        Assert.Equal("x", network.Ssid);
+        Assert.Equal("Secured", network.Security);
+    }
+
     private static WirelessRequest Settings() => new()
     {
         WifiEnabled = true, BleEnabled = true, Ssid = "Pico網", ConfirmReboot = true, Board = Board
