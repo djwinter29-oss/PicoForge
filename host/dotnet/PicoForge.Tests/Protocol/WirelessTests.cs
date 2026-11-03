@@ -646,6 +646,10 @@ public sealed class WirelessTests
         public BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false) => settings;
         public void Reboot() { }
         public void SetSelfTest(string action, uint sizeMib) { }
+        public WirelessStatusResponse ReadWireless() => throw new NotSupportedException();
+        public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null) =>
+            throw new NotSupportedException();
+        public void CancelWirelessTest() => throw new NotSupportedException();
         public WirelessStatusResponse SetWireless(WirelessRequest settings)
         {
             Writes++;

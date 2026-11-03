@@ -15,46 +15,50 @@ internal interface IDashboardBoards
     BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false);
     bool Reboot(string? boardId);
     bool SetSelfTest(string? boardId, string action, uint sizeMib);
-    WirelessResponse ReadWireless(string? boardId) => throw new InvalidOperationException("Wireless provisioning unavailable");
-    WirelessResponse SetWireless(string? boardId, WirelessRequest settings) =>
-        throw new InvalidOperationException("Wireless provisioning unavailable");
-    IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
-        throw new InvalidOperationException("Wireless provisioning unavailable");
-    WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
-        throw new InvalidOperationException("Wireless provisioning unavailable");
-    bool CancelWirelessTest(string? boardId) =>
-        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessResponse ReadWireless(string? boardId);
+    WirelessResponse SetWireless(string? boardId, WirelessRequest settings);
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId);
+    WirelessOperationResponse TestWireless(string? boardId, string ssid, string password);
+    bool CancelWirelessTest(string? boardId);
 }
 
 internal sealed class DashboardBoards : IDisposable, IDashboardBoards
 {
+    private static readonly TimeSpan StaleSerialBoardGracePeriod = TimeSpan.FromSeconds(30);
     private readonly object gate = new();
     private readonly string? serialNumber;
     private readonly string? devicePath;
     private readonly Func<HidBoard[]> discover;
-    private readonly Func<string?, string?, DeviceMonitor> createMonitor;
+    private readonly Func<string?, string?, IDeviceMonitor> createMonitor;
+    private readonly TimeProvider timeProvider;
     private readonly Dictionary<string, DashboardBoard> known = new();
-    private readonly Dictionary<string, DeviceMonitor> monitors = new();
+    private readonly Dictionary<string, DateTimeOffset> lastSeen = new();
+    private readonly Dictionary<string, IDeviceMonitor> monitors = new();
     private bool closed;
 
     public DashboardBoards(string? serialNumber = null, string? devicePath = null, ILoggerFactory? loggerFactory = null)
         : this(serialNumber, devicePath, PicoForgeHid.Discover,
-            (serial, path) => new DeviceMonitor(serial, path, loggerFactory?.CreateLogger<DeviceMonitor>())) { }
+            (serial, path) => new DeviceMonitor(serial, path, loggerFactory?.CreateLogger<DeviceMonitor>()),
+            TimeProvider.System) { }
 
     internal DashboardBoards(string? serialNumber, string? devicePath, Func<HidBoard[]> discover,
-        Func<string?, string?, DeviceMonitor> createMonitor)
+        Func<string?, string?, IDeviceMonitor> createMonitor, TimeProvider? timeProvider = null)
     {
         this.serialNumber = serialNumber;
         this.devicePath = devicePath;
         this.discover = discover;
         this.createMonitor = createMonitor;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public DashboardBoardList Boards()
     {
+        IDeviceMonitor[] expiredMonitors;
+        DashboardBoardList listing;
         lock (gate)
         {
             ObjectDisposedException.ThrowIf(closed, this);
+            var now = timeProvider.GetUtcNow();
             var seen = new HashSet<string>();
             var boards = discover().Select(device =>
             {
@@ -62,18 +66,43 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                 var identity = serial is null ? $"path:{device.DevicePath}" : $"serial:{serial}";
                 var id = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
                 if (!seen.Add(id))
-                    throw new InvalidOperationException("duplicate PicoForge board identity; board serials must be unique");
-                var board = new DashboardBoard(id, string.IsNullOrEmpty(device.ProductName) ? "PicoForge" : device.ProductName,
+                    throw new InvalidOperationException(
+                        "duplicate PicoForge board identity; board serials must be unique");
+                var productName = string.IsNullOrEmpty(device.ProductName) ? "PicoForge" : device.ProductName;
+                var board = new DashboardBoard(id, productName,
                     serial, device.DevicePath);
                 known[id] = board;
+                lastSeen[id] = now;
                 return board;
             }).ToArray();
+            var expiredIds = known
+                .Where(entry => !seen.Contains(entry.Key) &&
+                    (entry.Value.SerialNumber is null ||
+                     now - lastSeen[entry.Key] >= StaleSerialBoardGracePeriod) &&
+                    (!monitors.TryGetValue(entry.Key, out var monitor) ||
+                     !monitor.Snapshot.CommandOutcomeUncertain))
+                .Select(entry => entry.Key)
+                .ToArray();
+            expiredMonitors = expiredIds
+                .Where(monitors.ContainsKey)
+                .Select(id => monitors[id])
+                .ToArray();
+            foreach (var id in expiredIds)
+            {
+                known.Remove(id);
+                lastSeen.Remove(id);
+                monitors.Remove(id);
+            }
             var preferred = boards.FirstOrDefault(board =>
                 (serialNumber is not null && board.SerialNumber == serialNumber)
                 || (devicePath is not null && board.DevicePath == devicePath));
-            return new DashboardBoardList(boards, preferred?.Id
+            listing = new DashboardBoardList(boards, preferred?.Id
                 ?? (serialNumber is null && devicePath is null ? boards.FirstOrDefault()?.Id : null));
         }
+        // ponytail: An unresolved write keeps this monitor and board entry until shutdown so reconnects cannot
+        // silently clear the write block. It may retain one board indefinitely; safe clearing needs firmware recovery.
+        foreach (var monitor in expiredMonitors) monitor.Dispose();
+        return listing;
     }
 
     public StatusResponse Snapshot(string? boardId) => boardId is null
@@ -82,7 +111,8 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
 
     public bool SetLed(string? boardId, bool on) => Reader(boardId).SetLed(on);
     public WirelessResponse ReadWireless(string? boardId) => Reader(boardId).ReadWireless();
-    public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => Reader(boardId).SetWireless(settings);
+    public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) =>
+        Reader(boardId).SetWireless(settings);
     public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
         Reader(boardId).ScanWireless();
     public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
@@ -97,7 +127,7 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
     public bool SetSelfTest(string? boardId, string action, uint sizeMib) =>
         Reader(boardId).SetSelfTest(action, sizeMib);
 
-    private DeviceMonitor Reader(string? boardId)
+    private IDeviceMonitor Reader(string? boardId)
     {
         lock (gate)
         {
@@ -121,7 +151,7 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
 
     public void Dispose()
     {
-        DeviceMonitor[] readers;
+        IDeviceMonitor[] readers;
         lock (gate)
         {
             if (closed) return;

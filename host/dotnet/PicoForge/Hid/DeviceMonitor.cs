@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace PicoForge;
 
-internal interface IDeviceMonitor
+internal interface IDeviceMonitor : IHostedService, IDisposable
 {
     StatusResponse Snapshot { get; }
     bool SetLed(bool on);
@@ -11,21 +11,18 @@ internal interface IDeviceMonitor
     BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false);
     bool Reboot();
     bool SetSelfTest(string action, uint sizeMib);
-    WirelessResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
-    WirelessResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
-    IReadOnlyList<WirelessNetworkResponse> ScanWireless() =>
-        throw new InvalidOperationException("Wireless provisioning unavailable");
-    WirelessOperationResponse TestWireless(string ssid, string password) =>
-        throw new InvalidOperationException("Wireless provisioning unavailable");
-    bool CancelWirelessTest() => throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessResponse ReadWireless();
+    WirelessResponse SetWireless(WirelessRequest settings);
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless();
+    WirelessOperationResponse TestWireless(string ssid, string password);
+    bool CancelWirelessTest();
 }
 
 /// <summary>Serialized HID operations used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
 internal interface IHidCommands
 {
     bool CommandOutcomeUncertain { get; }
-    InputReport? ReadInputReport(int timeoutMilliseconds = 250) =>
-        throw new InvalidOperationException("HID input unavailable");
+    InputReport? ReadInputReport(int timeoutMilliseconds = 250);
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
     BoardConfigurationResponse ReadConfiguration();
@@ -33,13 +30,12 @@ internal interface IHidCommands
     BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false);
     void Reboot();
     void SetSelfTest(string action, uint sizeMib);
-    WirelessStatusResponse ReadWireless() => throw new InvalidOperationException("Wireless provisioning unavailable");
-    WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new InvalidOperationException("Wireless provisioning unavailable");
-    IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null) =>
-        throw new InvalidOperationException("Wireless provisioning unavailable");
+    WirelessStatusResponse ReadWireless();
+    WirelessStatusResponse SetWireless(WirelessRequest settings);
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null);
     WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
-        Action<string>? onProgress = null) => throw new InvalidOperationException("Wireless provisioning unavailable");
-    void CancelWirelessTest() => throw new InvalidOperationException("Wireless provisioning unavailable");
+        Action<string>? onProgress = null);
+    void CancelWirelessTest();
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor

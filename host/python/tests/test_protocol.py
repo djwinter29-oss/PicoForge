@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from picoforge.protocol import (
+from picoforge.reports import (
     build_control_command_report,
     build_led_command_report,
     build_msc_command_report,

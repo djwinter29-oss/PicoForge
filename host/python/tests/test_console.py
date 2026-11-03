@@ -4,10 +4,10 @@ import hmac
 import socket
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from picoforge.console import ConsoleBridge
-from picoforge.web import create_app
+from picoforge.dashboard.console import ConsoleBridge
+from picoforge.dashboard.server import create_app, run_server
 
 
 class Monitor:
@@ -86,6 +86,32 @@ class ConsoleTests(unittest.TestCase):
             bridge.read(token)
         self.connect.side_effect = OSError("connection refused")
         self.assertEqual(self.client.post("/api/console", json={}).status_code, 503)
+
+    def test_close_all_disconnects_an_active_console_session(self):
+        endpoint = self.open()
+        bridge = self.app.extensions["picoforge_console"]
+        bridge.close_all()
+        self.assertEqual(self.peer.recv(1), b"")
+        with self.assertRaises(RuntimeError):
+            bridge.read(endpoint.split("session=", 1)[1])
+
+    def test_server_shutdown_closes_console_and_dashboard(self):
+        dashboard = Mock()
+        connection = Mock()
+
+        def stop_server(app, **_kwargs):
+            app.extensions["picoforge_console"]._socket = connection
+            app.extensions["picoforge_console"]._session = "active"
+            raise RuntimeError("server stopped")
+
+        with patch("picoforge.dashboard.server.DashboardBoards", return_value=dashboard), \
+                patch("picoforge.dashboard.server.Flask.run", autospec=True,
+                   side_effect=stop_server):
+            with self.assertRaisesRegex(RuntimeError, "server stopped"):
+                run_server()
+
+        connection.close.assert_called_once()
+        dashboard.close.assert_called_once()
 
     def test_invalid_board_addresses_are_not_used_as_proxy_targets(self):
         for ip in ("127.0.0.1", "224.0.0.1", "0.0.0.0", "255.255.255.255", "bad", "::1"):

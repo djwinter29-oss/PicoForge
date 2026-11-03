@@ -312,5 +312,12 @@ public sealed class ProtocolTests
             return true;
         }
         public bool SetSelfTest(string? boardId, string action, uint sizeMib) => true;
+        public WirelessResponse ReadWireless(string? boardId) => throw new NotSupportedException();
+        public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => throw new NotSupportedException();
+        public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
+            throw new NotSupportedException();
+        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+            throw new NotSupportedException();
+        public bool CancelWirelessTest(string? boardId) => throw new NotSupportedException();
     }
 }

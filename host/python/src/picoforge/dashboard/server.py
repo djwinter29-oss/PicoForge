@@ -6,11 +6,11 @@ from pathlib import Path
 import base64
 import binascii
 import secrets
-from typing import Any
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
-from .monitor import DashboardBoards
+from .backend import DashboardBackend
+from .boards import DashboardBoards
 from .console import ConsoleBridge
 from ..reports import (
     build_wireless_command_report,
@@ -22,11 +22,11 @@ from ..reports import (
 )
 
 
-def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flask:
+def create_app(monitor: DashboardBackend | None = None, web_root: Path | None = None) -> Flask:
     """Create a testable status app; hardware monitoring starts only by default."""
     installed = Path(__file__).resolve().parents[1] / "web"
     root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[4] / "web")
-    dashboard = monitor or DashboardBoards()
+    dashboard: DashboardBackend = monitor if monitor is not None else DashboardBoards()
     console = ConsoleBridge()
     app = Flask(__name__, template_folder=str(root), static_folder=None)
     app.config.update(
@@ -46,6 +46,16 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         )
         return response
 
+    _register_ui_routes(app, root)
+    _register_console_routes(app, dashboard, console)
+    _register_api_routes(app, dashboard)
+    _register_wireless_routes(app, dashboard)
+    app.extensions["picoforge_monitor"] = dashboard
+    app.extensions["picoforge_console"] = console
+    return app
+
+
+def _register_ui_routes(app: Flask, root: Path) -> None:
     @app.get("/")
     def index():
         return render_template("index.html", dashboard_type="Python")
@@ -54,6 +64,20 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
     def console_page():
         return send_from_directory(root, "console.html")
 
+    @app.get("/favicon.svg")
+    def favicon():
+        return send_from_directory(root, "favicon.svg", mimetype="image/svg+xml")
+
+    @app.get("/css/<path:filename>")
+    def css(filename: str):
+        return send_from_directory(root / "css", filename)
+
+    @app.get("/js/<path:filename>")
+    def javascript(filename: str):
+        return send_from_directory(root / "js", filename)
+
+
+def _register_console_routes(app: Flask, dashboard: DashboardBackend, console: ConsoleBridge) -> None:
     @app.route("/api/console", methods=["POST", "GET", "PUT", "DELETE"])
     def console_api():
         request.max_content_length = 2048
@@ -92,18 +116,8 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             app.logger.warning("TCP console connection failed: %s", error)
             return jsonify({"error": f"TCP console connection failed: {error}"}), 503
 
-    @app.get("/favicon.svg")
-    def favicon():
-        return send_from_directory(root, "favicon.svg", mimetype="image/svg+xml")
 
-    @app.get("/css/<path:filename>")
-    def css(filename: str):
-        return send_from_directory(root / "css", filename)
-
-    @app.get("/js/<path:filename>")
-    def javascript(filename: str):
-        return send_from_directory(root / "js", filename)
-
+def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
     @app.get("/api/status")
     def status():
         try:
@@ -133,69 +147,6 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
             return jsonify({"error": str(error)}), 409
         except OSError as error:
             return jsonify({"error": str(error)}), 503
-
-    @app.get("/api/wireless")
-    def wireless():
-        try:
-            return jsonify(dashboard.read_wireless(request.args.get("board")))
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Wireless status unavailable"}), 503
-
-    @app.post("/api/wireless/scan")
-    def scan_wireless():
-        try:
-            return jsonify(dashboard.scan_wireless(request.args.get("board")))
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Wireless scan failed"}), 503
-
-    @app.post("/api/wireless/test")
-    def test_wireless():
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict) or set(payload) - {"ssid", "password"}:
-            return jsonify({"error": "Expected SSID and optional password"}), 400
-        try:
-            build_wireless_command_report(1, 3, ssid=payload.get("ssid", ""),
-                                          password=payload.get("password", ""))
-        except ValueError as error:
-            return jsonify({"error": str(error)}), 400
-        try:
-            return jsonify(dashboard.test_wireless(request.args.get("board"), payload["ssid"],
-                                                   payload.get("password", "")))
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except TimeoutError:
-            return jsonify({"error": "Wi-Fi test timed out; outcome is uncertain. Restart the dashboard "
-                                     "and reconnect the board before retrying."}), 503
-        except (OSError, ValueError):
-            return jsonify({"error": "Wi-Fi test result is uncertain. Restart the dashboard "
-                                     "and reconnect the board before retrying."}), 503
-
-    @app.post("/api/wireless/cancel")
-    def cancel_wireless_test():
-        try:
-            return jsonify(dashboard.cancel_wireless_test(request.args.get("board")))
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Could not clear the wireless test credentials"}), 503
-
-    @app.post("/api/wireless")
-    def set_wireless():
-        payload = request.get_json(silent=True)
-        try:
-            build_wireless_configuration_report(payload)
-        except ValueError as error:
-            return jsonify({"error": str(error)}), 400
-        try:
-            return jsonify(dashboard.set_wireless(request.args.get("board"), payload))
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 409
-        except (OSError, ValueError):
-            return jsonify({"error": "Wireless provisioning outcome is uncertain; command was not resent"}), 503
 
     @app.post("/api/settings")
     def set_settings():
@@ -306,13 +257,81 @@ def create_app(monitor: Any | None = None, web_root: Path | None = None) -> Flas
         except OSError as error:
             return jsonify({"error": str(error)}), 503
 
-    app.extensions["picoforge_monitor"] = dashboard
-    return app
+
+def _register_wireless_routes(app: Flask, dashboard: DashboardBackend) -> None:
+    @app.get("/api/wireless")
+    def wireless():
+        try:
+            return jsonify(dashboard.read_wireless(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless status unavailable"}), 503
+
+    @app.post("/api/wireless/scan")
+    def scan_wireless():
+        try:
+            return jsonify(dashboard.scan_wireless(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless scan failed"}), 503
+
+    @app.post("/api/wireless/test")
+    def test_wireless():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) - {"ssid", "password"}:
+            return jsonify({"error": "Expected SSID and optional password"}), 400
+        try:
+            build_wireless_command_report(1, 3, ssid=payload.get("ssid", ""),
+                                          password=payload.get("password", ""))
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        try:
+            return jsonify(dashboard.test_wireless(request.args.get("board"), payload["ssid"],
+                                                   payload.get("password", "")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except TimeoutError:
+            return jsonify({"error": "Wi-Fi test timed out; outcome is uncertain. Restart the dashboard "
+                                     "and reconnect the board before retrying."}), 503
+        except (OSError, ValueError):
+            return jsonify({"error": "Wi-Fi test result is uncertain. Restart the dashboard "
+                                     "and reconnect the board before retrying."}), 503
+
+    @app.post("/api/wireless/cancel")
+    def cancel_wireless_test():
+        try:
+            return jsonify(dashboard.cancel_wireless_test(request.args.get("board")))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Could not clear the wireless test credentials"}), 503
+
+    @app.post("/api/wireless")
+    def set_wireless():
+        payload = request.get_json(silent=True)
+        try:
+            build_wireless_configuration_report(payload)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        try:
+            return jsonify(dashboard.set_wireless(request.args.get("board"), payload))
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 409
+        except (OSError, ValueError):
+            return jsonify({"error": "Wireless provisioning outcome is uncertain; command was not resent"}), 503
 
 
 def run_server(port: int = 5000, serial_number: str | None = None, device_path: str | None = None) -> None:
     dashboard = DashboardBoards(serial_number, device_path)
+    app: Flask | None = None
     try:
-        create_app(dashboard).run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+        app = create_app(dashboard)
+        app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
     finally:
-        dashboard.close()
+        try:
+            if app is not None:
+                app.extensions["picoforge_console"].close_all()
+        finally:
+            dashboard.close()

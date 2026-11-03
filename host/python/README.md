@@ -64,6 +64,7 @@ picoforge --help
 `status` prints JSON diagnostics. `reboot` requires explicit confirmation and uses the board's saved settings.
 All three commands accept either `--serial SERIAL` or `--device-path PATH` to select a board.
 The source launcher accepts the same command and options, for example `tools/host/run-python.sh web --port 5001`.
+`status` returns the reports received within a five-second collection window; unavailable report fields remain `null`.
 
 Use **Rescan** and the dashboard's board selector to switch between attached boards. Run only one HID host connection
 per board; separate host processes can conflict for access. Python and .NET both default to port 5000, so use a
@@ -110,6 +111,13 @@ The package uses the **BSD-3-Clause** license. Its [LICENSE](LICENSE) mirrors th
 Package metadata, dependencies, and the `picoforge` entry point are defined in [pyproject.toml](pyproject.toml).
 
 Python implementations are grouped by responsibility under `src/picoforge/reports`, `src/picoforge/hid`, and
-`src/picoforge/dashboard`.
-The original top-level modules remain as compatibility imports for existing `picoforge.protocol`,
-`picoforge.device`, `picoforge.monitor`, `picoforge.console`, and `picoforge.web` users.
+`src/picoforge/dashboard`. Report codecs are split by report family; dashboard board discovery, per-board monitoring,
+HTTP routes, and the TCP console bridge have separate modules. `DashboardBackend` and the dashboard/HID typed
+envelopes make internal boundaries explicit while JSON dictionaries remain the HTTP contract. Dashboard discovery
+expires absent serial-numbered boards after a 30-second reconnect grace and path-only boards after 5 seconds; an
+uncertain command keeps its monitor until shutdown so cleanup cannot silently clear the write block. One background
+worker stops expired monitors, and a monitor for a reconnected board is not created until its previous monitor has
+stopped. Server shutdown closes the active TCP console session and stops its board monitors.
+
+Import report codecs from `picoforge.reports`, HID access from `picoforge.hid`, and dashboard services from
+`picoforge.dashboard`.

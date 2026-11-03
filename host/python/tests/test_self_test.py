@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from picoforge.protocol import build_self_test_command_report, parse_self_test_report
+from picoforge.reports import build_self_test_command_report, parse_self_test_report
 
 
 def report(state=0, flags=0, target=0, written=0, read=0, write_ms=0, read_ms=0,

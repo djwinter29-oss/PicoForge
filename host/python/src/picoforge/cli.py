@@ -5,8 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from math import ceil
+from time import monotonic
 
 from .hid.device import PicoForgeHid
+from .hid.models import MemoryStatus, RuntimeStatus, SelfTestStatus
+
+_STATUS_REPORT_TIMEOUT_SECONDS = 5.0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -23,6 +28,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         selection.add_argument("--device-path", help="select a HID path")
     web.add_argument("--port", type=int, default=5000)
     return parser.parse_args(argv)
+
+
+def _read_status_reports(
+    device: PicoForgeHid, self_test_expected: bool
+) -> tuple[RuntimeStatus | None, MemoryStatus | None, SelfTestStatus | None]:
+    runtime = None
+    memory = None
+    self_test = None
+    deadline = monotonic() + _STATUS_REPORT_TIMEOUT_SECONDS
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        item = device.read_input_report(timeout_ms=max(1, ceil(remaining * 1000)))
+        if item is None:
+            break
+        if item["kind"] == "runtime":
+            runtime = item["data"]
+        elif item["kind"] == "memory":
+            memory = item["data"]
+        elif item["kind"] == "self_test":
+            self_test = item["data"]
+        if runtime is not None and memory is not None and (
+            self_test is not None or not self_test_expected
+        ):
+            break
+    return runtime, memory, self_test
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,24 +92,7 @@ def main(argv: list[str] | None = None) -> int:
                 "system_clock_mhz": configuration["system_clock_mhz"],
                 "sdcard_profile": configuration["sdcard_profile"],
             }
-            runtime = None
-            memory = None
-            self_test = None
-            self_test_expected = info["self_test_supported"]
-            for _ in range(16):
-                item = device.read_input_report(timeout_ms=1500)
-                if item is None:
-                    continue
-                if item["kind"] == "runtime":
-                    runtime = item["data"]
-                elif item["kind"] == "memory":
-                    memory = item["data"]
-                elif item["kind"] == "self_test":
-                    self_test = item["data"]
-                if runtime is not None and memory is not None and (
-                    self_test is not None or not self_test_expected
-                ):
-                    break
+            runtime, memory, self_test = _read_status_reports(device, info["self_test_supported"])
             print(json.dumps({
                 "connected": True,
                 "hardware": info,

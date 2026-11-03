@@ -13,6 +13,11 @@ dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 status/command requests include its ID as `?board=<id>`. `GET /api/status` returns the selected board's hardware
 identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected
 board's LED; `POST /api/settings` saves supported boot settings and verifies HID readback.
+Serial-identified boards retain their monitor for at least 30 seconds after disappearing from a successful rescan,
+allowing brief USB reconnects without losing selection. Monitors with uncertain command outcomes remain pinned
+until host shutdown so reconnects cannot clear the write block. Boards without serial numbers use their HID device
+path as identity and are removed from the registry on the first successful rescan where they are absent. A path-only
+identity cannot distinguish a different serial-less board reusing that path unless a rescan observes the gap.
 `POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Current firmware keeps CDC, HID and MSC connected;
 MSC reports no medium while Pico owns the card. Safely eject before disabling to return the card to PicoForge.
 With older firmware, expected HID disconnects after a confirmed MSC command show **Reconnecting** for up to
@@ -38,7 +43,7 @@ Self-tests and transitions still block saving; standalone reboot remains blocked
 - `Hosting/` — application startup and dependency registration.
 - `Protocol/` — HID report models, validation, and wireless report codecs.
 - `Hid/` — USB HID transport and serialized device monitoring.
-- `Dashboard/` — board selection, HTTP endpoints, and TCP console bridge.
+- `Dashboard/` — board selection, grouped status/wireless endpoints, and TCP console bridge.
 
 The folders organize implementation by responsibility while retaining the existing `PicoForge` namespace.
 Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,

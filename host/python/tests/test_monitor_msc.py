@@ -1,9 +1,11 @@
 import sys
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
-from picoforge.monitor import DashboardBoards, DeviceMonitor, _empty_snapshot
+from picoforge.dashboard.boards import DashboardBoards
+from picoforge.dashboard.monitor import DeviceMonitor, _empty_snapshot
 
 
 class MonitorMscTests(unittest.TestCase):
@@ -114,6 +116,24 @@ class MonitorMscTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "outcome is uncertain"):
             self.monitor.set_msc(True)
         self.monitor._active_client.set_msc.assert_not_called()
+
+    def test_snapshot_mutations_do_not_change_monitor_state(self):
+        monitor = DeviceMonitor.__new__(DeviceMonitor)
+        monitor._lock = threading.RLock()
+        monitor._snapshot = {
+            **_empty_snapshot(),
+            "hardware": {"product_name": "PicoForge"},
+            "runtime": {"uptime_ms": 42},
+        }
+        monitor._input_received_at = {}
+        monitor._command_outcome_uncertain = False
+
+        snapshot = monitor.snapshot()
+        snapshot["hardware"]["product_name"] = "changed"
+        snapshot["runtime"]["uptime_ms"] = 0
+
+        self.assertEqual(monitor._snapshot["hardware"]["product_name"], "PicoForge")
+        self.assertEqual(monitor._snapshot["runtime"]["uptime_ms"], 42)
 
 
 class MonitorReconnectTests(unittest.TestCase):
@@ -402,4 +422,255 @@ class DashboardBoardsTests(unittest.TestCase):
         attached.append({"serial_number": "duplicate", "device_path": "/hid/b"})
         with self.assertRaisesRegex(RuntimeError, "duplicate"):
             boards.boards()
+        boards.close()
+
+    def test_removed_serial_board_monitor_expires_after_reconnect_grace_period(self):
+        attached = [{"serial_number": "board-A", "device_path": "/hid/a"}]
+        now = [0.0]
+        created = []
+        closed = threading.Event()
+
+        class FakeMonitor:
+            closed = False
+
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                self.closed = True
+                closed.set()
+
+        def create_monitor(*_):
+            monitor = FakeMonitor()
+            created.append(monitor)
+            return monitor
+
+        boards = DashboardBoards(
+            discover=lambda: attached,
+            monitor_factory=create_monitor,
+            clock=lambda: now[0],
+        )
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.snapshot(board_id)
+        attached.clear()
+
+        now[0] = 29.0
+        boards.boards()
+        self.assertFalse(created[0].closed)
+        self.assertEqual(boards.snapshot(board_id), {"command_outcome_uncertain": False})
+
+        now[0] = 30.0
+        boards.boards()
+        self.assertTrue(closed.wait(1))
+        self.assertTrue(created[0].closed)
+        with self.assertRaisesRegex(RuntimeError, "unknown board"):
+            boards.snapshot(board_id)
+
+        deadline = time.monotonic() + 1
+        while boards._retiring and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertFalse(boards._retiring)
+        attached.append({"serial_number": "board-A", "device_path": "/hid/new-a"})
+        self.assertEqual(boards.boards()["boards"][0]["id"], board_id)
+        boards.snapshot(board_id)
+        self.assertEqual(len(created), 2)
+        boards.close()
+
+    def test_removed_path_only_board_expires_after_short_grace_period(self):
+        attached = [{"serial_number": None, "device_path": "/hid/a"}]
+        now = [0.0]
+        created = []
+        closed = threading.Event()
+
+        class FakeMonitor:
+            closed = False
+
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                self.closed = True
+                closed.set()
+
+        def create_monitor(*_):
+            monitor = FakeMonitor()
+            created.append(monitor)
+            return monitor
+
+        boards = DashboardBoards(
+            discover=lambda: attached,
+            monitor_factory=create_monitor,
+            clock=lambda: now[0],
+        )
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.snapshot(board_id)
+        attached.clear()
+        now[0] = 5.0
+        boards.boards()
+        self.assertTrue(closed.wait(1))
+        self.assertTrue(created[0].closed)
+        with self.assertRaisesRegex(RuntimeError, "unknown board"):
+            boards.snapshot(board_id)
+        boards.close()
+
+    def test_failed_discovery_does_not_expire_known_monitors(self):
+        attached = [{"serial_number": "board-A", "device_path": "/hid/a"}]
+        now = [0.0]
+        monitor = Mock()
+        monitor.snapshot.return_value = {"command_outcome_uncertain": False}
+        discover = Mock(return_value=attached)
+        boards = DashboardBoards(discover=discover, monitor_factory=lambda *_: monitor, clock=lambda: now[0])
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.snapshot(board_id)
+
+        now[0] = 31.0
+        discover.side_effect = OSError("HID enumeration failed")
+        with self.assertRaisesRegex(OSError, "enumeration failed"):
+            boards.boards()
+        self.assertFalse(monitor.close.called)
+        self.assertEqual(boards.snapshot(board_id), monitor.snapshot.return_value)
+        boards.close()
+
+    def test_uncertain_command_keeps_stale_monitor_to_preserve_write_block(self):
+        attached = [{"serial_number": "board-A", "device_path": "/hid/a"}]
+        now = [0.0]
+        monitor = Mock()
+        monitor.snapshot.return_value = {"command_outcome_uncertain": True}
+        boards = DashboardBoards(
+            discover=lambda: attached, monitor_factory=lambda *_: monitor, clock=lambda: now[0]
+        )
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.snapshot(board_id)
+        attached.clear()
+        now[0] = 60.0
+        boards.boards()
+
+        monitor.close.assert_not_called()
+        self.assertEqual(boards.snapshot(board_id), monitor.snapshot.return_value)
+        boards.close()
+        monitor.close.assert_called_once()
+
+    def test_monitor_close_waits_until_background_thread_stops(self):
+        monitor = DeviceMonitor.__new__(DeviceMonitor)
+        monitor._stop = threading.Event()
+        started = threading.Event()
+        release = threading.Event()
+        closed = threading.Event()
+
+        def run():
+            started.set()
+            release.wait()
+
+        monitor._thread = threading.Thread(target=run)
+        monitor._thread.start()
+        self.assertTrue(started.wait(1))
+
+        def close():
+            monitor.close()
+            closed.set()
+
+        closer = threading.Thread(target=close)
+        closer.start()
+        self.assertFalse(closed.wait(0.05))
+        release.set()
+        self.assertTrue(closed.wait(1))
+        closer.join()
+
+    def test_reconnected_board_cannot_start_a_second_monitor_while_old_one_closes(self):
+        attached = [{"serial_number": "board-A", "device_path": "/hid/a"}]
+        now = [0.0]
+        closing = threading.Event()
+        release_close = threading.Event()
+        created = []
+
+        class FakeMonitor:
+            def __init__(self, wait_on_close=False):
+                self.wait_on_close = wait_on_close
+
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                if self.wait_on_close:
+                    closing.set()
+                    release_close.wait()
+
+        def create_monitor(*_):
+            monitor = FakeMonitor(wait_on_close=not created)
+            created.append(monitor)
+            return monitor
+
+        boards = DashboardBoards(
+            discover=lambda: attached,
+            monitor_factory=create_monitor,
+            clock=lambda: now[0],
+        )
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.snapshot(board_id)
+        attached.clear()
+        now[0] = 30.0
+        expiry = threading.Thread(target=boards.boards)
+        expiry.start()
+        self.assertTrue(closing.wait(1))
+        expiry.join(1)
+        self.assertFalse(expiry.is_alive())
+
+        attached.append({"serial_number": "board-A", "device_path": "/hid/new-a"})
+        boards.boards()
+        with self.assertRaisesRegex(RuntimeError, "shutting down"):
+            boards.snapshot(board_id)
+        self.assertEqual(len(created), 1)
+
+        release_close.set()
+        deadline = time.monotonic() + 1
+        while boards._retiring and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertFalse(boards._retiring)
+        boards.snapshot(board_id)
+        self.assertEqual(len(created), 2)
+        boards.close()
+
+    def test_expired_monitors_share_one_retirement_worker(self):
+        attached = [
+            {"serial_number": "board-A", "device_path": "/hid/a"},
+            {"serial_number": "board-B", "device_path": "/hid/b"},
+        ]
+        now = [0.0]
+        closed = []
+        all_closed = threading.Event()
+
+        class FakeMonitor:
+            def __init__(self):
+                self.retirement_thread = None
+
+            def snapshot(self):
+                return {"command_outcome_uncertain": False}
+
+            def close(self):
+                self.retirement_thread = threading.current_thread()
+                closed.append(self)
+                if len(closed) == 2:
+                    all_closed.set()
+
+        boards = DashboardBoards(
+            discover=lambda: attached,
+            monitor_factory=lambda *_: FakeMonitor(),
+            clock=lambda: now[0],
+        )
+        self.assertIsNone(boards._retirement_thread)
+        for board in boards.boards()["boards"]:
+            boards.snapshot(board["id"])
+        attached.clear()
+        now[0] = 30.0
+        boards.boards()
+
+        self.assertIsNotNone(boards._retirement_thread)
+        self.assertTrue(all_closed.wait(1))
+        deadline = time.monotonic() + 1
+        while boards._retiring and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertFalse(boards._retiring)
+        self.assertEqual(len({monitor.retirement_thread for monitor in closed}), 1)
+        self.assertEqual(closed[0].retirement_thread.name, "picoforge-monitor-retirement")
+        self.assertFalse(boards._retiring)
         boards.close()

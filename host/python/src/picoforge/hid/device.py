@@ -6,6 +6,19 @@ from math import ceil
 from time import monotonic, sleep
 from typing import Any, Callable
 
+from .models import (
+    BoardConfiguration,
+    BootSettings,
+    ControlResult,
+    HardwareIdentity,
+    InputReport,
+    MscStatus,
+    RuntimeStatus,
+    WirelessNetwork,
+    WirelessOperation,
+    WirelessSaveResult,
+    WirelessStatus,
+)
 from ..reports import (
     CAP_WIRELESS,
     WIRELESS_REPORT_ID,
@@ -132,13 +145,13 @@ class PicoForgeHid:
         self._device = device
         self.closed = False
         self._expected_serial_number = info.get("serial_number")
-        self.identity: dict[str, object] | None = None
-        self.configuration: dict[str, object] | None = None
+        self.identity: HardwareIdentity | None = None
+        self.configuration: BoardConfiguration | None = None
         self._transaction_id = 0
         self.last_command_result: dict[str, object] | None = None
         self._command_uncertain = False
 
-    def read_info(self) -> dict[str, object]:
+    def read_info(self) -> HardwareIdentity:
         self._require_open()
         report = self._device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE)
         self.identity = parse_device_identity_report(report)
@@ -147,7 +160,7 @@ class PicoForgeHid:
             raise ValueError("HID identity UID disagrees with the USB serial string")
         return self.identity
 
-    def read_configuration(self) -> dict[str, object]:
+    def read_configuration(self) -> BoardConfiguration:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity.get("supported"):
@@ -164,7 +177,7 @@ class PicoForgeHid:
             "radios": configuration["radios"],
         }
 
-    def read_status(self, timeout_ms: int = 250) -> dict[str, object] | None:
+    def read_status(self, timeout_ms: int = 250) -> RuntimeStatus | None:
         """Consume non-status input reports while waiting up to timeout_ms for status."""
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
@@ -180,7 +193,7 @@ class PicoForgeHid:
             if remaining_ms <= 0:
                 return None
 
-    def read_input_report(self, timeout_ms: int = 250) -> dict[str, object] | None:
+    def read_input_report(self, timeout_ms: int = 250) -> InputReport | None:
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
         self._require_open()
@@ -203,14 +216,14 @@ class PicoForgeHid:
             return {"kind": "runtime", "data": parse_telemetry_report(report, identity)}
         raise ValueError(f"unexpected HID Input report ID {report[0]}")
 
-    def set_led(self, on: bool) -> dict[str, object]:
+    def set_led(self, on: bool) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & CAP_LED:
             raise RuntimeError("board identification LED is unavailable")
         return self._execute_control(build_led_command_report(on, self._next_transaction_id()), 1)
 
-    def set_settings(self, settings: dict[str, object], *, force: bool = False) -> dict[str, object]:
+    def set_settings(self, settings: dict[str, object], *, force: bool = False) -> BootSettings:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & CAP_SAVE_SETTINGS:
@@ -227,7 +240,7 @@ class PicoForgeHid:
             raise RuntimeError("firmware did not confirm the selected boot settings")
         return saved
 
-    def reboot(self) -> dict[str, object]:
+    def reboot(self) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & CAP_REBOOT:
@@ -235,7 +248,7 @@ class PicoForgeHid:
         command = build_control_command_report(self._next_transaction_id(), 2, flags=1)
         return self._execute_control(command, 2)
 
-    def read_wireless(self) -> dict[str, object]:
+    def read_wireless(self) -> WirelessStatus:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity.get("capabilities", 0) & CAP_WIRELESS:
@@ -243,7 +256,7 @@ class PicoForgeHid:
         return parse_wireless_status_report(
             self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE))
 
-    def set_wireless(self, settings: dict[str, object]) -> dict[str, object]:
+    def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResult:
         """Save board settings and credentials atomically; return wireless status plus confirmed settings."""
         self._require_open()
         if self._command_uncertain:
@@ -299,7 +312,7 @@ class PicoForgeHid:
         except OSError:
             raise OSError("Wireless provisioning delivery failed; outcome is uncertain; command was not resent") from None
 
-    def scan_wireless(self, *, on_poll: Callable[[], None] | None = None) -> list[dict[str, object]]:
+    def scan_wireless(self, *, on_poll: Callable[[], None] | None = None) -> list[WirelessNetwork]:
         """Scan for nearby access points and return strongest unique SSIDs."""
         self._require_open()
         scan = self._wireless_command(1, timeout=15.0, on_poll=on_poll)
@@ -311,7 +324,7 @@ class PicoForgeHid:
     def test_wireless(
         self, ssid: str, password: str = "", *, on_poll: Callable[[], None] | None = None,
         on_progress: Callable[[str], None] | None = None,
-    ) -> dict[str, object]:
+    ) -> WirelessOperation:
         """Test a temporary network join; firmware retains credentials only in RAM after success."""
         self._require_open()
         return self._wireless_command(3, ssid=ssid, password=password, timeout=35.0, terminal=5, on_poll=on_poll,
@@ -326,7 +339,7 @@ class PicoForgeHid:
         self, operation: int, *, page: int = 0, ssid: str = "", password: str = "",
         timeout: float = 15.0, terminal: int | None = None,
         on_poll: Callable[[], None] | None = None, on_progress: Callable[[str], None] | None = None,
-    ) -> dict[str, object]:
+    ) -> WirelessOperation:
         if self._command_uncertain:
             raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
         previous = self.read_wireless()
@@ -361,7 +374,7 @@ class PicoForgeHid:
             sleep(0.1)
         raise TimeoutError("Wireless operation timed out; do not resend until its result is checked")
 
-    def set_msc(self, enable: bool, *, force: bool = False) -> dict[str, object]:
+    def set_msc(self, enable: bool, *, force: bool = False) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & (1 << 3 | 1 << 4):
@@ -375,7 +388,7 @@ class PicoForgeHid:
             self._device.close()
             self.closed = True
 
-    def set_self_test(self, action: str, size_mib: int | None = None) -> dict[str, object]:
+    def set_self_test(self, action: str, size_mib: int | None = None) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & CAP_SELF_TEST:
@@ -387,7 +400,9 @@ class PicoForgeHid:
         self._transaction_id = self._transaction_id % 255 + 1
         return self._transaction_id
 
-    def _execute_control(self, command: bytes, opcode: int, *, reconnect: bool = False) -> dict[str, object]:
+    def _execute_control(
+        self, command: bytes, opcode: int, *, reconnect: bool = False
+    ) -> ControlResult:
         if self._command_uncertain:
             raise RuntimeError("a prior HID command has an uncertain outcome; reconnect and inspect device state")
         sent = self._device.send_feature_report(list(command))

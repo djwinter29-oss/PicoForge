@@ -11,19 +11,27 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
-    def test_legacy_modules_reexport_domain_implementations(self):
-        from picoforge import console, device, monitor, protocol, web
+    def test_public_apis_live_in_their_domain_packages(self):
         from picoforge.dashboard import console as dashboard_console
         from picoforge.dashboard import monitor as dashboard_monitor
         from picoforge.dashboard import server
         from picoforge.hid import device as hid_device
-        from picoforge.reports import hid as reports
+        import picoforge.reports as reports
 
-        self.assertIs(device.PicoForgeHid, hid_device.PicoForgeHid)
-        self.assertIs(monitor.DeviceMonitor, dashboard_monitor.DeviceMonitor)
-        self.assertIs(console.ConsoleBridge, dashboard_console.ConsoleBridge)
-        self.assertIs(web.create_app, server.create_app)
-        self.assertIs(protocol.parse_identity_report, reports.parse_identity_report)
+        self.assertNotIn("struct", reports.__all__)
+        self.assertEqual(hid_device.PicoForgeHid.__module__, "picoforge.hid.device")
+        self.assertEqual(dashboard_monitor.DeviceMonitor.__module__, "picoforge.dashboard.monitor")
+        self.assertEqual(dashboard_console.ConsoleBridge.__module__, "picoforge.dashboard.console")
+        self.assertEqual(server.create_app.__module__, "picoforge.dashboard.server")
+        self.assertIn("parse_identity_report", reports.__all__)
+        self.assertIn("parse_wireless_status_report", reports.__all__)
+        self.assertIn("parse_storage_report", reports.__all__)
+
+    def test_compatibility_modules_are_removed(self):
+        package = PROJECT / "src" / "picoforge"
+        for module in ("console", "device", "monitor", "protocol", "web"):
+            self.assertFalse((package / f"{module}.py").exists(), module)
+        self.assertFalse((package / "reports" / "hid.py").exists())
 
     @unittest.skipIf(tomllib is None, "tomllib requires Python 3.11")
     def test_package_metadata_includes_repository_license(self):

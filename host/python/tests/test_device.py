@@ -2,8 +2,8 @@ import struct
 import unittest
 from unittest.mock import Mock, patch
 
-from picoforge.device import PicoForgeHid, _matches_vendor_collection, enumerate_devices
-from picoforge.protocol import (
+from picoforge.hid.device import PicoForgeHid, _matches_vendor_collection, enumerate_devices
+from picoforge.reports import (
     CONTROL_FEATURE_SIZE,
     SELF_TEST_INPUT_SIZE,
     parse_identity_report,

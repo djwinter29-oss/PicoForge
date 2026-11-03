@@ -141,3 +141,8 @@ class ConsoleBridge:
         with self._lock:
             self._require_session(session)
             self._close()
+
+    def close_all(self) -> None:
+        with self._lock:
+            if self._socket is not None:
+                self._close()

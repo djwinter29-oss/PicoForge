@@ -378,6 +378,8 @@ public sealed class ForcedSaveTests
         public Exception? Failure { get; set; }
         public int Reboots { get; private set; }
         public bool CommandOutcomeUncertain => Failure is not null;
+        public InputReport? ReadInputReport(int timeoutMilliseconds = 250) =>
+            throw new NotSupportedException();
         public void SetLed(bool on) { }
         public void SetMsc(bool enabled, bool force = false) { }
         public BoardConfigurationResponse ReadConfiguration() => throw new NotSupportedException();
@@ -390,6 +392,13 @@ public sealed class ForcedSaveTests
         }
         public void Reboot() => Reboots++;
         public void SetSelfTest(string action, uint sizeMib) { }
+        public WirelessStatusResponse ReadWireless() => throw new NotSupportedException();
+        public WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new NotSupportedException();
+        public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null) =>
+            throw new NotSupportedException();
+        public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
+            Action<string>? onProgress = null) => throw new NotSupportedException();
+        public void CancelWirelessTest() => throw new NotSupportedException();
     }
 
     private sealed class Dashboard : IDashboardBoards
@@ -408,5 +417,12 @@ public sealed class ForcedSaveTests
         }
         public bool Reboot(string? boardId) => true;
         public bool SetSelfTest(string? boardId, string action, uint sizeMib) => true;
+        public WirelessResponse ReadWireless(string? boardId) => throw new NotSupportedException();
+        public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => throw new NotSupportedException();
+        public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
+            throw new NotSupportedException();
+        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+            throw new NotSupportedException();
+        public bool CancelWirelessTest(string? boardId) => throw new NotSupportedException();
     }
 }

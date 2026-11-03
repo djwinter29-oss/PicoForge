@@ -5,17 +5,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from picoforge.device import PicoForgeHid
-from picoforge.monitor import DeviceMonitor
-from picoforge.protocol import (
+from picoforge.hid.device import PicoForgeHid
+from picoforge.dashboard.monitor import DeviceMonitor
+from picoforge.reports import (
     build_wireless_command_report,
     build_wireless_configuration_report,
     parse_wireless_result_report,
     parse_wireless_status_report,
 )
-from picoforge.web import create_app
+from picoforge.dashboard.server import create_app
 from test_protocol import identity_report
-from picoforge.protocol import parse_identity_report
+from picoforge.reports import parse_identity_report
 
 
 BOARD = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 3}

@@ -3,6 +3,7 @@
 
 # Generated build output
 /build/
+/host/python/build/
 **/bin/
 **/obj/
 __pycache__/

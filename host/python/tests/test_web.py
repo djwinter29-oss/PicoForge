@@ -1,6 +1,6 @@
 import unittest
 
-from picoforge.web import create_app
+from picoforge.dashboard.server import create_app
 from picoforge.cli import parse_args
 
 
@@ -100,7 +100,18 @@ class FakeMonitor:
         return {"status": "completed", "opcode": 2, "transaction_id": 1}
 
 
+class FalseyMonitor(FakeMonitor):
+    def __bool__(self) -> bool:
+        return False
+
+
 class WebTests(unittest.TestCase):
+    def test_create_app_keeps_an_injected_falsey_dashboard(self):
+        monitor = FalseyMonitor()
+
+        app = create_app(monitor)
+
+        self.assertIs(app.extensions["picoforge_monitor"], monitor)
     def test_server_dashboard_does_not_serve_browser_bluetooth_page(self):
         client = create_app(FakeMonitor()).test_client()
         self.assertEqual(client.get("/ble/").status_code, 404)
@@ -153,6 +164,25 @@ class WebTests(unittest.TestCase):
         self.assertIn("10", response.json["report_freshness"])
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_api_error_statuses_distinguish_bad_input_conflicts_and_unavailable_devices(self):
+        class FailingMonitor(FakeMonitor):
+            def snapshot(self, board_id=None):
+                raise RuntimeError("device busy")
+
+            def boards(self):
+                raise OSError("HID enumeration failed")
+
+        monitor = FailingMonitor()
+        client = create_app(monitor).test_client()
+
+        self.assertEqual(client.post("/api/led", json={"on": 1}).status_code, 400)
+        conflict = client.get("/api/status")
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.json["error"], "device busy")
+        unavailable = client.get("/api/boards")
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(unavailable.json["error"], "HID enumeration failed")
 
     def test_boards_route_lists_selectable_devices(self):
         response = create_app(FakeMonitor()).test_client().get(
