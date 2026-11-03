@@ -1,6 +1,6 @@
 import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=6";
 import { renderStatus } from "./view.mjs?v=12";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=6";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=7";
 import { bindWirelessForm } from "./wireless-form.mjs?v=15";
 import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=9";
 
@@ -97,7 +97,7 @@ function render(state) {
   bleAccessStatus.hidden = !bleClient || !state.connected;
   bleAccessStatus.textContent = !state.connected ? ""
     : client.accessMode === "control" ? "Bluetooth access: control mode; the board checks the key on every command."
-      : client.accessMode === "view-only" ? "Bluetooth access: view only; controls are disabled."
+      : client.accessMode === "view-only" ? "Bluetooth access: view only; only the board LED can be switched."
         : "Bluetooth access: choose View only or enter the control key.";
   element("usb-connection-close").disabled = state.busy;
   const bleAccessChoicePending = bleClient && state.connected && client.accessMode === null;
@@ -122,7 +122,7 @@ function render(state) {
   if (!state.connected) element("ble-control-key").value = "";
   ledControl.disabled = blocked || !state.board_status?.led_available || !(state.hardware?.capabilities & 1);
   if (bluetooth && client.accessMode !== "control") {
-    ledControl.disabled = true;
+    ledControl.disabled ||= client.accessMode === null;
     element("self-test-start").disabled = true;
     element("self-test-cancel").disabled = true;
   }

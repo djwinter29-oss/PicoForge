@@ -138,7 +138,11 @@ the first read freezes the value for subsequent read-blob offsets. Report `0014`
 result; writes accept only existing opcode 1 (LED) or 4 (benchmark). Reports are polled; no notification MTU
 assumption is needed.
 
-For **every** command:
+Opcode 1 (LED) only identifies the board, so it needs no proof: write the request to `0014` and read the result.
+Anyone in radio range can therefore switch the LED; confirm a board by its advertised serial before destructive USB
+actions. An LED write leaves any pending nonce, proof, and rate limit unchanged.
+
+For **every** other command:
 
 1. Read `0020` to obtain a new random 16-byte nonce, invalidating any earlier proof.
 2. Compute HMAC-SHA256 with the provisioned 32-byte key over

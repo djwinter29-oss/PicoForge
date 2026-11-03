@@ -169,6 +169,7 @@ static void __attribute__((noinline)) clobber_stack(void)
 int main(void)
 {
     uint8_t request[sizeof(pf_hid_control_request_t)] = {1u, 7u, 4u};
+    uint8_t led[sizeof(pf_hid_control_request_t)] = {1u, 8u, PF_HID_OPCODE_LED, 0u, 1u};
     uint8_t nonce[16], other[16], buffer[64];
 
     /* BTstack length probes, including discovery, must not build reports or advance sequence numbers. */
@@ -189,7 +190,7 @@ int main(void)
     assert(read_cb(1u, HANDLE(000b), 0u, buffer, 8u) == 8u && buffer[0] == 2u);
     assert(telemetry_builds == 1u && storage_builds == 1u && benchmark_builds == 1u);
 
-    /* Without a key, BLE is diagnostics-only: proofs and controls are refused with the non-pairing error. */
+    /* Without a key, BLE allows only diagnostics and the LED identify control; proofs and other controls are refused. */
     assert(pf_bluetooth_prepare());
     assert(pf_bluetooth_start());
     clobber_stack();
@@ -203,6 +204,8 @@ int main(void)
     assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0x80);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
     assert(controls == 0u);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0 && controls == 1u);
+    controls = 0u;
 
     /* Status is readable without a proof, but never carries the SSID or LAN address. */
     assert(read_cb(1u, HANDLE(001e), 0u, buffer, sizeof(buffer)) == PF_WIRELESS_STATUS_SIZE);
@@ -240,6 +243,13 @@ int main(void)
     assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0);
     assert(controls == 2u);
+
+    /* An open LED write neither consumes nor rejects a pending proof. */
+    read_nonce(nonce);
+    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0 && controls == 3u);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0);
+    assert(controls == 4u);
 
     /* A disconnect drops the pending proof and the frozen long-read snapshot. */
     read_nonce(nonce);

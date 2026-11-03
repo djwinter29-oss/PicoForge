@@ -106,9 +106,9 @@ nearby-device picker using the browser computer's Bluetooth adapter, filtered to
 Each board advertises the PicoForge service UUID and returns the name `PicoForge-<USB serial>` in its scan response
 and GAP Device Name, so the picker can tell boards apart.
 The board must have Bluetooth enabled, but does not need a saved key to advertise. After connecting, choose
-**Continue view only** for public diagnostics, or enter the USB-provisioned control key and select **Enable controls**
-to toggle the LED or start/cancel a benchmark. View-only mode needs no key; controls stay disabled until a valid
-key is entered. The key is checked by the board on every command, not when entered. The browser must be within radio
+**Continue view only** for public diagnostics and the board LED, or enter the USB-provisioned control key and select
+**Enable controls** to start/cancel a benchmark. The LED identifies the board and needs no key; other controls stay
+disabled until a valid key is entered. The key is checked by the board on every command, not when entered. The browser must be within radio
 range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.

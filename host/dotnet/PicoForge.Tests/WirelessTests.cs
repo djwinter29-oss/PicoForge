@@ -13,6 +13,30 @@ namespace PicoForge.Tests;
 
 public sealed class WirelessTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void WirelessStatusAcceptsHidBackendPrefixes(byte version)
+    {
+        var report = new byte[version >= 4 ? 54 : 53];
+        Report().CopyTo(report, 0);
+        report[1] = version;
+        var expected = HidProtocol.ParseWirelessStatus(report);
+        Assert.Equal(version >= 2, expected.TcpCliConfigurable);
+        Assert.Equal(version >= 3, expected.TcpCliAuthConfigurable);
+        foreach (var prefix in new byte[] { 0, HidProtocol.WirelessReportId })
+        {
+            var framed = new byte[256];
+            framed[0] = prefix;
+            report.CopyTo(framed, 1);
+            Assert.Equal(expected, HidProtocol.ParseWirelessStatus(framed));
+            framed[report.Length + 1] = 1;
+            Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(framed));
+        }
+    }
+
     [Fact]
     public void ParsesFirmwareGeneratedFeature30StatusVectors()
     {

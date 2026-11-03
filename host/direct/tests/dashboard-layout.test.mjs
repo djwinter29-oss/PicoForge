@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PicoForgeWebHid } from "../js/device.mjs?v=6";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=6";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=7";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -11,7 +11,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/direct\.css\?v=15"/);
-  assert.match(html, /src="js\/app\.mjs\?v=29"/);
+  assert.match(html, /src="js\/app\.mjs\?v=30"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=6"/);
   assert.match(app, /from "\.\/view\.mjs\?v=12"/);
@@ -345,6 +345,7 @@ test("connection dialogs scan before prompting for a key and preserve transport 
   PicoForgeBluetooth.prototype.setViewOnly = function () {
     this.bleKey = null;
     this.accessMode = "view-only";
+    this.update({ error: null });
   };
   PicoForgeBluetooth.prototype.disconnect = async function () {
     this.bleKey = null;
@@ -388,8 +389,8 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     await el("#ble-view-only").click();
     assert.equal(client.accessMode, "view-only");
     assert.equal(el("#bluetooth-connection-dialog").open, false);
-    assert.match(el("#ble-access-status").textContent, /View only/);
-    assert.equal(el("#led-control").disabled, true, "view-only mode keeps commands disabled");
+    assert.match(el("#ble-access-status").textContent, /view only; only the board LED/);
+    assert.equal(el("#led-control").disabled, false, "the LED identifies the board without a key");
     assert.equal(el("#self-test-start").disabled, true);
     el("#bluetooth-open").click();
     el("#self-test-size").input();

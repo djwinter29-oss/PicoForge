@@ -224,11 +224,12 @@ internal static partial class HidProtocol
 
     public static WirelessStatusResponse ParseWirelessStatus(ReadOnlySpan<byte> report)
     {
-        var offset = report.Length >= 2 && report[0] == 0 && report[1] == WirelessReportId ? 2
+        var offset = report.Length >= 2 && (report[0] == 0 || report[0] == WirelessReportId)
+                && report[1] == WirelessReportId ? 2
             : report.Length != 0 && report[0] == WirelessReportId ? 1 : -1;
         Require(offset >= 0 && report.Length > offset, "Invalid wireless status report");
         var payloadSize = report[offset] >= 4 ? 53 : 52;
-        var payload = FeaturePayload(report, WirelessReportId, payloadSize);
+        var payload = FeaturePayload(report, WirelessReportId, payloadSize, report[offset]);
         var restartFlag = payloadSize == 53 ? payload[52] : (byte)0;
         Require(payload[0] is 1 or 2 or 3 or 4 && (payload[1] & ~3) == 0 && payload[2] <= 6 &&
             payload[4] <= 3 && payload[42] <= 1 && payload[43] <= 1 && payload[44] <= 3 &&

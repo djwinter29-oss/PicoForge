@@ -41,6 +41,8 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
         receiveFeatureReport: async id => this.characteristics.get(id).readValue(),
         sendFeatureReport: async (id, report) => {
           if (id !== 20 || ![1, 4].includes(report[2])) throw new Error("This operation requires USB.");
+          // The LED only identifies the board, so firmware accepts it without a proof.
+          if (report[2] === 1) return this.characteristics.get(20).writeValueWithResponse(report);
           if (!this.bleKey) throw new Error("Enter the USB-provisioned BLE control key first.");
           const value = await this.characteristics.get(32).readValue();
           const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
@@ -110,7 +112,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
 
   async command(opcode, options) {
     if (![1, 4].includes(opcode)) throw new Error("This operation requires USB.");
-    if (this.accessMode !== "control" || !this.bleKey) {
+    if (opcode !== 1 && (this.accessMode !== "control" || !this.bleKey)) {
       throw new Error("Choose Control and enter the saved key to enable BLE commands.");
     }
     return super.command(opcode, options);

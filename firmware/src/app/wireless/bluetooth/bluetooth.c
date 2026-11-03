@@ -185,7 +185,7 @@ static bool authenticate(const uint8_t *request)
     return accepted;
 }
 
-/** @brief Accept only authorization proofs and restricted controls; no BLE credential or flash writes. */
+/** @brief Accept authorization proofs, the open LED identify control and proven controls; never flash writes. */
 static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t transaction_mode,
                            uint16_t offset, uint8_t *buffer, uint16_t size)
 {
@@ -201,9 +201,10 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
     }
     if (handle != BLE_HANDLE(0014)) return ATT_ERROR_WRITE_NOT_PERMITTED;
     if (size != sizeof(pf_hid_control_request_t)) return ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH;
-    if (!authenticate(buffer)) return BLE_ERROR_CONTROL_REJECTED;
     pf_hid_control_request_t request;
     memcpy(&request, buffer, sizeof(request));
+    /* The LED only identifies a board and exposes nothing; it skips the proof without touching nonce/rate state. */
+    if (request.opcode != PF_HID_OPCODE_LED && !authenticate(buffer)) return BLE_ERROR_CONTROL_REJECTED;
     return pf_hid_ble_control(&request) ? 0 : ATT_ERROR_REQUEST_NOT_SUPPORTED;
 }
 

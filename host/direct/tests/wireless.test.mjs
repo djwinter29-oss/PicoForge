@@ -459,7 +459,7 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
         async readValue() {
           const bytes = id === 1 ? identity(128 | 55) : id === 2 ? config() : id === 3 ? telemetry()
             : id === 10 ? storage() : id === 11 ? selfTest() : id === 32 ? nonce
-              : result(writes.at(-1)?.[1]?.[1] ?? 1, 1);
+              : result(writes.at(-1)?.[1]?.[1] ?? 1, writes.at(-1)?.[1]?.[2] ?? 1);
           return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         },
         async writeValueWithResponse(bytes) { writes.push([id, [...bytes]]); },
@@ -484,15 +484,18 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     assert.equal(client.state.connected, true);
     assert.equal(client.state.transport, "ble");
     assert.equal(client.accessMode, null, "access requires an explicit choice after connecting");
-    await assert.rejects(client.command(1, { args: [1] }), /key/);
+    await assert.rejects(client.command(4, { args: [1] }), /key/);
     assert.equal(writes.length, 0);
     client.setViewOnly();
     assert.equal(client.accessMode, "view-only");
-    await assert.rejects(client.command(1, { args: [1] }), /Control/);
+    await assert.rejects(client.command(4, { args: [1] }), /Control/);
     assert.equal(writes.length, 0);
+    await client.command(1, { args: [1] });
+    assert.deepEqual(writes.map(item => item[0]), [20], "the LED is sent without a proof");
+    writes.length = 0;
     await client.setControlKey("ab".repeat(32));
     assert.equal(client.accessMode, "control");
-    await client.command(1, { args: [1] });
+    await client.command(4, { args: [0, 0, 0, 0, 0] });
     assert.deepEqual(writes.map(item => item[0]), [33, 20]);
     const uid = Buffer.from(client.state.hardware.serial_number, "hex");
     const expected = createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
@@ -501,8 +504,9 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     assert.deepEqual(writes[0][1], [...expected]);
     for (const opcode of [2, 3, 6]) await assert.rejects(client.command(opcode), /requires USB/);
     assert.equal(writes.length, 2);
+    client.update({ self_test_command_pending: false }); // stands in for the next self-test report
     characteristics.get(20).writeValueWithResponse = async () => { throw new Error("GATT Error Unknown."); };
-    await assert.rejects(client.command(1, { args: [0] }), /rejected the BLE control key/);
+    await assert.rejects(client.command(4, { args: [0, 0, 0, 0, 0] }), /rejected the BLE control key/);
     assert.equal(client.state.connected, true, "a rejected key must not drop the link");
     assert.equal(Boolean(client.state.outcome_uncertain), false);
     await client.disconnect();
