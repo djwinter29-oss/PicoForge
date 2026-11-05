@@ -1,5 +1,5 @@
-import { CAP } from "./protocol.mjs?v=47";
-import { deriveOperationEligibility } from "./eligibility.mjs?v=47";
+import { CAP } from "./protocol.mjs?v=48";
+import { deriveOperationEligibility } from "./eligibility.mjs?v=48";
 
 function uptimeLabel(milliseconds) {
   if (typeof milliseconds === "bigint") {

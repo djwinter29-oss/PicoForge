@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
-using System.Text.Json;
 
 namespace PicoForge;
 
@@ -11,23 +10,32 @@ internal sealed class ConsoleBridge : IDisposable
     private readonly object gate = new();
     private readonly TimeProvider time;
     private readonly ITimer expiry;
+    private readonly int port;
+    private readonly bool allowLoopbackForTests;
     private Socket? connection;
     private string? session;
     // TimeProvider timestamp of the last session request, guarded by gate.
     private long lastRequest;
 
     public ConsoleBridge(TimeProvider? time = null)
+        : this(time, 2323, false) { }
+
+    internal ConsoleBridge(TimeProvider? time, int port, bool allowLoopbackForTests)
     {
         this.time = time ?? TimeProvider.System;
+        this.port = port;
+        this.allowLoopbackForTests = allowLoopbackForTests;
         expiry = this.time.CreateTimer(_ => Expire(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
-    public string Open(WirelessStatusResponse wireless, Func<byte[], byte[], byte[]>? signProof = null)
+    public async Task<string> OpenAsync(WirelessStatusResponse wireless,
+        Func<byte[], byte[], byte[]>? signProof = null, CancellationToken cancel = default)
     {
-        if (!wireless.WifiEnabled || wireless.WifiState != "connected" || !wireless.TcpCliStarted)
+        if (!wireless.WifiEnabled || wireless.WifiState != WifiState.Connected || !wireless.TcpCliStarted)
             throw new InvalidOperationException("The board's Wi-Fi TCP CLI is not available");
         if (!IPAddress.TryParse(wireless.Ipv4, out var address) ||
-            address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(address) ||
+            address.AddressFamily != AddressFamily.InterNetwork ||
+            !allowLoopbackForTests && IPAddress.IsLoopback(address) ||
             address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) ||
             address.GetAddressBytes()[0] is >= 224 and <= 239)
             throw new ArgumentException("Invalid board IPv4 address");
@@ -40,9 +48,10 @@ internal sealed class ConsoleBridge : IDisposable
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            socket.ConnectAsync(new IPEndPoint(address, 2323), timeout.Token).AsTask().GetAwaiter().GetResult();
-            Authenticate(socket, signProof);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            await socket.ConnectAsync(new IPEndPoint(address, port), timeout.Token);
+            await AuthenticateAsync(socket, signProof, cancel);
             socket.SendTimeout = 100;
             lock (gate)
             {
@@ -60,9 +69,10 @@ internal sealed class ConsoleBridge : IDisposable
         }
     }
 
-    private void Authenticate(Socket socket, Func<byte[], byte[], byte[]> signProof)
+    private async Task AuthenticateAsync(Socket socket, Func<byte[], byte[], byte[]> signProof,
+        CancellationToken cancel)
     {
-        var challenge = ReadChallenge(socket);
+        var challenge = await ReadChallengeAsync(socket, cancel);
         var fields = challenge[..^2].Split(' ');
         if (fields.Length != 4 || fields[0] != "PicoForge" || fields[1] != "AUTH" ||
             fields[2].Length != 32 || fields[2].Any(character => !Uri.IsHexDigit(character)) ||
@@ -73,11 +83,12 @@ internal sealed class ConsoleBridge : IDisposable
         byte[] proof = [];
         try
         {
+            cancel.ThrowIfCancellationRequested();
             proof = signProof(nonce, uid);
             if (proof.Length != 16) throw new InvalidOperationException("The board returned an invalid TCP CLI proof");
             var response = System.Text.Encoding.ASCII.GetBytes(
                 $"AUTH {Convert.ToHexString(proof).ToLowerInvariant()}\r\n");
-            try { SendAll(socket, response); }
+            try { await SendAllAsync(socket, response, cancel); }
             finally
             {
                 CryptographicOperations.ZeroMemory(response);
@@ -91,21 +102,39 @@ internal sealed class ConsoleBridge : IDisposable
         }
     }
 
-    private string ReadChallenge(Socket socket)
+    private async Task<string> ReadChallengeAsync(Socket socket, CancellationToken cancel)
     {
         var line = new List<byte>(96);
         var value = new byte[1];
-        var started = time.GetTimestamp();
-        while (line.Count < 128 && time.GetElapsedTime(started) < TimeSpan.FromSeconds(3))
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
+        try
         {
-            if (!socket.Poll(100_000, SelectMode.SelectRead)) continue;
-            var count = socket.Receive(value, SocketFlags.None);
-            if (count == 0) throw new IOException("Board closed the TCP CLI during authentication");
-            line.Add(value[0]);
-            if (line.Count >= 2 && line[^2] == '\r' && line[^1] == '\n')
-                return System.Text.Encoding.ASCII.GetString([.. line]);
+            while (line.Count < 128)
+            {
+                var count = await socket.ReceiveAsync(value, SocketFlags.None, timeout.Token);
+                if (count == 0) throw new IOException("Board closed the TCP CLI during authentication");
+                line.Add(value[0]);
+                if (line.Count >= 2 && line[^2] == '\r' && line[^1] == '\n')
+                    return System.Text.Encoding.ASCII.GetString([.. line]);
+            }
+        }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            throw new IOException("TCP CLI authentication challenge timed out or exceeded its limit");
         }
         throw new IOException("TCP CLI authentication challenge timed out or exceeded its limit");
+    }
+
+    private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> data, CancellationToken cancel)
+    {
+        var sent = 0;
+        while (sent < data.Length)
+        {
+            var count = await socket.SendAsync(data[sent..], SocketFlags.None, cancel);
+            if (count == 0) throw new SocketException((int)SocketError.ConnectionReset);
+            sent += count;
+        }
     }
 
     private static void SendAll(Socket socket, ReadOnlySpan<byte> data)
@@ -127,15 +156,29 @@ internal sealed class ConsoleBridge : IDisposable
     }
 
     /// <summary>Waits up to 2 s for board output without holding the gate, so writes are never blocked.</summary>
-    public (byte[] Data, bool Closed) Read(string? token)
+    public async Task<(byte[] Data, bool Closed)> ReadAsync(string? token, CancellationToken cancel = default)
     {
         Socket waiting;
         lock (gate) waiting = RequireSession(token);
-        // ponytail: one long-poll GET per 2 s idle replaces 20 polls/s; a WebSocket would only cut the per-chunk
-        // request.
-        bool ready;
-        try { ready = waiting.Poll(2_000_000, SelectMode.SelectRead); }
-        catch (Exception error) when (error is ObjectDisposedException or SocketException) { ready = false; }
+        var data = new byte[4096];
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        int count;
+        try { count = await waiting.ReceiveAsync(data, SocketFlags.None, timeout.Token); }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            count = -1;
+        }
+        catch (Exception error) when (error is ObjectDisposedException or SocketException)
+        {
+            lock (gate)
+            {
+                if (!ReferenceEquals(connection, waiting))
+                    throw new InvalidOperationException("Console disconnected; connect again");
+                CloseConnection();
+            }
+            throw new IOException("TCP console connection failed", error);
+        }
         lock (gate)
         {
             var socket = RequireSession(token);
@@ -143,16 +186,14 @@ internal sealed class ConsoleBridge : IDisposable
                 throw new InvalidOperationException("Console disconnected; connect again");
             try
             {
-                if (!ready) return ([], false);
-                var data = new byte[4096];
-                var count = socket.Receive(data);
+                if (count < 0) return ([], false);
                 if (count == 0) CloseConnection();
                 return (data[..count], count == 0);
             }
-            catch (SocketException)
+            catch (Exception error) when (error is ObjectDisposedException or SocketException)
             {
                 CloseConnection();
-                throw;
+                throw new IOException("TCP console connection failed", error);
             }
         }
     }
@@ -199,48 +240,5 @@ internal sealed class ConsoleBridge : IDisposable
     {
         expiry.Dispose();
         lock (gate) CloseConnection();
-    }
-
-    /// <summary>
-    /// Maps the console routes; <see cref="StatusEndpoints.UseApiErrors"/> supplies every error body.
-    /// </summary>
-    public static void MapEndpoints(WebApplication app)
-    {
-        var unavailable = new StatusEndpoints.UnavailableMessage("TCP console connection failed", WithDetail: true);
-        var limit = new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(2048);
-        app.MapPost("/api/console", (JsonElement payload, string? board, IDashboardBoards dashboard,
-            ConsoleBridge bridge, CancellationToken cancel) =>
-        {
-            if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Any())
-                throw new ArgumentException("Expected an empty object; TCP authentication uses the connected board");
-            var monitor = dashboard.Monitor(board);
-            var wireless = monitor.ReadWireless(cancel).Wireless;
-            return Results.Ok(new
-            {
-                session = bridge.Open(wireless, (nonce, uid) => monitor.TcpCliAuthProof(nonce, uid, cancel))
-            });
-        }).Errors(StatusEndpoints.CommandErrors).WithMetadata(unavailable, limit);
-        app.MapGet("/api/console", (string? session, ConsoleBridge bridge) =>
-        {
-            var (data, closed) = bridge.Read(session);
-            return Results.Ok(new { data = Convert.ToBase64String(data), closed });
-        }).Errors(409, 503).WithMetadata(unavailable);
-        app.MapPut("/api/console", (JsonElement payload, string? session, ConsoleBridge bridge) =>
-        {
-            if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Count() != 1 ||
-                !payload.TryGetProperty("data", out var field) || field.ValueKind != JsonValueKind.String)
-                throw new ArgumentException("Expected base64-encoded input bytes");
-            var encoded = field.GetString()!;
-            if (encoded.Length > 1368) throw new ArgumentException("Input exceeds 1024 bytes");
-            var data = Convert.FromBase64String(encoded);
-            if (data.Length is < 1 or > 1024) throw new ArgumentException("Expected 1..1024 input bytes");
-            bridge.Write(session, data);
-            return Results.Ok(new { ok = true });
-        }).Errors(400, 409, 503).WithMetadata(unavailable, limit);
-        app.MapDelete("/api/console", (string? session, ConsoleBridge bridge) =>
-        {
-            bridge.Close(session);
-            return Results.Ok(new { ok = true });
-        }).Errors(409);
     }
 }

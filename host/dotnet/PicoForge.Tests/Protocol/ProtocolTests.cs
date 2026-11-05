@@ -209,6 +209,33 @@ public sealed class ProtocolTests
         Assert.Equal(HidProtocol.BoardFlagWifi, 1 << HidProtocol.BoardRadioShift);
         Assert.Equal(HidProtocol.SaveForceMsc, Define("PF_HID_SAVE_SETTINGS_FORCE_MSC"));
         Assert.Equal(HidProtocol.SaveCommitWireless, Define("PF_HID_SAVE_SETTINGS_COMMIT_WIRELESS"));
+        Assert.Equal(Enum.GetValues<ControlStatus>().Select(value => (int)value),
+            Regex.Matches(source, @"#define PF_HID_COMMAND_\w+ (\d+)u")
+                .Select(match => int.Parse(match.Groups[1].Value)));
+        Assert.Equal(Enum.GetValues<ControlError>().Select(value => (int)value),
+            Regex.Matches(source, @"#define PF_HID_ERROR_\w+ (\d+)u")
+                .Select(match => int.Parse(match.Groups[1].Value)));
+    }
+
+    [Fact]
+    public void SharedJsonOptionsKeepWirelessStatesAsSnakeCaseStrings()
+    {
+        var json = JsonSerializer.SerializeToElement(new WirelessStatusResponse
+        {
+            WifiState = WifiState.TestJoined,
+            BleState = BleState.Advertising,
+            ScanState = (byte)WirelessScanState.Scanning
+        }, DashboardJson.Options);
+        Assert.Equal("test_joined", json.GetProperty("wifi_state").GetString());
+        Assert.Equal("advertising", json.GetProperty("ble_state").GetString());
+        Assert.Equal((byte)WirelessScanState.Scanning, json.GetProperty("scan_state").GetByte());
+    }
+
+    [Fact]
+    public void SharedJsonOptionsRequireAllBoardSettingsConstructorFields()
+    {
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<BootSettingsResponse>(
+            """{"system_clock_mhz":200,"sdcard_profile":1}""", DashboardJson.Options));
     }
 
     [Theory]
@@ -281,13 +308,12 @@ public sealed class ProtocolTests
         var monitor = new EndpointMonitor();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.ConfigureHttpJsonOptions(options =>
-            options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+        builder.Services.ConfigureHttpJsonOptions(options => DashboardJson.Configure(options.SerializerOptions));
         builder.Services.AddOpenApi();
         builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(monitor));
         await using var app = builder.Build();
         app.UseApiErrors();
-        app.MapDeviceStatus();
+        app.MapStatusEndpoints();
         app.MapOpenApi();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };

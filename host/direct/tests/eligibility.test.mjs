@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveOperationEligibility } from "../js/eligibility.mjs?v=47";
+import { deriveOperationEligibility } from "../js/eligibility.mjs?v=48";
 
 const readyState = (changes = {}) => ({
   link: "usb",

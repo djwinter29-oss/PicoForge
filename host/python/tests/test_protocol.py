@@ -1,4 +1,5 @@
 import json
+import re
 import struct
 import unittest
 from pathlib import Path
@@ -10,6 +11,11 @@ from picoforge.reports import (
     build_self_test_command_report,
     build_settings_command_report,
     build_wireless_command_report,
+    ControlError,
+    ControlOpcode,
+    ControlStatus,
+    BleState,
+    WifiState,
     parse_configuration_report,
     parse_control_result_report,
     parse_identity_report,
@@ -75,6 +81,50 @@ class ProtocolTests(unittest.TestCase):
             build_settings_command_report(settings, force="yes")
         with self.assertRaises(ValueError):
             build_settings_command_report(settings, tcp_cli_enabled=1)
+
+    def test_feature_20_values_match_firmware_header(self):
+        header = (Path(__file__).resolve().parents[3] / "firmware/src/app/usb/usb_hid.h").read_text()
+        macros = {
+            name: int(value)
+            for name, value in re.findall(
+                r"^#define (PF_HID_(?:OPCODE|COMMAND|ERROR)_\w+) (\d+)u?(?:[ \t]|$)", header, re.MULTILINE,
+            )
+        }
+        expected = {
+            **{f"PF_HID_OPCODE_{item.name}": int(item) for item in ControlOpcode},
+            **{f"PF_HID_COMMAND_{item.name}": int(item) for item in ControlStatus},
+            **{f"PF_HID_ERROR_{item.name}": int(item) for item in ControlError},
+        }
+        self.assertEqual({name: macros[name] for name in expected}, expected)
+
+    def test_wireless_state_values_match_firmware(self):
+        root = Path(__file__).resolve().parents[3] / "firmware/src/app/wireless"
+        wifi_header = (root / "wifi/wifi.h").read_text()
+        wifi_source = (root / "wifi/wifi.c").read_text()
+        bluetooth_source = (root / "bluetooth/bluetooth.c").read_text()
+        wifi_states = {
+            name: int(value)
+            for name, value in re.findall(r"PF_WIFI_STATE_(\w+) = (\d+)", wifi_header)
+        }
+        test_states = {
+            name: int(value)
+            for name, value in re.findall(r"PF_WIFI_COMMAND_(TESTING|TEST_JOINED|FAILED) = (\d+)", wifi_source)
+        }
+        ble_states = {
+            name: int(value)
+            for name, value in re.findall(r"PF_BLUETOOTH_STATE_(\w+) = (\d+)", bluetooth_source)
+        }
+        self.assertEqual({item.name: int(item) for item in tuple(WifiState)[:4]}, wifi_states)
+        self.assertEqual({item.name: int(item) for item in tuple(WifiState)[4:]}, {
+            "TESTING": test_states["TESTING"],
+            "TEST_JOINED": test_states["TEST_JOINED"],
+            "TEST_FAILED": test_states["FAILED"],
+        })
+        self.assertEqual({item.name: int(item) for item in BleState}, {
+            "OFF": ble_states["STARTING"],
+            "ADVERTISING": ble_states["ADVERTISING"],
+            "CONNECTED": ble_states["CONNECTED"],
+        })
 
     def test_identity_and_board_configuration_decode(self):
         self.assertEqual(self.identity["device_uid"], "0123456789ABCDEF")

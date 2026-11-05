@@ -11,7 +11,7 @@ from picoforge.dashboard.server import create_app
 from picoforge.hid.device import PicoForgeHid, WirelessTestCancelled
 from picoforge.reports import (
     build_tcp_cli_auth_request, build_wireless_command_report, build_settings_command_report,
-    parse_control_result_report, parse_tcp_cli_auth_result, parse_wireless_status_report,
+    ProtocolError, parse_control_result_report, parse_wireless_status_report,
     validate_wireless_configuration,
 )
 
@@ -49,6 +49,10 @@ class WirelessTests(unittest.TestCase):
         client._command_uncertain = False
         client._control_lock = threading.RLock()
         client.last_command_result = None
+        client._wireless_snapshot = None
+        client._wireless_active = False
+        client._tested_generation = None
+        client._tested_at = None
         client._device = Mock()
         client._device.send_feature_report.side_effect = lambda value: len(value)
         client._device.get_feature_report.side_effect = list(reports)
@@ -63,6 +67,9 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(parsed["ipv4"], "192.168.1.2")
         self.assertNotIn("password_configured", parsed)
         self.assertNotIn("tcp_cli_enabled", parsed)
+        self.assertNotIn("error", parsed)
+        self.assertNotIn("tcp_cli_auth_required", parsed)
+        self.assertNotIn("age_ms", parsed)
         self.assertNotIn("rssi", parsed)
         command = build_wireless_command_report(9, 6, value=bytes.fromhex(parsed["ssid_hex"]))
         self.assertEqual(command[:6], bytes((20, 1, 9, 6, 0, len(raw))))
@@ -82,7 +89,7 @@ class WirelessTests(unittest.TestCase):
         tested = parse_wireless_status_report(b"\x0c" + bytes.fromhex(vectors["tested_candidate"]))
         self.assertEqual(serving["ssid_hex"], b"PicoForge".hex())
         self.assertTrue(serving["tcp_cli_started"])
-        self.assertTrue(serving["tcp_cli_auth_required"], "the console must answer the board's AUTH challenge")
+        self.assertTrue(serving["ble_key_configured"], "the console must answer the board's AUTH challenge")
         self.assertFalse(disabled["tcp_cli_started"])
         self.assertEqual((tested["wifi_state"], tested["test_generation"], tested["pair_tested"]),
                          ("test_joined", 1, True))
@@ -401,16 +408,17 @@ class WirelessTests(unittest.TestCase):
         nonce, proof = bytes(range(16)), bytes(range(16, 32))
         request = build_tcp_cli_auth_request(7, nonce)
         self.assertEqual((request[:5], request[5:21], request[21:]), (bytes((20, 1, 7, 13, 0)), nonce, bytes(48)))
-        self.assertEqual(parse_tcp_cli_auth_result(result(13, 7, data=proof), 7), proof)
-        with self.assertRaisesRegex(ValueError, "stale"):
-            parse_tcp_cli_auth_result(result(13, 8, data=proof), 7)
+        parsed = parse_control_result_report(result(13, 7, data=proof))
+        self.assertEqual((parsed["transaction_id"], parsed["opcode"], parsed["proof"]), (7, 13, proof))
+        stale = parse_control_result_report(result(13, 8, data=proof))
+        self.assertNotEqual(stale["transaction_id"], 7)
         client = self.client([OSError("retry GET only"), result(13, data=proof)])
         with patch("picoforge.hid.device.sleep"):
             self.assertEqual(client.tcp_cli_auth_proof(nonce, bytes.fromhex("0123456789abcdef")), proof)
         self.assertEqual(client._device.send_feature_report.call_count, 1)
         self.assertEqual(client._device.get_feature_report.call_count, 2)
         self.assertIsNone(client.last_command_result["proof"])
-        self.assertEqual(client.last_command_result["result_data"], 0)
+        self.assertNotIn("result_data", client.last_command_result)
 
     def test_uncertain_delivery_blocks_all_writes_including_proof(self):
         for failure in ("short", OSError("USB"), ValueError("invalid result")):
@@ -451,12 +459,16 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(client.post("/api/wireless/test?board=a",
                                      json={"ssid": "ignored", "ssid_hex": "4100FF", "password": ""}).status_code, 200)
         dashboard.test_wireless.assert_called_with(b"A\0\xff", "")
-        for failure in (TimeoutError("secret12"), OSError("secret12"), ValueError("secret12")):
+        for failure in (TimeoutError("secret12"), OSError("secret12"), ProtocolError("secret12")):
             dashboard.test_wireless.side_effect = failure
             response = client.post("/api/wireless/test", json={"ssid": "Pico", "password": "secret12"})
             self.assertEqual(response.status_code, 503)
             self.assertIn("uncertain", response.json["error"])
             self.assertNotIn("secret12", response.text)
+        dashboard.test_wireless.side_effect = ValueError("bug")
+        response = client.post("/api/wireless/test", json={"ssid": "Pico", "password": ""})
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json["error"], "Internal server error")
 
     def monitor(self):
         client = Mock()

@@ -117,8 +117,48 @@ internal enum Opcode : byte
     TcpProof = 13
 }
 
+/// <summary>Feature 20 command statuses, matching <c>PF_HID_COMMAND_*</c>.</summary>
+internal enum ControlStatus : byte
+{
+    /// <summary>No command result has been published.</summary>
+    Idle = 0,
+    /// <summary>Accepted; the result will be published later.</summary>
+    Pending = 1,
+    /// <summary>Command completed successfully.</summary>
+    Completed = 2,
+    /// <summary>Request was malformed or out of range.</summary>
+    Invalid = 3,
+    /// <summary>Opcode or capability is unavailable.</summary>
+    Unsupported = 4,
+    /// <summary>Device state currently blocks the command.</summary>
+    Busy = 5,
+    /// <summary>Accepted command failed while executing.</summary>
+    Failed = 6
+}
+
+/// <summary>Feature 20 command errors, matching <c>PF_HID_ERROR_*</c>.</summary>
+internal enum ControlError : byte
+{
+    /// <summary>No error.</summary>
+    None = 0,
+    /// <summary>Reserved bits, flags or trailing arguments are invalid.</summary>
+    Malformed = 1,
+    /// <summary>A required confirmation flag is missing.</summary>
+    Confirmation = 2,
+    /// <summary>An argument is out of range or not applicable.</summary>
+    Argument = 3,
+    /// <summary>The device lacks the capability.</summary>
+    Capability = 4,
+    /// <summary>Storage or benchmark activity blocks the command.</summary>
+    Busy = 5,
+    /// <summary>The device operation failed.</summary>
+    Operation = 6,
+    /// <summary>The opcode is unsupported.</summary>
+    Opcode = 7
+}
+
 /// <summary>One Feature 20 result; <see cref="Opcode"/> may hold an unassigned value echoed by firmware.</summary>
-internal sealed record ControlResult(byte TransactionId, Opcode Opcode, byte Status, byte ErrorReason,
+internal sealed record ControlResult(byte TransactionId, Opcode Opcode, ControlStatus Status, ControlError ErrorReason,
     byte[] ResultData);
 
 internal static partial class HidProtocol
@@ -212,8 +252,8 @@ internal static partial class HidProtocol
             2 or 3 => mcuId == 2,
             _ => true
         }, "board model and MCU do not match");
-        var ramTotal = ReadUInt32LittleEndian(payload[18..]);
-        var ramReserved = ReadUInt32LittleEndian(payload[22..]);
+        var ramTotal = BinaryPrimitives.ReadUInt32LittleEndian(payload[18..]);
+        var ramReserved = BinaryPrimitives.ReadUInt32LittleEndian(payload[22..]);
         Require(ramTotal != 0 && ramReserved <= ramTotal, "invalid firmware RAM reservation");
         var uid = Convert.ToHexString(payload.Slice(3, 8));
         var mcu = mcuId switch
@@ -276,7 +316,7 @@ internal static partial class HidProtocol
         var uptime = BinaryPrimitives.ReadUInt64LittleEndian(payload[4..]);
         var core0 = BinaryPrimitives.ReadUInt16LittleEndian(payload[12..]);
         var core1 = BinaryPrimitives.ReadUInt16LittleEndian(payload[14..]);
-        var clock = ReadUInt32LittleEndian(payload[16..]);
+        var clock = BinaryPrimitives.ReadUInt32LittleEndian(payload[16..]);
         var flags = payload[21];
         Require((ledFlags & ~1) == 0 && (flags & ~0x0f) == 0, "unknown HID telemetry flags");
         Require((core0 <= 10000 || core0 == ushort.MaxValue)
@@ -301,9 +341,9 @@ internal static partial class HidProtocol
         var flags = payload[2];
         var component = payload[3];
         var mode = payload[4];
-        var clock = ReadUInt32LittleEndian(payload[5..]);
+        var clock = BinaryPrimitives.ReadUInt32LittleEndian(payload[5..]);
         var speed = payload[9];
-        var blocks = ReadUInt32LittleEndian(payload[10..]);
+        var blocks = BinaryPrimitives.ReadUInt32LittleEndian(payload[10..]);
         var cid = payload.Slice(14, 16);
         var filesystem = payload[30];
         var mscEnabled = payload[31];
@@ -368,10 +408,10 @@ internal static partial class HidProtocol
         var payload = InputPayload(report, SelfTestReportId, SelfTestPayloadSize);
         var state = payload[2];
         var flags = payload[3];
-        var target = ReadUInt32LittleEndian(payload[4..]);
-        var written = ReadUInt32LittleEndian(payload[8..]);
-        var read = ReadUInt32LittleEndian(payload[12..]);
-        var mismatches = ReadUInt32LittleEndian(payload[24..]);
+        var target = BinaryPrimitives.ReadUInt32LittleEndian(payload[4..]);
+        var written = BinaryPrimitives.ReadUInt32LittleEndian(payload[8..]);
+        var read = BinaryPrimitives.ReadUInt32LittleEndian(payload[12..]);
+        var mismatches = BinaryPrimitives.ReadUInt32LittleEndian(payload[24..]);
         Require(payload[0] == ReportVersion && (flags & ~3) == 0 && payload[31] == 0
             && payload[28] <= 10 && payload[29] <= 19 && payload[30] == 0
             && target <= 1024u * 1024u * 1024u && written <= target && read <= written
@@ -382,8 +422,9 @@ internal static partial class HidProtocol
             0 => "idle", 1 => "queued", 2 => "preparing", 3 => "writing", 4 => "reading",
             5 => "cleanup", 6 => "passed", 7 => "failed", 8 => "cancelled", _ => $"unknown ({state})"
         };
-        return new(payload[1], name, target, written, read, ReadUInt32LittleEndian(payload[16..]),
-            ReadUInt32LittleEndian(payload[20..]), mismatches, payload[28], payload[29],
+        return new(payload[1], name, target, written, read,
+            BinaryPrimitives.ReadUInt32LittleEndian(payload[16..]),
+            BinaryPrimitives.ReadUInt32LittleEndian(payload[20..]), mismatches, payload[28], payload[29],
             (flags & 1) != 0, (flags & 2) != 0);
     }
 
@@ -406,66 +447,79 @@ internal static partial class HidProtocol
     public static ControlResult ParseControlResult(ReadOnlySpan<byte> report)
     {
         var payload = FeaturePayload(report, ControlReportId, ControlPayloadSize);
-        var result = new ControlResult(payload[1], (Opcode)payload[2], payload[3], payload[4],
+        var result = new ControlResult(payload[1], (Opcode)payload[2], (ControlStatus)payload[3],
+            (ControlError)payload[4],
             payload[5..].ToArray());
-        Require(payload[0] == ReportVersion && result.Status <= 6 && result.ErrorReason <= 7,
+        Require(payload[0] == ReportVersion && (byte)result.Status <= (byte)ControlStatus.Failed &&
+            (byte)result.ErrorReason <= (byte)ControlError.Opcode,
             "invalid HID control result version, status, or error");
-        if (result.Status == 0)
+        if (result.Status == ControlStatus.Idle)
         {
-            Require(result.TransactionId == 0 && result.Opcode == 0 && result.ErrorReason == 0
+            Require(result.TransactionId == 0 && result.Opcode == (Opcode)0 &&
+                result.ErrorReason == ControlError.None
                 && result.ResultData.All(value => value == 0), "invalid idle control result");
             return result;
         }
         Require(result.TransactionId != 0, "control result has a zero transaction ID");
         Require(result.Status switch
         {
-            1 or 2 => result.ErrorReason == 0,
-            3 => result.ErrorReason is 1 or 2 or 3,
-            4 => result.ErrorReason is 4 or 7,
-            5 => result.ErrorReason == 5,
-            6 => result.ErrorReason == 6,
+            ControlStatus.Pending or ControlStatus.Completed => result.ErrorReason == ControlError.None,
+            ControlStatus.Invalid => result.ErrorReason is ControlError.Malformed or ControlError.Confirmation
+                or ControlError.Argument,
+            ControlStatus.Unsupported => result.ErrorReason is ControlError.Capability or ControlError.Opcode,
+            ControlStatus.Busy => result.ErrorReason == ControlError.Busy,
+            ControlStatus.Failed => result.ErrorReason == ControlError.Operation,
             _ => false
         }, "invalid control status/error combination");
         var assigned = Enum.IsDefined(result.Opcode);
-        Require(assigned || (result.Opcode != 0 && result.Status == 4 && result.ErrorReason == 7),
+        Require(assigned || (result.Opcode != (Opcode)0 && result.Status == ControlStatus.Unsupported &&
+            result.ErrorReason == ControlError.Opcode),
             "control result has an unsupported opcode/status combination");
         Require(result.Opcode switch
         {
-            Opcode.Led => result.Status is 1 or 2 or 3 or 6,
-            Opcode.Reboot or Opcode.Msc => result.Status is 1 or 2 or 3 or 5 or 6,
+            Opcode.Led => result.Status is ControlStatus.Pending or ControlStatus.Completed
+                or ControlStatus.Invalid or ControlStatus.Failed,
+            Opcode.Reboot or Opcode.Msc => result.Status is ControlStatus.Pending or ControlStatus.Completed
+                or ControlStatus.Invalid or ControlStatus.Busy or ControlStatus.Failed,
             Opcode.SelfTest or Opcode.SaveSettings or Opcode.WifiTest or Opcode.WifiScan =>
-                result.Status is >= 1 and <= 6,
+                result.Status is ControlStatus.Pending or ControlStatus.Completed or ControlStatus.Invalid
+                    or ControlStatus.Unsupported or ControlStatus.Busy or ControlStatus.Failed,
             Opcode.StageSsid or Opcode.StagePassword or Opcode.StageKey or Opcode.WifiEntry =>
-                result.Status is >= 2 and <= 6,
-            Opcode.WifiCancel or Opcode.TcpProof => result.Status is 2 or 3 or 4 or 6,
-            _ => result.Status == 4 && result.ErrorReason == 7
+                result.Status is ControlStatus.Completed or ControlStatus.Invalid or ControlStatus.Unsupported
+                    or ControlStatus.Busy or ControlStatus.Failed,
+            Opcode.WifiCancel or Opcode.TcpProof => result.Status is ControlStatus.Completed
+                or ControlStatus.Invalid or ControlStatus.Unsupported or ControlStatus.Failed,
+            _ => result.Status == ControlStatus.Unsupported && result.ErrorReason == ControlError.Opcode
         }, "control result status is invalid for its opcode");
-        Require(!assigned || result.Status != 4 || result.ErrorReason == 4,
+        Require(!assigned || result.Status != ControlStatus.Unsupported ||
+            result.ErrorReason == ControlError.Capability,
             "assigned opcode reported as unassigned");
-        Require(result.Status != 3 || result.ErrorReason != 2 || result.Opcode is Opcode.Reboot or Opcode.Msc,
+        Require(result.Status != ControlStatus.Invalid || result.ErrorReason != ControlError.Confirmation ||
+            result.Opcode is Opcode.Reboot or Opcode.Msc,
             "confirmation error is invalid for this opcode");
-        Require(result.Opcode != Opcode.Reboot || result.Status != 3 || result.ErrorReason is 1 or 2,
+        Require(result.Opcode != Opcode.Reboot || result.Status != ControlStatus.Invalid ||
+            result.ErrorReason is ControlError.Malformed or ControlError.Confirmation,
             "invalid reboot error");
-        if (result.Status is 3 or 5 or 6)
+        if (result.Status is ControlStatus.Invalid or ControlStatus.Busy or ControlStatus.Failed)
         {
             var detail = result.ResultData[0];
             Require(result.ResultData.AsSpan(1).IndexOfAnyExcept((byte)0) < 0 &&
                 ValidControlDetail(result, detail), "invalid control detail");
         }
-        else if (result.Status == 2 && result.Opcode == Opcode.SaveSettings)
+        else if (result.Status == ControlStatus.Completed && result.Opcode == Opcode.SaveSettings)
         {
             Require(IsValidClock(BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData)) &&
                 result.ResultData[2] <= 1 && result.ResultData[3] <= 7 && result.ResultData[4] <= 7 &&
                 result.ResultData.AsSpan(5).IndexOfAnyExcept((byte)0) < 0, "invalid saved-settings result data");
         }
-        else if (result.Status == 2 && result.Opcode == Opcode.WifiEntry)
+        else if (result.Status == ControlStatus.Completed && result.Opcode == Opcode.WifiEntry)
         {
             var data = result.ResultData;
             Require(BinaryPrimitives.ReadUInt16LittleEndian(data) != 0 && data[2] < 18 && data[3] <= 32 &&
                 data.AsSpan(4 + data[3], 32 - data[3]).IndexOfAnyExcept((byte)0) < 0 &&
                 data[37] <= 7 && data.AsSpan(38).IndexOfAnyExcept((byte)0) < 0, "invalid scan entry result");
         }
-        else if (result.Status == 2 && result.Opcode == Opcode.TcpProof)
+        else if (result.Status == ControlStatus.Completed && result.Opcode == Opcode.TcpProof)
         {
             Require(result.ResultData.AsSpan(16).IndexOfAnyExcept((byte)0) < 0, "invalid TCP CLI proof padding");
         }
@@ -479,8 +533,9 @@ internal static partial class HidProtocol
         var op = result.Opcode;
         if (detail == 0)
             return !(op == Opcode.SelfTest &&
-                (result.Status is 5 or 6 || result.Status == 3 && result.ErrorReason == 3));
-        if (result.Status == 3 && result.ErrorReason == 3)
+                (result.Status is ControlStatus.Busy or ControlStatus.Failed ||
+                 result.Status == ControlStatus.Invalid && result.ErrorReason == ControlError.Argument));
+        if (result.Status == ControlStatus.Invalid && result.ErrorReason == ControlError.Argument)
             return detail switch
             {
                 3 => op == Opcode.SelfTest,
@@ -489,7 +544,7 @@ internal static partial class HidProtocol
                 22 or 23 => op == Opcode.WifiEntry, 24 => op == Opcode.TcpProof, 27 => op == Opcode.SaveSettings,
                 _ => false
             };
-        if (result.Status == 5)
+        if (result.Status == ControlStatus.Busy)
             return detail switch
             {
                 1 or 2 => op is Opcode.Reboot or Opcode.Msc or Opcode.SelfTest or Opcode.SaveSettings,
@@ -498,23 +553,23 @@ internal static partial class HidProtocol
                 26 => op is Opcode.SaveSettings or Opcode.WifiTest or Opcode.WifiScan or Opcode.WifiEntry,
                 _ => false
             };
-        return result.Status == 6 && op == Opcode.SelfTest && detail is 4 or 5 or 6 or 7 or 10;
+        return result.Status == ControlStatus.Failed && op == Opcode.SelfTest && detail is 4 or 5 or 6 or 7 or 10;
     }
 
     public static void RequireCompleted(ControlResult result, byte transactionId, Opcode opcode)
     {
         Require(result.TransactionId == transactionId && result.Opcode == opcode,
             "HID control result does not match the submitted transaction");
-        if (result.Status == 2) return;
+        if (result.Status == ControlStatus.Completed) return;
         var description = result.ErrorReason switch
         {
-            1 => "malformed command fields",
-            2 => "confirmation required",
-            3 => "invalid command argument",
-            4 => "command capability unavailable",
-            5 => "device is busy",
-            6 => "device operation failed",
-            7 => "unsupported command",
+            ControlError.Malformed => "malformed command fields",
+            ControlError.Confirmation => "confirmation required",
+            ControlError.Argument => "invalid command argument",
+            ControlError.Capability => "command capability unavailable",
+            ControlError.Busy => "device is busy",
+            ControlError.Operation => "device operation failed",
+            ControlError.Opcode => "unsupported command",
             _ => "command did not complete"
         };
         if (result.ResultData[0] >= 16)
@@ -528,7 +583,7 @@ internal static partial class HidProtocol
                 27 => "staged wireless values require explicit commit", _ => description
             };
         throw new InvalidOperationException(
-            $"HID command rejected ({result.Status}/{result.ErrorReason}): {description}");
+            $"HID command rejected ({(byte)result.Status}/{(byte)result.ErrorReason}): {description}");
     }
 
     public static string? FilesystemName(byte format) => format switch
@@ -552,9 +607,6 @@ internal static partial class HidProtocol
             "unexpected HID feature report length or ID");
         return report.Slice(1, size);
     }
-
-    private static uint ReadUInt32LittleEndian(ReadOnlySpan<byte> source) =>
-        BinaryPrimitives.ReadUInt32LittleEndian(source);
 
     private static void Require(bool condition, string message)
     {

@@ -9,6 +9,10 @@ Python and .NET share their own frontend, but must not share any dashboard compo
 dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 ```
 
+Select a default board at launch with `tools/host/run-dotnet.sh --serial SERIAL` or
+`tools/host/run-dotnet.sh --device-path HID_PATH`. The options are mutually exclusive; without either, the first
+discovered board is selected. Use **Rescan** to refresh the board list.
+
 `GET /api/boards` discovers attached boards. The dashboard's **Rescan** and board selector choose one, and
 status/command requests include its ID as `?board=<id>`. `GET /api/status` returns the selected board's hardware
 identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected

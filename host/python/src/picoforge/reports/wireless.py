@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from .common import REPORT_VERSION, WIRELESS_REPORT_ID, InvalidRequest, _feature_payload, _validate_settings
-from .control import build_control_command_report, parse_control_result_report
+from ..hid.models import WirelessNetwork, WirelessStatus
+from .common import (
+    REPORT_VERSION, WIRELESS_REPORT_ID, BleState, ControlOpcode, InvalidRequest,
+    WifiState, WirelessFlags, WirelessStagedFlags, _feature_payload, _validate_settings,
+)
+from .control import build_control_command_report
 
 WIRELESS_STATUS_SIZE = 48
 WIRELESS_TEST_DETAILS = (
@@ -54,37 +58,52 @@ def request_ssid(settings: dict[str, object]) -> bytes:
     return bytes.fromhex(encoded)
 
 
+def _password_bytes(value: object) -> bytes:
+    if not isinstance(value, str) or (value and not 8 <= len(value) <= 63) or any(
+            not 32 <= ord(char) <= 126 for char in value):
+        raise InvalidRequest("Password must be empty or contain 8..63 printable ASCII characters")
+    return value.encode("ascii")
+
+
+def _control_key_bytes(value: object) -> bytes:
+    if value == "":
+        return b""
+    if isinstance(value, str) and len(value) == 64 and all(
+            char in "0123456789abcdefABCDEF" for char in value):
+        return bytes.fromhex(value)
+    if isinstance(value, bytes) and len(value) == 32:
+        return value
+    raise InvalidRequest("Control key must contain 64 hexadecimal characters or be empty")
+
+
 def build_wireless_command_report(transaction_id: int, operation: int, *, value: object = None,
                                   index: int = 0, generation: int = 0) -> bytes:
     """Build a USB wireless opcode (6-13) on the common control channel."""
-    if operation in (6, 7, 8):
-        if operation == 6:
+    if isinstance(operation, ControlOpcode):
+        operation = int(operation)
+    if type(operation) is not int:
+        raise ValueError("Invalid wireless opcode")
+    try:
+        operation = ControlOpcode(operation)
+    except ValueError:
+        raise ValueError("Invalid wireless opcode") from None
+    if operation in (ControlOpcode.STAGE_SSID, ControlOpcode.STAGE_PASSWORD, ControlOpcode.STAGE_KEY):
+        if operation == ControlOpcode.STAGE_SSID:
             raw = ssid_bytes(value)
-        elif operation == 7:
-            if not isinstance(value, str) or (value and not 8 <= len(value) <= 63) or any(
-                    not 32 <= ord(char) <= 126 for char in value):
-                raise InvalidRequest("Password must be empty or contain 8..63 printable ASCII characters")
-            raw = value.encode("ascii")
+        elif operation == ControlOpcode.STAGE_PASSWORD:
+            raw = _password_bytes(value)
         else:
-            if value == "":
-                raw = b""
-            elif isinstance(value, str) and len(value) == 64 and all(
-                    char in "0123456789abcdefABCDEF" for char in value):
-                raw = bytes.fromhex(value)
-            elif isinstance(value, bytes) and len(value) == 32:
-                raw = value
-            else:
-                raise InvalidRequest("Control key must contain 64 hexadecimal characters or be empty")
+            raw = _control_key_bytes(value)
         args = bytes((len(raw),)) + raw
-    elif operation == 12:
+    elif operation == ControlOpcode.WIFI_ENTRY:
         if type(index) is not int or not 0 <= index < 18 or type(generation) is not int or not 1 <= generation <= 65535:
             raise ValueError("Invalid scan index or generation")
         args = bytes((index,)) + generation.to_bytes(2, "little")
-    elif operation == 13:
+    elif operation == ControlOpcode.TCP_PROOF:
         if not isinstance(value, bytes) or len(value) != 16:
             raise ValueError("TCP CLI auth nonce must contain exactly 16 bytes")
         args = value
-    elif operation in (9, 10, 11):
+    elif operation in (ControlOpcode.WIFI_TEST, ControlOpcode.WIFI_CANCEL, ControlOpcode.WIFI_SCAN):
         args = b""
     else:
         raise ValueError("Invalid wireless opcode")
@@ -92,16 +111,7 @@ def build_wireless_command_report(transaction_id: int, operation: int, *, value:
 
 
 def build_tcp_cli_auth_request(transaction_id: int, nonce: bytes) -> bytes:
-    return build_wireless_command_report(transaction_id, 13, value=nonce)
-
-
-def parse_tcp_cli_auth_result(report: bytes | bytearray | list[int], transaction_id: int) -> bytes:
-    result = parse_control_result_report(report)
-    if result["transaction_id"] != transaction_id or result["opcode"] != 13:
-        raise ValueError("invalid or stale TCP CLI auth result")
-    if result["status"] != "completed":
-        raise RuntimeError("The board cannot create a TCP CLI proof; check the saved Control key")
-    return result["proof"]
+    return build_wireless_command_report(transaction_id, ControlOpcode.TCP_PROOF, value=nonce)
 
 
 def validate_wireless_configuration(settings: object) -> None:
@@ -127,15 +137,17 @@ def validate_wireless_configuration(settings: object) -> None:
     if ("tcp_cli_enabled" in settings and "tcp_cli_enabled" in settings["board"]
             and settings["tcp_cli_enabled"] != settings["board"]["tcp_cli_enabled"]):
         raise InvalidRequest("TCP CLI switch must match the board settings")
-    for field, opcode in (("ssid", 6), ("password", 7), ("ble_key", 8)):
-        if field in settings or (field == "ssid" and "ssid_hex" in settings):
-            build_wireless_command_report(
-                1, opcode, value=request_ssid(settings) if field == "ssid" else settings[field])
+    if "ssid" in settings or "ssid_hex" in settings:
+        request_ssid(settings)
+    if "password" in settings:
+        _password_bytes(settings["password"])
+    if "ble_key" in settings:
+        _control_key_bytes(settings["ble_key"])
     if settings.get("use_tested_wifi") and "password" in settings:
         raise InvalidRequest("A tested pair cannot be replaced while saving")
 
 
-def parse_scan_entry(data: bytes) -> dict:
+def parse_scan_entry(data: bytes) -> WirelessNetwork:
     generation = int.from_bytes(data[:2], "little")
     index, length = data[2:4]
     if (len(data) != 63 or not generation or index >= 18 or length > 32
@@ -150,32 +162,49 @@ def parse_scan_entry(data: bytes) -> dict:
             "secured": bool(security), "security": labels[security]}
 
 
-def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> dict:
+def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> WirelessStatus:
     """Decode only runtime fields actually carried by Feature 12."""
     p = _feature_payload(report, WIRELESS_REPORT_ID, WIRELESS_STATUS_SIZE)
     flags, length, staged = p[4], p[9], p[47]
     scan, generation, count, test = p[42], int.from_bytes(p[43:45], "little"), p[45], p[46]
-    if (p[0] != REPORT_VERSION or p[1] > 6 or p[3] > 2 or length > 32 or any(p[10 + length:42])
+    if (p[0] != REPORT_VERSION or p[1] not in WifiState._value2member_map_
+            or p[3] not in BleState._value2member_map_ or length > 32 or any(p[10 + length:42])
             or scan > 3 or count > 18 or staged & ~15):
         raise ValueError("Invalid wireless status report")
     # ipv4, detail and pair-tested are independent of wifi_state: a saved link may reconnect after a failed test.
-    if ((scan != 2 and count) or (scan and not generation) or (p[1] >= 4 and not test)
-            or (staged & 8 and (flags & 0xF0 or staged & 7))
-            or any(staged & (1 << bit) and not flags & (0x10 << bit) for bit in range(3))
-            or (staged & 1 and not (flags & 0x20 and staged & 2))
-            or (flags & 0x80 and not flags & 0x30)
-            or (flags & 4 and not flags & 2)):
+    staged_flags = WirelessStagedFlags(staged)
+    status_flags = WirelessFlags(flags)
+    if ((scan != 2 and count) or (scan and not generation) or (p[1] >= WifiState.TESTING and not test)
+            or (staged_flags & WirelessStagedFlags.TESTED_PAIR
+                and (status_flags & (WirelessFlags.SSID_STAGED | WirelessFlags.PASSWORD_STAGED
+                                     | WirelessFlags.KEY_STAGED) or staged_flags & ~WirelessStagedFlags.TESTED_PAIR))
+            or (staged_flags & WirelessStagedFlags.SSID
+                and not status_flags & WirelessFlags.SSID_STAGED)
+            or (staged_flags & WirelessStagedFlags.PASSWORD
+                and not status_flags & WirelessFlags.PASSWORD_STAGED)
+            or (staged_flags & WirelessStagedFlags.KEY
+                and not status_flags & WirelessFlags.KEY_STAGED)
+            or (staged_flags & WirelessStagedFlags.SSID
+                and not (status_flags & WirelessFlags.PASSWORD_STAGED
+                         and staged_flags & WirelessStagedFlags.PASSWORD))
+            or (status_flags & WirelessFlags.PAIR_TESTED
+                and not (status_flags & (WirelessFlags.SSID_STAGED | WirelessFlags.PASSWORD_STAGED)))
+            or (status_flags & WirelessFlags.TCP_CLI_STARTED
+                and not status_flags & WirelessFlags.BLE_KEY_CONFIGURED)):
         raise ValueError("Inconsistent wireless status fields")
     detail = p[2] if p[2] < len(WIRELESS_TEST_DETAILS) else 0
     raw = p[10:10 + length]
     return {
-        "wifi_state": ("disabled", "connecting", "connected", "failed", "testing", "test_joined", "test_failed")[p[1]],
-        "wifi_state_id": p[1], "error": detail, "detail": detail,
-        "phase": WIRELESS_TEST_DETAILS[detail], "ble_state": ("off", "advertising", "connected")[p[3]],
-        "network_configured": bool(flags & 1), "ble_key_configured": bool(flags & 2),
-        "tcp_cli_started": bool(flags & 4), "tcp_cli_auth_required": bool(flags & 2),
-        "ssid_staged": bool(flags & 16), "password_staged": bool(flags & 32),
-        "key_staged": bool(flags & 64), "pair_tested": bool(flags & 128),
+        "wifi_state": WifiState(p[1]).name.lower(),
+        "wifi_state_id": p[1], "detail": detail,
+        "phase": WIRELESS_TEST_DETAILS[detail], "ble_state": BleState(p[3]).name.lower(),
+        "network_configured": bool(status_flags & WirelessFlags.NETWORK_CONFIGURED),
+        "ble_key_configured": bool(status_flags & WirelessFlags.BLE_KEY_CONFIGURED),
+        "tcp_cli_started": bool(status_flags & WirelessFlags.TCP_CLI_STARTED),
+        "ssid_staged": bool(status_flags & WirelessFlags.SSID_STAGED),
+        "password_staged": bool(status_flags & WirelessFlags.PASSWORD_STAGED),
+        "key_staged": bool(status_flags & WirelessFlags.KEY_STAGED),
+        "pair_tested": bool(status_flags & WirelessFlags.PAIR_TESTED),
         "ipv4": ".".join(map(str, p[5:9])), "ssid": display_ssid(raw), "ssid_hex": raw.hex(),
         "scan_state": ("idle", "scanning", "complete", "failed")[scan],
         "scan_generation": generation, "scan_count": count, "test_generation": test, "staged_state": staged,

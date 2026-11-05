@@ -40,12 +40,11 @@ public sealed class PerformanceTests(ITestOutputHelper output)
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
-        builder.Services.ConfigureHttpJsonOptions(json =>
-            json.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+        builder.Services.ConfigureHttpJsonOptions(json => DashboardJson.Configure(json.SerializerOptions));
         builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(monitor));
         await using var app = builder.Build();
         app.UseApiErrors();
-        app.MapDeviceStatus();
+        app.MapStatusEndpoints();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         for (var i = 0; i < 100; i++) await client.GetFromJsonAsync<JsonElement>("/api/status?board=board-a");

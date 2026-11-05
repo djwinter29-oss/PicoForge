@@ -146,11 +146,9 @@ class WirelessStatus(TypedDict, total=False):
     ipv4: str
     ssid: str
     ble_key_configured: bool
-    error: int
     ble_state: str
     tcp_cli_started: bool
     tcp_cli_enabled: bool
-    tcp_cli_auth_required: bool
     ssid_hex: str
     detail: int
     phase: str
@@ -165,7 +163,6 @@ class WirelessStatus(TypedDict, total=False):
     test_generation: int
     staged_state: int
     stale: bool
-    age_ms: int
     remaining_seconds: int
 
 
@@ -206,7 +203,6 @@ class ControlResult(TypedDict):
     status: str
     error_reason: int
     error: str
-    result_data: int
     saved_settings: BootSettings | None
     detail: int
     commit_mask: int

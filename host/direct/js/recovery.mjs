@@ -2,7 +2,7 @@
  * Same-tab recovery records for an uncertain device write. Records hold only allowlisted transaction, profile,
  * commit-mask or generation fields, never credentials; anything else fails closed.
  */
-import { validSettings } from "./protocol.mjs?v=47";
+import { validSettings } from "./protocol.mjs?v=48";
 
 const PENDING_OPERATION_KEY = "picoforge.direct.pending-operation";
 const isUid = value => typeof value === "string" && /^[A-F0-9]{16}$/i.test(value);

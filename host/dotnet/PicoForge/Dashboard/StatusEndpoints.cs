@@ -23,6 +23,8 @@ internal static class StatusEndpoints
     public sealed record RebootRequest(bool Confirm);
     /// <summary>Every <c>/api</c> error body, matching the Python server.</summary>
     public sealed record ApiError(string Error);
+    /// <summary>Empty success response.</summary>
+    public sealed record EmptyResponse;
 
     /// <summary>Rejects cross-origin non-GET <c>/api</c> requests before routing, matching the Python server.</summary>
     public static IApplicationBuilder UseSameOriginApiWrites(this IApplicationBuilder app)
@@ -101,9 +103,8 @@ internal static class StatusEndpoints
 
     internal static readonly int[] CommandErrors = [400, 404, 409, 503];
 
-    public static IEndpointRouteBuilder MapDeviceStatus(this IEndpointRouteBuilder endpoints)
+    public static IEndpointRouteBuilder MapStatusEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapWirelessEndpoints();
         endpoints.MapGet("/api/boards", GetBoards)
             .WithName("GetBoards")
             .WithSummary("Discover attached PicoForge boards")
@@ -119,7 +120,7 @@ internal static class StatusEndpoints
         endpoints.MapPost("/api/led", SetLed)
             .WithName("SetBoardLed")
             .WithSummary("Set the onboard board LED")
-            .Produces(StatusCodes.Status200OK)
+            .Produces<EmptyResponse>(StatusCodes.Status200OK)
             .Errors(CommandErrors);
         endpoints.MapPost("/api/settings", SetSettings)
             .WithName("SetBootSettings")
@@ -131,7 +132,7 @@ internal static class StatusEndpoints
         endpoints.MapPost("/api/reboot", Reboot)
             .WithName("RebootDevice")
             .WithSummary("Reboot PicoForge after explicit confirmation")
-            .Produces(StatusCodes.Status200OK)
+            .Produces<EmptyResponse>(StatusCodes.Status200OK)
             .Errors(CommandErrors);
         endpoints.MapPost("/api/msc", SetMsc)
             .WithName("SetMscMode")
@@ -143,7 +144,7 @@ internal static class StatusEndpoints
             .WithSummary("Start or cancel an SD-card file benchmark")
             .WithDescription("Delivers a HID command; poll /api/status for verification, cleanup, " +
                 "and average read/write metrics.")
-            .Produces(StatusCodes.Status202Accepted)
+            .Produces<EmptyResponse>(StatusCodes.Status202Accepted)
             .Errors(CommandErrors);
         endpoints.MapPost("/api/msc/force-return", ForceReturnMsc)
             .WithName("ForceReturnMsc")
@@ -167,7 +168,7 @@ internal static class StatusEndpoints
         if (request.On is not bool on)
             throw new ArgumentException("Expected JSON with a boolean 'on' field");
         dashboard.Monitor(board).SetLed(on, cancel);
-        return Results.Ok(new { });
+        return Results.Ok(new EmptyResponse());
     }
 
     private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard,
@@ -185,7 +186,7 @@ internal static class StatusEndpoints
     {
         if (!request.Confirm) throw new ArgumentException("Explicit reboot confirmation is required");
         dashboard.Monitor(board).Reboot(cancel);
-        return Results.Ok(new { });
+        return Results.Ok(new EmptyResponse());
     }
 
     private static IResult SetMsc(SetMscRequest request, string? board, IDashboardBoards dashboard,
@@ -210,6 +211,6 @@ internal static class StatusEndpoints
             (request.Action == "start" && request.SizeMib is not (>= 1 and <= 1024)))
             throw new ArgumentException("Expected start/cancel and a size from 1 to 1024 MiB");
         dashboard.Monitor(board).SetSelfTest(request.Action, request.SizeMib, cancel);
-        return Results.Json(new { }, statusCode: StatusCodes.Status202Accepted);
+        return Results.Json(new EmptyResponse(), statusCode: StatusCodes.Status202Accepted);
     }
 }

@@ -115,6 +115,3 @@ def parse_memory_report(
             "request_rejected": bool(msc_rejected),
         },
     }
-
-
-parse_storage_report = parse_memory_report

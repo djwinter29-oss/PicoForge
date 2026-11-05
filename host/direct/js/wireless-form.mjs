@@ -1,4 +1,4 @@
-import { OP, bytesToHex } from "./protocol.mjs?v=47";
+import { OP, bytesToHex } from "./protocol.mjs?v=48";
 
 export function bindWirelessForm({
   load, scan, test, cancelTest, ready, loadReady = ready, tcpReady = null, supported, changed = () => {},

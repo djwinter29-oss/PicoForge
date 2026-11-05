@@ -17,7 +17,7 @@ internal sealed class PicoForgeHid : IHidClient
     private byte[] inputReport;
     private byte[] featureReport;
     private readonly TimeProvider time;
-    private HardwareInfoResponse? identity;
+    private HardwareInfoResponse identity;
     // ponytail: Feature 2 changes only through opcode 5 or a reboot (a new handle), so it is read once per handle
     // and again after a save. Another host saving over WebHID meanwhile leaves Wi-Fi switch display stale until then.
     private BoardConfigurationResponse? configuration;
@@ -49,6 +49,12 @@ internal sealed class PicoForgeHid : IHidClient
         writeFeature = report => stream.SetFeature(report);
         reopen = ReopenSameBoard;
         time = TimeProvider.System;
+        try { identity = ReadHardwareInfo(); }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
     }
 
     internal PicoForgeHid(HardwareInfoResponse identity, Func<byte, int, byte[]> readFeature,
@@ -74,16 +80,13 @@ internal sealed class PicoForgeHid : IHidClient
             .DistinctBy(candidate => candidate.DevicePath)
             .Where(HasPicoForgeUsage);
 
-    public HardwareInfoResponse ReadInfo()
-    {
-        var report = readFeature(HidProtocol.IdentityReportId, HidProtocol.IdentityFeatureSize);
-        identity = HidProtocol.ParseIdentityReport(report);
-        return identity;
-    }
+    public HardwareInfoResponse ReadInfo() => identity;
+
+    private HardwareInfoResponse ReadHardwareInfo() =>
+        HidProtocol.ParseIdentityReport(readFeature(HidProtocol.IdentityReportId, HidProtocol.IdentityFeatureSize));
 
     public BoardConfigurationResponse ReadConfiguration()
     {
-        identity ??= ReadInfo();
         return configuration = HidProtocol.ParseConfigurationReport(
             readFeature(HidProtocol.ConfigurationReportId, HidProtocol.ConfigurationFeatureSize), identity);
     }
@@ -98,7 +101,6 @@ internal sealed class PicoForgeHid : IHidClient
             var count = stream.Read(inputReport, 0, inputReport.Length);
             if (count == 0) return null;
             var data = inputReport.AsSpan(0, count);
-            identity ??= ReadInfo();
             return data[0] switch
             {
                 HidProtocol.TelemetryReportId => new(HidProtocol.ParseTelemetryReport(data), null, null),
@@ -131,7 +133,6 @@ internal sealed class PicoForgeHid : IHidClient
     public void SetMsc(bool enabled, bool force = false)
     {
         if (force && enabled) throw new ArgumentException("Force return requires disabling MSC");
-        identity ??= ReadInfo();
         if ((identity.Capabilities & (HidProtocol.CapabilitySpi | HidProtocol.CapabilitySdio)) == 0)
             throw new NotSupportedException("MSC control is unavailable on this firmware");
         var arguments = new byte[64];
@@ -179,7 +180,6 @@ internal sealed class PicoForgeHid : IHidClient
         ArgumentNullException.ThrowIfNull(nonce);
         ArgumentNullException.ThrowIfNull(uid);
         EnsureCapability(HidProtocol.CapabilityWireless, "USB TCP CLI authentication");
-        identity ??= ReadInfo();
         var expectedUid = Convert.FromHexString(identity.SerialNumber);
         if (uid.Length != expectedUid.Length || !CryptographicOperations.FixedTimeEquals(uid, expectedUid))
             throw new ArgumentException("TCP CLI challenge belongs to a different board");
@@ -198,7 +198,8 @@ internal sealed class PicoForgeHid : IHidClient
         EnsureCapability(HidProtocol.CapabilityWireless, "wireless provisioning");
         EnsureCapability(HidProtocol.CapabilitySettings, "persistent settings");
         var previous = ReadWireless();
-        if (previous.WifiState == "testing" || previous.ScanState == 1)
+        if (previous.WifiState == WifiState.Testing ||
+            (WirelessScanState)previous.ScanState == WirelessScanState.Scanning)
             throw new InvalidOperationException("A Wi-Fi test or scan is active");
         var ssid = settings.Ssid is not null || settings.SsidHex is not null
             ? HidProtocol.EncodeSsid(settings.Ssid, settings.SsidHex) : null;
@@ -208,7 +209,8 @@ internal sealed class PicoForgeHid : IHidClient
             throw new InvalidOperationException("Discard or explicitly include the existing staged wireless values");
         if (settings.UseTestedWifi)
         {
-            if (!previous.PairTested || (previous.StagedState & 8) != 0 ||
+            if (!previous.PairTested ||
+                ((WirelessStagingFlags)previous.StagedState & WirelessStagingFlags.PairTested) != 0 ||
                 ssid is not null && !ssid.SequenceEqual(Convert.FromHexString(previous.SsidHex)))
                 throw new InvalidOperationException("The selected staged Wi-Fi pair has not passed testing");
         }
@@ -247,9 +249,12 @@ internal sealed class PicoForgeHid : IHidClient
         var prior = ReadWireless();
         SendCommand(Opcode.WifiScan);
         var generation = prior.ScanGeneration == ushort.MaxValue ? (ushort)1 : (ushort)(prior.ScanGeneration + 1);
-        var result = WaitWireless(status => status.ScanState is 2 or 3, 15000, onPoll,
+        var result = WaitWireless(status =>
+                (WirelessScanState)status.ScanState is WirelessScanState.Complete or WirelessScanState.Failed,
+            15000, onPoll,
             status => status.ScanGeneration == generation);
-        if (result.ScanState != 2) throw new InvalidOperationException("Wireless scan failed");
+        if ((WirelessScanState)result.ScanState != WirelessScanState.Complete)
+            throw new InvalidOperationException("Wireless scan failed");
         var networks = new List<WirelessNetworkResponse>();
         for (byte index = 0; index < result.ScanCount; index++)
         {
@@ -273,9 +278,10 @@ internal sealed class PicoForgeHid : IHidClient
         var prior = ReadWireless();
         SendCommand(Opcode.WifiTest);
         var generation = prior.TestGeneration == byte.MaxValue ? (byte)1 : (byte)(prior.TestGeneration + 1);
-        var result = WaitWireless(status => status.WifiState is "test_joined" or "test_failed", 35000, onPoll,
+        var result = WaitWireless(status =>
+                status.WifiState is WifiState.TestJoined or WifiState.TestFailed, 35000, onPoll,
             status => status.TestGeneration == generation, onProgress, cancel);
-        if (result.WifiState != "test_joined" || !result.PairTested)
+        if (result.WifiState != WifiState.TestJoined || !result.PairTested)
             throw new InvalidOperationException($"Could not connect: {result.Phase}");
         return new(5, 5, result.Ipv4, result.Error, result.TestGeneration);
     }
@@ -347,9 +353,7 @@ internal sealed class PicoForgeHid : IHidClient
     {
         if (CommandOutcomeUncertain)
             throw new InvalidOperationException("A prior HID command outcome is uncertain; further writes are blocked");
-        identity ??= ReadInfo();
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
-        if (transactionId == 0) transactionId = 1;
         var request = HidProtocol.BuildControlRequest(transactionId, opcode, flags, arguments ?? new byte[64]);
         var forcedSave = opcode == Opcode.SaveSettings && (flags & HidProtocol.SaveForceMsc) != 0;
         CommandOutcomeUncertain = true;
@@ -385,7 +389,7 @@ internal sealed class PicoForgeHid : IHidClient
             var result = HidProtocol.ParseControlResult(response);
             if (result.TransactionId != transactionId || result.Opcode != opcode)
                 throw new InvalidDataException("HID control result was replaced by another transaction");
-            if (result.Status != 1)
+            if (result.Status != ControlStatus.Pending)
             {
                 CommandOutcomeUncertain = false;
                 HidProtocol.RequireCompleted(result, transactionId, opcode);
@@ -435,7 +439,6 @@ internal sealed class PicoForgeHid : IHidClient
 
     private void EnsureCapability(byte capability, string operation)
     {
-        identity ??= ReadInfo();
         if ((identity.Capabilities & capability) == 0)
             throw new NotSupportedException($"{operation} is unavailable on this firmware");
     }

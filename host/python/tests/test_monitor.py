@@ -166,6 +166,7 @@ class MonitorReconnectTests(unittest.TestCase):
         client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
         monitor._client_factory = lambda: client
         waits = []
+        monitor.status_snapshot()
 
         def wait(timeout):
             waits.append(timeout)
@@ -289,7 +290,7 @@ class MonitorReconnectTests(unittest.TestCase):
             "memory": {"sample_valid": True},
             "self_test": {"active": True},
         })
-        monitor._input_received_at = {3: 99.5, 10: 98.0, 11: 98.0}
+        monitor._input_received_at = {"runtime": 99.5, "memory": 98.0, "self_test": 98.0}
         with patch("picoforge.dashboard.monitor.time.monotonic", return_value=100.0):
             snapshot = monitor.snapshot()
         self.assertFalse(snapshot["telemetry_stale"])
@@ -298,6 +299,33 @@ class MonitorReconnectTests(unittest.TestCase):
         self.assertIsNone(snapshot["memory"])
         self.assertIsNone(snapshot["self_test"])
         self.assertEqual(snapshot["runtime"], {"uptime_ms": 1})
+
+
+class MonitorWirelessCancellationTests(unittest.TestCase):
+    def test_late_cancel_failure_does_not_replace_successful_test_result(self):
+        client = Mock()
+        snapshot = {
+            "connected": True,
+            "hardware": {"wireless_supported": True, "self_test_supported": False},
+            "memory": {"msc": {"enabled": False, "transition_pending": False}},
+            "storage_stale": False,
+        }
+        monitor = make_monitor(client, snapshot)
+        expected = {"transaction_id": 1, "state": "completed"}
+
+        def finish_test(_ssid, _password, *, cancel, **_kwargs):
+            cancel.set()
+            return expected
+
+        client.test_wireless.side_effect = finish_test
+        client.cancel_wireless_test.side_effect = OSError("USB disconnected during cleanup")
+
+        with self.assertLogs("picoforge.dashboard.monitor", "ERROR"):
+            result = monitor.test_wireless("network")
+
+        self.assertEqual(result, {"test": expected})
+        client.cancel_wireless_test.assert_called_once_with()
+        self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
 
 
 class MonitorSettingsTests(unittest.TestCase):
@@ -348,6 +376,71 @@ class MonitorSettingsTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.monitor.set_settings(settings)
                 self.client.set_settings.assert_not_called()
+
+
+class MonitorPollingTests(unittest.TestCase):
+    def test_idle_polling_slows_and_status_request_restores_active_cadence(self):
+        client = Mock()
+        client.read_info.return_value = {
+            "supported": True,
+            "wireless_supported": True,
+            "settings_supported": False,
+            "self_test_supported": False,
+        }
+        client.read_configuration.return_value = {}
+        client.read_input_report.return_value = None
+        client.read_wireless.return_value = {"wifi_state": "connected", "stale": False}
+        monitor = DeviceMonitor(client_factory=lambda: client, autostart=False)
+        clock = [100.0]
+        waits = []
+        monitor._last_status_request_at = 95.0
+
+        def wait(timeout):
+            waits.append(timeout)
+            clock[0] += timeout
+            if len(waits) == 2:
+                monitor.status_snapshot()
+            elif len(waits) == 5:
+                monitor._stop.set()
+            return monitor._stop.is_set()
+
+        with patch("picoforge.dashboard.monitor.time.monotonic", side_effect=lambda: clock[0]):
+            monitor._stop.wait = wait
+            monitor._run()
+
+        self.assertEqual(waits[:2], [0.5, 0.5])
+        self.assertEqual(waits[2:5], [0.05, 0.05, 0.05])
+        self.assertEqual(client.read_wireless.call_count, 2, "status polling resumes wireless refresh immediately")
+
+    def test_idle_wireless_status_poll_interval_is_five_seconds(self):
+        client = Mock()
+        client.read_info.return_value = {
+            "supported": True,
+            "wireless_supported": True,
+            "settings_supported": False,
+            "self_test_supported": False,
+        }
+        client.read_configuration.return_value = {}
+        client.read_input_report.return_value = None
+        clock = [200.0]
+        wireless_reads = []
+        client.read_wireless.side_effect = lambda: wireless_reads.append(clock[0]) or {"stale": False}
+        monitor = DeviceMonitor(client_factory=lambda: client, autostart=False)
+        monitor._last_status_request_at = 195.0
+        waits = []
+
+        def wait(timeout):
+            waits.append(timeout)
+            clock[0] += timeout
+            if len(waits) == 11:
+                monitor._stop.set()
+            return monitor._stop.is_set()
+
+        with patch("picoforge.dashboard.monitor.time.monotonic", side_effect=lambda: clock[0]):
+            monitor._stop.wait = wait
+            monitor._run()
+
+        self.assertEqual(wireless_reads, [200.0, 205.0])
 
 
 if __name__ == "__main__":

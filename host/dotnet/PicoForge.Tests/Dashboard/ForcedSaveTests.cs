@@ -421,15 +421,14 @@ public sealed class ForcedSaveTests
         using var monitor = Attached(commands, Ready());
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.ConfigureHttpJsonOptions(options =>
-            options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+        builder.Services.ConfigureHttpJsonOptions(options => DashboardJson.Configure(options.SerializerOptions));
         builder.Services.AddOpenApi();
         builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(monitor));
         builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
         await using var app = builder.Build();
         app.UseApiErrors();
         app.UseSameOriginApiWrites();
-        app.MapDeviceStatus();
+        app.MapStatusEndpoints();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         using (var crossOrigin = new HttpRequestMessage(HttpMethod.Post, "/api/led?board=board-a"))

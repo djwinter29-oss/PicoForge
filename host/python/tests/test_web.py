@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from picoforge.dashboard.server import create_app
 from picoforge.cli import parse_args
-from picoforge.reports import build_self_test_command_report
+from picoforge.reports import ProtocolError, build_self_test_command_report
 from picoforge.reports.common import _validate_settings
 
 
@@ -50,11 +50,23 @@ class FakeMonitor:
             "settings_supported": True,
             "settings_message": None,
             "control_result": None,
+            "wireless": {
+                "wifi_state": "connected",
+                "wifi_state_id": 2,
+                "detail": 0,
+                "error": 0,
+                "ble_key_configured": True,
+                "tcp_cli_auth_required": True,
+                "age_ms": 0,
+            },
             "telemetry_stale": False,
             "storage_stale": False,
             "self_test_stale": False,
             "updated_at": "2026-10-10T12:00:00+00:00",
         }
+
+    def status_snapshot(self):
+        return self.snapshot()
 
     def set_led(self, on):
         return {"board_status": {"temperature_valid": True, "temperature_centidegrees": 2345,
@@ -175,6 +187,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.json["runtime"]["ram_total_bytes"], 532480)
         self.assertEqual(response.json["runtime"]["temperature_centidegrees"], 2345)
         self.assertEqual(response.json["memory"]["msc"]["enabled"], False)
+        self.assertEqual(response.json["wireless"]["wifi_state"], "connected")
+        for field in ("wifi_state_id", "error", "tcp_cli_auth_required", "age_ms"):
+            self.assertNotIn(field, response.json["wireless"])
         self.assertIn("board_configuration", response.json)
         self.assertFalse(response.json["telemetry_stale"])
         for derived in ("board_status", "msc", "filesystem_format", "settings", "report_freshness"):
@@ -271,13 +286,16 @@ class WebTests(unittest.TestCase):
         for route, (method, url, body) in routes.items():
             for error, status in ((RuntimeError("busy"), 409), (LookupError("unknown board"), 404),
                                   (OSError("io"), 503), (ConnectionError("PicoForge HID is not connected"), 503),
-                                  (TimeoutError("late"), 503), (ValueError("bad reply"), 503)):
+                                  (TimeoutError("late"), 503), (ProtocolError("bad reply"), 503),
+                                  (ValueError("bug"), 500), (NotImplementedError("todo"), 500)):
                 with self.subTest(route=route, error=type(error).__name__):
                     client = create_app(Raising(error)).test_client()
                     response = client.open(url, method=method, json=body, base_url="http://127.0.0.1")
                     self.assertEqual(response.status_code, status)
                     if status in (404, 409):
                         expected = str(error)
+                    elif status == 500:
+                        expected = "Internal server error"
                     elif route == "console" and isinstance(error, OSError):
                         expected = f"TCP console connection failed: {error}"
                     elif isinstance(error, TimeoutError) and route in timed_out:
@@ -335,7 +353,7 @@ class WebTests(unittest.TestCase):
     def test_settings_endpoint_reports_invalid_device_readback_as_service_error(self):
         class InvalidReadbackMonitor(FakeMonitor):
             def set_settings(self, settings, *, force=False):
-                raise ValueError("invalid HID settings report")
+                raise ProtocolError("invalid HID settings report")
 
         response = create_app(FakeBoards(InvalidReadbackMonitor())).test_client().post(
             "/api/settings?board=board-a",
@@ -421,7 +439,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertEqual(monitor.last_self_test, ("cancel", None))
         for payload in ({"action": "start", "size_mib": True}, {"action": "start", "size_mib": 1025},
-                        {"action": "invalid"}):
+                        {"action": "invalid"}, {"action": None}):
             response = client.post("/api/self-test?board=board-a", json=payload, base_url="http://127.0.0.1")
             self.assertEqual(response.status_code, 400)
 

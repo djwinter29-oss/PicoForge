@@ -5,6 +5,24 @@ namespace PicoForge.Tests;
 
 public sealed class DashboardBoardsTests
 {
+    [Theory]
+    [InlineData("board-B", null, 1)]
+    [InlineData(null, "/hid/a", 0)]
+    public void ConfiguredSerialOrPathSelectsTheDefaultBoard(string? serial, string? path, int expected)
+    {
+        HidBoard[] attached =
+        [
+            new("/hid/a", "board-A", "PicoForge"),
+            new("/hid/b", "board-B", "PicoForge")
+        ];
+        using var boards = new DashboardBoards(serial, path, () => attached,
+            (_, _) => throw new InvalidOperationException("test discovery only"));
+
+        var result = boards.Boards();
+
+        Assert.Equal(result.Boards[expected].Id, result.DefaultBoardId);
+    }
+
     [Fact]
     public void DiscoveryIsLazyAndBoardIdsSurvivePathChangesWhenSerialExists()
     {

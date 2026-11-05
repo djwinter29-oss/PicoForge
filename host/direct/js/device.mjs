@@ -6,12 +6,12 @@ import {
   CAP, DEVICE_FILTER, OP, PRODUCT_IDS, SAVE_SETTINGS_FORCE_MSC, buildControlRequest, decodeConfigReport,
   decodeControlResult, decodeIdentityReport, decodeSelfTestReport, decodeSettings, decodeStorageReport,
   decodeTelemetryReport, encodeSettings, hexToBytes, matchesPicoForge, requireValid, validSettings, wait, withTimeout,
-} from "./protocol.mjs?v=47";
-import { defaultPendingStore, loadPendingOperation, savePendingOperation } from "./recovery.mjs?v=47";
-import { deriveOperationEligibility } from "./eligibility.mjs?v=47";
-import { waitLifecycle, wirelessPollInterval } from "./wireless.mjs?v=47";
+} from "./protocol.mjs?v=48";
+import { defaultPendingStore, loadPendingOperation, savePendingOperation } from "./recovery.mjs?v=48";
+import { deriveOperationEligibility } from "./eligibility.mjs?v=48";
+import { waitLifecycle, wirelessPollInterval } from "./wireless.mjs?v=48";
 
-export * from "./protocol.mjs?v=47";
+export * from "./protocol.mjs?v=48";
 
 const EMPTY = {
   hardware: null, settings: null, settings_supported: false, settings_message: null,

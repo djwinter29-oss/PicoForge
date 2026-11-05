@@ -16,7 +16,6 @@ internal interface IDeviceMonitor : IDisposable
         CancellationToken cancel = default);
     void Reboot(CancellationToken cancel = default);
     void SetSelfTest(string action, uint sizeMib, CancellationToken cancel = default);
-    WirelessResponse ReadWireless(CancellationToken cancel = default);
     WirelessResponse SetWireless(WirelessRequest settings, CancellationToken cancel = default);
     IReadOnlyList<WirelessNetworkResponse> ScanWireless(CancellationToken cancel = default);
     WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null,
@@ -192,12 +191,6 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         }
     }
 
-    public WirelessResponse ReadWireless(CancellationToken cancel = default)
-    {
-        using (Device(cancel))
-            return new(Client().ReadWireless(), Snapshot.RebootPending);
-    }
-
     public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid, CancellationToken cancel = default)
     {
         using (Device(cancel))
@@ -324,7 +317,6 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         var current = Snapshot;
         if (current.Hardware?.WirelessSupported != true)
             throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
-        if (current.CommandOutcomeUncertain) throw new InvalidOperationException(UncertainMessage);
         if (current.Memory?.Msc is not { Enabled: false, TransitionPending: false } ||
             current.RebootPending || current.SelfTest?.Active == true ||
             ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
@@ -404,7 +396,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         try
         {
             var wireless = client.ReadWireless();
-            active = wireless.WifiState == "testing" || wireless.ScanState == 1;
+            active = wireless.WifiState == WifiState.Testing ||
+                (WirelessScanState)wireless.ScanState == WirelessScanState.Scanning;
             lock (gate) snapshot = snapshot with { Wireless = wireless, WirelessError = null };
         }
         catch (Exception error) when (IsDeviceError(error))

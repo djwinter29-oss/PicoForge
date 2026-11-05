@@ -4,7 +4,7 @@ import {
   PicoForgeWebHid, decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
   decodeSelfTestReport,
   decodeControlResult, buildControlRequest, matchesPicoForge, OP, encodeSettings, decodeSettings,
-} from "../js/device.mjs?v=47";
+} from "../js/device.mjs?v=48";
 import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit } from "./support/fixtures.mjs";
 
 test("explicit connect always requests selection regardless of previously authorized devices", async () => {

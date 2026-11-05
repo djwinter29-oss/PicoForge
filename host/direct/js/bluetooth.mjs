@@ -1,9 +1,11 @@
-import { PicoForgeWebHid } from "./device.mjs?v=47";
-import { BLE_OPCODES, CAP, OP, hexToBytes, parseHexBytes } from "./protocol.mjs?v=47";
+import { PicoForgeWebHid } from "./device.mjs?v=48";
+import { BLE_OPCODES, CAP, OP, hexToBytes, parseHexBytes } from "./protocol.mjs?v=48";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f502";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f502`;
-const GATT_SERVICE = "generic_attribute";
+// Numeric SIG UUIDs: Web Bluetooth rejects "service_changed" (its standard name is "gatt.service_changed").
+const GATT_SERVICE = 0x1801;
+const SERVICE_CHANGED = 0x2a05;
 
 /** Web Bluetooth uses the existing report decoder/transaction engine, but never reconnects or replays writes. */
 export class PicoForgeBluetooth extends PicoForgeWebHid {
@@ -88,7 +90,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
           const server = await this.bleDevice.gatt.connect();
           try {
             const gatt = await server.getPrimaryService(GATT_SERVICE);
-            await (await gatt.getCharacteristic("service_changed")).startNotifications();
+            await (await gatt.getCharacteristic(SERVICE_CHANGED)).startNotifications();
           } catch (error) {
             if (!["NotAllowedError", "NotFoundError", "NotSupportedError", "SecurityError"].includes(error?.name)) {
               throw error;

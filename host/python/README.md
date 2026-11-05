@@ -68,6 +68,7 @@ python -m picoforge --help
 All three commands accept either `--serial SERIAL` or `--device-path PATH` to select a board.
 The source launcher accepts the same command and options, for example `tools/host/run-python.sh web --port 5001`.
 `status` returns the reports received within a five-second collection window; unavailable report fields remain `null`.
+The top-level `msc` status key is retained for compatibility and deprecated in favor of `memory.msc`.
 
 Use **Rescan** and the dashboard's board selector to switch between attached boards. Run only one HID host connection
 per board; separate host processes can conflict for access. Python and .NET both default to port 5000, so use a
@@ -94,8 +95,9 @@ tools/host/hid-permissions-setup.sh
   file: back up card data and follow the [benchmark procedure](../../docs/guides/sdcard-benchmark.md).
 - **W-board wireless:** provision Wi-Fi and a Control key over USB. Bluetooth connections use the independent
   Direct dashboard. See [wireless setup and security limits](../../docs/guides/wireless.md).
-- **Wi-Fi console:** a connected SSID/IP link opens the local TCP console when supported by firmware. The board's TCP
-  service can require its saved Control key, but traffic is always unencrypted; use only on a trusted LAN. See
+- **Wi-Fi console:** a connected SSID/IP link opens the local TCP console when supported by firmware. Each dashboard
+  process allows one active console session, bound to its selected board. The board's TCP service can require its saved
+  Control key, but traffic is always unencrypted; use only on a trusted LAN. See
   [console setup and session limits](../../docs/guides/console.md#wi-fi-tcp-terminal).
 
 Commands can be rejected or remain uncertain after a timeout/disconnect; delivery is not completion.

@@ -69,6 +69,3 @@ def parse_status_report(
         "ram_used_bytes": identity.get("ram_reserved_bytes") if identity else None,
         "ram_total_bytes": identity.get("ram_total_bytes") if identity else None,
     }
-
-
-parse_telemetry_report = parse_status_report

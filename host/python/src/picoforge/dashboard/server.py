@@ -6,6 +6,7 @@ from pathlib import Path
 import base64
 import binascii
 import secrets
+from typing import cast
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -13,17 +14,27 @@ from .boards import DashboardBoards
 from .console import ConsoleBridge
 from .monitor import _empty_snapshot
 from .. import __version__
-from ..reports import InvalidRequest
+from ..hid.device import WirelessTestCancelled
+from ..hid.models import WirelessStatus
+from ..reports import InvalidRequest, ProtocolError
 from ..reports.wireless import request_ssid, validate_wireless_configuration
 
 _WIRELESS_RETRY = "Restart the dashboard and reconnect the board before retrying."
-# Endpoint -> message replacing device or transport detail when a wireless command fails with 503.
-_UNAVAILABLE_MESSAGES = {
-    "scan_wireless": "Wireless scan failed",
-    "test_wireless": f"Wi-Fi test result is uncertain. {_WIRELESS_RETRY}",
-    "cancel_wireless_test": "Could not clear the wireless test credentials",
-    "set_wireless": "Wireless provisioning outcome is uncertain; command was not resent",
-}
+_INTERNAL_WIRELESS_FIELDS = frozenset({"wifi_state_id", "tcp_cli_auth_required", "age_ms", "error"})
+
+
+def _public_wireless(status: WirelessStatus) -> WirelessStatus:
+    return cast(WirelessStatus, {
+        key: value for key, value in status.items() if key not in _INTERNAL_WIRELESS_FIELDS
+    })
+
+
+def _unavailable(message: str) -> tuple:
+    return jsonify({"error": message}), 503
+
+
+def _limit_console_request() -> None:
+    request.max_content_length = 2048
 
 
 def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None = None) -> Flask:
@@ -48,7 +59,10 @@ def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None =
 
     @app.errorhandler(RuntimeError)
     def conflict(error: RuntimeError):
-        return jsonify({"error": str(error)}), 409
+        if type(error) is RuntimeError or isinstance(error, WirelessTestCancelled):
+            return jsonify({"error": str(error)}), 409
+        app.logger.exception("Unhandled RuntimeError")
+        return jsonify({"error": "Internal server error"}), 500
 
     @app.errorhandler(LookupError)
     def not_found(error: LookupError):
@@ -57,19 +71,19 @@ def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None =
         return jsonify({"error": str(error)}), 404
 
     @app.errorhandler(ValueError)
-    def invalid_or_unavailable(error: ValueError):
+    def invalid_request_or_bug(error: ValueError):
         if isinstance(error, InvalidRequest):
             return jsonify({"error": str(error)}), 400
-        # ponytail: any other ValueError is treated as malformed board data, so a code bug raising ValueError
-        # also reads as 503. Raise a dedicated protocol-error subclass from the parsers if that hides a real bug.
-        return unavailable(error)
+        app.logger.exception("Unhandled ValueError")
+        return jsonify({"error": "Internal server error"}), 500
+
+    @app.errorhandler(ProtocolError)
+    def protocol_error(error: ProtocolError):
+        return jsonify({"error": str(error)}), 503
 
     @app.errorhandler(OSError)
-    def unavailable(error: Exception):
-        message = _UNAVAILABLE_MESSAGES.get(request.endpoint or "", str(error))
-        if request.endpoint == "test_wireless" and isinstance(error, TimeoutError):
-            message = f"Wi-Fi test timed out; outcome is uncertain. {_WIRELESS_RETRY}"
-        return jsonify({"error": message}), 503
+    def unavailable(error: OSError):
+        return jsonify({"error": str(error)}), 503
 
     @app.after_request
     def security_headers(response):
@@ -119,47 +133,67 @@ def _board(boards: DashboardBoards):
 
 
 def _register_console_routes(app: Flask, boards: DashboardBoards, console: ConsoleBridge) -> None:
-    @app.route("/api/console", methods=["POST", "GET", "PUT", "DELETE"])
-    def console_api():
-        request.max_content_length = 2048
+    @app.post("/api/console")
+    def console_connect():
+        _limit_console_request()
         try:
-            if request.method == "POST":
-                payload = request.get_json(silent=True)
-                if not isinstance(payload, dict) or payload:
-                    return jsonify({
-                        "error": "Expected an empty object; TCP authentication uses the connected board"
-                    }), 400
-                monitor = _board(boards)
-                return jsonify({"session": console.open(monitor.read_wireless(), monitor.tcp_cli_auth_proof)})
-            session = request.args.get("session")
-            if request.method == "GET":
-                data, closed = console.read(session)
-                return jsonify({"data": base64.b64encode(data).decode("ascii"), "closed": closed})
-            if request.method == "PUT":
-                payload = request.get_json(silent=True)
-                if (not isinstance(payload, dict) or set(payload) != {"data"}
-                        or not isinstance(payload["data"], str) or len(payload["data"]) > 1368):
-                    return jsonify({"error": "Expected up to 1024 base64-encoded input bytes"}), 400
-                try:
-                    data = base64.b64decode(payload["data"], validate=True)
-                except binascii.Error:
-                    data = b""
-                if not 0 < len(data) <= 1024:
-                    return jsonify({"error": "Expected 1..1024 input bytes"}), 400
-                console.write(session, data)
-            else:
-                console.close(session)
-            return jsonify({"ok": True})
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict) or payload:
+                return jsonify({
+                    "error": "Expected an empty object; TCP authentication uses the connected board"
+                }), 400
+            board_id = request.args.get("board")
+            monitor = boards.monitor(board_id)
+            wireless = monitor.snapshot().get("wireless")
+            if wireless is None:
+                raise RuntimeError("Waiting for the board's wireless status")
+            return jsonify({
+                "session": console.open(wireless, monitor.tcp_cli_auth_proof, board_id=board_id),
+            })
         except OSError as error:
             app.logger.warning("TCP console connection failed: %s", error)
             return jsonify({"error": f"TCP console connection failed: {error}"}), 503
+
+    @app.get("/api/console")
+    def console_read():
+        _limit_console_request()
+        data, closed = console.read(request.args.get("session"))
+        return jsonify({"data": base64.b64encode(data).decode("ascii"), "closed": closed})
+
+    @app.put("/api/console")
+    def console_write():
+        _limit_console_request()
+        payload = request.get_json(silent=True)
+        if (not isinstance(payload, dict) or set(payload) != {"data"}
+                or not isinstance(payload["data"], str) or len(payload["data"]) > 1368):
+            return jsonify({"error": "Expected up to 1024 base64-encoded input bytes"}), 400
+        try:
+            data = base64.b64decode(payload["data"], validate=True)
+        except binascii.Error:
+            data = b""
+        if not 0 < len(data) <= 1024:
+            return jsonify({"error": "Expected 1..1024 input bytes"}), 400
+        console.write(request.args.get("session"), data)
+        return jsonify({"ok": True})
+
+    @app.delete("/api/console")
+    def console_close():
+        _limit_console_request()
+        console.close(request.args.get("session"))
+        return jsonify({"ok": True})
 
 
 def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
     @app.get("/api/status")
     def status():
         board_id = request.args.get("board")
-        return jsonify(_empty_snapshot() if board_id is None else boards.monitor(board_id).snapshot())
+        if board_id is None:
+            return jsonify(_empty_snapshot())
+        snapshot = boards.monitor(board_id).status_snapshot()
+        wireless = snapshot.get("wireless")
+        if wireless is not None:
+            snapshot["wireless"] = _public_wireless(wireless)
+        return jsonify(snapshot)
 
     @app.get("/api/boards")
     def boards_list():
@@ -202,6 +236,8 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected a self-test JSON command"}), 400
         action = payload.get("action")
+        if action not in ("start", "cancel"):
+            return jsonify({"error": "Self-test action must be start or cancel"}), 400
         size_mib = None if action == "cancel" else payload.get("size_mib")
         return jsonify(_board(boards).set_self_test(action, size_mib)), 202
 
@@ -216,7 +252,11 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
 def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
     @app.post("/api/wireless/scan")
     def scan_wireless():
-        return jsonify(_board(boards).scan_wireless())
+        try:
+            return jsonify(_board(boards).scan_wireless())
+        except (OSError, ProtocolError):
+            app.logger.exception("Wireless scan failed")
+            return _unavailable("Wireless scan failed")
 
     @app.post("/api/wireless/test")
     def test_wireless():
@@ -224,17 +264,36 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
         if not isinstance(payload, dict) or set(payload) - {"ssid", "ssid_hex", "password"}:
             return jsonify({"error": "Expected SSID and optional password"}), 400
         ssid = request_ssid(payload) if "ssid_hex" in payload else payload.get("ssid", "")
-        return jsonify(_board(boards).test_wireless(ssid, payload.get("password", "")))
+        try:
+            return jsonify(_board(boards).test_wireless(ssid, payload.get("password", "")))
+        except TimeoutError:
+            app.logger.exception("Wi-Fi test timed out")
+            return _unavailable(f"Wi-Fi test timed out; outcome is uncertain. {_WIRELESS_RETRY}")
+        except (OSError, ProtocolError):
+            app.logger.exception("Wi-Fi test result is uncertain")
+            return _unavailable(f"Wi-Fi test result is uncertain. {_WIRELESS_RETRY}")
 
     @app.post("/api/wireless/cancel")
     def cancel_wireless_test():
-        return jsonify(_board(boards).cancel_wireless_test())
+        try:
+            return jsonify(_board(boards).cancel_wireless_test())
+        except (OSError, ProtocolError):
+            app.logger.exception("Could not clear wireless test credentials")
+            return _unavailable("Could not clear the wireless test credentials")
 
     @app.post("/api/wireless")
     def set_wireless():
         payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Expected wireless configuration JSON"}), 400
         validate_wireless_configuration(payload)  # Bad input is 400 whatever the board state.
-        return jsonify(_board(boards).set_wireless(payload))
+        try:
+            result = _board(boards).set_wireless(payload)
+            result["wireless"] = _public_wireless(result["wireless"])
+            return jsonify(result)
+        except (OSError, ProtocolError):
+            app.logger.exception("Wireless provisioning outcome is uncertain")
+            return _unavailable("Wireless provisioning outcome is uncertain; command was not resent")
 
 
 def run_server(port: int = 5000, serial_number: str | None = None, device_path: str | None = None) -> None:

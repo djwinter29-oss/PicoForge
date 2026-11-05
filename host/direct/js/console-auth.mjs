@@ -1,6 +1,6 @@
-import { bytesToHex } from "./protocol.mjs?v=47";
+import { bytesToHex } from "./protocol.mjs?v=48";
 
-export { bytesToHex, parseHexBytes } from "./protocol.mjs?v=47";
+export { bytesToHex, parseHexBytes } from "./protocol.mjs?v=48";
 export const CONSOLE_AUTH_CHANNEL = "picoforge-direct-console-auth-v1";
 export const CONSOLE_AUTH_REQUEST = "tcp-cli-auth-request";
 export const CONSOLE_AUTH_RESPONSE = "tcp-cli-auth-response";

@@ -58,6 +58,25 @@ class HidEnumerationTests(unittest.TestCase):
 
 
 class HidDeviceTests(unittest.TestCase):
+    def test_initializes_cached_device_state(self):
+        transport = Mock()
+        with patch("picoforge.hid.device._select_device", return_value={
+                "path": b"/hid/a", "serial_number": "0123456789ABCDEF"}), \
+                patch("picoforge.hid.device._require_hid") as hid:
+            hid.return_value.device.return_value = transport
+            client = PicoForgeHid()
+        self.assertIsNone(client.configuration)
+        self.assertIsNone(client._wireless_snapshot)
+        self.assertIsNone(client._tested_generation)
+        self.assertIsNone(client._tested_at)
+
+    def test_capability_gate_reuses_cached_identity(self):
+        client = self.connection()
+        client.read_info = Mock(side_effect=AssertionError("identity is already cached"))
+        client._device.feature_reports[20] = [control_result()]
+        self.assertEqual(client.set_led(True)["status"], "completed")
+        client.read_info.assert_not_called()
+
     def test_forced_save_reopens_original_uid_and_never_replays_set(self):
         client = self.connection()
         client.identity["capabilities"] |= 64
@@ -120,13 +139,11 @@ class HidDeviceTests(unittest.TestCase):
         client.last_command_result = None
         client._command_uncertain = False
         client._control_lock = threading.RLock()
+        client._wireless_snapshot = None
+        client._wireless_active = False
+        client._tested_generation = None
+        client._tested_at = None
         return client
-
-    def test_read_status_skips_new_storage_report(self):
-        client = self.connection([bytes([10, 1, 0, 1]) + bytes(31), telemetry()])
-        with patch("picoforge.hid.device.monotonic", side_effect=[0, 0.1]):
-            result = client.read_status(250)
-        self.assertEqual(result, parse_status_report(telemetry(), client.identity))
 
     def test_input_reports_dispatch_under_new_ids(self):
         client = self.connection([telemetry()])

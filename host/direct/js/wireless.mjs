@@ -5,7 +5,7 @@
 import {
   OP, buildControlRequest, bytesToHex as hex, decodeScanEntry, decodeWireless, displaySsid, encodeSettings,
   parseHexBytes, ssidBytes, validSettings, withTimeout,
-} from "./protocol.mjs?v=47";
+} from "./protocol.mjs?v=48";
 
 /** @brief Feature 12 poll interval: fast while a Wi-Fi test or scan runs, otherwise 2 s. */
 export const wirelessPollInterval = wireless => wireless?.state === 4 || wireless?.scan_state === 1 ? 500 : 2000;

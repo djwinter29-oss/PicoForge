@@ -1,4 +1,4 @@
-import { bindWirelessForm } from "../js/wireless-form.mjs?v=47";
+import { bindWirelessForm } from "../js/wireless-form.mjs?v=48";
 
 const results = document.querySelector("#results");
 const report = (name, error) => {

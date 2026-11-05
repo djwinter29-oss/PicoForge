@@ -179,6 +179,8 @@ firmware reports that the TCP CLI is serving. Clicking it opens a separate web c
 automatically. Type in the terminal; there is no local echo. Use **Disconnect** to release it or **Connect** to
 reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser
 request.
+Each Python or .NET dashboard process allows one active console session at a time; the session is bound to the selected
+USB board.
 Browser requests have bounded deadlines; disconnect aborts pending requests, and input with an uncertain delivery
 result is never automatically resent.
 The local host relays bounded raw bytes over TCP, using same-origin HTTP long-polling between browser and host; browsers

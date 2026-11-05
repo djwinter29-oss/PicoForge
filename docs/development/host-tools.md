@@ -43,12 +43,17 @@ python3 -m pip install --editable host/python
 On Linux, HID access can require the repository's
 [permission setup script](../../tools/host/hid-permissions-setup.sh), followed by reconnecting the device.
 
+The Python `picoforge status` JSON retains the top-level `msc` field for compatibility; it is deprecated in favor of
+`memory.msc`.
+
 ## Qualify the Python Host with Hardware
 
-The Python monitor polls HID input reports every 50 ms while releasing the device lock between batches. Host tests
-verify that commands can acquire the lock between polls, but they cannot establish real USB report latency, CPU use,
-or device handoff behavior. Before changing this interval or claiming physical qualification, test the packaged or
-source-installed Python host with representative RP2040 and RP2350 boards:
+The Python monitor polls HID input reports every 50 ms while a browser polls status, then slows to 500 ms after five
+seconds without a status request. Wireless status polling similarly slows to five seconds while idle and resumes its
+normal cadence when a browser returns. The monitor releases the device lock between report batches. Host tests verify
+these schedules and that commands can acquire the lock between batches, but cannot establish real USB report latency,
+CPU use, or device handoff behavior. Before changing these intervals or claiming physical qualification, test the
+packaged or source-installed Python host with representative RP2040 and RP2350 boards:
 
 1. Record the OS, Python version, firmware revision, board model, and storage/radio configuration. Start the dashboard
    with `tools/host/run-python.sh` and leave Live diagnostics visible for at least five minutes. Confirm runtime,
@@ -237,7 +242,8 @@ the firmware `control_result`, which .NET omits. LED, reboot and self-test (202)
 browser applies the requested state on success and reads the outcome from the next status snapshot.
 
 Non-GET `/api` requests with a foreign `Origin` return 403. The web console long-polls
-`GET /api/console`; each request waits up to 2 s for board output without blocking input.
+`GET /api/console`; each asynchronous request waits up to 2 s for board output, honors request cancellation, and does
+not block input.
 
 ### Dashboard component isolation
 

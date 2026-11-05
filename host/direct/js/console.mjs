@@ -2,11 +2,11 @@
  * Direct Wi-Fi CLI console: the Python dashboard's interactive terminal, relayed through the Direct local bridge.
  * The dashboard passes the board address and its auth pairing token in the URL; firmware always requires TCP auth.
  */
-import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs?v=47";
+import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs?v=48";
 import {
   bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
   parseHexBytes, randomHex,
-} from "./console-auth.mjs?v=47";
+} from "./console-auth.mjs?v=48";
 
 const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");

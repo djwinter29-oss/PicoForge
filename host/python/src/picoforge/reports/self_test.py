@@ -12,6 +12,7 @@ from .common import (
     REPORT_VERSION,
     SELF_TEST_PAYLOAD_SIZE,
     SELF_TEST_REPORT_ID,
+    ControlOpcode,
 )
 from .common import InvalidRequest, _input_payload, _unknown_name
 from .control import build_control_command_report
@@ -35,7 +36,7 @@ def build_self_test_command_report(
     elif not 1 <= size_mib <= 1024:
         raise InvalidRequest("Self-test size must be an integer from 1 to 1024 MiB")
     args = bytes((int(action == "start"),)) + int(size_mib).to_bytes(4, "little")
-    return build_control_command_report(transaction_id, 4, arguments=args)
+    return build_control_command_report(transaction_id, ControlOpcode.SELF_TEST, arguments=args)
 
 def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestStatus:
     """Decode and validate Input report 11 self-test progress and retained result."""
@@ -100,6 +101,3 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
         "file_remains": bool(flags & 1),
         "volume_mounted": bool(flags & 2),
     }
-
-
-parse_self_test_status_report = parse_self_test_report

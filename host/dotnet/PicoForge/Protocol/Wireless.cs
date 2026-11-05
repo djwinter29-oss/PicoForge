@@ -7,13 +7,110 @@ using System.Text.Json.Serialization;
 
 namespace PicoForge;
 
-/// <summary>Report 12 runtime state and Report 2 saved switches; never contains credentials.</summary>
-public sealed record WirelessStatusResponse(bool WifiEnabled, bool BleEnabled, string Ssid,
-    string WifiState, string Ipv4, byte Error, string BleState, bool TcpCliStarted, bool TcpCliEnabled,
-    bool NetworkConfigured, bool BleKeyConfigured, string SsidHex, bool SsidStaged, bool PasswordStaged,
-    bool KeyStaged, bool PairTested, byte StagedState, byte ScanState, ushort ScanGeneration, byte ScanCount,
-    byte TestGeneration)
+/// <summary>Wi-Fi states in Feature 12 and the shared dashboard JSON contract.</summary>
+public enum WifiState
 {
+    /// <summary>Wi-Fi is disabled.</summary>
+    Disabled,
+    /// <summary>Joining the saved network.</summary>
+    Connecting,
+    /// <summary>Connected and assigned an address.</summary>
+    Connected,
+    /// <summary>Join failed or the link was lost.</summary>
+    Failed,
+    /// <summary>A staged pair is being tested.</summary>
+    Testing,
+    /// <summary>The staged pair passed its connection test.</summary>
+    TestJoined,
+    /// <summary>The staged pair failed its connection test.</summary>
+    TestFailed
+}
+
+/// <summary>Bluetooth states reported in Feature 12.</summary>
+public enum BleState
+{
+    /// <summary>Bluetooth is off.</summary>
+    Off,
+    /// <summary>The board is advertising.</summary>
+    Advertising,
+    /// <summary>A Bluetooth connection is active.</summary>
+    Connected
+}
+
+internal enum WirelessScanState : byte
+{
+    Idle = 0,
+    Scanning = 1,
+    Complete = 2,
+    Failed = 3
+}
+
+[Flags]
+internal enum WirelessStatusFlags : byte
+{
+    NetworkConfigured = 1 << 0,
+    BleKeyConfigured = 1 << 1,
+    TcpCliStarted = 1 << 2,
+    SsidStaged = 1 << 4,
+    PasswordStaged = 1 << 5,
+    KeyStaged = 1 << 6,
+    PairTested = 1 << 7
+}
+
+[Flags]
+internal enum WirelessStagingFlags : byte
+{
+    Ssid = 1 << 0,
+    Password = 1 << 1,
+    Key = 1 << 2,
+    PairTested = 1 << 3
+}
+
+internal static class DashboardJson
+{
+    public static JsonSerializerOptions Options { get; } = CreateOptions();
+
+    public static void Configure(JsonSerializerOptions options)
+    {
+        options.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+        options.PropertyNameCaseInsensitive = false;
+        options.RespectRequiredConstructorParameters = true;
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower));
+    }
+
+    private static JsonSerializerOptions CreateOptions()
+    {
+        var options = new JsonSerializerOptions();
+        Configure(options);
+        return options;
+    }
+}
+
+/// <summary>Report 12 runtime state and Report 2 saved switches; never contains credentials.</summary>
+public sealed record WirelessStatusResponse
+{
+    public bool WifiEnabled { get; init; }
+    public bool BleEnabled { get; init; }
+    public string Ssid { get; init; } = "";
+    public WifiState WifiState { get; init; }
+    public string Ipv4 { get; init; } = "";
+    public byte Error { get; init; }
+    public BleState BleState { get; init; }
+    public bool TcpCliStarted { get; init; }
+    public bool TcpCliEnabled { get; init; }
+    public bool NetworkConfigured { get; init; }
+    public bool BleKeyConfigured { get; init; }
+    public string SsidHex { get; init; } = "";
+    public bool SsidStaged { get; init; }
+    public bool PasswordStaged { get; init; }
+    public bool KeyStaged { get; init; }
+    public bool PairTested { get; init; }
+    public byte StagedState { get; init; }
+    public byte ScanState { get; init; }
+    public ushort ScanGeneration { get; init; }
+    public byte ScanCount { get; init; }
+    public byte TestGeneration { get; init; }
+
     public string Phase => HidProtocol.WifiDetail(Error);
 }
 
@@ -52,19 +149,11 @@ public sealed class WirelessRequest
         try
         {
             if (json.ValueKind != JsonValueKind.Object) throw new JsonException();
-            var request = json.Deserialize<WirelessRequest>(new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-            }) ?? throw new JsonException();
-            if (json.TryGetProperty("password", out var password) && password.ValueKind != JsonValueKind.String ||
-                json.TryGetProperty("ble_key", out var key) && key.ValueKind != JsonValueKind.String ||
-                json.TryGetProperty("ssid", out var ssid) && ssid.ValueKind != JsonValueKind.String ||
-                json.TryGetProperty("ssid_hex", out var hex) && hex.ValueKind != JsonValueKind.String ||
-                json.TryGetProperty("tcp_cli_enabled", out var tcp) &&
-                    tcp.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
-                !json.TryGetProperty("board", out var board) || board.ValueKind != JsonValueKind.Object ||
-                !board.TryGetProperty("system_clock_mhz", out _) || !board.TryGetProperty("sdcard_profile", out _) ||
-                !board.TryGetProperty("radios", out _))
+            var request = json.Deserialize<WirelessRequest>(DashboardJson.Options)
+                ?? throw new JsonException();
+            if (HasExplicitNull(json, "password") || HasExplicitNull(json, "ble_key") ||
+                HasExplicitNull(json, "ssid") || HasExplicitNull(json, "ssid_hex") ||
+                HasExplicitNull(json, "tcp_cli_enabled"))
                 throw new JsonException();
             HidProtocol.ValidateWirelessRequest(request);
             return request;
@@ -75,6 +164,9 @@ public sealed class WirelessRequest
                 "Invalid wireless configuration; confirm reboot and check field types and lengths");
         }
     }
+
+    private static bool HasExplicitNull(JsonElement json, string name) =>
+        json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Null;
 }
 
 internal static partial class HidProtocol
@@ -146,40 +238,69 @@ internal static partial class HidProtocol
         BoardConfigurationResponse configuration)
     {
         var payload = FeaturePayload(report, WirelessReportId, 48);
-        Require(payload[0] == ReportVersion && payload[1] <= 6 && payload[3] <= 2 &&
+        Require(payload[0] == ReportVersion && payload[1] <= (byte)WifiState.TestFailed &&
+            payload[3] <= (byte)BleState.Connected &&
             payload[9] <= 32 && payload.Slice(10 + payload[9], 32 - payload[9]).IndexOfAnyExcept((byte)0) < 0 &&
-            payload[42] <= 3 && payload[45] <= 18 && (payload[47] & 0xf0) == 0,
+            payload[42] <= (byte)WirelessScanState.Failed && payload[45] <= 18 &&
+            (payload[47] & 0xf0) == 0,
             "Invalid wireless status report");
-        var flags = payload[4];
-        var staged = payload[47];
+        var flags = (WirelessStatusFlags)payload[4];
+        var staged = (WirelessStagingFlags)payload[47];
         var scanGeneration = BinaryPrimitives.ReadUInt16LittleEndian(payload[43..]);
-        Require((payload[42] == 2 || payload[45] == 0) &&
-            (payload[42] == 0 ? scanGeneration == 0 : scanGeneration != 0) &&
-            ((staged & 8) == 0 || (flags & 0xf0) == 0) &&
-            ((staged & 1) == 0 || (flags & 0x10) != 0) &&
-            ((staged & 2) == 0 || (flags & 0x20) != 0) &&
-            ((staged & 4) == 0 || (flags & 0x40) != 0) &&
-            ((staged & 1) == 0 || (staged & 2) != 0 && (flags & 0x30) == 0x30) &&
-            ((flags & 0x80) == 0 || (flags & 0x30) != 0 && payload[46] != 0) &&
-            ((flags & 4) == 0 || (flags & 2) != 0) &&
-            (payload[3] == 0 || (flags & 2) != 0) &&
-            (payload[1] < 4 || payload[46] != 0), "Invalid wireless status fields");
+        Require(((WirelessScanState)payload[42] == WirelessScanState.Complete || payload[45] == 0) &&
+            ((WirelessScanState)payload[42] == WirelessScanState.Idle
+                ? scanGeneration == 0 : scanGeneration != 0) &&
+            ((staged & WirelessStagingFlags.PairTested) == 0 ||
+                (flags & (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged |
+                    WirelessStatusFlags.KeyStaged | WirelessStatusFlags.PairTested)) == 0) &&
+            ((staged & WirelessStagingFlags.Ssid) == 0 || (flags & WirelessStatusFlags.SsidStaged) != 0) &&
+            ((staged & WirelessStagingFlags.Password) == 0 ||
+                (flags & WirelessStatusFlags.PasswordStaged) != 0) &&
+            ((staged & WirelessStagingFlags.Key) == 0 || (flags & WirelessStatusFlags.KeyStaged) != 0) &&
+            ((staged & WirelessStagingFlags.Ssid) == 0 ||
+                (staged & WirelessStagingFlags.Password) != 0 &&
+                (flags & (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged)) ==
+                    (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged)) &&
+            ((flags & WirelessStatusFlags.PairTested) == 0 ||
+                (flags & (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged)) != 0 &&
+                payload[46] != 0) &&
+            ((flags & WirelessStatusFlags.TcpCliStarted) == 0 ||
+                (flags & WirelessStatusFlags.BleKeyConfigured) != 0) &&
+            (payload[3] == (byte)BleState.Off ||
+                (flags & WirelessStatusFlags.BleKeyConfigured) != 0) &&
+            (payload[1] < (byte)WifiState.Testing || payload[46] != 0), "Invalid wireless status fields");
         var ssid = payload.Slice(10, payload[9]).ToArray();
         var saved = configuration.BoardFlags;
-        return new((saved & BoardFlagWifi) != 0, (saved & BoardFlagBle) != 0, DisplaySsid(ssid),
-            new[] { "disabled", "connecting", "connected", "failed", "testing", "test_joined",
-                "test_failed" }[payload[1]],
-            string.Join(".", payload[5..9].ToArray()), payload[2] <= 6 ? payload[2] : (byte)0,
-            new[] { "off", "advertising", "connected" }[payload[3]], (flags & 4) != 0,
-            (saved & BoardFlagTcpCli) != 0, (flags & 1) != 0, (flags & 2) != 0,
-            Convert.ToHexString(ssid), (flags & 16) != 0, (flags & 32) != 0,
-            (flags & 64) != 0, (flags & 128) != 0, staged, payload[42], scanGeneration, payload[45], payload[46]);
+        return new()
+        {
+            WifiEnabled = (saved & BoardFlagWifi) != 0,
+            BleEnabled = (saved & BoardFlagBle) != 0,
+            Ssid = DisplaySsid(ssid),
+            WifiState = (WifiState)payload[1],
+            Ipv4 = string.Join(".", payload[5..9].ToArray()),
+            Error = payload[2] <= 6 ? payload[2] : (byte)0,
+            BleState = (BleState)payload[3],
+            TcpCliStarted = (flags & WirelessStatusFlags.TcpCliStarted) != 0,
+            TcpCliEnabled = (saved & BoardFlagTcpCli) != 0,
+            NetworkConfigured = (flags & WirelessStatusFlags.NetworkConfigured) != 0,
+            BleKeyConfigured = (flags & WirelessStatusFlags.BleKeyConfigured) != 0,
+            SsidHex = Convert.ToHexString(ssid),
+            SsidStaged = (flags & WirelessStatusFlags.SsidStaged) != 0,
+            PasswordStaged = (flags & WirelessStatusFlags.PasswordStaged) != 0,
+            KeyStaged = (flags & WirelessStatusFlags.KeyStaged) != 0,
+            PairTested = (flags & WirelessStatusFlags.PairTested) != 0,
+            StagedState = payload[47],
+            ScanState = payload[42],
+            ScanGeneration = scanGeneration,
+            ScanCount = payload[45],
+            TestGeneration = payload[46]
+        };
     }
 
     public static WirelessNetworkResponse ParseScanEntry(ControlResult result, ushort generation, byte index)
     {
         var data = result.ResultData;
-        Require(result.Opcode == Opcode.WifiEntry && result.Status == 2 &&
+        Require(result.Opcode == Opcode.WifiEntry && result.Status == ControlStatus.Completed &&
             BinaryPrimitives.ReadUInt16LittleEndian(data) == generation && data[2] == index,
             "Scan entry belongs to another scan");
         var ssid = data.AsSpan(4, data[3]).ToArray();

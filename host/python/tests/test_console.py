@@ -19,8 +19,11 @@ class Monitor:
         self.board = board
         return self
 
+    def snapshot(self):
+        return {"wireless": self.wireless}
+
     def read_wireless(self):
-        return self.wireless
+        raise AssertionError("console connection must use the monitor snapshot")
 
     def tcp_cli_auth_proof(self, nonce, uid):
         key = bytes(range(1, 33))
@@ -52,6 +55,7 @@ class ConsoleTests(unittest.TestCase):
         endpoint = self.open()
         self.assertEqual(self.monitor.board, "board-a")
         self.connect.assert_called_once_with(("192.168.66.87", 2323), timeout=3)
+        self.assertEqual(self.app.extensions["picoforge_console"]._board_id, "board-a")
         self.assertEqual(self.client.post("/api/console", json={}).status_code, 409)
         self.assertEqual(self.client.delete("/api/console?session=wrong").status_code, 409)
         command = b"help\r\x1b[A"
@@ -84,6 +88,39 @@ class ConsoleTests(unittest.TestCase):
             reader.join(2)
         self.assertEqual(result, [(b"ok", False)])
         bridge.close(token)
+
+    def test_close_all_does_not_wait_for_socket_connect(self):
+        started = threading.Event()
+        release = threading.Event()
+        connection = Mock()
+        bridge = ConsoleBridge()
+        errors = []
+
+        def delayed_connect(*_args, **_kwargs):
+            started.set()
+            release.wait(2)
+            return connection
+
+        def open_console():
+            try:
+                bridge.open(self.monitor.wireless, board_id="board-a")
+            except RuntimeError as error:
+                errors.append(error)
+
+        with patch("picoforge.dashboard.console.socket.create_connection", side_effect=delayed_connect):
+            worker = threading.Thread(target=open_console)
+            worker.start()
+            self.assertTrue(started.wait(1))
+            before = time.monotonic()
+            bridge.close_all()
+            self.assertLess(time.monotonic() - before, 0.2)
+            release.set()
+            worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        connection.close.assert_called_once_with()
+        self.assertIsNone(bridge._socket)
 
     def test_input_limits_origins_and_explicit_disconnect(self):
         endpoint = self.open()
@@ -146,7 +183,7 @@ class ConsoleTests(unittest.TestCase):
         self.connect.assert_not_called()
 
     def test_tcp_authentication_uses_the_connected_boards_usb_proof(self):
-        self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
+        self.monitor.wireless = {**self.monitor.wireless, "ble_key_configured": True}
         nonce = bytes(range(16))
         uid = bytes(range(8))
         self.peer.sendall(f"PicoForge AUTH {nonce.hex()} {uid.hex()}\r\n".encode("ascii"))
@@ -160,12 +197,12 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(self.client.delete(endpoint).status_code, 200)
 
     def test_tcp_authentication_rejects_whitespace_padded_challenge_hex(self):
-        self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
+        self.monitor.wireless = {**self.monitor.wireless, "ble_key_configured": True}
         self.peer.sendall(f"PicoForge AUTH {'00' * 15}\t\t {'00' * 8}\r\n".encode("ascii"))
         self.assertEqual(self.client.post("/api/console", json={}).status_code, 503)
 
     def test_tcp_authentication_does_not_accept_control_keys_from_the_browser(self):
-        self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
+        self.monitor.wireless = {**self.monitor.wireless, "ble_key_configured": True}
         self.assertEqual(self.client.post("/api/console", json={"ble_key": "00" * 32}).status_code, 400)
         self.assertEqual(self.client.post("/api/console", json={"ble_key": "invalid"}).status_code, 400)
         self.connect.assert_not_called()

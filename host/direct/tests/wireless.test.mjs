@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { createHmac, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeBluetooth, BLE_SERVICE } from "../js/bluetooth.mjs?v=47";
-import { PicoForgeWebHid, buildControlRequest, decodeControlResult } from "../js/device.mjs?v=47";
+import { PicoForgeBluetooth, BLE_SERVICE } from "../js/bluetooth.mjs?v=48";
+import { PicoForgeWebHid, buildControlRequest, decodeControlResult } from "../js/device.mjs?v=48";
 import {
   cancelWireless, readWireless,
   saveWireless, scanWireless, testWireless, wirelessPollInterval,
-} from "../js/wireless.mjs?v=47";
-import { decodeWireless, displaySsid, ssidBytes } from "../js/protocol.mjs?v=47";
+} from "../js/wireless.mjs?v=48";
+import { decodeWireless, displaySsid, ssidBytes } from "../js/protocol.mjs?v=48";
 import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result } from "./support/fixtures.mjs";
 
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
@@ -338,10 +338,10 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
     async connect() {
       this.connected = true;
       return { async getPrimaryService(uuid) {
-        if (uuid === "generic_attribute") {
+        if (uuid === 0x1801) {
           if (!serviceChangedAvailable) throw Object.assign(new Error("Service is hidden"), { name: "NotFoundError" });
           return { async getCharacteristic(uuid) {
-            assert.equal(uuid, "service_changed");
+            assert.equal(uuid, 0x2a05);
             return { async startNotifications() {
               notificationStarts++;
               discoveryOrder.push("service_changed_subscription");
@@ -374,7 +374,7 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
   try {
     await client.connect("ab".repeat(32));
     assert.equal(client.state.connected, true);
-    assert.ok(requestedServices.includes("generic_attribute"));
+    assert.ok(requestedServices.includes(0x1801));
     assert.equal(notificationStarts, 1);
     assert.deepEqual(discoveryOrder.slice(0, 2), ["service_changed_subscription", "pico_service_discovery"]);
     assert.ok(requested.includes(12)); assert.ok(requested.includes(256)); assert.ok(requested.includes(257));
@@ -423,7 +423,7 @@ test("BLE discovery retries only read-only setup on the chosen board and retains
     async connect() {
       connects++; this.connected = true;
       return { async getPrimaryService(uuid) {
-        if (uuid === "generic_attribute") {
+        if (uuid === 0x1801) {
           return { async getCharacteristic() {
             return { async startNotifications() {} };
           } };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderStatus, renderSelfTest } from "../js/view.mjs?v=47";
-import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs?v=47";
+import { renderStatus, renderSelfTest } from "../js/view.mjs?v=48";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs?v=48";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 function withDocument(run) {

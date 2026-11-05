@@ -17,5 +17,5 @@ def make_monitor(client=None, snapshot=None, *, fresh=True):
     if snapshot is not None:
         monitor._snapshot = {**_empty_snapshot(), **snapshot}
     if fresh:
-        monitor._input_received_at = dict.fromkeys((3, 10, 11), math.inf)
+        monitor._input_received_at = dict.fromkeys(("runtime", "memory", "self_test"), math.inf)
     return monitor

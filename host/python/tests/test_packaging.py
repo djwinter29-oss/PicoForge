@@ -25,7 +25,10 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(server.create_app.__module__, "picoforge.dashboard.server")
         self.assertIn("parse_identity_report", reports.__all__)
         self.assertIn("parse_wireless_status_report", reports.__all__)
-        self.assertIn("parse_storage_report", reports.__all__)
+        self.assertIn("parse_memory_report", reports.__all__)
+        for alias in ("parse_telemetry_report", "parse_storage_report",
+                      "parse_self_test_status_report", "parse_tcp_cli_auth_result"):
+            self.assertNotIn(alias, reports.__all__)
 
     def test_compatibility_modules_are_removed(self):
         package = PROJECT / "src" / "picoforge"

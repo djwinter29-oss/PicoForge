@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=47";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=47";
-import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs?v=47";
+import { PicoForgeWebHid } from "../js/device.mjs?v=48";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=48";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs?v=48";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 const memorySessionStorage = () => {

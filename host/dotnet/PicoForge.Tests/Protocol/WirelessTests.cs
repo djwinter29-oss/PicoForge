@@ -430,8 +430,7 @@ public sealed class WirelessTests
         var dashboard = new WirelessMonitor();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.ConfigureHttpJsonOptions(options =>
-            options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+        builder.Services.ConfigureHttpJsonOptions(options => DashboardJson.Configure(options.SerializerOptions));
         builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(dashboard));
         await using var app = builder.Build();
         app.UseApiErrors();

@@ -1,4 +1,8 @@
+using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.FileProviders;
 using Xunit;
 
 namespace PicoForge.Tests;
@@ -61,6 +65,23 @@ public sealed class SharedDashboardAssetsTests
         Assert.Equal(0, configuration.GetProperty("sdcard_profile").GetInt32());
         Assert.Equal(1, configuration.GetProperty("radios").GetInt32());
         Assert.False(configuration.TryGetProperty("next_boot", out _));
+    }
+
+    [Fact]
+    public async Task RawTemplatePagesAreNotServedAsStaticFiles()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var app = builder.Build();
+        app.UseTemplateFileGuard();
+        using var files = new PhysicalFileProvider(WebRoot());
+        app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+        await app.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/index.html")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/console.html")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/js/app.mjs")).StatusCode);
+        await app.StopAsync();
     }
 
     internal static string WebRoot()

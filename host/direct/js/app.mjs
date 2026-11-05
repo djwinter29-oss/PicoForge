@@ -1,15 +1,15 @@
-import { CAP, PicoForgeWebHid } from "./device.mjs?v=47";
-import { renderControls, renderStatus } from "./view.mjs?v=47";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=47";
+import { CAP, PicoForgeWebHid } from "./device.mjs?v=48";
+import { renderControls, renderStatus } from "./view.mjs?v=48";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=48";
 import {
   bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
   parseHexBytes, randomHex,
-} from "./console-auth.mjs?v=47";
-import { bindWirelessForm } from "./wireless-form.mjs?v=47";
-import { deriveOperationEligibility } from "./eligibility.mjs?v=47";
+} from "./console-auth.mjs?v=48";
+import { bindWirelessForm } from "./wireless-form.mjs?v=48";
+import { deriveOperationEligibility } from "./eligibility.mjs?v=48";
 import {
   cancelWireless, readWireless, saveWireless, scanWireless, testWireless, wirelessPollInterval,
-} from "./wireless.mjs?v=47";
+} from "./wireless.mjs?v=48";
 
 const element = id => document.querySelector(`#${id}`);
 const usbDialog = element("usb-connection-dialog");

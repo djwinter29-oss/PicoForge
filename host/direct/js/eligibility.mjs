@@ -2,7 +2,7 @@
  * Single source of operation readiness for the Direct dashboard. The client's guards and every view gate derive
  * from this function so buttons and device writes cannot disagree.
  */
-import { CAP } from "./protocol.mjs?v=47";
+import { CAP } from "./protocol.mjs?v=48";
 
 /**
  * @brief Derive operation readiness from a client snapshot.
