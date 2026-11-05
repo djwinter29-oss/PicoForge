@@ -1,6 +1,6 @@
 import { PicoForgeWebHid } from "./device.mjs?v=12";
 import { renderStatus } from "./view.mjs?v=20";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=15";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=17";
 import {
   bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
   parseHexBytes, randomHex,

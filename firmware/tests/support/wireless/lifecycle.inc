@@ -90,6 +90,7 @@ static bool ble_prepared_with_key; /**< Key was loaded when Bluetooth evaluated 
 bool pf_bluetooth_prepare(void) { ble_prepared_with_key = shared_key; return false; }
 bool pf_bluetooth_start(void) { return true; }
 uint8_t pf_bluetooth_state(void) { return 0u; }
+void pf_bluetooth_poll(void) {}
 bool pf_tcp_cli_set_auth_required(bool required) { auth_required = required; return shared_key || !required; }
 bool pf_tcp_cli_serving(void) { return serving; }
 void pf_tcp_cli_poll(bool enabled, uint64_t timestamp) { assert(timestamp == now); serving = enabled; }

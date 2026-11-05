@@ -325,18 +325,34 @@ test("Report12 freshness uses active500ms/idle2s and invalid reads never refresh
 
 test("BLE maps normalized68byte control to restricted9byte wire form and HMACs those exact bytes", async () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const previousWarn = console.warn;
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
   const setup = fakeConnection();
-  const writes = [], requested = [];
+  const writes = [], requested = [], requestedServices = [], discoveryOrder = [];
+  let notificationStarts = 0;
+  let serviceChangedAvailable = true;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
   const nonce = Uint8Array.from({ length: 16 }, (_, index) => index);
   const ble = new EventTarget();
   const values = { 1: identity(128 | 55), 2: config(), 3: telemetry(), 10: storage(), 11: selfTest(),
-    12: status(), 32: nonce };
+    12: status(), 256: nonce };
   ble.gatt = { connected: false,
     async connect() {
       this.connected = true;
       return { async getPrimaryService(uuid) {
+        if (uuid === "generic_attribute") {
+          if (!serviceChangedAvailable) throw Object.assign(new Error("Service is hidden"), { name: "NotFoundError" });
+          return { async getCharacteristic(uuid) {
+            assert.equal(uuid, "service_changed");
+            return { async startNotifications() {
+              notificationStarts++;
+              discoveryOrder.push("service_changed_subscription");
+            } };
+          } };
+        }
         assert.equal(uuid, BLE_SERVICE);
+        discoveryOrder.push("pico_service_discovery");
         return { async getCharacteristic(uuid) {
           const id = parseInt(uuid.slice(4, 8), 16); requested.push(id);
           return {
@@ -353,36 +369,49 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
     },
     disconnect() { this.connected = false; ble.dispatchEvent(new Event("gattserverdisconnected")); },
   };
-  const client = new PicoForgeBluetooth({ requestDevice: async () => ble }, () => {},
+  const client = new PicoForgeBluetooth({ requestDevice: async options => {
+    requestedServices.push(...options.optionalServices);
+    return ble;
+  } }, () => {},
     { pendingStore: setup.pendingStore });
   try {
     await client.connect("ab".repeat(32));
     assert.equal(client.state.connected, true);
-    assert.ok(requested.includes(12)); assert.ok(!requested.includes(30));
+    assert.ok(requestedServices.includes("generic_attribute"));
+    assert.equal(notificationStarts, 1);
+    assert.deepEqual(discoveryOrder.slice(0, 2), ["service_changed_subscription", "pico_service_discovery"]);
+    assert.ok(requested.includes(12)); assert.ok(requested.includes(256)); assert.ok(requested.includes(257));
     const sign = request => [...createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
       .update(Buffer.concat([nonce, Buffer.from("0102030405060708", "hex"), Buffer.from("PFBLECTL1"),
         Buffer.from(request)])).digest().subarray(0, 16)];
-    assert.deepEqual(writes[0], [33, sign(Buffer.from("SESSION01"))]);
+    assert.deepEqual(writes[0], [257, sign(Buffer.from("SESSION01"))]);
     writes.length = 0;
     await client.command(1, { args: [1] });
     assert.deepEqual(writes, [[20, [1, 1, 1, 0, 1, 0, 0, 0, 0]]]);
     writes.length = 0;
     await client.command(2, { flags: 1 });
     assert.deepEqual(writes[1], [20, [1, 2, 2, 1, 0, 0, 0, 0, 0]]);
-    assert.deepEqual(writes[0], [33, sign(writes[1][1])]);
+    assert.deepEqual(writes[0], [257, sign(writes[1][1])]);
     client.update({ reboot_pending: false });
     writes.length = 0;
     await client.command(5, { args: [200, 0, 1, 4] });
     assert.deepEqual(writes[1], [20, [1, 3, 5, 0, 200, 0, 1, 4, 0]]);
-    assert.deepEqual(writes[0], [33, sign(writes[1][1])]);
+    assert.deepEqual(writes[0], [257, sign(writes[1][1])]);
     client.update({ reboot_pending: false });
     for (const opcode of [3, 4, 6, 7, 8, 9, 10, 11, 12, 13]) {
       await assert.rejects(client.command(opcode), /requires USB/);
     }
     await readWireless(client);
     assert.equal(client.state.wireless.ssid_hex, "");
+    await client.disconnect();
+    serviceChangedAvailable = false;
+    await client.connect("ab".repeat(32));
+    assert.equal(client.state.connected, true);
+    assert.equal(notificationStarts, 1);
+    assert.ok(warnings.some(([message]) => message.includes("Service Changed is unavailable")));
   } finally {
     await client.disconnect();
+    console.warn = previousWarn;
     if (previous) Object.defineProperty(globalThis, "crypto", previous);
     else delete globalThis.crypto;
   }
@@ -391,12 +420,17 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
 test("BLE discovery retries only read-only setup on the chosen board and retains the final failure", async () => {
   const ble = new EventTarget();
   const values = { 1: identity(128 | 55), 2: config(), 3: telemetry(), 10: storage(), 11: selfTest(),
-    12: status(), 32: new Uint8Array(16) };
+    12: status(), 256: new Uint8Array(16) };
   let failures = 1, connects = 0, prompts = 0;
   ble.gatt = { connected: false,
     async connect() {
       connects++; this.connected = true;
-      return { async getPrimaryService() {
+      return { async getPrimaryService(uuid) {
+        if (uuid === "generic_attribute") {
+          return { async getCharacteristic() {
+            return { async startNotifications() {} };
+          } };
+        }
         if (failures-- > 0) throw new Error("No matching service");
         return { async getCharacteristic(uuid) {
           const bytes = values[parseInt(uuid.slice(4, 8), 16)] ?? new Uint8Array(9);

@@ -76,7 +76,8 @@ packets. The layouts use version `1`, independent of firmware semantic version.
 
 This document owns the Feature `12` and `20` byte layouts. It also owns the wireless command rules,
 including staging, testing, expiry and scan. The [wireless design](wireless.md) owns radio behavior, credential
-persistence, and security considerations. BLE's restricted Feature `20` command form is specified below.
+persistence, and security considerations. The [Bluetooth LE protocol](bluetooth.md) owns everything carried over
+Bluetooth, including how these reports map to GATT characteristics.
 
 ### Connection and Read Flow
 
@@ -429,8 +430,8 @@ one. GET does not advance either Input sequence.
 
 Feature report `20` carries all commands, including wireless credential staging, Wi-Fi test and scan, and the
 TCP CLI proof. SET submits one typed operation; GET returns the latest operation result and its data. USB SET and
-GET payloads are exactly 68 bytes (69 bytes including the report ID). The BLE control characteristic uses a
-separate 9-byte form, described below.
+GET payloads are exactly 68 bytes (69 bytes including the report ID). Bluetooth uses a separate form, defined in
+the [Bluetooth LE protocol](bluetooth.md#control-characteristic).
 
 ### SET Request
 
@@ -515,38 +516,10 @@ modes are not distinguished. Scan results contain no credentials.
 Op `13` requires a saved Control key; without one it returns Invalid with the no-Control-key-saved detail. It
 returns only the first 16 bytes of the HMAC-SHA256 proof for the fixed TCP CLI admission request. It never exposes
 the Control key or signs arbitrary data. The proof result is retained for up to ten seconds or until another USB
-SET with a valid envelope updates the USB result slot. GET does not consume it, so USB transport retries are safe;
-BLE commands do not replace the USB result slot or clear the proof. The TCP CLI challenge is one-use and rejects
+SET with a valid envelope updates the USB result slot. GET does not consume it, so USB transport retries are safe.
+The TCP CLI challenge is one-use and rejects
 replay. See the
 [wireless design](wireless.md) for proof domains and security rationale.
-
-### BLE Feature 20 Form
-
-The BLE control characteristic uses a separate 9-byte request/result form, not a truncated USB Feature report.
-It accepts opcodes `1`, `2`, and `5`. On an unlocked link, an invalid request envelope (length other than 9,
-version other than 1, or transaction ID zero) returns ATT application error `0x81` and leaves the BLE result slot
-unchanged. Envelope validation precedes proof validation and does not consume a pending challenge or proof. A
-locked-link check precedes envelope validation: every write while locked returns ATT application error `0x80`
-without checking the envelope. A valid-envelope non-LED write requires a fresh proof and consumes it. After proof
-validation, assigned opcodes unavailable over BLE update the BLE result slot with Unsupported/error `4`;
-unassigned opcodes update it with Unsupported/error `7`. Failed or missing proof returns ATT application error
-`0x80` and does not update the result slot.
-The 9-byte request is `version`, `transaction_id`, `opcode`, `flags`, then five argument bytes. For op `5`, those
-argument bytes are clock MHz (2 bytes), SD-card profile, switch mask
-(Wi-Fi, BLE, TCP CLI), and zero. An authenticated BLE op `5` may change the TCP CLI switch but must leave Wi-Fi and
-BLE radio bits equal to the saved mask. A request that changes either radio switch returns Invalid/error `3` with
-detail `0`. Forced-save and wireless-commit flags are forbidden over BLE.
-
-The 9-byte result is `version`, `transaction_id`, `opcode`, `status`, `error_reason`, then four result-data bytes.
-Status and error values match USB Feature `20`. For Invalid, Busy, or Failed, result-data byte 0 contains the
-applicable detail and bytes 1-3 are zero. Unsupported and other results without data have four zero data bytes.
-For successful op `5`, the four bytes contain clock MHz (little-endian), SD-card profile, and saved switch mask;
-other successful results have zero data. The wireless commit mask is USB-only and is not present in the BLE result.
-For otherwise-valid BLE opcodes `2` and `5`, if unexpired wireless values are staged over USB, return Busy/error
-`5` with detail `28` and do not save or reboot. This prevents a BLE save or reboot from silently discarding the
-USB host's staged values. Wireless opcodes `6`-`13` are USB-only.
-Feature `12` is a 48-byte BLE characteristic value and is read using ATT long reads; firmware must honor the read
-offset and return the frozen snapshot across read-blob requests.
 
 ### GET Result
 
@@ -608,7 +581,7 @@ Feature `20` results. Details are zero for Idle, Pending, Completed, and Unsuppo
 | `25` | A Wi-Fi test is active. | Busy/error `5`: wireless commit on `5`, or opcodes `6`-`9`, `11`. |
 | `26` | A Wi-Fi scan is active. | Busy/error `5`: wireless commit on `5`, or opcodes `9`, `11`, `12`. |
 | `27` | Unexpired wireless values are staged but the commit flag is clear. | Invalid/error `3`: opcode `5`. |
-| `28` | Unexpired USB-staged wireless values block this BLE operation. | Busy/error `5`: BLE opcodes `2`, `5`. |
+| `28` | Unexpired USB-staged wireless values block a Bluetooth save or reboot. | Busy/error `5`: [Bluetooth](bluetooth.md#validation-order) opcodes `2`, `5`. |
 | `29`-`31` | Reserved. | - |
 | `32`-`255` | Reserved. | - |
 
@@ -637,18 +610,16 @@ Status/error combinations are restricted as follows:
 | `13` | Completed, Invalid (`1`/`3`), Unsupported (`4`), Failed |
 
 When multiple rejection conditions apply, the first matching class below determines the result. One exception is
-that additional USB SETs during an in-flight forced save are ignored after envelope validation. BLE SETs follow the
-ordering below; only otherwise-valid BLE opcodes `2` and `5` are blocked by a forced USB save.
+that additional USB SETs during an in-flight forced save are ignored after envelope validation. Bluetooth applies
+the same ordering to its control form; see its [validation order](bluetooth.md#validation-order).
 
 1. Invalid transport envelope: reject the SET without changing that transport's result slot.
 2. Unsupported capability or opcode: Unsupported (`4` or `7`).
 3. Malformed flags or arguments: Invalid (`1` or `3`).
 4. Missing confirmation: Invalid (`2`).
-5. Resource conflict: Busy (`5`), including USB staging that blocks BLE opcodes `2` and `5`, and an in-flight
-   forced USB save that blocks otherwise-valid BLE opcodes `2` and `5`.
+5. Resource conflict: Busy (`5`).
 6. Stateful operation precondition: Invalid (`3`) with detail `19`-`24` or `27`, or detail `0` when none is defined.
-   This includes staged-wireless state, scan-generation/index validation, the saved-Control-key requirement, and the
-   BLE saved-radio-switch restriction.
+   This includes staged-wireless state, scan-generation/index validation, and the saved-Control-key requirement.
 7. Operation failure: Failed (`6`).
 
 Within class 3, validate request bytes without consulting device state. Class 6 depends on live or saved device
@@ -659,8 +630,7 @@ result slot with the result determined by this ordering.
 Opcode `4` returns Unsupported (`4`) when Report `1` bit 5 is clear. Opcode
 `3` is supported whenever either selected-transport bit 3 or 4 is set and must not return Unsupported on the basis
 of a separate MSC capability. Wireless opcodes `6`-`13` return Unsupported (`4`) when capability bit 7 is clear.
-Unassigned opcodes return Unsupported (`7`). The opcode-status table describes USB Feature `20`; BLE-specific
-Unsupported results for assigned opcodes are defined in the BLE form below.
+Unassigned opcodes return Unsupported (`7`). The opcode-status table describes USB Feature `20`.
 For opcode `4`, Invalid/error `3` returns benchmark detail `3` (invalid size); Busy/error `5` returns detail `1`
 (conflicting work) or `2` (MSC ownership). Failed/error `6` returns preflight detail `4` (card unavailable), `5`
 (insufficient space), `6` (test file exists), `7` (preflight file-check I/O), or `10` (filesystem not mounted).
@@ -688,8 +658,9 @@ An accepted opcode `3` transition waits for the matching Feature `20` result GET
 If the host does not read the result, the transition proceeds after a bounded 500 ms grace period. This allows the
 host to observe acceptance without making ownership depend indefinitely on a GET.
 
-USB Feature `20` and the BLE control characteristic have separate result slots and transaction-ID sequences. A
-request on one transport never replaces the other transport's result. Each transport must serialize its own
+USB Feature `20` has its own result slot and transaction-ID sequence; the
+[Bluetooth control characteristic](bluetooth.md#control-characteristic) keeps separate ones, and neither replaces
+the other's result. Each transport must serialize its own
 requests: do not submit another command there until the prior command's result is terminal and any associated
 asynchronous lifecycle is understood. Resource conflicts are arbitrated across transports and return Busy as defined
 for the operation. A later accepted operation replaces the result in its own transport's slot. Hosts advance
@@ -703,9 +674,9 @@ restarts a pending operation.
 ## Report ID 12: Wireless Status
 
 Feature report `12` is read-only and available when Report `1` capability bit 7 is set. It reports wireless runtime,
-test and scan state; saved switches are read from Report `2`. USB and the authenticated BLE status characteristic
-return the same 48-byte payload. It is a Feature report because hosts poll this shared USB/BLE snapshot on demand,
-rather than receiving periodic Input reports.
+test and scan state; saved switches are read from Report `2`. It is a Feature report because hosts poll this
+snapshot on demand, rather than receiving periodic Input reports. Bluetooth exposes the same payload; see the
+[GATT layout](bluetooth.md#gatt-layout).
 
 | Offset | Size | Field | Meaning |
 | -----: | ---: | ----- | ------- |
@@ -740,7 +711,7 @@ result. It is independent of scan generation.
 `ssid` contains raw network bytes, not a NUL-terminated string. Hosts display valid printable UTF-8 normally and
 escape invalid UTF-8 bytes and control characters (for example `\xNN`) without altering the bytes used for matching.
 `flags` bit 2 reports whether the TCP CLI listener is actually serving, not merely whether it is enabled in Report `2`.
-The listener only serves when a Control key is saved; clearing the key disables TCP CLI service as well as BLE.
+The listener only serves when a Control key is saved; clearing the key disables TCP CLI service.
 
 A new accepted scan clears the previous result, advances the nonzero 16-bit generation (zero before any scan), and
 begins in state `scanning`. Completion publishes the retained count and state `complete`; failure publishes `failed`
@@ -767,15 +738,13 @@ storage through successful device-side sync and USB detach before flash programm
 Failed/error `6`, with no flash save or reboot. A flash-save failure restores the prior RAM profiles, reconnects host
 access, and reports Failed without reboot; flash may nevertheless have partially changed.
 
-After verified saving, reconnect HID without usable MSC and keep media USB-reserved until reset so neither the host
-nor the worker starts new card I/O. Publish Completed with the original transaction and verified settings.
-Reboot waits for that result GET, or a five-second fallback deadline, followed by the existing one-second USB result
-grace period. Boot then follows the [default-mounted storage lifecycle](architecture.md#storage-ownership-lifecycle).
-Additional USB Feature `20` SETs while the forced transaction is outstanding are ignored with a UART warning to
-preserve the USB result slot. BLE opcode `1` remains available because it does not access storage. Otherwise-valid
-BLE opcodes `2` and `5` return Busy/error `5` in the BLE result slot and perform no action; their detail is `1`
-(conflicting work). If unexpired USB staging also exists, the forced-save conflict takes precedence over detail
-`28`. Hosts must serialize writes on each transport. GET never replays a save.
+After verified saving, reconnect HID without usable MSC and keep media USB-reserved until reset so neither the host nor
+the worker starts new card I/O. Publish Completed with the original transaction and verified settings. Reboot waits for
+that result GET, or a five-second fallback deadline, followed by the existing one-second USB result grace period. Boot
+then follows the [default-mounted storage lifecycle](architecture.md#storage-ownership-lifecycle). Additional USB
+Feature `20` SETs while the forced transaction is outstanding are ignored with a UART warning to preserve the USB result
+slot. Bluetooth behavior during a forced save is defined in its [validation order](bluetooth.md#validation-order). Hosts
+must serialize writes on each transport. GET never replays a save.
 
 Clients reconnect only to the same verified device UID and poll the original opcode/transaction result. Never replay
 SET or infer completion from reconnection. Timeout, mismatched identity, or invalid result leaves outcome uncertain
@@ -904,8 +873,8 @@ Conformance tests cover:
    - [ ] Report types and lengths, API report-ID framing, field validation, stale telemetry, configuration
      cross-field rules, storage-state validity and ownership transitions, profile validation, and build-selected
      transport behavior.
-   - [ ] Reserved Report `12` flag validation, benchmark result retention, Feature `12` stale-status behavior and
-     BLE long reads, CID decoding, and the PicoUART report prefix.
+   - [ ] Reserved Report `12` flag validation, benchmark result retention, Feature `12` stale-status behavior,
+     CID decoding, and the PicoUART report prefix.
 2. **Commands**
    - [ ] Command validation and results, global detail-value mapping and status applicability, and storage Busy
      details for opcodes `2`, `3`, and `5`.
@@ -920,17 +889,14 @@ Conformance tests cover:
    - [ ] Error-precedence pairs: envelope rejection preserves the result slot; Unsupported precedes malformed
      arguments; Busy precedes stateful preconditions; request-only validation is distinct from state-dependent
      validation.
-4. **BLE**
-   - [ ] Separate USB/BLE result slots and transaction-ID sequences; BLE request/result layouts and command
-     restrictions, including radio-switch rejection with detail zero.
-   - [ ] Invalid envelope returns `0x81` without slot or proof consumption; assigned and unassigned BLE Unsupported
-     results and proof consumption; proof expiry.
-5. **Concurrency**
-   - [ ] Cross-transport resource arbitration, BLE save/reboot blocking during unexpired USB staging, USB forced-save
-     SET suppression, and BLE Busy slot handling and LED availability.
+4. **Concurrency**
+   - [ ] Cross-transport resource arbitration and USB forced-save SET suppression.
+
+Bluetooth checks, including its cross-transport Busy results, are listed in the
+[Bluetooth LE conformance list](bluetooth.md#conformance).
 
 Host tests and firmware cross-builds do not verify physical USB behavior. Qualify CDC, 69-byte Feature `20` transfers,
-49-byte Report `12` BLE long reads, HID, MSC transitions, and re-enumeration on RP2040 and RP2350 hardware before
+49-byte Report `12` transfers, HID, MSC transitions, and re-enumeration on RP2040 and RP2350 hardware before
 product use.
 
 ## Implementation and Integration

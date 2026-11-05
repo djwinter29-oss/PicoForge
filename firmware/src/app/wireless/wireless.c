@@ -117,6 +117,7 @@ void pf_wireless_poll(void)
     expire_staged();
     if (!started) return;
     cyw43_arch_poll();
+    if (ble_enabled) pf_bluetooth_poll();
     const uint64_t now = time_us_64();
     pf_wifi_poll(now);
     if (staged.mask != 0u && !staged.tested && pf_wifi_test_succeeded()) {

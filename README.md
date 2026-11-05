@@ -121,7 +121,8 @@ See the [documentation index](docs/README.md) for reading order and authoritativ
   [console](docs/guides/console.md) · [wireless](docs/guides/wireless.md)
 - **Build and develop:** [architecture](docs/reference/architecture.md) ·
   [settings](docs/reference/settings.md) · [SD-card driver](docs/reference/sdcard/driver.md) ·
-  [USB HID reference](docs/reference/usb-hid.md) · [host tools](docs/development/host-tools.md) ·
+  [USB HID reference](docs/reference/usb-hid.md) · [Bluetooth LE protocol](docs/reference/bluetooth.md) ·
+  [host tools](docs/development/host-tools.md) ·
   [firmware testing](docs/development/firmware-testing.md)
 - **Maintain and release:** [contributing](CONTRIBUTING.md) ·
   [release guide](docs/deployment/release.md) · [security reporting](SECURITY.md)

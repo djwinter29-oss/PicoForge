@@ -23,4 +23,7 @@ bool pf_bluetooth_start(void);
  */
 uint8_t pf_bluetooth_state(void);
 
+/** @brief Apply owner-task BLE timers, including the fast-to-slow advertising transition. */
+void pf_bluetooth_poll(void);
+
 #endif

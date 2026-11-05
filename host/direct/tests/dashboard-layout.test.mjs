@@ -7,7 +7,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/direct\.css\?v=19"/);
-  assert.match(html, /src="js\/app\.mjs\?v=43"/);
+  assert.match(html, /src="js\/app\.mjs\?v=45"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=12"/);
   assert.match(app, /from "\.\/view\.mjs\?v=20"/);

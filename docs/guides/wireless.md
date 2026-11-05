@@ -132,8 +132,8 @@ Only one BLE connection is supported; disconnects never replay a command or reco
 
 ## Implementation Reference
 
-Radio task ownership, persistence, USB report layouts, native-host APIs, and BLE proof formats live in the
-[wireless reference](../reference/wireless.md).
+Radio task ownership, persistence and native-host APIs live in the [wireless reference](../reference/wireless.md);
+BLE advertising, GATT and proof formats live in the [Bluetooth LE protocol](../reference/bluetooth.md).
 
 ## Qualification
 

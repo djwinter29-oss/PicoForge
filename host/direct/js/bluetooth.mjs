@@ -1,7 +1,8 @@
 import { PicoForgeWebHid } from "./device.mjs?v=12";
 
-export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f501";
-const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f501`;
+export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f502";
+const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f502`;
+const GATT_SERVICE = "generic_attribute";
 
 /** Web Bluetooth uses the existing report decoder/transaction engine, but never reconnects or replays writes. */
 export class PicoForgeBluetooth extends PicoForgeWebHid {
@@ -29,12 +30,15 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
 
   /** Sign request with the control key over a fresh nonce and write the 16-byte proof; uid is the raw board ID. */
   async prove(uid, request) {
-    const value = await this.characteristics.get(32).readValue();
+    const value = await this.characteristics.get(256).readValue();
     const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    if (nonce.length !== 16) throw new Error("Invalid BLE authorization challenge");
+    if (nonce.length !== 16) {
+      throw Object.assign(new Error("The board did not provide a fresh BLE challenge; reconnect and retry."),
+        { final: true });
+    }
     const message = new Uint8Array([...nonce, ...uid, ...new TextEncoder().encode("PFBLECTL1"), ...request]);
     const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
-    await this.characteristics.get(33).writeValueWithResponse(mac.slice(0, 16));
+    await this.characteristics.get(257).writeValueWithResponse(mac.slice(0, 16));
   }
 
   /** The board refuses every read but identity until the connection proves the key once. */
@@ -43,8 +47,9 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     const uid = new Uint8Array(value.buffer.slice(value.byteOffset + 3, value.byteOffset + 11));
     try { await this.prove(uid, new TextEncoder().encode("SESSION01")); }
     catch (error) {
+      if (error.final) throw error;
       if (!this.bleDevice.gatt.connected) throw error;
-      throw Object.assign(new Error("The board rejected the control key. Check the key, wait 2 s, and retry."),
+      throw Object.assign(new Error("The board rejected the unlock proof. Check the Control key or wait 2 s."),
         { final: true });
     }
   }
@@ -76,7 +81,10 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     this.connecting = true;
     try {
       await this.setControlKey(hex);
-      this.bleDevice = await this.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }], optionalServices: [BLE_SERVICE] });
+      this.bleDevice = await this.bluetooth.requestDevice({
+        filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }],
+        optionalServices: [BLE_SERVICE, GATT_SERVICE],
+      });
       this.bleDevice.addEventListener("gattserverdisconnected", this.onBleDisconnected);
       const adapter = new EventTarget();
       Object.assign(adapter, { opened: true, open: async () => {},
@@ -103,8 +111,9 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
             await this.characteristics.get(20).writeValueWithResponse(request);
           } catch (error) {
             // Firmware answers a bad, missing or rate-limited proof with an ATT application error.
+            if (error.final) throw error;
             if (!this.bleDevice.gatt.connected) throw error;
-            throw new Error("The board rejected the control key. Check the key, wait 2 s, and retry.");
+            throw new Error("The board rejected or rate-limited the proof. Check the Control key or wait 2 s.");
           }
         } });
       if (this.outstanding && this.bleUid) this.reconnectUid = this.bleUid;
@@ -113,8 +122,17 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
       for (let attempt = 1; ; attempt++) {
         try {
           const server = await this.bleDevice.gatt.connect();
+          try {
+            const gatt = await server.getPrimaryService(GATT_SERVICE);
+            await (await gatt.getCharacteristic("service_changed")).startNotifications();
+          } catch (error) {
+            if (!["NotAllowedError", "NotFoundError", "NotSupportedError", "SecurityError"].includes(error?.name)) {
+              throw error;
+            }
+            console.warn("Service Changed is unavailable; continuing with platform GATT cache behavior.", error);
+          }
           const service = await server.getPrimaryService(BLE_SERVICE);
-          for (const id of [1, 2, 3, 10, 11, 12, 20, 32, 33]) {
+          for (const id of [1, 2, 3, 10, 11, 12, 20, 256, 257]) {
             this.characteristics.set(id, await service.getCharacteristic(characteristic(id)));
           }
           await this.unlock();
