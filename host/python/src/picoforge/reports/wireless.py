@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .common import REPORT_VERSION, WIRELESS_REPORT_ID, _feature_payload, _validate_settings
+from .common import REPORT_VERSION, WIRELESS_REPORT_ID, InvalidRequest, _feature_payload, _validate_settings
 from .control import build_control_command_report, parse_control_result_report
 
 WIRELESS_STATUS_SIZE = 48
@@ -22,11 +22,11 @@ def ssid_bytes(ssid: object) -> bytes:
         elif isinstance(ssid, list) and all(type(value) is int and 0 <= value <= 255 for value in ssid):
             raw = bytes(ssid)
         else:
-            raise ValueError("SSID must be text or raw bytes")
+            raise InvalidRequest("SSID must be text or raw bytes")
     except UnicodeError:
-        raise ValueError("SSID must be valid UTF-8 text or raw bytes") from None
+        raise InvalidRequest("SSID must be valid UTF-8 text or raw bytes") from None
     if len(raw) > 32:
-        raise ValueError("SSID must contain at most 32 bytes")
+        raise InvalidRequest("SSID must contain at most 32 bytes")
     return raw
 
 
@@ -50,7 +50,7 @@ def request_ssid(settings: dict[str, object]) -> bytes:
     encoded = settings["ssid_hex"]
     if (not isinstance(encoded, str) or len(encoded) > 64 or len(encoded) % 2
             or any(char not in "0123456789abcdefABCDEF" for char in encoded)):
-        raise ValueError("ssid_hex must contain at most 32 bytes encoded as hexadecimal")
+        raise InvalidRequest("ssid_hex must contain at most 32 bytes encoded as hexadecimal")
     return bytes.fromhex(encoded)
 
 
@@ -63,7 +63,7 @@ def build_wireless_command_report(transaction_id: int, operation: int, *, value:
         elif operation == 7:
             if not isinstance(value, str) or (value and not 8 <= len(value) <= 63) or any(
                     not 32 <= ord(char) <= 126 for char in value):
-                raise ValueError("Password must be empty or contain 8..63 printable ASCII characters")
+                raise InvalidRequest("Password must be empty or contain 8..63 printable ASCII characters")
             raw = value.encode("ascii")
         else:
             if value == "":
@@ -74,7 +74,7 @@ def build_wireless_command_report(transaction_id: int, operation: int, *, value:
             elif isinstance(value, bytes) and len(value) == 32:
                 raw = value
             else:
-                raise ValueError("Control key must contain 64 hexadecimal characters or be empty")
+                raise InvalidRequest("Control key must contain 64 hexadecimal characters or be empty")
         args = bytes((len(raw),)) + raw
     elif operation == 12:
         if type(index) is not int or not 0 <= index < 18 or type(generation) is not int or not 1 <= generation <= 65535:
@@ -107,32 +107,32 @@ def parse_tcp_cli_auth_result(report: bytes | bytearray | list[int], transaction
 def validate_wireless_configuration(settings: object) -> None:
     """Validate all user input before the first staging write; omitted fields stay untouched."""
     if not isinstance(settings, dict):
-        raise ValueError("Expected wireless configuration JSON")
+        raise InvalidRequest("Expected wireless configuration JSON")
     if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "ssid_hex", "password", "ble_key", "confirm_reboot",
                         "board", "use_tested_wifi", "tcp_cli_enabled"}:
-        raise ValueError("Unknown wireless configuration field")
+        raise InvalidRequest("Unknown wireless configuration field")
     if settings.get("confirm_reboot") is not True:
-        raise ValueError("Explicit confirm_reboot: true is required")
+        raise InvalidRequest("Explicit confirm_reboot: true is required")
     if type(settings.get("wifi_enabled")) is not bool or type(settings.get("ble_enabled")) is not bool:
-        raise ValueError("wifi_enabled and ble_enabled must be boolean")
+        raise InvalidRequest("wifi_enabled and ble_enabled must be boolean")
     if "use_tested_wifi" in settings and type(settings["use_tested_wifi"]) is not bool:
-        raise ValueError("use_tested_wifi must be boolean")
+        raise InvalidRequest("use_tested_wifi must be boolean")
     if "tcp_cli_enabled" in settings and type(settings["tcp_cli_enabled"]) is not bool:
-        raise ValueError("tcp_cli_enabled must be boolean")
+        raise InvalidRequest("tcp_cli_enabled must be boolean")
     if "ble_key" in settings and not isinstance(settings["ble_key"], str):
-        raise ValueError("Control key must be hexadecimal text or empty")
+        raise InvalidRequest("Control key must be hexadecimal text or empty")
     _, _, radios = _validate_settings(settings.get("board"))
     if settings["wifi_enabled"] != bool(radios & 1) or settings["ble_enabled"] != bool(radios & 2):
-        raise ValueError("Wireless enable flags must match the board radio switches")
+        raise InvalidRequest("Wireless enable flags must match the board radio switches")
     if ("tcp_cli_enabled" in settings and "tcp_cli_enabled" in settings["board"]
             and settings["tcp_cli_enabled"] != settings["board"]["tcp_cli_enabled"]):
-        raise ValueError("TCP CLI switch must match the board settings")
+        raise InvalidRequest("TCP CLI switch must match the board settings")
     for field, opcode in (("ssid", 6), ("password", 7), ("ble_key", 8)):
         if field in settings or (field == "ssid" and "ssid_hex" in settings):
             build_wireless_command_report(
                 1, opcode, value=request_ssid(settings) if field == "ssid" else settings[field])
     if settings.get("use_tested_wifi") and "password" in settings:
-        raise ValueError("A tested pair cannot be replaced while saving")
+        raise InvalidRequest("A tested pair cannot be replaced while saving")
 
 
 def parse_scan_entry(data: bytes) -> dict:

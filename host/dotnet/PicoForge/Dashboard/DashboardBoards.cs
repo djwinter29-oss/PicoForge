@@ -6,22 +6,14 @@ namespace PicoForge;
 public sealed record DashboardBoard(string Id, string ProductName, string? SerialNumber, string DevicePath);
 public sealed record DashboardBoardList(DashboardBoard[] Boards, string? DefaultBoardId);
 
+/// <summary>Board discovery plus one lazily started monitor per listed board.</summary>
 internal interface IDashboardBoards
 {
     DashboardBoardList Boards();
+    /// <summary>The board's snapshot, or an empty disconnected one when no board is selected.</summary>
     StatusResponse Snapshot(string? boardId);
-    bool SetLed(string? boardId, bool on);
-    MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false);
-    BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false);
-    bool Reboot(string? boardId);
-    bool SetSelfTest(string? boardId, string action, uint sizeMib);
-    WirelessResponse ReadWireless(string? boardId);
-    byte[] TcpCliAuthProof(string? boardId, byte[] nonce, byte[] uid) =>
-        throw new NotSupportedException("USB TCP CLI authentication is unavailable");
-    WirelessResponse SetWireless(string? boardId, WirelessRequest settings);
-    IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId);
-    WirelessOperationResponse TestWireless(string? boardId, string ssid, string password, string? ssidHex = null);
-    bool CancelWirelessTest(string? boardId);
+    /// <summary>The listed board's started monitor; throws <see cref="KeyNotFoundException"/> otherwise.</summary>
+    IDeviceMonitor Monitor(string? boardId);
 }
 
 internal sealed class DashboardBoards : IDisposable, IDashboardBoards
@@ -114,37 +106,16 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
 
     public StatusResponse Snapshot(string? boardId) => boardId is null
         ? new(false, null, null, null, null, null, null, null)
-        : Reader(boardId).Snapshot;
+        : Monitor(boardId).Snapshot;
 
-    public bool SetLed(string? boardId, bool on) => Reader(boardId).SetLed(on);
-    public WirelessResponse ReadWireless(string? boardId) => Reader(boardId).ReadWireless();
-    public byte[] TcpCliAuthProof(string? boardId, byte[] nonce, byte[] uid) =>
-        Reader(boardId).TcpCliAuthProof(nonce, uid);
-    public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) =>
-        Reader(boardId).SetWireless(settings);
-    public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
-        Reader(boardId).ScanWireless();
-    public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password,
-        string? ssidHex = null) =>
-        Reader(boardId).TestWireless(ssid, password, ssidHex);
-    public bool CancelWirelessTest(string? boardId) => Reader(boardId).CancelWirelessTest();
-
-    public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
-        Reader(boardId).SetMsc(enabled, force);
-    public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false) =>
-        Reader(boardId).SetSettings(settings, force);
-    public bool Reboot(string? boardId) => Reader(boardId).Reboot();
-    public bool SetSelfTest(string? boardId, string action, uint sizeMib) =>
-        Reader(boardId).SetSelfTest(action, sizeMib);
-
-    private IDeviceMonitor Reader(string? boardId)
+    public IDeviceMonitor Monitor(string? boardId)
     {
         MonitorEntry entry;
         lock (gate)
         {
             ObjectDisposedException.ThrowIf(closed, this);
             if (boardId is null || !known.TryGetValue(boardId, out var board))
-                throw new InvalidOperationException("unknown board; rescan and select a listed board");
+                throw new KeyNotFoundException("unknown board; rescan and select a listed board");
             if (!monitors.TryGetValue(boardId, out var current))
             {
                 entry = new MonitorEntry(createMonitor(

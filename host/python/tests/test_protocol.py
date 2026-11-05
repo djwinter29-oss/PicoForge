@@ -1,5 +1,7 @@
+import json
 import struct
 import unittest
+from pathlib import Path
 
 from picoforge.reports import (
     build_control_command_report,
@@ -15,6 +17,10 @@ from picoforge.reports import (
     parse_self_test_report,
     parse_status_report,
 )
+
+
+def status_contract():
+    return json.loads((Path(__file__).parents[2] / "web/tests/status-contract.json").read_text())
 
 
 def identity_report(capabilities=0x35, mcu=2, board=2):
@@ -77,6 +83,7 @@ class ProtocolTests(unittest.TestCase):
         config = parse_configuration_report(configuration_report(), self.identity)
         self.assertEqual(config["system_clock_mhz"], 200)
         self.assertEqual(config["sdcard_profile"], 1)
+        self.assertLessEqual(set(status_contract()["nested"]["board_configuration"]), set(config))
         raw = identity_report()
         for framed in (bytes([0]) + raw + bytes(4), raw + bytes(4)):
             with self.assertRaises(ValueError):
@@ -150,6 +157,7 @@ class ProtocolTests(unittest.TestCase):
     def test_storage_snapshot_decodes_independent_sd_and_msc_fields(self):
         data = parse_memory_report(storage_report(), self.identity)
         self.assertTrue(data["sample_valid"])
+        self.assertLessEqual(set(status_contract()["nested"]["memory"]), set(data))
         self.assertTrue(data["initialized"])
         self.assertEqual(data["mode"], "sdio")
         self.assertEqual(data["capacity_bytes"], 4096 * 512)

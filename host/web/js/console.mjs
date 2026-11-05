@@ -64,7 +64,6 @@ async function poll(token, signal) {
         await close("Connection closed by board; check terminal output before retrying commands");
         return;
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
     } catch (error) {
       if (session === token) await close(error.message);
       return;

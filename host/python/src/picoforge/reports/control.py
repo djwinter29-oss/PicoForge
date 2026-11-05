@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 from .common import (
     CAP_LED, CAP_REBOOT, CAP_SAVE_SETTINGS, CAP_SELF_TEST, CAP_WIRELESS,
     CONTROL_ERROR_NAMES, CONTROL_PAYLOAD_SIZE, CONTROL_REPORT_ID, CONTROL_STATUS_NAMES, REPORT_VERSION,
-    _ALLOWED_STATUS_ERRORS, _OPCODE_STATUSES, _bytes, _feature_payload, _validate_settings,
+    _ALLOWED_STATUS_ERRORS, _OPCODE_STATUSES, InvalidRequest, _bytes, _feature_payload, _validate_settings,
 )
 
 
@@ -155,7 +155,10 @@ def parse_control_result_report(
         clock, profile, switches, commit_mask = struct.unpack_from("<HBBB", data)
         saved = {"system_clock_mhz": clock, "sdcard_profile": profile, "radios": switches & 3,
                  "tcp_cli_enabled": bool(switches & 4)}
-        _validate_settings(saved)
+        try:
+            _validate_settings(saved)
+        except InvalidRequest as error:
+            raise ValueError(f"invalid HID settings result: {error}") from None
         if switches & ~7 or commit_mask & ~7 or any(data[5:]):
             raise ValueError("invalid HID settings result data")
     elif status == 2 and opcode == 12:

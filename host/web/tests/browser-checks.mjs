@@ -38,14 +38,16 @@ const mock = `<script>
   let cancelAttempts = 0;
   const connected = {
     connected: true,
-    board_status: { led_available: true, led_on: false },
+    runtime: { led_available: true, led_on: false },
     hardware: { product_name: "PicoForge", board_model: "Pico 2 W", mcu: "RP2350",
       capabilities: 128 | 16 | 2, ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
     settings_supported: true,
     settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
     memory: { mode: "spi" },
     msc: { enabled: false, transition_pending: false },
-    self_test: null
+    self_test: null,
+    wireless: { ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
+      ble_key_configured: false, tcp_cli_enabled: true }
   };
   window.fetch = async (input, options = {}) => {
     const url = new URL(input, location.href);
@@ -57,10 +59,6 @@ const mock = `<script>
     if (url.pathname === "/api/wireless" && options.method === "POST") return response({
       wireless: { ...JSON.parse(options.body), password_configured: true }
     });
-    if (url.pathname === "/api/wireless") return response({ wireless: {
-      ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
-      ble_key_configured: false, tcp_cli_enabled: true
-    } });
     if (url.pathname === "/api/wireless/test") return response({
       test: { remaining_seconds: 600, ipv4: "192.0.2.2" }
     });

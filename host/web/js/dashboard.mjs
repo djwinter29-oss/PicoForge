@@ -16,6 +16,23 @@ let boardConfigurationSignature = null;
 let boardConfigurationElements = null;
 let boardConfigurationDocument = null;
 
+/**
+ * Lift the view's shortcuts out of the shared status shape (tests/status-contract.json): both servers nest USB-drive
+ * ownership and filesystem format in `memory` and next-boot settings in `board_configuration`.
+ */
+export function normalizeStatus(snapshot) {
+  const configuration = snapshot.settings_supported ? snapshot.board_configuration : null;
+  return {
+    ...snapshot,
+    msc: snapshot.memory?.msc ?? null,
+    filesystem_format: snapshot.memory?.filesystem_format ?? null,
+    settings: (configuration ? {
+      system_clock_mhz: configuration.system_clock_mhz, sdcard_profile: configuration.sdcard_profile,
+      radios: configuration.radios, tcp_cli_enabled: configuration.tcp_cli_enabled,
+    } : null),
+  };
+}
+
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
   if (!connected) {
@@ -62,11 +79,10 @@ export function renderStatus(snapshot) {
   const storageShared = snapshot.msc_command_pending || snapshot.msc?.enabled || snapshot.msc?.transition_pending;
   document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
   document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared;
-  const board = snapshot.board_status;
-  document.querySelector("#temperature").textContent = board?.temperature_valid
-    ? `${(board.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
+  document.querySelector("#temperature").textContent = runtime?.temperature_valid
+    ? `${(runtime.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
   const ledControl = document.querySelector("#led-control");
-  const ledOn = board?.led_available ? Boolean(board.led_on) : null;
+  const ledOn = runtime?.led_available ? Boolean(runtime.led_on) : null;
   ledControl.textContent = ledOn === null ? "Board LED: --" : `Board LED: ${ledOn ? "On" : "Off"}`;
   ledControl.dataset.state = ledOn === null ? "unknown" : ledOn ? "on" : "off";
   ledControl.setAttribute("aria-pressed", String(ledOn === true));

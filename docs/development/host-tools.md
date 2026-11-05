@@ -138,6 +138,41 @@ python3 -m pytest tests -m contracts
 
 See the [test ownership index](../../tests/README.md) for cross-project checks and their prerequisites.
 
+### Python dashboard performance baseline
+
+Measure the dashboard hot paths before changing polling or snapshot copying. `--board` opens an attached board
+read-only; stop any running dashboard first because it holds the HID interface:
+
+```sh
+host/python/.venv/bin/python tools/validation/bench-python-dashboard.py [--board [--serial SERIAL]]
+```
+
+| Path | Rate | Baseline (2026-11-05, x86-64 Linux) | Revisit when |
+|---|---|---|---|
+| `snapshot()` deep copy | Each `GET /api/status` | 50-95 us | One status request exceeds 1 ms |
+| `GET /api/status` through Flask | 1/s per visible tab | ~0.6 ms | Many tabs or noticeable status latency |
+| 50 ms input poll loop | 20 wakes/s per board | 2.4-5.5 ms CPU/s with mocked HID; ~1 ms CPU/s for a running dashboard with a real board | Idle CPU exceeds ~1% per board |
+
+Save, scan and connection-test commands hold the device lock across several USB round trips; time them by hand on
+hardware before splitting that lock, and split it only where the write-safety rules still hold.
+
+### .NET dashboard performance baseline
+
+`PerformanceTests` times the status hot paths with a mocked board and fails only past ceilings 10-50x the baseline:
+
+```sh
+dotnet test host/dotnet/PicoForge.sln -c Release --filter PerformanceTests --logger "console;verbosity=detailed"
+```
+
+| Path | Rate | Baseline (2026-11-05, x86-64 Linux, Release) | Revisit when |
+|---|---|---|---|
+| `DeviceMonitor.Snapshot` (freshness applied on read) | Each `GET /api/status` | 0.5-0.9 us | One read exceeds 50 us |
+| Status JSON serialization | Each `GET /api/status` | 17-33 us | One status exceeds 0.5 ms |
+| `GET /api/status` through Kestrel | 1/s per visible tab | 0.25-0.32 ms | Many tabs or noticeable status latency |
+
+HID commands block one thread-pool thread under the device lock, up to 5 s for a forced save. That is acceptable for
+a localhost dashboard; move HID I/O to a dedicated thread only if concurrent requests start queueing.
+
 ## Shared Frontend and Protocol Boundaries
 
 Python and .NET serve the same assets from `host/web`; keep shared UI behavior backend-neutral and preserve the common
@@ -146,6 +181,43 @@ USB handling there rather than creating a second Python/.NET frontend.
 The dashboards do not import or package each other's assets. Each owns its wireless form module and its Node tests;
 matching firmware protocol behavior does not imply shared frontend code. Python/.NET build and run without `host/direct`,
 and Direct can be served and tested without `host/web`, `host/python`, or `host/dotnet`.
+
+### Shared API contract
+
+[status-contract.json](../../host/web/tests/status-contract.json) lists the `GET /api/status` fields both native servers
+must emit, the `nested` fields inside `memory` and `board_configuration`, the removed fields neither may emit, and
+removed routes that must return 405 (such as `GET /api/wireless`); Python and .NET tests each check it. Staleness is
+reported only through `telemetry_stale`, `storage_stale` and `self_test_stale`: a report is stale until first received
+and after the [freshness limit](../reference/usb-hid.md#input-freshness), and the server nulls the stale section when
+the snapshot is read, so a silent board ages out without a new report. Both servers nest USB-drive ownership (`msc`) and
+`filesystem_format` in `memory`, and next-boot settings (`system_clock_mhz`, `sdcard_profile`, `radios`,
+`tcp_cli_enabled`) in `board_configuration` beside the boot-time `stored_*` values; `normalizeStatus()` in
+`host/web/js/dashboard.mjs` lifts them out for the view. Feature `12` wireless status arrives in the same snapshot as
+`wireless` and `wireless_error`; the server polls it every 0.5 s during a scan or connection test and every 2 s
+otherwise.
+
+Every `/api` error body is `{"error": "<message>"}`, and both servers map failures the same way:
+
+| Status | Meaning | Python | .NET |
+|---|---|---|---|
+| 400 | Rejected input, before any HID write | `InvalidRequest` | `ArgumentException`, `JsonException`, bad binding |
+| 404 | Unknown `board` ID | `LookupError` | `KeyNotFoundException` |
+| 409 | Board state conflict or firmware refusal; retry after the state changes | `RuntimeError` | `InvalidOperationException`, `NotSupportedException` |
+| 503 | HID I/O, timeout, disconnect or malformed board data | `OSError`, other `ValueError` | `IOException`, `TimeoutException`, `InvalidDataException` |
+| 500 | Server fault; logged, and the message is not exposed | anything else | anything else |
+
+Wi-Fi endpoints replace 503 transport detail with a fixed per-endpoint message, for example "Wireless provisioning
+outcome is uncertain; command was not resent". The board monitor never stops on a fault: it reports the error in the
+snapshot, prefixed "Internal monitor error" for a server fault, and reconnects after 1 s. A stored `busy` control result
+is history and does not block later commands; the per-device lock serializes them.
+
+Command replies share a top-level key: `msc` for `POST /api/msc` and `/api/msc/force-return`, `settings` for
+`POST /api/settings`, `networks`, `test` and `cancelled` for the Wi-Fi scan, test and cancel routes. Python also returns
+the firmware `control_result`, which .NET omits. LED, reboot and self-test (202) replies are acknowledgements; the
+browser applies the requested state on success and reads the outcome from the next status snapshot.
+
+Non-GET `/api` requests with a foreign `Origin` return 403. The web console long-polls
+`GET /api/console`; each request waits up to 2 s for board output without blocking input.
 
 ### Dashboard component isolation
 

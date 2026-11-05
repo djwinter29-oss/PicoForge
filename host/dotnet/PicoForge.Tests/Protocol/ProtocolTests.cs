@@ -37,22 +37,22 @@ public sealed class ProtocolTests
         Assert.Equal((ushort)2, HidProtocol.ParseIdentityReport(identity).ProductId);
         identity = IdentityReport();
         identity[18] = 1;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(identity));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseIdentityReport(identity));
 
         var hardware = HidProtocol.ParseIdentityReport(IdentityReport());
         var config = ConfigurationReport();
         config[14] = 4;
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             HidProtocol.ParseConfigurationReport(config, hardware));
         config = ConfigurationReport();
         config[14] |= 0x10;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
         var wireless = IdentityReport();
         wireless[18] |= HidProtocol.CapabilityWireless;
         Assert.Equal(new BootSettingsResponse(200, 1, 2), HidProtocol.ToBootSettings(
             HidProtocol.ParseConfigurationReport(config, HidProtocol.ParseIdentityReport(wireless))));
         config[14] = (byte)((ConfigurationReport()[14] & 7) | 0x20);
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
         Assert.Equal(0x20, HidProtocol.ParseConfigurationReport(config,
             HidProtocol.ParseIdentityReport(wireless)).BoardFlags & 0x20);
     }
@@ -66,7 +66,7 @@ public sealed class ProtocolTests
         report[18] |= 0x80;
         Assert.True(HidProtocol.ParseIdentityReport(report).WirelessSupported);
         report[18] |= HidProtocol.CapabilitySpi | HidProtocol.CapabilitySdio;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseIdentityReport(report));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseIdentityReport(report));
     }
 
     [Theory]
@@ -86,7 +86,7 @@ public sealed class ProtocolTests
         report[18] &= unchecked((byte)~HidProtocol.CapabilityLed);
         var noLed = HidProtocol.ParseIdentityReport(report);
         Assert.Equal(byte.MaxValue, HidProtocol.ParseConfigurationReport(config, noLed).LedGpio);
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             HidProtocol.ParseConfigurationReport(ConfigurationReport(), noLed));
     }
 
@@ -112,7 +112,7 @@ public sealed class ProtocolTests
         Assert.Equal((short)2534, telemetry.TemperatureCentidegrees);
 
         report[15] = 0xfe;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseTelemetryReport(report));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseTelemetryReport(report));
     }
 
     [Fact]
@@ -142,7 +142,7 @@ public sealed class ProtocolTests
         Assert.True(unavailable.Msc!.Enabled);
 
         report[4] = 1;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseStorageReport(report,
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseStorageReport(report,
             HidProtocol.ParseIdentityReport(IdentityReport())));
     }
 
@@ -170,7 +170,7 @@ public sealed class ProtocolTests
         Assert.False(HidProtocol.ParseSelfTestReport(report).Active);
 
         report[3] = 6;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseSelfTestReport(report));
     }
 
     [Theory]
@@ -182,7 +182,7 @@ public sealed class ProtocolTests
         report[0] = 11;
         report[1] = 1;
         report[index] = 1;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseSelfTestReport(report));
     }
 
     [Fact]
@@ -212,11 +212,11 @@ public sealed class ProtocolTests
         result[9] = 7;
         Assert.Equal((byte)7, HidProtocol.ParseControlResult(result).ResultData[3]);
         result[9] = 8;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(result));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseControlResult(result));
         result[9] = 0;
 
         result[4] = 4;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(result));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseControlResult(result));
     }
 
     [Fact]
@@ -228,8 +228,9 @@ public sealed class ProtocolTests
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
         builder.Services.AddOpenApi();
-        builder.Services.AddSingleton<IDashboardBoards>(monitor);
+        builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(monitor));
         await using var app = builder.Build();
+        app.UseApiErrors();
         app.MapDeviceStatus();
         app.MapOpenApi();
         await app.StartAsync();
@@ -241,24 +242,68 @@ public sealed class ProtocolTests
         Assert.Equal(new BootSettingsResponse(200, 1, 0), monitor.LastSettings);
         Assert.False(monitor.RebootRequested);
 
-        var invalid = await client.PostAsJsonAsync("/api/settings?board=board-a",
-            new { system_clock_mhz = 100, sdcard_profile = 1, radios = 0 });
-        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         var unconfirmed = await client.PostAsJsonAsync("/api/reboot?board=board-a", new { confirm = false });
         Assert.Equal(HttpStatusCode.BadRequest, unconfirmed.StatusCode);
         var reboot = await client.PostAsJsonAsync("/api/reboot?board=board-a", new { confirm = true });
-        Assert.Equal(HttpStatusCode.Accepted, reboot.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, reboot.StatusCode);
         Assert.True(monitor.RebootRequested);
 
         var unknownStatus = await client.GetAsync("/api/status?board=unknown");
-        Assert.Equal(HttpStatusCode.Conflict, unknownStatus.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownStatus.StatusCode);
+        Assert.Contains("unknown board", (await unknownStatus.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString());
         var unknownSettings = await client.PostAsJsonAsync("/api/settings?board=unknown",
             new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0 });
-        Assert.Equal(HttpStatusCode.Conflict, unknownSettings.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownSettings.StatusCode);
 
         using var openApi = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
         Assert.True(openApi.RootElement.GetProperty("paths").GetProperty("/api/status")
             .GetProperty("get").GetProperty("responses").TryGetProperty("409", out _));
+        await app.StopAsync();
+    }
+
+    [Fact]
+    public async Task ApiErrorsMapEveryExceptionToOneErrorBody()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        await using var app = builder.Build();
+        app.UseApiErrors();
+        Exception[] errors =
+        [
+            new ArgumentException("bad input"), new JsonException("bad json"), new KeyNotFoundException("no board"),
+            new InvalidOperationException("busy"), new NotSupportedException("no capability"),
+            new IOException("unplugged"), new InvalidDataException("garbled"), new TimeoutException("slow"),
+            new UnauthorizedAccessException("denied"), new NullReferenceException("bug")
+        ];
+        for (var index = 0; index < errors.Length; index++)
+        {
+            var error = errors[index];
+            app.MapGet($"/api/fail/{index}", () => { throw error; });
+        }
+        app.MapGet("/api/masked", () => { throw new IOException("raw"); })
+            .WithMetadata(new StatusEndpoints.UnavailableMessage("friendly", "too slow"));
+        app.MapGet("/api/masked-timeout", () => { throw new TimeoutException("raw"); })
+            .WithMetadata(new StatusEndpoints.UnavailableMessage("friendly", "too slow"));
+        await app.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+
+        int[] expected = [400, 400, 404, 409, 409, 503, 503, 503, 503, 500];
+        for (var index = 0; index < errors.Length; index++)
+        {
+            var response = await client.GetAsync($"/api/fail/{index}");
+            Assert.Equal(expected[index], (int)response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(expected[index] == 500 ? "Internal server error" : errors[index].Message,
+                body.GetProperty("error").GetString());
+        }
+        foreach (var (path, message) in new[] { ("/api/masked", "friendly"), ("/api/masked-timeout", "too slow") })
+        {
+            var response = await client.GetAsync(path);
+            Assert.Equal(503, (int)response.StatusCode);
+            Assert.Equal(message, (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error")
+                .GetString());
+        }
         await app.StopAsync();
     }
 
@@ -325,39 +370,14 @@ public sealed class ProtocolTests
         return report;
     }
 
-    private sealed class EndpointMonitor : IDashboardBoards
+    private sealed class EndpointMonitor : TestMonitor
     {
         public BootSettingsResponse? LastSettings { get; private set; }
         public bool RebootRequested { get; private set; }
-        public DashboardBoardList Boards() => new([new("board-a", "PicoForge", "uid", "/hid/a")], "board-a");
-        public StatusResponse Snapshot(string? boardId)
-        {
-            if (boardId != "board-a")
-                throw new InvalidOperationException("unknown board; rescan and select a listed board");
-            return new(true, null, null, null, null, null, null, null,
-                Settings: new BootSettingsResponse(0, 0, 0));
-        }
-        public bool SetLed(string? boardId, bool on) => true;
-        public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
-            new(enabled, false, false);
-        public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false)
-        {
+        public override StatusResponse Snapshot { get; set; } = new(true, null, null, null, null, null, null, null,
+            Settings: new BootSettingsResponse(0, 0, 0));
+        public override BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false) =>
             LastSettings = settings;
-            return settings;
-        }
-        public bool Reboot(string? boardId)
-        {
-            RebootRequested = true;
-            return true;
-        }
-        public bool SetSelfTest(string? boardId, string action, uint sizeMib) => true;
-        public WirelessResponse ReadWireless(string? boardId) => throw new NotSupportedException();
-        public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => throw new NotSupportedException();
-        public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
-            throw new NotSupportedException();
-        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password,
-            string? ssidHex = null) =>
-            throw new NotSupportedException();
-        public bool CancelWirelessTest(string? boardId) => throw new NotSupportedException();
+        public override void Reboot() => RebootRequested = true;
     }
 }

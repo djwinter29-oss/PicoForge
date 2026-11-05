@@ -68,7 +68,7 @@ public sealed class DashboardBoardsTests
         clock.Advance(TimeSpan.FromSeconds(1));
         boards.Boards();
         Assert.True(created[0].Disposed);
-        Assert.Throws<InvalidOperationException>(() => boards.Snapshot(id));
+        Assert.Throws<KeyNotFoundException>(() => boards.Snapshot(id));
 
         attached = [new("/hid/new-a", "board-A", "PicoForge")];
         Assert.Equal(id, boards.Boards().Boards[0].Id);
@@ -94,7 +94,7 @@ public sealed class DashboardBoardsTests
         boards.Boards();
 
         Assert.True(created[0].Disposed);
-        Assert.Throws<InvalidOperationException>(() => boards.Snapshot(id));
+        Assert.Throws<KeyNotFoundException>(() => boards.Snapshot(id));
         attached = [new("/hid/a", "different-board", "PicoForge")];
         Assert.NotEqual(id, boards.Boards().Boards[0].Id);
     }
@@ -250,30 +250,14 @@ public sealed class DashboardBoardsTests
         public void Advance(TimeSpan amount) => now += amount;
     }
 
-    private sealed class FakeDeviceMonitor : IDeviceMonitor
+    private sealed class FakeDeviceMonitor : TestMonitor
     {
-        public bool Disposed { get; private set; }
         public Action? OnStart { get; init; }
-        public StatusResponse Snapshot { get; set; } = new(false, null, null, null, null, null, null, null);
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        public override Task StartAsync(CancellationToken cancellationToken)
         {
             OnStart?.Invoke();
             return Task.CompletedTask;
         }
-        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-        public void Dispose() => Disposed = true;
-        public bool SetLed(bool on) => throw new NotSupportedException();
-        public MscStatusResponse? SetMsc(bool enabled, bool force = false) => throw new NotSupportedException();
-        public BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false) =>
-            throw new NotSupportedException();
-        public bool Reboot() => throw new NotSupportedException();
-        public bool SetSelfTest(string action, uint sizeMib) => throw new NotSupportedException();
-        public WirelessResponse ReadWireless() => throw new NotSupportedException();
-        public WirelessResponse SetWireless(WirelessRequest settings) => throw new NotSupportedException();
-        public IReadOnlyList<WirelessNetworkResponse> ScanWireless() => throw new NotSupportedException();
-        public WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null) =>
-            throw new NotSupportedException();
-        public bool CancelWirelessTest() => throw new NotSupportedException();
     }
 }

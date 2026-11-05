@@ -126,7 +126,7 @@ def _select_device(serial_number: str | None, device_path: str | None) -> dict[s
     if device_path is not None:
         matches = [info for info in matches if _path_string(info.get("path")) == device_path]
     if not matches:
-        raise RuntimeError("PicoForge HID interface not found; check the USB connection and HID permissions")
+        raise ConnectionError("PicoForge HID interface not found; check the USB connection and HID permissions")
     if len(matches) != 1:
         raise RuntimeError("multiple PicoForge HID interfaces matched; select one with --serial or --device-path")
     return matches[0]
@@ -136,8 +136,6 @@ def _serialized(method):
     """Keep the result slot and multi-command wireless lifecycles owned by one caller."""
     @wraps(method)
     def call(self, *args, **kwargs):
-        if not hasattr(self, "_control_lock"):
-            self._control_lock = RLock()
         with self._control_lock:
             return method(self, *args, **kwargs)
     return call
@@ -166,8 +164,17 @@ class PicoForgeHid:
         self._command_uncertain = False
         self._control_lock = RLock()
         self._wireless_snapshot: WirelessStatus | None = None
-        self._wireless_received = 0.0
         self._wireless_active = False
+
+    @property
+    def command_uncertain(self) -> bool:
+        """True after a write whose firmware outcome could not be confirmed; further writes are blocked."""
+        return self._command_uncertain
+
+    @property
+    def wireless_active(self) -> bool:
+        """True while the last Feature 12 read showed a scan or connection test in progress."""
+        return self._wireless_active
 
     def read_info(self) -> HardwareIdentity:
         self._require_open()
@@ -299,18 +306,8 @@ class PicoForgeHid:
         if status["pair_tested"] and status["test_generation"] == getattr(self, "_tested_generation", None):
             status["remaining_seconds"] = max(0, 600 - ceil(monotonic() - self._tested_at))
         self._wireless_snapshot = status
-        self._wireless_received = monotonic()
         self._wireless_active = status["wifi_state_id"] == 4 or status["scan_state"] == "scanning"
         return status
-
-    def wireless_freshness(self) -> dict[str, object]:
-        """Return independent monotonic Feature 12 freshness without executing a read."""
-        cached = getattr(self, "_wireless_snapshot", None)
-        age = max(0.0, monotonic() - self._wireless_received) if cached is not None else None
-        stale = cached is None or bool(cached.get("stale")) or age >= (1.5 if self._wireless_active else 6.0)
-        if cached is not None:
-            cached.update(stale=stale, age_ms=int(age * 1000))
-        return {"available": cached is not None, "stale": stale, "age_ms": None if age is None else int(age * 1000)}
 
     @_serialized
     def tcp_cli_auth_proof(self, nonce: bytes, uid: bytes) -> bytes:
@@ -486,8 +483,7 @@ class PicoForgeHid:
             self._device.close()
             self.closed = True
             self._wireless_snapshot = None
-            self._wireless_received = 0.0
-
+    
     @_serialized
     def set_self_test(self, action: str, size_mib: int | None = None) -> ControlResult:
         self._require_open()

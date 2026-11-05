@@ -181,7 +181,7 @@ reconnect. Closing the tab also releases the session; an abandoned tab expires a
 request.
 Browser requests have bounded deadlines; disconnect aborts pending requests, and input with an uncertain delivery
 result is never automatically resent.
-The local host relays bounded raw bytes over TCP, using same-origin HTTP polling between browser and host; browsers
+The local host relays bounded raw bytes over TCP, using same-origin HTTP long-polling between browser and host; browsers
 cannot open raw TCP sockets themselves. Python and .NET targets come only from the selected USB board's wireless
 status, not a user-supplied host or port. The Direct dashboard also provides this console when hosted locally with
 its included bridge; its hosted static site does not. Direct targets come from the connected board's live wireless

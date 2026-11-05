@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import socket
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -14,12 +15,14 @@ class Monitor:
     wireless = {"wifi_enabled": True, "wifi_state": "connected", "tcp_cli_started": True,
                 "ipv4": "192.168.66.87"}
 
-    def read_wireless(self, board):
+    def monitor(self, board):
         self.board = board
-        return {"wireless": self.wireless}
+        return self
 
-    def tcp_cli_auth_proof(self, board, nonce, uid):
-        self.board = board
+    def read_wireless(self):
+        return self.wireless
+
+    def tcp_cli_auth_proof(self, nonce, uid):
         key = bytes(range(1, 33))
         return hmac.new(key, nonce + uid + b"PFTCPCLI1TCPCLI001", hashlib.sha256).digest()[:16]
 
@@ -34,6 +37,7 @@ class ConsoleTests(unittest.TestCase):
             "picoforge.dashboard.console.socket.create_connection",
             return_value=self.client_socket,
         ).start()
+        patch("picoforge.dashboard.console._READ_WAIT_SECONDS", 0.2).start()
         self.addCleanup(patch.stopall)
         self.monitor = Monitor()
         self.app = create_app(self.monitor)
@@ -63,6 +67,23 @@ class ConsoleTests(unittest.TestCase):
         self.peer.close()
         self.assertTrue(self.client.get(endpoint).json["closed"])
         self.assertEqual(self.client.get(endpoint).status_code, 409)
+
+    def test_waiting_read_does_not_block_input_and_returns_board_output(self):
+        bridge = ConsoleBridge()
+        token = bridge.open(self.monitor.wireless)
+        result = []
+        with patch("picoforge.dashboard.console._READ_WAIT_SECONDS", 1):
+            reader = threading.Thread(target=lambda: result.append(bridge.read(token)))
+            reader.start()
+            time.sleep(0.05)
+            started = time.monotonic()
+            bridge.write(token, b"x")
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertEqual(self.peer.recv(1), b"x")
+            self.peer.sendall(b"ok")
+            reader.join(2)
+        self.assertEqual(result, [(b"ok", False)])
+        bridge.close(token)
 
     def test_input_limits_origins_and_explicit_disconnect(self):
         endpoint = self.open()
@@ -121,7 +142,7 @@ class ConsoleTests(unittest.TestCase):
     def test_invalid_board_addresses_are_not_used_as_proxy_targets(self):
         for ip in ("127.0.0.1", "224.0.0.1", "0.0.0.0", "255.255.255.255", "bad", "::1"):
             self.monitor.wireless = {**self.monitor.wireless, "ipv4": ip}
-            self.assertEqual(self.client.post("/api/console", json={}).status_code, 400)
+            self.assertEqual(self.client.post("/api/console", json={}).status_code, 503, "board reported bad IP")
         self.connect.assert_not_called()
 
     def test_tcp_authentication_uses_the_connected_boards_usb_proof(self):
@@ -137,6 +158,11 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(self.peer.recv(64), b"AUTH " + proof.hex().encode() + b"\r\n")
         endpoint = "/api/console?session=" + response.json["session"]
         self.assertEqual(self.client.delete(endpoint).status_code, 200)
+
+    def test_tcp_authentication_rejects_whitespace_padded_challenge_hex(self):
+        self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
+        self.peer.sendall(f"PicoForge AUTH {'00' * 15}\t\t {'00' * 8}\r\n".encode("ascii"))
+        self.assertEqual(self.client.post("/api/console", json={}).status_code, 503)
 
     def test_tcp_authentication_does_not_accept_control_keys_from_the_browser(self):
         self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}

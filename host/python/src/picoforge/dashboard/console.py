@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import ipaddress
 import secrets
+import select
 import socket
 import threading
 import time
 from collections.abc import Callable
+
+# ponytail: one long-poll GET per 2 s idle replaces 20 polls/s; a WebSocket would only cut the per-chunk request.
+_READ_WAIT_SECONDS = 2.0
 
 
 class ConsoleBridge:
@@ -31,16 +35,14 @@ class ConsoleBridge:
         if not challenge.endswith(b"\r\n"):
             raise ValueError("Invalid TCP CLI authentication challenge")
         try:
-            fields = challenge[:-2].decode("ascii").split(" ")
-        except UnicodeDecodeError as error:
+            tag, kind, nonce_hex, uid_hex = challenge[:-2].decode("ascii").split(" ")
+            nonce, uid = bytes.fromhex(nonce_hex), bytes.fromhex(uid_hex)
+        except ValueError as error:
             raise ValueError("Invalid TCP CLI authentication challenge") from error
-        if (len(fields) != 4 or fields[:2] != ["PicoForge", "AUTH"] or len(fields[2]) != 32
-                or any(character not in "0123456789abcdefABCDEF" for character in fields[2])
-                or len(fields[3]) != 16
-                or any(character not in "0123456789abcdefABCDEF" for character in fields[3])):
+        # Text and byte lengths together reject the whitespace bytes.fromhex() would otherwise skip.
+        if ((tag, kind) != ("PicoForge", "AUTH") or len(nonce_hex) != 32 or len(nonce) != 16
+                or len(uid_hex) != 16 or len(uid) != 8):
             raise ValueError("Invalid TCP CLI authentication challenge")
-        nonce = bytes.fromhex(fields[2])
-        uid = bytes.fromhex(fields[3])
         proof = sign_proof(nonce, uid)
         if not isinstance(proof, bytes) or len(proof) != 16:
             raise RuntimeError("The connected board returned an invalid TCP CLI proof")
@@ -91,16 +93,27 @@ class ConsoleBridge:
         if self._socket is None or not secrets.compare_digest(self._session, session or ""):
             raise RuntimeError("Console disconnected; connect again")
         self._last_request = time.monotonic()
+        return self._socket
 
     def _close(self):
         self._socket.close()
         self._socket = self._session = None
 
     def read(self, session):
+        """Wait up to 2 s for board output without holding the lock, so writes are never blocked."""
         with self._lock:
-            self._require_session(session)
+            connection = self._require_session(session)
+        try:
+            ready = select.select([connection], [], [], _READ_WAIT_SECONDS)[0]
+        except (OSError, ValueError):
+            ready = []
+        with self._lock:
+            if self._require_session(session) is not connection:
+                raise RuntimeError("Console disconnected; connect again")
+            if not ready:
+                return b"", False
             try:
-                data = self._socket.recv(4096)
+                data = connection.recv(4096)
             except socket.timeout:
                 return b"", False
             except OSError:

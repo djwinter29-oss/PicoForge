@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Http.HttpResults;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace PicoForge;
@@ -6,7 +6,6 @@ namespace PicoForge;
 internal static class StatusEndpoints
 {
     public sealed record SetLedRequest(bool? On);
-    public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
     /// <summary>Requested next-boot clock, SD-card profile and radio enables.</summary>
     public sealed record SetSettingsRequest(int? SystemClockMhz,
         [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile, bool ConfirmDataLoss = false,
@@ -20,10 +19,67 @@ internal static class StatusEndpoints
     public sealed record SetMscResponse(MscStatusResponse Msc);
     /// <summary>Start a 1..1024 MiB temporary-file test or request cancellation.</summary>
     public sealed record SetSelfTestRequest(string Action, uint SizeMib = 32);
-    /// <summary>Command delivery acknowledgement; completion comes from HID telemetry.</summary>
-    public sealed record SelfTestAcceptedResponse(bool Accepted);
     /// <summary>Explicit acknowledgement that the device will reboot and disconnect.</summary>
     public sealed record RebootRequest(bool Confirm);
+    /// <summary>Every <c>/api</c> error body, matching the Python server.</summary>
+    public sealed record ApiError(string Error);
+
+    /// <summary>Rejects cross-origin non-GET <c>/api</c> requests before routing, matching the Python server.</summary>
+    public static IApplicationBuilder UseSameOriginApiWrites(this IApplicationBuilder app)
+    {
+        return app.Use(async (context, next) =>
+        {
+            var request = context.Request;
+            if (!HttpMethods.IsGet(request.Method) && request.Path.StartsWithSegments("/api") &&
+                request.Headers.TryGetValue("Origin", out var origin) && origin != $"{request.Scheme}://{request.Host}")
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsJsonAsync(new { error = "API writes must be same-origin" });
+                return;
+            }
+            await next();
+        });
+    }
+
+    /// <summary>
+    /// Endpoint metadata: the 503 message that replaces transport detail when this endpoint's HID command fails,
+    /// matching the Python server's per-endpoint messages.
+    /// </summary>
+    public sealed record UnavailableMessage(string Message, string? Timeout = null);
+
+    /// <summary>
+    /// The single <c>/api</c> error mapping, matching the Python server; every error body is <c>{error}</c>.
+    /// Bad input is 400, an unknown board 404, a board-state conflict or firmware refusal 409, a transport fault or
+    /// malformed board data 503, and anything else a logged 500.
+    /// </summary>
+    public static IApplicationBuilder UseApiErrors(this IApplicationBuilder app)
+    {
+        var logger = app.ApplicationServices.GetRequiredService<ILoggerFactory>().CreateLogger("PicoForge.Api");
+        return app.Use(async (context, next) =>
+        {
+            try { await next(); }
+            catch (Exception error) when (!context.Response.HasStarted
+                && context.Request.Path.StartsWithSegments("/api")
+                && !context.RequestAborted.IsCancellationRequested)
+            {
+                var unavailable = context.GetEndpoint()?.Metadata.GetMetadata<UnavailableMessage>();
+                var (status, message) = error switch
+                {
+                    BadHttpRequestException bad => (bad.StatusCode, bad.Message),
+                    ArgumentException or JsonException => (400, error.Message),
+                    KeyNotFoundException => (404, error.Message),
+                    InvalidOperationException or NotSupportedException => (409, error.Message),
+                    TimeoutException when unavailable?.Timeout is not null => (503, unavailable.Timeout),
+                    IOException or InvalidDataException or TimeoutException or UnauthorizedAccessException =>
+                        (503, unavailable?.Message ?? error.Message),
+                    _ => (500, "Internal server error")
+                };
+                if (status == 500) logger.LogError(error, "Unhandled API error");
+                context.Response.StatusCode = status;
+                await context.Response.WriteAsJsonAsync(new ApiError(message));
+            }
+        });
+    }
 
     public static IEndpointRouteBuilder MapDeviceStatus(this IEndpointRouteBuilder endpoints)
     {
@@ -32,226 +88,105 @@ internal static class StatusEndpoints
             .WithName("GetBoards")
             .WithSummary("Discover attached PicoForge boards")
             .Produces<DashboardBoardList>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+            .Produces<ApiError>(StatusCodes.Status409Conflict)
+            .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapGet("/api/status", GetStatus)
             .WithName("GetDeviceStatus")
             .WithSummary("Get current PicoForge HID status")
             .WithDescription("Returns the selected board's connection state and latest hardware/runtime reports. Pass its ID from /api/boards as the board query.")
             .Produces<StatusResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .Produces<ApiError>(StatusCodes.Status409Conflict);
         endpoints.MapPost("/api/led", SetLed)
             .WithName("SetBoardLed")
             .WithSummary("Set the onboard board LED")
-            .Produces<SetLedResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+            .Produces(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status409Conflict)
+            .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapPost("/api/settings", SetSettings)
             .WithName("SetBootSettings")
             .WithSummary("Save persistent boot settings")
             .WithDescription("Saves supported boot profiles and verifies the HID command result. Firmware reboots automatically on success.")
             .Produces<SetSettingsResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status409Conflict)
+            .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapPost("/api/reboot", Reboot)
             .WithName("RebootDevice")
             .WithSummary("Reboot PicoForge after explicit confirmation")
-            .Produces(StatusCodes.Status202Accepted)
-            .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+            .Produces(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status409Conflict)
+            .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapPost("/api/msc", SetMsc)
             .WithName("SetMscMode")
             .WithSummary("Request USB mass-storage mode")
-            .Produces<MscStatusResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+            .Produces<SetMscResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status409Conflict)
+            .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapPost("/api/self-test", SetSelfTest)
             .WithName("RequestSdSelfTest")
             .WithSummary("Start or cancel an SD-card file benchmark")
             .WithDescription("Delivers a HID command; poll /api/status for verification, cleanup, and average read/write metrics.")
-            .Produces<SelfTestAcceptedResponse>(StatusCodes.Status202Accepted)
-            .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+            .Produces(StatusCodes.Status202Accepted)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status409Conflict)
+            .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
         endpoints.MapPost("/api/msc/force-return", ForceReturnMsc)
             .WithName("ForceReturnMsc")
             .WithSummary("Force storage back to Pico after acknowledging possible data loss")
             .WithDescription("Bypasses host eject, not device sync. Pending includes one remount attempt; never formats or repairs.")
             .Produces<SetMscResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status409Conflict)
+            .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
         return endpoints;
     }
 
-    private static IResult GetBoards(IDashboardBoards dashboard)
-    {
-        try { return Results.Ok(dashboard.Boards()); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        { return Results.Problem(statusCode: 503, title: error.Message); }
-        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
-    }
+    private static IResult GetBoards(IDashboardBoards dashboard) => Results.Ok(dashboard.Boards());
 
-    private static IResult GetStatus(string? board, IDashboardBoards dashboard)
-    {
-        try { return Results.Ok(dashboard.Snapshot(board)); }
-        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
-    }
+    private static IResult GetStatus(string? board, IDashboardBoards dashboard) =>
+        Results.Ok(dashboard.Snapshot(board));
 
     private static IResult SetLed(SetLedRequest request, string? board, IDashboardBoards dashboard)
     {
         if (request.On is not bool on)
-            return Results.Problem(statusCode: 400, title: "Expected JSON with a boolean 'on' field");
-        try
-        {
-            if (!dashboard.SetLed(board, on))
-                return Results.Conflict(new { error = "PicoForge HID is disconnected or the board LED is unavailable" });
-            return Results.Ok(new SetLedResponse(dashboard.Snapshot(board).BoardStatus));
-        }
-        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
-        {
-            return Results.Problem(statusCode: 503, title: "HID command delivery failed");
-        }
-        catch (InvalidOperationException error)
-        {
-            return Results.Conflict(new { error = error.Message });
-        }
+            throw new ArgumentException("Expected JSON with a boolean 'on' field");
+        dashboard.Monitor(board).SetLed(on);
+        return Results.Ok(new { });
     }
 
-    private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard)
-    {
-        if (request.SystemClockMhz is not (0 or 150 or 200 or 250) ||
-            request.SdCardProfile is not (0 or 1) || request.Radios is not (>= 0 and <= 3))
-            return Results.Problem(statusCode: 400, title: "Unsupported boot settings value");
-
-        StatusResponse status;
-        try { status = dashboard.Snapshot(board); }
-        catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
-        var settings = new BootSettingsResponse(request.SystemClockMhz.Value, request.SdCardProfile.Value,
-            request.Radios.Value);
-        try
-        {
-            if (request.ConfirmDataLoss)
-            {
-                if (!status.Connected || status.CommandOutcomeUncertain ||
-                    status.Msc is not { Enabled: true, TransitionPending: false } || status.SelfTest?.Active == true)
-                    return Results.Conflict(new { error = "Forced save is unavailable or storage is busy" });
-            }
-            var saved = dashboard.SetSettings(board, settings, request.ConfirmDataLoss);
-            return saved is null
-                ? Results.Conflict(new { error = "Boot settings are unavailable or storage is busy" })
-                : Results.Ok(new SetSettingsResponse(saved));
-        }
-        catch (InvalidOperationException error)
-        {
-            var uncertain = status.CommandOutcomeUncertain;
-            try { uncertain = dashboard.Snapshot(board).CommandOutcomeUncertain; }
-            catch (InvalidOperationException) { uncertain = true; }
-            return Results.Conflict(new { error = request.ConfirmDataLoss && uncertain
-                ? $"Forced save outcome is uncertain: {error.Message}" : error.Message });
-        }
-        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
-        {
-            return Results.Problem(statusCode: 503, title: request.ConfirmDataLoss
-                ? "Forced save outcome is uncertain; the command was not resent"
-                : "HID settings command delivery failed");
-        }
-        catch (NotSupportedException)
-        {
-            return Results.Problem(statusCode: 503, title: "HID settings command is not supported");
-        }
-    }
+    private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard) =>
+        Results.Ok(new SetSettingsResponse(dashboard.Monitor(board).SetSettings(new(request.SystemClockMhz ?? -1,
+            request.SdCardProfile ?? -1, request.Radios ?? -1), request.ConfirmDataLoss)));
 
     private static IResult Reboot(RebootRequest request, string? board, IDashboardBoards dashboard)
     {
-        if (!request.Confirm)
-            return Results.Problem(statusCode: 400, title: "Explicit reboot confirmation is required");
-        try
-        {
-            return dashboard.Reboot(board)
-                ? Results.Accepted()
-                : Results.Conflict(new { error = "PicoForge is disconnected or storage is busy" });
-        }
-        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
-        {
-            return Results.Problem(statusCode: 503, title: "HID reboot command delivery failed");
-        }
-        catch (InvalidOperationException error)
-        {
-            return Results.Conflict(new { error = error.Message });
-        }
+        if (!request.Confirm) throw new ArgumentException("Explicit reboot confirmation is required");
+        dashboard.Monitor(board).Reboot();
+        return Results.Ok(new { });
     }
 
     private static IResult SetMsc(SetMscRequest request, string? board, IDashboardBoards dashboard)
     {
         if (request.Enabled is not bool enabled)
-            return Results.Problem(statusCode: 400, title: "Expected JSON with a boolean 'enabled' field");
-        try
-        {
-            var status = dashboard.SetMsc(board, enabled);
-            return status is null
-                ? Results.Conflict(new { error = "PicoForge HID is disconnected" })
-                : Results.Ok(status);
-        }
-        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
-        {
-            return Results.Problem(statusCode: 503, title: "HID command delivery failed");
-        }
-        catch (InvalidOperationException error)
-        {
-            return Results.Conflict(new { error = error.Message });
-        }
+            throw new ArgumentException("Expected JSON with a boolean 'enabled' field");
+        return Results.Ok(new SetMscResponse(dashboard.Monitor(board).SetMsc(enabled)));
     }
 
-    private static Results<Ok<SetMscResponse>, ProblemHttpResult> ForceReturnMsc(
-        ForceReturnMscRequest request, string? board, IDashboardBoards dashboard,
-        CancellationToken cancellationToken)
+    private static IResult ForceReturnMsc(ForceReturnMscRequest request, string? board, IDashboardBoards dashboard)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!request.ConfirmDataLoss)
-            return TypedResults.Problem(statusCode: 400, title: "Explicit confirm_data_loss: true is required");
-        try
-        {
-            var status = dashboard.SetMsc(board, false, force: true);
-            return status is null
-                ? TypedResults.Problem(statusCode: 409, title: "Enabled MSC with force-return support is unavailable")
-                : TypedResults.Ok(new SetMscResponse(status));
-        }
-        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
-        {
-            return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
-        }
-        catch (InvalidOperationException error)
-        {
-            return TypedResults.Problem(statusCode: 409, title: error.Message);
-        }
+        if (!request.ConfirmDataLoss) throw new ArgumentException("Explicit confirm_data_loss: true is required");
+        return Results.Ok(new SetMscResponse(dashboard.Monitor(board).SetMsc(false, force: true)));
     }
 
-    private static Results<Accepted<SelfTestAcceptedResponse>, ProblemHttpResult> SetSelfTest(
-        SetSelfTestRequest request, string? board, IDashboardBoards dashboard,
-        CancellationToken cancellationToken)
+    private static IResult SetSelfTest(SetSelfTestRequest request, string? board, IDashboardBoards dashboard)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         if (request.Action is not ("start" or "cancel") ||
             (request.Action == "start" && request.SizeMib is not (>= 1 and <= 1024)))
-            return TypedResults.Problem(statusCode: 400, title: "Expected start/cancel and a size from 1 to 1024 MiB");
-        try
-        {
-            if (!dashboard.SetSelfTest(board, request.Action, request.SizeMib))
-                return TypedResults.Problem(statusCode: 409, title: "PicoForge HID self-test interface is unavailable");
-            return TypedResults.Accepted("/api/status", new SelfTestAcceptedResponse(true));
-        }
-        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
-        {
-            return TypedResults.Problem(statusCode: 503, title: "HID command delivery failed");
-        }
-        catch (InvalidOperationException error)
-        {
-            return TypedResults.Problem(statusCode: 409, title: error.Message);
-        }
+            throw new ArgumentException("Expected start/cancel and a size from 1 to 1024 MiB");
+        dashboard.Monitor(board).SetSelfTest(request.Action, request.SizeMib);
+        return Results.Json(new { }, statusCode: StatusCodes.Status202Accepted);
     }
 }

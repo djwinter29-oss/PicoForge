@@ -87,11 +87,8 @@ def main(argv: list[str] | None = None) -> int:
                     "self_test": None,
                 }, sort_keys=True))
                 return 1
-            configuration = device.read_configuration()
-            settings = {
-                "system_clock_mhz": configuration["system_clock_mhz"],
-                "sdcard_profile": configuration["sdcard_profile"],
-            }
+            settings = device.read_settings()
+            configuration = device.configuration
             runtime, memory, self_test = _read_status_reports(device, info["self_test_supported"])
             print(json.dumps({
                 "connected": True,

@@ -51,10 +51,10 @@ those reports do not define.
   testing, reset to the normal WPA2-first behavior. If only the password changes for the same SSID, preserve the
   saved authentication mode.
 - Clearing the Control key prevents the TCP CLI listener from serving until a key is saved again.
-- Native-host `GET /api/wireless` returns sanitized status. Confirmed `POST /api/wireless` stages provided
-  credentials with ops `6`-`8`, optionally tests with op `9`, then commits through op `5` with the explicit
-  wireless-commit flag. Omitted credentials are not staged. `POST /api/wireless/scan` uses op `11` and reads each
-  result through op `12`; `POST /api/wireless/test` and `/cancel` use ops `9` and `10`.
+- Native hosts report sanitized wireless status as `wireless` in `GET /api/status`. Confirmed `POST /api/wireless`
+  stages provided credentials with ops `6`-`8`, optionally tests with op `9`, then commits through op `5` with the
+  explicit wireless-commit flag. Omitted credentials are not staged. `POST /api/wireless/scan` uses op `11` and reads
+  each result through op `12`; `POST /api/wireless/test` and `/cancel` use ops `9` and `10`.
 
 ## Wi-Fi station behavior
 

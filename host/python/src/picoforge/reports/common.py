@@ -161,18 +161,22 @@ def _input_payload(report: bytes | bytearray | list[int], report_id: int, size: 
 def _unknown_name(value: int, names: dict[int, str]) -> str:
     return names.get(value, f"unknown ({value})")
 
+class InvalidRequest(ValueError):
+    """User-supplied command input was rejected before any HID write."""
+
+
 def _validate_settings(settings: dict[str, object]) -> tuple[int, int, int]:
     """Return clock, SD profile and radio enables (bit 0 Wi-Fi, bit 1 BLE)."""
     if not isinstance(settings, dict):
-        raise ValueError("boot settings must be an object")
+        raise InvalidRequest("boot settings must be an object")
     clock = settings.get("system_clock_mhz")
     profile = settings.get("sdcard_profile")
     radios = settings.get("radios")
     if (type(clock) is not int or clock not in (0, 150, 200, 250) or type(profile) is not int or profile not in (0, 1)
             or type(radios) is not int or radios not in range(4)):
-        raise ValueError("unsupported boot settings value")
+        raise InvalidRequest("unsupported boot settings value")
     if "tcp_cli_enabled" in settings and type(settings["tcp_cli_enabled"]) is not bool:
-        raise ValueError("TCP CLI setting must be boolean")
+        raise InvalidRequest("TCP CLI setting must be boolean")
     if set(settings) - {"system_clock_mhz", "sdcard_profile", "radios", "tcp_cli_enabled"}:
-        raise ValueError("unknown boot settings field")
+        raise InvalidRequest("unknown boot settings field")
     return clock, profile, radios

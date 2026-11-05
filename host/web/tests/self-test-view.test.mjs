@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderStatus as renderServerStatus, renderSelfTest as renderServerSelfTest } from "../js/dashboard.mjs";
+import {
+  normalizeStatus, renderStatus as renderServerStatus, renderSelfTest as renderServerSelfTest,
+} from "../js/dashboard.mjs";
 
 function withDocument(run) {
   const saved = globalThis.document;
@@ -124,3 +126,16 @@ test("server dashboard retains storage visibility through stale reports without 
       assert.equal(el('[aria-labelledby="memory-title"]').hidden, false, "Disconnect must clear confirmed presence");
     }
   }));
+
+test("status normalization reads only the shared nested shape", () => {
+  const msc = { enabled: true, transition_pending: false };
+  const status = normalizeStatus({ settings_supported: true, memory: { msc, filesystem_format: "fat32" },
+    board_configuration: { system_clock_mhz: 250, sdcard_profile: 1, radios: 3, tcp_cli_enabled: true, led_gpio: 25 } });
+  assert.deepEqual(status.msc, msc);
+  assert.equal(status.filesystem_format, "fat32");
+  assert.deepEqual(status.settings, { system_clock_mhz: 250, sdcard_profile: 1, radios: 3, tcp_cli_enabled: true });
+  const stale = normalizeStatus({ settings_supported: false, memory: null, board_configuration: null });
+  assert.equal(stale.msc, null);
+  assert.equal(stale.filesystem_format, null);
+  assert.equal(stale.settings, null);
+});

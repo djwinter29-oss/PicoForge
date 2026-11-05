@@ -1,4 +1,5 @@
 from .common import (
+    InvalidRequest,
     IDENTITY_REPORT_ID,
     CONFIGURATION_REPORT_ID,
     TELEMETRY_REPORT_ID,
@@ -78,6 +79,7 @@ from .self_test import (
 )
 
 __all__ = [
+    "InvalidRequest",
     "IDENTITY_REPORT_ID",
     "CONFIGURATION_REPORT_ID",
     "TELEMETRY_REPORT_ID",

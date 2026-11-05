@@ -303,9 +303,11 @@ Feature `20` completion result:
   a Control key is saved, and without a key the listener does not serve.
 - Bluetooth **Enabled** needs a saved or staged key; disabling Bluetooth erases the key on save.
 
-The Python/.NET `GET /api/status` response includes nullable `settings` and `settings_supported` fields.
+The Python/.NET `GET /api/status` response includes `settings_supported` and the saved values in
+`board_configuration` (.NET also sends a nullable `settings`).
 `POST /api/settings` requires the system clock, `sdcard_profile` and `radios`, and returns the values confirmed by the
-device. Unsupported values return HTTP 400; unsupported firmware or busy storage returns HTTP 409. Normal writes are
+device. Unsupported values return HTTP 400; unsupported firmware or busy storage returns HTTP 409; HID failure returns
+HTTP 503. Normal writes are
 rejected while MSC or storage work owns the media; confirmed forced saving is the only exception.
 
 ### Forced Save and Reboot

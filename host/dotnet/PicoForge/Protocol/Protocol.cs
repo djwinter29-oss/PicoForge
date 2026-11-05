@@ -17,9 +17,19 @@ public sealed record BootSettingsResponse(int SystemClockMhz,
     [property: JsonPropertyName("sdcard_profile")] int SdCardProfile, int Radios);
 
 /// <summary>GPIO topology and persisted configuration from HID Feature report 2.</summary>
-public sealed record BoardConfigurationResponse(ushort StoredSystemClockMhz, byte StoredSdCardProfile,
+public sealed record BoardConfigurationResponse(
+    [property: JsonPropertyName("stored_sysclk_profile")] ushort StoredSystemClockMhz,
+    [property: JsonPropertyName("stored_sdcard_profile")] byte StoredSdCardProfile,
     byte MonitorUartIndex, byte MonitorUartTxGpio, byte MonitorUartRxGpio, byte[] StorageGpios,
-    byte BoardFlags, byte ResetCause, byte LedGpio, byte CardDetectGpio);
+    byte BoardFlags, byte ResetCause, byte LedGpio, byte CardDetectGpio)
+{
+    /// <summary>Next-boot values saved in this session; the stored values apply until a save replaces them.</summary>
+    [JsonIgnore] public BootSettingsResponse? NextBoot { get; init; }
+    public int SystemClockMhz => NextBoot?.SystemClockMhz ?? StoredSystemClockMhz;
+    [JsonPropertyName("sdcard_profile")] public int SdCardProfile => NextBoot?.SdCardProfile ?? StoredSdCardProfile;
+    public int Radios => NextBoot?.Radios ?? BoardFlags >> 3 & 3;
+    public bool TcpCliEnabled => (BoardFlags & 0x20) != 0;
+}
 
 /// <summary>Dynamic telemetry reported periodically by HID Input report 3.</summary>
 public sealed record RuntimeStatusResponse(byte Sequence, uint UptimeMs, uint SystemClockHz,
@@ -44,7 +54,13 @@ public sealed record SdCardIdentity(byte ManufacturerId, string OemId, string Pr
 public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool PresenceKnown,
     bool? Present, bool Initialized, string? ComponentType, string? Mode, uint? BusClockHz,
     uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer,
-    bool SampleValid = true, byte SpeedMode = 0);
+    bool SampleValid = true, byte SpeedMode = 0)
+{
+    /// <summary>USB-drive ownership, nested here in JSON to match the Python server.</summary>
+    public MscStatusResponse? Msc { get; init; }
+    /// <summary>Mounted filesystem name, nested here in JSON to match the Python server.</summary>
+    public string? FilesystemFormat { get; init; }
+}
 
 public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected);
 
@@ -62,18 +78,31 @@ public sealed record SelfTestStatusResponse(byte Sequence, string State, uint Ta
 internal sealed record InputReport(RuntimeStatusResponse? Runtime, MemoryStatusResponse? Memory,
     MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null, string? FilesystemFormat = null);
 
-/// <summary>Current HID connection and the most recent hardware/runtime reports.</summary>
+/// <summary>
+/// Current HID connection and the most recent hardware/runtime reports. The JSON shape matches the Python server:
+/// USB-drive ownership and filesystem nest in <c>memory</c>, next-boot settings in <c>board_configuration</c>.
+/// </summary>
 public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoResponse? Hardware,
-    RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, BoardStatusResponse? BoardStatus,
-    MemoryStatusResponse? Memory, MscStatusResponse? Msc, SelfTestStatusResponse? SelfTest = null,
-    string? FilesystemFormat = null, BootSettingsResponse? Settings = null,
-    BoardConfigurationResponse? BoardConfiguration = null, DateTimeOffset? TelemetryUpdatedAt = null,
-    DateTimeOffset? StorageUpdatedAt = null, DateTimeOffset? SelfTestUpdatedAt = null,
+    RuntimeStatusResponse? Runtime, DateTimeOffset? UpdatedAt, [property: JsonIgnore] BoardStatusResponse? BoardStatus,
+    [property: JsonIgnore] MemoryStatusResponse? Memory, [property: JsonIgnore] MscStatusResponse? Msc,
+    SelfTestStatusResponse? SelfTest = null, [property: JsonIgnore] string? FilesystemFormat = null,
+    [property: JsonIgnore] BootSettingsResponse? Settings = null,
+    [property: JsonIgnore] BoardConfigurationResponse? BoardConfiguration = null,
     bool TelemetryStale = true, bool StorageStale = true, bool SelfTestStale = true,
     bool CommandOutcomeUncertain = false, bool RebootPending = false, bool Reconnecting = false,
-    string? WirelessPhase = null)
+    string? WirelessPhase = null, WirelessStatusResponse? Wireless = null, string? WirelessError = null)
 {
     public bool SettingsSupported => Settings is not null;
+
+    [JsonPropertyName("memory")]
+    public MemoryStatusResponse? MemoryJson => Memory is null ? null : Memory with
+    {
+        Msc = Msc, FilesystemFormat = FilesystemFormat
+    };
+
+    [JsonPropertyName("board_configuration")]
+    public BoardConfigurationResponse? BoardConfigurationJson => BoardConfiguration is null ? null :
+        BoardConfiguration with { NextBoot = Settings };
 }
 
 internal sealed record ControlResult(byte TransactionId, byte Opcode, byte Status, byte ErrorReason,
@@ -311,9 +340,8 @@ internal static partial class HidProtocol
 
     public static byte[] BuildControlRequest(byte transactionId, byte opcode, byte flags, ReadOnlySpan<byte> arguments)
     {
-        Require(transactionId != 0, "transaction ID must be nonzero");
-        Require(arguments.Length == 64, "control command requires 64 argument bytes");
-        Require(opcode != 5 || (flags & ~3) == 0, "invalid saved-settings command flags");
+        if (transactionId == 0 || arguments.Length != 64 || (opcode == 5 && (flags & ~3) != 0))
+            throw new ArgumentException("Invalid HID control request fields");
         var report = new byte[ControlFeatureSize];
         report[0] = ControlReportId;
         report[1] = ReportVersion;
@@ -449,7 +477,7 @@ internal static partial class HidProtocol
     public static string? FilesystemName(byte format) => format switch
     {
         0 => null, 1 => "fat12", 2 => "fat16", 3 => "fat32", 4 => "exfat",
-        _ => throw new InvalidOperationException("unknown HID filesystem format")
+        _ => throw new InvalidDataException("unknown HID filesystem format")
     };
 
     private static ReadOnlySpan<byte> InputPayload(ReadOnlySpan<byte> report, byte reportId, int size)
@@ -473,6 +501,6 @@ internal static partial class HidProtocol
 
     private static void Require(bool condition, string message)
     {
-        if (!condition) throw new InvalidOperationException(message);
+        if (!condition) throw new InvalidDataException(message);
     }
 }

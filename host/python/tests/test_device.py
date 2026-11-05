@@ -1,10 +1,12 @@
 import struct
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
 from picoforge.hid.device import PicoForgeHid, _matches_vendor_collection, enumerate_devices
 from picoforge.reports import (
     CONTROL_FEATURE_SIZE,
+    InvalidRequest,
     SELF_TEST_INPUT_SIZE,
     build_control_command_report,
     parse_identity_report,
@@ -117,6 +119,7 @@ class HidDeviceTests(unittest.TestCase):
         client._transaction_id = 0
         client.last_command_result = None
         client._command_uncertain = False
+        client._control_lock = threading.RLock()
         return client
 
     def test_read_status_skips_new_storage_report(self):
@@ -161,6 +164,21 @@ class HidDeviceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Wireless"):
             client.cancel_wireless_test()
         self.assertEqual(client._device.sent, [])
+
+    def test_invalid_user_input_is_rejected_before_any_write(self):
+        client = self.connection()
+        client.identity["capabilities"] |= 128
+        for command in (
+            lambda: client.set_settings({"system_clock_mhz": 100, "sdcard_profile": 0, "radios": 0}),
+            lambda: client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 0}),
+            lambda: client.set_self_test("start", 1025),
+            lambda: client.test_wireless("Pico", "short"),
+            lambda: client.set_wireless({"wifi_enabled": True}),
+        ):
+            with self.assertRaises(InvalidRequest):
+                command()
+        self.assertEqual(client._device.sent, [])
+        self.assertFalse(client.command_uncertain)
 
     def test_tcp_cli_auth_proof_uses_the_matching_usb_board(self):
         client = self.connection()

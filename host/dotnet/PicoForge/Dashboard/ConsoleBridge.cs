@@ -116,14 +116,22 @@ internal sealed class ConsoleBridge : IDisposable
         return connection;
     }
 
+    /// <summary>Waits up to 2 s for board output without holding the gate, so writes are never blocked.</summary>
     public (byte[] Data, bool Closed) Read(string? token)
     {
+        Socket waiting;
+        lock (gate) waiting = RequireSession(token);
+        // ponytail: one long-poll GET per 2 s idle replaces 20 polls/s; a WebSocket would only cut the per-chunk request.
+        bool ready;
+        try { ready = waiting.Poll(2_000_000, SelectMode.SelectRead); }
+        catch (Exception error) when (error is ObjectDisposedException or SocketException) { ready = false; }
         lock (gate)
         {
             var socket = RequireSession(token);
+            if (!ReferenceEquals(socket, waiting)) throw new InvalidOperationException("Console disconnected; connect again");
             try
             {
-                if (!socket.Poll(100_000, SelectMode.SelectRead)) return ([], false);
+                if (!ready) return ([], false);
                 var data = new byte[4096];
                 var count = socket.Receive(data);
                 if (count == 0) CloseConnection();
@@ -194,9 +202,6 @@ internal sealed class ConsoleBridge : IDisposable
             async (HttpContext context, IDashboardBoards dashboard, ConsoleBridge bridge, ILogger<ConsoleBridge> log) =>
         {
             var request = context.Request;
-            if (request.Headers.TryGetValue("Origin", out var origin) &&
-                origin != $"{request.Scheme}://{request.Host}")
-                return Results.Json(new { error = "Console requests must be same-origin" }, statusCode: 403);
             try
             {
                 var token = request.Query["session"].ToString();
@@ -207,9 +212,9 @@ internal sealed class ConsoleBridge : IDisposable
                         throw new ArgumentException(
                             "Expected an empty object; TCP authentication uses the connected board");
                     var board = request.Query["board"].ToString();
-                    var wireless = dashboard.ReadWireless(board).Wireless;
-                    return Results.Ok(new { session = bridge.Open(wireless,
-                        (nonce, uid) => dashboard.TcpCliAuthProof(board, nonce, uid)) });
+                    var monitor = dashboard.Monitor(board);
+                    var wireless = monitor.ReadWireless().Wireless;
+                    return Results.Ok(new { session = bridge.Open(wireless, monitor.TcpCliAuthProof) });
                 }
                 if (request.Method == "GET")
                 {

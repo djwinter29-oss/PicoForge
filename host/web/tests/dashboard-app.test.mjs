@@ -30,6 +30,14 @@ test("server dashboard presents expected USB reconnection without hiding real er
   }
 });
 
+/** Serve the test's flat view state in the shared server shape (status-contract.json). */
+function serverShape({ msc = null, filesystem_format = null, settings = null, memory = null, board_configuration = null,
+  ...status }) {
+  return { ...status,
+    memory: memory || msc || filesystem_format ? { ...memory, msc, filesystem_format } : null,
+    board_configuration: settings || board_configuration ? { ...board_configuration, ...settings } : null };
+}
+
 test("shared dashboard preserves drafts and command state across status failures", async context => {
   const handlers = new Map();
   /** Pick Configure… the way a browser does: focus, then an input event before change. */
@@ -51,10 +59,12 @@ test("shared dashboard preserves drafts and command state across status failures
     }
     return elements.get(selector);
   };
-  const connected = { connected: true, error: null, board_status: { led_available: true, led_on: false },
+  const connected = { connected: true, error: null, runtime: { led_available: true, led_on: false },
     hardware: { product_name: "PicoForge", board_model: "Pico 2", mcu: "RP2350", capabilities: 2 | 16,
       ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
     settings_supported: true, settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
+    board_configuration: { monitor_uart_index: 255, monitor_uart_tx_gpio: 255, monitor_uart_rx_gpio: 255,
+      storage_gpios: [2, 3, 4, 5, 255, 255], card_detect_gpio: 255, reset_cause: 1 },
     memory: { mode: "spi" }, msc: { enabled: false, transition_pending: false }, self_test: null };
   let statusFails = false;
   let statusUnknownBoard = false;
@@ -87,10 +97,11 @@ test("shared dashboard preserves drafts and command state across status failures
   let wirelessTestError = null;
   let wirelessState = "connected";
   let wirelessReadFails = false;
-  let wirelessReadGate = null;
-  let wirelessNow = Date.now();
+  const savedWireless = () => ({ ssid: "saved", wifi_enabled: true, ble_enabled: false, tcp_cli_enabled: true,
+    wifi_state: wirelessState, ipv4: "192.168.1.9" });
+  let now = Date.now();
   const requestTimeouts = [];
-  context.mock.method(Date, "now", () => wirelessNow);
+  context.mock.method(Date, "now", () => now);
   context.mock.method(AbortSignal, "timeout", milliseconds => {
     assert.ok([5000, 10000, 15000, 40000].includes(milliseconds),
       "dashboard requests use endpoint-appropriate deadlines");
@@ -133,7 +144,11 @@ test("shared dashboard preserves drafts and command state across status failures
       if (statusFails) throw new Error("status down");
       if (statusUnknownBoard) return { ok: false, status: 409,
         json: async () => ({ error: "unknown board; rescan and select a listed board" }) };
-      return { ok: true, json: async () => structuredClone(connected) };
+      const wireless = connected.hardware.capabilities & 128 ? {
+        wireless: wirelessReadFails ? null : savedWireless(),
+        wireless_error: wirelessReadFails ? "wireless down" : null,
+      } : {};
+      return { ok: true, json: async () => ({ ...serverShape(structuredClone(connected)), ...wireless }) };
     }
     if (url.startsWith("/api/wireless/test?board=")) {
       assert.ok(options.signal instanceof AbortSignal);
@@ -143,12 +158,7 @@ test("shared dashboard preserves drafts and command state across status failures
       return { ok: true, json: async () => ({ test: { ipv4: "192.168.1.9", remaining_seconds: 600 } }) };
     }
     if (url.startsWith("/api/wireless?board=")) {
-      if (options.method !== "POST") await wirelessReadGate;
-      if (options.method !== "POST" && wirelessReadFails) throw new Error("wireless down");
-      if (options.method !== "POST") return { ok: true, json: async () => ({
-        wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false, tcp_cli_enabled: true, wifi_state: wirelessState, ipv4: "192.168.1.9" },
-        reboot_pending: false,
-      }) };
+      assert.equal(options.method, "POST", "Wi-Fi status is read from /api/status, never GET /api/wireless");
       const settings = JSON.parse(options.body);
       wirelessSettings.push(settings);
       return { ok: wirelessFailure === 0, status: wirelessFailure || 200, json: async () => ({
@@ -187,8 +197,7 @@ test("shared dashboard preserves drafts and command state across status failures
       if (ledResponseError) return { ok: false, status: 409, json: async () => ({
         error: "LED outcome is uncertain; command was not resent",
       }) };
-      const board_status = { led_available: true, led_on: JSON.parse(options.body).on };
-      return { ok: true, json: async () => ({ board_status }) };
+      return { ok: true, json: async () => ({ control_result: { status: "completed" } }) };
     }
     if (url.startsWith("/api/msc/force-return?board=")) {
       assert.deepEqual(JSON.parse(options.body), { confirm_data_loss: true });
@@ -612,12 +621,12 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledBeforeConflict + 1,
       "an uncertain LED 409 is not resent");
     ledResponseError = false;
-    connected.board_status.led_on = ledRequestedStates.at(-1);
+    connected.runtime.led_on = ledRequestedStates.at(-1);
     await new Promise(resolve => setImmediate(resolve));
     await tick();
     assert.doesNotMatch(elements.get("#status-message").textContent, /LED outcome is uncertain/,
-      `reconciled LED state: ${connected.board_status.led_on}`);
-    connected.board_status.led_on = false;
+      `reconciled LED state: ${connected.runtime.led_on}`);
+    connected.runtime.led_on = false;
     await tick();
     rebootResponseError = true;
     const rebootBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/reboot?")).length;
@@ -697,7 +706,7 @@ test("shared dashboard preserves drafts and command state across status failures
     handlers.get("#board-select:change")();
     await new Promise(resolve => setImmediate(resolve));
     statusFails = false;
-    connected.board_status.led_on = false;
+    connected.runtime.led_on = false;
     await tick();
     await new Promise(resolve => setImmediate(resolve));
     ledTimeout = true;
@@ -715,7 +724,7 @@ test("shared dashboard preserves drafts and command state across status failures
     await handlers.get("#led-control:click")();
     assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledRequestsAfterSwitch,
       "switching back restores the unresolved LED outcome and prevents replay");
-    connected.board_status.led_on = true;
+    connected.runtime.led_on = true;
     await new Promise(resolve => setImmediate(resolve));
     await tick();
     assert.equal(elements.get("#led-control").textContent, "Board LED: On",
@@ -818,35 +827,16 @@ test("shared dashboard preserves drafts and command state across status failures
     connected.msc = { enabled: false, transition_pending: false };
     await tick();
     await switchBoard("board-b");
-    let finishWirelessRead;
-    wirelessReadGate = new Promise(resolve => { finishWirelessRead = resolve; });
-    wirelessNow += 2000;
-    const beforeStatusReads = requestedUrls.filter(url => url.startsWith("/api/status?")).length;
-    let timeout;
-    try {
-      await Promise.race([tick(), new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("Wireless reads must not block diagnostics polling")), 1000);
-      })]);
-      await tick();
-      assert.equal(requestedUrls.filter(url => url.startsWith("/api/status?")).length, beforeStatusReads + 2);
-    } finally {
-      clearTimeout(timeout);
-      finishWirelessRead();
-      wirelessReadGate = null;
-      await new Promise(resolve => setImmediate(resolve));
-    }
+    const beforeWirelessReads = requestedUrls.filter(url => url.startsWith("/api/wireless?")).length;
     wirelessState = "connecting";
-    wirelessNow += 2000;
     await tick();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#wifi-state").textContent, "saved (connecting)");
     wirelessState = "failed";
-    wirelessNow += 2000;
     await tick();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#wifi-state").textContent, "saved (disconnected)");
     wirelessReadFails = true;
-    wirelessNow += 2000;
     await tick();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#wifi-state").textContent, "Unavailable");
@@ -854,10 +844,11 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(elements.get("#connection-label").textContent, "Connected");
     wirelessReadFails = false;
     wirelessState = "connected";
-    wirelessNow += 2000;
     await tick();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#wifi-state").textContent, "saved (192.168.1.9)");
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless?")).length, beforeWirelessReads,
+      "Wi-Fi status arrives with /api/status; no separate wireless polling");
     assert.equal(elements.get("#settings-save").disabled, true);
     configureRadio("wifi");
     handlers.get("#wifi-other:click")();

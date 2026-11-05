@@ -11,6 +11,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
+// Binding failures throw so UseApiErrors returns them as {error} like every other API error.
+builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 builder.Services.AddSingleton<DashboardBoards>();
 builder.Services.AddSingleton<IDashboardBoards>(services => services.GetRequiredService<DashboardBoards>());
 builder.Services.AddSingleton<ConsoleBridge>();
@@ -33,6 +35,8 @@ app.Use(async (context, next) =>
         "default-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'; img-src 'self'; frame-ancestors 'none'";
     await next();
 });
+app.UseSameOriginApiWrites();
+app.UseApiErrors();
 
 var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 var files = new PhysicalFileProvider(webRoot);

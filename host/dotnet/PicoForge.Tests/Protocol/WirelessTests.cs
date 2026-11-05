@@ -105,7 +105,7 @@ public sealed class WirelessTests
     {
         var report = Status();
         report[index] = value;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(report,
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseWirelessStatus(report,
             HidProtocol.ParseConfigurationReport(Configuration(), Hardware)));
     }
 
@@ -120,7 +120,7 @@ public sealed class WirelessTests
         report[48] = 8;
         Assert.Equal(8, HidProtocol.ParseWirelessStatus(report, configuration).StagedState);
         report[5] |= 16;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(report, configuration));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseWirelessStatus(report, configuration));
     }
 
     [Fact]
@@ -130,8 +130,8 @@ public sealed class WirelessTests
         var report = Status();
         foreach (var malformed in new[] { report[1..], new byte[] { 0 }.Concat(report).ToArray(),
             new byte[] { 12 }.Concat(report).ToArray(), report.Concat(new byte[] { 0 }).ToArray() })
-            Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(malformed, configuration));
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(new byte[10]));
+            Assert.Throws<InvalidDataException>(() => HidProtocol.ParseWirelessStatus(malformed, configuration));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseControlResult(new byte[10]));
     }
 
     [Theory]
@@ -173,7 +173,7 @@ public sealed class WirelessTests
     [InlineData(1, 4, 4, 0)]
     [InlineData(9, 4, 7, 0)]
     public void RejectsDisallowedControlCombinations(byte opcode, byte status, byte error, byte detail) =>
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             HidProtocol.ParseControlResult(Result(opcode, status, error, detail)));
 
     [Theory]
@@ -193,7 +193,7 @@ public sealed class WirelessTests
         var report = Result(opcode, status, error, detail);
         Assert.Equal(detail, HidProtocol.ParseControlResult(report).ResultData[0]);
         report[7] = 1;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(report));
+        Assert.Throws<InvalidDataException>(() => HidProtocol.ParseControlResult(report));
     }
 
     [Fact]
@@ -328,7 +328,7 @@ public sealed class WirelessTests
     public void StaleScanEntryCannotBeShownAsCurrent()
     {
         using var wire = new Wire { StaleScanEntry = true };
-        Assert.Throws<InvalidOperationException>(() => wire.Hid.ScanWireless());
+        Assert.Throws<InvalidDataException>(() => wire.Hid.ScanWireless());
         Assert.True(wire.Hid.CommandOutcomeUncertain);
     }
 
@@ -393,7 +393,7 @@ public sealed class WirelessTests
     public void SaveMismatchRemainsUncertain()
     {
         using var wire = new Wire { WrongSaveMask = true };
-        Assert.Throws<InvalidOperationException>(() => wire.Hid.SetWireless(Settings()));
+        Assert.Throws<InvalidDataException>(() => wire.Hid.SetWireless(Settings()));
         Assert.True(wire.Hid.CommandOutcomeUncertain);
         Assert.Single(wire.Writes);
     }
@@ -412,37 +412,46 @@ public sealed class WirelessTests
     [Fact]
     public async Task HttpPreservesRawSsidAndSanitizesResponses()
     {
-        var dashboard = new Dashboard();
+        var dashboard = new WirelessMonitor();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
-        builder.Services.AddSingleton<IDashboardBoards>(dashboard);
+        builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(dashboard));
         await using var app = builder.Build();
+        app.UseApiErrors();
         app.MapWirelessEndpoints();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         foreach (var body in new[] { "null", "[]", "{}", "{\"password\":\"secret\\n12\"}" })
         {
-            var response = await client.PostAsync("/api/wireless?board=a",
+            var response = await client.PostAsync("/api/wireless?board=board-a",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.DoesNotContain("secret", await response.Content.ReadAsStringAsync());
         }
-        var tested = await client.PostAsJsonAsync("/api/wireless/test?board=a",
+        var tested = await client.PostAsJsonAsync("/api/wireless/test?board=board-a",
             new { ssid = "escaped", ssid_hex = "4100ff", password = "secret12" });
         Assert.Equal(HttpStatusCode.OK, tested.StatusCode);
         Assert.Equal("4100ff", dashboard.SsidHex);
         Assert.DoesNotContain("secret12", await tested.Content.ReadAsStringAsync());
-        var saved = await client.PostAsJsonAsync("/api/wireless?board=a",
+        var saved = await client.PostAsJsonAsync("/api/wireless?board=board-a",
             new { wifi_enabled = true, ble_enabled = true, ssid_hex = "4100ff", confirm_reboot = true,
                 use_tested_wifi = true, board = new { system_clock_mhz = 200, sdcard_profile = 1, radios = 3 } });
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
         Assert.True(dashboard.Saved!.UseTestedWifi);
         Assert.Equal("4100ff", dashboard.Saved.SsidHex);
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/wireless?board=a")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/wireless/scan?board=a", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/wireless/cancel?board=a", null)).StatusCode);
+        var contractPath = Path.Combine(SharedDashboardAssetsTests.WebRoot(), "tests/status-contract.json");
+        using var contract = JsonDocument.Parse(File.ReadAllText(contractPath));
+        foreach (var route in contract.RootElement.GetProperty("removed_routes").EnumerateArray())
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(route[0].GetString()!),
+                $"{route[1].GetString()}?board=board-a");
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, (await client.SendAsync(request)).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/wireless/scan?board=board-a", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsync("/api/wireless/cancel?board=board-a", null)).StatusCode);
         await app.StopAsync();
     }
 
@@ -535,34 +544,24 @@ public sealed class WirelessTests
         public void Dispose() => Hid.Dispose();
     }
 
-    private sealed class Dashboard : IDashboardBoards
+    private sealed class WirelessMonitor : TestMonitor
     {
         public string? SsidHex { get; private set; }
         public WirelessRequest? Saved { get; private set; }
         private static WirelessStatusResponse CurrentWireless => HidProtocol.ParseWirelessStatus(Status(),
             HidProtocol.ParseConfigurationReport(Configuration(), Hardware));
-        public DashboardBoardList Boards() => new([], null);
-        public StatusResponse Snapshot(string? boardId) => throw new NotSupportedException();
-        public bool SetLed(string? boardId, bool on) => throw new NotSupportedException();
-        public bool Reboot(string? boardId) => throw new NotSupportedException();
-        public bool SetSelfTest(string? boardId, string action, uint sizeMib) => throw new NotSupportedException();
-        public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>
-            throw new NotSupportedException();
-        public BootSettingsResponse? SetSettings(string? boardId, BootSettingsResponse settings, bool force = false) =>
-            throw new NotSupportedException();
-        public WirelessResponse ReadWireless(string? boardId) => new(CurrentWireless, false);
-        public WirelessResponse SetWireless(string? boardId, WirelessRequest settings)
+        public override WirelessResponse ReadWireless() => new(CurrentWireless, false);
+        public override WirelessResponse SetWireless(WirelessRequest settings)
         {
             Saved = settings;
             return new(CurrentWireless, true, settings.Board);
         }
-        public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) => [];
-        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password,
-            string? ssidHex = null)
+        public override IReadOnlyList<WirelessNetworkResponse> ScanWireless() => [];
+        public override WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null)
         {
             SsidHex = ssidHex;
             return new(5, 5, "192.168.1.2", 0, 1);
         }
-        public bool CancelWirelessTest(string? boardId) => true;
+        public override void CancelWirelessTest() { }
     }
 }

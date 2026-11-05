@@ -13,7 +13,7 @@ from .common import (
     SELF_TEST_PAYLOAD_SIZE,
     SELF_TEST_REPORT_ID,
 )
-from .common import _input_payload, _unknown_name
+from .common import InvalidRequest, _input_payload, _unknown_name
 from .control import build_control_command_report
 
 
@@ -23,17 +23,17 @@ def build_self_test_command_report(
     transaction_id: int = 1,
 ) -> bytes:
     if action not in ("start", "cancel"):
-        raise ValueError("Self-test action must be start or cancel")
+        raise InvalidRequest("Self-test action must be start or cancel")
     if size_mib is not None and type(size_mib) is not int:
-        raise ValueError("Self-test size must be an integer")
+        raise InvalidRequest("Self-test size must be an integer")
     if action == "cancel":
         if size_mib not in (None, 0):
-            raise ValueError("Self-test cancel does not accept a size")
+            raise InvalidRequest("Self-test cancel does not accept a size")
         size_mib = 0
     elif size_mib is None:
         size_mib = 32
     elif not 1 <= size_mib <= 1024:
-        raise ValueError("Self-test size must be an integer from 1 to 1024 MiB")
+        raise InvalidRequest("Self-test size must be an integer from 1 to 1024 MiB")
     args = bytes((int(action == "start"),)) + int(size_mib).to_bytes(4, "little")
     return build_control_command_report(transaction_id, 4, arguments=args)
 

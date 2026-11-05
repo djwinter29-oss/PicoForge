@@ -2,12 +2,11 @@
 
 import json
 import threading
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from picoforge.dashboard.monitor import DeviceMonitor
+from helpers import make_monitor
 from picoforge.dashboard.server import create_app
 from picoforge.hid.device import PicoForgeHid
 from picoforge.reports import (
@@ -48,6 +47,7 @@ class WirelessTests(unittest.TestCase):
         client.configuration = {"radios": 3, "tcp_cli_enabled": True}
         client._transaction_id = 0
         client._command_uncertain = False
+        client._control_lock = threading.RLock()
         client.last_command_result = None
         client._device = Mock()
         client._device.send_feature_report.side_effect = lambda value: len(value)
@@ -377,16 +377,12 @@ class WirelessTests(unittest.TestCase):
         with self.assertRaises(OSError):
             client._complete_settings(request)
 
-    def test_status_freshness_active_and_idle_boundaries(self):
-        for initial, threshold in ((status(), 6), (status(wifi=4, flags=0x33, test=1), 1.5),
-                                   (status(scan=1, generation=1), 1.5)):
+    def test_status_activity_and_failed_reads_mark_cached_status_stale(self):
+        for initial, active in ((status(), False), (status(wifi=4, flags=0x33, test=1), True),
+                                (status(scan=1, generation=1), True)):
             client = self.client([initial, OSError("USB")])
-            with patch("picoforge.hid.device.monotonic", return_value=10):
-                cached = client.read_wireless()
-            with patch("picoforge.hid.device.monotonic", return_value=10 + threshold - 0.001):
-                self.assertFalse(client.wireless_freshness()["stale"])
-            with patch("picoforge.hid.device.monotonic", return_value=10 + threshold):
-                self.assertTrue(client.wireless_freshness()["stale"])
+            cached = client.read_wireless()
+            self.assertEqual(client.wireless_active, active)
             with self.assertRaises(OSError):
                 client.read_wireless()
             self.assertTrue(cached["stale"])
@@ -421,14 +417,14 @@ class WirelessTests(unittest.TestCase):
             self.assertEqual(client._device.send_feature_report.call_count, 1)
 
     def test_http_routes_validate_sanitize_and_preserve_raw_ssid(self):
-        dashboard = Mock()
-        dashboard.set_wireless.return_value = {"wireless": parse_wireless_status_report(status()),
-                                               "reboot_pending": True, "settings": BOARD}
+        boards = Mock()
+        dashboard = boards.monitor.return_value
+        saved = {"wireless": parse_wireless_status_report(status()), "reboot_pending": True, "settings": BOARD}
+        dashboard.set_wireless.side_effect = lambda body: validate_wireless_configuration(body) or saved
         dashboard.test_wireless.return_value = {"test": {"state": 5}}
-        dashboard.read_wireless.return_value = {"wireless": parse_wireless_status_report(status())}
         dashboard.scan_wireless.return_value = {"networks": []}
         dashboard.cancel_wireless_test.return_value = {"cancelled": True}
-        client = create_app(dashboard).test_client()
+        client = create_app(boards).test_client()
         for body in (None, [], settings(confirm_reboot=False), settings(password="short")):
             self.assertEqual(client.post("/api/wireless?board=a", json=body).status_code, 400)
         body = settings(password="secret12", ble_key="ab" * 32)
@@ -436,15 +432,15 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("secret12", response.text)
         self.assertNotIn("ab" * 32, response.text)
-        self.assertEqual(client.get("/api/wireless?board=a").status_code, 200)
         self.assertEqual(client.post("/api/wireless/scan?board=a").status_code, 200)
         self.assertEqual(client.post("/api/wireless/cancel?board=a").json, {"cancelled": True})
         self.assertEqual(client.post("/api/wireless/test?board=a",
                                      json={"ssid": [65, 0, 255], "password": ""}).status_code, 200)
-        dashboard.test_wireless.assert_called_once_with("a", [65, 0, 255], "")
+        dashboard.test_wireless.assert_called_once_with([65, 0, 255], "")
+        boards.monitor.assert_called_with("a")
         self.assertEqual(client.post("/api/wireless/test?board=a",
                                      json={"ssid": "ignored", "ssid_hex": "4100FF", "password": ""}).status_code, 200)
-        dashboard.test_wireless.assert_called_with("a", b"A\0\xff", "")
+        dashboard.test_wireless.assert_called_with(b"A\0\xff", "")
         for failure in (TimeoutError("secret12"), OSError("secret12"), ValueError("secret12")):
             dashboard.test_wireless.side_effect = failure
             response = client.post("/api/wireless/test", json={"ssid": "Pico", "password": "secret12"})
@@ -453,46 +449,47 @@ class WirelessTests(unittest.TestCase):
             self.assertNotIn("secret12", response.text)
 
     def monitor(self):
-        monitor = DeviceMonitor.__new__(DeviceMonitor)
-        monitor._device_lock = threading.RLock()
-        monitor._lock = threading.RLock()
-        monitor._active_client = Mock()
-        monitor._command_outcome_uncertain = False
-        monitor._snapshot = {"connected": True, "hardware": {"wireless_supported": True},
-                             "msc": {"enabled": False, "transition_pending": False}, "storage_stale": False}
-        monitor._input_received_at = {10: time.monotonic()}
-        return monitor
+        client = Mock()
+        return make_monitor(client, {"connected": True, "hardware": {"wireless_supported": True},
+                                     "memory": {"msc": {"enabled": False, "transition_pending": False}}}), client
+
+    def test_busy_command_reply_does_not_block_later_wireless_commands(self):
+        monitor, client = self.monitor()
+        monitor._snapshot["hardware"] = {"wireless_supported": True, "led_available": True}
+        client.set_led.return_value = {"status": "busy", "error": "busy"}
+        with self.assertRaisesRegex(RuntimeError, "LED command busy"):
+            monitor.set_led(True)
+        self.assertEqual(monitor.snapshot()["control_result"]["status"], "busy")
+        client.scan_wireless.return_value = []
+        self.assertEqual(monitor.scan_wireless(), {"networks": []})
 
     def test_monitor_ownership_gates_and_input_pump(self):
-        monitor = self.monitor()
+        monitor, client = self.monitor()
         baseline = monitor._snapshot.copy()
-        for change in ({"connected": False}, {"hardware": {}}, {"msc": None},
-                       {"msc": {"enabled": True}}, {"msc": {"transition_pending": True}},
-                       {"self_test": {"active": True}}, {"reboot_pending": True},
-                       {"control_result": {"status": "pending"}}, {"control_result": {"status": "busy"}}):
+        for change in ({"connected": False}, {"hardware": {}}, {"memory": None},
+                       {"memory": {"msc": {"enabled": True}}}, {"memory": {"msc": {"transition_pending": True}}},
+                       {"self_test": {"active": True}}, {"reboot_pending": True}):
             monitor._snapshot = {**baseline, **change}
             with self.subTest(change=change), self.assertRaises(RuntimeError):
                 monitor.set_wireless(settings())
-            monitor._active_client.set_wireless.assert_not_called()
+            client.set_wireless.assert_not_called()
         monitor._snapshot = baseline
-        monitor._active_client.read_input_report.return_value = {"kind": "self_test", "data": {"active": False}}
-        monitor._poll_wireless_inputs()
-        self.assertEqual(monitor._active_client.read_input_report.call_count, 16)
-        monitor._active_client.read_input_report.side_effect = OSError("USB disconnected")
+        client.read_input_report.return_value = {"kind": "self_test", "data": {"active": False}}
+        monitor._drain_input_reports()
+        self.assertEqual(client.read_input_report.call_count, 16)
+        client.read_input_report.side_effect = OSError("USB disconnected")
         with self.assertRaises(OSError):
-            monitor._poll_wireless_inputs()
+            monitor._drain_input_reports()
 
     def test_monitor_polls_wireless_at_active_and_idle_intervals(self):
         for active, interval in ((False, 2.0), (True, 0.5)):
-            monitor = self.monitor()
+            monitor, client = self.monitor()
             monitor._stop = threading.Event()
-            client = monitor._active_client
-            client._wireless_active = active
+            client.wireless_active = active
             client.read_info.return_value = {"supported": True, "wireless_supported": True}
             client.read_configuration.return_value = BOARD
             client.read_input_report.return_value = None
             client.read_wireless.side_effect = [OSError("bad status"), {"ssid": "new", "stale": False}]
-            client.wireless_freshness.return_value = {"available": True, "stale": True, "age_ms": 2000}
             monitor._client_factory = lambda: client
             now = [0.0]
             iterations = []
@@ -511,14 +508,13 @@ class WirelessTests(unittest.TestCase):
             self.assertEqual(client.read_wireless.call_count, 2)
             self.assertEqual(monitor._snapshot["wireless"]["ssid"], "new")
             self.assertIsNone(monitor._snapshot["wireless_error"])
-            self.assertTrue(monitor._snapshot["wireless_freshness"]["stale"])
 
     def test_monitor_keeps_serving_inputs_and_freshness_while_testing(self):
-        monitor = self.monitor()
+        monitor, client = self.monitor()
         runtime = {"temperature_valid": True, "temperature_centidegrees": 2500,
                    "led_available": True, "led_on": False}
         memory = {"msc": {"enabled": False, "transition_pending": False}, "filesystem_format": "fat32"}
-        monitor._active_client.read_input_report.side_effect = [
+        client.read_input_report.side_effect = [
             {"kind": "runtime", "data": runtime}, {"kind": "memory", "data": memory},
             {"kind": "self_test", "data": {"active": False}}, None,
         ]
@@ -537,14 +533,14 @@ class WirelessTests(unittest.TestCase):
                 self.assertEqual(snapshot["memory"], memory)
             return {"state": 5}
 
-        monitor._active_client.test_wireless.side_effect = joining
+        client.test_wireless.side_effect = joining
         self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
         self.assertIsNone(monitor.snapshot()["wireless_phase"])
 
     def test_monitor_proof_uncertainty_propagates_to_other_writes(self):
-        monitor = self.monitor()
-        monitor._active_client._command_uncertain = True
-        monitor._active_client.tcp_cli_auth_proof.side_effect = OSError("USB")
+        monitor, client = self.monitor()
+        client.command_uncertain = True
+        client.tcp_cli_auth_proof.side_effect = OSError("USB")
         with self.assertRaises(OSError):
             monitor.tcp_cli_auth_proof(bytes(16), bytes(8))
         self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])

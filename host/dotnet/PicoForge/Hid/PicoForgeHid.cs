@@ -7,7 +7,7 @@ namespace PicoForge;
 
 public sealed record HidBoard(string DevicePath, string? SerialNumber, string ProductName);
 
-internal sealed class PicoForgeHid : IHidCommands, IDisposable
+internal sealed class PicoForgeHid : IHidClient
 {
     private HidDevice device = null!;
     private HidStream stream = null!;
@@ -29,7 +29,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             .Where(candidate => serialNumber is null || candidate.GetSerialNumber() == serialNumber)
             .ToArray();
         if (candidates.Length == 0)
-            throw new InvalidOperationException("PicoForge HID interface not found; check USB connection and HID permissions");
+            throw new IOException("PicoForge HID interface not found; check USB connection and HID permissions");
         if (candidates.Length != 1)
             throw new InvalidOperationException("Multiple PicoForge HID interfaces matched; connect one board at a time");
 
@@ -111,9 +111,9 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 HidProtocol.StorageReportId => HidProtocol.ParseStorageReport(data, identity),
                 HidProtocol.SelfTestReportId when (identity.Capabilities & HidProtocol.CapabilitySelfTest) != 0
                     => new(null, null, null, HidProtocol.ParseSelfTestReport(data)),
-                HidProtocol.SelfTestReportId => throw new InvalidOperationException(
+                HidProtocol.SelfTestReportId => throw new InvalidDataException(
                     "firmware published self-test status without advertising the capability"),
-                _ => throw new InvalidOperationException($"unexpected HID input report ID {data[0]}")
+                _ => throw new InvalidDataException($"unexpected HID input report ID {data[0]}")
             };
         }
         catch (TimeoutException)
@@ -161,7 +161,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         if (saved != settings || result.ResultData[3] != switches || result.ResultData[4] != 0)
         {
             CommandOutcomeUncertain = true;
-            throw new InvalidOperationException("Firmware did not confirm the selected next-boot settings");
+            throw new InvalidDataException("Firmware did not confirm the selected next-boot settings");
         }
         return saved;
     }
@@ -247,7 +247,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             result.ResultData[4] != expectedMask)
         {
             CommandOutcomeUncertain = true;
-            throw new InvalidOperationException("Saved settings were not confirmed; outcome is uncertain");
+            throw new InvalidDataException("Saved settings were not confirmed; outcome is uncertain");
         }
         // Keep the last runtime snapshot, with only the verified saved configuration updated.
         return staged with
@@ -398,7 +398,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             }
             var result = HidProtocol.ParseControlResult(response);
             if (result.TransactionId != transactionId || result.Opcode != opcode)
-                throw new InvalidOperationException("HID control result was replaced by another transaction");
+                throw new InvalidDataException("HID control result was replaced by another transaction");
             if (result.Status != 1)
             {
                 CommandOutcomeUncertain = false;
@@ -437,7 +437,8 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 replacement = null;
                 return;
             }
-            catch (Exception error) when (error is IOException or TimeoutException or InvalidOperationException)
+            catch (Exception error) when (error is IOException or TimeoutException or InvalidDataException
+                or InvalidOperationException)
             {
                 // A board may still be reconnecting; do not select an unverified identity.
             }
