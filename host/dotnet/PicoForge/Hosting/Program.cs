@@ -40,7 +40,9 @@ var indexHtml = await File.ReadAllTextAsync(Path.Combine(webRoot, "index.html"))
 app.MapGet("/", () => Results.Content(
     indexHtml.Replace("{{ dashboard_type }}", ".NET"), "text/html; charset=utf-8"));
 app.MapDeviceStatus();
-app.MapGet("/console", () => Results.File(Path.Combine(webRoot, "console.html"), "text/html; charset=utf-8"));
+var consoleHtml = await File.ReadAllTextAsync(Path.Combine(webRoot, "console.html"));
+app.MapGet("/console", () => Results.Content(
+    consoleHtml.Replace("{{ dashboard_type }}", ".NET"), "text/html; charset=utf-8"));
 ConsoleBridge.MapEndpoints(app);
 if (app.Environment.IsDevelopment()) app.MapOpenApi();
 await app.RunAsync();

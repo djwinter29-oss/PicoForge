@@ -50,6 +50,7 @@ test("Direct console relays keystrokes through the local bridge and closes the s
     assert.deepEqual(calls[0], ["open", { ipv4: "192.168.66.87", auth_required: true, ble_key: "ab".repeat(32) }]);
     assert.equal(element("#console-auth-key").value, "", "the key is cleared after the request");
     assert.equal(element("#console-status").textContent, "Connected");
+    assert.equal(element("#connect").textContent, "Disconnect", "one button toggles while connected");
 
     handlers.get("#terminal:keydown")({ key: "Tab", preventDefault() {}, isComposing: false,
       ctrlKey: false, altKey: false, metaKey: false, shiftKey: false });
@@ -57,12 +58,14 @@ test("Direct console relays keystrokes through the local bridge and closes the s
     const write = calls.find(([operation]) => operation === "write");
     assert.deepEqual(write[1], { session: "session-a", data: btoa("\t") }, "Tab is forwarded for completion");
 
-    handlers.get("#disconnect:click")();
+    handlers.get("#connect:click")();
     await tick();
     await tick();
     assert.equal(readSignal.aborted, true);
     assert.deepEqual(calls.at(-1), ["close", { session: "session-a" }]);
     assert.equal(element("#console-status").textContent, "Disconnected");
+    assert.equal(element("#connect").textContent, "Connect");
+    assert.equal(element("#connect").disabled, false);
   } finally {
     Object.assign(globalThis, saved);
   }

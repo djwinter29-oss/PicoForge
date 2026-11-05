@@ -81,7 +81,7 @@ test("console disconnect aborts a hung poll and does not retry pending input", a
       key: "x", preventDefault() {}, isComposing: false, ctrlKey: false, altKey: false, metaKey: false,
     });
     await new Promise(resolve => setImmediate(resolve));
-    handlers.get("#disconnect:click")();
+    handlers.get("#connect:click")();
     await new Promise(resolve => setImmediate(resolve));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(pollSignal.aborted, true);

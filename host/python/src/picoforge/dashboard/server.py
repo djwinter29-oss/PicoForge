@@ -78,7 +78,7 @@ def _register_ui_routes(app: Flask, root: Path) -> None:
 
     @app.get("/console")
     def console_page():
-        return send_from_directory(root, "console.html")
+        return render_template("console.html", dashboard_type="Python")
 
     @app.get("/favicon.svg")
     def favicon():

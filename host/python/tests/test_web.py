@@ -145,6 +145,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"<title>PicoForge Dashboard | Python</title>", response.data)
         self.assertIn(b"<small>Python</small>", response.data)
+        console = create_app(FakeMonitor()).test_client().get("/console", base_url="http://127.0.0.1")
+        self.assertIn(b"<title>PicoForge Console | Python</title>", console.data)
+        self.assertIn(b"<small>Python</small>", console.data)
 
     def test_status_route_returns_snapshot_and_security_headers(self):
         app = create_app(FakeMonitor())

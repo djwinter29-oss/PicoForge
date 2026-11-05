@@ -7,7 +7,6 @@ import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs?v=1";
 const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");
 const connect = document.querySelector("#connect");
-const disconnect = document.querySelector("#disconnect");
 const authKey = document.querySelector("#console-auth-key");
 const query = new URLSearchParams(location.search);
 const ipv4 = query.get("ipv4") ?? "";
@@ -62,6 +61,13 @@ function render() {
   terminal.scrollTop = terminal.scrollHeight;
 }
 
+/** Show one Connect/Disconnect toggle; the connected state also drives the top-bar light via CSS. */
+function setButton(label, disabled, connected = false) {
+  connect.textContent = label;
+  connect.disabled = disabled;
+  connect.setAttribute("data-state", connected ? "connected" : "disconnected");
+}
+
 async function close(message = "Disconnected") {
   const token = session;
   const controller = sessionController;
@@ -70,9 +76,8 @@ async function close(message = "Disconnected") {
   controller?.abort();
   input = "";
   status.textContent = message;
-  disconnect.disabled = true;
   terminal.setAttribute("aria-readonly", "true");
-  connect.disabled = true;
+  setButton("Connect", true);
   if (token) {
     try { await bridge("close", { session: token }, undefined, 5000); }
     catch (error) { status.textContent = `${message}. ${error.message}`; }
@@ -137,7 +142,7 @@ async function open() {
   }
   const controller = new AbortController();
   openingController = controller;
-  connect.disabled = true;
+  setButton("Connecting…", true);
   status.textContent = "Connecting to the board's TCP CLI...";
   try {
     const result = await bridge("open", { ipv4, auth_required: authRequired,
@@ -155,14 +160,14 @@ async function open() {
     input = "";
     render();
     status.textContent = "Connected";
-    disconnect.disabled = false;
+    setButton("Disconnect", false, true);
     terminal.setAttribute("aria-readonly", "false");
     terminal.focus();
     void poll(session, sessionController.signal);
   } catch (error) {
     if (!controller.signal.aborted) {
       status.textContent = error.message;
-      connect.disabled = false;
+      setButton("Connect", false);
     }
   } finally {
     if (openingController === controller) openingController = null;
@@ -192,8 +197,7 @@ terminal.addEventListener("paste", event => {
   if (text.includes("\r") && !window.confirm("Pasted text includes Enter and may execute commands. Continue?")) return;
   void send(text);
 });
-connect.addEventListener("click", () => { void open(); });
-disconnect.addEventListener("click", () => { void close(); });
+connect.addEventListener("click", () => { void (session ? close() : open()); });
 window.addEventListener("pagehide", () => {
   openingController?.abort();
   openingController = null;

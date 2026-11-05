@@ -1,15 +1,69 @@
-.console-controls { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+/* Wi-Fi console page: reuses the dashboard tokens, top bar, and buttons. */
+.console-page main { display: grid; gap: 14px; }
+.console-lede { margin: 6px 0 0; color: var(--muted); }
+.console-page .button { min-width: 104px; }
+.console-page .button:disabled { cursor: not-allowed; }
+.console-key { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.console-key[hidden] { display: none; }
+.console-key input {
+  width: 18rem;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd6d3;
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 12px var(--mono);
+}
+.console-key input:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; border-color: var(--teal); }
+.console-window {
+  overflow: hidden;
+  background: #0c1d1c;
+  border: 1px solid #0b2a28;
+  border-top: 3px solid var(--teal);
+  border-radius: 10px;
+  box-shadow: 0 3px 12px #17332e14;
+}
+.console-window:focus-within { box-shadow: 0 0 0 3px #c9e77999; }
+.console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 8px 16px;
+  background: var(--teal-dark);
+  border-bottom: 1px solid #ffffff14;
+  color: #b6d1ca;
+  font: 12px var(--mono);
+}
+#console-status { color: #fff; font-weight: 600; }
 #terminal {
-  background: #111827;
-  color: #f3f4f6;
-  padding: 1rem;
-  min-height: 24rem;
-  max-height: 70vh;
+  height: max(24rem, calc(100vh - 290px));
+  margin: 0;
+  padding: 14px 16px;
   overflow: auto;
-  font: 14px/1.5 monospace;
+  color: #e3efe9;
+  font: 13px/1.55 var(--mono);
   white-space: pre;
   cursor: text;
-  border: 2px solid transparent;
+  outline: none;
 }
-#terminal:focus { outline: none; border-color: #60a5fa; }
-.terminal-cursor { background: #f3f4f6; color: #111827; }
+.terminal-cursor { background: var(--lime); color: #0c1d1c; }
+#connect[data-state="connected"] {
+  background: var(--paper);
+  border-color: #cbd6d3;
+  color: var(--ink);
+  box-shadow: none;
+}
+#connect[data-state="connected"]:hover:not(:disabled) { background: #e8eeeb; }
+.console-page .connection-light { background: #ff927b; }
+.console-page:has(#connect[data-state="connected"]) .connection-light {
+  background: #b9e86b;
+  box-shadow: 0 0 0 4px #b9e86b24;
+}
+@media (max-width: 720px) {
+  .console-page .page-heading { flex-direction: column; align-items: stretch; }
+  .console-key { flex-wrap: wrap; }
+  .console-key input { width: 100%; }
+}
