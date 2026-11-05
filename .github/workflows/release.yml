@@ -129,7 +129,7 @@ jobs:
           VERSION: ${{ needs.validate-tag.outputs.version }}
         run: |
           mkdir -p build/direct dist
-          cp host/direct/index.html host/direct/favicon.svg LICENSE build/direct/
+          cp host/direct/index.html host/direct/console.html host/direct/favicon.svg LICENSE build/direct/
           cp -r host/direct/css host/direct/js build/direct/
           cp tools/host/direct_server.py build/direct/server.py
           cd build/direct

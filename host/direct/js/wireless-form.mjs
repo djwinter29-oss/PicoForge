@@ -19,8 +19,9 @@ export function renderWirelessStatus(snapshot) {
       const link = existing ?? document.createElement("a");
       link.textContent = label;
       link.href = snapshot.console_url;
-      link.dataset.consoleLink = "true";
-      link.title = "Open the Wi-Fi CLI terminal";
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.title = "Open the Wi-Fi CLI console in a new tab";
       if (!existing) status.replaceChildren(link);
     } else status.textContent = label;
     status.title = snapshot.wireless_error ?? (name === "wifi" && missingAuthKey
@@ -30,7 +31,7 @@ export function renderWirelessStatus(snapshot) {
       : name === "wifi" && snapshot.hardware?.serial_number
         ? `picoforge-${snapshot.hardware.serial_number}.local` : "");
   };
-  // BLE status omits SSID and IP until the connection proves the control key, so show only the link state then.
+  // Firmware before public BLE status zeroes the SSID and IP over Bluetooth, so show only the link state then.
   const redacted = snapshot.transport === "ble" && !wireless?.ssid;
   render("wifi", () => !wireless.wifi_enabled || (!redacted && !wireless.ssid) ? "Disabled"
     : wireless.wifi_state === "connected" ? (redacted ? "Connected" : `${wireless.ssid} (${wireless.ipv4})`)

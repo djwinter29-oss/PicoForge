@@ -207,10 +207,10 @@ int main(void)
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0 && controls == 1u);
     controls = 0u;
 
-    /* Status is readable without a proof, but never carries the SSID or LAN address. */
+    /* Status is public diagnostics: it is readable without a proof and includes the SSID and LAN address. */
     assert(read_cb(1u, HANDLE(001e), 0u, buffer, sizeof(buffer)) == PF_WIRELESS_STATUS_SIZE);
     for (unsigned i = PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET; i < PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET; ++i) {
-        assert(buffer[i] == 0u);
+        assert(buffer[i] == 0xa5);
     }
     assert(buffer[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] == 0xa5 && buffer[PF_WIRELESS_STATUS_ERROR_OFFSET] == 0xa5);
 
@@ -266,7 +266,7 @@ int main(void)
 """
 
 
-def test_ble_authorization_redaction_and_disconnect_reset(tmp_path):
+def test_ble_authorization_public_status_and_disconnect_reset(tmp_path):
     (tmp_path / "pico").mkdir()
     (tmp_path / "btstack.h").write_text(FAKE_BTSTACK)
     (tmp_path / "btstack_tlv_none.h").write_text(

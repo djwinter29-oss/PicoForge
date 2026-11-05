@@ -6,11 +6,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
-  assert.match(html, /href="css\/direct\.css\?v=16"/);
-  assert.match(html, /src="js\/app\.mjs\?v=33"/);
+  assert.match(html, /href="css\/direct\.css\?v=17"/);
+  assert.match(html, /src="js\/app\.mjs\?v=37"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
   assert.match(app, /from "\.\/device\.mjs\?v=7"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=14"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=16"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
     assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));

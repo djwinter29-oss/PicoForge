@@ -30,7 +30,7 @@ test("missing TCP auth key shows an actionable hint without misdiagnosing other 
   } finally { globalThis.document = previous; }
 });
 
-test("connected Wi-Fi CLI status becomes an in-dashboard terminal link", () => {
+test("connected Wi-Fi CLI status links to the console in a new tab", () => {
   const previous = globalThis.document;
   const elements = new Map();
   const wifi = { textContent: "", title: "", children: [], querySelector() { return this.children[0] ?? null; },
@@ -44,12 +44,14 @@ test("connected Wi-Fi CLI status becomes an in-dashboard terminal link", () => {
     dataset: {}, textContent: "", href: "", title: "",
   }) };
   try {
-    renderWirelessStatus({ connected: true, hardware: { capabilities: 128 }, console_url: "#wifi-terminal",
+    renderWirelessStatus({ connected: true, hardware: { capabilities: 128 },
+      console_url: "console.html?ipv4=192.168.1.9&auth=1",
       wireless: { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
         ssid: "HomeDev", ipv4: "192.168.1.9", ble_enabled: false } });
     assert.equal(wifi.children[0].textContent, "HomeDev (192.168.1.9)");
-    assert.equal(wifi.children[0].href, "#wifi-terminal");
-    assert.equal(wifi.children[0].dataset.consoleLink, "true");
+    assert.equal(wifi.children[0].href, "console.html?ipv4=192.168.1.9&auth=1");
+    assert.equal(wifi.children[0].target, "_blank");
+    assert.equal(wifi.children[0].rel, "noopener noreferrer");
   } finally { globalThis.document = previous; }
 });
 

@@ -1,8 +1,7 @@
 import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=7";
-import { renderStatus } from "./view.mjs?v=14";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=8";
-import { bindWirelessForm } from "./wireless-form.mjs?v=16";
-import { bindDirectTerminal } from "./terminal.mjs?v=1";
+import { renderStatus } from "./view.mjs?v=16";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=10";
+import { bindWirelessForm } from "./wireless-form.mjs?v=18";
 import { deriveOperationEligibility } from "./eligibility.mjs?v=1";
 import {
   cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
@@ -24,18 +23,6 @@ const configurationDialog = element("configuration-dialog");
 const rebootDialog = element("reboot-dialog");
 const returnDialog = element("return-dialog");
 const shareDialog = element("share-dialog");
-const terminal = bindDirectTerminal({
-  dialog: element("terminal-dialog"),
-  connect: element("terminal-connect"),
-  disconnect: element("terminal-disconnect"),
-  close: element("terminal-close"),
-  status: element("terminal-status"),
-  output: element("terminal-output"),
-  input: element("terminal-input"),
-  key: element("terminal-key"),
-  keyLabel: element("terminal-key-label"),
-  getWireless: () => client.state.wireless,
-});
 let settingsDirty = false;
 let configurationForceSave = false;
 let client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
@@ -72,8 +59,11 @@ async function refreshWirelessStatus() {
 
 function render(state) {
   const wireless = state.wireless;
-  renderStatus({ ...state, console_url: wireless?.wifi_enabled && wireless.wifi_state === "connected"
-    && wireless.tcp_cli_started && wireless.ipv4 !== "0.0.0.0" ? "#wifi-terminal" : null });
+  // View-only Bluetooth shows the network but no console link; older firmware also zeroes the IPv4 over Bluetooth.
+  const consoleAllowed = !(client instanceof PicoForgeBluetooth) || client.accessMode === "control";
+  renderStatus({ ...state, console_url: consoleAllowed && wireless?.wifi_enabled
+    && wireless.wifi_state === "connected" && wireless.tcp_cli_started && wireless.ipv4 !== "0.0.0.0"
+    ? `console.html?ipv4=${wireless.ipv4}&auth=${Number(wireless.tcp_cli_auth_required)}` : null });
   if (!state.connected) {
     wirelessLoadedAt = 0;
     wirelessForm.reset();
@@ -179,12 +169,6 @@ function render(state) {
     && (state.hardware?.capabilities & 128)) void refreshWirelessStatus();
 }
 
-element("wifi-state").addEventListener("click", event => {
-  if (!event.target.closest("a[data-console-link]")) return;
-  event.preventDefault();
-  terminal.open();
-});
-
 async function run(operation) {
   try { await operation(); } catch (error) { client.update({ error: error.message }); }
 }
@@ -235,7 +219,6 @@ element("ble-authorize").addEventListener("click", () => run(async () => {
       target.accessMode = null;
       throw new Error("Bluetooth disconnected while loading the control key. Scan and connect again.");
     }
-    wirelessLoadedAt = 0;
     target.update({ error: null });
     bluetoothDialog.close();
   }

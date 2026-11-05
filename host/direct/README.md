@@ -55,10 +55,13 @@ Live diagnostics shows uptime, service load for Core 0 / Core 1, board temperatu
 effective bus clock and timing in one field. Busy sampling retains the last valid card details without inserting
 a message or shifting the table; stale reports, disconnects, ownership transitions, and valid absent/uninitialized
 samples clear retained details. Retained values are display-only and never authorize a command.
-When Wi-Fi and the board TCP CLI are connected, click the Wi-Fi value to open the Direct terminal. It relays raw
-commands over TCP port 2323, which is unencrypted; if the board requires TCP authentication, enter its saved
-64-digit BLE control key. The local bridge permits one terminal session and closes it after 15 seconds without a
-request. Run the included server instead of a generic static-file server to enable this feature.
+When Wi-Fi and the board TCP CLI are connected, click the Wi-Fi value to open the Wi-Fi console in a new tab. Like
+the Python dashboard console, it is an interactive terminal: Enter runs a command, Tab completes, and arrow keys edit
+and recall history. It relays raw keystrokes over TCP port 2323, which is unencrypted; if the board requires TCP
+authentication, enter its saved 64-digit BLE control key. The local bridge permits one terminal session and closes it
+after 15 seconds without a request. Run the included server instead of a generic static-file server to enable this
+feature. View-only Bluetooth shows the SSID and IP address without the console link; enter the control key in the
+Bluetooth dialog to enable it.
 
 ## Controls
 

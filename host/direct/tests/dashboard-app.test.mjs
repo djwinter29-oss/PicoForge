@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PicoForgeWebHid } from "../js/device.mjs?v=7";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=8";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=10";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -330,11 +330,17 @@ test("connection dialogs scan before prompting for a key and preserve transport 
     assert.equal(el("#ble-control-key").value, "", "selecting view-only clears unsubmitted secrets");
     assert.equal(client.state.connected, true, "view-only mode retains diagnostics");
     assert.equal(client.bleKey, null);
+    const wireless = { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
+      tcp_cli_auth_required: false, ssid: "HomeDev", ipv4: "192.168.66.87" };
+    client.update({ wireless });
+    assert.equal(el("#wifi-state").textContent, "HomeDev (192.168.66.87)", "view-only still names the network");
+    assert.equal(el("#wifi-state").children.length, 0, "view-only Bluetooth offers no console link");
     el("#bluetooth-open").click();
     el("#ble-control-key").value = "ab".repeat(32);
     await el("#ble-authorize").click();
     assert.equal(loadedKey, "ab".repeat(32));
     assert.equal(client.accessMode, "control");
+    assert.equal(el("#wifi-state").children[0]?.href, "console.html?ipv4=192.168.66.87&auth=0");
     assert.equal(el("#bluetooth-connection-dialog").open, false);
     assert.match(el("#ble-access-status").textContent, /control mode/);
     assert.equal(el("#ble-control-key").value, "");
