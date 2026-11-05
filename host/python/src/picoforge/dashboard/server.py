@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import base64
 import binascii
@@ -71,14 +72,23 @@ def create_app(monitor: DashboardBackend | None = None, web_root: Path | None = 
     return app
 
 
+def _app_version() -> str:
+    try:
+        return version("picoforge")
+    except PackageNotFoundError:
+        return "0.0.0-dev"
+
+
 def _register_ui_routes(app: Flask, root: Path) -> None:
+    app_version = _app_version()
+
     @app.get("/")
     def index():
-        return render_template("index.html", dashboard_type="Python")
+        return render_template("index.html", dashboard_type="Python", app_version=app_version)
 
     @app.get("/console")
     def console_page():
-        return render_template("console.html", dashboard_type="Python")
+        return render_template("console.html", dashboard_type="Python", app_version=app_version)
 
     @app.get("/favicon.svg")
     def favicon():

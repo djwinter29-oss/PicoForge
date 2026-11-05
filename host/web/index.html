@@ -13,7 +13,9 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="PicoForge host status">
       <span class="brand-mark">PF</span>
-      <span class="brand-copy"><small>{{ dashboard_type }}</small><strong>PicoForge</strong></span>
+      <span class="brand-copy">
+        <strong>PicoForge</strong><small>{{ dashboard_type }} · App v{{ app_version }}</small>
+      </span>
     </a>
     <div class="connection" id="connection" data-state="disconnected">
       <span class="connection-light" aria-hidden="true"></span>

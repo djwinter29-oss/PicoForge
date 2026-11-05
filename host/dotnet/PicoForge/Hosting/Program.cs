@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.FileProviders;
 using PicoForge;
@@ -36,13 +37,14 @@ app.Use(async (context, next) =>
 var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 var files = new PhysicalFileProvider(webRoot);
 app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
-var indexHtml = await File.ReadAllTextAsync(Path.Combine(webRoot, "index.html"));
-app.MapGet("/", () => Results.Content(
-    indexHtml.Replace("{{ dashboard_type }}", ".NET"), "text/html; charset=utf-8"));
+var appVersion = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+    ?.InformationalVersion.Split('+')[0] ?? "0.0.0-dev";
+string Page(string html) => html.Replace("{{ dashboard_type }}", ".NET").Replace("{{ app_version }}", appVersion);
+var indexHtml = Page(await File.ReadAllTextAsync(Path.Combine(webRoot, "index.html")));
+app.MapGet("/", () => Results.Content(indexHtml, "text/html; charset=utf-8"));
 app.MapDeviceStatus();
-var consoleHtml = await File.ReadAllTextAsync(Path.Combine(webRoot, "console.html"));
-app.MapGet("/console", () => Results.Content(
-    consoleHtml.Replace("{{ dashboard_type }}", ".NET"), "text/html; charset=utf-8"));
+var consoleHtml = Page(await File.ReadAllTextAsync(Path.Combine(webRoot, "console.html")));
+app.MapGet("/console", () => Results.Content(consoleHtml, "text/html; charset=utf-8"));
 ConsoleBridge.MapEndpoints(app);
 if (app.Environment.IsDevelopment()) app.MapOpenApi();
 await app.RunAsync();
