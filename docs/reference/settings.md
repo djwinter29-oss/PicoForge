@@ -12,11 +12,8 @@ there is no runtime transport selector.
 Wireless provisioning, private credential storage, BLE authorization and client support are defined in the
 [wireless design](../guides/wireless.md).
 
-Builds use the SDK stock clock; select a different clock through the saved system-clock profile, not a CMake
-override. The former `PF_SYS_CLK_MHZ` option is rejected, including in existing caches. The build/load scripts clear
-retired clock and SD-speed options automatically when rebuilding; `load.sh --skip-build` leaves the image unchanged.
-For direct CMake use, clear it once with
-`cmake -U PF_SYS_CLK_MHZ -S firmware -B <build-dir>`, then use the normal build command.
+Builds use the SDK stock clock; select a different clock through the saved system-clock profile, not a build-time
+override.
 
 Both SD transports obtain their requested clock from
 `pf_get_storage_speed_mhz()` in
@@ -24,8 +21,7 @@ Both SD transports obtain their requested clock from
 the hardware chooses the closest safe supported clock at or below it. Board data supplies wiring and controller
 selection, not a separate speed. SPI above 25 MHz requires card CMD6 High-Speed support; otherwise the CSD-limited
 Default-Speed rate is retained. SDIO High-Speed is limited by SYSCLK/4 and the card; there is no build-time
-negotiation switch. Clear the removed cached option once with
-`cmake -U PF_SDIO_PIO_HIGH_SPEED -S firmware -B <build-dir>` before rebuilding an existing configuration.
+negotiation switch.
 For example, a 50 MHz SDIO request at 150 MHz SYSCLK achieves 37.5 MHz. Status reports the actual bus clock separately.
 
 ## Using the API
@@ -67,18 +63,17 @@ The Python, .NET, and Direct dashboards map these values to select options and v
 the Feature `20` completion result. **Save&Reboot** sends only opcode `6`; firmware queues its existing deferred
 reboot after a successful save. Failed or rejected saves do not reboot. Opcode `2` remains the standalone reboot
 command. Reconnection refreshes Feature `2`. The Python/.NET
-`GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` accepts
-the system clock and `sdcard_profile`, and returns the values confirmed by the device. Unsupported values return HTTP 400;
-unsupported firmware or busy storage returns HTTP 409. Normal writes are rejected while MSC or storage work owns
-the media; confirmed forced saving is the exception below.
+`GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` requires
+the system clock, `sdcard_profile` and `radios`, and returns the values confirmed by the device. Unsupported values
+return HTTP 400; unsupported firmware or busy storage returns HTTP 409. Normal writes are rejected while MSC or
+storage work owns the media; confirmed forced saving is the exception below.
 The dashboards expose one **SD Card** speed selector. High-Speed is a requested profile; the active negotiated timing
 is reported separately because a card or transport may remain at Standard speed. Values apply after reboot and do
 not change the active clock or bus immediately.
 On W boards (capability bit 7) the dashboards also show **Wi-Fi** and **Bluetooth** next-boot switches, enabled by
-default; Pico/Pico 2 builds hide them and must send `radios` as `0`. `POST /api/settings` accepts optional `radios`;
-omitting it keeps the saved switches.
+default; Pico/Pico 2 builds hide them and must send `radios` as `0`.
 The wireless boot controls also include a **TCP CLI** dropdown. It is greyed out when Wi-Fi is disabled and keeps
-its selection until saving; it is also greyed out until the board's wireless status confirms support, for example
+its selection until saving; it is also greyed out until the board's wireless status has been read, for example
 while connected through Bluetooth. TCP CLI authentication has no setting: it is required exactly when a control key
 is saved. Bluetooth **Enabled** needs a saved or staged key, and disabling Bluetooth erases the key on save.
 Pico/Pico 2 builds hide all three wireless boot controls.
@@ -102,13 +97,12 @@ the save. See the [wire lifecycle](usb-hid.md#confirmed-save-and-reboot-while-sh
 
 Device sync cannot flush the computer's cached writes. This is an explicitly accepted unsafe interruption, not a
 safe-eject guarantee or filesystem repair. After successful reboot, MSC defaults off and automatic mounting resumes.
-Older firmware keeps Save disabled during sharing and displays an update/return-to-Pico instruction.
 
 ## Persistence and flash safety
 
-The version 1 profile record stores one byte per profile: system clock and shared SD-card speed. It does not
-store MHz or separate SPI/SDIO settings. The HID protocol's system clock field still carries MHz.
-An independently checked wireless extension follows that unchanged record within the same flash page; see
+The version 1 record stores one byte per profile (system clock and shared SD-card speed), the radio and TCP CLI
+switches, and the private wireless credentials under one CRC. It does not store MHz or separate SPI/SDIO settings.
+The HID protocol's system clock field still carries MHz. See also
 [wireless persistence](wireless.md#execution-and-storage-safety).
 
 Boot-applied settings are exposed through the platform facade `platform/boot_config.c/.h`. The USB task is the only
@@ -131,23 +125,27 @@ An unsafe first access leaves loading pending for a safe caller; setters reject 
 
 ## Record format
 
-Little-endian, 16 bytes, padded with `0xFF` to one 256-byte page at the start of the reserved sector:
+Little-endian, 148 bytes, padded with `0xFF` to one 256-byte page at the start of the reserved sector:
 
 | Offset | Size | Content |
 | --- | --- | --- |
 | 0 | 4 | magic `PFCF` |
 | 4 | 2 | format version (`1`) |
-| 6 | 2 | record size (`16`) |
+| 6 | 2 | record size (`148`) |
 | 8 | 1 | System clock profile (`0` Default, `1` 150 MHz, `2` 200 MHz, `3` 250 MHz) |
 | 9 | 1 | Shared SD-card speed profile (`0` Default, `1` High-Speed) |
-| 10 | 1 | Disabled radios (`PF_WIRELESS_*` bits; `0` in older records enables both) |
-| 11 | 1 | Wireless extension required (`1` when written by this firmware, `0` in older records) |
-| 12 | 4 | CRC-32 (IEEE, reflected) of bytes 0–11 |
+| 10 | 1 | Disabled services: bit 0 Wi-Fi, bit 1 Bluetooth, bit 2 TCP CLI; other bits invalid |
+| 11 | 1 | Wi-Fi authentication state (`0` try WPA2, `1` try WPA3-SAE, `2` WPA2, `3` WPA3-SAE) |
+| 12 | 33 | Wi-Fi SSID, NUL-terminated UTF-8 |
+| 45 | 64 | Wi-Fi passphrase, NUL-terminated printable ASCII; empty or 8–63 characters |
+| 109 | 32 | Control key; all zero means no key |
+| 141 | 3 | Reserved, zero |
+| 144 | 4 | CRC-32 (IEEE, reflected) of bytes 0–143 |
 
 Missing, erased, short, wrong magic/version/size, CRC-invalid or out-of-range data returns the complete defaults;
-fields are never applied partially and boot never depends on the record. A record marked as requiring the wireless
-extension loads only together with a valid extension, so profiles and credentials commit as one unit. There is a single
-copy: a power loss during save leaves a record that fails CRC, or lacks its extension, and loads as defaults (single
+fields are never applied partially and boot never depends on the record. Profiles and credentials share one CRC, so
+they commit as one unit. There is a single copy: a power loss during save leaves a record that fails CRC and loads as
+defaults with no credentials (single
 sector, no wear levelling: fine for infrequent user configuration; a dual-sector journal is the upgrade if retaining
 the old values across a power loss or frequent writes are needed).
 
@@ -196,7 +194,7 @@ They cover defaults, the CRC-32 check value, malformed metadata and profiles, ro
 failed and partially completed programming, rejected ISR/scheduler contexts, reentrant saves, safe loading retries,
 and lockout-TCB reclamation including elapsed-tick wraparound. The SDK fake distinguishes failure before task
 creation, failure after task creation but before programming, and failure after programming during safe-zone exit.
-Partial-program tests interrupt the profile record and wireless extension at every byte boundary, check complete
+Partial-program tests interrupt the record at every byte boundary, check complete
 defaults with no credentials after reboot, then verify
 recovery through a successful save. Separate system-clock tests exercise modelled clock/regulator APIs.
 Real flash erase/program, power loss, clock changes and the bus speeds on hardware are not tested here and need a board.

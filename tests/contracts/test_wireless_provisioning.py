@@ -157,7 +157,7 @@ bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *for
 static void request(uint8_t *report, uint16_t mhz, uint8_t profile)
 {
     memset(report, 0, PF_WIRELESS_REQUEST_SIZE);
-    report[0] = 2; report[1] = 7; report[2] = PF_WIRELESS_WIFI; report[3] = 3;
+    report[0] = 1; report[1] = 7; report[2] = PF_WIRELESS_WIFI; report[3] = 3;
     strcpy((char *)report + 4, "network");
     report[133] = (uint8_t)mhz; report[134] = (uint8_t)(mhz >> 8); report[135] = profile;
 }
@@ -250,7 +250,7 @@ int main(int argc, char **argv)
     assert(zeroizes == before_rejected_zeroizes + 2u);
     staged_test = false;
     request(report, 150, 0);
-    report[0] = 1;
+    report[0] = 2;
     assert(!pf_wireless_configure(report) && saves == 2 && discards == 2);
     request(report, 150, 0);
     storage_busy = true;
@@ -325,7 +325,7 @@ int main(int argc, char **argv)
     pf_wireless_status(status);
     assert(status[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] == 1 && strcmp((char *)status + 9, "network") == 0);
 
-    /* A save can disable, preserve, or enable the service independently of the radio switches. */
+    /* Every save carries the complete TCP CLI switch, independently of the radio switches. */
     request(report, 150, 0);
     report[3] |= 8u;
     assert(pf_wireless_configure(report) && !tcp_cli_enabled);
@@ -334,16 +334,13 @@ int main(int argc, char **argv)
     pf_wireless_status(status);
     assert(status[PF_WIRELESS_STATUS_SERVICES_OFFSET] == PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED);
     assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0u);
-    request(report, 150, 0);
-    report[3] |= 16u;
-    assert(pf_wireless_configure(report) && !tcp_cli_enabled);
-    request(report, 150, 0);
-    report[3] |= 24u;
     const unsigned before_invalid = saves;
-    assert(!pf_wireless_configure(report) && saves == before_invalid);
-    /* Retired TCP authentication flags from older hosts are accepted and ignored. */
+    for (unsigned flag = 16u; flag <= 128u; flag <<= 1u) {
+        request(report, 150, 0);
+        report[3] |= (uint8_t)flag;
+        assert(!pf_wireless_configure(report) && saves == before_invalid && !tcp_cli_enabled);
+    }
     request(report, 150, 0);
-    report[3] |= 96u;
     assert(pf_wireless_configure(report) && saves == before_invalid + 1u && tcp_cli_enabled);
     request(report, 150, 0);
     save_result = false;
@@ -367,5 +364,5 @@ int main(int argc, char **argv)
     generated_vectors = subprocess.run([str(binary), "status-vectors"], check=True,
                                        capture_output=True, text=True).stdout
     # On an intentional status change, regenerate the fixture from this binary's `status-vectors` output.
-    vectors_path = ROOT / "tests/fixtures/wireless-status-v4.json"
+    vectors_path = ROOT / "tests/fixtures/wireless-status.json"
     assert generated_vectors == vectors_path.read_text()

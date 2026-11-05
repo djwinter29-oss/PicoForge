@@ -54,8 +54,8 @@ class SelfTestProtocolTests(unittest.TestCase):
 
     def test_requires_filesystem_result_for_filesystem_io_failure(self):
         with self.assertRaisesRegex(ValueError, "FatFs"):
-            parse_self_test_report(report(7, target=1024, error=8))
-        result = parse_self_test_report(report(7, target=1024, error=8, fs_result=1))
+            parse_self_test_report(report(7, target=1024, error=7))
+        result = parse_self_test_report(report(7, target=1024, error=7, fs_result=1))
         self.assertEqual(result["error_name"], "filesystem I/O")
 
 

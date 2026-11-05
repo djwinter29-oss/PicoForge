@@ -16,9 +16,9 @@ class MonitorMscTests(unittest.TestCase):
         self.monitor._active_client = Mock()
         self.monitor._active_client.set_msc.return_value = {"status": "completed", "error": "none"}
         self.monitor._active_client.set_led.return_value = {"status": "completed", "error": "none"}
-        self.monitor._snapshot = {"msc": {"enabled": True, "force_return_supported": True}}
+        self.monitor._snapshot = {"msc": {"enabled": True}}
 
-    def test_forced_settings_require_confirmed_capable_idle_host_ownership(self):
+    def test_forced_settings_require_confirmed_idle_host_ownership(self):
         settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         snapshot = {"connected": True, "settings_supported": True,
                     "hardware": {"capabilities": 68, "storage_transport": "sdio"},
@@ -29,7 +29,6 @@ class MonitorMscTests(unittest.TestCase):
         self.assertEqual(self.monitor.set_settings(settings, force=True), settings)
         self.monitor._active_client.set_settings.assert_called_once_with(settings, force=True)
         for mutate in [
-            {"hardware": {"capabilities": 4, "storage_transport": "sdio"}},
             {"msc": {"enabled": False, "transition_pending": False}},
             {"msc": {"enabled": True, "transition_pending": True}},
             {"self_test": {"active": True}},
@@ -71,18 +70,15 @@ class MonitorMscTests(unittest.TestCase):
                 self.monitor._active_client.set_msc.assert_called_once_with(False, force=True)
                 self.assertTrue(status["transition_pending"])
 
-    def test_legacy_safe_command_remains_hid_only(self):
+    def test_safe_return_uses_only_hid(self):
         self.monitor.set_msc(False)
         self.monitor._active_client.set_msc.assert_called_once_with(False)
 
-    def test_return_requires_capable_enabled_idle_firmware(self):
-        for field, value in (("force_return_supported", False), ("enabled", False),
-                             ("transition_pending", True)):
+    def test_force_return_requires_enabled_idle_msc(self):
+        for field, value in (("enabled", False), ("transition_pending", True)):
             with self.subTest(field=field):
-                self.monitor._snapshot["msc"] = {
-                    "enabled": True, "force_return_supported": True, "transition_pending": False, field: value,
-                }
-                with self.assertRaisesRegex(RuntimeError, "force-return support"):
+                self.monitor._snapshot["msc"] = {"enabled": True, "transition_pending": False, field: value}
+                with self.assertRaisesRegex(RuntimeError, "requires enabled MSC"):
                     self.monitor.set_msc(False, force=True)
                 self.monitor._active_client.set_msc.assert_not_called()
 
@@ -147,7 +143,7 @@ class MonitorReconnectTests(unittest.TestCase):
         monitor._input_received_at = {}
         client = Mock()
         client.read_info.return_value = {"supported": True}
-        client.read_configuration.return_value = {"system_clock_mhz": 0, "sdcard_profile": 0}
+        client.read_configuration.return_value = {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0}
         client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
         monitor._client_factory = lambda: client
         waits = []
@@ -220,8 +216,7 @@ class MonitorReconnectTests(unittest.TestCase):
         }
         client.read_configuration.return_value = {
             "system_clock_mhz": 200, "sdcard_profile": 1, "stored_sysclk_profile": 200,
-            "stored_sdcard_profile": 1, "storage_transport": "sdio",
-            "sdio_bus_mhz": 50, "spi_bus_mhz": 0,
+            "stored_sdcard_profile": 1, "radios": 0, "storage_transport": "sdio",
         }
         client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
         monitor._client_factory = lambda: client
@@ -255,6 +250,7 @@ class MonitorReconnectTests(unittest.TestCase):
         client.read_configuration.return_value = {
             "system_clock_mhz": 0,
             "sdcard_profile": 0,
+            "radios": 0,
         }
         captured = {}
         items = iter([
@@ -319,25 +315,17 @@ class MonitorSettingsTests(unittest.TestCase):
             "connected": True,
             "hardware": {"storage_transport": "sdio"},
             "settings_supported": True,
-            "settings": {"system_clock_mhz": 0, "sdcard_profile": 0,
-                         "sdio_bus_mhz": 25, "spi_bus_mhz": 0},
+            "settings": {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0},
             "msc": {"enabled": False, "transition_pending": False},
         }
 
     def test_saves_settings_only_when_supported_and_storage_is_idle(self):
-        settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 50}
-        self.monitor._active_client.set_settings.return_value = {
-            "system_clock_mhz": 200, "sdcard_profile": 1,
-        }
-        self.monitor._active_client.configuration = {
-            "system_clock_mhz": 200, "sdcard_profile": 1,
-            "sdio_bus_mhz": 50, "spi_bus_mhz": 0,
-        }
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
+        self.monitor._active_client.set_settings.return_value = settings
+        self.monitor._active_client.configuration = settings
         saved = self.monitor.set_settings(settings)
         self.assertEqual(saved["sdcard_profile"], 1)
-        self.monitor._active_client.set_settings.assert_called_once_with(
-            {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
-        )
+        self.monitor._active_client.set_settings.assert_called_once_with(settings)
         self.assertIn("Waiting for the board to reboot", self.monitor.snapshot()["settings_message"])
 
     def test_canonical_settings_are_saved_and_returned_without_transport_fields(self):
@@ -347,14 +335,13 @@ class MonitorSettingsTests(unittest.TestCase):
         self.assertEqual(self.monitor.set_settings(settings), settings)
         self.monitor._active_client.set_settings.assert_called_once_with(settings)
 
-    def test_settings_without_radios_keep_the_saved_radio_enables(self):
-        self.monitor._snapshot["board_configuration"] = {"radios": 3}
-        self.monitor.set_settings({"system_clock_mhz": 150, "sdcard_profile": 0})
-        self.monitor._active_client.set_settings.assert_called_once_with(
-            {"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 3})
+    def test_settings_require_the_radio_switches(self):
+        with self.assertRaises(ValueError):
+            self.monitor.set_settings({"system_clock_mhz": 150, "sdcard_profile": 0})
+        self.monitor._active_client.set_settings.assert_not_called()
 
     def test_rejects_settings_when_storage_state_is_unknown_or_busy(self):
-        settings = {"system_clock_mhz": 150, "sdio_bus_mhz": 0, "spi_bus_mhz": 0}
+        settings = {"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 0}
         for msc in (None, {"enabled": True, "transition_pending": False},
                     {"enabled": False, "transition_pending": True}):
             with self.subTest(msc=msc):
@@ -366,7 +353,7 @@ class MonitorSettingsTests(unittest.TestCase):
 
     def test_rejects_invalid_saved_values_before_hid_write(self):
         with self.assertRaises(ValueError):
-            self.monitor.set_settings({"system_clock_mhz": 100, "sdio_bus_mhz": 0, "spi_bus_mhz": 0})
+            self.monitor.set_settings({"system_clock_mhz": 100, "sdcard_profile": 0, "radios": 0})
         self.monitor._active_client.set_settings.assert_not_called()
 
 

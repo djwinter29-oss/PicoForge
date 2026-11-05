@@ -76,7 +76,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     const wifiBlocked = busy || wifiCanceling || wifiCancelError !== null;
     const tcp = el("settings-tcp-cli");
     if (tcp) {
-      tcp.disabled = !tcpReady || !status?.tcp_cli_configurable;
+      tcp.disabled = !tcpReady || !status;
       tcp.closest?.("label")?.toggleAttribute("hidden", !available);
     }
     for (const id of ["settings-wifi", "settings-ble"]) {
@@ -112,7 +112,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   const erasing = () => Boolean(supported() && status && (
     !radioOn("settings-wifi") && status.wifi_enabled && (status.ssid || status.password_configured)
     || !radioOn("settings-ble") && status.ble_enabled && status.ble_key_configured));
-  const dirty = () => Boolean(wifiStage || keyDirty || erasing() || status?.tcp_cli_configurable
+  const dirty = () => Boolean(wifiStage || keyDirty || erasing() || status && el("settings-tcp-cli")
     && radioOn("settings-tcp-cli") !== status.tcp_cli_enabled);
   el("settings-tcp-cli")?.addEventListener("change", () => { refresh(); changed(); });
   const enableRadio = id => {
@@ -343,7 +343,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       const ble = radioOn("settings-ble");
       const config = { wifi_enabled: wifi, ble_enabled: ble,
         ssid: wifi ? wifiStage?.ssid ?? status?.ssid ?? "" : "", confirm_reboot: true };
-      if (status?.tcp_cli_configurable) config.tcp_cli_enabled = radioOn("settings-tcp-cli");
+      if (status && el("settings-tcp-cli")) config.tcp_cli_enabled = radioOn("settings-tcp-cli");
       if (wifi && wifiStage?.use_tested_wifi) config.use_tested_wifi = true;
       if (!wifi && (status?.ssid || status?.password_configured)) config.password = "";
       if (ble && keyDirty) config.ble_key = el("ble-secret").value;

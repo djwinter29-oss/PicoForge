@@ -144,7 +144,7 @@ test("self-test writes require fresh, known, mounted, firmware-owned state and v
 test("self-test presents retained throughput, request errors, and unknown enums", () => withDocument(el => {
   const state = snapshot();
   state.self_test = decodeSelfTestReport(selfTest(6));
-  state.self_test.request_error = 11;
+  state.self_test.request_error = 10;
   renderSelfTest(state);
   assert.equal(el("#self-test-disclosure").open, false);
   assert.equal(el("#self-test-state").textContent, "Passed · 100%");

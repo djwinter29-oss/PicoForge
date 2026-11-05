@@ -179,50 +179,13 @@ def _unknown_name(value: int, names: dict[int, str]) -> str:
     return names.get(value, f"unknown ({value})")
 
 def _validate_settings(settings: dict[str, object]) -> tuple[int, int, int]:
-    """Return clock, SD profile and radio enables (bit 0 Wi-Fi, bit 1 BLE; 0 when omitted)."""
+    """Return clock, SD profile and radio enables (bit 0 Wi-Fi, bit 1 BLE)."""
     if not isinstance(settings, dict):
         raise ValueError("boot settings must be an object")
     clock = settings.get("system_clock_mhz")
     profile = settings.get("sdcard_profile")
-    radios = settings.get("radios", 0)
+    radios = settings.get("radios")
     if (type(clock) is not int or clock not in (0, 150, 200, 250) or type(profile) is not int or profile not in (0, 1)
             or type(radios) is not int or radios not in range(4)):
         raise ValueError("unsupported boot settings value")
     return clock, profile, radios
-
-def normalize_legacy_settings(
-    settings: dict[str, object], transport: str, current_profile: int | None = None
-) -> dict[str, int]:
-    """Translate the established dashboard settings shape to the v1 profile."""
-    if not isinstance(settings, dict):
-        raise ValueError("boot settings must be an object")
-    clock = settings.get("system_clock_mhz")
-    sdio = settings.get("sdio_bus_mhz")
-    spi = settings.get("spi_bus_mhz")
-    if (type(clock) is not int or clock not in (0, 150, 200, 250)
-            or type(sdio) is not int or sdio not in (0, 25, 50)
-            or type(spi) is not int or spi not in (0, 25, 50)):
-        raise ValueError("unsupported boot settings value")
-    if transport not in ("sdio", "spi"):
-        raise ValueError("unknown storage transport")
-    selected = sdio if transport == "sdio" else spi
-    other = spi if transport == "sdio" else sdio
-    if other not in (0, selected):
-        raise ValueError("settings for the unselected storage transport must be zero or match the selected profile")
-    profile = int(selected == 50)
-    if selected == 0 and other == 0 and current_profile in (0, 1):
-        profile = current_profile
-    return {"system_clock_mhz": clock, "sdcard_profile": profile}
-
-def validate_legacy_settings(settings: dict[str, object]) -> None:
-    if not isinstance(settings, dict):
-        raise ValueError("boot settings must be an object")
-    values = (
-        settings.get("system_clock_mhz"),
-        settings.get("sdio_bus_mhz"),
-        settings.get("spi_bus_mhz"),
-    )
-    if (type(values[0]) is not int or values[0] not in (0, 150, 200, 250)
-            or type(values[1]) is not int or values[1] not in (0, 25, 50)
-            or type(values[2]) is not int or values[2] not in (0, 25, 50)):
-        raise ValueError("unsupported boot settings value")

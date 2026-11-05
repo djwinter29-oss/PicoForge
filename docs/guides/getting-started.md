@@ -122,7 +122,7 @@ To share the card with your computer:
 1. Finish file operations. Manual `storage unmount` is optional; enabling USB mass storage also queues an unmount.
 2. Enable USB mass storage (MSC) in the dashboard; the medium becomes available without disconnecting HID or CDC.
 3. Use the card from your computer.
-4. Safely eject the drive before returning ownership to PicoForge. The legacy safe-disable API is documented in the
+4. Safely eject the drive before returning ownership to PicoForge. The safe-disable API is documented in the
    [HID reference](../reference/usb-hid.md). The dashboard's **Return to Pico** action requests a
    confirmed Pico-side host-access revocation/remount, not an OS eject; read the
    [force-return risks](../reference/usb-hid.md#msc-force-return-safety) before using it.

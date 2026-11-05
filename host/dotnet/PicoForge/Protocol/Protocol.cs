@@ -14,7 +14,7 @@ public sealed record HardwareInfoResponse(string ProductName, string Mcu, byte M
 
 /// <summary>Persisted next-boot clock, transport speed profile and radio enables (bit 0 Wi-Fi, bit 1 BLE).</summary>
 public sealed record BootSettingsResponse(int SystemClockMhz,
-    [property: JsonPropertyName("sdcard_profile")] int SdCardProfile, int Radios = 0);
+    [property: JsonPropertyName("sdcard_profile")] int SdCardProfile, int Radios);
 
 /// <summary>GPIO topology and persisted configuration from HID Feature report 2.</summary>
 public sealed record BoardConfigurationResponse(ushort StoredSystemClockMhz, byte StoredSdCardProfile,
@@ -46,8 +46,7 @@ public sealed record MemoryStatusResponse(byte Sequence, bool Configured, bool P
     uint? BlockCount, ulong? CapacityBytes, SdCardIdentity? Manufacturer,
     bool SampleValid = true, byte SpeedMode = 0);
 
-public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected,
-    bool ForceReturnSupported = true);
+public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, bool RequestRejected);
 
 /// <summary>Verified SD-card file benchmark progress, elapsed times, and cleanup state.</summary>
 public sealed record SelfTestStatusResponse(byte Sequence, string State, uint TargetBytes,
@@ -296,7 +295,7 @@ internal static partial class HidProtocol
         var read = ReadUInt32LittleEndian(payload[12..]);
         var mismatches = ReadUInt32LittleEndian(payload[24..]);
         Require(payload[0] == ReportVersion && (flags & ~3) == 0 && payload[31] == 0
-            && payload[28] <= 11 && payload[29] <= 19 && payload[30] <= 11
+            && payload[28] <= 10 && payload[29] <= 19 && payload[30] <= 10
             && target <= 1024u * 1024u * 1024u && written <= target && read <= written
             && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0
                 && (flags & 1) == 0 && payload[28] == 0)), "invalid HID self-test report");

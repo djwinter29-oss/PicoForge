@@ -79,18 +79,12 @@ class HidDeviceTests(unittest.TestCase):
         replacement.send_feature_report.assert_not_called()
         self.assertFalse(client._command_uncertain)
 
-    def test_forced_save_rejects_old_firmware_without_sending(self):
-        client = self.connection()
-        with self.assertRaisesRegex(RuntimeError, "Update firmware"):
-            client.set_settings({"system_clock_mhz": 200, "sdcard_profile": 1}, force=True)
-        self.assertEqual(client._device.sent, [])
-
     def test_forced_save_invalid_saved_values_remain_uncertain(self):
         client = self.connection()
         client.identity["capabilities"] |= 64
         client._device.feature_reports[20] = [control_result(opcode=6)]
         with self.assertRaisesRegex(RuntimeError, "did not confirm"):
-            client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 1}, force=True)
+            client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 1, "radios": 0}, force=True)
         self.assertTrue(client._command_uncertain)
         with self.assertRaisesRegex(RuntimeError, "uncertain"):
             client.set_led(True)

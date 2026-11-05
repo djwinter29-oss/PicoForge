@@ -8,7 +8,6 @@ from picoforge.reports import (
     build_self_test_command_report,
     build_settings_command_report,
     build_wireless_command_report,
-    normalize_legacy_settings,
     parse_configuration_report,
     parse_control_result_report,
     parse_identity_report,
@@ -58,7 +57,7 @@ class ProtocolTests(unittest.TestCase):
     def test_forced_save_capability_and_confirmation_flag(self):
         info = parse_identity_report(identity_report(capabilities=0x75))
         self.assertTrue(info["capabilities"] & 64)
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         self.assertEqual(build_settings_command_report(settings, 3, force=True),
                          bytes([20, 1, 3, 6, 1, 200, 0, 1, 0, 0]))
         self.assertEqual(build_settings_command_report(settings, 3)[4], 0)
@@ -72,7 +71,6 @@ class ProtocolTests(unittest.TestCase):
         config = parse_configuration_report(configuration_report(), self.identity)
         self.assertEqual(config["system_clock_mhz"], 200)
         self.assertEqual(config["sdcard_profile"], 1)
-        self.assertEqual((config["sdio_bus_mhz"], config["spi_bus_mhz"]), (50, 0))
         raw = identity_report()
         for framed in (bytes([0]) + raw + bytes(4), raw + bytes(4)):
             self.assertEqual(parse_identity_report(framed)["product_id"], 2)
@@ -166,7 +164,7 @@ class ProtocolTests(unittest.TestCase):
                          bytes([20, 1, 4, 3, 1, 2, 0, 0, 0, 0]))
         self.assertEqual(build_self_test_command_report("start", 1024, 3),
                          bytes([20, 1, 3, 4, 0, 1, 0, 4, 0, 0]))
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         self.assertEqual(build_settings_command_report(settings, 2),
                          bytes([20, 1, 2, 6, 0, 200, 0, 1, 0, 0]))
         for arguments in (b"\x02\0\0\0\0", b"\0\x01\0\0\0"):
@@ -177,7 +175,7 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_control_command_report(0, 1)
         with self.assertRaises(ValueError):
-            build_settings_command_report({"system_clock_mhz": 100, "sdcard_profile": 0})
+            build_settings_command_report({"system_clock_mhz": 100, "sdcard_profile": 0, "radios": 0})
 
     def test_wireless_command_rejects_non_integer_operations(self):
         for operation in (True, 3.0, "3", 0, 5):
@@ -212,14 +210,6 @@ class ProtocolTests(unittest.TestCase):
         unsupported_led = bytes([20, 1, 11, 1, 4, 4, 0, 0, 0, 0])
         with self.assertRaisesRegex(ValueError, "advertised capabilities"):
             parse_control_result_report(unsupported_led, self.identity)
-
-    def test_legacy_settings_translation_uses_selected_transport(self):
-        settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 50}
-        self.assertEqual(normalize_legacy_settings(settings, "sdio"),
-                         {"system_clock_mhz": 200, "sdcard_profile": 1})
-        self.assertEqual(normalize_legacy_settings(
-            {"system_clock_mhz": 0, "sdio_bus_mhz": 0, "spi_bus_mhz": 0}, "spi"
-        ), {"system_clock_mhz": 0, "sdcard_profile": 0})
 
 
 if __name__ == "__main__":

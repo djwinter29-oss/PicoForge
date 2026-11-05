@@ -70,7 +70,7 @@ test("TCP switch is saved only on v2 and expired test credentials block saving",
   let now = 100;
   const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   context.mock.method(Date, "now", () => now);
-  let status = { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true, tcp_cli_configurable: true,
+  let status = { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true,
     ble_key_configured: false };
   let supported = true, ready = true;
   try {
@@ -129,10 +129,6 @@ test("TCP switch is saved only on v2 and expired test credentials block saving",
     assert.equal(el("wireless-summary").hidden, true);
     form.reset();
     form.update();
-    status = { ...status, tcp_cli_configurable: false };
-    await form.load();
-    assert.equal(el("settings-tcp-cli").disabled, true);
-    assert.equal(Object.hasOwn(form.request(), "tcp_cli_enabled"), false);
     supported = false;
     form.update();
     for (const id of ["settings-tcp-cli"]) {

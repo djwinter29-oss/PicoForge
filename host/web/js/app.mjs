@@ -1,5 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "./wireless-form.mjs?v=16";
+import { bindWirelessForm } from "./wireless-form.mjs?v=17";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -137,8 +137,7 @@ function operationState(snapshot = currentSnapshot) {
       && !ledRequestInProgress && statusReadError === null,
     canChangeMsc: !settingsRequestInProgress && !wirelessBusy && !snapshot?.reboot_pending
       && !(mscPending || selfTestPending || Boolean(snapshot?.msc?.transition_pending)) && !outcomeUncertain
-      && Boolean(snapshot?.connected && snapshot.msc) && statusReadError === null
-      && !(snapshot.msc.enabled && !snapshot.msc.force_return_supported),
+      && Boolean(snapshot?.connected && snapshot.msc) && statusReadError === null,
     boardSelectionBusy: scanningBoards || settingsRequestInProgress || wirelessForm.operationBusy()
       || ledRequestInProgress || mscRequestInProgress || selfTestRequestInProgress,
   };
@@ -489,7 +488,6 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
   const force = currentSnapshot.msc.enabled;
   if ((confirmReturn && !force) || (confirmShare && force)) return;
   if (force) {
-    if (!currentSnapshot.msc.force_return_supported) return;
     if (!confirmReturn) {
       returnDialog.showModal();
       return;
@@ -542,8 +540,7 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
       mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
         || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
         || Boolean(currentSnapshot.self_test?.active)
-        || selfTestPendingSequence !== null
-        || Boolean(currentSnapshot?.msc?.enabled && !currentSnapshot.msc.force_return_supported);
+        || selfTestPendingSequence !== null;
       if (mscPendingEnabled !== null) void updateStatus();
     } else void updateStatus();
   }
@@ -623,7 +620,7 @@ async function saveSettings() {
       || !(settingsDirty || wirelessForm.dirty())
       || wirelessForm.operationBusy() || !wirelessForm.canSave()
       || settingsRequestInProgress || storageCommandPending() || !msc
-      || msc.enabled !== force || (force && !(currentSnapshot.hardware?.capabilities & 64))
+      || msc.enabled !== force
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)) return;
   const combined = wirelessForm.dirty();
   if (combined && (force || !wirelessReady())) return;

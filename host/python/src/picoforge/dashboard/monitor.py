@@ -17,12 +17,7 @@ from ..hid.models import (
     MscStatus,
     RuntimeStatus,
 )
-from ..reports import (
-    build_wireless_configuration_report,
-    build_settings_command_report,
-    normalize_legacy_settings,
-    validate_legacy_settings,
-)
+from ..reports import build_settings_command_report, validate_wireless_configuration
 from .models import (
     BoardStatus,
     DashboardSnapshot,
@@ -200,9 +195,8 @@ class DeviceMonitor:
                 raise RuntimeError("PicoForge HID is not connected")
             snapshot = self.snapshot()
             msc = snapshot.get("msc") or {}
-            if force and (not msc.get("force_return_supported") or not msc.get("enabled")
-                          or msc.get("transition_pending")):
-                raise RuntimeError("Force return requires enabled MSC and firmware with force-return support")
+            if force and (not msc.get("enabled") or msc.get("transition_pending")):
+                raise RuntimeError("Force return requires enabled MSC")
             result = (self._send_control(self._active_client.set_msc, False, force=True) if force
                       else self._send_control(self._active_client.set_msc, enable))
             with self._lock:
@@ -212,8 +206,7 @@ class DeviceMonitor:
             with self._lock:
                 previous = self._snapshot.get("msc") or {}
                 status = {"enabled": previous.get("enabled", False),
-                          "transition_pending": True, "request_rejected": False,
-                          "force_return_supported": previous.get("force_return_supported", False)}
+                          "transition_pending": True, "request_rejected": False}
                 self._snapshot["msc"] = status
                 self._snapshot["control_result"] = result
                 changing_owner = previous.get("enabled", False) != enable
@@ -246,31 +239,15 @@ class DeviceMonitor:
             hardware = snapshot.get("hardware")
             if not isinstance(hardware, dict):
                 raise RuntimeError("Waiting for device identity")
-            if "sdcard_profile" in settings:
-                build_settings_command_report(settings)
-                command_settings = settings
-            else:
-                validate_legacy_settings(settings)
-                configuration = snapshot.get("board_configuration")
-                current_profile = (
-                    configuration.get("sdcard_profile") if isinstance(configuration, dict) else None
-                )
-                command_settings = normalize_legacy_settings(
-                    settings, hardware["storage_transport"], current_profile
-                )
-            if "radios" not in command_settings:
-                # Callers that predate the radio switches keep the saved enables instead of turning radios off.
-                configuration = snapshot.get("board_configuration")
-                command_settings = {**command_settings, "radios": configuration.get("radios", 0)
-                                    if isinstance(configuration, dict) else 0}
-            build_settings_command_report(command_settings)
+            build_settings_command_report(settings)
+            command_settings = settings
             msc = snapshot.get("msc")
             if not isinstance(msc, dict):
                 raise RuntimeError("Waiting for storage ownership status")
             if type(force) is not bool:
                 raise ValueError("Forced save confirmation must be boolean")
-            if force and (not hardware["capabilities"] & 64 or not msc.get("enabled")):
-                raise RuntimeError("Forced save requires USB ownership and supporting firmware")
+            if force and not msc.get("enabled"):
+                raise RuntimeError("Forced save requires USB ownership")
             if msc.get("transition_pending") or (msc.get("enabled") and not force):
                 raise RuntimeError("Disable the USB drive before saving boot settings")
             if isinstance(snapshot.get("self_test"), dict) and snapshot["self_test"].get("active"):
@@ -394,7 +371,7 @@ class DeviceMonitor:
             return {"cancelled": True}
 
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResponse:
-        build_wireless_configuration_report(settings)
+        validate_wireless_configuration(settings)
         with self._device_lock:
             snapshot = self.snapshot()
             require_wireless_idle(
@@ -431,7 +408,7 @@ class DeviceMonitor:
                     settings = {
                         "system_clock_mhz": configuration["system_clock_mhz"],
                         "sdcard_profile": configuration["sdcard_profile"],
-                        "radios": configuration.get("radios", 0),
+                        "radios": configuration["radios"],
                     }
                     settings_message = None
                 except (OSError, RuntimeError, ValueError) as error:

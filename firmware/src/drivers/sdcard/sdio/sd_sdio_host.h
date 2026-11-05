@@ -23,8 +23,6 @@ typedef struct {
     uint8_t bus_width;                /**< Width negotiated with the card. */
     pf_sd_detail_error_t last_error; /**< Latest SD or mapped physical failure. */
     pf_sd_error_counters_t errors; /**< SD and mapped physical diagnostic counters. */
-    uint32_t last_response_words[5]; /**< Legacy packed response diagnostic, including partial capture. */
-    size_t last_response_word_count; /**< Number of captured response words. */
     bool write_stream_open;          /**< CMD25 requires CMD12 before other operations. */
     bool read_stream_unresolved;     /**< CMD18 may have reached the card and needs CMD12. */
     bool data_rx_multiblock_supported; /**< False after a qualified single-block fallback. */

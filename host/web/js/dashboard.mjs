@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "./wireless-form.mjs?v=16";
+import { renderWirelessStatus } from "./wireless-form.mjs?v=17";
 
 function uptimeLabel(milliseconds) {
   if (!Number.isFinite(milliseconds)) return "--";
@@ -76,12 +76,9 @@ export function renderStatus(snapshot) {
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Return to Pico" : "Enable USB drive";
   mscControl.disabled = snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
-    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
-    || Boolean(msc?.enabled && !msc.force_return_supported);
+    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending);
   document.querySelector("#msc-note").textContent = snapshot.msc_outcome_uncertain
     ? "Storage command outcome is uncertain. Check fresh ownership status before taking action."
-    : msc?.enabled && !msc.force_return_supported
-    ? "Update firmware to disable the USB drive from Pico; this firmware requires manual host eject."
     : msc?.request_rejected
     ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
       : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
@@ -135,8 +132,7 @@ function renderSettings(snapshot) {
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready
     || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(snapshot.wireless_dirty && msc?.enabled)
     || Boolean(snapshot.wireless_dirty && snapshot.wireless_stage_valid === false)
-    || !((snapshot.hardware?.capabilities ?? 0) & 2)
-    || Boolean(msc?.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64));
+    || !((snapshot.hardware?.capabilities ?? 0) & 2);
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
     || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
     || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
@@ -145,8 +141,6 @@ function renderSettings(snapshot) {
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
         : !msc ? "Waiting for storage ownership status."
-          : msc.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64)
-            ? "Update firmware or return storage to Pico before saving settings."
           : msc.transition_pending ? "Wait for the USB storage transition before saving settings."
             : "");
   document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
@@ -312,7 +306,7 @@ export function renderSelfTest(snapshot) {
   const speed = value => value == null ? "--" : `${(value / 1048576).toFixed(2)} MiB/s`;
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", mounting: "Mounting", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
-  const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
+  const errors = ["", "Storage busy", "USB host owns the card", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
   set("#self-test-state", status ? `${labels[status.state] ?? "Unknown"} · ${Math.floor(status.progress_percent ?? 0)}%`
     : "Unavailable");
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;

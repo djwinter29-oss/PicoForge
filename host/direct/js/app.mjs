@@ -1,15 +1,15 @@
-import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=9";
-import { renderStatus } from "./view.mjs?v=17";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=12";
+import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=10";
+import { renderStatus } from "./view.mjs?v=18";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=13";
 import {
   bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
   parseHexBytes, randomHex,
 } from "./console-auth.mjs?v=1";
-import { bindWirelessForm } from "./wireless-form.mjs?v=19";
+import { bindWirelessForm } from "./wireless-form.mjs?v=20";
 import { deriveOperationEligibility } from "./eligibility.mjs?v=2";
 import {
   cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
-} from "./wireless.mjs?v=11";
+} from "./wireless.mjs?v=12";
 
 const element = id => document.querySelector(`#${id}`);
 const usbDialog = element("usb-connection-dialog");
@@ -167,16 +167,13 @@ function render(state) {
   settingsSave.disabled ||= !wirelessForm.canSave();
   // Credentials have no forced-save path: provisioning requires firmware-owned storage.
   settingsSave.disabled ||= wirelessForm.dirty() && Boolean(state.msc?.enabled);
-  settingsSave.disabled ||= Boolean(state.msc?.enabled && !(state.hardware?.capabilities & 64));
   settingsReboot.disabled = !settingsReady || state.msc?.enabled || !(state.hardware?.capabilities & 2);
   element("settings-note").textContent = state.settings_message
     || (!state.connected ? "Connect to read the saved settings."
       : !state.settings_supported ? "Persistent settings save is unavailable."
         : !storageReady ? (state.self_test?.active || state.self_test_command_pending
           ? "" : "Waiting for fresh, idle storage status.")
-          : state.msc?.enabled && !(state.hardware?.capabilities & 64)
-            ? "Update firmware or return storage to Pico before saving settings."
-            : "");
+          : "");
   element("settings-note").hidden = !element("settings-note").textContent;
   element("status-message").hidden = !state.error && !element("settings-note").hidden;
   element("msc-note").textContent = state.reconnecting

@@ -13,7 +13,7 @@ namespace PicoForge.Tests;
 
 public sealed class ForcedSaveTests
 {
-    private static readonly BootSettingsResponse Settings = new(200, 1);
+    private static readonly BootSettingsResponse Settings = new(200, 1, 0);
     private static HardwareInfoResponse Hardware(byte capabilities = 0x4c) =>
         new("PicoForge", "RP2350", 2, "0001020304050607", Capabilities: capabilities);
 
@@ -38,19 +38,6 @@ public sealed class ForcedSaveTests
     public void SaveRejectsReservedFlags(byte flags) =>
         Assert.Throws<InvalidOperationException>(() =>
             HidProtocol.BuildControlRequest(7, 6, flags, [200, 0, 1, 0, 0]));
-
-    [Theory]
-    [InlineData(0x0c)]
-    [InlineData(0x40)]
-    public void ForcedSaveRequiresBothCapabilities(byte capabilities)
-    {
-        var writes = 0;
-        using var hid = new PicoForgeHid(Hardware(capabilities), (_, _) => Result(2),
-            _ => writes++, _ => Assert.Fail("must not reconnect"));
-        Assert.Throws<NotSupportedException>(() => hid.SetSettings(Settings, true));
-        Assert.Equal(0, writes);
-        Assert.False(hid.CommandOutcomeUncertain);
-    }
 
     [Theory]
     [InlineData(false)]
@@ -349,7 +336,7 @@ public sealed class ForcedSaveTests
         foreach (var invalid in new[] { "null", "1", "\"true\"", "{}", "[]", "" })
         {
             using var body = new StringContent(
-                $"{{\"system_clock_mhz\":200,\"sdcard_profile\":1,\"confirm_data_loss\":{invalid}}}",
+                $"{{\"system_clock_mhz\":200,\"sdcard_profile\":1,\"radios\":0,\"confirm_data_loss\":{invalid}}}",
                 Encoding.UTF8, "application/json");
             var response = await client.PostAsync("/api/settings?board=board-a", body);
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -359,25 +346,25 @@ public sealed class ForcedSaveTests
         {
             dashboard.Status = status;
             var response = await client.PostAsJsonAsync("/api/settings?board=board-a",
-                new { system_clock_mhz = 200, sdcard_profile = 1, confirm_data_loss = true });
+                new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0, confirm_data_loss = true });
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         }
         Assert.Empty(dashboard.Forces);
         dashboard.Status = Ready() with { CommandOutcomeUncertain = true };
         var uncertain = await client.PostAsJsonAsync("/api/settings?board=board-a",
-            new { system_clock_mhz = 200, sdcard_profile = 1, confirm_data_loss = true });
+            new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0, confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.Conflict, uncertain.StatusCode);
         Assert.Empty(dashboard.Forces);
         dashboard.Status = Ready();
         var forced = await client.PostAsJsonAsync("/api/settings?board=board-a",
-            new { system_clock_mhz = 200, sdcard_profile = 1, confirm_data_loss = true });
+            new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0, confirm_data_loss = true });
         Assert.Equal(HttpStatusCode.OK, forced.StatusCode);
         dashboard.Status = Ready(false);
         var normal = await client.PostAsJsonAsync("/api/settings?board=board-a",
-            new { system_clock_mhz = 200, sdcard_profile = 1 });
+            new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0 });
         Assert.Equal(HttpStatusCode.OK, normal.StatusCode);
         var unconfirmed = await client.PostAsJsonAsync("/api/settings?board=board-a",
-            new { system_clock_mhz = 200, sdcard_profile = 1, confirm_data_loss = false });
+            new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0, confirm_data_loss = false });
         Assert.Equal(HttpStatusCode.OK, unconfirmed.StatusCode);
         Assert.Equal(new[] { true, false, false }, dashboard.Forces);
         await app.StopAsync();
@@ -386,7 +373,6 @@ public sealed class ForcedSaveTests
     private static StatusResponse[] BlockedStatuses() =>
     [
         Ready(false),
-        Ready(capabilities: 0x0c),
         Ready() with { Connected = false },
         Ready() with { Msc = null },
         Ready() with { Msc = new(true, true, false) },

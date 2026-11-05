@@ -54,9 +54,9 @@ from ..reports import (
     build_led_command_report,
     build_msc_command_report,
     build_self_test_command_report,
-    parse_device_identity_report,
+    parse_identity_report,
     parse_storage_report,
-    parse_board_configuration_report,
+    parse_configuration_report,
     parse_control_result_report,
     parse_self_test_status_report,
     parse_telemetry_report,
@@ -158,7 +158,7 @@ class PicoForgeHid:
     def read_info(self) -> HardwareIdentity:
         self._require_open()
         report = self._device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE)
-        self.identity = parse_device_identity_report(report)
+        self.identity = parse_identity_report(report)
         if (self._expected_serial_number and self.identity.get("supported")
                 and str(self._expected_serial_number).upper() != self.identity["serial_number"]):
             raise ValueError("HID identity UID disagrees with the USB serial string")
@@ -170,7 +170,7 @@ class PicoForgeHid:
         if not identity.get("supported"):
             raise RuntimeError(f"unsupported product: {identity['product_name']}")
         report = self._device.get_feature_report(CONFIGURATION_REPORT_ID, CONFIGURATION_FEATURE_SIZE)
-        self.configuration = parse_board_configuration_report(report, identity)
+        self.configuration = parse_configuration_report(report, identity)
         return self.configuration
 
     def read_settings(self) -> dict[str, int]:
@@ -232,14 +232,12 @@ class PicoForgeHid:
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & CAP_SAVE_SETTINGS:
             raise RuntimeError("persistent settings are unavailable on this firmware")
-        if force and not identity["capabilities"] & (1 << 6):
-            raise RuntimeError("Update firmware for confirmed settings save while USB owns storage")
         command = build_settings_command_report(settings, self._next_transaction_id(), force=force)
         result = self._execute_control(command, 6, reconnect=force)
         if result["status"] != "completed":
             raise RuntimeError(f"settings command {result['status']}: {result['error']}")
         saved = result["saved_settings"]
-        if saved != {**settings, "radios": settings.get("radios", 0)}:
+        if saved != settings:
             self._command_uncertain = True
             raise RuntimeError("firmware did not confirm the selected boot settings")
         return saved
@@ -285,8 +283,9 @@ class PicoForgeHid:
         if self._command_uncertain:
             raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
         previous = self.read_wireless()
+        # An omitted TCP CLI switch keeps the saved value; the request always carries the complete state.
         command = build_wireless_configuration_report(
-            settings, self._next_transaction_id(), tcp_cli_configurable=previous["tcp_cli_configurable"])
+            {"tcp_cli_enabled": previous["tcp_cli_enabled"], **settings}, self._next_transaction_id())
         if previous["status"] in ("pending", "busy"):
             raise RuntimeError("Wireless provisioning is busy")
         self._command_uncertain = True
@@ -311,9 +310,8 @@ class PicoForgeHid:
                         }
                         if any(result[key] != value for key, value in expected.items()):
                             raise RuntimeError("Wireless saved configuration was not confirmed; outcome is uncertain")
-                        board = settings["board"]
                         saved = self.read_settings()
-                        if saved != {**board, "radios": board.get("radios", 0)}:
+                        if saved != settings["board"]:
                             raise RuntimeError("Saved board settings were not confirmed; outcome is uncertain")
                         self._command_uncertain = False
                         return {**result, "settings": saved}
@@ -467,7 +465,7 @@ class PicoForgeHid:
             device = _require_hid().device()
             try:
                 device.open_path(candidates[0]["path"])
-                identity = parse_device_identity_report(
+                identity = parse_identity_report(
                     device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE))
             except OSError:
                 device.close()

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=9";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=12";
+import { PicoForgeWebHid } from "../js/device.mjs?v=10";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=13";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -118,8 +118,6 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     client.update({ msc: { enabled: true, transition_pending: false } });
     el("#settings-clock").value = "200"; el("#settings-clock").change();
     assert.equal(el("#settings-clock").disabled, false);
-    assert.equal(el("#settings-save").disabled, true);
-    client.update({ hardware: { ...client.state.hardware, capabilities: client.state.hardware.capabilities | 64 } });
     await el("#settings-save").click();
     assert.equal(el("#configuration-force-warning").hidden, false);
     el("#cancel-configuration").click();
@@ -169,8 +167,8 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
       reads++;
       if (failure) throw new Error("device read failed");
       if (delayed) return delayed;
-      const report = new Uint8Array(52);
-      report.set([3, 1, 0, 0, wifiState, 192, 168, 1, 9]);
+      const report = new Uint8Array(53);
+      report.set([1, 1, 0, 0, wifiState, 192, 168, 1, 9]);
       report.set(new TextEncoder().encode("HomeDev"), 9);
       return report;
     };
@@ -199,7 +197,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     now += 2000;
     client.update({});
     client.clearConnection();
-    finishRead(new Uint8Array(52));
+    finishRead(new Uint8Array(53));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(client.state.wireless, null, "a late report must not repopulate a disconnected board");
     assert.equal(el("#wifi-state").textContent, "--");

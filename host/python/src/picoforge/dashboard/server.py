@@ -15,11 +15,9 @@ from .console import ConsoleBridge
 from .. import __version__
 from ..reports import (
     build_wireless_command_report,
-    build_wireless_configuration_report,
     build_self_test_command_report,
     build_settings_command_report,
-    normalize_legacy_settings,
-    validate_legacy_settings,
+    validate_wireless_configuration,
 )
 
 
@@ -173,36 +171,11 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
         force = payload.get("confirm_data_loss", False)
         if type(force) is not bool:
             return jsonify({"error": "confirm_data_loss must be boolean"}), 400
-        if "sdcard_profile" in payload:
-            settings = {key: payload.get(key) for key in ("system_clock_mhz", "sdcard_profile")}
-            if "radios" in payload:
-                settings["radios"] = payload["radios"]
-            validator = build_settings_command_report
-        else:
-            settings = {key: payload.get(key) for key in
-                        ("system_clock_mhz", "sdio_bus_mhz", "spi_bus_mhz")}
-            validator = validate_legacy_settings
+        settings = {key: payload.get(key) for key in ("system_clock_mhz", "sdcard_profile", "radios")}
         try:
-            validator(settings)
+            build_settings_command_report(settings)
         except ValueError as error:
             return _api_error(error)
-        if "sdcard_profile" not in settings:
-            try:
-                snapshot = dashboard.snapshot(board_id)
-                hardware = snapshot.get("hardware")
-                configuration = snapshot.get("board_configuration")
-                if not isinstance(hardware, dict):
-                    raise RuntimeError("Waiting for device identity")
-                current_profile = (
-                    configuration.get("sdcard_profile") if isinstance(configuration, dict) else None
-                )
-                settings = normalize_legacy_settings(
-                    settings, hardware["storage_transport"], current_profile
-                )
-            except ValueError as error:
-                return _api_error(error)
-            except RuntimeError as error:
-                return _api_error(error)
         try:
             saved = (dashboard.set_settings(board_id, settings, force=True) if force
                      else dashboard.set_settings(board_id, settings))
@@ -329,7 +302,7 @@ def _register_wireless_routes(app: Flask, dashboard: DashboardBackend) -> None:
     def set_wireless():
         payload = request.get_json(silent=True)
         try:
-            build_wireless_configuration_report(payload)
+            validate_wireless_configuration(payload)
         except ValueError as error:
             return _api_error(error)
         try:

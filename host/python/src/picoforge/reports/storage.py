@@ -113,7 +113,6 @@ def parse_memory_report(
             "enabled": bool(msc_enabled),
             "transition_pending": bool(msc_pending),
             "request_rejected": bool(msc_rejected),
-            "force_return_supported": True,
         },
     }
 

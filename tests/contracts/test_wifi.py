@@ -620,7 +620,7 @@ int main(void) {
     now += 10000000u;
     pf_wifi_poll(now);
     pf_wifi_result(result);
-    assert(result[0] == 2u && result[2] == 3u && sta_releases == before_timeout);
+    assert(result[0] == 1u && result[2] == 3u && sta_releases == before_timeout);
     pf_wifi_poll(now);
     assert(sta_releases == before_timeout);
     scan_active = false;
@@ -649,7 +649,7 @@ int main(void) {
     scan_active = false;
     pf_wifi_poll(now);
     pf_wifi_result(result);
-    assert(result[0] == 2u && result[4] == 8u);
+    assert(result[0] == 1u && result[4] == 8u);
     for (unsigned security = 0; security < 6u; ++security) assert(result[40u + 35u * security] == security);
 
     /* Staged credentials expire at exactly ten minutes even when no host polls the result. */

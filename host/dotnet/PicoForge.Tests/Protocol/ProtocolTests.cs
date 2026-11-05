@@ -26,7 +26,7 @@ public sealed class ProtocolTests
         Assert.Equal((ushort)200, configuration.StoredSystemClockMhz);
         Assert.Equal((byte)1, configuration.StoredSdCardProfile);
         Assert.Equal(new byte[] { 10, 11, 12, 13, 14, 15 }, configuration.StorageGpios);
-        Assert.Equal(new BootSettingsResponse(200, 1), HidProtocol.ToBootSettings(configuration));
+        Assert.Equal(new BootSettingsResponse(200, 1, 0), HidProtocol.ToBootSettings(configuration));
     }
 
     [Fact]
@@ -213,13 +213,13 @@ public sealed class ProtocolTests
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
 
         var saved = await client.PostAsJsonAsync("/api/settings?board=board-a",
-            new { system_clock_mhz = 200, sdcard_profile = 1 });
+            new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0 });
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
-        Assert.Equal(new BootSettingsResponse(200, 1), monitor.LastSettings);
+        Assert.Equal(new BootSettingsResponse(200, 1, 0), monitor.LastSettings);
         Assert.False(monitor.RebootRequested);
 
         var invalid = await client.PostAsJsonAsync("/api/settings?board=board-a",
-            new { system_clock_mhz = 100, sdcard_profile = 1 });
+            new { system_clock_mhz = 100, sdcard_profile = 1, radios = 0 });
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         var unconfirmed = await client.PostAsJsonAsync("/api/reboot?board=board-a", new { confirm = false });
         Assert.Equal(HttpStatusCode.BadRequest, unconfirmed.StatusCode);
@@ -230,7 +230,7 @@ public sealed class ProtocolTests
         var unknownStatus = await client.GetAsync("/api/status?board=unknown");
         Assert.Equal(HttpStatusCode.Conflict, unknownStatus.StatusCode);
         var unknownSettings = await client.PostAsJsonAsync("/api/settings?board=unknown",
-            new { system_clock_mhz = 200, sdcard_profile = 1 });
+            new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0 });
         Assert.Equal(HttpStatusCode.Conflict, unknownSettings.StatusCode);
 
         using var openApi = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
@@ -312,7 +312,7 @@ public sealed class ProtocolTests
             if (boardId != "board-a")
                 throw new InvalidOperationException("unknown board; rescan and select a listed board");
             return new(true, null, null, null, null, null, null, null,
-                Settings: new BootSettingsResponse(0, 0));
+                Settings: new BootSettingsResponse(0, 0, 0));
         }
         public bool SetLed(string? boardId, bool on) => true;
         public MscStatusResponse? SetMsc(string? boardId, bool enabled, bool force = false) =>

@@ -13,18 +13,11 @@ namespace PicoForge.Tests;
 
 public sealed class WirelessTests
 {
-    [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    [InlineData(4)]
-    public void WirelessStatusAcceptsHidBackendPrefixes(byte version)
+    [Fact]
+    public void WirelessStatusAcceptsHidBackendPrefixes()
     {
-        var report = new byte[version >= 4 ? 54 : 53];
-        Report().CopyTo(report, 0);
-        report[1] = version;
+        var report = Report();
         var expected = HidProtocol.ParseWirelessStatus(report);
-        Assert.Equal(version >= 2, expected.TcpCliConfigurable);
         foreach (var prefix in new byte[] { 0, HidProtocol.WirelessReportId })
         {
             var framed = new byte[256];
@@ -40,7 +33,7 @@ public sealed class WirelessTests
     public void ParsesFirmwareGeneratedFeature30StatusVectors()
     {
         using var vectors = JsonDocument.Parse(File.ReadAllText(
-            Path.Combine(AppContext.BaseDirectory, "wireless-status-v4.json")));
+            Path.Combine(AppContext.BaseDirectory, "wireless-status.json")));
         WirelessStatusResponse Parse(string name)
         {
             var report = new byte[54];
@@ -73,37 +66,35 @@ public sealed class WirelessTests
     }
 
     [Fact]
-    public void V2TcpSwitchSecurityAndExpiryDetails()
+    public void TcpSwitchSecurityAndExpiryDetails()
     {
         var request = Settings();
-        Assert.Equal(19, HidProtocol.BuildWirelessRequest(request, 1)[4]);
-        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1, false)[4]);
+        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1, true)[4]);
+        Assert.Equal(11, HidProtocol.BuildWirelessRequest(request, 1, false)[4]);
         request.TcpCliEnabled = false;
-        Assert.Equal(11, HidProtocol.BuildWirelessRequest(request, 1)[4]);
-        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 1, false));
+        Assert.Equal(11, HidProtocol.BuildWirelessRequest(request, 1, true)[4]);
         request.TcpCliEnabled = true;
-        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1, false)[4]);
         var status = Report();
-        status[1] = 3;
         status[48] = 1;
-        Assert.True(HidProtocol.ParseWirelessStatus(status).TcpCliConfigurable);
         Assert.False(HidProtocol.ParseWirelessStatus(status).TcpCliEnabled);
         status[48] = 2;
         Assert.True(HidProtocol.ParseWirelessStatus(status).TcpCliAuthRequired);
-        status[48] = 4;
-        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(status));
-        var statusV4 = new byte[54];
-        Report().CopyTo(statusV4, 0);
-        statusV4[1] = 4;
-        statusV4[50] = 7;
-        statusV4[53] = 1;
-        var parsedV4 = HidProtocol.ParseWirelessStatus(statusV4);
-        Assert.Equal((ushort)7, parsedV4.ReconnectCount);
-        Assert.True(parsedV4.RestartRequired);
+        status[50] = 7;
+        status[53] = 1;
+        var parsed = HidProtocol.ParseWirelessStatus(status);
+        Assert.Equal((ushort)7, parsed.ReconnectCount);
+        Assert.True(parsed.RestartRequired);
+        foreach (var (offset, value) in new[] { (1, 2), (48, 4), (49, 4), (53, 2) })
+        {
+            var invalid = status.ToArray();
+            invalid[offset] = (byte)value;
+            Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(invalid));
+        }
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessStatus(status[..53]));
         string[] labels = ["Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)", "RSN (WPA2/WPA3)",
             "WPA/RSN", "WPA/RSN"];
         var report = OperationResult();
-        report[1] = 2;
         report[5] = 1;
         report[7] = 1;
         report[8] = (byte)'x';
@@ -120,10 +111,12 @@ public sealed class WirelessTests
         foreach (var (detail, phase) in new[] { (9, "Test connection lost"), (10, "Test credentials expired") })
         {
             report = OperationResult(state: 6, detail: (byte)detail);
-            report[1] = 2;
             Assert.Equal(phase, HidProtocol.ParseWirelessOperation(report).Phase);
         }
         report[4] = 11;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
+        report[4] = 10;
+        report[1] = 2;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
         report = OperationResult(state: 5);
         report[221] = 88;
@@ -169,7 +162,6 @@ public sealed class WirelessTests
         Assert.Equal("connected", status.WifiState);
 
         var operationReport = OperationResult(state: 2);
-        operationReport[1] = 1;
         operationReport[5] = 1;
         operationReport[7] = 1;
         operationReport[8] = (byte)'x';
@@ -178,7 +170,7 @@ public sealed class WirelessTests
         Array.Clear(operationReport);
         var network = Assert.Single(operation.Networks);
         Assert.Equal("x", network.Ssid);
-        Assert.Equal("Secured", network.Security);
+        Assert.Equal("WEP", network.Security);
     }
 
     private static WirelessRequest Settings() => new()
@@ -193,7 +185,6 @@ public sealed class WirelessTests
     {
         var before = Report(0, 0);
         var after = Report();
-        before[1] = after[1] = 2;
         after[48] = mismatch ? (byte)0 : (byte)1;
         var reads = new Queue<byte[]>([before, after]);
         var writes = new List<byte[]>();
@@ -222,8 +213,8 @@ public sealed class WirelessTests
 
     private static byte[] Report(byte status = 2, byte transaction = 1)
     {
-        var report = new byte[53];
-        new byte[] { 30, 3, 3, status, transaction, 2, 192, 168, 1, 2 }.CopyTo(report, 0);
+        var report = new byte[54];
+        new byte[] { 30, 1, 3, status, transaction, 2, 192, 168, 1, 2 }.CopyTo(report, 0);
         Encoding.UTF8.GetBytes("Pico網").CopyTo(report, 10);
         report[43] = report[44] = 1;
         return report;
@@ -233,7 +224,7 @@ public sealed class WirelessTests
     {
         var report = new byte[223];
         report[0] = 35;
-        report[1] = 2;
+        report[1] = 1;
         report[2] = transaction;
         report[3] = state;
         report[4] = detail;
@@ -250,22 +241,22 @@ public sealed class WirelessTests
     [Fact]
     public void BuilderUsesExactOffsetsAndOmittedCredentialsArePreserved()
     {
-        var report = HidProtocol.BuildWirelessRequest(Settings(), 255);
+        var report = HidProtocol.BuildWirelessRequest(Settings(), 255, true);
         Assert.Equal(137, report.Length);
-        Assert.Equal(new byte[] { 31, 2, 255, 3, 19 }, report[..5]);
+        Assert.Equal(new byte[] { 31, 1, 255, 3, 3 }, report[..5]);
         Assert.Equal(Encoding.UTF8.GetBytes("Pico網"), report[5..12]);
         Assert.All(report[38..134], value => Assert.Equal(0, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
         var request = Settings();
         request.Password = "secret12";
         request.BleKey = new string('a', 64);
-        report = HidProtocol.BuildWirelessRequest(request, 1);
-        Assert.Equal(16, report[4]);
+        report = HidProtocol.BuildWirelessRequest(request, 1, true);
+        Assert.Equal(0, report[4]);
         Assert.Equal(Encoding.ASCII.GetBytes("secret12\0"), report[38..47]);
         Assert.All(report[102..134], value => Assert.Equal(0xaa, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
         request.WifiEnabled = false;
-        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 2));
+        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 2, true));
         var erase = Settings();
         erase.WifiEnabled = false;
         erase.BleEnabled = false;
@@ -273,8 +264,8 @@ public sealed class WirelessTests
         erase.Password = "";
         erase.BleKey = "";
         erase.Board = new(200, 1, 0);
-        report = HidProtocol.BuildWirelessRequest(erase, 3);
-        Assert.Equal(16, report[4]);
+        report = HidProtocol.BuildWirelessRequest(erase, 3, true);
+        Assert.Equal(0, report[4]);
         Assert.All(report[5..134], value => Assert.Equal(0, value));
     }
 
@@ -689,7 +680,7 @@ public sealed class WirelessTests
         public void SetLed(bool on) { }
         public void SetMsc(bool enabled, bool force = false) { }
         public BoardConfigurationResponse ReadConfiguration() => throw new NotSupportedException();
-        public BootSettingsResponse ReadSettings() => new(0, 0);
+        public BootSettingsResponse ReadSettings() => new(0, 0, 0);
         public BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false) => settings;
         public void Reboot() { }
         public void SetSelfTest(string action, uint sizeMib) { }

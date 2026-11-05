@@ -1,4 +1,4 @@
-import { PicoForgeWebHid } from "./device.mjs?v=9";
+import { PicoForgeWebHid } from "./device.mjs?v=10";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f501";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f501`;

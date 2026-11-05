@@ -104,7 +104,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 if (activeClient is null) return null;
                 if (force && (enabled || snapshot.Msc is not
-                    { Enabled: true, TransitionPending: false, ForceReturnSupported: true })) return null;
+                    { Enabled: true, TransitionPending: false })) return null;
                 client = activeClient;
             }
             ExecuteCommand(client, () => client.SetMsc(enabled, force));
@@ -113,8 +113,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 var changingOwner = (snapshot.Msc?.Enabled ?? false) != enabled;
                 snapshot = snapshot with
                 {
-                    Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false,
-                        snapshot.Msc?.ForceReturnSupported ?? false)
+                    Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false)
                 };
                 mscReconnectDeadline = changingOwner ? Environment.TickCount64 + 5000 : 0;
                 mscReconnectEnabled = changingOwner ? enabled : null;
@@ -135,9 +134,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 if (activeClient is null || snapshot.Settings is null || snapshot.Msc is null ||
                     snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true ||
-                    (force ? !snapshot.Connected || !snapshot.Msc.Enabled ||
-                        (snapshot.Hardware?.Capabilities & HidProtocol.CapabilityForcedSave) !=
-                            HidProtocol.CapabilityForcedSave : snapshot.Msc.Enabled))
+                    (force ? !snapshot.Connected || !snapshot.Msc.Enabled : snapshot.Msc.Enabled))
                     return null;
                 client = activeClient;
             }
@@ -175,7 +172,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     public WirelessResponse SetWireless(WirelessRequest settings)
     {
-        HidProtocol.BuildWirelessRequest(settings, 1);
+        HidProtocol.BuildWirelessRequest(settings, 1, true);
         lock (deviceGate)
         {
             var current = Snapshot;

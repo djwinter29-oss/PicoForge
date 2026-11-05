@@ -29,14 +29,13 @@ Choose **USB**, then **Select board** to open the browser device chooser, includ
 authorized, so the user selects which board to open. Cancel leaves the page disconnected. Close other clients
 using that board before connecting; the chooser cannot override another application's HID access.
 
-## Protocol compatibility
+## Protocol and connection
 
-This Direct dashboard targets layout version 1 of the authoritative
-[HID Report Reference](../../docs/reference/usb-hid.md), implemented by firmware and the Python,
-.NET, shared dashboard, and Direct dashboard clients. Physical USB qualification remains outstanding.
+The firmware and all host dashboards use version 1 of the authoritative
+[HID Report Reference](../../docs/reference/usb-hid.md). Physical USB qualification remains outstanding.
 It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
 (9), and Input 3 telemetry (22), 10 storage (34), and optionally 11 self-test (32, capability bit 5).
-Mandatory identity/configuration failures are explicit connection errors, not legacy fallbacks.
+Mandatory identity and configuration reports must be valid before the dashboard enables commands.
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.
@@ -68,11 +67,8 @@ request. Run the included server instead of a generic static-file server to enab
 Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/guides/wireless.md).
 Use USB to provision radio settings and a random Control key, then open **Bluetooth**, enter the key and scan;
 Bluetooth stays off without a saved key. See the linked wireless guide for the key-gated session.
-Privileged management remains USB-only.
-Feature 30 status versions 1-4 and Feature 35 result versions 1-2 are accepted. Newer status versions add the saved
-TCP CLI switch and optional Control key authentication; result version 2 adds scan security labels and staged-test
-lifetime. Successful temporary tests must be saved within ten minutes. Settings unavailable on older firmware remain
-unchanged.
+Privileged management remains USB-only. Wireless Features 30, 31, 34, and 35 use version 1. Successful temporary
+Wi-Fi tests must be saved within ten minutes.
 
 All operations serialize Feature 20 SET/GET transactions, matching both transaction ID and opcode.
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for
@@ -104,16 +100,16 @@ matching modal dialogs with Cancel and Escape support; no command is sent until 
 checked again at confirmation. Routine loaded-settings and fresh-report messages are hidden.
 Standard/High-Speed is a stored request;
 Storage shows the actual selected timing and effective bus clock.
-While shared, local settings editing remains available. Supporting firmware permits **Save&Reboot** with
+While shared, local settings editing remains available. Firmware permits **Save&Reboot** with
 an additional explicit host-cache data-loss confirmation; sync/detach must succeed before flash programming.
 The reconnect path verifies the original transaction and saved values without replaying SET. See the
-[forced-save policy](../../docs/reference/settings.md#forced-save-and-reboot). Older firmware keeps saving blocked
-until storage returns to Pico; self-test and transition gates still apply.
+[forced-save policy](../../docs/reference/settings.md#forced-save-and-reboot). Self-test and transition gates still
+apply.
 
 USB ownership transitions leave CDC, HID and MSC connected; Pico-owned storage reports no medium through MSC.
 See the [storage lifecycle](../../docs/reference/architecture.md#storage-ownership-lifecycle).
-For reboot or older firmware's ownership reconnects, the dashboard identifies a reconnect candidate by reading
-Feature 1 and matching its stable device UID before resuming; it never replays the prior command.
+After a reboot or forced save, the dashboard identifies a reconnect candidate by reading Feature 1 and matching its
+stable device UID before resuming; it never replays the prior command.
 **Return to Pico** is explicitly confirmed force return, not an OS eject.
 **Enable USB drive** first opens a matching storage-handoff dialog explaining exclusive host access and safe eject;
 Cancel or Escape sends no command, and confirmation rechecks the current safety gates.
@@ -145,4 +141,4 @@ tools/host/run-direct.sh --port 8000
 
 The page reports dialog focus and Escape behavior, narrow viewport overflow, and Wi-Fi cancellation failure/retry
 using mocked device operations. These browser checks do not replace physical WebHID/USB qualification, which still
-requires compatible firmware and RP2040/RP2350 hardware.
+requires firmware implementing the version-1 reports and RP2040/RP2350 hardware.

@@ -7,9 +7,9 @@ Python and .NET share their own frontend in `host/web`. The Direct dashboard is 
 components are shared with Direct**. See the
 [dashboard isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
 This Python host connects over USB HID, not Bluetooth LE.
-The dashboard supports Feature 30 status versions 1-4, Feature 35 result versions 1-2, and Feature 36's fixed TCP
-CLI proof report. It includes TCP CLI enable/authentication settings and scan security labels, and blocks saving
-expired temporary test credentials after ten minutes; legacy firmware keeps its existing CLI settings.
+Wireless Features 30, 31, 34 and 35 use version 1; Feature 36 uses the fixed TCP CLI proof format. The dashboard
+includes TCP CLI enable/authentication settings and scan security labels, and blocks saving expired temporary test
+credentials after ten minutes.
 
 ## Install
 

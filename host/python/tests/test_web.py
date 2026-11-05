@@ -44,11 +44,10 @@ class FakeMonitor:
                 "led_on": False,
             },
             "msc": {"enabled": False, "transition_pending": False, "request_rejected": False},
-            "settings": {"system_clock_mhz": 0, "sdcard_profile": 0},
+            "settings": {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0},
             "board_configuration": {
                 "stored_sysclk_profile": 0, "stored_sdcard_profile": 0,
-                "system_clock_mhz": 0, "sdcard_profile": 0,
-                "sdio_bus_mhz": 25, "spi_bus_mhz": 0,
+                "system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0,
             },
             "settings_supported": True,
             "settings_message": None,
@@ -82,15 +81,8 @@ class FakeMonitor:
     def set_settings(self, board_id, settings, *, force=False):
         self.last_board_id = board_id
         self.last_force_save = force
-        if "sdcard_profile" in settings:
-            result = settings
-        else:
-            result = {
-                "system_clock_mhz": settings["system_clock_mhz"],
-                "sdcard_profile": int(settings["sdio_bus_mhz"] == 50),
-            }
-        self.last_settings = result
-        return result
+        self.last_settings = settings
+        return settings
 
     def set_self_test(self, board_id, action, size_mib):
         self.last_board_id = board_id
@@ -141,7 +133,7 @@ class WebTests(unittest.TestCase):
     def test_settings_force_confirmation_is_explicit_boolean(self):
         monitor = FakeMonitor()
         client = create_app(monitor).test_client()
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         for invalid in ["yes", 1, None]:
             response = client.post("/api/settings", json={**settings, "confirm_data_loss": invalid},
                                    base_url="http://127.0.0.1")
@@ -178,7 +170,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.json["runtime"]["ram_used_bytes"], 65536)
         self.assertEqual(response.json["runtime"]["ram_total_bytes"], 532480)
         self.assertEqual(response.json["board_status"]["temperature_centidegrees"], 2345)
-        self.assertEqual(response.json["settings"], {"system_clock_mhz": 0, "sdcard_profile": 0})
+        self.assertEqual(response.json["settings"], {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0})
         self.assertIn("board_configuration", response.json)
         self.assertFalse(response.json["telemetry_stale"])
         self.assertIn("10", response.json["report_freshness"])
@@ -233,36 +225,19 @@ class WebTests(unittest.TestCase):
     def test_settings_endpoint_validates_and_returns_confirmed_values(self):
         monitor = FakeMonitor()
         client = create_app(monitor).test_client()
-        settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 50}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2}
         for invalid in (
             {**settings, "system_clock_mhz": 100},
-            {**settings, "sdio_bus_mhz": 40},
-            {**settings, "spi_bus_mhz": True},
-            {"system_clock_mhz": 200},
+            {**settings, "sdcard_profile": 2},
+            {**settings, "radios": True},
+            {"system_clock_mhz": 200, "sdcard_profile": 1},
         ):
             response = client.post("/api/settings", json=invalid, base_url="http://127.0.0.1")
             self.assertEqual(response.status_code, 400)
         response = client.post("/api/settings?board=board-a", json=settings, base_url="http://127.0.0.1")
         self.assertEqual(response.status_code, 200)
-        expected = {"system_clock_mhz": 200, "sdcard_profile": 1}
-        self.assertEqual(response.json["settings"], expected)
-        self.assertEqual(monitor.last_settings, expected)
-
-    def test_settings_endpoint_accepts_canonical_profile_shape(self):
-        monitor = FakeMonitor()
-        response = create_app(monitor).test_client().post(
-            "/api/settings?board=board-a",
-            json={"system_clock_mhz": 150, "sdcard_profile": 0},
-            base_url="http://127.0.0.1",
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json["settings"], {"system_clock_mhz": 150, "sdcard_profile": 0})
-        response = create_app(monitor).test_client().post(
-            "/api/settings?board=board-a",
-            json={"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 2},
-            base_url="http://127.0.0.1",
-        )
-        self.assertEqual(monitor.last_settings["radios"], 2)
+        self.assertEqual(response.json["settings"], settings)
+        self.assertEqual(monitor.last_settings, settings)
 
     def test_settings_endpoint_reports_invalid_device_readback_as_service_error(self):
         class InvalidReadbackMonitor(FakeMonitor):
@@ -271,7 +246,7 @@ class WebTests(unittest.TestCase):
 
         response = create_app(InvalidReadbackMonitor()).test_client().post(
             "/api/settings",
-            json={"system_clock_mhz": 150, "sdio_bus_mhz": 0, "spi_bus_mhz": 0},
+            json={"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 0},
             base_url="http://127.0.0.1",
         )
         self.assertEqual(response.status_code, 503)

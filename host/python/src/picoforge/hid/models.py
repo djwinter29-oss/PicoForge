@@ -47,8 +47,6 @@ class BoardConfiguration(TypedDict):
     led_gpio: int
     card_detect_gpio: int
     storage_transport: str
-    sdio_bus_mhz: int
-    spi_bus_mhz: int
 
 
 class BootSettings(TypedDict):
@@ -80,7 +78,6 @@ class MscStatus(TypedDict):
     enabled: bool
     transition_pending: bool
     request_rejected: bool
-    force_return_supported: bool
 
 
 class SdCardIdentity(TypedDict):
@@ -155,9 +152,8 @@ class WirelessStatus(TypedDict):
     ble_state: str
     tcp_cli_started: bool
     tcp_cli_enabled: bool
-    tcp_cli_configurable: bool
     tcp_cli_auth_required: bool
-    wifi_auth_state: str | None
+    wifi_auth_state: str
     reconnect_count: int
     rssi: int | None
     restart_required: bool

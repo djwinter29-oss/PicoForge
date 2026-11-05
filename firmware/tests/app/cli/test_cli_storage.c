@@ -308,7 +308,7 @@ void test_benchmark_status_includes_failure_cleanup_and_request_details(void)
     };
     send_cli("storage get benchmark\r");
     TEST_ASSERT_NOT_NULL(strstr(cli_output, "benchmark=failed target=4096 written=2048 read=1024 mismatches=3"));
-    TEST_ASSERT_NOT_NULL(strstr(cli_output, "write_ms=25 read_ms=12 error=10 filesystem_result=1 request_error=1 flags=3"));
+    TEST_ASSERT_NOT_NULL(strstr(cli_output, "write_ms=25 read_ms=12 error=9 filesystem_result=1 request_error=1 flags=3"));
 
     benchmark_ok = false;
     send_cli("storage benchmark 8\r");

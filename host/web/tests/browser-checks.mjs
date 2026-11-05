@@ -44,7 +44,7 @@ const mock = `<script>
     settings_supported: true,
     settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
     memory: { mode: "spi" },
-    msc: { enabled: false, transition_pending: false, force_return_supported: true },
+    msc: { enabled: false, transition_pending: false },
     self_test: null
   };
   window.fetch = async (input, options = {}) => {
@@ -59,7 +59,7 @@ const mock = `<script>
     });
     if (url.pathname === "/api/wireless") return response({ wireless: {
       ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
-      ble_key_configured: false, tcp_cli_configurable: false
+      ble_key_configured: false, tcp_cli_enabled: true
     } });
     if (url.pathname === "/api/wireless/test") return response({
       test: { remaining_seconds: 600, ipv4: "192.0.2.2" }

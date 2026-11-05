@@ -20,7 +20,9 @@ from .common import (
     WIRELESS_RESULT_FEATURE_SIZE,
     WIRELESS_RESULT_REPORT_ID,
 )
-from .common import _bytes, _feature_payload, _validate_settings
+from .common import _feature_payload, _validate_settings
+
+WIRELESS_STATUS_SIZE = 53
 
 
 def build_tcp_cli_auth_request(transaction_id: int, nonce: bytes) -> bytes:
@@ -45,10 +47,8 @@ def parse_tcp_cli_auth_result(report: bytes | bytearray | list[int], transaction
     return proof
 
 
-def build_wireless_configuration_report(
-    settings: dict[str, object], transaction_id: int = 1, *, tcp_cli_configurable: bool = True,
-) -> bytes:
-    """Build Feature 31 v2: board settings, radio switches and credentials in one atomic save."""
+def build_wireless_configuration_report(settings: dict[str, object], transaction_id: int = 1) -> bytes:
+    """Build Feature 31: board settings, radio and TCP CLI switches and credentials in one atomic save."""
     if not isinstance(settings, dict):
         raise ValueError("Expected wireless configuration JSON")
     if settings.get("confirm_reboot") is not True:
@@ -61,9 +61,8 @@ def build_wireless_configuration_report(
     if "use_tested_wifi" in settings and type(settings["use_tested_wifi"]) is not bool:
         raise ValueError("use_tested_wifi must be boolean")
     use_tested = settings.get("use_tested_wifi", False)
-    if "tcp_cli_enabled" in settings and (
-            type(settings["tcp_cli_enabled"]) is not bool or not tcp_cli_configurable):
-        raise ValueError("TCP CLI setting requires a boolean and wireless status v2")
+    if type(settings.get("tcp_cli_enabled")) is not bool:
+        raise ValueError("tcp_cli_enabled must be boolean")
     if "board" not in settings:
         raise ValueError("board settings are required")
     clock, profile, radios = _validate_settings(settings["board"])
@@ -79,9 +78,7 @@ def build_wireless_configuration_report(
     if type(transaction_id) is not int or not 1 <= transaction_id <= 255:
         raise ValueError("Wireless transaction must be 1..255")
     payload = bytearray(137)
-    payload[:5] = bytes([31, 2, transaction_id, radios, 0])
-    if tcp_cli_configurable:
-        payload[4] |= 16 if "tcp_cli_enabled" not in settings else 8 if not settings["tcp_cli_enabled"] else 0
+    payload[:5] = bytes([31, REPORT_VERSION, transaction_id, radios, 0 if settings["tcp_cli_enabled"] else 8])
     payload[134:137] = struct.pack("<HB", clock, profile)
     payload[5:5 + len(encoded)] = encoded
     if "password" not in settings and not use_tested:
@@ -107,6 +104,13 @@ def build_wireless_configuration_report(
     if use_tested:
         payload[4] |= 4
     return bytes(payload)
+
+def validate_wireless_configuration(settings: object) -> None:
+    """Validate a dashboard save request, where an omitted TCP CLI switch keeps the saved value."""
+    if not isinstance(settings, dict):
+        raise ValueError("Expected wireless configuration JSON")
+    build_wireless_configuration_report({"tcp_cli_enabled": True, **settings})
+
 
 def build_wireless_command_report(
     transaction_id: int, operation: int, *, page: int = 0, ssid: str = "", password: str = ""
@@ -146,8 +150,8 @@ def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> Wirel
     """Decode sanitized Feature 35 scan/test results; no password is returned."""
     payload = _feature_payload(report, WIRELESS_RESULT_REPORT_ID, WIRELESS_RESULT_FEATURE_SIZE - 1)
     state, page, count, wifi_state = payload[2:6]
-    max_page = (8 if payload[0] == 1 else len(WIRELESS_TEST_DETAILS) - 1) if state >= 4 else 2
-    if payload[0] not in (1, 2) or state > 6 or page > max_page or count > 18 or wifi_state > 3:
+    max_page = len(WIRELESS_TEST_DETAILS) - 1 if state >= 4 else 2
+    if payload[0] != REPORT_VERSION or state > 6 or page > max_page or count > 18 or wifi_state > 3:
         raise ValueError("Invalid wireless scan/test result")
     networks = []
     for index in range(6):
@@ -157,7 +161,7 @@ def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> Wirel
             if any(entry):
                 raise ValueError("Invalid empty wireless scan entry")
             continue
-        if length > 32 or any(entry[1 + length:33]) or entry[34] > (1 if payload[0] == 1 else 7):
+        if length > 32 or any(entry[1 + length:33]) or entry[34] > 7:
             raise ValueError("Invalid wireless scan entry")
         try:
             ssid = entry[1:1 + length].decode("utf-8")
@@ -165,9 +169,8 @@ def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> Wirel
             raise ValueError("Invalid wireless scan SSID") from None
         networks.append({"ssid": ssid, "rssi": int.from_bytes(entry[33:34], "little", signed=True),
                          "secured": bool(entry[34]),
-                         "security": (("Secured" if entry[34] else "Open") if payload[0] == 1 else
-                                      ("Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)",
-                                       "RSN (WPA2/WPA3)", "WPA/RSN", "WPA/RSN")[entry[34]])})
+                         "security": ("Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)",
+                                      "RSN (WPA2/WPA3)", "WPA/RSN", "WPA/RSN")[entry[34]]})
     remaining_seconds = int.from_bytes(payload[220:222], "little")
     staged = state == 5 or state == 6 and page == 9
     if len(networks) > count or (state != 5 and any(payload[216:220])) or remaining_seconds > 600:
@@ -182,18 +185,10 @@ def parse_wireless_result_report(report: bytes | bytearray | list[int]) -> Wirel
 
 def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> WirelessStatus:
     """Decode sanitized Feature 30; credentials are never present in this report."""
-    data = _bytes(report)
-    offset = 2 if len(data) >= 2 and data[:2] == bytes((0, WIRELESS_REPORT_ID)) else 1
-    if offset >= len(data) or data[0] != 0 and data[0] != WIRELESS_REPORT_ID:
-        raise ValueError("Invalid wireless status report")
-    payload_size = 53 if data[offset] >= 4 else 52
-    payload = _feature_payload(data, WIRELESS_REPORT_ID, payload_size)
-    restart_flag = payload[52] if payload_size == 53 else 0
-    if (payload[0] not in (1, 2, 3, 4) or payload[1] & ~3 or payload[2] > 6 or payload[4] > 3
+    payload = _feature_payload(report, WIRELESS_REPORT_ID, WIRELESS_STATUS_SIZE)
+    if (payload[0] != REPORT_VERSION or payload[1] & ~3 or payload[2] > 6 or payload[4] > 3
             or payload[42] > 1 or payload[43] > 1 or payload[44] > 3 or payload[45] > 2
-            or payload[46] > 1 or payload[47] > (0 if payload[0] == 1 else 1 if payload[0] == 2 else 3)
-            or payload[0] < 3 and any(payload[48:52]) or payload[0] >= 3 and payload[48] > 3
-            or payload[0] < 4 and restart_flag != 0 or restart_flag > 1):
+            or payload[46] > 1 or payload[47] > 3 or payload[48] > 3 or payload[52] > 1):
         raise ValueError("Invalid wireless status report")
     ssid = payload[9:42]
     nul = ssid.find(b"\0")
@@ -211,12 +206,9 @@ def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> Wirel
         "password_configured": bool(payload[42]), "ble_key_configured": bool(payload[43]),
         "error": payload[44], "ble_state": ("off", "advertising", "connected")[payload[45]],
         "tcp_cli_started": bool(payload[46]),
-        "tcp_cli_enabled": not bool(payload[47] & 1), "tcp_cli_configurable": payload[0] >= 2,
-        "tcp_cli_auth_required": bool(payload[47] & 2),
-        "wifi_auth_state": (None if payload[0] < 3 else
-                            ("try_wpa2", "try_sae", "wpa2", "sae")[payload[48]]),
-        "reconnect_count": int.from_bytes(payload[49:51], "little") if payload[0] >= 3 else 0,
-        "rssi": (int.from_bytes(payload[51:52], "little", signed=True)
-                 if payload[0] >= 3 and payload[51] != 127 else None),
-        "restart_required": bool(payload[0] >= 4 and restart_flag),
+        "tcp_cli_enabled": not bool(payload[47] & 1), "tcp_cli_auth_required": bool(payload[47] & 2),
+        "wifi_auth_state": ("try_wpa2", "try_sae", "wpa2", "sae")[payload[48]],
+        "reconnect_count": int.from_bytes(payload[49:51], "little"),
+        "rssi": int.from_bytes(payload[51:52], "little", signed=True) if payload[51] != 127 else None,
+        "restart_required": bool(payload[52]),
     }

@@ -36,7 +36,7 @@ static bool restart_required; /**< Saved wireless settings differ from the value
 
 /** @brief Feature 31 configuration request byte offsets and flags. */
 enum {
-    REQUEST_VERSION = 0, /**< Payload version, always 2. */
+    REQUEST_VERSION = 0, /**< Payload version, always 1. */
     REQUEST_TRANSACTION = 1, /**< Nonzero host transaction. */
     REQUEST_RADIOS = 2, /**< PF_WIRELESS_* radio switches. */
     REQUEST_FLAGS = 3, /**< REQUEST_KEEP_* and REQUEST_USE_TESTED bits. */
@@ -48,32 +48,13 @@ enum {
     REQUEST_KEEP_PASSWORD = 1, /**< Keep the saved passphrase. */
     REQUEST_KEEP_KEY = 2, /**< Keep the saved BLE key. */
     REQUEST_USE_TESTED = 4, /**< Save the staged tested credentials. */
-    REQUEST_DISABLE_TCP_CLI = 8, /**< Disable unauthenticated saved-LAN console access after reboot. */
-    REQUEST_KEEP_TCP_CLI = 16, /**< Preserve the saved console switch. */
-    /** Retired TCP authentication switch; accepted and ignored because a saved key now always requires it. */
-    REQUEST_RETIRED_TCP_AUTH = 32,
-    REQUEST_RETIRED_KEEP_TCP_AUTH = 64, /**< Retired; accepted and ignored. */
+    REQUEST_DISABLE_TCP_CLI = 8, /**< Disable saved-LAN console access after reboot. */
 };
 
 /** @brief Return whether USB mass storage or the storage worker owns the shared flash/radio admission. */
 static bool storage_busy(void)
 {
     return pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy();
-}
-
-/** @brief Validate supported Feature 31 flags and their mutually exclusive choices. */
-static bool valid_request_flags(uint8_t flags)
-{
-    static const uint8_t exclusive_pairs[][2] = {
-        {REQUEST_DISABLE_TCP_CLI, REQUEST_KEEP_TCP_CLI},
-    };
-    const uint8_t supported = REQUEST_KEEP_PASSWORD | REQUEST_KEEP_KEY | REQUEST_USE_TESTED |
-        REQUEST_DISABLE_TCP_CLI | REQUEST_KEEP_TCP_CLI | REQUEST_RETIRED_TCP_AUTH | REQUEST_RETIRED_KEEP_TCP_AUTH;
-    if ((flags & (uint8_t)~supported) != 0u) return false;
-    for (size_t i = 0u; i < sizeof(exclusive_pairs) / sizeof(exclusive_pairs[0]); ++i) {
-        if ((flags & exclusive_pairs[i][0]) != 0u && (flags & exclusive_pairs[i][1]) != 0u) return false;
-    }
-    return true;
 }
 
 /** @brief Initialize the shared SDK once, always on the USB owner task/core. */
@@ -211,7 +192,8 @@ bool pf_wireless_configure(const uint8_t *report)
     const bool use_tested = (flags & REQUEST_USE_TESTED) != 0u;
     save_transaction = report[REQUEST_TRANSACTION];
     save_status = PF_HID_COMMAND_INVALID;
-    if (report[REQUEST_VERSION] != 2u || save_transaction == 0u || !valid_request_flags(flags)) return false;
+    const uint8_t supported = REQUEST_KEEP_PASSWORD | REQUEST_KEEP_KEY | REQUEST_USE_TESTED | REQUEST_DISABLE_TCP_CLI;
+    if (report[REQUEST_VERSION] != 1u || save_transaction == 0u || (flags & (uint8_t)~supported) != 0u) return false;
     if (storage_busy()) {
         save_status = PF_HID_COMMAND_BUSY;
         return false;
@@ -250,8 +232,7 @@ bool pf_wireless_configure(const uint8_t *report)
     const bool valid = pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(clock_mhz)) &&
         pf_boot_config_set_storage_speed((pf_storage_speed_t)report[REQUEST_STORAGE_SPEED]) &&
         pf_boot_config_set_radios(report[REQUEST_RADIOS]) &&
-        ((flags & REQUEST_KEEP_TCP_CLI) != 0u ||
-         pf_boot_config_set_tcp_cli_enabled((flags & REQUEST_DISABLE_TCP_CLI) == 0u)) &&
+        pf_boot_config_set_tcp_cli_enabled((flags & REQUEST_DISABLE_TCP_CLI) == 0u) &&
         pf_boot_config_set_wifi_ssid(credentials.next_ssid) &&
         (keep_password || pf_boot_config_set_wifi_password(credentials.next_password)) &&
         (keep_key || pf_boot_config_set_ble_key(credentials.next_key)) &&

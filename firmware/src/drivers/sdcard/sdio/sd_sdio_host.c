@@ -99,8 +99,6 @@ bool pf_sd_sdio_host_init(pf_sd_sdio_host_t *host, const pf_sd_config_t *config)
     host->bus_width = 1u;
     host->last_error = PF_SD_DETAIL_NONE;
     memset(&host->errors, 0, sizeof(host->errors));
-    memset(host->last_response_words, 0, sizeof(host->last_response_words));
-    host->last_response_word_count = 0u;
     host->write_stream_open = false;
     host->read_stream_unresolved = false;
     host->data_rx_multiblock_supported = true;
@@ -179,12 +177,6 @@ bool pf_sd_sdio_host_command_bytes(pf_sd_sdio_host_t *host, uint8_t command, uin
     size_t received = 0u;
     bool ok = pf_sd_link_sdio_exchange(&host->transport, frame, sizeof(frame), response_bits,
                                          response, response_capacity, &received, SDIO_COMMAND_TIMEOUT_US);
-    memset(host->last_response_words, 0, sizeof(host->last_response_words));
-    host->last_response_word_count = (received + 3u) / 4u;
-    for (size_t index = 0u; index < received; ++index) {
-        uint32_t *word = &host->last_response_words[index / 4u];
-        *word = (*word << 8u) | response[index];
-    }
     return ok && received == response_bits / 8u;
 }
 

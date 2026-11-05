@@ -45,7 +45,7 @@ enum {
 
 /** @brief Feature 35 result payload byte offsets. */
 enum {
-    RESULT_VERSION = 0, /**< Payload version, 2 includes staged-test lifetime. */
+    RESULT_VERSION = 0, /**< Payload version, always 1. */
     RESULT_TRANSACTION = 1, /**< Transaction the result belongs to. */
     RESULT_STATE = 2, /**< pf_wifi_command_state_t. */
     RESULT_DETAIL = 3, /**< Scan page in states 0-3; pf_wifi_detail_t in states 4-6. */
@@ -637,7 +637,7 @@ void pf_wifi_reject_command(uint8_t transaction)
 void pf_wifi_result(uint8_t report[PF_WIRELESS_RESULT_SIZE])
 {
     memset(report, 0, PF_WIRELESS_RESULT_SIZE);
-    report[RESULT_VERSION] = 2u;
+    report[RESULT_VERSION] = 1u;
     report[RESULT_WIFI_STATE] = wifi_state;
     if (rejected_transaction != 0u) {
         report[RESULT_TRANSACTION] = rejected_transaction;

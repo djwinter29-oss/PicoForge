@@ -7,7 +7,7 @@ internal static class StatusEndpoints
 {
     public sealed record SetLedRequest(bool? On);
     public sealed record SetLedResponse(BoardStatusResponse? BoardStatus);
-    /// <summary>Requested next-boot clock, SD-card profile and optional radio enables (omitted keeps saved).</summary>
+    /// <summary>Requested next-boot clock, SD-card profile and radio enables.</summary>
     public sealed record SetSettingsRequest(int? SystemClockMhz,
         [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile, bool ConfirmDataLoss = false,
         int? Radios = null);
@@ -125,21 +125,19 @@ internal static class StatusEndpoints
     private static IResult SetSettings(SetSettingsRequest request, string? board, IDashboardBoards dashboard)
     {
         if (request.SystemClockMhz is not (0 or 150 or 200 or 250) ||
-            request.SdCardProfile is not (0 or 1) || request.Radios is < 0 or > 3)
+            request.SdCardProfile is not (0 or 1) || request.Radios is not (>= 0 and <= 3))
             return Results.Problem(statusCode: 400, title: "Unsupported boot settings value");
 
         StatusResponse status;
         try { status = dashboard.Snapshot(board); }
         catch (InvalidOperationException error) { return Results.Conflict(new { error = error.Message }); }
         var settings = new BootSettingsResponse(request.SystemClockMhz.Value, request.SdCardProfile.Value,
-            request.Radios ?? status.Settings?.Radios ?? 0);
+            request.Radios.Value);
         try
         {
             if (request.ConfirmDataLoss)
             {
                 if (!status.Connected || status.CommandOutcomeUncertain ||
-                    (status.Hardware?.Capabilities & HidProtocol.CapabilityForcedSave) !=
-                        HidProtocol.CapabilityForcedSave ||
                     status.Msc is not { Enabled: true, TransitionPending: false } || status.SelfTest?.Active == true)
                     return Results.Conflict(new { error = "Forced save is unavailable or storage is busy" });
             }

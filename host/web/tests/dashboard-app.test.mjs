@@ -146,7 +146,7 @@ test("shared dashboard preserves drafts and command state across status failures
       if (options.method !== "POST") await wirelessReadGate;
       if (options.method !== "POST" && wirelessReadFails) throw new Error("wireless down");
       if (options.method !== "POST") return { ok: true, json: async () => ({
-        wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false, wifi_state: wirelessState, ipv4: "192.168.1.9" },
+        wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false, tcp_cli_enabled: true, wifi_state: wirelessState, ipv4: "192.168.1.9" },
         reboot_pending: false,
       }) };
       const settings = JSON.parse(options.body);
@@ -370,11 +370,11 @@ test("shared dashboard preserves drafts and command state across status failures
       await tick();
       assert.equal(benchmark.hidden, !rejected);
       if (!rejected) {
-        connected.msc.force_return_supported = true;
         await handlers.get("#msc-control:click")();
         await handlers.get("#confirm-return:click")();
         assert.equal(benchmark.hidden, true, "return must wait for ownership telemetry");
         connected.msc = { enabled: false, transition_pending: false };
+        await new Promise(resolve => setImmediate(resolve));
         await tick();
         assert.equal(Boolean(benchmark.hidden), false);
       }
@@ -719,12 +719,9 @@ test("shared dashboard preserves drafts and command state across status failures
     await tick();
     assert.equal(elements.get("#led-control").textContent, "Board LED: On",
       "fresh LED status reconciles the timed-out command");
-    connected.msc = { enabled: true, force_return_supported: true, transition_pending: false };
+    connected.msc = { enabled: true, transition_pending: false };
     await tick();
     assert.equal(elements.get("#settings-clock").disabled, false, "local editing is safe during host ownership");
-    assert.equal(elements.get("#settings-save").disabled, true, "old firmware cannot force save");
-    connected.hardware.capabilities |= 64;
-    await tick();
     elements.get("#settings-clock").value = "250";
     handlers.get("#settings-clock:change")();
     await handlers.get("#settings-save:click")();

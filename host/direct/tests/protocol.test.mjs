@@ -262,7 +262,7 @@ test("control results enforce every opcode/status/error combination and zero res
   assert.throws(() => decodeControlResult(saved));
 });
 
-test("mandatory connection reads reject legacy firmware/config failures and gate self-test input", async () => {
+test("mandatory connection reads reject malformed identity/config failures and gate self-test input", async () => {
   const { client, device, reads } = fakeConnection({ capabilities: 1 | 2 | 4 | 16 });
   await client.connect();
   assert.deepEqual(reads, [1, 2]);
@@ -587,16 +587,6 @@ test("confirmed forced settings save reconnects to the original result without r
     }
     await client.disconnect();
   }
-});
-
-test("forced save never falls back on firmware without its capability", async () => {
-  const { client, device, sent } = fakeConnection();
-  await client.connect();
-  const shared = storage(); shared[2] = 1; shared.fill(0, 3, 31); shared[31] = 1;
-  emit(device, 10, shared); emit(device, 11, selfTest());
-  assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }, true), false);
-  assert.equal(sent.length, 0);
-  await client.disconnect();
 });
 
 test("USB sharing stays pending through delivery, old reports, reconnect and ownership transitions", async () => {

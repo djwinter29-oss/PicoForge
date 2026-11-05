@@ -58,21 +58,21 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
             raise ValueError("queued self-test report must have zero progress")
         if state != 7 and error:
             raise ValueError("self-test execution error is only valid in Failed state")
-        if state == 7 and error <= 11 and error not in (5, 6, 8, 9, 10):
+        if state == 7 and error <= 10 and error not in (4, 5, 7, 8, 9):
             raise ValueError("invalid execution error in Failed self-test state")
         if state == 6 and (
             not target or written != target or read != target or mismatches or error or flags & 1
         ):
             raise ValueError("invalid Passed self-test result")
-    if error == 8 and state == 7:
+    if error == 7 and state == 7:
         if not fs_result:
             raise ValueError("filesystem I/O failure requires a FatFs result")
-    elif error == 10 and state == 7:
+    elif error == 9 and state == 7:
         pass
     elif fs_result:
         raise ValueError("filesystem result is only valid for applicable self-test errors")
-    if request_error in (3, 9, 10):
-        raise ValueError("reserved or execution-only self-test request error")
+    if request_error in (8, 9):
+        raise ValueError("execution-only self-test request error")
     state_names = {
         0: "idle", 1: "queued", 2: "preparing", 3: "writing",
         4: "reading", 5: "cleanup", 6: "passed", 7: "failed", 8: "cancelled",
@@ -94,17 +94,15 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
         "mismatch_count": mismatches,
         "error": error,
         "error_name": _unknown_name(error, {
-            0: "none", 1: "busy", 2: "USB owns storage", 3: "reserved",
-            4: "invalid size", 5: "card unavailable", 6: "insufficient space",
-            7: "test file exists", 8: "filesystem I/O", 9: "verification", 10: "cleanup",
-            11: "filesystem not mounted",
+            0: "none", 1: "busy", 2: "USB owns storage", 3: "invalid size", 4: "card unavailable",
+            5: "insufficient space", 6: "test file exists", 7: "filesystem I/O", 8: "verification", 9: "cleanup",
+            10: "filesystem not mounted",
         }),
         "filesystem_result": fs_result,
         "request_error": request_error,
         "request_error_name": _unknown_name(request_error, {
-            0: "none", 1: "busy", 2: "USB owns storage", 4: "invalid size",
-            5: "card unavailable", 6: "insufficient space", 7: "test file exists",
-            8: "filesystem I/O", 11: "filesystem not mounted",
+            0: "none", 1: "busy", 2: "USB owns storage", 3: "invalid size", 4: "card unavailable",
+            5: "insufficient space", 6: "test file exists", 7: "filesystem I/O", 10: "filesystem not mounted",
         }),
         "file_remains": bool(flags & 1),
         "volume_mounted": bool(flags & 2),

@@ -153,19 +153,4 @@ def parse_configuration_report(
         "led_gpio": led_gpio,
         "card_detect_gpio": card_detect_gpio,
         "storage_transport": transport,
-        "sdio_bus_mhz": (25 if sd_profile == 0 else 50) if transport == "sdio" else 0,
-        "spi_bus_mhz": (25 if sd_profile == 0 else 50) if transport == "spi" else 0,
     }
-
-def parse_settings_report(report: bytes | bytearray | list[int],
-                          identity: HardwareIdentity) -> BoardConfiguration:
-    """Compatibility-named decoder for the new Board Configuration report."""
-    return parse_configuration_report(report, identity)
-
-def parse_info_report(report: bytes | bytearray | list[int]) -> HardwareIdentity:
-    """Compatibility-named decoder for Feature report 1."""
-    return parse_identity_report(report)
-
-
-parse_device_identity_report = parse_identity_report
-parse_board_configuration_report = parse_configuration_report

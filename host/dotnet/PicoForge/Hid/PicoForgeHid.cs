@@ -147,7 +147,6 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     public BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false)
     {
         EnsureCapability(HidProtocol.CapabilitySettings, "persistent settings");
-        if (force) EnsureCapability(HidProtocol.CapabilityForcedSave, "forced settings save");
         ValidateSettings(settings);
         var arguments = new byte[5];
         BinaryPrimitives.WriteUInt16LittleEndian(arguments, (ushort)settings.SystemClockMhz);
@@ -200,7 +199,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         if (previous.Status is "pending" or "busy")
             throw new InvalidOperationException("Wireless provisioning is busy");
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
-        var request = HidProtocol.BuildWirelessRequest(settings, transactionId, previous.TcpCliConfigurable);
+        var request = HidProtocol.BuildWirelessRequest(settings, transactionId, previous.TcpCliEnabled);
         CommandOutcomeUncertain = true;
         writeFeature(request);
         var deadline = Environment.TickCount64 + 5000;

@@ -641,7 +641,6 @@ export class PicoForgeWebHid {
     const transaction = this.transaction % 255 + 1;
     const report = buildControlRequest(transaction, opcode, options);
     const forcedSave = opcode === 6 && report[3] === 1;
-    if (forcedSave && !(this.state.hardware.capabilities & 64)) throw new Error("Update firmware for forced save");
     this.reconnectedResult = null;
     this.reconnectError = null;
     this.transaction = transaction;
@@ -773,8 +772,7 @@ export class PicoForgeWebHid {
     requireValid(validSettings(settings), "boot settings");
     requireValid(typeof force === "boolean", "forced save confirmation");
     if (!this.storageReady() || this.state.self_test?.active ||
-      (this.state.msc.enabled && !force) || (force && (!this.state.msc.enabled ||
-        !(this.state.hardware.capabilities & 64)))) {
+      (this.state.msc.enabled && !force) || (force && !this.state.msc.enabled)) {
       this.update({ settings_message: "Fresh idle firmware-owned storage required before saving." });
       return false;
     }

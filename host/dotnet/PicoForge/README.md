@@ -20,15 +20,14 @@ path as identity and are removed from the registry on the first successful resca
 identity cannot distinguish a different serial-less board reusing that path unless a rescan observes the gap.
 `POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Current firmware keeps CDC, HID and MSC connected;
 MSC reports no medium while Pico owns the card. Safely eject before disabling to return the card to PicoForge.
-With older firmware, expected HID disconnects after a confirmed MSC command show **Reconnecting** for up to
-five seconds. Persistent errors, invalid reports, permission failures and uncertain command outcomes remain errors.
+Persistent errors, invalid reports, permission failures and uncertain command outcomes remain errors.
 `POST /api/self-test` starts or cancels the SD-card test and acknowledges HID delivery with HTTP 202.
 See [the performance-test guide](../../../docs/guides/sdcard-benchmark.md) for safety and metric definitions.
 Run with `ASPNETCORE_ENVIRONMENT=Development` to expose `/openapi/v1.json`.
 The dashboard's **Return to Pico** action requires explicit data-loss confirmation and requests Pico-side
 host-access revocation/remount without any host OS eject command. See the
 [force-return design](../../../docs/reference/usb-hid.md#msc-force-return-safety) for its
-one-attempt remount policy and host-cache risks. The legacy safe-disable API remains available for manual-eject clients.
+one-attempt remount policy and host-cache risks. The safe-disable API remains available for manual-eject clients.
 If a HID write times out or its result cannot be matched, the dashboard marks the command outcome uncertain and blocks
 further writes rather than replaying or overwriting the result.
 **Enable USB drive** also opens a storage-handoff confirmation dialog; Cancel or Escape sends no command.
@@ -49,10 +48,9 @@ The folders organize implementation by responsibility while retaining the existi
 Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
-Feature 30 status versions 1-4, Feature 35 result versions 1-2, and Feature 36's fixed TCP CLI proof report are
-supported, including the saved TCP CLI switch, Control key authentication, scan security labels, and staged-test
-lifetime. The dashboard blocks saving temporary test credentials after ten minutes and preserves legacy firmware's
-CLI settings.
+Wireless Features 30, 31, 34 and 35 use version 1; Feature 36 uses the fixed TCP CLI proof format. The dashboard
+supports the saved TCP CLI switch, Control key authentication, scan security labels, and staged-test lifetime, and
+blocks saving temporary test credentials after ten minutes.
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.

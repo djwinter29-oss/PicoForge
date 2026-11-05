@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "./wireless-form.mjs?v=19";
+import { renderWirelessStatus } from "./wireless-form.mjs?v=20";
 
 function uptimeLabel(milliseconds) {
   if (typeof milliseconds === "bigint") {
@@ -217,7 +217,7 @@ export function renderSelfTest(snapshot) {
   const speed = value => value == null ? "--" : `${(value / 1048576).toFixed(2)} MiB/s`;
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", preparing: "Preparing", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
-  const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
+  const errors = ["", "Storage busy", "USB host owns the card", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
   set("#self-test-state", status ? `${labels[status.state] ?? status.state} · ${Math.floor(status.progress_percent ?? 0)}%`
     : "Unavailable");
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;

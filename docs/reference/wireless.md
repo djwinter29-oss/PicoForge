@@ -22,28 +22,21 @@ admission tied to its source. Storage ownership remains exclusive.
 All supported boards advertise LED control. `config/board.c` selects direct GPIO for Pico/Pico 2 and a CYW43 writer
 for W boards at build time. The wireless owner initializes the chip and clears its LED even with both radios disabled.
 LED writes fail explicitly if that initialization failed; LED support
-is not a dynamically detected capability. Existing HID LED capability and telemetry bits remain set for compatibility.
+is not a dynamically detected capability. HID capability and telemetry fields advertise the LED behavior in the
+current report contract.
 
 SDK BTstack's default flash-TLV initializer is interposed to select its nonpersistent TLV implementation before
 any bank access. Its default Pico W flash banks otherwise overlap the settings sector. No OS bonds are persisted;
 application proof authorization does not rely on Bluetooth pairing. Only the existing boot configuration service
 writes flash; persistent Bluetooth bonding is not supported.
 
-The 16-byte version-1 clock/speed record uses byte 10 bits 0/1 to disable Wi-Fi/BLE and bit 2 to disable the TCP CLI.
-The CLI switch defaults enabled for erased and older records, is independent of the radio bits returned by Report 2,
-and is preserved by ordinary clock/speed/radio updates. Firmware predating this service bit rejects records with
-bit 2 set and loads defaults; reprovision after such a downgrade.
-The record is followed by a 144-byte wireless extension in the same page:
-little-endian magic `0x4c574650`, version `1`, size `144`, a reserved byte/SSID[33]/password[64]/key[32], two
-reserved zero bytes, and CRC-32 over its first 140 bytes. The first byte was a pair of provisioning flags in earlier
-firmware; it is ignored when loading those records and written as zero on the next save. Old records retain
-default-enabled master switches but have no provisioned credentials: Wi-Fi and BLE stay off.
-Every save sets the profile record's wireless-required byte, so a bad or torn extension loads complete defaults rather
-than new profiles without credentials; older records (byte `0`) without an extension keep their profiles. Profile saves
-preserve the extension. A Feature 31 update stages the clock, SD profile, radio switches and all credentials and saves
-once; any rejection or failure discards the staged values, so no partial change survives.
-Downgrading to firmware that predates wireless support can erase the extension on its next settings save;
-reprovision wireless credentials after upgrading again.
+The version-1 [settings record](settings.md#record-format) stores the clock and SD profiles, the service switches
+(byte 10 bits 0/1 disable Wi-Fi/BLE and bit 2 disables the TCP CLI), the saved Wi-Fi authentication state, SSID,
+passphrase and Control key under one CRC. The CLI switch defaults enabled for erased records, is independent of the
+radio bits returned by Report 2, and is preserved by ordinary clock/speed/radio updates. A bad or torn record loads
+complete defaults with no credentials, so Wi-Fi and BLE stay off until provisioned. A Feature 31 update stages the
+clock, SD profile, radio and TCP CLI switches and all credentials and saves once; any rejection or failure discards
+the staged values, so no partial change survives.
 Flash remains **unencrypted**: physical/debug access can recover credentials. Erasing settings clears them.
 Passwords and keys are never included in status, diagnostic logs or readback reports.
 
@@ -53,7 +46,7 @@ Identity capability bit 7 denotes wireless provisioning. The radio master switch
 bits 3-4 and opcode 6 argument byte 3; see [USB HID report reference](usb-hid.md). Feature 30
 reports the saved radio switches; its separate booleans indicate whether credentials are configured.
 
-- Feature **30 GET**, version 4 is 53 payload bytes: version at 0, saved radio-switch flags at 1 (Wi-Fi bit 0, BLE bit
+- Feature **30 GET**, version `1` is 53 payload bytes: version at 0, saved radio-switch flags at 1 (Wi-Fi bit 0, BLE bit
   1), last
   provisioning status at 2 (existing command-status values), transaction at 3, Wi-Fi state at 4
   (disabled/connecting/connected/failed = 0/1/2/3, including temporary tests), saved-network IPv4 bytes at 5-8
@@ -61,20 +54,17 @@ reports the saved radio switches; its separate booleans indicate whether credent
   password/key-configured booleans at 42/43, error at 44 (none/init/join/timeout = 0/1/2/3; a radio init failure
   takes precedence over Wi-Fi join errors until a later start succeeds), BLE link at 45
   (off/advertising/connected = 0/1/2; off until the controller is working), TCP CLI serving boolean
-  at 46 (listener started and the saved network joined; zero during a connection test, without a link, and on older
-  firmware), service flags at 47 (bit 0 disables the saved-LAN TCP CLI; bit 1 requires HMAC
+  at 46 (listener started and the saved network joined; zero during a connection test and without a link),
+  service flags at 47 (bit 0 disables the saved-LAN TCP CLI; bit 1 requires HMAC
   authentication, set whenever a control key was loaded at boot),
   saved-network auth mode at 48, little-endian reconnect count at 49-50, signed RSSI at 51 (`127` unavailable), and
   restart-required at 52 (`1` when saved wireless settings differ from boot-applied values).
-  Versions 1-3 retain the 52-byte payload and zero/omit fields added by later versions; updated hosts accept versions
-  1-4.
-- Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
+- Feature **31 SET**, 136 payload bytes: version `1` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
   bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
-  credentials bit 2, disable TCP CLI bit 3, preserve TCP CLI switch bit 4; bits 5-6 were the retired TCP
-  authentication switch and are accepted and ignored), SSID at 4-36, password at 37-100,
+  credentials bit 2, disable TCP CLI bit 3; a cleared bit 3 enables it), SSID at 4-36, password at 37-100,
   key at 101-132, little-endian clock MHz at 133-134
   (opcode 6 values) and SD profile at 135. A cleared preserve flag with an empty password or all-zero key erases
-  that credential. TCP disable/preserve are mutually exclusive; neither means enable. Unknown flags,
+  that credential. Unknown flags,
   other versions or radio flags inconsistent with the settings are rejected.
   There is **no Feature 31 readback**; hosts confirm the board fields through Report 2.
 - Feature **34 SET**, 101 payload bytes: version `1` at 0, operation at 1 (scan `1`, select page `2`, test join
@@ -82,17 +72,16 @@ reports the saved radio switches; its separate booleans indicate whether credent
   at 6-37 and temporary password at 38-100. Unused fields are zero. Password data is never returned.
   Clear leaves the station link and rejoins the saved network only when a test owns the link; otherwise the saved
   connection is untouched. New scans and tests are rejected while a driver scan is still running.
-- Feature **35 GET**, 220 payload bytes: version `2`, transaction, operation state, page/detail, total scan count and
+- Feature **35 GET**, 222 payload bytes: version `1`, transaction, operation state, page/detail, total scan count and
   Wi-Fi state at offsets 0-5. Byte 3 is the selected page (0-2) in scan states and the test detail in states 4-6:
   none `0`, searching `1`, checking password `2`, waiting for DHCP `3`, network not found `4`, password rejected
   `5`, no DHCP address `6`, timed out `7`, connection start failed `8`, tested link lost `9`, staged credentials
   expired `10`. Six entries of 35 bytes each start at 6:
   SSID length, a 32-byte SSID, signed RSSI and the SDK security bitmask (privacy bit 0, WPA bit 1, RSN bit 2).
   RSN means WPA2/WPA3-family advertisement, not verified WPA3 support; enterprise modes are not distinguished.
-  Hosts accept legacy version `1`, where this byte is only a secured boolean and details end at `8`.
   Bytes 216-219 contain the IPv4 address only after a
   successful test join. Operation states are idle `0`, scanning `1`, scan complete `2`, scan failed `3`, joining
-  `  `4`, joined `5`, and failed `6`. Bytes 220-221 contain remaining staged-test lifetime in seconds (0-600); it
+  `4`, joined `5`, and failed `6`. Bytes 220-221 contain remaining staged-test lifetime in seconds (0-600); it
   remains available after test-link loss (state 6/detail 9). The scan list is capped at 18 strongest unique SSIDs
   (three pages). A scan that
   does not complete within 10 seconds reports scan failed; the driver must finish before releasing station mode or

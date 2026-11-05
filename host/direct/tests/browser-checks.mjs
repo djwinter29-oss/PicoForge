@@ -1,4 +1,4 @@
-import { bindWirelessForm } from "../js/wireless-form.mjs?v=19";
+import { bindWirelessForm } from "../js/wireless-form.mjs?v=20";
 
 const results = document.querySelector("#results");
 const report = (name, error) => {
@@ -59,7 +59,7 @@ await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the
   const form = bindWirelessForm({
     load: async () => ({
       ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
-      ble_key_configured: false, tcp_cli_configurable: false,
+      ble_key_configured: false, tcp_cli_enabled: true,
     }),
     scan: async () => [],
     test: async () => ({ remaining_seconds: 600, ipv4: "192.0.2.2" }),
