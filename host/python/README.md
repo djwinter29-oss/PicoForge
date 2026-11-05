@@ -7,9 +7,11 @@ Python and .NET share their own frontend in `host/web`. The Direct dashboard is 
 components are shared with Direct**. See the
 [dashboard isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
 This Python host connects over USB HID, not Bluetooth LE.
-Wireless Features 30, 31, 34 and 35 use version 1; Feature 36 uses the fixed TCP CLI proof format. The dashboard
-includes TCP CLI enable/authentication settings and scan security labels, and blocks saving expired temporary test
-credentials after ten minutes.
+Wireless status uses Feature 12 and all writes use the unified Feature 20 channel. The dashboard preserves saved
+service switches from Feature 2 and supports staged credentials, testing, scans, and USB-generated TCP CLI proofs.
+Opaque scan SSIDs include `ssid_hex` beside an escaped display name; test/save requests may send that hex value
+to preserve the network bytes. Saving a tested pair reuses its staging without resending either credential.
+See the [authoritative wire contract](../../docs/reference/usb-hid.md) for layouts and expiry rules.
 
 ## Install
 

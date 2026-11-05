@@ -42,10 +42,10 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
     payload = _input_payload(report, SELF_TEST_REPORT_ID, SELF_TEST_PAYLOAD_SIZE)
     version, sequence, state, flags = payload[:4]
     target, written, read, write_ms, read_ms, mismatches = struct.unpack_from("<IIIIII", payload, 4)
-    error, fs_result, request_error, reserved = payload[28:32]
+    error, fs_result, reserved0, reserved1 = payload[28:32]
     if version != REPORT_VERSION:
         raise ValueError(f"unsupported HID self-test report version {version}")
-    if flags & ~3 or reserved or target > 1024 * 1024 * 1024 or written > target or read > written:
+    if flags & ~3 or reserved0 or reserved1 or target > 1024 * 1024 * 1024 or written > target or read > written:
         raise ValueError("invalid HID self-test report")
     if state in range(1, 9) and not target:
         raise ValueError("active or retained self-test state requires a target size")
@@ -71,8 +71,6 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
         pass
     elif fs_result:
         raise ValueError("filesystem result is only valid for applicable self-test errors")
-    if request_error in (8, 9):
-        raise ValueError("execution-only self-test request error")
     state_names = {
         0: "idle", 1: "queued", 2: "preparing", 3: "writing",
         4: "reading", 5: "cleanup", 6: "passed", 7: "failed", 8: "cancelled",
@@ -99,11 +97,6 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
             10: "filesystem not mounted",
         }),
         "filesystem_result": fs_result,
-        "request_error": request_error,
-        "request_error_name": _unknown_name(request_error, {
-            0: "none", 1: "busy", 2: "USB owns storage", 3: "invalid size", 4: "card unavailable",
-            5: "insufficient space", 6: "test file exists", 7: "filesystem I/O", 10: "filesystem not mounted",
-        }),
         "file_remains": bool(flags & 1),
         "volume_mounted": bool(flags & 2),
     }

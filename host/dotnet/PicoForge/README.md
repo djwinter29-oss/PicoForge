@@ -48,9 +48,12 @@ The folders organize implementation by responsibility while retaining the existi
 Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
-Wireless Features 30, 31, 34 and 35 use version 1; Feature 36 uses the fixed TCP CLI proof format. The dashboard
-supports the saved TCP CLI switch, Control key authentication, scan security labels, and staged-test lifetime, and
-blocks saving temporary test credentials after ten minutes.
+Wireless uses the version-1 [Report 12 and Feature 20 contract](../../../docs/reference/usb-hid.md).
+Report 2 supplies all saved service switches; omitted credentials are not staged. Tested saves commit the staged
+pair without restaging it. Status and scan entries include escaped `ssid` labels and lossless `ssid_hex`; test/save
+requests accept `ssid_hex` for opaque network names. A successful test returns a conservative 600-second countdown;
+fresh firmware staging flags remain authoritative. Removed password/auth-mode/reconnect diagnostics are not invented.
+TCP CLI access always requires the saved Control key and the board's fixed opcode-13 proof.
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.

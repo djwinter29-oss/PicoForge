@@ -16,8 +16,8 @@ SDK poll-mode wireless work runs on the existing USB owner task. It creates no a
 the static-allocation policy, and never invokes FatFs from a radio callback. On W images that owner task is pinned to
 its startup core before initializing the SDK at boot: poll-context checks and CYW43 IRQ ownership require it. The same
 task drives the CYW43 LED. Non-wireless builds keep the existing all-core task affinity. BLE controls reuse the
-existing LED and benchmark admission helpers. USB and BLE retain separate command-result slots; the original
-benchmark admission remains tied to its source. Storage ownership remains exclusive.
+existing LED, reboot and settings admission helpers; benchmarks remain USB-only. USB and BLE retain separate
+command-result slots. Storage ownership remains exclusive.
 
 All supported boards advertise LED control. `config/board.c` selects direct GPIO for Pico/Pico 2 and a CYW43 writer
 for W boards at build time. The wireless owner initializes the chip and clears its LED even with both radios disabled.
@@ -30,7 +30,7 @@ any bank access. Its default Pico W flash banks otherwise overlap the settings s
 application proof authorization does not rely on Bluetooth pairing. Only the existing boot configuration service
 writes flash; persistent Bluetooth bonding is not supported.
 
-The version-1 [settings record](settings.md#record-format) stores the clock and SD profiles, the service switches
+The version-2 [settings record](settings.md#record-format) stores the clock and SD profiles, the service switches
 (byte 10 bits 0/1 disable Wi-Fi/BLE and bit 2 disables the TCP CLI), the saved Wi-Fi authentication state, SSID,
 passphrase and Control key under one CRC. The CLI switch defaults enabled for erased records, is independent of the
 radio bits returned by Report 2, and is preserved by ordinary clock/speed/radio updates. The listener serves only

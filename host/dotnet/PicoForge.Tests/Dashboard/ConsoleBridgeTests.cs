@@ -9,9 +9,9 @@ namespace PicoForge.Tests;
 
 public sealed class ConsoleBridgeTests
 {
-    private static WirelessStatusResponse Wireless(string address, bool authRequired = false) =>
-        new(true, false, "HomeDev", true, true, "idle", 0, "connected", address, 0,
-            TcpCliStarted: true, TcpCliAuthRequired: authRequired);
+    private static WirelessStatusResponse Wireless(string address, bool authRequired = true) =>
+        new(true, false, "HomeDev", "connected", address, 0, "off", true, true, true, authRequired,
+            "486F6D65446576", false, false, false, false, 0, 0, 0, 0, 0);
 
     [Fact]
     public async Task RelaysRawBytesToTheBoardPortAndReleasesTheSessionOnPeerClose()
@@ -25,8 +25,15 @@ public sealed class ConsoleBridgeTests
         {
             using var bridge = new ConsoleBridge();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            var token = bridge.Open(Wireless(address.ToString()), null);
+            var opening = Task.Run(() => bridge.Open(Wireless(address.ToString()), (_, _) => new byte[16]));
             using var peer = await listener.AcceptSocketAsync(timeout.Token);
+            await peer.SendAsync(Encoding.ASCII.GetBytes(
+                "PicoForge AUTH 00000000000000000000000000000000 0001020304050607\r\n"),
+                SocketFlags.None, timeout.Token);
+            var token = await opening.WaitAsync(timeout.Token);
+            var auth = new byte[64];
+            var authCount = await peer.ReceiveAsync(auth, SocketFlags.None, timeout.Token);
+            Assert.Equal("AUTH 00000000000000000000000000000000\r\n", Encoding.ASCII.GetString(auth[..authCount]));
             Assert.Throws<InvalidOperationException>(() => bridge.Open(Wireless(address.ToString()), null));
             Assert.Throws<InvalidOperationException>(() => bridge.Close("wrong"));
             var command = Encoding.ASCII.GetBytes("help\r\x1b[A");

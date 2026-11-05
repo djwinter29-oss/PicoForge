@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "./wireless-form.mjs?v=21";
+import { renderWirelessStatus } from "./wireless-form.mjs?v=22";
 
 function uptimeLabel(milliseconds) {
   if (typeof milliseconds === "bigint") {
@@ -234,8 +234,6 @@ export function renderSelfTest(snapshot) {
   set("#self-test-write-time", status ? `${(status.write_elapsed_ms / 1000).toFixed(2)} s` : "--");
   set("#self-test-read-time", status ? `${(status.read_elapsed_ms / 1000).toFixed(2)} s` : "--");
   const notices = [];
-  if (status?.request_error) notices.push(`Request rejected: ${errors[status.request_error]
-    ?? `Unknown error (${status.request_error})`}.`);
   if (status?.error) notices.push(`${errors[status.error] ?? `Unknown error (${status.error})`} (FatFs ${status.filesystem_result}).`);
   if (status && !status.valid_for_control) notices.push("Unknown status values; controls disabled.");
   if (status?.file_remains) notices.push("PFTEST.BIN remains on the card.");
@@ -243,7 +241,8 @@ export function renderSelfTest(snapshot) {
   set("#self-test-message", notices.join(" "));
   const pending = Boolean(snapshot.self_test_command_pending);
   const fresh = snapshot.freshness?.[10] === "fresh" && snapshot.freshness?.[11] === "fresh";
-  const ready = snapshot.connected && fresh && Boolean(snapshot.hardware?.capabilities & 32)
+  const ready = snapshot.connected && snapshot.transport !== "ble" && fresh
+    && Boolean(snapshot.hardware?.capabilities & 32)
     && snapshot.memory?.initialized && status?.volume_mounted && status.valid_for_control
     && !snapshot.msc?.enabled && !snapshot.outcome_uncertain && !snapshot.reboot_pending;
   const size = document.querySelector("#self-test-size");

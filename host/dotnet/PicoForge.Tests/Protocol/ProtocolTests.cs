@@ -51,6 +51,10 @@ public sealed class ProtocolTests
         wireless[18] |= HidProtocol.CapabilityWireless;
         Assert.Equal(new BootSettingsResponse(200, 1, 2), HidProtocol.ToBootSettings(
             HidProtocol.ParseConfigurationReport(config, HidProtocol.ParseIdentityReport(wireless))));
+        config[14] = (byte)((ConfigurationReport()[14] & 7) | 0x20);
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
+        Assert.Equal(0x20, HidProtocol.ParseConfigurationReport(config,
+            HidProtocol.ParseIdentityReport(wireless)).BoardFlags & 0x20);
     }
 
     [Fact]
@@ -169,28 +173,45 @@ public sealed class ProtocolTests
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
     }
 
+    [Theory]
+    [InlineData(31)]
+    [InlineData(32)]
+    public void SelfTestRejectsNonzeroReservedBytes(int index)
+    {
+        var report = new byte[33];
+        report[0] = 11;
+        report[1] = 1;
+        report[index] = 1;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseSelfTestReport(report));
+    }
+
     [Fact]
     public void BuildsAndValidatesControlTransactionResults()
     {
-        var request = HidProtocol.BuildControlRequest(7, 6, 0, [200, 0, 1, 0, 0]);
-        Assert.Equal(new byte[] { 20, 1, 7, 6, 0, 200, 0, 1, 0, 0 }, request);
+        var arguments = new byte[64];
+        arguments[0] = 200;
+        arguments[2] = 1;
+        var request = HidProtocol.BuildControlRequest(7, 5, 0, arguments);
+        Assert.Equal(69, request.Length);
+        Assert.Equal(new byte[] { 20, 1, 7, 5, 0, 200, 0, 1, 0, 0 }, request[..10]);
+        Assert.All(request[10..], value => Assert.Equal(0, value));
 
         var result = new byte[HidProtocol.ControlPayloadSize + 1];
         result[0] = HidProtocol.ControlReportId;
         result[1] = 1;
         result[2] = 7;
-        result[3] = 6;
+        result[3] = 5;
         result[4] = 2;
         result[6] = 200;
         result[8] = 1;
         var parsed = HidProtocol.ParseControlResult(result);
-        HidProtocol.RequireCompleted(parsed, 7, 6);
+        HidProtocol.RequireCompleted(parsed, 7, 5);
         Assert.Equal((byte)1, parsed.ResultData[2]);
         result[9] = 3;
         Assert.Equal((byte)3, HidProtocol.ParseControlResult(result).ResultData[3]);
-        result[9] = 14;
-        Assert.Equal((byte)14, HidProtocol.ParseControlResult(result).ResultData[3]);
-        result[9] = 4;
+        result[9] = 7;
+        Assert.Equal((byte)7, HidProtocol.ParseControlResult(result).ResultData[3]);
+        result[9] = 8;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(result));
         result[9] = 0;
 
@@ -334,7 +355,8 @@ public sealed class ProtocolTests
         public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => throw new NotSupportedException();
         public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
             throw new NotSupportedException();
-        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password,
+            string? ssidHex = null) =>
             throw new NotSupportedException();
         public bool CancelWirelessTest(string? boardId) => throw new NotSupportedException();
     }

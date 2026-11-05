@@ -17,7 +17,8 @@ from ..hid.models import (
     MscStatus,
     RuntimeStatus,
 )
-from ..reports import build_settings_command_report, validate_wireless_configuration
+from ..reports import validate_wireless_configuration
+from ..reports.common import _validate_settings
 from .models import (
     BoardStatus,
     DashboardSnapshot,
@@ -239,7 +240,7 @@ class DeviceMonitor:
             hardware = snapshot.get("hardware")
             if not isinstance(hardware, dict):
                 raise RuntimeError("Waiting for device identity")
-            build_settings_command_report(settings)
+            _validate_settings(settings)
             command_settings = settings
             msc = snapshot.get("msc")
             if not isinstance(msc, dict):
@@ -286,7 +287,7 @@ class DeviceMonitor:
         with self._device_lock:
             if self._active_client is None:
                 raise RuntimeError("PicoForge HID is not connected")
-            return self._active_client.tcp_cli_auth_proof(nonce, uid)
+            return self._send_control(self._active_client.tcp_cli_auth_proof, nonce, uid)
 
     def scan_wireless(self) -> WirelessScanResponse:
         with self._device_lock:
@@ -388,6 +389,7 @@ class DeviceMonitor:
             return {"wireless": result, "settings": saved, "reboot_pending": True}
 
     def _run(self) -> None:
+        wireless_poll_at = 0.0
         while not self._stop.is_set():
             client = None
             try:
@@ -409,6 +411,7 @@ class DeviceMonitor:
                         "system_clock_mhz": configuration["system_clock_mhz"],
                         "sdcard_profile": configuration["sdcard_profile"],
                         "radios": configuration["radios"],
+                        "tcp_cli_enabled": configuration["tcp_cli_enabled"],
                     }
                     settings_message = None
                 except (OSError, RuntimeError, ValueError) as error:
@@ -429,6 +432,22 @@ class DeviceMonitor:
                 while not self._stop.is_set():
                     with self._device_lock:
                         self._poll_wireless_inputs()
+                        if hardware.get("wireless_supported"):
+                            interval = 0.5 if getattr(client, "_wireless_active", False) else 2.0
+                            if time.monotonic() >= wireless_poll_at:
+                                wireless_poll_at = time.monotonic() + interval
+                                try:
+                                    wireless = client.read_wireless()
+                                    with self._lock:
+                                        self._snapshot["wireless"] = wireless
+                                        self._snapshot["wireless_error"] = None
+                                except (OSError, ValueError) as error:
+                                    with self._lock:
+                                        self._snapshot["wireless_error"] = str(error)
+                            with self._lock:
+                                self._snapshot["wireless_freshness"] = {
+                                    "supported": True, **client.wireless_freshness(),
+                                }
                     # ponytail: 50 ms caps report latency within the 1 s dashboard refresh; shorten if
                     # measured latency becomes noticeable.
                     self._stop.wait(_INPUT_POLL_INTERVAL_SECONDS)

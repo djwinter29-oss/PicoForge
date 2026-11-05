@@ -14,7 +14,7 @@ internal interface IDeviceMonitor : IHostedService, IDisposable
     WirelessResponse ReadWireless();
     WirelessResponse SetWireless(WirelessRequest settings);
     IReadOnlyList<WirelessNetworkResponse> ScanWireless();
-    WirelessOperationResponse TestWireless(string ssid, string password);
+    WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null);
     bool CancelWirelessTest();
     byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) =>
         throw new NotSupportedException("USB TCP CLI authentication is unavailable");
@@ -38,7 +38,7 @@ internal interface IHidCommands
     WirelessStatusResponse SetWireless(WirelessRequest settings);
     IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null);
     WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
-        Action<string>? onProgress = null);
+        Action<string>? onProgress = null, string? ssidHex = null);
     void CancelWirelessTest();
 }
 
@@ -166,13 +166,13 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         lock (deviceGate)
         {
             if (activeClient is null) throw new InvalidOperationException("PicoForge HID is not connected");
-            return activeClient.TcpCliAuthProof(nonce, uid);
+            return ExecuteCommand(activeClient, () => activeClient.TcpCliAuthProof(nonce, uid));
         }
     }
 
     public WirelessResponse SetWireless(WirelessRequest settings)
     {
-        HidProtocol.BuildWirelessRequest(settings, 1, true);
+        HidProtocol.ValidateWirelessRequest(settings);
         lock (deviceGate)
         {
             var current = Snapshot;
@@ -199,7 +199,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         }
     }
 
-    public WirelessOperationResponse TestWireless(string ssid, string password)
+    public WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null)
     {
         lock (deviceGate)
         {
@@ -207,7 +207,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             try
             {
                 return ExecuteCommand(client, () => client.TestWireless(ssid, password, () => PollInputs(client),
-                    SetWirelessPhase));
+                    SetWirelessPhase, ssidHex));
             }
             finally { SetWirelessPhase(null); }
         }

@@ -29,9 +29,6 @@ const validSettings = settings => settings && validClock(settings.system_clock_m
 const bytesAt = (view, offset, size) => new Uint8Array(view.buffer, view.byteOffset + offset, size);
 const zero = bytes => bytes.every(byte => byte === 0);
 const SAVE_SETTINGS_FORCE_MSC = 1;
-const SAVE_SETTINGS_SET_TCP_CLI = 2;
-const SETTINGS_RESULT_TCP_CLI_ENABLED = 1 << 2;
-const SETTINGS_RESULT_TCP_CLI_INCLUDED = 1 << 3;
 
 export function decodeIdentityReport(report) {
   const view = payload(report, 26);
@@ -67,10 +64,10 @@ export function decodeConfigReport(report, identity) {
   const led = view.getUint8(15);
   const detect = view.getUint8(16);
   const settings = { system_clock_mhz: view.getUint16(1, true), sdcard_profile: view.getUint8(3),
-    radios: flags >> 3 & 3 };
+    radios: flags >> 3 & 3, tcp_cli_enabled: Boolean(flags & 32) };
   const maxGpio = [1, 2, 3, 4].includes(identity.board_model) || identity.mcu_id === 1 ? 29
     : identity.mcu_id === 2 ? 47 : -1;
-  requireValid(validSettings(settings) && !(flags & ~31) && (identity.capabilities & 128 || !settings.radios)
+  requireValid(validSettings(settings) && !(flags & ~63) && (identity.capabilities & 128 || !(flags & 56))
     && [0, 1, 255].includes(uart)
     && (tx === 255) === (rx === 255) && (!(flags & 4) || (uart !== 255 && tx !== 255))
     && Boolean(flags & 1) === (detect !== 255) && Boolean(flags & 2) === (led !== 255)
@@ -163,15 +160,13 @@ export function decodeSelfTestReport(report) {
   const mismatches = view.getUint32(24, true);
   const error = view.getUint8(28);
   const fs = view.getUint8(29);
-  const request = view.getUint8(30);
   // Unknown enums remain diagnostic data but can never authorize a state transition.
-  const enumsKnown = state <= 8 && error <= 11 && request <= 11 && fs <= 19;
-  requireValid(!(flags & ~3) && view.getUint8(31) === 0 && target <= 1073741824
+  const enumsKnown = state <= 8 && error <= 10 && fs <= 19;
+  requireValid(!(flags & ~3) && view.getUint8(30) === 0 && view.getUint8(31) === 0 && target <= 1073741824
     && written <= target && read <= written && mismatches <= read
-    && error !== 3 && request !== 3 && ![9, 10].includes(request)
-    && (error > 11 || error === 0 || [5, 6, 8, 9, 10].includes(error))
-    && (state > 8 || error > 11 || (state === 7 ? error !== 0 : error === 0))
-    && (state > 8 || fs > 19 || (state === 7 && [8, 10].includes(error) ? error !== 8 || fs > 0 : fs === 0))
+    && (error > 10 || error === 0 || [4, 5, 7, 8, 9].includes(error))
+    && (state > 8 || error > 10 || (state === 7 ? error !== 0 : error === 0))
+    && (state > 8 || fs > 19 || (state === 7 && [7, 9].includes(error) ? error !== 7 || fs > 0 : fs === 0))
     && (state !== 0 || zero(bytesAt(view, 4, 25)))
     && (state !== 1 || (target > 0 && zero(bytesAt(view, 8, 21))))
     && (state === 0 || state > 8 || target > 0)
@@ -182,7 +177,7 @@ export function decodeSelfTestReport(report) {
       ?? `Unknown state (${state})`,
     valid_for_control: enumsKnown, active: enumsKnown ? state >= 1 && state <= 5 : null,
     target_bytes: target, written_bytes: written, read_bytes: read, write_elapsed_ms: writeMs,
-    read_elapsed_ms: readMs, mismatch_count: mismatches, error, filesystem_result: fs, request_error: request,
+    read_elapsed_ms: readMs, mismatch_count: mismatches, error, filesystem_result: fs,
     file_remains: Boolean(flags & 1), volume_mounted: Boolean(flags & 2),
     write_bytes_per_second: writeMs ? written * 1000 / writeMs : null,
     read_bytes_per_second: readMs ? read * 1000 / readMs : null,
@@ -193,9 +188,9 @@ export function buildControlRequest(transaction, opcode, { flags = 0, args = [] 
   requireValid(Number.isInteger(transaction) && transaction >= 1 && transaction <= 255, "transaction ID");
   requireValid(Number.isInteger(opcode) && opcode >= 0 && opcode <= 255
     && Number.isInteger(flags) && flags >= 0 && flags <= 255
-    && args.length <= 5 && [...args].every(value => Number.isInteger(value) && value >= 0 && value <= 255),
+    && args.length <= 64 && [...args].every(value => Number.isInteger(value) && value >= 0 && value <= 255),
   "command arguments");
-  const report = Uint8Array.from([1, transaction, opcode, flags, ...args, ...Array(5 - args.length).fill(0)]);
+  const report = Uint8Array.from([1, transaction, opcode, flags, ...args, ...Array(64 - args.length).fill(0)]);
   const arg = report[4];
   const unused = offset => zero(report.subarray(offset));
   requireValid(opcode === 1 ? flags === 0 && arg <= 1 && unused(5)
@@ -203,38 +198,64 @@ export function buildControlRequest(transaction, opcode, { flags = 0, args = [] 
       : opcode === 3 ? arg <= 2 && flags === (arg === 2 ? 1 : 0) && unused(5)
         : opcode === 4 ? flags === 0 && arg <= 1
           && (arg === 0 ? unused(5) : new DataView(report.buffer).getUint32(5, true) >= 1
-            && new DataView(report.buffer).getUint32(5, true) <= 1024)
-          : opcode === 6 && flags <= (SAVE_SETTINGS_FORCE_MSC | SAVE_SETTINGS_SET_TCP_CLI)
-            && validClock(report[4] | report[5] << 8) && report[6] <= 1 && report[7] <= 3
-            && ((flags & SAVE_SETTINGS_SET_TCP_CLI) ? report[8] <= 1 : report[8] === 0), "control request");
+            && new DataView(report.buffer).getUint32(5, true) <= 1024) && unused(9)
+          : opcode === 5 ? flags <= 3 && validClock(report[4] | report[5] << 8)
+            && report[6] <= 1 && report[7] <= 7 && unused(8)
+            : [6, 8].includes(opcode) ? flags === 0 && arg <= 32
+              && (opcode !== 8 || arg === 0 || arg === 32) && unused(5 + arg)
+              : opcode === 7 ? flags === 0 && (arg === 0 || arg >= 8 && arg <= 63)
+                && report.subarray(5, 5 + arg).every(byte => byte >= 32 && byte <= 126) && unused(5 + arg)
+                : [9, 10, 11].includes(opcode) ? flags === 0 && unused(4)
+                  : opcode === 12 ? flags === 0 && arg < 18 && (report[5] | report[6] << 8) !== 0 && unused(7)
+                    : opcode === 13 && flags === 0 && unused(20), "control request");
   return report;
 }
 
-export function decodeControlResult(report) {
-  const view = payload(report, 9);
+export function decodeControlResult(report, { ble = false } = {}) {
+  const view = payload(report, 68);
   const transaction = view.getUint8(1);
   const opcode = view.getUint8(2);
   const status = view.getUint8(3);
   const error = view.getUint8(4);
-  const known = [1, 2, 3, 4, 6].includes(opcode);
+  const known = opcode >= 1 && opcode <= 13;
   const settingsResult = view.getUint8(8);
-  const tcpCliIncluded = Boolean(settingsResult & SETTINGS_RESULT_TCP_CLI_INCLUDED);
   const settings = { system_clock_mhz: view.getUint16(5, true), sdcard_profile: view.getUint8(7),
-    radios: settingsResult & 3 };
-  if (tcpCliIncluded) settings.tcp_cli_enabled = Boolean(settingsResult & SETTINGS_RESULT_TCP_CLI_ENABLED);
+    radios: settingsResult & 3, tcp_cli_enabled: Boolean(settingsResult & 4) };
   const allowedErrors = [[0], [0], [0], [1, 2, 3], [4, 7], [5], [6]];
   requireValid(allowedErrors[status]?.includes(error)
     && (status === 0 ? transaction === 0 && opcode === 0
       : transaction !== 0 && (known ? error !== 7
-        && !(opcode === 1 && status === 5) && !(opcode === 3 && status === 4)
+        && !([1, 10, 13].includes(opcode) && status === 5) && !([1, 2, 3].includes(opcode) && status === 4)
+        && !([6, 7, 8, 10, 12, 13].includes(opcode) && status === 1)
         && !(status === 3 && error === 2 && ![2, 3].includes(opcode))
         && !(opcode === 2 && status === 3 && error === 3) : status === 4 && error === 7))
-    && (opcode === 6 && status === 2
-      ? validSettings(settings) && !(settingsResult & 0xf0)
-        && (tcpCliIncluded || !(settingsResult & SETTINGS_RESULT_TCP_CLI_ENABLED))
-      : zero(bytesAt(view, 5, 4))), "control result");
+    , "control result");
+  const data = bytesAt(view, 5, 63).slice();
+  const detail = [3, 5, 6].includes(status) ? data[0] : 0;
+  requireValid((ble || detail !== 28)
+    && (!ble || !known || [1, 2, 5].includes(opcode) || status === 4 && error === 4), "transport result");
+  const detailRules = {
+    1: [5, [2, 3, 4, 5]], 2: [5, [2, 3, 4, 5]], 3: [3, [4]],
+    4: [6, [4]], 5: [6, [4]], 6: [6, [4]], 7: [6, [4]], 10: [6, [4]],
+    16: [3, [6]], 17: [3, [7]], 18: [3, [8]], 19: [3, [5, 9]], 20: [3, [5, 9]],
+    21: [3, [5, 9]], 22: [3, [12]], 23: [3, [12]], 24: [3, [13]],
+    25: [5, [5, 6, 7, 8, 9, 11]], 26: [5, [5, 9, 11, 12]], 27: [3, [5]], 28: [5, [2, 5]],
+  };
+  if ([3, 5, 6].includes(status)) {
+    requireValid(zero(data.subarray(1)) && (!detail || detailRules[detail]?.[0] === status
+      && detailRules[detail][1].includes(opcode) && (status !== 3 || error === 3)), "result detail");
+  } else if (status === 2 && opcode === 5) {
+    requireValid(validSettings(settings) && settingsResult <= 7 && data[4] <= 7 && zero(data.subarray(5)),
+      "saved settings result");
+  } else if (status === 2 && opcode === 12) {
+    requireValid((data[0] | data[1] << 8) !== 0 && data[2] < 18 && data[3] <= 32
+      && zero(data.subarray(4 + data[3], 36)) && data[37] <= 7 && zero(data.subarray(38)), "scan entry result");
+  } else {
+    requireValid(zero(data.subarray(status === 2 && opcode === 13 ? 16 : 0)), "result data");
+  }
   return { transaction_id: transaction, opcode, status, error_reason: error,
-    settings: opcode === 6 && status === 2 ? settings : null };
+    detail, data, commit_mask: opcode === 5 && status === 2 ? data[4] : 0,
+    settings: opcode === 5 && status === 2 ? settings : null };
 }
 
 export function matchesPicoForge(device) {
@@ -260,38 +281,33 @@ const validBoardSettings = value => value && [0, 150, 200, 250].includes(value.s
 const hasExactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 function validatePendingOperation(record) {
-  if (!record || record.version !== 1 || !isUid(record.uid)) throw new Error("Invalid saved operation identity");
+  if (!record || record.version !== 2 || !isUid(record.uid)) throw new Error("Invalid saved operation identity");
   if (record.kind === "control") {
     const request = record.request;
-    const requestKeys = request?.opcode === 6 ? ["transaction_id", "opcode", "settings"] : ["transaction_id", "opcode"];
-    const settingsKeys = request?.settings && Object.hasOwn(request.settings, "tcp_cli_enabled")
-      ? ["system_clock_mhz", "sdcard_profile", "radios", "tcp_cli_enabled"]
-      : ["system_clock_mhz", "sdcard_profile", "radios"];
+    const requestKeys = request?.opcode === 5 ? ["transaction_id", "opcode", "settings", "commit_mask"]
+      : request?.opcode === 12 ? ["transaction_id", "opcode", "scan_generation", "scan_index"]
+        : request?.lifecycle ? ["transaction_id", "opcode", "lifecycle"] : ["transaction_id", "opcode"];
+    const settingsKeys = ["system_clock_mhz", "sdcard_profile", "radios", "tcp_cli_enabled"];
     if (!hasExactKeys(record, ["version", "kind", "uid", "request"])
       || !hasExactKeys(request, requestKeys) || !Number.isInteger(request.transaction_id) || request.transaction_id < 1
-      || request.transaction_id > 255 || ![1, 2, 3, 4, 6].includes(request.opcode)
-      || request.opcode === 6 && (!hasExactKeys(request.settings, settingsKeys)
-        || !validBoardSettings(request.settings))) throw new Error("Invalid saved control transaction");
-  } else if (record.kind === "wireless-command") {
-    const states = ({ 1: [2], 2: [2], 3: [5], 4: [0] })[record.operation];
-    if (!hasExactKeys(record, ["version", "kind", "uid", "transaction", "operation", "terminalStates", "timeout"])
-      || !Number.isInteger(record.transaction) || record.transaction < 1 || record.transaction > 255
-      || !states || JSON.stringify(record.terminalStates) !== JSON.stringify(states)
-      || record.timeout !== (record.operation === 3 ? 35000 : 15000)) {
-      throw new Error("Invalid saved wireless transaction");
+      || request.transaction_id > 255 || !Number.isInteger(request.opcode) || request.opcode < 1 || request.opcode > 13
+      || request.lifecycle && (!hasExactKeys(request.lifecycle, ["operation", "generation"])
+        || request.lifecycle.operation !== request.opcode || ![9, 11].includes(request.opcode)
+        || !Number.isInteger(request.lifecycle.generation) || request.lifecycle.generation < 1
+        || request.lifecycle.generation > (request.opcode === 9 ? 255 : 65535))
+      || request.opcode === 5 && (!hasExactKeys(request.settings, settingsKeys)
+        || !validBoardSettings(request.settings) || !Number.isInteger(request.commit_mask)
+        || request.commit_mask < 0 || request.commit_mask > 7)
+      || request.opcode === 12 && (!Number.isInteger(request.scan_generation)
+        || request.scan_generation < 1 || request.scan_generation > 65535
+        || !Number.isInteger(request.scan_index) || request.scan_index < 0 || request.scan_index >= 18)) {
+      throw new Error("Invalid saved control transaction");
     }
-  } else if (record.kind === "wireless-save") {
-    const expected = record.expected?.wireless;
-    if (!hasExactKeys(record, ["version", "kind", "uid", "transaction", "expected"])
-      || !Number.isInteger(record.transaction) || record.transaction < 1 || record.transaction > 255
-      || !hasExactKeys(record.expected, ["wireless", "board"])
-      || !hasExactKeys(expected, ["tcp_cli_enabled", "wifi_enabled", "ble_enabled",
-        "ssid_digest", "password_configured", "ble_key_configured"])
-      || !/^[a-f0-9]{64}$/.test(expected.ssid_digest)
-      || ![expected.tcp_cli_enabled, expected.wifi_enabled,
-        expected.ble_enabled, expected.password_configured, expected.ble_key_configured].every(
-        value => typeof value === "boolean") || !validBoardSettings(record.expected.board)) {
-      throw new Error("Invalid saved wireless configuration transaction");
+  } else if (record.kind === "wireless-lifecycle") {
+    if (!hasExactKeys(record, ["version", "kind", "uid", "operation", "generation"])
+      || ![9, 11].includes(record.operation) || !Number.isInteger(record.generation)
+      || record.generation < 1 || record.generation > (record.operation === 9 ? 255 : 65535)) {
+      throw new Error("Invalid saved wireless lifecycle");
     }
   } else throw new Error("Unknown saved operation kind");
   return record;
@@ -317,8 +333,7 @@ export class PicoForgeWebHid {
     }
     Object.assign(this, { hid, onChange, now, sleep, timeout, device: null, reconnectUid: null,
       transaction: 0, outstanding: null, pendingWirelessCommand: null, reconcileWirelessCommand: null,
-      pendingWirelessSave: null, reconcileWirelessSave: null, wirelessAuthTransaction: 0,
-      wirelessAuthPending: false,
+      wirelessOperation: null,
       receipts: new Map(), expiryTimer: null, generation: 0, mscPendingEnabled: null,
       selfTestPendingSequence: null, pendingStore, recoveryError: null });
     try {
@@ -326,18 +341,16 @@ export class PicoForgeWebHid {
       const raw = pendingStore?.getItem(PENDING_OPERATION_KEY);
       if (raw) {
         const record = validatePendingOperation(JSON.parse(raw));
-        this.transaction = record.transaction ?? record.request.transaction_id;
+        this.transaction = record.request?.transaction_id ?? 0;
         this.reconnectUid = record.uid;
         if (record.kind === "control") this.outstanding = record.request;
-        if (record.kind === "wireless-command") this.pendingWirelessCommand = record;
-        if (record.kind === "wireless-save") this.pendingWirelessSave = record;
+        if (record.kind === "wireless-lifecycle") this.pendingWirelessCommand = record;
       }
     } catch (error) {
       this.recoveryError = `Pending operation recovery data is unavailable or invalid: ${error.message}`;
     }
     this.state = { ...EMPTY, connected: false, reconnecting: false, busy: false,
-      outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand
-        || this.pendingWirelessSave),
+      outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
       error: this.recoveryError ?? (hid ? null : "WebHID is unavailable; use a supported browser on localhost or HTTPS") };
     this.onInputReport = event => {
       if (event.device !== this.device || !this.state.connected) return;
@@ -368,8 +381,8 @@ export class PicoForgeWebHid {
       this.clearConnection();
       this.update({ reconnecting: Boolean(this.reconnectUid), error: this.recoveryError ?? (this.outstanding
         ? "Command outcome uncertain after disconnect; no request will be replayed."
-        : this.pendingWirelessCommand ? "Wireless command outcome uncertain; reconnect to inspect its result."
-          : this.pendingWirelessSave ? "Wireless save outcome uncertain; reconnect to inspect its result." : null) });
+        : this.pendingWirelessCommand
+          ? "Wireless command outcome uncertain; reconnect to inspect its result." : null) });
     };
     this.onConnect = event => {
       if (this.reconnectUid && matchesPicoForge(event.device) && !this.device) void this.attachDevice(event.device);
@@ -388,9 +401,9 @@ export class PicoForgeWebHid {
   persistPendingOperation() {
     if (!this.pendingStore) throw new Error("Session storage is unavailable; refusing an untracked device write.");
     const uid = this.state.hardware?.serial_number ?? this.reconnectUid;
-    const record = this.outstanding ? { version: 1, kind: "control", uid, request: this.outstanding }
-      : this.pendingWirelessCommand ? { version: 1, kind: "wireless-command", ...this.pendingWirelessCommand }
-        : this.pendingWirelessSave ? { version: 1, kind: "wireless-save", ...this.pendingWirelessSave } : null;
+    const record = this.outstanding ? { version: 2, kind: "control", uid, request: this.outstanding }
+      : this.pendingWirelessCommand ? { version: 2, kind: "wireless-lifecycle", uid, ...this.pendingWirelessCommand }
+        : null;
     if (record) this.pendingStore.setItem(PENDING_OPERATION_KEY, JSON.stringify(validatePendingOperation(record)));
     else this.clearPersistedOperation();
   }
@@ -404,11 +417,12 @@ export class PicoForgeWebHid {
     const changes = {};
     const freshness = { ...this.state.freshness };
     for (const [id, received] of this.receipts) {
-      if (!suspended && this.now() - received < (id === 3 ? 750 : 1500)) continue;
+      if (!suspended && this.now() - received < this.reportLifetime(id)) continue;
       this.receipts.delete(id);
       freshness[id] = "stale";
       Object.assign(changes, id === 3 ? { runtime: null, board_status: null }
-        : id === 10 ? { memory: null, filesystem_format: null, msc: null } : { self_test: null });
+        : id === 10 ? { memory: null, filesystem_format: null, msc: null }
+          : id === 12 ? { wireless: null, wireless_error: "Wireless status is stale" } : { self_test: null });
     }
     if (Object.keys(changes).length) this.update({ ...changes, freshness });
     this.scheduleExpiry();
@@ -419,7 +433,7 @@ export class PicoForgeWebHid {
     this.expiryTimer = null;
     if (!this.device || !this.receipts.size) return;
     const deadline = Math.min(...[...this.receipts].map(([id, received]) =>
-      received + (id === 3 ? 750 : 1500)));
+      received + this.reportLifetime(id)));
     this.expiryTimer = setTimeout(() => {
       this.expiryTimer = null;
       this.expireReports();
@@ -427,16 +441,18 @@ export class PicoForgeWebHid {
     this.expiryTimer.unref?.();
   }
 
+  reportLifetime(id) { return id === 12 ? 3 * (this.wirelessInterval ?? 2000) : id === 3 ? 750 : 1500; }
+
   clearConnection() {
     this.generation++;
     this.device?.removeEventListener("inputreport", this.onInputReport);
     clearTimeout(this.expiryTimer);
     this.expiryTimer = null;
     this.device = null;
+    this.savedSsidHex = null;
     this.receipts.clear();
     this.update({ ...EMPTY, connected: false, busy: false,
-      outcome_uncertain: Boolean(this.recoveryError || this.outstanding
-        || this.pendingWirelessCommand || this.pendingWirelessSave),
+      outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
       msc_command_pending: this.mscPendingEnabled !== null });
   }
 
@@ -462,7 +478,7 @@ export class PicoForgeWebHid {
       if (generation !== this.generation) throw new Error("Connection cancelled");
       this.device = device;
       const hardware = decodeIdentityReport(await withTimeout(device.receiveFeatureReport(1), this.timeout));
-      const expectedUid = this.reconnectUid ?? this.pendingWirelessCommand?.uid ?? this.pendingWirelessSave?.uid;
+      const expectedUid = this.reconnectUid;
       if (expectedUid && hardware.serial_number !== expectedUid) {
         await device.close();
         if (generation === this.generation && device === this.device) {
@@ -476,8 +492,7 @@ export class PicoForgeWebHid {
       this.reconnectUid = hardware.serial_number;
       device.addEventListener("inputreport", this.onInputReport);
       this.update({ ...EMPTY, connected: true, reconnecting: false, busy: true,
-        outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand
-          || this.pendingWirelessSave),
+        outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
         error: this.recoveryError,
         hardware, settings, settings_supported: Boolean(hardware.capabilities & 4),
         msc_command_pending: this.mscPendingEnabled !== null });
@@ -486,24 +501,32 @@ export class PicoForgeWebHid {
         try {
           const result = await this.pollResult(device, this.outstanding);
           if (result.status === 2 && this.outstanding.settings &&
-            !sameSettings(result.settings, this.outstanding.settings)) {
+            (!sameSettings(result.settings, this.outstanding.settings)
+              || result.commit_mask !== this.outstanding.commit_mask)) {
             throw new Error("Firmware did not confirm the selected values after reconnect");
           }
-          this.clearPersistedOperation();
+          const lifecycle = result.status === 2 ? this.outstanding.lifecycle : null;
           this.reconnectedResult = result;
           this.outstanding = null;
+          if (lifecycle) {
+            this.pendingWirelessCommand = lifecycle;
+            this.persistPendingOperation();
+          } else this.clearPersistedOperation();
           if (result.opcode === 3 && result.status !== 2) {
             this.mscPendingEnabled = null;
             this.update({ msc_command_pending: false });
           }
           this.update({ outcome_uncertain: false, error: result.status === 2 ? null
             : `Command ${result.opcode}: status ${result.status}, error ${result.error_reason}`,
-          recovery_message: result.status === 2 ? "Pending command result confirmed after reconnect." : null });
+          recovery_message: result.status === 2 ? result.opcode === 10
+            ? "Wireless test cancellation confirmed after reconnect."
+            : "Pending command result confirmed after reconnect." : null });
         } catch (error) {
           this.reconnectError = error;
           this.update({ outcome_uncertain: true, error: error.message });
         }
-      } else if (this.pendingWirelessCommand) {
+      }
+      if (this.pendingWirelessCommand && !this.outstanding) {
         const pending = this.pendingWirelessCommand;
         try {
           if (!this.reconcileWirelessCommand) {
@@ -519,32 +542,7 @@ export class PicoForgeWebHid {
           this.pendingWirelessCommand = null;
           this.update({ outcome_uncertain: Boolean(this.recoveryError),
             error: this.recoveryError ?? (outcome.kind === "failed" ? outcome.message : null),
-            recovery_message: outcome.kind === "completed" ? (pending.operation === 3
-              ? "Wireless test completed after reconnect; run it again to stage credentials."
-              : pending.operation === 4 ? "Wireless test cancellation confirmed after reconnect."
-                : "Wireless scan completed after reconnect; scan again to view nearby networks.") : null });
-        } catch (error) {
-          this.update({ outcome_uncertain: true, error: error.message });
-        }
-      } else if (this.pendingWirelessSave) {
-        const pending = this.pendingWirelessSave;
-        try {
-          if (!this.reconcileWirelessSave) throw new Error("Wireless save remains uncertain; reconnect and inspect status.");
-          const outcome = await this.reconcileWirelessSave(device, pending);
-          if (generation !== this.generation || device !== this.device) {
-            throw new Error("Wireless save outcome uncertain after disconnect");
-          }
-          if (!outcome) throw new Error("Wireless save remains uncertain; the matching result is not available.");
-          this.clearPersistedOperation();
-          pending.outcome = outcome;
-          this.pendingWirelessSave = null;
-          if (outcome.kind === "saved") {
-            this.update({ settings: outcome.board, wireless: outcome.wireless, wireless_error: null,
-              reboot_pending: true, outcome_uncertain: false, error: null,
-              recovery_message: "Wireless settings confirmed after reconnect; the board is rebooting." });
-          } else {
-            this.update({ outcome_uncertain: Boolean(this.recoveryError), error: this.recoveryError ?? outcome.message });
-          }
+            recovery_message: outcome.kind === "completed" ? "Wireless operation confirmed after reconnect." : null });
         } catch (error) {
           this.update({ outcome_uncertain: true, error: error.message });
         }
@@ -562,7 +560,7 @@ export class PicoForgeWebHid {
   async disconnect() {
     if (this.state.busy) return;
     const device = this.device;
-    if (!this.outstanding && !this.pendingWirelessCommand && !this.pendingWirelessSave) this.reconnectUid = null;
+    if (!this.outstanding && !this.pendingWirelessCommand) this.reconnectUid = null;
     this.mscPendingEnabled = null;
     this.clearConnection();
     this.update({ reconnecting: false, error: this.recoveryError });
@@ -583,7 +581,7 @@ export class PicoForgeWebHid {
     return this.state.connected && this.state.transport !== "ble" && this.storageReady()
       && !this.state.msc?.enabled && !this.state.msc?.transition_pending && !this.state.self_test?.active
       && !this.state.busy && !this.state.outcome_uncertain && !this.state.reboot_pending
-      && !this.outstanding && !this.pendingWirelessCommand && !this.pendingWirelessSave;
+      && !this.outstanding && !this.pendingWirelessCommand && !this.wirelessOperation;
   }
 
   async pollResult(device, request) {
@@ -595,8 +593,13 @@ export class PicoForgeWebHid {
       if (device !== this.device || generation !== this.generation) {
         throw new Error("Command outcome uncertain after disconnect");
       }
-      const result = decodeControlResult(report);
+      const result = decodeControlResult(report, { ble: Boolean(this.bleTransport) });
       if (result.transaction_id === request.transaction_id && result.opcode === request.opcode && result.status > 1) {
+        if (result.status === 2 && request.opcode === 12
+          && ((result.data[0] | result.data[1] << 8) !== request.scan_generation
+            || result.data[2] !== request.scan_index)) {
+          throw new Error("Scan entry did not match the requested generation and index");
+        }
         return result;
       }
       await this.sleep(50);
@@ -617,53 +620,38 @@ export class PicoForgeWebHid {
     if (uid.some((byte, index) => byte !== expectedUid[index])) {
       throw new Error("The Wi-Fi console challenge belongs to a different board");
     }
-    if (this.wirelessAuthPending) throw new Error("A TCP CLI proof is already being generated");
-    this.wirelessAuthPending = true;
-    try {
-      const device = this.device;
-      const generation = this.generation;
-      const transaction = this.wirelessAuthTransaction % 255 + 1;
-      this.wirelessAuthTransaction = transaction;
-      const request = new Uint8Array(19);
-      request.set([1, transaction]);
-      request.set(nonce, 2);
-      await withTimeout(device.sendFeatureReport(36, request), this.timeout);
-      if (device !== this.device || generation !== this.generation) {
-        throw new Error("The USB connection changed while authorizing the Wi-Fi console");
-      }
-      const response = payload(await withTimeout(device.receiveFeatureReport(36), this.timeout), 19);
-      if (response.getUint8(1) !== transaction || response.getUint8(2) > 1) {
-        throw new Error("Invalid or stale TCP CLI authentication proof");
-      }
-      if (response.getUint8(2) !== 1) {
-        throw new Error("The board could not create a TCP CLI proof; check the saved Control key and firmware");
-      }
-      return bytesAt(response, 3, 16).slice();
-    } finally {
-      this.wirelessAuthPending = false;
-    }
+    const result = await this.command(13, { args: nonce });
+    return result.data.slice(0, 16);
   }
 
   async command(opcode, options) {
     this.expireReports();
     if (!this.device || !this.state.connected || this.state.busy || this.state.outcome_uncertain
       || this.outstanding || this.state.self_test_command_pending || this.state.msc_command_pending
-      || this.state.reboot_pending || this.pendingWirelessCommand || this.pendingWirelessSave) {
+      || this.state.reboot_pending || this.pendingWirelessCommand
+      || this.wirelessOperation && options?.workflow !== this.wirelessOperation) {
       throw new Error("Command unavailable or previous outcome uncertain");
     }
-    const bit = ({ 1: 1, 2: 2, 4: 32, 6: 4 })[opcode];
+    const bit = opcode >= 6 ? 128 : ({ 1: 1, 2: 2, 4: 32, 5: 4 })[opcode];
     if (bit && !(this.state.hardware.capabilities & bit)) throw new Error("Unavailable capability");
     const transaction = this.transaction % 255 + 1;
     const report = buildControlRequest(transaction, opcode, options);
-    const forcedSave = opcode === 6 && Boolean(report[3] & SAVE_SETTINGS_FORCE_MSC);
+    const forcedSave = opcode === 5 && Boolean(report[3] & SAVE_SETTINGS_FORCE_MSC);
     this.reconnectedResult = null;
     this.reconnectError = null;
     this.transaction = transaction;
     const request = { transaction_id: transaction, opcode };
-    const settingsToSave = opcode === 6 ? { system_clock_mhz: report[4] | report[5] << 8,
-      sdcard_profile: report[6], radios: report[7],
-      ...(report[3] & SAVE_SETTINGS_SET_TCP_CLI ? { tcp_cli_enabled: Boolean(report[8]) } : {}) } : null;
-    if (settingsToSave) request.settings = settingsToSave;
+    if (opcode === 12) {
+      request.scan_index = report[4];
+      request.scan_generation = report[5] | report[6] << 8;
+    }
+    if (options?.lifecycle) request.lifecycle = options.lifecycle;
+    const settingsToSave = opcode === 5 ? { system_clock_mhz: report[4] | report[5] << 8,
+      sdcard_profile: report[6], radios: report[7] & 3, tcp_cli_enabled: Boolean(report[7] & 4) } : null;
+    if (settingsToSave) {
+      request.settings = settingsToSave;
+      request.commit_mask = options?.commitMask ?? 0;
+    }
     const device = this.device;
     const generation = this.generation;
     this.outstanding = request;
@@ -689,24 +677,31 @@ export class PicoForgeWebHid {
           this.mscPendingEnabled = null;
           this.update({ msc_command_pending: false });
         }
-        throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
+        throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}, `
+          + `detail ${result.detail}`);
       }
-      if (opcode === 6) {
+      if (opcode === 5) {
         const saved = result.settings;
-        if (!sameSettings(saved, settingsToSave)) {
+        if (!sameSettings(saved, settingsToSave) || result.commit_mask !== request.commit_mask) {
           this.update({ outcome_uncertain: true });
           throw new Error("Firmware did not confirm the selected values");
         }
         this.update({ settings: saved });
       }
-      this.clearPersistedOperation();
-      this.outstanding = null;
+      if (request.lifecycle) {
+        this.pendingWirelessCommand = request.lifecycle;
+        this.outstanding = null;
+        this.persistPendingOperation();
+      } else {
+        this.clearPersistedOperation();
+        this.outstanding = null;
+      }
       if (opcode === 3) this.update({ msc_command_pending: true });
       if (opcode === 4) {
         this.selfTestPendingSequence = this.state.self_test?.sequence ?? null;
         this.update({ self_test_command_pending: true });
       }
-      if (opcode === 2 || opcode === 6) this.update({ reboot_pending: true });
+      if (opcode === 2 || opcode === 5) this.update({ reboot_pending: true });
       return result;
     } catch (error) {
       if (forcedSave && sent && this.reconnectUid &&
@@ -721,7 +716,7 @@ export class PicoForgeWebHid {
           throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
         }
         if (result?.transaction_id === transaction && result.opcode === opcode && result.status === 2
-          && sameSettings(result.settings, settingsToSave)) {
+          && sameSettings(result.settings, settingsToSave) && result.commit_mask === request.commit_mask) {
           this.update({ settings: result.settings, reboot_pending: true, outcome_uncertain: false });
           return result;
         }
@@ -741,10 +736,12 @@ export class PicoForgeWebHid {
         }
       }
       if (generation === this.generation) {
-        this.update({ outcome_uncertain: Boolean(this.outstanding), error: error.message });
+        this.update({ outcome_uncertain: Boolean(this.outstanding || this.pendingWirelessCommand),
+          error: error.message });
       }
       throw error;
     } finally {
+      report.fill(0);
       if (generation === this.generation) this.update({ busy: false });
     }
   }
@@ -795,10 +792,9 @@ export class PicoForgeWebHid {
     }
     try {
       const args = [settings.system_clock_mhz & 255, settings.system_clock_mhz >> 8,
-        settings.sdcard_profile, settings.radios ?? 0];
-      if (tcpCliEnabled !== undefined) args.push(Number(tcpCliEnabled));
-      const flags = Number(force) | (tcpCliEnabled === undefined ? 0 : SAVE_SETTINGS_SET_TCP_CLI);
-      await this.command(6, { flags, args });
+        settings.sdcard_profile, (settings.radios ?? 0)
+          | Number(tcpCliEnabled ?? settings.tcp_cli_enabled ?? this.state.settings?.tcp_cli_enabled ?? false) << 2];
+      await this.command(5, { flags: Number(force), args });
       this.update({ settings_message: "Settings saved. Waiting for the board to reboot." });
       return true;
     } catch (error) {

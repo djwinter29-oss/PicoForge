@@ -38,6 +38,7 @@ class BoardConfiguration(TypedDict):
     stored_sdcard_profile: int
     sdcard_profile: int
     radios: int
+    tcp_cli_enabled: bool
     monitor_uart_index: int
     monitor_uart_tx_gpio: int
     monitor_uart_rx_gpio: int
@@ -49,10 +50,11 @@ class BoardConfiguration(TypedDict):
     storage_transport: str
 
 
-class BootSettings(TypedDict):
+class BootSettings(TypedDict, total=False):
     system_clock_mhz: int
     sdcard_profile: int
     radios: int
+    tcp_cli_enabled: bool
 
 
 class RuntimeStatus(TypedDict):
@@ -132,31 +134,39 @@ class SelfTestStatus(TypedDict):
     error: int
     error_name: str
     filesystem_result: int
-    request_error: int
-    request_error_name: str
     file_remains: bool
     volume_mounted: bool
 
 
-class WirelessStatus(TypedDict):
+class WirelessStatus(TypedDict, total=False):
     wifi_enabled: bool
     ble_enabled: bool
-    status: str
-    transaction_id: int
     wifi_state: str
+    wifi_state_id: int
     ipv4: str
     ssid: str
-    password_configured: bool
     ble_key_configured: bool
     error: int
     ble_state: str
     tcp_cli_started: bool
     tcp_cli_enabled: bool
     tcp_cli_auth_required: bool
-    wifi_auth_state: str
-    reconnect_count: int
-    rssi: int | None
-    restart_required: bool
+    ssid_hex: str
+    detail: int
+    phase: str
+    network_configured: bool
+    ssid_staged: bool
+    password_staged: bool
+    key_staged: bool
+    pair_tested: bool
+    scan_state: str
+    scan_generation: int
+    scan_count: int
+    test_generation: int
+    staged_state: int
+    stale: bool
+    age_ms: int
+    remaining_seconds: int
 
 
 class WirelessSaveResult(WirelessStatus):
@@ -168,6 +178,9 @@ class WirelessNetwork(TypedDict):
     rssi: int
     secured: bool
     security: str
+    ssid_hex: str
+    generation: int
+    index: int
 
 
 class WirelessOperation(TypedDict):
@@ -180,6 +193,8 @@ class WirelessOperation(TypedDict):
     wifi_state: int
     ipv4: str
     networks: list[WirelessNetwork]
+    test_generation: int
+    scan_generation: int
     remaining_seconds: int
 
 
@@ -193,6 +208,10 @@ class ControlResult(TypedDict):
     error: str
     result_data: int
     saved_settings: BootSettings | None
+    detail: int
+    commit_mask: int
+    scan_entry: WirelessNetwork | None
+    proof: bytes | None
 
 
 class RuntimeInputReport(TypedDict):

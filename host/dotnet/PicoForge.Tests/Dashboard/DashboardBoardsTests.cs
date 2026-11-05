@@ -272,7 +272,7 @@ public sealed class DashboardBoardsTests
         public WirelessResponse ReadWireless() => throw new NotSupportedException();
         public WirelessResponse SetWireless(WirelessRequest settings) => throw new NotSupportedException();
         public IReadOnlyList<WirelessNetworkResponse> ScanWireless() => throw new NotSupportedException();
-        public WirelessOperationResponse TestWireless(string ssid, string password) =>
+        public WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null) =>
             throw new NotSupportedException();
         public bool CancelWirelessTest() => throw new NotSupportedException();
     }

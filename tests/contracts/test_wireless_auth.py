@@ -51,6 +51,8 @@ void pico_get_unique_board_id(pico_unique_board_id_t *uid) {
     tcp_cli_proof = library.pf_wireless_auth_tcp_cli_proof
     tcp_cli_proof.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
     tcp_cli_proof.restype = ctypes.c_bool
+    available = library.pf_wireless_auth_available
+    available.restype = ctypes.c_bool
     key, nonce, uid = bytes(range(32)), bytes(range(16)), bytes(range(8))
     command = bytes([1, 7, 4, 0, 1, 32, 0, 0, 0])
     domain = b"PFBLECTL1"
@@ -73,7 +75,17 @@ void pico_get_unique_board_id(pico_unique_board_id_t *uid) {
             altered[field] = bytes(changed)
             assert not verify(*altered)
     set_key(bytes(32))
+    assert available()
     assert not verify(nonce, domain, command, proof)
+    zero_proof = hmac.new(bytes(32), nonce + uid + domain + command, hashlib.sha256).digest()[:16]
+    assert verify(nonce, domain, command, zero_proof)
+    assert tcp_cli_proof(tcp_nonce, tcp_proof)
+    assert tcp_proof.raw == hmac.new(
+        bytes(32), tcp_nonce + uid + b"PFTCPCLI1" + b"TCPCLI001", hashlib.sha256
+    ).digest()[:16]
+    set_key(None)
+    assert not available()
+    assert not verify(nonce, domain, command, zero_proof)
     assert not tcp_cli_proof(tcp_nonce, tcp_proof)
 
 

@@ -24,6 +24,7 @@
  * Authentication (0x05) makes centrals start OS pairing, which PicoForge does not use, and they then disconnect.
  */
 #define BLE_ERROR_CONTROL_REJECTED 0x80
+#define BLE_ERROR_ENVELOPE 0x81 /**< Invalid control length/version/transaction; proof remains usable. */
 #define BLE_AUTH_RETRY_DELAY_US 2000000u /**< Minimum interval between rejected authentication attempts. */
 
 /** @brief BLE controller/link state encoded in the wireless status report. */
@@ -127,8 +128,8 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
         case BLE_HANDLE(0003): return sizeof(pf_hid_telemetry_report_t);
         case BLE_HANDLE(000a): return sizeof(pf_hid_storage_report_t);
         case BLE_HANDLE(000b): return pf_hid_self_test_supported() ? sizeof(pf_hid_self_test_report_t) : 0u;
-        case BLE_HANDLE(0014): return sizeof(pf_hid_control_result_t);
-        case BLE_HANDLE(001e): return PF_WIRELESS_STATUS_SIZE;
+        case BLE_HANDLE(0014): return PF_HID_BLE_CONTROL_PAYLOAD_SIZE;
+        case BLE_HANDLE(000c): return PF_WIRELESS_STATUS_SIZE;
         case BLE_HANDLE(0020): return sizeof(nonce);
         default: return 0u;
         }
@@ -153,8 +154,8 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
             read_length = sizeof(pf_hid_self_test_report_t);
         } else if (handle == BLE_HANDLE(0014)) {
             pf_hid_ble_result(&read_buffer.result);
-            read_length = sizeof(pf_hid_control_result_t);
-        } else if (handle == BLE_HANDLE(001e)) {
+            read_length = PF_HID_BLE_CONTROL_PAYLOAD_SIZE;
+        } else if (handle == BLE_HANDLE(000c)) {
             /* Unlocked readers see the saved SSID and LAN address, as USB readers do. */
             pf_wireless_status(read_buffer.bytes);
             read_length = PF_WIRELESS_STATUS_SIZE;
@@ -205,9 +206,11 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
     }
     if (handle != BLE_HANDLE(0014)) return ATT_ERROR_WRITE_NOT_PERMITTED;
     if (!session_authorized) return BLE_ERROR_CONTROL_REJECTED;
-    if (size != sizeof(pf_hid_control_request_t)) return ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH;
-    pf_hid_control_request_t request;
-    memcpy(&request, buffer, sizeof(request));
+    if (size != PF_HID_BLE_CONTROL_PAYLOAD_SIZE || buffer[0] != PF_HID_REPORT_VERSION || buffer[1] == 0u) {
+        return BLE_ERROR_ENVELOPE;
+    }
+    pf_hid_control_request_t request = {0};
+    memcpy(&request, buffer, PF_HID_BLE_CONTROL_PAYLOAD_SIZE);
     /* On an unlocked link the LED only identifies a board; it skips the proof without touching nonce/rate state. */
     if (request.opcode != PF_HID_OPCODE_LED && !authenticate(buffer)) return BLE_ERROR_CONTROL_REJECTED;
     return pf_hid_ble_control(&request) ? 0 : ATT_ERROR_REQUEST_NOT_SUPPORTED;

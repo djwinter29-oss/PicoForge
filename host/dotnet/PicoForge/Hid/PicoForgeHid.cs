@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using System.Text;
 using HidSharp;
 
 namespace PicoForge;
@@ -38,7 +39,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         stream.WriteTimeout = 1000;
         inputReport = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
         featureReport = new byte[Math.Max(
-            HidProtocol.WirelessResultFeatureSize, device.GetMaxFeatureReportLength() + 1)];
+            HidProtocol.ControlFeatureSize, device.GetMaxFeatureReportLength())];
         readFeature = GetFeatureReport;
         writeFeature = report => stream.SetFeature(report);
         reopen = ReopenSameBoard;
@@ -52,7 +53,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         this.writeFeature = writeFeature;
         this.reopen = reopen;
         inputReport = new byte[HidProtocol.SelfTestPayloadSize + 1];
-        featureReport = new byte[HidProtocol.WirelessResultFeatureSize];
+        featureReport = new byte[HidProtocol.ControlFeatureSize];
     }
 
     public static HidBoard[] Discover() => MatchingDevices().Select(candidate => new HidBoard(
@@ -128,7 +129,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     public void SetLed(bool on)
     {
         EnsureCapability(HidProtocol.CapabilityLed, "LED control");
-        var arguments = new byte[5];
+        var arguments = new byte[64];
         arguments[0] = on ? (byte)1 : (byte)0;
         SendCommand(1, 0, arguments);
     }
@@ -139,7 +140,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         identity ??= ReadInfo();
         if ((identity.Capabilities & (HidProtocol.CapabilitySpi | HidProtocol.CapabilitySdio)) == 0)
             throw new NotSupportedException("MSC control is unavailable on this firmware");
-        var arguments = new byte[5];
+        var arguments = new byte[64];
         arguments[0] = force ? (byte)2 : enabled ? (byte)1 : (byte)0;
         SendCommand(3, force ? (byte)1 : (byte)0, arguments);
     }
@@ -148,16 +149,18 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     {
         EnsureCapability(HidProtocol.CapabilitySettings, "persistent settings");
         ValidateSettings(settings);
-        var arguments = new byte[5];
+        var configuration = ReadConfiguration();
+        var switches = (byte)(settings.Radios | ((configuration.BoardFlags & 32) != 0 ? 4 : 0));
+        var arguments = new byte[64];
         BinaryPrimitives.WriteUInt16LittleEndian(arguments, (ushort)settings.SystemClockMhz);
         arguments[2] = (byte)settings.SdCardProfile;
-        arguments[3] = (byte)settings.Radios;
-        var result = SendCommand(6, force ? (byte)1 : (byte)0, arguments);
+        arguments[3] = switches;
+        var result = SendCommand(5, force ? (byte)1 : (byte)0, arguments);
         var saved = new BootSettingsResponse(BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData),
-            result.ResultData[2], result.ResultData[3]);
-        if (saved != settings)
+            result.ResultData[2], result.ResultData[3] & 3);
+        if (saved != settings || result.ResultData[3] != switches || result.ResultData[4] != 0)
         {
-            if (force) CommandOutcomeUncertain = true;
+            CommandOutcomeUncertain = true;
             throw new InvalidOperationException("Firmware did not confirm the selected next-boot settings");
         }
         return saved;
@@ -166,13 +169,15 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     public void Reboot()
     {
         EnsureCapability(HidProtocol.CapabilityReboot, "reboot");
-        SendCommand(2, 1, new byte[5]);
+        SendCommand(2, 1, new byte[64]);
     }
 
     public WirelessStatusResponse ReadWireless()
     {
         EnsureCapability(HidProtocol.CapabilityWireless, "wireless provisioning");
-        return HidProtocol.ParseWirelessStatus(readFeature(HidProtocol.WirelessReportId, HidProtocol.WirelessFeatureSize));
+        var configuration = ReadConfiguration();
+        return HidProtocol.ParseWirelessStatus(
+            readFeature(HidProtocol.WirelessReportId, HidProtocol.WirelessFeatureSize), configuration);
     }
 
     public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid)
@@ -184,114 +189,145 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         var expectedUid = Convert.FromHexString(identity.SerialNumber);
         if (uid.Length != expectedUid.Length || !CryptographicOperations.FixedTimeEquals(uid, expectedUid))
             throw new ArgumentException("TCP CLI challenge belongs to a different board");
-        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
-        writeFeature(HidProtocol.BuildTcpCliAuthRequest(transactionId, nonce));
-        return HidProtocol.ParseTcpCliAuthResult(
-            readFeature(HidProtocol.TcpCliAuthReportId, HidProtocol.TcpCliAuthResultSize), transactionId);
+        if (nonce.Length != 16) throw new ArgumentException("TCP CLI challenge must contain 16 bytes");
+        var arguments = new byte[64];
+        nonce.CopyTo(arguments, 0);
+        return SendCommand(13, 0, arguments).ResultData[..16];
     }
 
-    /// <summary>Save board settings and credentials atomically, then confirm both through Reports 30 and 2.</summary>
+    /// <summary>Stage only provided values and confirm the atomic save from the original opcode 5 result.</summary>
     public WirelessStatusResponse SetWireless(WirelessRequest settings)
     {
         if (CommandOutcomeUncertain)
             throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
+        EnsureCapability(HidProtocol.CapabilityWireless, "wireless provisioning");
+        EnsureCapability(HidProtocol.CapabilitySettings, "persistent settings");
+        HidProtocol.ValidateWirelessRequest(settings);
         var previous = ReadWireless();
-        if (previous.Status is "pending" or "busy")
-            throw new InvalidOperationException("Wireless provisioning is busy");
-        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
-        var request = HidProtocol.BuildWirelessRequest(settings, transactionId, previous.TcpCliEnabled);
-        CommandOutcomeUncertain = true;
-        writeFeature(request);
-        var deadline = Environment.TickCount64 + 5000;
-        while (Environment.TickCount64 < deadline)
+        if (previous.WifiState == "testing" || previous.ScanState == 1)
+            throw new InvalidOperationException("A Wi-Fi test or scan is active");
+        var ssid = settings.Ssid is not null || settings.SsidHex is not null
+            ? HidProtocol.EncodeSsid(settings.Ssid, settings.SsidHex) : null;
+        if (!settings.UseTestedWifi &&
+                (previous.SsidStaged && ssid is null || previous.PasswordStaged && settings.Password is null) ||
+            previous.KeyStaged && settings.BleKey is null)
+            throw new InvalidOperationException("Discard or explicitly include the existing staged wireless values");
+        if (settings.UseTestedWifi)
         {
-            var result = ReadWireless();
-            if (result.TransactionId == transactionId)
-            {
-                if (result.Status == "completed")
-                {
-                    if (result.TcpCliEnabled != (settings.TcpCliEnabled ?? previous.TcpCliEnabled) ||
-                        result.WifiEnabled != settings.WifiEnabled || result.BleEnabled != settings.BleEnabled ||
-                        result.Ssid != settings.Ssid ||
-                        result.PasswordConfigured != (settings.UseTestedWifi ||
-                            (settings.Password is null ? previous.PasswordConfigured : settings.Password.Length != 0)) ||
-                        result.BleKeyConfigured != (settings.BleKey is null ? previous.BleKeyConfigured
-                            : settings.BleKey.Length != 0))
-                        throw new InvalidOperationException(
-                            "Wireless saved configuration was not confirmed; outcome is uncertain");
-                    if (ReadSettings() != settings.Board)
-                        throw new InvalidOperationException(
-                            "Saved board settings were not confirmed; outcome is uncertain");
-                    CommandOutcomeUncertain = false;
-                    return result;
-                }
-                if (result.Status is "invalid" or "unsupported" or "busy" or "failed")
-                {
-                    CommandOutcomeUncertain = false;
-                    throw new InvalidOperationException($"Wireless provisioning {result.Status}");
-                }
-            }
-            Thread.Sleep(20);
+            if (!previous.PairTested || (previous.StagedState & 8) != 0 ||
+                ssid is not null && !ssid.SequenceEqual(Convert.FromHexString(previous.SsidHex)))
+                throw new InvalidOperationException("The selected staged Wi-Fi pair has not passed testing");
         }
-        throw new TimeoutException("Wireless provisioning outcome is uncertain; command was not resent");
+        else
+        {
+            if (ssid is not null) SendCommand(6, 0, HidProtocol.StagingArguments(6, ssid));
+            if (settings.Password is not null)
+                SendCommand(7, 0, HidProtocol.StagingArguments(7, Encoding.ASCII.GetBytes(settings.Password)));
+        }
+        if (settings.BleKey is not null)
+            SendCommand(8, 0, HidProtocol.StagingArguments(8, HidProtocol.EncodeControlKey(settings.BleKey)));
+        var staged = ReadWireless();
+        if (settings.UseTestedWifi && !staged.PairTested ||
+            !settings.UseTestedWifi && ssid is not null && !staged.SsidStaged ||
+            settings.Password is not null && !staged.PasswordStaged ||
+            settings.BleKey is not null && !staged.KeyStaged)
+            throw new InvalidOperationException("Staged wireless values expired or were replaced; save was not sent");
+        var commit = settings.UseTestedWifi || ssid is not null || settings.Password is not null ||
+            settings.BleKey is not null;
+        var switches = (byte)(settings.Board!.Radios |
+            ((settings.TcpCliEnabled ?? previous.TcpCliEnabled) ? 4 : 0));
+        var arguments = new byte[64];
+        BinaryPrimitives.WriteUInt16LittleEndian(arguments, (ushort)settings.Board.SystemClockMhz);
+        arguments[2] = (byte)settings.Board.SdCardProfile;
+        arguments[3] = switches;
+        var expectedMask = (staged.SsidStaged ? 1 : 0) | (staged.PasswordStaged ? 2 : 0) | (staged.KeyStaged ? 4 : 0);
+        var result = SendCommand(5, commit ? (byte)2 : (byte)0, arguments);
+        if (BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData) != settings.Board.SystemClockMhz ||
+            result.ResultData[2] != settings.Board.SdCardProfile || result.ResultData[3] != switches ||
+            result.ResultData[4] != expectedMask)
+        {
+            CommandOutcomeUncertain = true;
+            throw new InvalidOperationException("Saved settings were not confirmed; outcome is uncertain");
+        }
+        // Keep the last runtime snapshot, with only the verified saved configuration updated.
+        return staged with
+        {
+            WifiEnabled = (result.ResultData[3] & 1) != 0,
+            BleEnabled = (result.ResultData[3] & 2) != 0,
+            TcpCliEnabled = (result.ResultData[3] & 4) != 0,
+            BleKeyConfigured = settings.BleKey is null ? staged.BleKeyConfigured : settings.BleKey.Length != 0,
+            NetworkConfigured = staged.SsidStaged ? staged.SsidHex.Length != 0 : staged.NetworkConfigured
+        };
     }
 
     public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null)
     {
-        var result = WirelessOperation(1, timeoutMilliseconds: 15000, terminalState: 2, onPoll: onPoll);
+        EnsureCapability(HidProtocol.CapabilityWireless, "wireless scan");
+        var prior = ReadWireless();
+        SendCommand(11, 0, new byte[64]);
+        var generation = prior.ScanGeneration == ushort.MaxValue ? (ushort)1 : (ushort)(prior.ScanGeneration + 1);
+        var result = WaitWireless(status => status.ScanState is 2 or 3, 15000, onPoll,
+            status => status.ScanGeneration == generation);
+        if (result.ScanState != 2) throw new InvalidOperationException("Wireless scan failed");
         var networks = new List<WirelessNetworkResponse>();
-        for (byte page = 0; page < (result.Count + 5) / 6; page++)
-            networks.AddRange(WirelessOperation(2, page, timeoutMilliseconds: 5000,
-                terminalState: 2, onPoll: onPoll).Networks);
+        for (byte index = 0; index < result.ScanCount; index++)
+        {
+            onPoll?.Invoke();
+            var arguments = new byte[64];
+            arguments[0] = index;
+            BinaryPrimitives.WriteUInt16LittleEndian(arguments.AsSpan(1), result.ScanGeneration);
+            var entry = SendCommand(12, 0, arguments);
+            CommandOutcomeUncertain = true;
+            networks.Add(HidProtocol.ParseScanEntry(entry, result.ScanGeneration, index));
+            CommandOutcomeUncertain = false;
+        }
         return networks;
     }
 
     public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
-        Action<string>? onProgress = null)
+        Action<string>? onProgress = null, string? ssidHex = null)
     {
-        var result = WirelessOperation(3, ssid: ssid, password: password,
-            timeoutMilliseconds: 35000, terminalState: 5, onPoll: onPoll, onProgress: onProgress);
-        return result;
+        EnsureCapability(HidProtocol.CapabilityWireless, "wireless test");
+        var encoded = HidProtocol.EncodeSsid(ssid, ssidHex);
+        if (encoded.Length == 0) throw new ArgumentException("A Wi-Fi test requires a nonempty SSID");
+        HidProtocol.ValidatePassword(password);
+        SendCommand(6, 0, HidProtocol.StagingArguments(6, encoded));
+        SendCommand(7, 0, HidProtocol.StagingArguments(7, Encoding.ASCII.GetBytes(password)));
+        var prior = ReadWireless();
+        SendCommand(9, 0, new byte[64]);
+        var generation = prior.TestGeneration == byte.MaxValue ? (byte)1 : (byte)(prior.TestGeneration + 1);
+        var result = WaitWireless(status => status.WifiState is "test_joined" or "test_failed", 35000, onPoll,
+            status => status.TestGeneration == generation, onProgress);
+        if (result.WifiState != "test_joined" || !result.PairTested)
+            throw new InvalidOperationException($"Could not connect: {result.Phase}");
+        return new(5, 5, result.Ipv4, result.Error, result.TestGeneration);
     }
 
-    public void CancelWirelessTest() => WirelessOperation(4, timeoutMilliseconds: 5000, terminalState: 0);
-
-    private WirelessOperationResponse WirelessOperation(byte operation, byte page = 0,
-        string? ssid = null, string? password = null, int timeoutMilliseconds = 15000,
-        byte terminalState = 2, Action? onPoll = null, Action<string>? onProgress = null)
+    public void CancelWirelessTest()
     {
-        if (CommandOutcomeUncertain)
-            throw new InvalidOperationException("A prior command outcome is uncertain; further writes are blocked");
-        var prior = ReadWireless();
-        if (prior.Status is "pending" or "busy")
-            throw new InvalidOperationException("Wireless provisioning is busy");
-        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
-        var request = HidProtocol.BuildWirelessCommand(transactionId, operation, page, ssid, password);
+        EnsureCapability(HidProtocol.CapabilityWireless, "wireless test");
+        SendCommand(10, 0, new byte[64]);
+    }
+
+    private WirelessStatusResponse WaitWireless(Func<WirelessStatusResponse, bool> terminal, int timeoutMilliseconds,
+        Action? onPoll, Func<WirelessStatusResponse, bool> generationMatches, Action<string>? onProgress = null)
+    {
         CommandOutcomeUncertain = true;
-        writeFeature(request);
         var deadline = Environment.TickCount64 + timeoutMilliseconds;
         while (Environment.TickCount64 < deadline)
         {
             onPoll?.Invoke();
-            var result = HidProtocol.ParseWirelessOperation(
-                readFeature(HidProtocol.WirelessResultReportId, HidProtocol.WirelessResultFeatureSize));
-            if (result.TransactionId == transactionId)
+            var result = ReadWireless();
+            if (generationMatches(result))
             {
-                if (result.State == 6)
-                {
-                    CommandOutcomeUncertain = false;
-                    throw new InvalidOperationException(operation == 3
-                        ? $"Could not connect: {(result.Detail == 0 ? "Timed out" : result.Phase)}"
-                        : "Wireless operation failed");
-                }
-                if (result.State == terminalState)
+                if (terminal(result))
                 {
                     CommandOutcomeUncertain = false;
                     return result;
                 }
-                if (result.State == 4) onProgress?.Invoke(result.Phase);
+                onProgress?.Invoke(result.Phase.Length == 0 ? "Joining network" : result.Phase);
             }
-            Thread.Sleep(100);
+            Thread.Sleep(500);
         }
         throw new TimeoutException("Wireless operation timed out; do not resend until its result is checked");
     }
@@ -304,7 +340,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         if (action == "cancel") sizeMib = 0;
         else if (sizeMib is < 1 or > 1024)
             throw new ArgumentOutOfRangeException(nameof(sizeMib), "Self-test size must be 1..1024 MiB");
-        var arguments = new byte[5];
+        var arguments = new byte[64];
         arguments[0] = action == "start" ? (byte)1 : (byte)0;
         BinaryPrimitives.WriteUInt32LittleEndian(arguments.AsSpan(1), sizeMib);
         SendCommand(4, 0, arguments);
@@ -314,7 +350,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
 
     private byte[] GetFeatureReport(byte reportId, int requiredSize)
     {
-        if (featureReport.Length < requiredSize)
+        if (featureReport.Length != requiredSize)
             featureReport = new byte[requiredSize];
         Array.Clear(featureReport);
         featureReport[0] = reportId;
@@ -330,7 +366,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
         if (transactionId == 0) transactionId = 1;
         var request = HidProtocol.BuildControlRequest(transactionId, opcode, flags, arguments);
-        var forcedSave = opcode == 6 && flags == 1;
+        var forcedSave = opcode == 5 && (flags & 1) != 0;
         CommandOutcomeUncertain = true;
         var disconnected = false;
         try { writeFeature(request); }
@@ -340,6 +376,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
             disconnected = true;
         }
 
+        var retryRead = forcedSave || opcode == 13;
         var deadline = Environment.TickCount64 + (forcedSave ? 5000 : 1000);
         while (Environment.TickCount64 < deadline)
         {
@@ -353,7 +390,7 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 }
                 response = readFeature(HidProtocol.ControlReportId, HidProtocol.ControlFeatureSize);
             }
-            catch (Exception error) when (forcedSave && error is IOException or TimeoutException)
+            catch (Exception error) when (retryRead && error is IOException or TimeoutException)
             {
                 disconnected = true;
                 Thread.Sleep(20);
@@ -387,15 +424,14 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
                 replacement = candidate.Open();
                 replacement.ReadTimeout = 250;
                 replacement.WriteTimeout = 1000;
-                var report = new byte[Math.Max(HidProtocol.IdentityFeatureSize,
-                    candidate.GetMaxFeatureReportLength() + 1)];
+                var report = new byte[HidProtocol.IdentityFeatureSize];
                 report[0] = HidProtocol.IdentityReportId;
                 replacement.GetFeature(report);
                 if (HidProtocol.ParseIdentityReport(report).SerialNumber != uid) continue;
                 inputReport = new byte[Math.Max(
                     HidProtocol.SelfTestPayloadSize + 1, candidate.GetMaxInputReportLength())];
                 featureReport = new byte[Math.Max(
-                    HidProtocol.WirelessResultFeatureSize, candidate.GetMaxFeatureReportLength() + 1)];
+                    HidProtocol.ControlFeatureSize, candidate.GetMaxFeatureReportLength())];
                 device = candidate;
                 stream = replacement;
                 replacement = null;

@@ -13,10 +13,11 @@
 #include "task.h"
 
 #define MAGIC 0x46434650u /* "PFCF" in little-endian byte order */
-#define FORMAT_VERSION 1u
+#define FORMAT_VERSION 2u
 #define SAVE_TIMEOUT_MS 1000u
 #define LOCKOUT_RECLAIM_TIMEOUT_MS 1000u
 #define TCP_CLI_DISABLED 4u /**< Private persisted service bit, independent of the two radio switches. */
+#define CONTROL_KEY_PRESENT 1u /**< Byte 141 bit 0 distinguishes every raw key from absence. */
 
 #define BOOT_CONFIG_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 
@@ -25,13 +26,14 @@ _Static_assert(BOOT_CONFIG_FLASH_OFFSET % FLASH_SECTOR_SIZE == 0u, "config secto
 /** Private saved wireless settings; erased or invalid records contain no credentials. */
 typedef struct {
     uint8_t wifi_auth_state; /**< pf_wifi_auth_state_t; zero means try WPA2. */
-    char ssid[PF_WIFI_SSID_SIZE]; /**< NUL-terminated Wi-Fi SSID. */
+    uint8_t ssid_length; /**< Opaque SSID byte count, zero through 32. */
+    uint8_t ssid[32]; /**< Opaque SSID, zero padded; embedded zero bytes are significant. */
     char password[PF_WIFI_PASSWORD_SIZE]; /**< NUL-terminated WPA2/WPA3 passphrase. */
-    uint8_t ble_key[32]; /**< Control HMAC-SHA256 key; all zero means none. */
+    uint8_t ble_key[32]; /**< Raw Control HMAC-SHA256 key; presence is independent of its bytes. */
 } wireless_settings_t;
 
 /**
- * @brief v1 flash record: profiles, service switches and credentials under one CRC.
+ * @brief v2 flash record: explicit SSID length, profiles, switches and credentials under one CRC.
  *
  * A torn or partial write fails the CRC, so the record loads all or nothing.
  *
@@ -47,16 +49,18 @@ typedef struct {
     uint8_t sdcard_profile; /**< Shared pf_storage_speed_t value for either transport. */
     uint8_t radios_disabled; /**< Disabled PF_WIRELESS_* radios and the TCP_CLI_DISABLED service bit. */
     wireless_settings_t wireless; /**< Private saved credentials. */
-    uint8_t reserved[3]; /**< Zero padding before the CRC. */
+    uint8_t reserved[3]; /**< Byte 141 bit 0 is key presence; remaining bits and bytes 142-143 are zero. */
     uint32_t crc; /**< IEEE CRC-32 of all preceding bytes. */
 } record_t;
 
 _Static_assert(sizeof(wireless_settings_t) == 130u && offsetof(record_t, wireless) == 11u &&
-               offsetof(record_t, crc) == 144u && sizeof(record_t) == 148u, "v1 record layout");
+               offsetof(record_t, reserved) == 141u && offsetof(record_t, crc) == 144u &&
+               sizeof(record_t) == 148u, "v2 record layout");
 _Static_assert(sizeof(record_t) <= FLASH_PAGE_SIZE, "settings fit one flash page");
 
 static record_t config; /**< RAM record; zero profiles select defaults, and save refreshes metadata and CRC. */
 static uint8_t boot_radios_disabled; /**< Wireless/radio service flags captured with the boot configuration. */
+static bool boot_key_present; /**< Control-key presence captured at boot, including an all-zero raw key. */
 static wireless_settings_t boot_wireless_settings; /**< Credential/settings snapshot used for restart diagnostics. */
 static bool loaded; /**< The saved record has been read once. */
 static bool boot_snapshot_valid; /**< Original saved values are available for restart comparison. */
@@ -151,6 +155,14 @@ static bool wifi_password_valid(const char *password)
     return true;
 }
 
+/** @brief Return whether any raw key byte is nonzero, for v1 presence inference and canonical absent records. */
+static bool key_nonzero(const uint8_t key[32])
+{
+    uint8_t bits = 0u;
+    for (size_t i = 0u; i < 32u; ++i) bits |= key[i];
+    return bits != 0u;
+}
+
 /** @brief Reject malformed records before publishing their values to the RAM copy. */
 static bool record_valid(const record_t *record)
 {
@@ -159,8 +171,10 @@ static bool record_valid(const record_t *record)
            record->sdcard_profile <= PF_STORAGE_SPEED_HIGH &&
            (record->radios_disabled & ~(PF_WIRELESS_WIFI | PF_WIRELESS_BLE | TCP_CLI_DISABLED)) == 0u &&
            record->wireless.wifi_auth_state <= PF_WIFI_AUTH_SAE &&
-           record->reserved[0] == 0u && record->reserved[1] == 0u && record->reserved[2] == 0u &&
-           wifi_ssid_valid(record->wireless.ssid) && wifi_password_valid(record->wireless.password);
+           (record->reserved[0] & ~CONTROL_KEY_PRESENT) == 0u &&
+           record->reserved[1] == 0u && record->reserved[2] == 0u &&
+           ((record->reserved[0] & CONTROL_KEY_PRESENT) != 0u || !key_nonzero(record->wireless.ble_key)) &&
+           record->wireless.ssid_length <= 32u && wifi_password_valid(record->wireless.password);
 }
 
 /** @copydoc pf_boot_config_discard */
@@ -188,11 +202,27 @@ static void ensure_loaded(void)
         return;
     }
     memcpy(&record, stored_data(), sizeof(record));
+    /* v1 used the same 33 bytes for a UTF-8 C string. Validate its original CRC before converting in RAM. */
+    if (record.version == 1u && record.crc == crc32(&record, offsetof(record_t, crc)) &&
+        record.reserved[0] == 0u && record.reserved[1] == 0u && record.reserved[2] == 0u) {
+        char legacy_ssid[PF_WIFI_SSID_SIZE];
+        memcpy(legacy_ssid, &record.wireless.ssid_length, sizeof(legacy_ssid));
+        if (wifi_ssid_valid(legacy_ssid)) {
+            const uint8_t length = (uint8_t)strlen(legacy_ssid);
+            record.wireless.ssid_length = length;
+            memset(record.wireless.ssid, 0, sizeof(record.wireless.ssid));
+            memcpy(record.wireless.ssid, legacy_ssid, length);
+            record.reserved[0] = key_nonzero(record.wireless.ble_key) ? CONTROL_KEY_PRESENT : 0u;
+            record.version = FORMAT_VERSION;
+            record.crc = crc32(&record, offsetof(record_t, crc));
+        }
+    }
     memset(&config, 0, sizeof(config));
     if (record_valid(&record)) {
         config = record;
     }
     boot_radios_disabled = config.radios_disabled;
+    boot_key_present = (config.reserved[0] & CONTROL_KEY_PRESENT) != 0u;
     boot_wireless_settings = config.wireless;
     boot_snapshot_valid = true;
     loaded = true;
@@ -202,7 +232,8 @@ static void ensure_loaded(void)
 void pf_boot_config_wifi_ssid(char ssid[PF_WIFI_SSID_SIZE])
 {
     ensure_loaded();
-    memcpy(ssid, config.wireless.ssid, sizeof(config.wireless.ssid));
+    memset(ssid, 0, PF_WIFI_SSID_SIZE);
+    memcpy(ssid, config.wireless.ssid, config.wireless.ssid_length);
 }
 
 /** @copydoc pf_boot_config_set_wifi_ssid */
@@ -210,9 +241,25 @@ bool pf_boot_config_set_wifi_ssid(const char *ssid)
 {
     ensure_loaded();
     if (!loaded || !wifi_ssid_valid(ssid)) return false;
-    size_t length = strlen(ssid);
+    return pf_boot_config_set_wifi_ssid_bytes((const uint8_t *)ssid, (uint8_t)strlen(ssid));
+}
+
+/** @copydoc pf_boot_config_wifi_ssid_bytes */
+uint8_t pf_boot_config_wifi_ssid_bytes(uint8_t ssid[32])
+{
+    ensure_loaded();
+    memcpy(ssid, config.wireless.ssid, sizeof(config.wireless.ssid));
+    return config.wireless.ssid_length;
+}
+
+/** @copydoc pf_boot_config_set_wifi_ssid_bytes */
+bool pf_boot_config_set_wifi_ssid_bytes(const uint8_t *ssid, uint8_t length)
+{
+    ensure_loaded();
+    if (!loaded || length > 32u || (ssid == NULL && length != 0u)) return false;
     memset(config.wireless.ssid, 0, sizeof(config.wireless.ssid));
-    memcpy(config.wireless.ssid, ssid, length + 1u);
+    if (length != 0u) memcpy(config.wireless.ssid, ssid, length);
+    config.wireless.ssid_length = length;
     return true;
 }
 
@@ -252,8 +299,10 @@ void pf_boot_config_ble_key(uint8_t key[32])
 bool pf_boot_config_set_ble_key(const uint8_t key[32])
 {
     ensure_loaded();
-    if (!loaded || key == NULL) return false;
-    memcpy(config.wireless.ble_key, key, sizeof(config.wireless.ble_key));
+    if (!loaded) return false;
+    memset(config.wireless.ble_key, 0, sizeof(config.wireless.ble_key));
+    if (key != NULL) memcpy(config.wireless.ble_key, key, sizeof(config.wireless.ble_key));
+    config.reserved[0] = key != NULL ? CONTROL_KEY_PRESENT : 0u;
     return true;
 }
 
@@ -261,9 +310,7 @@ bool pf_boot_config_set_ble_key(const uint8_t key[32])
 bool pf_boot_config_ble_key_configured(void)
 {
     ensure_loaded();
-    uint8_t bits = 0u;
-    for (size_t i = 0u; i < sizeof(config.wireless.ble_key); ++i) bits |= config.wireless.ble_key[i];
-    return bits != 0u;
+    return (config.reserved[0] & CONTROL_KEY_PRESENT) != 0u;
 }
 
 pf_sysclk_profile_t pf_boot_config_sysclk(void)
@@ -346,6 +393,7 @@ bool pf_boot_config_wireless_restart_required(void)
     const uint8_t wireless_flags = PF_WIRELESS_WIFI | PF_WIRELESS_BLE | TCP_CLI_DISABLED;
     return loaded && boot_snapshot_valid &&
         (((config.radios_disabled ^ boot_radios_disabled) & wireless_flags) != 0u ||
+         ((config.reserved[0] & CONTROL_KEY_PRESENT) != 0u) != boot_key_present ||
          memcmp(&config.wireless, &boot_wireless_settings, sizeof(config.wireless)) != 0);
 }
 
@@ -371,7 +419,8 @@ bool pf_boot_config_save(void)
     config.magic = MAGIC;
     config.version = FORMAT_VERSION;
     config.size = sizeof(config);
-    memset(config.reserved, 0, sizeof(config.reserved));
+    config.reserved[0] &= CONTROL_KEY_PRESENT;
+    config.reserved[1] = config.reserved[2] = 0u;
     config.crc = crc32(&config, offsetof(record_t, crc));
     memset(page, 0xff, sizeof(page));
     memcpy(page, &config, sizeof(config));

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=11";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=14";
+import { PicoForgeWebHid } from "../js/device.mjs?v=12";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=15";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -156,6 +156,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     assert.equal(el("#settings-save").disabled, true);
     assert.equal(el("#self-test-start").disabled, true);
     let now = Date.now();
+    client.now = () => now;
     context.mock.method(Date, "now", () => now);
     let reads = 0;
     let wifiState = 2;
@@ -163,17 +164,20 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     let delayed = null;
     const device = new EventTarget();
     device.receiveFeatureReport = async id => {
-      assert.equal(id, 30);
+      assert.equal(id, 12);
       reads++;
       if (failure) throw new Error("device read failed");
       if (delayed) return delayed;
-      const report = new Uint8Array(53);
-      report.set([1, 1, 0, 0, wifiState, 192, 168, 1, 9]);
-      report.set(new TextEncoder().encode("HomeDev"), 9);
+      const report = new Uint8Array(48);
+      report.set([1, wifiState, 0, 0, 1]);
+      if (wifiState === 2) report.set([192, 168, 1, 9], 5);
+      report[9] = 7;
+      report.set(new TextEncoder().encode("HomeDev"), 10);
       return report;
     };
     client.device = device;
-    client.update({ hardware: { ...client.state.hardware, capabilities: client.state.hardware.capabilities | 128 } });
+    client.update({ settings: { ...client.state.settings, radios: 1 },
+      hardware: { ...client.state.hardware, capabilities: client.state.hardware.capabilities | 128 } });
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(el("#wifi-state").textContent, "HomeDev (192.168.1.9)");
     assert.equal(reads, 1);
@@ -189,15 +193,18 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     now += 2000;
     client.update({});
     await new Promise(resolve => setImmediate(resolve));
+    assert.equal(el("#wifi-state").textContent, "HomeDev (connecting)", "one failed poll retains a fresh snapshot");
+    now += 4000;
+    client.expireReports();
     assert.equal(el("#wifi-state").textContent, "Unavailable");
-    assert.match(el("#wifi-state").title, /device read failed/);
+    assert.match(el("#wifi-state").title, /stale/);
     failure = false;
     let finishRead;
     delayed = new Promise(resolve => { finishRead = resolve; });
     now += 2000;
     client.update({});
     client.clearConnection();
-    finishRead(new Uint8Array(53));
+    finishRead(new Uint8Array(48));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(client.state.wireless, null, "a late report must not repopulate a disconnected board");
     assert.equal(el("#wifi-state").textContent, "--");

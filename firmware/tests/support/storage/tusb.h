@@ -8,14 +8,20 @@
 #define SCSI_SENSE_ILLEGAL_REQUEST 5u
 #define SCSI_SENSE_UNIT_ATTENTION 6u
 #define CONTROL_STAGE_SETUP 0u
+#define CONTROL_STAGE_DATA 1u
+#define CONTROL_STAGE_ACK 2u
 #define TUSB_REQ_TYPE_CLASS 1u
+#define TUSB_DIR_OUT 0u
+#define HID_REQ_CONTROL_SET_REPORT 9u
 #define MSC_REQ_RESET 0xffu
 typedef enum { HID_REPORT_TYPE_INPUT = 1, HID_REPORT_TYPE_FEATURE = 3 } hid_report_type_t;
+typedef enum { XFER_RESULT_SUCCESS = 0 } xfer_result_t;
 typedef struct {
-    struct { uint8_t type; } bmRequestType_bit;
+    struct { uint8_t type, direction; } bmRequestType_bit;
     uint8_t bRequest;
     uint16_t wValue, wLength;
 } tusb_control_request_t;
+bool tud_control_xfer(uint8_t rhport, const tusb_control_request_t *request, void *buffer, uint16_t length);
 bool tud_msc_set_sense(uint8_t lun, uint8_t key, uint8_t asc, uint8_t ascq);
 bool tud_disconnect(void);
 bool tud_connect(void);

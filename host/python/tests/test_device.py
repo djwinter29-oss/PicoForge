@@ -6,8 +6,7 @@ from picoforge.hid.device import PicoForgeHid, _matches_vendor_collection, enume
 from picoforge.reports import (
     CONTROL_FEATURE_SIZE,
     SELF_TEST_INPUT_SIZE,
-    TCP_CLI_AUTH_REPORT_ID,
-    TCP_CLI_AUTH_RESULT_SIZE,
+    build_control_command_report,
     parse_identity_report,
     parse_status_report,
 )
@@ -25,8 +24,8 @@ def telemetry():
 
 
 def control_result(opcode=1, status=2, error=0, transaction=1):
-    data = struct.pack("<HBB", 200, 1, 0) if opcode == 6 and status == 2 else bytes(4)
-    return bytes([20, 1, transaction, opcode, status, error]) + data
+    data = struct.pack("<HBBB", 200, 1, 0, 0) if opcode == 5 and status == 2 else b""
+    return bytes([20, 1, transaction, opcode, status, error]) + data.ljust(63, b"\0")
 
 
 def configuration(clock=200, profile=1):
@@ -66,12 +65,12 @@ class HidDeviceTests(unittest.TestCase):
         replacement = Mock()
         raw = bytes([1, 1]) + struct.pack("<H", 2) + bytes.fromhex("0123456789abcdef")
         raw += bytes([1, 2, 3, 2, 2, 0, 0x75]) + struct.pack("<II", 520192, 100000)
-        replacement.get_feature_report.side_effect = [raw, control_result(opcode=6)]
+        replacement.get_feature_report.side_effect = [raw, control_result(opcode=5)]
         with patch("picoforge.hid.device._matching_devices", return_value=[
                 {"path": b"/hid/new", "serial_number": "0123456789ABCDEF"}]), \
                 patch("picoforge.hid.device._require_hid") as hid, patch("picoforge.hid.device.sleep"):
             hid.return_value.device.return_value = replacement
-            settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
+            settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False}
             self.assertEqual(client.set_settings(settings, force=True), settings)
         self.assertEqual(len(original.sent), 1)
         self.assertEqual(original.sent[0][4], 1)
@@ -82,9 +81,10 @@ class HidDeviceTests(unittest.TestCase):
     def test_forced_save_invalid_saved_values_remain_uncertain(self):
         client = self.connection()
         client.identity["capabilities"] |= 64
-        client._device.feature_reports[20] = [control_result(opcode=6)]
+        client._device.feature_reports[20] = [control_result(opcode=5)]
         with self.assertRaisesRegex(RuntimeError, "did not confirm"):
-            client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 1, "radios": 0}, force=True)
+            client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 1, "radios": 0,
+                                 "tcp_cli_enabled": False}, force=True)
         self.assertTrue(client._command_uncertain)
         with self.assertRaisesRegex(RuntimeError, "uncertain"):
             client.set_led(True)
@@ -135,16 +135,17 @@ class HidDeviceTests(unittest.TestCase):
         client._device.feature_reports[20] = [control_result()]
         result = client.set_led(True)
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(client._device.sent, [bytes([20, 1, 1, 1, 0, 1, 0, 0, 0, 0])])
+        self.assertEqual(client._device.sent, [build_control_command_report(1, 1, arguments=b"\1")])
         self.assertEqual(client._device.last_get, (20, CONTROL_FEATURE_SIZE))
 
     def test_settings_save_uses_one_command_and_verified_result_without_configuration_read(self):
         client = self.connection()
-        client._device.feature_reports[20] = [control_result(opcode=6)]
+        client._device.feature_reports[20] = [control_result(opcode=5)]
+        client._device.feature_reports[2] = [configuration()]
         settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
-        self.assertEqual(client.set_settings(settings), settings)
-        self.assertEqual(client._device.sent, [bytes([20, 1, 1, 6, 0, 200, 0, 1, 0, 0])])
-        self.assertEqual(client._device.last_get, (20, 10))
+        self.assertEqual(client.set_settings(settings), {**settings, "tcp_cli_enabled": False})
+        self.assertEqual(client._device.sent, [build_control_command_report(1, 5, arguments=bytes((200, 0, 1, 0)))])
+        self.assertEqual(client._device.last_get, (20, 69))
 
     def test_unavailable_capability_blocks_control_write(self):
         client = self.connection()
@@ -152,17 +153,24 @@ class HidDeviceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "LED"):
             client.set_led(True)
         self.assertEqual(client._device.sent, [])
+        client.identity["capabilities"] = 0x35
+        with self.assertRaisesRegex(RuntimeError, "forced"):
+            client.set_settings({"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0,
+                                 "tcp_cli_enabled": False}, force=True)
+        client.identity["capabilities"] &= ~128
+        with self.assertRaisesRegex(RuntimeError, "Wireless"):
+            client.cancel_wireless_test()
+        self.assertEqual(client._device.sent, [])
 
     def test_tcp_cli_auth_proof_uses_the_matching_usb_board(self):
         client = self.connection()
         client.identity["capabilities"] |= 128
         nonce = bytes(range(16))
         proof = bytes(range(16, 32))
-        client._device.feature_reports[TCP_CLI_AUTH_REPORT_ID] = [
-            bytes([TCP_CLI_AUTH_REPORT_ID, 1, 1, 1]) + proof]
+        client._device.feature_reports[20] = [bytes([20, 1, 1, 13, 2, 0]) + proof + bytes(47)]
         self.assertEqual(client.tcp_cli_auth_proof(nonce, bytes.fromhex("0123456789abcdef")), proof)
-        self.assertEqual(client._device.sent, [bytes([36, 1, 1]) + nonce + b"\0"])
-        self.assertEqual(client._device.last_get, (TCP_CLI_AUTH_REPORT_ID, TCP_CLI_AUTH_RESULT_SIZE))
+        self.assertEqual(client._device.sent, [build_control_command_report(1, 13, arguments=nonce)])
+        self.assertEqual(client._device.last_get, (20, 69))
         with self.assertRaisesRegex(ValueError, "different board"):
             client.tcp_cli_auth_proof(nonce, bytes(8))
         self.assertEqual(len(client._device.sent), 1)

@@ -16,7 +16,7 @@ static void send_control(uint8_t transaction_id, uint8_t opcode, uint8_t flags, 
         .opcode = opcode,
         .flags = flags,
     };
-    if (arguments != NULL) memcpy(request.arguments, arguments, sizeof(request.arguments));
+    if (arguments != NULL) memcpy(request.arguments, arguments, 5u);
     tud_hid_set_report_cb(0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE,
                           (const uint8_t *)&request, sizeof(request));
 }
@@ -73,6 +73,61 @@ void setUp(void)
 }
 
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
+
+void test_usb_set_envelope_is_rejected_before_ack_and_valid_commands_execute_only_after_ack(void)
+{
+    tusb_control_request_t setup = {
+        .bmRequestType_bit = {.type = TUSB_REQ_TYPE_CLASS, .direction = TUSB_DIR_OUT},
+        .bRequest = HID_REQ_CONTROL_SET_REPORT,
+        .wValue = ((uint16_t)HID_REPORT_TYPE_FEATURE << 8u) | PF_HID_CONTROL_REPORT_ID,
+        .wLength = 69u,
+    };
+    control_result.transaction_id = 99u;
+    TEST_ASSERT_TRUE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_SETUP, &setup));
+    TEST_ASSERT_EQUAL_UINT16(69u, hid_control_length);
+    uint8_t *bytes = hid_control_buffer;
+    bytes[0] = 20u;
+    bytes[1] = 1u;
+    bytes[2] = 7u;
+    bytes[3] = PF_HID_OPCODE_LED;
+    bytes[5] = 1u;
+    TEST_ASSERT_TRUE(__wrap_usbd_control_xfer_cb(0u, 0u, XFER_RESULT_SUCCESS, 64u));
+    TEST_ASSERT_FALSE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_DATA, &setup));
+    TEST_ASSERT_EQUAL_UINT8(99u, control_result.transaction_id);
+    TEST_ASSERT_TRUE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_SETUP, &setup));
+    bytes[0] = 20u;
+    bytes[1] = 1u;
+    bytes[2] = 7u;
+    bytes[3] = PF_HID_OPCODE_LED;
+    bytes[5] = 1u;
+    TEST_ASSERT_TRUE(__wrap_usbd_control_xfer_cb(0u, 0u, XFER_RESULT_SUCCESS, 64u));
+    TEST_ASSERT_TRUE(__wrap_usbd_control_xfer_cb(0u, 0u, XFER_RESULT_SUCCESS, 5u));
+    TEST_ASSERT_TRUE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_DATA, &setup));
+    TEST_ASSERT_EQUAL_UINT8(99u, control_result.transaction_id);
+    TEST_ASSERT_EQUAL_UINT(0u, led_requests);
+    TEST_ASSERT_TRUE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_ACK, &setup));
+    TEST_ASSERT_EQUAL_UINT8(7u, control_result.transaction_id);
+    TEST_ASSERT_EQUAL_UINT(1u, led_requests);
+    TEST_ASSERT_FALSE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_ACK, &setup));
+
+    TEST_ASSERT_TRUE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_SETUP, &setup));
+    bytes[0] = 20u;
+    bytes[1] = 1u;
+    TEST_ASSERT_TRUE(__wrap_usbd_control_xfer_cb(0u, 0u, XFER_RESULT_SUCCESS, 64u));
+    TEST_ASSERT_TRUE(__wrap_usbd_control_xfer_cb(0u, 0u, XFER_RESULT_SUCCESS, 5u));
+    TEST_ASSERT_FALSE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_DATA, &setup));
+    TEST_ASSERT_FALSE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_ACK, &setup));
+    TEST_ASSERT_EQUAL_UINT8(7u, control_result.transaction_id);
+    setup.wLength = 68u;
+    TEST_ASSERT_FALSE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_SETUP, &setup));
+    setup.wLength = 69u;
+    setup.wValue = ((uint16_t)HID_REPORT_TYPE_FEATURE << 8u) | 12u;
+    TEST_ASSERT_FALSE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_SETUP, &setup));
+    setup.bRequest = 1u;
+    hid_control_delegates = 0u;
+    TEST_ASSERT_TRUE(__wrap_hidd_control_xfer_cb(0u, CONTROL_STAGE_SETUP, &setup));
+    TEST_ASSERT_EQUAL_UINT(1u, hid_control_delegates);
+}
 
 void test_feature_reports_match_wire_sizes_and_populate_identity_configuration(void)
 {
@@ -211,6 +266,12 @@ void test_save_settings_command_updates_next_boot_profile_and_returns_saved_valu
     TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, test_sysclk);
     TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
 
+    send_control(15u, PF_HID_OPCODE_SAVE_SETTINGS, PF_HID_SAVE_SETTINGS_COMMIT_WIRELESS, arguments);
+    const pf_hid_control_result_t commit_result = read_control_result();
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, commit_result.status);
+    TEST_ASSERT_EQUAL_UINT8(21u, commit_result.result_data[0]);
+    TEST_ASSERT_FALSE(pf_hid_take_reboot_request());
+
     settings_save_fails = true;
     send_control(11u, PF_HID_OPCODE_SAVE_SETTINGS, 0u, arguments);
     TEST_ASSERT_EQUAL_UINT8(6u, read_control_result().status);
@@ -338,7 +399,8 @@ void test_self_test_command_rejects_bad_size_then_queues_valid_work(void)
     TEST_ASSERT_EQUAL_UINT8(3u, result.status);
     TEST_ASSERT_EQUAL_UINT8(3u, result.error_reason);
     TEST_ASSERT_EQUAL_UINT(0u, queued);
-    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_SIZE, bench.status.request_error);
+    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_ERROR_SIZE, result.result_data[0]);
+    TEST_ASSERT_EQUAL(PF_FILE_BENCHMARK_ERROR_NONE, bench.status.request_error);
 
     const uint8_t valid_arguments[5] = {1u, 32u, 0u, 0u, 0u};
     send_control(12u, PF_HID_OPCODE_SELF_TEST, 0u, valid_arguments);
@@ -517,5 +579,5 @@ void test_self_test_report_maps_every_status_field_to_its_own_wire_field(void)
     TEST_ASSERT_EQUAL_UINT32(16u, report.mismatch_count);
     TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_ERROR_SPACE, report.error);
     TEST_ASSERT_EQUAL_UINT8(7u, report.filesystem_result);
-    TEST_ASSERT_EQUAL_UINT8(PF_FILE_BENCHMARK_ERROR_SIZE, report.request_error);
+    TEST_ASSERT_EQUAL_UINT8(0u, report.reserved_error);
 }

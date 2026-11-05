@@ -192,7 +192,8 @@ status. Once the TCP session is authenticated, the dashboard connection can clos
 A saved Control key still gates the TCP CLI; removing the second prompt does not disable that requirement. Direct
 reuses the dashboard's existing board authentication: a Bluetooth session already accepted the key to unlock BLE
 and keeps it as a non-extractable WebCrypto key for that session; over USB, firmware creates a fixed-purpose proof
-through Feature 36. Direct verifies that the TCP challenge UID matches the connected board. The console receives only
+through Feature `20` opcode `13`. Direct verifies that the TCP challenge UID matches the connected board.
+The console receives only
 the one-use proof, never the Control key. Entering the same key again would not add a separate factor or strengthen
 the challenge-response check.
 

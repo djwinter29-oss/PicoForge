@@ -894,6 +894,10 @@ Current versioned report layouts use version `1`; hosts accept that version only
 previous layouts. Increment the affected report's version when an incompatible field, length, unit, validation rule,
 or lifecycle changes. Layout versions are independent of firmware semantic version.
 
+This unpublished version-1 contract replaces earlier development layouts without a legacy wire fallback. Update
+firmware and all host clients together. Migration of the persistent settings record is separate from wire-layout
+compatibility; see the [settings record format](settings.md#record-format).
+
 Conformance tests cover:
 
 1. **Reports**
@@ -931,8 +935,11 @@ product use.
 
 ## Implementation and Integration
 
-The descriptor and firmware implementation are in `firmware/src/app/usb`; configure the TinyUSB HID control buffer
-to at least 69 bytes in every build (128 bytes is the current headroom target). Storage benchmark admission and
+The descriptor and firmware implementation are in `firmware/src/app/usb`; the TinyUSB HID control buffer is
+128 bytes in every build, accommodating the 69-byte control report. The integration validates SET report framing,
+actual received length, version and transaction ID before the USB status handshake; the pinned SDK's ordinary
+SET callback runs too late to reject an invalid envelope. Linker interposition leaves vendor sources unchanged.
+Storage benchmark admission and
 execution are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and Direct dashboard clients
 implement the same report contract. Settings saves write the persistent record's single SD profile, which Report
 `2` exposes.

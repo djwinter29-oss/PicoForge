@@ -1,5 +1,5 @@
 import { renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "./wireless-form.mjs?v=17";
+import { bindWirelessForm } from "./wireless-form.mjs?v=18";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -234,9 +234,10 @@ async function saveCombinedSettings(settings) {
     }, 15000);
     const result = await responseJson(response, `Wireless endpoint returned HTTP ${response.status}`);
     const saved = result.wireless;
-    if (result.reboot_pending !== true || saved?.ssid !== request.ssid
+    const expectedSsidHex = request.ssid_hex ??
+      [...new TextEncoder().encode(request.ssid)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    if (result.reboot_pending !== true || saved?.ssid_hex?.toLowerCase() !== expectedSsidHex.toLowerCase()
       || saved.wifi_enabled !== request.wifi_enabled || saved.ble_enabled !== request.ble_enabled
-      || (request.password !== undefined && saved.password_configured !== Boolean(request.password))
       || (request.tcp_cli_enabled !== undefined && saved.tcp_cli_enabled !== request.tcp_cli_enabled)
       || (request.ble_key !== undefined && saved.ble_key_configured !== Boolean(request.ble_key))
       || result.settings?.system_clock_mhz !== settings.system_clock_mhz

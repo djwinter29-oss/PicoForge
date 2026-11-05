@@ -10,8 +10,7 @@ export function renderWirelessStatus(snapshot) {
   const render = (name, text) => {
     document.querySelector(`#${name}-diagnostics`).hidden = !(snapshot.hardware?.capabilities & 128);
     const status = document.querySelector(`#${name}-state`);
-    const label = unavailable ?? `${text()}${name === "wifi" && wireless?.restart_required
-      ? " · restart required" : ""}`;
+    const label = unavailable ?? text();
     if (name === "wifi" && consoleReady) {
       const existing = status.querySelector?.("a");
       const link = existing ?? document.createElement("a");
@@ -22,10 +21,8 @@ export function renderWirelessStatus(snapshot) {
       link.title = "Open the Wi-Fi CLI console in a new tab";
       if (!existing) status.replaceChildren(link);
     } else status.textContent = label;
-    status.title = snapshot.wireless_error ?? (name === "wifi" && wireless?.restart_required
-      ? "Saved wireless settings differ from the settings applied at boot; restart required."
-      : name === "wifi" && snapshot.hardware?.serial_number
-        ? `picoforge-${snapshot.hardware.serial_number}.local` : "");
+    status.title = snapshot.wireless_error ?? (name === "wifi" && snapshot.hardware?.serial_number
+      ? `picoforge-${snapshot.hardware.serial_number}.local` : "");
   };
   render("wifi", () => !wireless.wifi_enabled || !wireless.ssid ? "Disabled"
     : `${wireless.ssid} (${wireless.wifi_state === "connected" ? wireless.ipv4
@@ -51,6 +48,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   let generation = 0;
   let status = null;
   let wifiStage = null;
+  let wifiTestAttempted = false;
+  let selectedSsidHex = null;
   let wifiEdited = false;
   let keyDirty = false;
   let keyNeedsRegeneration = false;
@@ -110,7 +109,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   };
   /** Disabling a saved-enabled radio erases its credentials at the next save. */
   const erasing = () => Boolean(supported() && status && (
-    !radioOn("settings-wifi") && status.wifi_enabled && (status.ssid || status.password_configured)
+    !radioOn("settings-wifi") && status.wifi_enabled && status.ssid
     || !radioOn("settings-ble") && status.ble_enabled && status.ble_key_configured));
   const dirty = () => Boolean(wifiStage || keyDirty || erasing() || status && el("settings-tcp-cli")
     && radioOn("settings-tcp-cli") !== status.tcp_cli_enabled);
@@ -143,6 +142,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       button.addEventListener("click", () => {
         if (wifiCancelError) return;
         el("wifi-ssid").value = network.ssid;
+        selectedSsidHex = network.ssid_hex ?? null;
         wifiEdited = true;
         el("wifi-manual-label").hidden = true;
         el("wifi-password-label").hidden = !network.secured;
@@ -154,7 +154,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     });
   };
   const discardWifi = async () => {
-    if (wifiStage?.use_tested_wifi) {
+    if (wifiTestAttempted) {
       wifiCanceling = true;
       refresh();
       changed();
@@ -175,10 +175,12 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     clearInterval(stagedTimer);
     stagedTimer = null;
     wifiStage = null;
+    wifiTestAttempted = false;
     wifiEdited = false;
     wifiCancelError = null;
     wifiCancelRequiresReconnect = false;
     el("wifi-ssid").value = "";
+    selectedSsidHex = null;
     clearWifiInputs();
     refresh();
     changed();
@@ -187,6 +189,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
 
   const openWifi = () => {
     el("wifi-ssid").value = wifiStage?.ssid ?? status?.ssid ?? "";
+    selectedSsidHex = (wifiStage ? wifiStage.ssid_hex : status?.ssid_hex) ?? null;
     el("wifi-password-label").hidden = false;
     el("wifi-manual-label").hidden = false;
     setStatus("wifi-status", wifiCancelError
@@ -238,6 +241,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     el("wifi-ssid").focus();
   });
   el("wifi-ssid").addEventListener("input", () => {
+    selectedSsidHex = null;
     wifiEdited = true;
     refresh();
     changed();
@@ -267,7 +271,9 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     refresh();
     changed();
     try {
-      const result = await test({ ssid, password }, next => {
+      const ssidHex = selectedSsidHex;
+      wifiTestAttempted = true;
+      const result = await test({ ssid, password, ...(ssidHex !== null ? { ssid_hex: ssidHex } : {}) }, next => {
         if (current !== generation || !next || next === phase) return;
         phase = next;
         progress();
@@ -275,7 +281,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       if (current !== generation) return;
       if (!Number.isInteger(result.remaining_seconds) || result.remaining_seconds < 1 ||
           result.remaining_seconds > 600) throw new Error("Firmware returned an invalid staged-credential lifetime");
-      wifiStage = { ssid, use_tested_wifi: true, tested_at: Date.now(),
+      wifiStage = { ssid, ...(ssidHex !== null ? { ssid_hex: ssidHex } : {}),
+        use_tested_wifi: true, tested_at: Date.now(),
         remaining_seconds: result.remaining_seconds };
       clearInterval(stagedTimer);
       stagedTimer = setInterval(refresh, 1000);
@@ -344,9 +351,11 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       const ble = radioOn("settings-ble");
       const config = { wifi_enabled: wifi, ble_enabled: ble,
         ssid: wifi ? wifiStage?.ssid ?? status?.ssid ?? "" : "", confirm_reboot: true };
+      const ssidHex = wifi ? (wifiStage ? wifiStage.ssid_hex : status?.ssid_hex) : null;
+      if (ssidHex !== undefined && ssidHex !== null) config.ssid_hex = ssidHex;
       if (status && el("settings-tcp-cli")) config.tcp_cli_enabled = radioOn("settings-tcp-cli");
       if (wifi && wifiStage?.use_tested_wifi) config.use_tested_wifi = true;
-      if (!wifi && (status?.ssid || status?.password_configured)) config.password = "";
+      if (!wifi && status?.ssid) config.password = "";
       if (ble && keyDirty) config.ble_key = el("ble-secret").value;
       else if (!ble && status?.ble_key_configured) config.ble_key = "";
       return config;
@@ -362,6 +371,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
         stagedTimer = null;
         loaded = true;
         wifiStage = null;
+        wifiTestAttempted = false;
+        selectedSsidHex = null;
         wifiEdited = false;
         wifiCancelError = null;
         wifiCancelRequiresReconnect = false;
@@ -389,6 +400,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       loaded = false;
       retryAfter = 0;
       wifiStage = null;
+      wifiTestAttempted = false;
+      selectedSsidHex = null;
       wifiEdited = false;
       keyDirty = false;
       keyNeedsRegeneration = false;

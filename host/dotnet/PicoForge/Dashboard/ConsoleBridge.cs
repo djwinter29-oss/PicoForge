@@ -25,7 +25,7 @@ internal sealed class ConsoleBridge : IDisposable
             address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) ||
             address.GetAddressBytes()[0] is >= 224 and <= 239)
             throw new ArgumentException("Invalid board IPv4 address");
-        if (wireless.TcpCliAuthRequired && signProof is null)
+        if (!wireless.BleKeyConfigured || signProof is null)
             throw new InvalidOperationException("USB Control key proof is unavailable");
         lock (gate)
         {
@@ -36,8 +36,7 @@ internal sealed class ConsoleBridge : IDisposable
             {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
                 socket.ConnectAsync(new IPEndPoint(address, 2323), timeout.Token).AsTask().GetAwaiter().GetResult();
-                if (wireless.TcpCliAuthRequired)
-                    Authenticate(socket, signProof!);
+                Authenticate(socket, signProof);
                 socket.SendTimeout = 100;
                 connection = socket;
                 session = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));

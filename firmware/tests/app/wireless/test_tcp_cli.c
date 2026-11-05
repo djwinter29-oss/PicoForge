@@ -23,7 +23,7 @@ bool pf_logging_write(pf_logging_level_t level, const char *tag, const char *for
 uint64_t time_us_64(void) { return fake_time_us; }
 void pf_wireless_auth_set_key(const uint8_t key[32])
 {
-    key_available = key != NULL && key[0] != 0u;
+    key_available = key != NULL;
 }
 bool pf_wireless_auth_available(void) { return key_available; }
 bool pf_wireless_auth_new_nonce(uint8_t nonce[16])
@@ -175,14 +175,11 @@ void test_lost_saved_link_closes_client_and_rejects_new_sessions_until_restored(
     TEST_ASSERT_EQUAL_UINT16(0u, client_pcb.sent_size);
 }
 
-void test_authentication_requires_a_nonzero_key_and_verifies_before_cli_io(void)
+void test_authentication_accepts_an_explicit_zero_key_and_verifies_before_cli_io(void)
 {
-    uint8_t key[32] = {0x42u};
     uint8_t zero_key[32] = {0u};
     TEST_ASSERT_FALSE(pf_tcp_cli_set_auth_required(true));
     pf_wireless_auth_set_key(zero_key);
-    TEST_ASSERT_FALSE(pf_tcp_cli_set_auth_required(true));
-    pf_wireless_auth_set_key(key);
     TEST_ASSERT_TRUE(pf_tcp_cli_set_auth_required(true));
     pf_tcp_cli_close(NULL);
     memset(&client_pcb, 0, sizeof(client_pcb));

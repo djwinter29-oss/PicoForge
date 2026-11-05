@@ -56,11 +56,13 @@ for section visibility when storage reports become stale; stale readings and sto
 Controls and dialog dismissal are disabled while a test is pending.
 The server dashboard stops waiting after 40 seconds; an uncertain result blocks further writes until the dashboard
 is restarted and the board reconnected. Tests are never automatically replayed.
-SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters, while an empty password
-tests an open network. The Bluetooth dialog generates a random control key; copy it to a password manager before
-saving because the board never returns it. Bluetooth **Enabled** is unavailable until a key is saved or generated.
-There is no separate TCP authentication setting: saving a key requires it for the Wi-Fi CLI, and erasing the key
-opens the CLI again. **Save&Reboot** commits the clock, SD Card speed,
+SSID length is at most 32 bytes; scanned SSIDs retain their raw bytes and escape non-printable or invalid UTF-8 bytes
+for display. Manually entered names are encoded as UTF-8. Passphrases are 8-63 printable ASCII characters;
+an empty password tests an open network. The Bluetooth dialog generates a random control key; copy it to a password
+manager before saving because the board never returns it. Bluetooth **Enabled** is unavailable until a key is saved
+or generated.
+There is no separate TCP authentication setting: the Wi-Fi CLI requires a saved key, and erasing the key
+disables the listener. **Save&Reboot** commits the clock, SD Card speed,
 radio switches and staged credentials together as one atomic save.
 
 Saving credentials requires fresh, idle firmware-owned storage. USB sharing, transitions, benchmark work, outstanding
@@ -111,8 +113,8 @@ and GAP Device Name, so the picker can tell boards apart.
 The board advertises only when Bluetooth is enabled and a control key is saved. Enter the USB-provisioned control
 key before **Scan for boards**; after the link is established the dashboard proves the key once to unlock the session,
 and the board refuses every read except identity until it does. A rejected key closes the link and starts a
-two-second lockout. The LED needs no further proof; reboot, settings saves, and each benchmark start/cancel are proved
-again. The browser must
+two-second lockout. The LED needs no further proof; reboot and settings saves are proved again.
+Benchmark controls require USB. The browser must
 be within radio range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.

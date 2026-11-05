@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from math import ceil
+from functools import wraps
+from threading import RLock
 from time import monotonic, sleep
 from typing import Any, Callable
 
@@ -20,19 +22,14 @@ from .models import (
     WirelessStatus,
 )
 from ..reports import (
+    CAP_FORCE_SAVE,
     CAP_WIRELESS,
     WIRELESS_REPORT_ID,
     WIRELESS_FEATURE_SIZE,
-    WIRELESS_RESULT_REPORT_ID,
-    WIRELESS_RESULT_FEATURE_SIZE,
-    TCP_CLI_AUTH_REPORT_ID,
-    TCP_CLI_AUTH_RESULT_SIZE,
     build_tcp_cli_auth_request,
-    parse_tcp_cli_auth_result,
-    build_wireless_configuration_report,
+    validate_wireless_configuration,
     build_wireless_command_report,
     parse_wireless_status_report,
-    parse_wireless_result_report,
     CAP_LED,
     CAP_REBOOT,
     CAP_SAVE_SETTINGS,
@@ -61,6 +58,8 @@ from ..reports import (
     parse_self_test_status_report,
     parse_telemetry_report,
 )
+from ..reports.common import _validate_settings
+from ..reports.wireless import display_ssid, request_ssid
 
 VENDOR_ID = 0xCAFE
 PRODUCT_ID = 0x4011
@@ -133,6 +132,17 @@ def _select_device(serial_number: str | None, device_path: str | None) -> dict[s
     return matches[0]
 
 
+def _serialized(method):
+    """Keep the result slot and multi-command wireless lifecycles owned by one caller."""
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        if not hasattr(self, "_control_lock"):
+            self._control_lock = RLock()
+        with self._control_lock:
+            return method(self, *args, **kwargs)
+    return call
+
+
 class PicoForgeHid:
     """Own one PicoForge HID connection and expose decoded reports."""
 
@@ -154,6 +164,10 @@ class PicoForgeHid:
         self._transaction_id = 0
         self.last_command_result: dict[str, object] | None = None
         self._command_uncertain = False
+        self._control_lock = RLock()
+        self._wireless_snapshot: WirelessStatus | None = None
+        self._wireless_received = 0.0
+        self._wireless_active = False
 
     def read_info(self) -> HardwareIdentity:
         self._require_open()
@@ -179,6 +193,7 @@ class PicoForgeHid:
             "system_clock_mhz": configuration["system_clock_mhz"],
             "sdcard_profile": configuration["sdcard_profile"],
             "radios": configuration["radios"],
+            "tcp_cli_enabled": configuration["tcp_cli_enabled"],
         }
 
     def read_status(self, timeout_ms: int = 250) -> RuntimeStatus | None:
@@ -220,6 +235,7 @@ class PicoForgeHid:
             return {"kind": "runtime", "data": parse_telemetry_report(report, identity)}
         raise ValueError(f"unexpected HID Input report ID {report[0]}")
 
+    @_serialized
     def set_led(self, on: bool) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
@@ -227,13 +243,17 @@ class PicoForgeHid:
             raise RuntimeError("board identification LED is unavailable")
         return self._execute_control(build_led_command_report(on, self._next_transaction_id()), 1)
 
+    @_serialized
     def set_settings(self, settings: dict[str, object], *, force: bool = False) -> BootSettings:
         self._require_open()
         identity = self.identity or self.read_info()
         if not identity["capabilities"] & CAP_SAVE_SETTINGS:
             raise RuntimeError("persistent settings are unavailable on this firmware")
+        if force and not identity["capabilities"] & CAP_FORCE_SAVE:
+            raise RuntimeError("forced settings save is unavailable on this firmware")
+        settings = self._complete_settings(settings)
         command = build_settings_command_report(settings, self._next_transaction_id(), force=force)
-        result = self._execute_control(command, 6, reconnect=force)
+        result = self._execute_control(command, 5, reconnect=force)
         if result["status"] != "completed":
             raise RuntimeError(f"settings command {result['status']}: {result['error']}")
         saved = result["saved_settings"]
@@ -242,6 +262,15 @@ class PicoForgeHid:
             raise RuntimeError("firmware did not confirm the selected boot settings")
         return saved
 
+    def _complete_settings(self, settings: dict[str, object]) -> dict[str, object]:
+        """Resolve omitted service switches only from the authoritative persisted configuration."""
+        _validate_settings(settings)
+        if "tcp_cli_enabled" in settings:
+            return dict(settings)
+        configuration = self.read_configuration()
+        return {**settings, "tcp_cli_enabled": configuration["tcp_cli_enabled"]}
+
+    @_serialized
     def reboot(self) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
@@ -255,9 +284,35 @@ class PicoForgeHid:
         identity = self.identity or self.read_info()
         if not identity.get("capabilities", 0) & CAP_WIRELESS:
             raise RuntimeError("Wireless provisioning is unavailable on this firmware")
-        return parse_wireless_status_report(
-            self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE))
+        try:
+            status = parse_wireless_status_report(
+                self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE))
+        except (OSError, ValueError):
+            cached = getattr(self, "_wireless_snapshot", None)
+            if cached is not None:
+                cached["stale"] = True
+            raise
+        configuration = getattr(self, "configuration", None) or self.read_configuration()
+        status.update(wifi_enabled=bool(configuration["radios"] & 1),
+                      ble_enabled=bool(configuration["radios"] & 2),
+                      tcp_cli_enabled=configuration["tcp_cli_enabled"], stale=False, age_ms=0)
+        if status["pair_tested"] and status["test_generation"] == getattr(self, "_tested_generation", None):
+            status["remaining_seconds"] = max(0, 600 - ceil(monotonic() - self._tested_at))
+        self._wireless_snapshot = status
+        self._wireless_received = monotonic()
+        self._wireless_active = status["wifi_state_id"] == 4 or status["scan_state"] == "scanning"
+        return status
 
+    def wireless_freshness(self) -> dict[str, object]:
+        """Return independent monotonic Feature 12 freshness without executing a read."""
+        cached = getattr(self, "_wireless_snapshot", None)
+        age = max(0.0, monotonic() - self._wireless_received) if cached is not None else None
+        stale = cached is None or bool(cached.get("stale")) or age >= (1.5 if self._wireless_active else 6.0)
+        if cached is not None:
+            cached.update(stale=stale, age_ms=int(age * 1000))
+        return {"available": cached is not None, "stale": stale, "age_ms": None if age is None else int(age * 1000)}
+
+    @_serialized
     def tcp_cli_auth_proof(self, nonce: bytes, uid: bytes) -> bytes:
         """Ask this board for the fixed TCP CLI proof; never expose or copy its saved key."""
         self._require_open()
@@ -270,122 +325,153 @@ class PicoForgeHid:
             raise RuntimeError("The connected board identity is unavailable") from error
         if not isinstance(uid, bytes) or len(uid) != 8 or uid != expected_uid:
             raise ValueError("TCP CLI challenge belongs to a different board")
-        transaction_id = self._next_transaction_id()
-        request = build_tcp_cli_auth_request(transaction_id, nonce)
-        if self._device.send_feature_report(list(request)) != len(request):
-            raise OSError("failed to send TCP CLI auth challenge to the board")
-        result = self._device.get_feature_report(TCP_CLI_AUTH_REPORT_ID, TCP_CLI_AUTH_RESULT_SIZE)
-        return parse_tcp_cli_auth_result(result, transaction_id)
+        result = self._execute_control(build_tcp_cli_auth_request(self._next_transaction_id(), nonce), 13,
+                                       retry_get=True)
+        self._require_completed(result)
+        return bytes(result["proof"])
 
+    @_serialized
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResult:
         """Save board settings and credentials atomically; return wireless status plus confirmed settings."""
         self._require_open()
         if self._command_uncertain:
             raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
+        validate_wireless_configuration(settings)
         previous = self.read_wireless()
-        # An omitted TCP CLI switch keeps the saved value; the request always carries the complete state.
-        command = build_wireless_configuration_report(
-            {"tcp_cli_enabled": previous["tcp_cli_enabled"], **settings}, self._next_transaction_id())
-        if previous["status"] in ("pending", "busy"):
-            raise RuntimeError("Wireless provisioning is busy")
-        self._command_uncertain = True
-        try:
-            if self._device.send_feature_report(list(command)) != len(command):
-                raise OSError("Wireless provisioning delivery failed; outcome is uncertain")
-            deadline = monotonic() + 5.0
-            while True:
-                result = self.read_wireless()
-                if result["transaction_id"] == command[2] and result["status"] != "pending":
-                    if result["status"] == "completed":
-                        expected = {
-                            "tcp_cli_enabled": settings.get("tcp_cli_enabled", previous["tcp_cli_enabled"]),
-                            "wifi_enabled": settings["wifi_enabled"],
-                            "ble_enabled": settings["ble_enabled"],
-                            "ssid": command[5:38].split(b"\0", 1)[0].decode("utf-8"),
-                            "password_configured": (True if settings.get("use_tested_wifi")
-                                else previous["password_configured"] if command[4] & 1
-                                else bool(settings["password"])),
-                            "ble_key_configured": (previous["ble_key_configured"] if command[4] & 2
-                                else bool(settings["ble_key"])),
-                        }
-                        if any(result[key] != value for key, value in expected.items()):
-                            raise RuntimeError("Wireless saved configuration was not confirmed; outcome is uncertain")
-                        saved = self.read_settings()
-                        if saved != settings["board"]:
-                            raise RuntimeError("Saved board settings were not confirmed; outcome is uncertain")
-                        self._command_uncertain = False
-                        return {**result, "settings": saved}
-                    if result["status"] in ("invalid", "unsupported", "busy", "failed"):
-                        self._command_uncertain = False
-                        raise RuntimeError(f"Wireless provisioning {result['status']}")
-                if monotonic() >= deadline:
-                    raise TimeoutError("Wireless provisioning timed out; outcome is uncertain; command was not resent")
-                sleep(0.05)
-        except OSError:
-            raise OSError("Wireless provisioning delivery failed; outcome is uncertain; command was not resent") from None
+        board = dict(settings["board"])
+        if "tcp_cli_enabled" in settings:
+            board["tcp_cli_enabled"] = settings["tcp_cli_enabled"]
+        board = self._complete_settings(board)
+        use_tested = settings.get("use_tested_wifi", False)
+        if use_tested:
+            if (not previous["pair_tested"] or previous["staged_state"] & 8
+                    or (("ssid" in settings or "ssid_hex" in settings)
+                        and request_ssid(settings).hex() != previous["ssid_hex"])):
+                raise RuntimeError("The exact staged Wi-Fi pair has not passed testing or has expired")
+        else:
+            for field, opcode in (("ssid", 6), ("password", 7)):
+                if field in settings or (field == "ssid" and "ssid_hex" in settings):
+                    self._wireless_command(opcode, value=request_ssid(settings) if field == "ssid" else settings[field])
+        if "ble_key" in settings:
+            self._wireless_command(8, value=settings["ble_key"])
+        staged = self.read_wireless()
+        if use_tested and (not staged["pair_tested"] or staged["test_generation"] != previous["test_generation"]):
+            raise RuntimeError("The tested Wi-Fi pair changed before saving")
+        commit = staged["ssid_staged"] or staged["password_staged"] or staged["key_staged"]
+        expected_mask = (int(staged["ssid_staged"]) | (int(staged["password_staged"]) << 1)
+                         | (int(staged["key_staged"]) << 2))
+        command = build_settings_command_report(board, self._next_transaction_id(), commit=commit)
+        result = self._execute_control(command, 5)
+        self._require_completed(result)
+        if result["saved_settings"] != board or result["commit_mask"] != expected_mask:
+            self._command_uncertain = True
+            raise RuntimeError("Saved board settings or credential commit were not confirmed; outcome is uncertain")
+        # Reset is already scheduled. Confirm saved fields from the verified commit, not a post-save GET.
+        response = {**staged, "wifi_enabled": bool(board["radios"] & 1),
+                    "ble_enabled": bool(board["radios"] & 2), "tcp_cli_enabled": board["tcp_cli_enabled"],
+                    "stale": True, "settings": result["saved_settings"]}
+        if not use_tested and ("ssid" in settings or "ssid_hex" in settings):
+            raw = request_ssid(settings)
+            response.update(ssid=display_ssid(raw), ssid_hex=raw.hex(),
+                            network_configured=bool(raw))
+        if "ble_key" in settings:
+            response["ble_key_configured"] = bool(settings["ble_key"])
+        return response
 
+    @_serialized
     def scan_wireless(self, *, on_poll: Callable[[], None] | None = None) -> list[WirelessNetwork]:
         """Scan for nearby access points and return strongest unique SSIDs."""
         self._require_open()
-        scan = self._wireless_command(1, timeout=15.0, on_poll=on_poll)
-        networks: list[dict[str, object]] = []
-        for page in range((int(scan["count"]) + 5) // 6):
-            networks.extend(self._wireless_command(2, page=page, on_poll=on_poll)["networks"])
+        previous = self.read_wireless()
+        self._wireless_command(11)
+        scan = self._poll_wireless("scan", previous["scan_generation"], 15.0, on_poll=on_poll)
+        networks = []
+        for index in range(scan["scan_count"]):
+            result = self._wireless_command(12, index=index, generation=scan["scan_generation"])
+            entry = result["scan_entry"]
+            if entry["generation"] != scan["scan_generation"] or entry["index"] != index:
+                self._command_uncertain = True
+                raise ValueError("Mismatched scan entry generation or index")
+            networks.append(entry)
         return networks
 
+    @_serialized
     def test_wireless(
         self, ssid: str, password: str = "", *, on_poll: Callable[[], None] | None = None,
         on_progress: Callable[[str], None] | None = None,
     ) -> WirelessOperation:
         """Test a temporary network join; firmware retains credentials only in RAM after success."""
         self._require_open()
-        return self._wireless_command(3, ssid=ssid, password=password, timeout=35.0, terminal=5, on_poll=on_poll,
-                                      on_progress=on_progress)
+        # Validate both fields before staging either, including opaque SSIDs selected from scans.
+        build_wireless_command_report(1, 6, value=ssid)
+        build_wireless_command_report(1, 7, value=password)
+        previous = self.read_wireless()
+        self._wireless_command(6, value=ssid)
+        self._wireless_command(7, value=password)
+        result = self._wireless_command(9)
+        status = self._poll_wireless("test", previous["test_generation"], 35.0,
+                                     on_poll=on_poll, on_progress=on_progress)
+        self._tested_generation = status["test_generation"]
+        self._tested_at = monotonic()
+        return {"transaction_id": result["transaction_id"], "state": 5, "page": 0,
+                "detail": status["detail"], "phase": status["phase"], "count": status["scan_count"],
+                "wifi_state": status["wifi_state_id"], "ipv4": status["ipv4"], "networks": [],
+                "test_generation": status["test_generation"], "scan_generation": status["scan_generation"],
+                "remaining_seconds": 600}
 
+    @_serialized
     def cancel_wireless_test(self) -> None:
         """Clear temporary test credentials from firmware RAM."""
         self._require_open()
-        self._wireless_command(4)
+        self._wireless_command(10)
 
     def _wireless_command(
-        self, operation: int, *, page: int = 0, ssid: str = "", password: str = "",
-        timeout: float = 15.0, terminal: int | None = None,
+        self, operation: int, *, value: object = None, index: int = 0, generation: int = 0,
+    ) -> ControlResult:
+        identity = self.identity or self.read_info()
+        if not identity.get("capabilities", 0) & CAP_WIRELESS:
+            raise RuntimeError("Wireless provisioning is unavailable on this firmware")
+        command = build_wireless_command_report(self._next_transaction_id(), operation, value=value,
+                                                index=index, generation=generation)
+        result = self._execute_control(command, operation)
+        self._require_completed(result)
+        return result
+
+    @staticmethod
+    def _require_completed(result: ControlResult) -> None:
+        if result["status"] != "completed":
+            raise RuntimeError(f"Wireless command {result['status']}: {result['error']} (detail {result['detail']})")
+
+    def _poll_wireless(
+        self, kind: str, previous_generation: int, timeout: float, *,
         on_poll: Callable[[], None] | None = None, on_progress: Callable[[str], None] | None = None,
-    ) -> WirelessOperation:
-        if self._command_uncertain:
-            raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
-        previous = self.read_wireless()
-        if previous["status"] in ("pending", "busy"):
-            raise RuntimeError("Wireless provisioning is busy")
-        transaction = self._next_transaction_id()
-        command = build_wireless_command_report(transaction, operation, page=page, ssid=ssid, password=password)
-        self._command_uncertain = True
-        try:
-            if self._device.send_feature_report(list(command)) != len(command):
-                raise OSError("Wireless command delivery failed; outcome is uncertain")
-        except OSError:
-            raise OSError("Wireless command delivery failed; outcome is uncertain; command was not resent") from None
+    ) -> WirelessStatus:
         deadline = monotonic() + timeout
-        expected = terminal if terminal is not None else {1: 2, 2: 2, 3: 5, 4: 0}[operation]
+        modulus = 65535 if kind == "scan" else 255
+        expected_generation = previous_generation % modulus + 1
+        self._command_uncertain = True
         while monotonic() < deadline:
             if on_poll is not None:
                 on_poll()
-            result = parse_wireless_result_report(
-                self._device.get_feature_report(WIRELESS_RESULT_REPORT_ID, WIRELESS_RESULT_FEATURE_SIZE))
-            if result["transaction_id"] == transaction:
-                if result["state"] == 6:
+            status = self.read_wireless()
+            generation = status[f"{kind}_generation"]
+            if generation not in (previous_generation, expected_generation):
+                raise ValueError("Wireless operation generation changed unexpectedly; outcome is uncertain")
+            if generation == expected_generation:
+                failed = status["scan_state"] == "failed" if kind == "scan" else status["wifi_state_id"] == 6
+                completed = status["scan_state"] == "complete" if kind == "scan" else (
+                    status["wifi_state_id"] == 5 and status["pair_tested"])
+                if failed or completed:
                     self._command_uncertain = False
-                    if operation == 3:
-                        raise RuntimeError(f"Could not connect: {result['phase'] or 'Timed out'}")
-                    raise RuntimeError("Wireless operation failed")
-                if result["state"] == expected:
-                    self._command_uncertain = False
-                    return result
-                if on_progress is not None and result["state"] == 4:
-                    on_progress(str(result["phase"]))
-            sleep(0.1)
+                    if failed:
+                        raise RuntimeError(f"Wireless {kind} failed: {status['phase'] or 'Timed out'}")
+                    return status
+                if on_progress is not None:
+                    on_progress(status["phase"] or "Connecting to Wi-Fi")
+            sleep(0.5)
         raise TimeoutError("Wireless operation timed out; do not resend until its result is checked")
 
+    @_serialized
     def set_msc(self, enable: bool, *, force: bool = False) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
@@ -399,7 +485,10 @@ class PicoForgeHid:
         if not self.closed:
             self._device.close()
             self.closed = True
+            self._wireless_snapshot = None
+            self._wireless_received = 0.0
 
+    @_serialized
     def set_self_test(self, action: str, size_mib: int | None = None) -> ControlResult:
         self._require_open()
         identity = self.identity or self.read_info()
@@ -413,10 +502,11 @@ class PicoForgeHid:
         return self._transaction_id
 
     def _execute_control(
-        self, command: bytes, opcode: int, *, reconnect: bool = False
+        self, command: bytes, opcode: int, *, reconnect: bool = False, retry_get: bool = False,
     ) -> ControlResult:
         if self._command_uncertain:
             raise RuntimeError("a prior HID command has an uncertain outcome; reconnect and inspect device state")
+        self._command_uncertain = True
         sent = self._device.send_feature_report(list(command))
         if sent != len(command):
             raise OSError(f"failed to send HID control opcode {opcode}")
@@ -427,6 +517,9 @@ class PicoForgeHid:
                 report = self._device.get_feature_report(CONTROL_REPORT_ID, CONTROL_FEATURE_SIZE)
                 result = parse_control_result_report(report, self.identity)
             except OSError as error:
+                if retry_get and monotonic() < deadline:
+                    sleep(0.05)
+                    continue
                 if reconnect and monotonic() < deadline:
                     self._command_uncertain = True
                     self._reopen_for_result(deadline, error)
@@ -439,7 +532,9 @@ class PicoForgeHid:
             if result["transaction_id"] == transaction_id and result["opcode"] == opcode:
                 if result["status"] != "pending":
                     self._command_uncertain = False
-                    self.last_command_result = result
+                    # Proof bytes are not dashboard snapshot data.
+                    self.last_command_result = {**result, "proof": None, "result_data": (
+                        0 if opcode == 13 else result["result_data"])}
                     return result
             if monotonic() >= deadline:
                 self._command_uncertain = True

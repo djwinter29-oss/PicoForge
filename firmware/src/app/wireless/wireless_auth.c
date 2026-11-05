@@ -12,7 +12,7 @@
 #include "pico/unique_id.h"
 
 static uint8_t auth_key[32]; /**< Shared BLE/TCP control key, wiped when cleared. */
-static bool key_available; /**< False until a nonzero key is loaded. */
+static bool key_available; /**< True after any raw 32-byte key is loaded, including all-zero bytes. */
 /** @brief Protocol domain separating USB-assisted TCP CLI admission from all other proofs. */
 static const uint8_t tcp_cli_domain[9] = {'P', 'F', 'T', 'C', 'P', 'C', 'L', 'I', '1'};
 /** @brief Fixed request admitted by the TCP CLI; the USB interface cannot sign arbitrary messages. */
@@ -21,11 +21,7 @@ static const uint8_t tcp_cli_request[9] = {'T', 'C', 'P', 'C', 'L', 'I', '0', '0
 /** @copydoc pf_wireless_auth_set_key */
 void pf_wireless_auth_set_key(const uint8_t key[32])
 {
-    uint8_t nonzero = 0u;
-    if (key != NULL) {
-        for (size_t i = 0u; i < sizeof(auth_key); ++i) nonzero |= key[i];
-    }
-    if (key == NULL || nonzero == 0u) {
+    if (key == NULL) {
         mbedtls_platform_zeroize(auth_key, sizeof(auth_key));
         key_available = false;
         return;

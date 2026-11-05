@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.contracts
 
 UUID = "_7c91_4d70_8b32_6e856443f501_01_VALUE_HANDLE"
-HANDLES = {"0001": 3, "0002": 5, "0003": 7, "000a": 9, "000b": 11, "0014": 13, "001e": 15, "0020": 17, "0021": 19}
+HANDLES = {"0001": 3, "0002": 5, "0003": 7, "000a": 9, "000b": 11, "0014": 13, "000c": 15, "0020": 17, "0021": 19}
 
 FAKE_BTSTACK = r"""
 #ifndef FAKE_BTSTACK_H
@@ -178,8 +178,8 @@ static void __attribute__((noinline)) clobber_stack(void)
 
 int main(void)
 {
-    uint8_t request[sizeof(pf_hid_control_request_t)] = {1u, 7u, 4u};
-    uint8_t led[sizeof(pf_hid_control_request_t)] = {1u, 8u, PF_HID_OPCODE_LED, 0u, 1u};
+    uint8_t request[PF_HID_BLE_CONTROL_PAYLOAD_SIZE] = {1u, 7u, 2u, 1u};
+    uint8_t led[PF_HID_BLE_CONTROL_PAYLOAD_SIZE] = {1u, 8u, PF_HID_OPCODE_LED, 0u, 1u};
     uint8_t nonce[16], other[16], buffer[64];
     const uint16_t rejected_read = ATT_READ_ERROR_CODE_OFFSET + 0x80u;
 
@@ -200,7 +200,7 @@ int main(void)
     assert(read_cb(1u, ATT_CHARACTERISTIC_GAP_DEVICE_NAME_01_VALUE_HANDLE, 0u, buffer, sizeof(buffer)) == 26u);
     assert(read_cb(1u, HANDLE(0001), 0u, buffer, sizeof(buffer)) == sizeof(pf_hid_identity_report_t));
     const uint16_t locked_handles[] = {HANDLE(0002), HANDLE(0003), HANDLE(000a), HANDLE(000b), HANDLE(0014),
-                                       HANDLE(001e)};
+                                       HANDLE(000c)};
     for (unsigned i = 0u; i < sizeof(locked_handles) / sizeof(locked_handles[0]); ++i) {
         assert(read_cb(1u, locked_handles[i], 0u, NULL, 0u) == rejected_read);
         assert(read_cb(1u, locked_handles[i], 0u, buffer, sizeof(buffer)) == rejected_read);
@@ -208,6 +208,7 @@ int main(void)
     assert(telemetry_builds == 0u && storage_builds == 0u && benchmark_builds == 0u);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0x80);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, 1u) == 0x80);
     assert(controls == 0u);
 
     /* A control proof cannot unlock the session; a wrong proof starts a two-second lockout. */
@@ -240,8 +241,8 @@ int main(void)
     assert(telemetry_builds == 1u && storage_builds == 1u && benchmark_builds == 1u);
 
     /* Unlocked readers get full status, including the SSID and LAN address. */
-    assert(read_cb(1u, HANDLE(001e), 0u, buffer, sizeof(buffer)) == PF_WIRELESS_STATUS_SIZE);
-    for (unsigned i = PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET; i < PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET; ++i) {
+    assert(read_cb(1u, HANDLE(000c), 0u, buffer, sizeof(buffer)) == PF_WIRELESS_STATUS_SIZE);
+    for (unsigned i = 5u; i < 42u; ++i) {
         assert(buffer[i] == 0xa5);
     }
 
@@ -250,6 +251,14 @@ int main(void)
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
     read_nonce(nonce);
     assert(proof_write(prove(nonce, 1u)) == 0);
+    /* Envelope rejection comes before proof validation and preserves the pending proof. */
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, 8u) == 0x81);
+    request[0] = 2u;
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x81);
+    request[0] = 1u;
+    request[1] = 0u;
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x81);
+    request[1] = 7u;
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0);
     assert(controls == 2u);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
@@ -286,7 +295,7 @@ int main(void)
     event(HCI_EVENT_DISCONNECTION_COMPLETE, 0u, 0u);
     assert(pf_bluetooth_state() == 1u && advertising_enables == 2u);
     assert(read_cb(2u, HANDLE(0001), 8u, buffer, 8u) == 0u);
-    assert(read_cb(2u, HANDLE(001e), 0u, buffer, sizeof(buffer)) == rejected_read);
+    assert(read_cb(2u, HANDLE(000c), 0u, buffer, sizeof(buffer)) == rejected_read);
     assert(write_cb(2u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0x80);
     assert(write_cb(2u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
     assert(write_cb(2u, HANDLE(0002), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) ==

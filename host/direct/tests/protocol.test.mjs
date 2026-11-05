@@ -28,19 +28,19 @@ test("explicit connect always requests selection regardless of previously author
   }
 });
 
-test("USB TCP CLI proof is board-bound and uses Feature 36 without exposing a Control key", async () => {
+test("USB TCP CLI proof is board-bound and serialized through Feature 20 opcode 13", async () => {
   const { client, device, sent } = fakeConnection({ capabilities: 128 | 55 });
   const proof = Uint8Array.from({ length: 16 }, (_, index) => index + 16);
   const receive = device.receiveFeatureReport;
   device.receiveFeatureReport = async id => {
-    if (id === 36) return Uint8Array.from([1, 1, 1, ...proof]);
+    if (id === 20) { const bytes = result(1, 13); bytes.set(proof, 5); return bytes; }
     return receive(id);
   };
   await client.connect();
   const nonce = Uint8Array.from({ length: 16 }, (_, index) => index);
   const uid = Uint8Array.from({ length: 8 }, (_, index) => index + 1);
   assert.deepEqual(await client.tcpCliAuthProof(nonce, uid), proof);
-  assert.deepEqual(sent[0], [36, 1, 1, ...nonce, 0]);
+  assert.deepEqual(sent[0], [20, 1, 1, 13, 0, ...nonce, ...Array(48).fill(0)]);
   await assert.rejects(client.tcpCliAuthProof(nonce, Uint8Array.from([8, 7, 6, 5, 4, 3, 2, 1])),
     /different board/);
   assert.equal(sent.length, 1, "a mismatched challenge is rejected before contacting the board");
@@ -204,8 +204,8 @@ test("self-test validates retained states, execution/request errors and unknown 
     const bad = idle.slice(); bad[offset] = value;
     assert.throws(() => decodeSelfTestReport(bad), `${offset}: ${value}`);
   }
-  const failed = selfTest(7); failed[28] = 8; failed[29] = 1;
-  assert.equal(decodeSelfTestReport(failed).error, 8);
+  const failed = selfTest(7); failed[28] = 7; failed[29] = 1;
+  assert.equal(decodeSelfTestReport(failed).error, 7);
   failed[29] = 0;
   assert.throws(() => decodeSelfTestReport(failed));
   const unknown = selfTest(99);
@@ -214,21 +214,22 @@ test("self-test validates retained states, execution/request errors and unknown 
   const unknownError = selfTest(7); unknownError[28] = 255;
   assert.equal(decodeSelfTestReport(unknownError).error, 255);
   const rejected = passed.slice(); rejected[30] = 11;
-  assert.equal(decodeSelfTestReport(rejected).state, "passed");
+  assert.throws(() => decodeSelfTestReport(rejected));
   const queued = selfTest(1); queued[8] = 1;
   assert.throws(() => decodeSelfTestReport(queued));
 });
 
-test("control request builders encode new nine-byte envelopes and reject malformed operations", () => {
-  assert.deepEqual([...buildControlRequest(1, 1, { args: [1] })], [1, 1, 1, 0, 1, 0, 0, 0, 0]);
-  assert.deepEqual([...buildControlRequest(255, 3, { flags: 1, args: [2] })], [1, 255, 3, 1, 2, 0, 0, 0, 0]);
-  assert.deepEqual([...buildControlRequest(2, 6, { args: [200, 0, 1] })], [1, 2, 6, 0, 200, 0, 1, 0, 0]);
-  assert.deepEqual([...buildControlRequest(2, 6, { flags: 2, args: [200, 0, 1, 3, 1] })],
-    [1, 2, 6, 2, 200, 0, 1, 3, 1]);
+test("control request builders encode exact 68-byte envelopes and reject malformed operations", () => {
+  const padded = prefix => [...prefix, ...Array(68 - prefix.length).fill(0)];
+  assert.deepEqual([...buildControlRequest(1, 1, { args: [1] })], padded([1, 1, 1, 0, 1]));
+  assert.deepEqual([...buildControlRequest(255, 3, { flags: 1, args: [2] })], padded([1, 255, 3, 1, 2]));
+  assert.deepEqual([...buildControlRequest(2, 5, { args: [200, 0, 1] })], padded([1, 2, 5, 0, 200, 0, 1]));
+  assert.deepEqual([...buildControlRequest(2, 5, { flags: 2, args: [200, 0, 1, 7] })],
+    padded([1, 2, 5, 2, 200, 0, 1, 7]));
   for (const [opcode, options] of [[2, {}], [1, { flags: 1 }], [1, { args: [0, 1] }],
     [3, { args: [2] }], [3, { flags: 1, args: [1] }], [4, { args: [0, 1] }],
-    [4, { args: [1, 0, 0, 0, 0] }], [6, { args: [100, 0, 0] }],
-    [6, { args: [200, 0, 0, 0, 1] }], [6, { flags: 2, args: [200, 0, 0, 0, 2] }], [5, {}]]) {
+    [4, { args: [1, 0, 0, 0, 0] }], [5, { args: [100, 0, 0] }],
+    [5, { args: [200, 0, 0, 0, 1] }], [5, { flags: 4, args: [200, 0, 0, 0] }], [6, { args: [33] }]]) {
     assert.throws(() => buildControlRequest(1, opcode, options), `opcode ${opcode}`);
   }
   assert.throws(() => buildControlRequest(0, 1));
@@ -236,12 +237,13 @@ test("control request builders encode new nine-byte envelopes and reject malform
 
 test("control results enforce every opcode/status/error combination and zero result data", () => {
   const allowed = {
-    1: [[1, 0], [2, 0], [3, 1], [3, 3], [4, 4], [6, 6]],
-    2: [[1, 0], [2, 0], [3, 1], [3, 2], [4, 4], [5, 5], [6, 6]],
+    1: [[1, 0], [2, 0], [3, 1], [3, 3], [6, 6]],
+    2: [[1, 0], [2, 0], [3, 1], [3, 2], [5, 5], [6, 6]],
     3: [[1, 0], [2, 0], [3, 1], [3, 2], [3, 3], [5, 5], [6, 6]],
     4: [[1, 0], [2, 0], [3, 1], [3, 3], [4, 4], [5, 5], [6, 6]],
-    6: [[1, 0], [2, 0], [3, 1], [3, 3], [4, 4], [5, 5], [6, 6]],
-    5: [[4, 7]], 0: [[4, 7]], 255: [[4, 7]],
+    5: [[1, 0], [2, 0], [3, 1], [3, 3], [4, 4], [5, 5], [6, 6]],
+    6: [[2, 0], [3, 1], [3, 3], [4, 4], [5, 5], [6, 6]],
+    0: [[4, 7]], 255: [[4, 7]],
   };
   for (const [op, combinations] of Object.entries(allowed)) {
     for (let status = 0; status <= 7; status++) for (let error = 0; error <= 8; error++) {
@@ -257,16 +259,17 @@ test("control results enforce every opcode/status/error combination and zero res
   }
   const badData = result(1, 1); badData[5] = 1;
   assert.throws(() => decodeControlResult(badData));
-  const saved = result(1, 6); saved.set([200, 0, 1, 0], 5);
-  assert.deepEqual(decodeControlResult(saved).settings, { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 });
+  const saved = result(1, 5); saved.set([200, 0, 1, 0], 5);
+  assert.deepEqual(decodeControlResult(saved).settings,
+    { system_clock_mhz: 200, sdcard_profile: 1, radios: 0, tcp_cli_enabled: false });
   saved[8] = 3;
   assert.equal(decodeControlResult(saved).settings.radios, 3);
-  saved[8] = 14;
+  saved[8] = 6;
   assert.deepEqual(decodeControlResult(saved).settings,
     { system_clock_mhz: 200, sdcard_profile: 1, radios: 2, tcp_cli_enabled: true });
-  saved[8] = 8;
+  saved[8] = 0;
   assert.equal(decodeControlResult(saved).settings.tcp_cli_enabled, false);
-  saved[8] = 4;
+  saved[8] = 8;
   assert.throws(() => decodeControlResult(saved));
   saved[8] = 16;
   assert.throws(() => decodeControlResult(saved));
@@ -349,7 +352,7 @@ test("transactions serialize, match ID and opcode, poll Pending, wrap IDs, and d
   const pending = client.setLed(true);
   await assert.rejects(client.setLed(true), /unavailable/);
   await pending;
-  assert.deepEqual(sent[0], [20, 1, 1, 1, 0, 1, 0, 0, 0, 0]);
+  assert.deepEqual(sent[0], [20, 1, 1, 1, 0, 1, ...Array(63).fill(0)]);
   assert.equal(calls, 4);
   assert.equal(client.state.board_status.led_on, false, "acceptance is not an Input snapshot");
   await client.disconnect();
@@ -512,7 +515,7 @@ test("settings completion remains serialized and verifies saved values without a
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(client.state.busy, true);
   await assert.rejects(client.setLed(true), /unavailable/);
-  const incorrect = result(1, 6); incorrect[5] = 150; incorrect[7] = 1;
+  const incorrect = result(1, 5); incorrect[5] = 150; incorrect[7] = 1;
   release(incorrect);
   assert.equal(await saving, false);
   assert.match(client.state.settings_message, /did not confirm/);
@@ -526,7 +529,7 @@ test("W-board settings save sends and verifies the radio enables", async () => {
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
   assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1, radios: 2 }), true);
-  assert.deepEqual(sent[0], [20, 1, 1, 6, 0, 200, 0, 1, 2, 0]);
+  assert.deepEqual(sent[0], [20, 1, 1, 5, 0, 200, 0, 1, 2, ...Array(60).fill(0)]);
   assert.equal(client.state.settings.radios, 2);
   await client.disconnect();
 });
@@ -536,7 +539,7 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
   assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }), true);
-  assert.deepEqual(sent[0], [20, 1, 1, 6, 0, 200, 0, 1, 0, 0]);
+  assert.deepEqual(sent[0], [20, 1, 1, 5, 0, 200, 0, 1, 0, ...Array(60).fill(0)]);
   assert.equal(sent.length, 1, "firmware reboot requires no second command");
   assert.equal(client.state.reboot_pending, true);
   await client.disconnect();
@@ -550,7 +553,7 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
   await client.setSelfTest("start", 32);
-  assert.deepEqual(sent[2], [20, 1, 3, 4, 0, 1, 32, 0, 0, 0]);
+  assert.deepEqual(sent[2], [20, 1, 3, 4, 0, 1, 32, 0, 0, 0, ...Array(59).fill(0)]);
   assert.equal(client.state.self_test.state, "idle", "acceptance doesn't invent progress");
   await assert.rejects(client.setMsc(true), /Fresh idle/);
   const completed = selfTest(6); completed[1] = 1;
@@ -588,7 +591,7 @@ test("confirmed forced settings save reconnects to the original result without r
       return response;
     };
     assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }, true), !incorrect);
-    assert.deepEqual(sent, [[20, 1, 1, 6, 1, 200, 0, 1, 0, 0]]);
+    assert.deepEqual(sent, [[20, 1, 1, 5, 1, 200, 0, 1, 0, ...Array(60).fill(0)]]);
     assert.equal(client.state.outcome_uncertain, incorrect);
     assert.equal(Boolean(client.state.reboot_pending), !incorrect);
     if (incorrect) {
@@ -698,7 +701,7 @@ test("normal and forced saves keep writes blocked when returned settings differ 
       if (id === 20) response[5] = 150;
       return response;
     };
-    await assert.rejects(client.command(6, { flags, args: [200, 0, 1] }), /did not confirm/);
+    await assert.rejects(client.command(5, { flags, args: [200, 0, 1] }), /did not confirm/);
     assert.equal(client.state.outcome_uncertain, true);
     await assert.rejects(client.command(1, { args: [1] }), /uncertain/);
     assert.equal(sent.length, 1);

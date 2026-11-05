@@ -1,3 +1,5 @@
+"""Contract and lifecycle checks for USB Features 12 and 20."""
+
 import json
 import threading
 import time
@@ -5,438 +7,450 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from picoforge.hid.device import PicoForgeHid
 from picoforge.dashboard.monitor import DeviceMonitor
-from picoforge.reports import (
-    build_tcp_cli_auth_request,
-    build_wireless_command_report,
-    build_wireless_configuration_report,
-    validate_wireless_configuration,
-    parse_tcp_cli_auth_result,
-    parse_wireless_result_report,
-    parse_wireless_status_report,
-)
 from picoforge.dashboard.server import create_app
-from test_protocol import identity_report
-from picoforge.reports import parse_identity_report
-
-
-BOARD = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 3}
-STATUS_VECTORS = json.loads(
-    (Path(__file__).resolve().parents[3] / "tests/fixtures/wireless-status.json").read_text()
+from picoforge.hid.device import PicoForgeHid
+from picoforge.reports import (
+    build_tcp_cli_auth_request, build_wireless_command_report, build_settings_command_report,
+    parse_control_result_report, parse_tcp_cli_auth_result, parse_wireless_status_report,
+    validate_wireless_configuration,
 )
+
+BOARD = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 3, "tcp_cli_enabled": True}
 
 
 def settings(**overrides):
     return {"wifi_enabled": True, "ble_enabled": True, "ssid": "Pico網",
-            "confirm_reboot": True, "tcp_cli_enabled": True, "board": BOARD, **overrides}
+            "confirm_reboot": True, "board": BOARD, **overrides}
 
 
-def status(status_code=2, transaction=1):
-    report = bytearray(54)
-    report[:6] = bytes([30, 1, 3, status_code, transaction, 2])
-    report[6:10] = bytes([192, 168, 1, 2])
-    ssid = "Pico網".encode()
-    report[10:10 + len(ssid)] = ssid
-    report[43:45] = b"\1\1"
+def status(*, wifi=2, flags=3, ssid="Pico網", scan=0, generation=0, count=0, test=0, staged=0, detail=0):
+    raw = ssid.encode() if isinstance(ssid, str) else ssid
+    report = bytearray(49)
+    report[:6] = bytes((12, 1, wifi, detail, 0, flags))
+    if wifi in (2, 5):
+        report[6:10] = bytes((192, 168, 1, 2))
+    report[10] = len(raw)
+    report[11:11 + len(raw)] = raw
+    report[43:49] = bytes((scan, generation & 255, generation >> 8, count, test, staged))
     return bytes(report)
 
 
-def operation_result(state=2, transaction=1, page=0, networks=()):
-    report = bytearray(223)
-    report[:6] = bytes([35, 1, transaction, state, page, len(networks)])
-    for index, (ssid, rssi, secured) in enumerate(networks):
-        encoded = ssid.encode("utf-8")
-        offset = 7 + index * 35
-        report[offset] = len(encoded)
-        report[offset + 1:offset + 1 + len(encoded)] = encoded
-        report[offset + 33] = rssi & 0xFF
-        report[offset + 34] = int(secured)
-    return bytes(report)
+def result(opcode, transaction=1, *, state=2, error=0, data=b""):
+    return bytes((20, 1, transaction, opcode, state, error)) + data.ljust(63, b"\0")
 
 
 class WirelessTests(unittest.TestCase):
-    def test_tcp_cli_auth_report_validates_board_proof_results(self):
-        nonce = bytes(range(16))
-        request = build_tcp_cli_auth_request(7, nonce)
-        self.assertEqual(request, bytes([36, 1, 7]) + nonce + b"\0")
-        proof = bytes(range(16))
-        response = bytes([36, 1, 7, 1]) + proof
-        self.assertEqual(parse_tcp_cli_auth_result(response, 7), proof)
-        with self.assertRaisesRegex(ValueError, "stale"):
-            parse_tcp_cli_auth_result(response, 8)
-        with self.assertRaisesRegex(ValueError, "nonce"):
-            build_tcp_cli_auth_request(7, bytes(15))
-        with self.assertRaisesRegex(RuntimeError, "Control key"):
-            parse_tcp_cli_auth_result(bytes([36, 1, 7, 0]) + bytes(16), 7)
-
-    def test_parses_firmware_generated_feature_30_status_vectors(self):
-        authenticated = parse_wireless_status_report(
-            bytes((30,)) + bytes.fromhex(STATUS_VECTORS["tcp_cli_auth_required"])
-        )
-        self.assertEqual(authenticated["ssid"], "PicoForge")
-        self.assertEqual(authenticated["wifi_state"], "connected")
-        self.assertTrue(authenticated["tcp_cli_started"])
-        self.assertTrue(authenticated["tcp_cli_enabled"])
-        self.assertTrue(authenticated["tcp_cli_auth_required"])
-        self.assertTrue(authenticated["restart_required"])
-
-        disabled = parse_wireless_status_report(
-            bytes((30,)) + bytes.fromhex(STATUS_VECTORS["tcp_cli_disabled"])
-        )
-        self.assertFalse(disabled["tcp_cli_started"])
-        self.assertFalse(disabled["tcp_cli_enabled"])
-        self.assertFalse(disabled["tcp_cli_auth_required"])
-        self.assertIsNone(disabled["rssi"])
-
-        diagnostics = parse_wireless_status_report(
-            bytes((30,)) + bytes.fromhex(STATUS_VECTORS["diagnostics"])
-        )
-        self.assertEqual(diagnostics["error"], 2)
-        self.assertEqual(diagnostics["wifi_auth_state"], "sae")
-        self.assertEqual(diagnostics["reconnect_count"], 0x0102)
-        self.assertEqual(diagnostics["rssi"], -61)
-
-    def test_tcp_switch_security_and_test_expiry_details(self):
-        for enabled, flags in ((True, 3), (False, 11)):
-            self.assertEqual(build_wireless_configuration_report(settings(tcp_cli_enabled=enabled))[4], flags)
-        for value in (None, 0, "false"):
-            with self.assertRaises(ValueError):
-                build_wireless_configuration_report(settings(tcp_cli_enabled=value))
-        with self.assertRaises(ValueError):
-            build_wireless_configuration_report({k: v for k, v in settings().items() if k != "tcp_cli_enabled"})
-        validate_wireless_configuration({k: v for k, v in settings().items() if k != "tcp_cli_enabled"})
-        self.assertEqual(build_wireless_configuration_report(settings())[1], 1)
-        report = bytearray(status())
-        report[48] = 1
-        parsed = parse_wireless_status_report(report)
-        self.assertFalse(parsed["tcp_cli_enabled"])
-        self.assertEqual(parsed["reconnect_count"], 0)
-        report[50:52] = (7).to_bytes(2, "little")
-        report[53] = 1
-        parsed = parse_wireless_status_report(report)
-        self.assertEqual(parsed["reconnect_count"], 7)
-        self.assertTrue(parsed["restart_required"])
-        for offset, value in ((1, 2), (48, 4), (49, 4), (53, 2)):
-            with self.subTest(offset=offset), self.assertRaises(ValueError):
-                parse_wireless_status_report(report[:offset] + bytes([value]) + report[offset + 1:])
-        with self.assertRaises(ValueError):
-            parse_wireless_status_report(report[:53])
-        for security, label in enumerate(("Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)",
-                                          "RSN (WPA2/WPA3)", "WPA/RSN", "WPA/RSN")):
-            report = bytearray(operation_result(networks=[("test", -42, security)]))
-            network = parse_wireless_result_report(report)["networks"][0]
-            self.assertEqual((network["secured"], network["security"]), (bool(security), label))
-        report[41] = 8
-        with self.assertRaises(ValueError):
-            parse_wireless_result_report(report)
-        for detail, phase in ((9, "Test connection lost"), (10, "Test credentials expired")):
-            report = bytearray(operation_result(6, page=detail))
-            self.assertEqual(parse_wireless_result_report(report)["phase"], phase)
-        for offset, value in ((1, 2), (4, 11)):
-            with self.subTest(offset=offset), self.assertRaises(ValueError):
-                parse_wireless_result_report(report[:offset] + bytes([value]) + report[offset + 1:])
-        staged = bytearray(operation_result(5))
-        staged[221:223] = (600).to_bytes(2, "little")
-        self.assertEqual(parse_wireless_result_report(staged)["remaining_seconds"], 600)
-        staged[221:223] = (601).to_bytes(2, "little")
-        with self.assertRaises(ValueError):
-            parse_wireless_result_report(staged)
-
-    def test_tcp_auth_follows_the_saved_key_and_has_no_setting(self):
-        with self.assertRaisesRegex(ValueError, "Unknown"):
-            build_wireless_configuration_report(settings(tcp_cli_auth_required=True))
-        self.assertFalse(build_wireless_configuration_report(settings())[4] & 96)
-
-    def test_tcp_switch_save_verifies_readback_and_keeps_omitted_switch(self):
-        for mismatch in (False, True):
-            before, after = bytearray(status(0, 0)), bytearray(status())
-            after[48] = 0 if mismatch else 1
-            client = self.client([before, after])
-            if mismatch:
-                with self.assertRaisesRegex(RuntimeError, "uncertain"):
-                    client.set_wireless(settings(tcp_cli_enabled=False))
-            else:
-                self.assertFalse(client.set_wireless(settings(tcp_cli_enabled=False))["tcp_cli_enabled"])
-            self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 11)
-            self.assertEqual(client._command_uncertain, mismatch)
-        before, after = bytearray(status(0, 0)), bytearray(status())
-        before[48] = after[48] = 1
-        client = self.client([before, after])
-        client.set_wireless({k: v for k, v in settings().items() if k != "tcp_cli_enabled"})
-        self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 11)
-
-    def test_dashboard_serves_the_shared_wireless_form_without_a_ble_dashboard(self):
-        client = create_app(Mock()).test_client()
-        page = client.get("/")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn('id="wifi-ssid"', page.text)
-        self.assertIn('id="wifi-password"', page.text)
-        self.assertIn('id="ble-secret"', page.text)
-        form = client.get("/js/wireless-form.mjs")
-        self.assertEqual(form.status_code, 200)
-        self.assertIn("export function bindWirelessForm", form.text)
-        self.assertEqual(client.get("/direct/js/wireless-form.mjs").status_code, 404)
-        self.assertEqual(client.get("/ble").status_code, 404)
-
-    def test_identity_accepts_wireless_without_relaxing_transport_validation(self):
-        self.assertTrue(parse_identity_report(identity_report(capabilities=0xF5))["wireless_supported"])
-        self.assertFalse(parse_identity_report(identity_report())["wireless_supported"])
-        with self.assertRaises(ValueError):
-            parse_identity_report(identity_report(capabilities=0xFD))
-
-    def test_builder_offsets_sizes_and_preserved_credentials(self):
-        report = build_wireless_configuration_report(settings(), 255)
-        self.assertEqual(len(report), 137)
-        self.assertEqual(report[:5], bytes([31, 1, 255, 3, 3]))
-        self.assertEqual(report[134:], bytes([200, 0, 1]))
-        tested = build_wireless_configuration_report(settings(use_tested_wifi=True))
-        self.assertEqual(tested[4], 6)
-        self.assertEqual(tested[38:102], bytes(64))
-        self.assertEqual(report[5:12], "Pico網".encode())
-        self.assertEqual(report[38:134], bytes(96))
-        report = build_wireless_configuration_report(settings(password="secret12", ble_key="ab" * 32))
-        self.assertEqual(report[4], 0)
-        self.assertEqual(report[38:47], b"secret12\0")
-        self.assertEqual(report[102:134], b"\xab" * 32)
-        self.assertEqual(report[134:], bytes([200, 0, 1]))
-        erase = build_wireless_configuration_report({
-            "wifi_enabled": False, "ble_enabled": False, "ssid": "", "password": "", "ble_key": "",
-            "confirm_reboot": True, "tcp_cli_enabled": True, "board": {**BOARD, "radios": 0}})
-        self.assertEqual(erase[3:5], bytes([0, 0]), "empty credentials erase instead of preserving")
-        self.assertEqual(erase[5:134], bytes(129))
-
-    def test_input_rejection_never_echoes_credentials(self):
-        for change in (
-            {"wifi_enabled": 1}, {"wifi_enabled": False}, {"ble_enabled": None}, {"ble_enabled": False},
-            {"ssid": "é" * 17},
-            {"ssid": "\0"}, {"ssid": "\ud800"}, {"ssid": ""}, {"password": None},
-            {"password": "short"}, {"password": "x" * 64}, {"password": "secret\nvalue"},
-            {"password": "secret網"}, {"ble_key": "00" * 32}, {"ble_key": "gg" * 32},
-            {"ble_key": None}, {"ble_key": "11"}, {"confirm_reboot": 1}, {"force": True},
-            {"board": None}, {"board": {**BOARD, "system_clock_mhz": 175}}, {"board": {**BOARD, "radios": 4}},
-        ):
-            with self.subTest(change=change), self.assertRaises(ValueError) as caught:
-                build_wireless_configuration_report(settings(**change))
-            self.assertNotIn("secret", str(caught.exception))
-        with self.assertRaises(ValueError):
-            build_wireless_configuration_report(settings(), 0)
-        with self.assertRaisesRegex(ValueError, "board"):
-            build_wireless_configuration_report({key: value for key, value in settings().items() if key != "board"})
-
-    def test_scan_test_command_layout_and_result_validation(self):
-        command = build_wireless_command_report(9, 3, ssid="Pico網", password="secret12")
-        self.assertEqual(len(command), 102)
-        self.assertEqual(command[:7], bytes([34, 1, 3, 9, 0, 7, 8]))
-        self.assertEqual(command[7:14], "Pico網".encode())
-        self.assertEqual(command[39:47], b"secret12")
-        self.assertEqual(build_wireless_command_report(10, 2, page=2)[4], 2)
-        for args in ((0, 1), (1, 5), (1, 2, {"page": 3}), (1, 3, {"ssid": "", "password": ""}),
-                     (1, 3, {"ssid": "Pico", "password": "short"})):
-            transaction, operation, *rest = args
-            with self.subTest(args=args), self.assertRaises(ValueError):
-                build_wireless_command_report(transaction, operation, **(rest[0] if rest else {}))
-        parsed = parse_wireless_result_report(operation_result(networks=[("Pico網", -42, True)]))
-        self.assertEqual(parsed["networks"], [{"ssid": "Pico網", "rssi": -42, "secured": True, "security": "WEP"}])
-        for offset, value in ((1, 3), (3, 7), (4, 3), (5, 19), (41, 2), (221, 1)):
-            malformed = bytearray(operation_result())
-            malformed[offset] = value
-            with self.subTest(offset=offset), self.assertRaises(ValueError):
-                parse_wireless_result_report(malformed)
-        joining = parse_wireless_result_report(operation_result(4, page=2))
-        self.assertEqual((joining["detail"], joining["phase"], joining["page"]), (2, "Checking password", 0))
-        start_failed = parse_wireless_result_report(operation_result(6, page=8))
-        self.assertEqual(start_failed["phase"], "Could not start connection")
-        with self.assertRaises(ValueError):
-            parse_wireless_result_report(operation_result(6, page=255))
-
-    def test_wireless_command_terminal_failure_is_known_but_delivery_failure_blocks_replay(self):
-        client = self.client([])
-        sent = []
-
-        def send(command):
-            sent.append(bytes(command))
-            return len(command)
-
-        def terminal(report_id, _size):
-            return status(0, 0) if report_id == 30 else operation_result(6, 1, page=5)
-
-        client._device.send_feature_report.side_effect = send
-        client._device.get_feature_report.side_effect = terminal
-        with self.assertRaisesRegex(RuntimeError, "Could not connect: Password rejected"):
-            client.test_wireless("Pico網", "secret12")
-        self.assertFalse(client._command_uncertain)
-        self.assertEqual(len(sent), 1)
-
-        client = self.client([])
-        client._device.get_feature_report.side_effect = lambda report_id, _size: status(0, 0)
-        client._device.send_feature_report.side_effect = OSError("detached")
-        with self.assertRaisesRegex(OSError, "outcome is uncertain"):
-            client.scan_wireless()
-        self.assertTrue(client._command_uncertain)
-        with self.assertRaisesRegex(RuntimeError, "uncertain"):
-            client.scan_wireless()
-        client._device.send_feature_report.assert_called_once()
-
-    def test_connection_wait_pumps_inputs_and_preserves_the_deadline_without_replaying(self):
-        for terminal, expected_error in ((5, None), (4, TimeoutError)):
-            client = self.client([])
-            client._device.send_feature_report.side_effect = lambda command: len(command)
-            client._device.get_feature_report.side_effect = lambda report_id, _size: (
-                status(0, 0) if report_id == 30 else operation_result(terminal, 1))
-            on_poll = Mock()
-            with self.subTest(terminal=terminal), patch(
-                "picoforge.hid.device.monotonic", side_effect=[0, 0, 36]
-            ), patch("picoforge.hid.device.sleep"):
-                if expected_error:
-                    with self.assertRaises(expected_error):
-                        client.test_wireless("Pico網", "secret12", on_poll=on_poll)
-                else:
-                    self.assertEqual(client.test_wireless("Pico網", "secret12", on_poll=on_poll)["state"], 5)
-            on_poll.assert_called_once_with()
-            client._device.send_feature_report.assert_called_once()
-            self.assertEqual(client._command_uncertain, expected_error is not None)
-
-    def test_status_is_sanitized_and_rejects_malformed_reports(self):
-        parsed = parse_wireless_status_report(status())
-        self.assertEqual(parsed["ssid"], "Pico網")
-        self.assertEqual(parsed["ipv4"], "192.168.1.2")
-        self.assertEqual(parsed["wifi_state"], "connected")
-        self.assertEqual(parsed["ble_state"], "off")
-        self.assertFalse(parsed["tcp_cli_started"])
-        advertising = bytearray(status())
-        advertising[46] = 1
-        self.assertEqual(parse_wireless_status_report(advertising)["ble_state"], "advertising")
-        advertising[47] = 1
-        self.assertTrue(parse_wireless_status_report(advertising)["tcp_cli_started"])
-        self.assertNotIn("password", parsed)
-        self.assertNotIn("ble_key", parsed)
-        for offset, value in ((1, 4), (2, 4), (3, 7), (5, 4), (43, 2), (44, 2),
-                              (45, 4), (46, 3), (47, 2), (48, 4), (49, 4)):
-            malformed = bytearray(status())
-            malformed[offset] = value
-            with self.subTest(offset=offset), self.assertRaises(ValueError):
-                parse_wireless_status_report(malformed)
-        for malformed in (status()[:-1], bytes([31]) + status()[1:], status() + b"\1"):
-            with self.assertRaises(ValueError):
-                parse_wireless_status_report(malformed)
-
-    def client(self, reports):
+    def client(self, reports=()):
         client = PicoForgeHid.__new__(PicoForgeHid)
         client.closed = False
-        client.identity = {"capabilities": 128}
+        client.identity = {"capabilities": 0xF5, "serial_number": "0123456789ABCDEF"}
+        client.configuration = {"radios": 3, "tcp_cli_enabled": True}
         client._transaction_id = 0
         client._command_uncertain = False
+        client.last_command_result = None
         client._device = Mock()
         client._device.send_feature_report.side_effect = lambda value: len(value)
-        client._device.get_feature_report.side_effect = reports
-        client.read_settings = Mock(return_value=dict(BOARD))
+        client._device.get_feature_report.side_effect = list(reports)
         return client
 
-    def test_one_set_poll_matching_transaction_and_terminal_rejections(self):
-        client = self.client([status(0, 0), status(2, 255), status(1), status()])
-        with patch("picoforge.hid.device.sleep"):
-            result = client.set_wireless(settings())
-        self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["settings"], BOARD)
-        client._device.send_feature_report.assert_called_once()
-        self.assertTrue(all(call.args == (30, 54) for call in client._device.get_feature_report.call_args_list))
+    def test_exact_status_layout_and_opaque_ssid(self):
+        raw = b"Wi\0\xff\n" + "網".encode()
+        parsed = parse_wireless_status_report(status(ssid=raw))
+        self.assertEqual(parsed["ssid"], "Wi\\x00\\xFF\\x0A網")
+        self.assertEqual(bytes.fromhex(parsed["ssid_hex"]), raw)
+        self.assertEqual(parsed["wifi_state"], "connected")
+        self.assertEqual(parsed["ipv4"], "192.168.1.2")
+        self.assertNotIn("password_configured", parsed)
+        self.assertNotIn("tcp_cli_enabled", parsed)
+        self.assertNotIn("rssi", parsed)
+        command = build_wireless_command_report(9, 6, value=bytes.fromhex(parsed["ssid_hex"]))
+        self.assertEqual(command[:6], bytes((20, 1, 9, 6, 0, len(raw))))
+        self.assertEqual(command[6:6 + len(raw)], raw)
+        self.assertEqual(len(command), 69)
+        self.assertEqual(parse_wireless_status_report(status(ssid=b"a" * 32))["ssid_hex"], "61" * 32)
+        # Reserved flags/detail are ignored, as specified for Feature 12.
+        self.assertEqual(parse_wireless_status_report(status(flags=11, detail=255))["detail"], 0)
+        for padded in (b"\0" + status(), status() + b"\0"):
+            with self.assertRaises(ValueError):
+                parse_wireless_status_report(padded)
+
+    def test_shared_firmware_status_vectors(self):
+        vectors = json.loads((Path(__file__).resolve().parents[3] / "tests/fixtures/wireless-status.json").read_text())
+        serving = parse_wireless_status_report(b"\x0c" + bytes.fromhex(vectors["tcp_cli_auth_required"]))
+        disabled = parse_wireless_status_report(b"\x0c" + bytes.fromhex(vectors["tcp_cli_disabled"]))
+        tested = parse_wireless_status_report(b"\x0c" + bytes.fromhex(vectors["tested_candidate"]))
+        self.assertEqual(serving["ssid_hex"], b"PicoForge".hex())
+        self.assertTrue(serving["tcp_cli_started"])
+        self.assertTrue(serving["tcp_cli_auth_required"], "the console must answer the board's AUTH challenge")
+        self.assertFalse(disabled["tcp_cli_started"])
+        self.assertEqual((tested["wifi_state"], tested["test_generation"], tested["pair_tested"]),
+                         ("test_joined", 1, True))
+        lost = parse_wireless_status_report(b"\x0c" + bytes.fromhex(vectors["test_failed_saved_link_serving"]))
+        self.assertEqual((lost["wifi_state"], lost["ipv4"], lost["pair_tested"], lost["tcp_cli_started"]),
+                         ("test_failed", "42.42.42.42", True, True))
+        init = parse_wireless_status_report(b"\x0c" + bytes.fromhex(vectors["radio_init_failed_while_connected"]))
+        self.assertEqual((init["wifi_state"], init["detail"]), ("connected", 1))
+
+    def test_status_cross_field_validation(self):
+        for kwargs in (
+            {"wifi": 7}, {"wifi": 4}, {"scan": 1}, {"count": 1},
+            {"scan": 1, "generation": 1, "count": 1}, {"scan": 2, "generation": 1, "count": 19},
+            {"flags": 0x13, "staged": 8}, {"staged": 1}, {"flags": 0x13, "staged": 1},
+            {"flags": 0x83}, {"flags": 5}, {"staged": 16},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                parse_wireless_status_report(status(**kwargs))
+        malformed = bytearray(status(ssid=b"a"))
+        malformed[12] = 1
+        for report in (malformed, status()[:-1], status() + b"\1", bytes((13,)) + status()[1:]):
+            with self.assertRaises(ValueError):
+                parse_wireless_status_report(report)
+        clear = parse_wireless_status_report(status(flags=0x33, staged=3))
+        self.assertTrue(clear["ssid_staged"] and clear["password_staged"])
+        self.assertEqual(parse_wireless_status_report(status(staged=8))["staged_state"], 8)
+
+    def test_staging_limits_and_save_switch_mask(self):
+        for opcode, value, size in ((6, b"x" * 32, 32), (6, "", 0), (7, "", 0),
+                                     (7, "x" * 63, 63), (8, "00" * 32, 32), (8, "", 0)):
+            command = build_wireless_command_report(1, opcode, value=value)
+            self.assertEqual((len(command), command[3], command[5]), (69, opcode, size))
+            self.assertFalse(any(command[6 + size:]))
+        for opcode, value in ((6, b"x" * 33), (7, "short"), (7, "a" * 64), (7, "abcde\nxy"),
+                              (8, "ab"), (8, b"a" * 31)):
+            with self.subTest(opcode=opcode), self.assertRaises(ValueError):
+                build_wireless_command_report(1, opcode, value=value)
+        for force, commit, flags in ((False, False, 0), (True, False, 1), (False, True, 2), (True, True, 3)):
+            command = build_settings_command_report(BOARD, 7, force=force, commit=commit)
+            self.assertEqual(command[:9], bytes((20, 1, 7, 5, flags, 200, 0, 1, 7)))
+            self.assertEqual(command[9:], bytes(60))
+        with self.assertRaisesRegex(ValueError, "saved TCP"):
+            build_settings_command_report({key: value for key, value in BOARD.items() if key != "tcp_cli_enabled"})
+        validate_wireless_configuration(settings())
+        validate_wireless_configuration(settings(ble_key="00" * 32))
+        for overrides in ({"confirm_reboot": False}, {"tcp_cli_enabled": 0}, {"password": "short"},
+                          {"use_tested_wifi": True, "password": "secret12"}, {"unknown": 1}):
+            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                validate_wireless_configuration(settings(**overrides))
+
+    def test_scan_entry_layout_and_security(self):
+        for security, label in enumerate(("Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)",
+                                          "RSN (WPA2/WPA3)", "WPA/RSN", "WPA/RSN")):
+            data = bytearray(63)
+            data[:6] = bytes((0x34, 0x12, 2, 2, 0, 255))
+            data[36:38] = bytes((214, security))
+            parsed = parse_control_result_report(result(12, data=data))["scan_entry"]
+            self.assertEqual((parsed["generation"], parsed["index"], parsed["ssid_hex"]),
+                             (0x1234, 2, "00ff"))
+            self.assertEqual((parsed["rssi"], parsed["security"]), (-42, label))
+        for offset, value in ((0, 0), (2, 18), (3, 33), (6, 1), (37, 8), (38, 1)):
+            data = bytearray(63)
+            data[:6] = bytes((1, 0, 0, 2, 65, 66))
+            data[offset] = value
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                parse_control_result_report(result(12, data=data))
+        command = build_wireless_command_report(4, 12, index=2, generation=0x1234)
+        self.assertEqual(command[5:8], bytes((2, 0x34, 0x12)))
+
+    def test_detail_namespace_and_status_applicability(self):
+        valid = [(4, 3, 3, 3), (4, 5, 5, 2), (4, 6, 6, 10), (5, 3, 3, 27),
+                 (5, 5, 5, 26), (6, 3, 3, 16), (7, 3, 3, 17), (8, 3, 3, 18),
+                 (9, 3, 3, 20), (12, 3, 3, 22), (13, 3, 3, 24), (12, 5, 5, 26)]
+        for opcode, state, error, detail in valid:
+            parsed = parse_control_result_report(result(opcode, state=state, error=error, data=bytes((detail,))))
+            self.assertEqual(parsed["detail"], detail)
+        invalid = [(4, 6, 6, 8), (4, 6, 6, 9), (5, 5, 5, 28), (6, 5, 5, 26),
+                   (13, 5, 5, 25), (10, 1, 0, 0), (6, 1, 0, 0), (5, 3, 1, 27),
+                   (12, 3, 3, 16), (5, 2, 0, 255)]
+        for opcode, state, error, detail in invalid:
+            with self.subTest(opcode=opcode, detail=detail), self.assertRaises(ValueError):
+                parse_control_result_report(result(opcode, state=state, error=error, data=bytes((detail,))))
+        with self.assertRaises(ValueError):
+            parse_control_result_report(result(6, state=3, error=3, data=b"\x10\x01"))
+
+    def test_test_workflow_wrap_and_independent_generations(self):
+        client = self.client([
+            status(test=255, generation=900, scan=2),
+            result(6, 1), result(7, 2), result(9, 3),
+            status(wifi=5, flags=0xB3, test=255, generation=900, scan=2),
+            status(wifi=4, flags=0x33, test=1, generation=900, scan=2),
+            status(wifi=5, flags=0xB3, test=1, generation=900, scan=2),
+        ])
+        poll, progress = Mock(), Mock()
+        with patch("picoforge.hid.device.sleep") as sleep:
+            tested = client.test_wireless(b"Pico\0\xff", "secret12", on_poll=poll, on_progress=progress)
+        commands = [bytes(call.args[0]) for call in client._device.send_feature_report.call_args_list]
+        self.assertEqual([command[3] for command in commands], [6, 7, 9])
+        self.assertEqual(commands[0][6:12], b"Pico\0\xff")
+        self.assertEqual(tested["test_generation"], 1)
+        self.assertEqual(tested["scan_generation"], 900)
+        self.assertEqual(poll.call_count, 3)
+        sleep.assert_called_with(0.5)
         self.assertFalse(client._command_uncertain)
-        for code, name in ((3, "invalid"), (4, "unsupported"), (5, "busy"), (6, "failed")):
-            client = self.client([status(0, 0), status(code)])
-            with self.subTest(code=code), self.assertRaisesRegex(RuntimeError, name):
-                client.set_wireless(settings())
-            self.assertFalse(client._command_uncertain)
-            client._device.send_feature_report.assert_called_once()
 
-    def test_wireless_scan_paging_and_test_join_are_single_attempts(self):
-        client = self.client([])
-        sent = []
-
-        def send(command):
-            sent.append(bytes(command))
-            return len(command)
-
-        def receive(report_id, _size):
-            if report_id == 30:
-                return status(2, 0)
-            operation, transaction = sent[-1][2], sent[-1][3]
-            if operation == 1:
-                result = bytearray(operation_result(2, transaction))
-                result[5] = 1
-                return result
-            if operation == 2:
-                return operation_result(2, transaction, networks=[("Pico網", -42, True)])
-            if operation == 3:
-                result = bytearray(operation_result(5, transaction))
-                result[217:221] = bytes([192, 168, 1, 5])
-                return result
-            return operation_result(0, transaction)
-
-        client._device.send_feature_report.side_effect = send
-        client._device.get_feature_report.side_effect = receive
+    def test_scan_workflow_and_entry_generation_validation(self):
+        data = bytearray(63)
+        data[:5] = bytes((1, 0, 0, 1, 65))
+        data[36] = 200
+        client = self.client([
+            status(scan=2, generation=65535, test=22), result(11),
+            status(scan=1, generation=1, test=22), status(scan=2, generation=1, count=1, test=22),
+            result(12, 2, data=data),
+        ])
         with patch("picoforge.hid.device.sleep"):
-            self.assertEqual(client.scan_wireless(), [
-                {"ssid": "Pico網", "rssi": -42, "secured": True, "security": "WEP"}])
-            self.assertEqual(client.test_wireless("Pico網", "secret12")["ipv4"], "192.168.1.5")
-            client.cancel_wireless_test()
-        self.assertEqual([command[2] for command in sent], [1, 2, 3, 4])
-        self.assertEqual(sent[2][39:47], b"secret12")
-        self.assertEqual(client._device.send_feature_report.call_count, 4)
+            networks = client.scan_wireless()
+        self.assertEqual(networks[0]["ssid"], "A")
+        sent = client._device.send_feature_report.call_args_list
+        self.assertEqual([call.args[0][3] for call in sent], [11, 12])
+        self.assertEqual(sent[1].args[0][5:8], [0, 1, 0])
+        client = self.client([status(), result(11), status(scan=2, generation=1, count=1),
+                              result(12, 2, data=bytes((2,)) + data[1:])])
+        with self.assertRaisesRegex(ValueError, "generation"):
+            client.scan_wireless()
+        self.assertTrue(client._command_uncertain)
 
-    def test_disconnect_timeout_and_short_write_block_replays(self):
-        for reports in ([status(0, 0), OSError("secret12")], [status(0, 0), status(1)]):
-            client = self.client(reports)
-            with patch("picoforge.hid.device.monotonic", side_effect=[0, 6]), self.assertRaises(OSError):
-                client.set_wireless(settings())
-            self.assertTrue(client._command_uncertain)
+    def test_test_failure_expiry_and_generation_mismatch(self):
+        for final, error in ((status(wifi=6, test=1, flags=0x33, detail=3), RuntimeError),
+                             (status(wifi=4, test=2, flags=0x33), ValueError)):
+            client = self.client([status(), result(6), result(7, 2), result(9, 3), final])
+            with self.assertRaises(error):
+                client.test_wireless("new", "secret12")
+            self.assertEqual(client._command_uncertain, error is ValueError)
+        client = self.client([status(staged=8)])
+        with self.assertRaisesRegex(RuntimeError, "expired"):
+            client.set_wireless(settings(use_tested_wifi=True))
+        client._device.send_feature_report.assert_not_called()
+
+    def test_tested_save_never_restages_pair_or_reads_after_save(self):
+        candidate = status(wifi=5, flags=0xB3, test=9)
+        saved = bytes((200, 0, 1, 7, 3))
+        client = self.client([candidate, candidate, result(5, data=saved)])
+        response = client.set_wireless(settings(use_tested_wifi=True))
+        sent = client._device.send_feature_report.call_args_list
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0].args[0][3:5], [5, 2])
+        self.assertEqual(response["settings"], BOARD)
+        self.assertEqual(response["ssid_hex"], "Pico網".encode().hex())
+        self.assertTrue(response["stale"])
+        self.assertEqual(client._device.get_feature_report.call_count, 3)
+        client = self.client([candidate])
+        with self.assertRaisesRegex(RuntimeError, "exact staged"):
+            client.set_wireless(settings(use_tested_wifi=True, ssid="different"))
+        client._device.send_feature_report.assert_not_called()
+
+    def test_sequential_save_stages_only_provided_fields_and_verifies_commit(self):
+        staged = status(flags=0x73)
+        client = self.client([status(), result(6), result(7, 2), result(8, 3), staged,
+                              result(5, 4, data=bytes((200, 0, 1, 7, 7)))])
+        response = client.set_wireless(settings(password="secret12", ble_key="ab" * 32))
+        self.assertEqual(response["settings"], BOARD)
+        self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list],
+                         [6, 7, 8, 5])
+        client = self.client([status(), status(), result(5, data=bytes((200, 0, 1, 7, 0)))])
+        request = settings()
+        request.pop("ssid")
+        client.set_wireless(request)
+        self.assertEqual(client._device.send_feature_report.call_count, 1)
+        self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 0)
+        for data in (bytes((150, 0, 1, 7, 1)), bytes((200, 0, 1, 7, 0))):
+            client = self.client([status(), result(6), status(flags=0x13), result(5, 2, data=data)])
             with self.assertRaisesRegex(RuntimeError, "uncertain"):
                 client.set_wireless(settings())
-            client._device.send_feature_report.assert_called_once()
-        client = self.client([status(0, 0)])
-        client._device.send_feature_report.side_effect = None
-        client._device.send_feature_report.return_value = 1
-        with self.assertRaises(OSError):
-            client.set_wireless(settings())
-        self.assertTrue(client._command_uncertain)
-
-    def test_completed_mismatch_remains_uncertain_and_never_marks_reboot_pending(self):
-        for offset, value in ((2, 1), (2, 2), (10, ord("X")), (43, 0), (44, 0)):
-            for credentials in ({}, {"password": "secret12", "ble_key": "ab" * 32}):
-                report = bytearray(status())
-                report[offset] = value
-                client = self.client([status(0, 0), bytes(report)])
-                monitor = self.monitor()
-                monitor._active_client = client
-                with self.subTest(offset=offset, credentials=bool(credentials)):
-                    with self.assertRaisesRegex(RuntimeError, "uncertain") as caught:
-                        monitor.set_wireless(settings(**credentials))
-                    self.assertNotIn("secret12", str(caught.exception))
-                    self.assertTrue(client._command_uncertain)
-                    self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
-                    self.assertFalse(monitor.snapshot().get("reboot_pending", False))
-                    with self.assertRaisesRegex(RuntimeError, "uncertain"):
-                        monitor.set_wireless(settings())
-                    client._device.send_feature_report.assert_called_once()
-
-    def test_board_settings_readback_mismatch_remains_uncertain(self):
-        client = self.client([status(0, 0), status()])
-        client.read_settings.return_value = {**BOARD, "radios": 0}
-        with self.assertRaisesRegex(RuntimeError, "uncertain"):
-            client.set_wireless(settings())
-        self.assertTrue(client._command_uncertain)
-
-    def test_omitted_credentials_must_preserve_absent_configuration(self):
-        before = bytearray(status(0, 0))
-        before[43:45] = bytes(2)
-        for offset in (43, 44):
-            after = bytearray(before)
-            after[3:5] = bytes([2, 1])
-            after[offset] = 1
-            client = self.client([bytes(before), bytes(after)])
-            with self.subTest(offset=offset), self.assertRaisesRegex(RuntimeError, "uncertain"):
-                client.set_wireless(settings())
             self.assertTrue(client._command_uncertain)
+
+    def test_hex_save_uses_raw_ssid_and_returns_verified_saved_fields(self):
+        board = {**BOARD, "tcp_cli_enabled": False, "radios": 1}
+        client = self.client([status(), result(6), result(7, 2), status(flags=0x33),
+                              result(5, 3, data=bytes((200, 0, 1, 1, 3)))])
+        request = settings(ssid="display-only", ssid_hex="4100fF", password="", ble_enabled=False,
+                           tcp_cli_enabled=False, board=board)
+        response = client.set_wireless(request)
+        sent = client._device.send_feature_report.call_args_list
+        self.assertEqual(sent[0].args[0][5:9], [3, 65, 0, 255])
+        self.assertEqual(response["ssid_hex"], "4100ff")
+        self.assertEqual(response["ssid"], "A\\x00\\xFF")
+        self.assertFalse(response["ble_enabled"])
+        self.assertFalse(response["tcp_cli_enabled"])
+        self.assertEqual(response["settings"], board)
+        for encoded in ("0", "gg", "01 02", "a" * 66, None, 12):
+            with self.subTest(encoded=encoded), self.assertRaises(ValueError):
+                validate_wireless_configuration(settings(ssid_hex=encoded))
+
+    def test_all_zero_control_key_is_present_and_only_empty_input_clears(self):
+        for key, configured in (("00" * 32, True), ("", False)):
+            client = self.client([status(), result(8), status(flags=0x43, staged=0 if configured else 4),
+                                  result(5, 2, data=bytes((200, 0, 1, 7, 4)))])
+            request = settings(ble_key=key)
+            request.pop("ssid")
+            response = client.set_wireless(request)
+            self.assertEqual(response["ble_key_configured"], configured)
+            staged_command = client._device.send_feature_report.call_args_list[0].args[0]
+            self.assertEqual(staged_command[5], 32 if configured else 0)
+
+    def test_cancel_during_scan_uses_opcode_ten_without_clearing_scan(self):
+        client = self.client([result(10)])
+        client.cancel_wireless_test()
+        command = client._device.send_feature_report.call_args.args[0]
+        self.assertEqual(command[:5], [20, 1, 1, 10, 0])
+        self.assertEqual(command[5:], [0] * 64)
+        client._device.get_feature_report.assert_called_once_with(20, 69)
+
+    def test_timeout_does_not_replay_scan_save_or_proof(self):
+        # A stale result cannot resolve a SET, even when its opcode matches.
+        for opcode in (5, 11, 13):
+            client = self.client([result(opcode, 255)])
+            command = (build_settings_command_report(BOARD, 1) if opcode == 5 else
+                       build_wireless_command_report(1, opcode, value=bytes(16) if opcode == 13 else None))
+            with patch("picoforge.hid.device.monotonic", side_effect=[0, 6]), self.assertRaises(TimeoutError):
+                client._execute_control(command, opcode)
+            self.assertTrue(client._command_uncertain)
+            with self.assertRaisesRegex(RuntimeError, "uncertain"):
+                client.cancel_wireless_test()
+            client._device.send_feature_report.assert_called_once()
+
+    def test_async_timeout_preserves_uncertainty(self):
+        client = self.client([])
+        with patch("picoforge.hid.device.monotonic", side_effect=[0, 36]), self.assertRaises(TimeoutError):
+            client._poll_wireless("test", 0, 35)
+        self.assertTrue(client._command_uncertain)
+
+    def test_commands_cannot_interleave_with_proof_retry(self):
+        entered, release, contender = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+        client = self.client()
+        proof = bytes(range(16))
+        calls = 0
+
+        def receive(report_id, size):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                if not release.wait(2):
+                    raise AssertionError("test release timed out")
+                return result(13, data=proof)
+            return result(10, 2)
+
+        client._device.get_feature_report.side_effect = receive
+
+        def authenticate():
+            try:
+                client.tcp_cli_auth_proof(bytes(16), bytes.fromhex("0123456789abcdef"))
+            except Exception as error:
+                errors.append(error)
+
+        def cancel():
+            contender.set()
+            try:
+                client.cancel_wireless_test()
+            except Exception as error:
+                errors.append(error)
+
+        first = threading.Thread(target=authenticate)
+        second = threading.Thread(target=cancel)
+        first.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            second.start()
+            self.assertTrue(contender.wait(2))
+            self.assertEqual(client._device.send_feature_report.call_count, 1)
+        finally:
+            release.set()
+            first.join(2)
+            if second.ident is not None:
+                second.join(2)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list], [13, 10])
+
+    def test_saved_switches_come_from_report_two_not_runtime(self):
+        client = self.client([status()])
+        client.configuration = {"radios": 1, "tcp_cli_enabled": False}
+        parsed = client.read_wireless()
+        self.assertTrue(parsed["wifi_enabled"])
+        self.assertFalse(parsed["ble_enabled"])
+        self.assertFalse(parsed["tcp_cli_enabled"])
+        client.read_configuration = Mock(return_value=client.configuration)
+        request = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 1}
+        self.assertFalse(client._complete_settings(request)["tcp_cli_enabled"])
+        client.read_configuration.side_effect = OSError("no Report 2")
+        with self.assertRaises(OSError):
+            client._complete_settings(request)
+
+    def test_status_freshness_active_and_idle_boundaries(self):
+        for initial, threshold in ((status(), 6), (status(wifi=4, flags=0x33, test=1), 1.5),
+                                   (status(scan=1, generation=1), 1.5)):
+            client = self.client([initial, OSError("USB")])
+            with patch("picoforge.hid.device.monotonic", return_value=10):
+                cached = client.read_wireless()
+            with patch("picoforge.hid.device.monotonic", return_value=10 + threshold - 0.001):
+                self.assertFalse(client.wireless_freshness()["stale"])
+            with patch("picoforge.hid.device.monotonic", return_value=10 + threshold):
+                self.assertTrue(client.wireless_freshness()["stale"])
+            with self.assertRaises(OSError):
+                client.read_wireless()
+            self.assertTrue(cached["stale"])
+
+    def test_proof_retention_get_retry_and_no_set_replay(self):
+        nonce, proof = bytes(range(16)), bytes(range(16, 32))
+        request = build_tcp_cli_auth_request(7, nonce)
+        self.assertEqual((request[:5], request[5:21], request[21:]), (bytes((20, 1, 7, 13, 0)), nonce, bytes(48)))
+        self.assertEqual(parse_tcp_cli_auth_result(result(13, 7, data=proof), 7), proof)
+        with self.assertRaisesRegex(ValueError, "stale"):
+            parse_tcp_cli_auth_result(result(13, 8, data=proof), 7)
+        client = self.client([OSError("retry GET only"), result(13, data=proof)])
+        with patch("picoforge.hid.device.sleep"):
+            self.assertEqual(client.tcp_cli_auth_proof(nonce, bytes.fromhex("0123456789abcdef")), proof)
+        self.assertEqual(client._device.send_feature_report.call_count, 1)
+        self.assertEqual(client._device.get_feature_report.call_count, 2)
+        self.assertIsNone(client.last_command_result["proof"])
+        self.assertEqual(client.last_command_result["result_data"], 0)
+
+    def test_uncertain_delivery_blocks_all_writes_including_proof(self):
+        for failure in ("short", OSError("USB"), ValueError("invalid result")):
+            client = self.client([failure])
+            if failure == "short":
+                client._device.send_feature_report.side_effect = lambda _: 1
+            elif isinstance(failure, ValueError):
+                client._device.get_feature_report.side_effect = [bytes(69)]
+            with self.assertRaises((OSError, ValueError)):
+                client.cancel_wireless_test()
+            self.assertTrue(client._command_uncertain)
+            with self.assertRaisesRegex(RuntimeError, "uncertain"):
+                client.tcp_cli_auth_proof(bytes(16), bytes.fromhex("0123456789abcdef"))
+            self.assertEqual(client._device.send_feature_report.call_count, 1)
+
+    def test_http_routes_validate_sanitize_and_preserve_raw_ssid(self):
+        dashboard = Mock()
+        dashboard.set_wireless.return_value = {"wireless": parse_wireless_status_report(status()),
+                                               "reboot_pending": True, "settings": BOARD}
+        dashboard.test_wireless.return_value = {"test": {"state": 5}}
+        dashboard.read_wireless.return_value = {"wireless": parse_wireless_status_report(status())}
+        dashboard.scan_wireless.return_value = {"networks": []}
+        dashboard.cancel_wireless_test.return_value = {"cancelled": True}
+        client = create_app(dashboard).test_client()
+        for body in (None, [], settings(confirm_reboot=False), settings(password="short")):
+            self.assertEqual(client.post("/api/wireless?board=a", json=body).status_code, 400)
+        body = settings(password="secret12", ble_key="ab" * 32)
+        response = client.post("/api/wireless?board=a", json=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("secret12", response.text)
+        self.assertNotIn("ab" * 32, response.text)
+        self.assertEqual(client.get("/api/wireless?board=a").status_code, 200)
+        self.assertEqual(client.post("/api/wireless/scan?board=a").status_code, 200)
+        self.assertEqual(client.post("/api/wireless/cancel?board=a").json, {"cancelled": True})
+        self.assertEqual(client.post("/api/wireless/test?board=a",
+                                     json={"ssid": [65, 0, 255], "password": ""}).status_code, 200)
+        dashboard.test_wireless.assert_called_once_with("a", [65, 0, 255], "")
+        self.assertEqual(client.post("/api/wireless/test?board=a",
+                                     json={"ssid": "ignored", "ssid_hex": "4100FF", "password": ""}).status_code, 200)
+        dashboard.test_wireless.assert_called_with("a", b"A\0\xff", "")
+        for failure in (TimeoutError("secret12"), OSError("secret12"), ValueError("secret12")):
+            dashboard.test_wireless.side_effect = failure
+            response = client.post("/api/wireless/test", json={"ssid": "Pico", "password": "secret12"})
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("uncertain", response.json["error"])
+            self.assertNotIn("secret12", response.text)
 
     def monitor(self):
         monitor = DeviceMonitor.__new__(DeviceMonitor)
@@ -444,91 +458,23 @@ class WirelessTests(unittest.TestCase):
         monitor._lock = threading.RLock()
         monitor._active_client = Mock()
         monitor._command_outcome_uncertain = False
-        monitor._active_client.set_wireless.return_value = {**parse_wireless_status_report(status()),
-                                                            "settings": BOARD}
         monitor._snapshot = {"connected": True, "hardware": {"wireless_supported": True},
                              "msc": {"enabled": False, "transition_pending": False}, "storage_stale": False}
         monitor._input_received_at = {10: time.monotonic()}
-        monitor._active_client.scan_wireless.return_value = [{"ssid": "Pico網", "rssi": -42, "secured": True}]
-        monitor._active_client.test_wireless.return_value = {
-            "transaction_id": 1, "state": 5, "page": 0, "count": 0, "wifi_state": 3,
-            "ipv4": "192.168.1.5", "networks": [],
-        }
-        monitor._active_client.cancel_wireless_test.return_value = None
         return monitor
 
-    def test_monitor_ownership_capability_busy_and_uncertainty_gates(self):
+    def test_monitor_ownership_gates_and_input_pump(self):
         monitor = self.monitor()
         baseline = monitor._snapshot.copy()
-        for change in (
-            {"connected": False}, {"hardware": {}}, {"msc": None},
-            {"msc": {"enabled": True}}, {"msc": {"transition_pending": True}},
-            {"self_test": {"active": True}}, {"reboot_pending": True},
-            {"control_result": {"status": "pending"}}, {"control_result": {"status": "busy"}},
-            {"hardware": {"wireless_supported": True, "self_test_supported": True}},
-            {"hardware": {"wireless_supported": True, "self_test_supported": True},
-             "self_test": {"active": False}, "self_test_stale": True},
-        ):
+        for change in ({"connected": False}, {"hardware": {}}, {"msc": None},
+                       {"msc": {"enabled": True}}, {"msc": {"transition_pending": True}},
+                       {"self_test": {"active": True}}, {"reboot_pending": True},
+                       {"control_result": {"status": "pending"}}, {"control_result": {"status": "busy"}}):
             monitor._snapshot = {**baseline, **change}
             with self.subTest(change=change), self.assertRaises(RuntimeError):
                 monitor.set_wireless(settings())
             monitor._active_client.set_wireless.assert_not_called()
-        monitor._input_received_at[10] = time.monotonic() - 2
-        with self.assertRaises(RuntimeError):
-            monitor.scan_wireless()
         monitor._snapshot = baseline
-        monitor._input_received_at[10] = time.monotonic()
-        monitor._command_outcome_uncertain = True
-        with self.assertRaises(RuntimeError):
-            monitor.set_wireless(settings())
-        monitor._command_outcome_uncertain = False
-        self.assertEqual(monitor.scan_wireless()["networks"][0]["ssid"], "Pico網")
-        self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
-        self.assertTrue(monitor.cancel_wireless_test()["cancelled"])
-        result = monitor.set_wireless(settings())
-        self.assertTrue(result["reboot_pending"])
-        self.assertEqual(result["settings"], BOARD)
-        self.assertNotIn("settings", result["wireless"])
-        self.assertTrue(monitor.snapshot()["reboot_pending"])
-        self.assertEqual(monitor.snapshot()["settings"], BOARD)
-
-    def test_monitor_updates_all_live_reports_during_a_connection_wait(self):
-        monitor = self.monitor()
-        runtime = {"temperature_valid": True, "temperature_centidegrees": 2500,
-                   "led_available": True, "led_on": False}
-        memory = {"msc": {"enabled": False, "transition_pending": False}, "filesystem_format": "fat32"}
-        self_test = {"active": False}
-        monitor._active_client.read_input_report.side_effect = [
-            {"kind": "runtime", "data": runtime}, {"kind": "memory", "data": memory},
-            {"kind": "self_test", "data": self_test}, None,
-        ]
-
-        def joining(ssid, password, *, on_poll, on_progress):
-            self.assertEqual((ssid, password), ("Pico網", "secret12"))
-            on_progress("Checking password")
-            self.assertEqual(monitor.snapshot()["wireless_phase"], "Checking password")
-            monitor._input_received_at = {3: 0, 10: 0, 11: 0}
-            with patch("picoforge.dashboard.monitor.time.monotonic", return_value=30):
-                self.assertTrue(monitor.snapshot()["telemetry_stale"])
-                on_poll()
-                snapshot = monitor.snapshot()
-                self.assertFalse(snapshot["telemetry_stale"])
-                self.assertFalse(snapshot["storage_stale"])
-                self.assertFalse(snapshot["self_test_stale"])
-                self.assertEqual(snapshot["runtime"], runtime)
-                self.assertEqual(snapshot["memory"], memory)
-                self.assertEqual(snapshot["self_test"], self_test)
-            return {"state": 5}
-
-        monitor._active_client.test_wireless.side_effect = joining
-        self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
-        self.assertIsNone(monitor.snapshot()["wireless_phase"])
-        self.assertEqual(monitor._active_client.read_input_report.call_count, 4)
-        for call in monitor._active_client.read_input_report.call_args_list:
-            self.assertEqual(call.kwargs, {"timeout_ms": 0})
-
-    def test_monitor_input_pump_is_bounded_and_does_not_swallow_usb_errors(self):
-        monitor = self.monitor()
         monitor._active_client.read_input_report.return_value = {"kind": "self_test", "data": {"active": False}}
         monitor._poll_wireless_inputs()
         self.assertEqual(monitor._active_client.read_input_report.call_count, 16)
@@ -536,44 +482,75 @@ class WirelessTests(unittest.TestCase):
         with self.assertRaises(OSError):
             monitor._poll_wireless_inputs()
 
-    def test_http_validation_routing_sanitization_and_uncertain_error(self):
-        dashboard = Mock()
-        dashboard.set_wireless.return_value = {"wireless": parse_wireless_status_report(status()),
-                                               "reboot_pending": True}
-        dashboard.read_wireless.return_value = {**dashboard.set_wireless.return_value, "reboot_pending": False}
-        dashboard.scan_wireless.return_value = {"networks": [{"ssid": "Pico網", "rssi": -42, "secured": True}]}
-        dashboard.test_wireless.return_value = {"test": {"state": 5, "ipv4": "192.168.1.5"}}
-        dashboard.cancel_wireless_test.return_value = {"cancelled": True}
-        client = create_app(dashboard).test_client()
-        for body in (None, [], settings(confirm_reboot=False), settings(password="secret\n12")):
-            response = client.post("/api/wireless?board=a", json=body)
-            self.assertEqual(response.status_code, 400)
-            self.assertNotIn("secret", response.text)
-        dashboard.set_wireless.assert_not_called()
-        response = client.post("/api/wireless?board=a", json=settings(password="secret12", ble_key="ab" * 32))
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn("secret12", response.text)
-        self.assertNotIn("ab" * 32, response.text)
-        dashboard.set_wireless.assert_called_once()
-        self.assertEqual(dashboard.set_wireless.call_args.args[0], "a")
-        self.assertEqual(client.get("/api/wireless?board=a").status_code, 200)
-        dashboard.read_wireless.assert_called_once_with("a")
-        self.assertEqual(client.post("/api/wireless/scan?board=a").json["networks"][0]["ssid"], "Pico網")
-        self.assertEqual(client.post("/api/wireless/test?board=a", json={"ssid": "Pico網",
-            "password": "secret12"}).json["test"]["state"], 5)
-        self.assertNotIn("secret12", client.post("/api/wireless/test?board=a", json={"ssid": "Pico網",
-            "password": "secret12"}).text)
-        self.assertEqual(client.post("/api/wireless/cancel?board=a").json["cancelled"], True)
-        self.assertEqual(client.post("/api/wireless/test", json={"ssid": "Pico", "password": "short"})
-                         .status_code, 400)
-        dashboard.set_wireless.side_effect = OSError("secret12")
-        response = client.post("/api/wireless?board=a", json=settings())
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("uncertain", response.text)
-        self.assertNotIn("secret12", response.text)
-        for failure in (TimeoutError("secret12"), OSError("secret12"), ValueError("secret12")):
-            dashboard.test_wireless.side_effect = failure
-            response = client.post("/api/wireless/test?board=a", json={"ssid": "Pico", "password": "secret12"})
-            self.assertEqual(response.status_code, 503)
-            self.assertIn("uncertain", response.json["error"])
-            self.assertNotIn("secret12", response.text)
+    def test_monitor_polls_wireless_at_active_and_idle_intervals(self):
+        for active, interval in ((False, 2.0), (True, 0.5)):
+            monitor = self.monitor()
+            monitor._stop = threading.Event()
+            client = monitor._active_client
+            client._wireless_active = active
+            client.read_info.return_value = {"supported": True, "wireless_supported": True}
+            client.read_configuration.return_value = BOARD
+            client.read_input_report.return_value = None
+            client.read_wireless.side_effect = [OSError("bad status"), {"ssid": "new", "stale": False}]
+            client.wireless_freshness.return_value = {"available": True, "stale": True, "age_ms": 2000}
+            monitor._client_factory = lambda: client
+            now = [0.0]
+            iterations = []
+
+            def wait(timeout):
+                if timeout == 0.05:
+                    iterations.append(now[0])
+                    now[0] += interval / 2
+                    if len(iterations) == 3:
+                        monitor._stop.set()
+                return False
+
+            monitor._stop.wait = wait
+            with patch("picoforge.dashboard.monitor.time.monotonic", side_effect=lambda: now[0]):
+                monitor._run()
+            self.assertEqual(client.read_wireless.call_count, 2)
+            self.assertEqual(monitor._snapshot["wireless"]["ssid"], "new")
+            self.assertIsNone(monitor._snapshot["wireless_error"])
+            self.assertTrue(monitor._snapshot["wireless_freshness"]["stale"])
+
+    def test_monitor_keeps_serving_inputs_and_freshness_while_testing(self):
+        monitor = self.monitor()
+        runtime = {"temperature_valid": True, "temperature_centidegrees": 2500,
+                   "led_available": True, "led_on": False}
+        memory = {"msc": {"enabled": False, "transition_pending": False}, "filesystem_format": "fat32"}
+        monitor._active_client.read_input_report.side_effect = [
+            {"kind": "runtime", "data": runtime}, {"kind": "memory", "data": memory},
+            {"kind": "self_test", "data": {"active": False}}, None,
+        ]
+
+        def joining(ssid, password, *, on_poll, on_progress):
+            on_progress("Connecting to Wi-Fi")
+            self.assertEqual(monitor.snapshot()["wireless_phase"], "Connecting to Wi-Fi")
+            monitor._input_received_at = {3: 0, 10: 0, 11: 0}
+            with patch("picoforge.dashboard.monitor.time.monotonic", return_value=30):
+                self.assertTrue(monitor.snapshot()["telemetry_stale"])
+                on_poll()
+                snapshot = monitor.snapshot()
+                self.assertFalse(snapshot["telemetry_stale"])
+                self.assertFalse(snapshot["storage_stale"])
+                self.assertEqual(snapshot["runtime"], runtime)
+                self.assertEqual(snapshot["memory"], memory)
+            return {"state": 5}
+
+        monitor._active_client.test_wireless.side_effect = joining
+        self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
+        self.assertIsNone(monitor.snapshot()["wireless_phase"])
+
+    def test_monitor_proof_uncertainty_propagates_to_other_writes(self):
+        monitor = self.monitor()
+        monitor._active_client._command_uncertain = True
+        monitor._active_client.tcp_cli_auth_proof.side_effect = OSError("USB")
+        with self.assertRaises(OSError):
+            monitor.tcp_cli_auth_proof(bytes(16), bytes(8))
+        self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
+        with self.assertRaisesRegex(RuntimeError, "uncertain"):
+            monitor.cancel_wireless_test()
+
+
+if __name__ == "__main__":
+    unittest.main()

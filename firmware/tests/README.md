@@ -29,6 +29,20 @@ production module. Support fixtures and standalone smoke programs are not Ceedli
 
 Run `tools/validation/coverage-firmware.sh` to execute `gcov:all` and generate HTML and Cobertura reports under `build/ceedling/artifacts/gcov/gcovr/`. Coverage requires at least one unit test.
 
+Wireless radio and staging host checks compile the production modules with
+[`support/wireless/lifecycle.inc`](support/wireless/lifecycle.inc)'s SDK model:
+
+```sh
+python3 -m pytest -q tests/contracts/test_wifi.py tests/contracts/test_wireless_provisioning.py \
+  --basetemp=build/wireless-contract-check
+ceedling test:test_boot_config
+```
+
+These cover opaque SSID joins, reconnect/WPA3 behavior, independent scan/test generations, strongest-18 reads,
+RAM staging/pair safety/expiry, and key-gated services. Boot-config tests cover v1 migration, raw v2 persistence,
+and explicit presence for every 32-byte key (including all-zero bytes). Real HMAC vectors and explicit key clearing
+are covered by `tests/contracts/test_wireless_auth.py`; association and RF behavior still require hardware.
+
 ## Host Behavior Regressions
 
 C behavior regressions run through Ceedling/Unity, alongside the existing

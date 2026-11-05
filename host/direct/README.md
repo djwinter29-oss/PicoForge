@@ -34,13 +34,16 @@ using that board before connecting; the chooser cannot override another applicat
 The firmware and all host dashboards use version 1 of the authoritative
 [HID Report Reference](../../docs/reference/usb-hid.md). Physical USB qualification remains outstanding.
 It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
-(9), and Input 3 telemetry (22), 10 storage (34), and optionally 11 self-test (32, capability bit 5).
+(68), wireless Feature 12 (48, capability bit 7), and Input 3 telemetry (22), 10 storage (34), and optionally
+11 self-test (32, capability bit 5).
 Mandatory identity and configuration reports must be valid before the dashboard enables commands.
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.
 Stale measurements are removed, unavailable/stale freshness is shown per report, and disconnect clears
-connection caches.
+connection caches. Wireless status is polled every 500 ms during tests/scans and every two seconds while idle;
+it expires after three polling intervals. Raw SSID bytes round-trip through `ssid_hex`; the escaped `ssid` label
+is display-only for scanned networks.
 Firmware RAM reserved / total is boot-stable build accounting, not live heap or stack usage.
 
 ## Dashboard layout
@@ -69,26 +72,26 @@ Use USB to provision radio settings and a random Control key, then open **Blueto
 Bluetooth stays off without a saved key. See the linked wireless guide for the key-gated session.
 The authenticated Bluetooth session can change system clock, SD-card speed, and the TCP CLI enable switch, and can
 request a confirmed reboot. Radio switches, Wi-Fi credentials, Control-key provisioning, forced saves, and USB
-storage ownership remain USB-only. Wireless Features 30, 31, 34, and 35 use version 1. Successful temporary Wi-Fi
-tests must be saved within ten minutes.
+storage ownership and benchmark execution remain USB-only. Benchmark status remains readable over BLE.
+BLE maps the unified USB envelope to its restricted nine-byte command/result form. Successful temporary Wi-Fi
+tests must be saved within ten minutes; saving a tested pair does not restage it.
 
 All operations serialize Feature 20 SET/GET transactions, matching both transaction ID and opcode.
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for
 fresh corresponding Input status. A timeout or disconnect never replays a command; uncertain results block further
 writes. Reconnecting reads the outstanding result without resubmitting it. Do not run competing HID writers.
-Wireless Feature 31 saves follow the same rule: an uncertain save retains its transaction and expected non-secret
-settings, blocks further writes, and is reconciled only against the matching result and board readback from the same
-board UID after reconnect. A mismatched or unavailable result remains uncertain; the save is never resent.
-Wireless Feature 34 scans and connection tests likewise retain the operation and transaction, then check Feature 35
-after same-board reconnect. Matching terminal results resolve uncertainty; missing, stale, or nonterminal results
-keep wireless operations blocked. These operations are never resent automatically.
+Wireless staging, tests, scans, saves and TCP CLI proofs share that same serialized Feature 20 channel.
+Save results must confirm exact switches and the wireless commit mask, even after firmware clears staging.
+Accepted scans/tests retain their generation and read Feature 12 after same-board reconnect. Matching terminal
+results resolve uncertainty; missing or changed generations keep wireless operations blocked. These operations
+are never resent automatically.
 If clearing temporary Wi-Fi test credentials fails, the Wi-Fi dialog stays open and saving remains blocked until
 the user retries or reconnect confirms cancellation.
 Pending operations are also retained in the current tab's `sessionStorage` so a page reload can resume same-board
-reconciliation. Recovery records contain only allowlisted transaction/readback data; wireless saves store
-a SHA-256 digest of the SSID, never the SSID, Wi-Fi password, or Control key. Missing, inaccessible, or invalid recovery
-storage fails closed and blocks writes rather than allowing an untracked operation. Completed scan/test results and
-staged test credentials are not restored; the status message tells the user to explicitly repeat the scan or test.
+reconciliation. Recovery records contain only allowlisted transaction/profile/commit-mask or generation data, never the
+SSID,
+Wi-Fi password, or Control key. Missing, inaccessible, or invalid recovery storage fails closed and blocks writes
+rather than allowing an untracked operation. Dialog state and secrets are not restored after a page reload.
 Keep the tab open until an uncertain operation is resolved; recovery does not survive ending the browser tab's session.
 USB sharing hides the benchmark from submission until fresh status confirms the requested
 ownership and a finished transition, or an explicit rejection. Self-test acceptance keeps controls pending until

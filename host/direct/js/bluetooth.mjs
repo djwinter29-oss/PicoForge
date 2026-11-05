@@ -1,4 +1,4 @@
-import { PicoForgeWebHid } from "./device.mjs?v=11";
+import { PicoForgeWebHid } from "./device.mjs?v=12";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f501";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f501`;
@@ -8,6 +8,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
   constructor(bluetooth, onChange, options) {
     super(undefined, onChange, options);
     this.bluetooth = bluetooth;
+    this.bleTransport = true;
     this.characteristics = new Map();
     this.pollTimer = null;
     this.bleKey = null;
@@ -80,15 +81,26 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
       const adapter = new EventTarget();
       Object.assign(adapter, { opened: true, open: async () => {},
         close: async () => this.bleDevice.gatt.disconnect(),
-        receiveFeatureReport: async id => this.characteristics.get(id).readValue(),
+        receiveFeatureReport: async id => {
+          const value = await this.characteristics.get(id).readValue();
+          if (id !== 20) return value;
+          if (value.byteLength !== 9) throw new Error("Expected exactly 9 BLE result bytes");
+          const report = new Uint8Array(68);
+          report.set(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+          return report;
+        },
         sendFeatureReport: async (id, report) => {
-          if (id !== 20 || ![1, 2, 4, 6].includes(report[2])) throw new Error("This operation requires USB.");
+          if (id !== 20 || report.length !== 68 || ![1, 2, 5].includes(report[2])
+            || report.subarray(9).some(Boolean) || report[2] === 5 && report[3] !== 0) {
+            throw new Error("This operation requires USB.");
+          }
+          const request = report.slice(0, 9);
           // The LED only identifies the board, so firmware accepts it without a proof.
-          if (report[2] === 1) return this.characteristics.get(20).writeValueWithResponse(report);
+          if (report[2] === 1) return this.characteristics.get(20).writeValueWithResponse(request);
           const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
           try {
-            await this.prove(uid, report);
-            await this.characteristics.get(20).writeValueWithResponse(report);
+            await this.prove(uid, request);
+            await this.characteristics.get(20).writeValueWithResponse(request);
           } catch (error) {
             // Firmware answers a bad, missing or rate-limited proof with an ATT application error.
             if (!this.bleDevice.gatt.connected) throw error;
@@ -102,7 +114,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
         try {
           const server = await this.bleDevice.gatt.connect();
           const service = await server.getPrimaryService(BLE_SERVICE);
-          for (const id of [1, 2, 3, 10, 11, 20, 30, 32, 33]) {
+          for (const id of [1, 2, 3, 10, 11, 12, 20, 32, 33]) {
             this.characteristics.set(id, await service.getCharacteristic(characteristic(id)));
           }
           await this.unlock();
@@ -132,8 +144,8 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
   }
 
   async setControlKey(hex) {
-    if (!/^[a-f0-9]{64}$/i.test(hex ?? "") || /^0+$/.test(hex)) {
-      throw new Error("Control key must be 64 nonzero hex digits.");
+    if (!/^[a-f0-9]{64}$/i.test(hex ?? "")) {
+      throw new Error("Control key must be 64 hex digits.");
     }
     const bytes = Uint8Array.from(hex.match(/../g), byte => parseInt(byte, 16));
     try {
@@ -143,7 +155,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
   }
 
   async command(opcode, options) {
-    if (![1, 2, 4, 6].includes(opcode)) throw new Error("This operation requires USB.");
+    if (![1, 2, 5].includes(opcode)) throw new Error("This operation requires USB.");
     return super.command(opcode, options);
   }
 

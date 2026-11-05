@@ -16,9 +16,10 @@ from .. import __version__
 from ..reports import (
     build_wireless_command_report,
     build_self_test_command_report,
-    build_settings_command_report,
     validate_wireless_configuration,
 )
+from ..reports.common import _validate_settings
+from ..reports.wireless import request_ssid
 
 
 def _api_error(
@@ -172,8 +173,10 @@ def _register_api_routes(app: Flask, dashboard: DashboardBackend) -> None:
         if type(force) is not bool:
             return jsonify({"error": "confirm_data_loss must be boolean"}), 400
         settings = {key: payload.get(key) for key in ("system_clock_mhz", "sdcard_profile", "radios")}
+        if "tcp_cli_enabled" in payload:
+            settings["tcp_cli_enabled"] = payload["tcp_cli_enabled"]
         try:
-            build_settings_command_report(settings)
+            _validate_settings(settings)
         except ValueError as error:
             return _api_error(error)
         try:
@@ -259,15 +262,17 @@ def _register_wireless_routes(app: Flask, dashboard: DashboardBackend) -> None:
     @app.post("/api/wireless/test")
     def test_wireless():
         payload = request.get_json(silent=True)
-        if not isinstance(payload, dict) or set(payload) - {"ssid", "password"}:
+        if not isinstance(payload, dict) or set(payload) - {"ssid", "ssid_hex", "password"}:
             return jsonify({"error": "Expected SSID and optional password"}), 400
         try:
-            build_wireless_command_report(1, 3, ssid=payload.get("ssid", ""),
-                                          password=payload.get("password", ""))
+            selected_ssid = request_ssid({"ssid": "", **payload})
+            build_wireless_command_report(1, 6, value=selected_ssid)
+            build_wireless_command_report(1, 7, value=payload.get("password", ""))
         except ValueError as error:
             return _api_error(error)
         try:
-            return jsonify(dashboard.test_wireless(request.args.get("board"), payload["ssid"],
+            return jsonify(dashboard.test_wireless(request.args.get("board"), (
+                                                   selected_ssid if "ssid_hex" in payload else payload.get("ssid", "")),
                                                    payload.get("password", "")))
         except RuntimeError as error:
             return _api_error(error)

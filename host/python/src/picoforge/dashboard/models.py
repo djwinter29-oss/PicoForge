@@ -57,6 +57,9 @@ class DashboardSnapshot(TypedDict, total=False):
     self_test_stale: bool | None
     updated_at: str | None
     wireless_phase: str | None
+    wireless: WirelessStatus | None
+    wireless_error: str | None
+    wireless_freshness: ReportFreshness
 
 
 class DashboardBoard(TypedDict):

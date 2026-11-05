@@ -64,8 +64,8 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
       assert.equal(el("#wifi-diagnostics").hidden, false);
     }
     for (const [wireless, expected] of [
-      [{ wifi_enabled: true, ssid: "", wifi_state: "connected", ipv4: "0.0.0.0" }, "Connected"],
-      [{ wifi_enabled: true, ssid: "", wifi_state: "connecting" }, "Wi-Fi (connecting)"],
+      [{ wifi_enabled: true, ssid: "", wifi_state: "connected", ipv4: "0.0.0.0" }, "Disabled"],
+      [{ wifi_enabled: true, ssid: "", wifi_state: "connecting" }, "Disabled"],
       [{ wifi_enabled: false, ssid: "", wifi_state: "disabled" }, "Disabled"],
       [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connected", ipv4: "192.168.66.87" },
         "HomeDev (192.168.66.87)"],
@@ -121,6 +121,7 @@ test("self-test writes require fresh, known, mounted, firmware-owned state and v
     value => { value.self_test_command_pending = true; },
     value => { value.outcome_uncertain = true; },
     value => { value.busy = true; },
+    value => { value.transport = "ble"; },
   ]) {
     const changed = snapshot(); mutate(changed);
     renderSelfTest(changed);
@@ -141,10 +142,10 @@ test("self-test writes require fresh, known, mounted, firmware-owned state and v
   assert.equal(el("#self-test-cancel").disabled, true);
 }));
 
-test("self-test presents retained throughput, request errors, and unknown enums", () => withDocument(el => {
+test("self-test presents retained throughput and unknown enums without obsolete request errors",
+  () => withDocument(el => {
   const state = snapshot();
   state.self_test = decodeSelfTestReport(selfTest(6));
-  state.self_test.request_error = 10;
   renderSelfTest(state);
   assert.equal(el("#self-test-disclosure").open, false);
   assert.equal(el("#self-test-state").textContent, "Passed · 100%");
@@ -152,13 +153,12 @@ test("self-test presents retained throughput, request errors, and unknown enums"
   assert.equal(el("#self-test-write-speed").textContent, "2.00 MiB/s");
   assert.equal(el("#self-test-read-speed").textContent, "4.00 MiB/s");
   assert.equal(el("#self-test-progress").value, 100);
-  assert.match(el("#self-test-message").textContent, /Filesystem not mounted/);
+  assert.equal(el("#self-test-message").textContent, "");
   state.self_test = decodeSelfTestReport(selfTest(99));
-  state.self_test.request_error = 255;
   renderSelfTest(state);
   assert.match(el("#self-test-state").textContent, /^Unknown state \(99\) · \d+%$/);
   assert.equal(el("#self-test-meter").dataset.result, "");
-  assert.match(el("#self-test-message").textContent, /Unknown error \(255\)/);
+  assert.match(el("#self-test-message").textContent, /Unknown status values/);
   assert.equal(el("#self-test-start").disabled, true);
   state.self_test = { ...state.self_test, state: "failed", active: false };
   renderSelfTest(state);

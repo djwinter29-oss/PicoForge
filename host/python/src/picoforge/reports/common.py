@@ -32,7 +32,7 @@ STORAGE_PAYLOAD_SIZE = 34
 
 SELF_TEST_PAYLOAD_SIZE = 32
 
-CONTROL_PAYLOAD_SIZE = 9
+CONTROL_PAYLOAD_SIZE = 68
 
 IDENTITY_FEATURE_SIZE = IDENTITY_PAYLOAD_SIZE + 1
 
@@ -72,25 +72,9 @@ CAP_WIRELESS = 1 << 7
 
 CAP_KNOWN = 255
 
-WIRELESS_REPORT_ID = 30
+WIRELESS_REPORT_ID = 12
 
-WIRELESS_FEATURE_SIZE = 54
-
-WIRELESS_COMMAND_REPORT_ID = 34
-
-WIRELESS_COMMAND_FEATURE_SIZE = 102
-
-WIRELESS_RESULT_REPORT_ID = 35
-
-WIRELESS_RESULT_FEATURE_SIZE = 223
-
-TCP_CLI_AUTH_REPORT_ID = 36
-
-TCP_CLI_AUTH_REQUEST_SIZE = 20
-
-TCP_CLI_AUTH_RESULT_SIZE = 20
-
-WIRELESS_CONFIGURATION_REPORT_ID = 31
+WIRELESS_FEATURE_SIZE = 49
 
 TELEMETRY_USB_MOUNTED = 1 << 0
 
@@ -140,8 +124,14 @@ _OPCODE_STATUSES = {
     2: {CONTROL_PENDING, CONTROL_COMPLETED, CONTROL_INVALID, CONTROL_UNSUPPORTED, CONTROL_BUSY, CONTROL_FAILED},
     3: {CONTROL_PENDING, CONTROL_COMPLETED, CONTROL_INVALID, CONTROL_BUSY, CONTROL_FAILED},
     4: {CONTROL_PENDING, CONTROL_COMPLETED, CONTROL_INVALID, CONTROL_UNSUPPORTED, CONTROL_BUSY, CONTROL_FAILED},
-    6: {CONTROL_PENDING, CONTROL_COMPLETED, CONTROL_INVALID, CONTROL_UNSUPPORTED, CONTROL_BUSY, CONTROL_FAILED},
+    5: {CONTROL_PENDING, CONTROL_COMPLETED, CONTROL_INVALID, CONTROL_UNSUPPORTED, CONTROL_BUSY, CONTROL_FAILED},
 }
+for _opcode in range(6, 14):
+    _OPCODE_STATUSES[_opcode] = {CONTROL_COMPLETED, CONTROL_INVALID, CONTROL_UNSUPPORTED, CONTROL_FAILED}
+    if _opcode not in (10, 13):
+        _OPCODE_STATUSES[_opcode].add(CONTROL_BUSY)
+    if _opcode in (9, 11):
+        _OPCODE_STATUSES[_opcode].add(CONTROL_PENDING)
 
 def _bytes(report: bytes | bytearray | list[int]) -> bytes:
     if not isinstance(report, (bytes, bytearray, list)):
@@ -156,18 +146,11 @@ def _bytes(report: bytes | bytearray | list[int]) -> bytes:
         raise ValueError("HID report must contain byte values") from error
 
 def _feature_payload(report: bytes | bytearray | list[int], report_id: int, size: int) -> bytes:
-    """Normalize HIDAPI report-ID framing and documented zero padding."""
+    """Validate HIDAPI's report-ID-prefixed buffer without guessing framing bytes."""
     data = _bytes(report)
-    if len(data) >= size + 2 and data[0] == 0 and data[1] == report_id:
-        offset = 2
-    elif len(data) >= size + 1 and data[0] == report_id:
-        offset = 1
-    else:
+    if len(data) != size + 1 or data[0] != report_id:
         raise ValueError(f"unexpected HID Feature report {report_id} length or ID")
-    payload = data[offset:offset + size]
-    if len(payload) != size or any(data[offset + size:]):
-        raise ValueError(f"unexpected HID Feature report {report_id} length or padding")
-    return payload
+    return data[1:]
 
 def _input_payload(report: bytes | bytearray | list[int], report_id: int, size: int) -> bytes:
     data = _bytes(report)
@@ -188,4 +171,8 @@ def _validate_settings(settings: dict[str, object]) -> tuple[int, int, int]:
     if (type(clock) is not int or clock not in (0, 150, 200, 250) or type(profile) is not int or profile not in (0, 1)
             or type(radios) is not int or radios not in range(4)):
         raise ValueError("unsupported boot settings value")
+    if "tcp_cli_enabled" in settings and type(settings["tcp_cli_enabled"]) is not bool:
+        raise ValueError("TCP CLI setting must be boolean")
+    if set(settings) - {"system_clock_mhz", "sdcard_profile", "radios", "tcp_cli_enabled"}:
+        raise ValueError("unknown boot settings field")
     return clock, profile, radios

@@ -11,7 +11,7 @@ test("keyless Bluetooth reports that a control key is needed; unavailable report
   } };
   const snapshot = { connected: true, hardware: { capabilities: 128, serial_number: "AB" }, wireless: {
     wifi_enabled: true, ssid: "saved", wifi_state: "failed", ble_enabled: true, ble_state: "off",
-    ble_key_configured: false, restart_required: false,
+    ble_key_configured: false,
   } };
   try {
     renderWirelessStatus(snapshot);
@@ -25,6 +25,62 @@ test("keyless Bluetooth reports that a control key is needed; unavailable report
     assert.equal(elements.get("#wifi-state").textContent, "Unavailable");
     assert.equal(elements.get("#wifi-state").title, "Read failed");
   } finally { globalThis.document = previous; }
+});
+
+test("scan selection retains raw SSID bytes, manual edits drop hex, "
+  + "and failed-test cancellation clears staging", async () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  const makeElement = () => ({
+    value: "", children: [], handlers: {}, options: ["0", "1", "configure"].map(value => ({ value })),
+    label: { toggleAttribute() {} }, closest() { return this.label; },
+    setAttribute() {}, append(...items) { this.children.push(...items); },
+    addEventListener(event, callback) { this.handlers[event] = callback; },
+    replaceChildren(...items) { this.children = items; }, close() {}, showModal() {}, focus() {},
+  });
+  const el = id => {
+    if (!elements.has(id)) elements.set(id, makeElement());
+    return elements.get(id);
+  };
+  globalThis.document = { querySelector: selector => el(selector.slice(1)), createElement: makeElement };
+  let cancelCount = 0, cancellationFails = false, testFails = false;
+  const tested = [];
+  const form = bindWirelessForm({
+    supported: () => true, ready: () => true,
+    load: async () => ({ ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true, ble_enabled: false }),
+    scan: async () => [{ ssid: "\\x00\\xFF<script>", ssid_hex: "00ff3c7363726970743e", rssi: -60, secured: false }],
+    test: async request => {
+      tested.push(request);
+      if (testFails) throw new Error("Password rejected");
+      return { ipv4: "192.168.1.2", remaining_seconds: 599 };
+    },
+    cancelTest: async () => { cancelCount++; if (cancellationFails) throw new Error("clear failed"); },
+  });
+  try {
+    el("settings-wifi").value = "1"; el("settings-ble").value = "0";
+    await form.load();
+    await el("wifi-scan").handlers.click();
+    const button = el("wifi-networks").children[0];
+    assert.equal(button.children[0].textContent, "\\x00\\xFF<script>", "SSID label is text, never HTML");
+    button.handlers.click();
+    await el("wifi-connect").handlers.click();
+    assert.equal(tested[0].ssid_hex, "00ff3c7363726970743e");
+    assert.equal(form.request().ssid_hex, "00ff3c7363726970743e");
+    assert.equal(form.request().use_tested_wifi, true);
+    cancellationFails = true;
+    await el("wifi-cancel").handlers.click();
+    assert.equal(form.canSave(), false, "failed discard cannot silently lose the retained pair");
+    cancellationFails = false;
+    await el("wifi-cancel").handlers.click();
+    assert.equal(form.canSave(), true);
+    assert.equal(cancelCount, 2);
+    el("wifi-ssid").value = "manual"; el("wifi-ssid").handlers.input();
+    testFails = true;
+    await el("wifi-connect").handlers.click();
+    assert.equal(Object.hasOwn(tested[1], "ssid_hex"), false, "manual text is encoded exactly once");
+    await el("wifi-cancel").handlers.click();
+    assert.equal(cancelCount, 3, "a failed test also leaves firmware staging that must be discarded");
+  } finally { form.reset(); globalThis.document = previous; }
 });
 
 test("connected Wi-Fi CLI status links to the console in a new tab", () => {
@@ -52,7 +108,7 @@ test("connected Wi-Fi CLI status links to the console in a new tab", () => {
   } finally { globalThis.document = previous; }
 });
 
-test("TCP switch is saved only on v2 and expired test credentials block saving", async context => {
+test("TCP switch is saved explicitly and expired test credentials block saving", async context => {
   const previous = globalThis.document;
   const elements = new Map();
   const el = id => {

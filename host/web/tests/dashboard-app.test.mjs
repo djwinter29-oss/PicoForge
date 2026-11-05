@@ -155,7 +155,8 @@ test("shared dashboard preserves drafts and command state across status failures
         error: wirelessFailure === 409 ? wirelessError : "Wireless outcome is uncertain",
         reboot_pending: true, settings: settings.board,
         wireless: { ...settings, board: undefined, password: undefined, ble_key: undefined,
-          password_configured: true, ble_key_configured: Boolean(settings.ble_key), wifi_state: "connected" },
+          ssid_hex: settings.ssid_hex ?? Buffer.from(settings.ssid).toString("hex"),
+          ble_key_configured: Boolean(settings.ble_key), wifi_state: "connected" },
       }) };
     }
     if (url.startsWith("/api/settings?board=")) {

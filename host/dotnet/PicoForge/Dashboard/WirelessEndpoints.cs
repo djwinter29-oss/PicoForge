@@ -4,7 +4,7 @@ namespace PicoForge;
 
 internal static class WirelessEndpoints
 {
-    public sealed record WirelessTestRequest(string? Ssid, string? Password = null);
+    public sealed record WirelessTestRequest(string? Ssid, string? Password = null, string? SsidHex = null);
 
     public static IEndpointRouteBuilder MapWirelessEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -69,11 +69,18 @@ internal static class WirelessEndpoints
             {
                 PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
             }) ?? throw new ArgumentException("Expected SSID and optional password");
-            HidProtocol.BuildWirelessCommand(1, 3, ssid: test.Ssid, password: test.Password);
+            if (HidProtocol.EncodeSsid(test.Ssid, test.SsidHex).Length == 0) throw new ArgumentException();
+            HidProtocol.ValidatePassword(test.Password ?? "");
         }
         catch (Exception error) when (error is JsonException or ArgumentException)
         { return Results.Problem(statusCode: 400, title: "Invalid SSID or password"); }
-        try { return Results.Ok(new { test = dashboard.TestWireless(board, test.Ssid!, test.Password ?? "") }); }
+        try
+        {
+            return Results.Ok(new
+            {
+                test = dashboard.TestWireless(board, test.Ssid ?? "", test.Password ?? "", test.SsidHex)
+            });
+        }
         catch (NotSupportedException)
         {
             return Results.Conflict(new { error = "Wireless provisioning is unavailable on this firmware" });

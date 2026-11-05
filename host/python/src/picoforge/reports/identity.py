@@ -100,10 +100,10 @@ def parse_configuration_report(
         raise ValueError(f"unsupported HID board configuration report version {version}")
     if clock_profile not in (0, 150, 200, 250) or sd_profile not in (0, 1):
         raise ValueError("invalid stored board configuration profile")
-    if flags & ~0x1F:
+    if flags & ~0x3F:
         raise ValueError("unknown board configuration flags")
     radios = flags >> 3 & 3
-    if radios and not identity.get("wireless_supported"):
+    if flags & 0x38 and not identity.get("wireless_supported"):
         raise ValueError("radio enables reported without wireless capability")
     if uart_index not in (0, 1, 255):
         raise ValueError("invalid monitor UART index")
@@ -144,6 +144,7 @@ def parse_configuration_report(
         "stored_sdcard_profile": sd_profile,
         "sdcard_profile": sd_profile,
         "radios": radios,
+        "tcp_cli_enabled": bool(flags & 0x20),
         "monitor_uart_index": uart_index,
         "monitor_uart_tx_gpio": uart_tx,
         "monitor_uart_rx_gpio": uart_rx,

@@ -18,7 +18,7 @@ bool pf_bluetooth_prepare(void);
  */
 bool pf_bluetooth_start(void);
 
-/** @brief Report the peripheral link for Feature 30 byte 45.
+/** @brief Report the peripheral link for Feature 12 byte 3.
  * @return 0 when the controller is not working, 1 while advertising, 2 while a central is connected.
  */
 uint8_t pf_bluetooth_state(void);

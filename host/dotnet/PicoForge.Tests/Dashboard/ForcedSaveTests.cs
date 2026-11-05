@@ -24,20 +24,27 @@ public sealed class ForcedSaveTests
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
     public void SaveFlagsPreserveArguments(byte flags)
     {
-        Assert.Equal(new byte[] { 20, 1, 7, 6, flags, 200, 0, 1, 0, 0 },
-            HidProtocol.BuildControlRequest(7, 6, flags, [200, 0, 1, 0, 0]));
+        var arguments = new byte[64];
+        arguments[0] = 200;
+        arguments[2] = 1;
+        var request = HidProtocol.BuildControlRequest(7, 5, flags, arguments);
+        Assert.Equal(69, request.Length);
+        Assert.Equal(new byte[] { 20, 1, 7, 5, flags, 200, 0, 1, 0, 0 }, request[..10]);
+        Assert.All(request[10..], value => Assert.Equal(0, value));
     }
 
     [Theory]
-    [InlineData(2)]
-    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(8)]
     [InlineData(128)]
     [InlineData(255)]
     public void SaveRejectsReservedFlags(byte flags) =>
         Assert.Throws<InvalidOperationException>(() =>
-            HidProtocol.BuildControlRequest(7, 6, flags, [200, 0, 1, 0, 0]));
+            HidProtocol.BuildControlRequest(7, 5, flags, new byte[64]));
 
     [Theory]
     [InlineData(false)]
@@ -47,7 +54,7 @@ public sealed class ForcedSaveTests
         var writes = new List<byte[]>();
         var reads = 0;
         var reopens = 0;
-        using var hid = new PicoForgeHid(Hardware(), (report, size) =>
+        using var hid = Hid((report, size) =>
         {
             Assert.Equal(HidProtocol.ControlReportId, report);
             Assert.Equal(HidProtocol.ControlFeatureSize, size);
@@ -67,7 +74,8 @@ public sealed class ForcedSaveTests
 
         Assert.Equal(Settings, hid.SetSettings(Settings, true));
         Assert.Single(writes);
-        Assert.Equal(new byte[] { 20, 1, 1, 6, 1, 200, 0, 1, 0, 0 }, writes[0]);
+        Assert.Equal(new byte[] { 20, 1, 1, 5, 1, 200, 0, 1, 0, 0 }, writes[0][..10]);
+        Assert.Equal(69, writes[0].Length);
         Assert.Equal(2, reopens);
         Assert.False(hid.CommandOutcomeUncertain);
     }
@@ -92,7 +100,7 @@ public sealed class ForcedSaveTests
             case "settings": result[6] = 150; break;
             case "confirmation": result = Result(3); result[5] = 2; break;
         }
-        using var hid = new PicoForgeHid(Hardware(), (_, _) => result, _ => writes++,
+        using var hid = Hid((_, _) => result, _ => writes++,
             _ => Assert.Fail("invalid results must not trigger reconnect"));
         Assert.Throws<InvalidOperationException>(() => hid.SetSettings(Settings, true));
         Assert.True(hid.CommandOutcomeUncertain);
@@ -109,7 +117,7 @@ public sealed class ForcedSaveTests
         var writes = new List<byte[]>();
         var result = Result(status);
         result[5] = reason;
-        using var hid = new PicoForgeHid(Hardware(), (_, _) => result, writes.Add,
+        using var hid = Hid((_, _) => result, writes.Add,
             _ => Assert.Fail("terminal rejection must not reconnect"));
         Assert.Throws<InvalidOperationException>(() => hid.SetSettings(Settings, true));
         Assert.Single(writes);
@@ -125,7 +133,7 @@ public sealed class ForcedSaveTests
         var writes = 0;
         var reads = 0;
         var reopens = 0;
-        using var hid = new PicoForgeHid(Hardware(), (_, _) =>
+        using var hid = Hid((_, _) =>
         {
             if (++reads == 1) throw new IOException("detached");
             var result = Result(2);
@@ -151,7 +159,7 @@ public sealed class ForcedSaveTests
     public void PendingTimeoutDoesNotReplayAndRemainsUncertain(bool force)
     {
         var writes = new List<byte[]>();
-        using var hid = new PicoForgeHid(Hardware(), (_, _) => Result(1), writes.Add,
+        using var hid = Hid((_, _) => Result(1), writes.Add,
             _ => Assert.Fail("a pending response must not trigger reconnect"));
         var started = Environment.TickCount64;
         var error = Assert.Throws<TimeoutException>(() => hid.SetSettings(Settings, force));
@@ -167,7 +175,7 @@ public sealed class ForcedSaveTests
     public void NormalSaveDisconnectDoesNotReconnectOrForce()
     {
         var writes = new List<byte[]>();
-        using var hid = new PicoForgeHid(Hardware(), (_, _) => throw new IOException("detached"),
+        using var hid = Hid((_, _) => throw new IOException("detached"),
             writes.Add, _ => Assert.Fail("normal commands must not reconnect"));
         Assert.Throws<IOException>(() => hid.SetSettings(Settings));
         Assert.Single(writes);
@@ -180,7 +188,7 @@ public sealed class ForcedSaveTests
     {
         var writes = 0;
         var reopens = 0;
-        using var hid = new PicoForgeHid(Hardware(), (_, _) => throw new IOException("detached"),
+        using var hid = Hid((_, _) => throw new IOException("detached"),
             _ => writes++, uid =>
             {
                 Assert.Equal(Hardware().SerialNumber, uid);
@@ -281,7 +289,7 @@ public sealed class ForcedSaveTests
         foreach (var status in new[]
         {
             Ready(false) with { Msc = new(false, true, false) },
-            Ready(false) with { SelfTest = new(1, "queued", 1024, 0, 0, 0, 0, 0, 0, 0, 0, false, true) },
+            Ready(false) with { SelfTest = new(1, "queued", 1024, 0, 0, 0, 0, 0, 0, 0, false, true) },
             Ready()
         })
         {
@@ -307,7 +315,7 @@ public sealed class ForcedSaveTests
         var snapshot = typeof(DeviceMonitor).GetField("snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
         snapshot.SetValue(monitor, Ready(enabled: false, capabilities: 0xec) with
         {
-            SelfTest = new(1, "idle", 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false),
+            SelfTest = new(1, "idle", 0, 0, 0, 0, 0, 0, 0, 0, false, false),
             SelfTestStale = false,
             StorageStale = false
         });
@@ -376,12 +384,24 @@ public sealed class ForcedSaveTests
         Ready() with { Connected = false },
         Ready() with { Msc = null },
         Ready() with { Msc = new(true, true, false) },
-        Ready() with { SelfTest = new(1, "writing", 1024, 0, 0, 0, 0, 0, 0, 0, 0, false, true) }
+        Ready() with { SelfTest = new(1, "writing", 1024, 0, 0, 0, 0, 0, 0, 0, false, true) }
     ];
 
-    private static byte[] Result(byte status) =>
-        [20, 1, 1, 6, status, 0, status == 2 ? (byte)200 : (byte)0, 0,
-            status == 2 ? (byte)1 : (byte)0, 0];
+    private static byte[] Result(byte status)
+    {
+        var report = new byte[69];
+        report[0] = 20;
+        report[1] = report[2] = 1;
+        report[3] = 5;
+        report[4] = status;
+        if (status == 2) { report[6] = 200; report[8] = 1; }
+        return report;
+    }
+
+    private static PicoForgeHid Hid(Func<byte, int, byte[]> read, Action<byte[]> write, Action<string> reopen) =>
+        new(Hardware(), (id, size) => id == 2
+            ? [2, 1, 200, 0, 1, 255, 255, 255, 2, 3, 4, 5, 255, 255, 0, 0, 255, 255]
+            : read(id, size), write, reopen);
 
     private sealed class Commands : IHidCommands
     {
@@ -410,7 +430,7 @@ public sealed class ForcedSaveTests
         public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null) =>
             throw new NotSupportedException();
         public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
-            Action<string>? onProgress = null) => throw new NotSupportedException();
+            Action<string>? onProgress = null, string? ssidHex = null) => throw new NotSupportedException();
         public void CancelWirelessTest()
         {
             if (CancelFailure is not null) throw CancelFailure;
@@ -438,7 +458,8 @@ public sealed class ForcedSaveTests
         public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) => throw new NotSupportedException();
         public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>
             throw new NotSupportedException();
-        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password) =>
+        public WirelessOperationResponse TestWireless(string? boardId, string ssid, string password,
+            string? ssidHex = null) =>
             throw new NotSupportedException();
         public bool CancelWirelessTest(string? boardId) => throw new NotSupportedException();
     }

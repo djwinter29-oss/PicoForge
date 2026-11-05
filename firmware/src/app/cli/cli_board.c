@@ -77,13 +77,15 @@ static void radio_command(EmbeddedCli *instance, char *args, void *context)
         return;
     }
 #if PF_ENABLE_WIRELESS
-    static const char *const wifi_states[] = { "disabled", "connecting", "connected", "failed" };
+    static const char *const wifi_states[] = {
+        "disabled", "connecting", "connected", "failed", "testing", "test-connected", "test-failed"
+    };
     static const char *const ble_states[] = { "disabled", "advertising", "connected" };
     uint8_t report[PF_WIRELESS_STATUS_SIZE];
     char line[120];
     pf_wireless_status(report);
     snprintf(line, sizeof(line), "wifi=%s ip=%u.%u.%u.%u",
-             report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] < 4u ?
+             report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] < sizeof(wifi_states) / sizeof(wifi_states[0]) ?
                  wifi_states[report[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET]] : "unknown",
              report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET], report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 1u],
              report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 2u], report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 3u]);

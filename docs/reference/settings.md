@@ -53,14 +53,15 @@ the failed command; failed commands do not automatically reboot.
 
 ## Host dashboard settings
 
-HID Feature report `2` reads persisted settings as transport-neutral profiles; Feature report `20`, opcode `6`, saves
+HID Feature report `2` reads persisted settings as transport-neutral profiles; Feature report `20`, opcode `5`, saves
 profiles. The profile payload is two-byte little-endian `system_clock_mhz` followed by one-byte `sdcard_profile`
-(`0` Standard, `1` High-Speed) and one-byte `radios` (bit 0 Wi-Fi, bit 1 BLE). Report `2` also returns the selected
+(`0` Standard, `1` High-Speed) and one-byte service switches (bit 0 Wi-Fi, bit 1 BLE, bit 2 TCP CLI). Report `2`
+also returns the selected
 board's GPIO configuration. See the exact
 offsets and validation rules in the [HID Report Reference](usb-hid.md).
 
 The Python, .NET, and Direct dashboards map these values to select options and verify the saved values returned in
-the Feature `20` completion result. **Save&Reboot** sends only opcode `6`; firmware queues its existing deferred
+the Feature `20` completion result. **Save&Reboot** sends opcode `5`; firmware queues its existing deferred
 reboot after a successful save. Failed or rejected saves do not reboot. Opcode `2` remains the standalone reboot
 command. Reconnection refreshes Feature `2`. The Python/.NET
 `GET /api/status` response includes nullable `settings` and `settings_supported` fields. `POST /api/settings` requires
@@ -75,7 +76,8 @@ default; Pico/Pico 2 builds hide them and must send `radios` as `0`.
 The wireless boot controls also include a **TCP CLI** dropdown. It is greyed out when Wi-Fi is disabled and keeps
 its selection until saving; it is also greyed out until the board's wireless status has been read, for example
 while connected through Bluetooth. TCP CLI authentication has no setting: it is required exactly when a control key
-is saved. Bluetooth **Enabled** needs a saved or staged key, and disabling Bluetooth erases the key on save.
+is saved; without a key the listener does not serve. Bluetooth **Enabled** needs a saved or staged key, and disabling
+Bluetooth erases the key on save.
 Pico/Pico 2 builds hide all three wireless boot controls.
 The TCP dropdown shows a usage hint on hover; the hint also remains available as a screen-reader description.
 
@@ -100,7 +102,7 @@ safe-eject guarantee or filesystem repair. After successful reboot, MSC defaults
 
 ## Persistence and flash safety
 
-The version 1 record stores one byte per profile (system clock and shared SD-card speed), the radio and TCP CLI
+The version 2 record stores one byte per profile (system clock and shared SD-card speed), the radio and TCP CLI
 switches, and the private wireless credentials under one CRC. It does not store MHz or separate SPI/SDIO settings.
 The HID protocol's system clock field still carries MHz. See also
 [wireless persistence](wireless.md#execution-and-storage-safety).
@@ -130,23 +132,29 @@ Little-endian, 148 bytes, padded with `0xFF` to one 256-byte page at the start o
 | Offset | Size | Content |
 | --- | --- | --- |
 | 0 | 4 | magic `PFCF` |
-| 4 | 2 | format version (`1`) |
+| 4 | 2 | format version (`2`) |
 | 6 | 2 | record size (`148`) |
 | 8 | 1 | System clock profile (`0` Default, `1` 150 MHz, `2` 200 MHz, `3` 250 MHz) |
 | 9 | 1 | Shared SD-card speed profile (`0` Default, `1` High-Speed) |
 | 10 | 1 | Disabled services: bit 0 Wi-Fi, bit 1 Bluetooth, bit 2 TCP CLI; other bits invalid |
 | 11 | 1 | Wi-Fi authentication state (`0` try WPA2, `1` try WPA3-SAE, `2` WPA2, `3` WPA3-SAE) |
-| 12 | 33 | Wi-Fi SSID, NUL-terminated UTF-8 |
+| 12 | 1 | Wi-Fi SSID length (`0`–`32`) |
+| 13 | 32 | Raw Wi-Fi SSID bytes; unused bytes zero |
 | 45 | 64 | Wi-Fi passphrase, NUL-terminated printable ASCII; empty or 8–63 characters |
-| 109 | 32 | Control key; all zero means no key |
-| 141 | 3 | Reserved, zero |
+| 109 | 32 | Raw Control key; presence is recorded separately |
+| 141 | 1 | Credential flags: bit 0 Control key present; other bits zero |
+| 142 | 2 | Reserved, zero |
 | 144 | 4 | CRC-32 (IEEE, reflected) of bytes 0–143 |
 
-Missing, erased, short, wrong magic/version/size, CRC-invalid or out-of-range data returns the complete defaults;
-fields are never applied partially and boot never depends on the record. Profiles and credentials share one CRC, so
-they commit as one unit. There is a single copy: a power loss during save leaves a record that fails CRC and loads as
-defaults with no credentials (single
-sector, no wear levelling: fine for infrequent user configuration; a dual-sector journal is the upgrade if retaining
+Validated version 1 records load through an in-RAM migration: their NUL-terminated SSID becomes a length-prefixed
+byte string and a nonzero key is marked present. Loading does not write flash; the next explicit save writes version 2.
+In version 2, all 32-byte key values are supported, including all zero; clearing a key removes its presence flag.
+
+Missing, erased, short, wrong magic/unsupported version/size, CRC-invalid or out-of-range data returns complete
+defaults; fields are never applied partially and boot never depends on the record. Profiles and credentials share
+one CRC, so they commit as one unit. There is a single copy: a power loss during save leaves a record that fails CRC
+and loads as defaults with no credentials (single sector, no wear levelling: fine for infrequent user configuration;
+a dual-sector journal is the upgrade if retaining
 the old values across a power loss or frequent writes are needed).
 
 ## Flash reservation

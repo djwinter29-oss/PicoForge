@@ -143,7 +143,9 @@ class MonitorReconnectTests(unittest.TestCase):
         monitor._input_received_at = {}
         client = Mock()
         client.read_info.return_value = {"supported": True}
-        client.read_configuration.return_value = {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0}
+        client.read_configuration.return_value = {
+            "system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0, "tcp_cli_enabled": False,
+        }
         client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
         monitor._client_factory = lambda: client
         waits = []
@@ -216,7 +218,7 @@ class MonitorReconnectTests(unittest.TestCase):
         }
         client.read_configuration.return_value = {
             "system_clock_mhz": 200, "sdcard_profile": 1, "stored_sysclk_profile": 200,
-            "stored_sdcard_profile": 1, "radios": 0, "storage_transport": "sdio",
+            "stored_sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False, "storage_transport": "sdio",
         }
         client.read_input_report.side_effect = lambda timeout_ms: monitor._stop.set()
         monitor._client_factory = lambda: client
@@ -224,7 +226,8 @@ class MonitorReconnectTests(unittest.TestCase):
         monitor._run()
         snapshot = monitor.snapshot()
         self.assertTrue(snapshot["connected"])
-        self.assertEqual(snapshot["settings"], {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0})
+        self.assertEqual(snapshot["settings"],
+                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False})
         self.assertEqual(snapshot["board_configuration"], client.read_configuration.return_value)
         self.assertTrue(snapshot["settings_supported"])
         self.assertIn("filesystem_format", snapshot)
@@ -251,6 +254,7 @@ class MonitorReconnectTests(unittest.TestCase):
             "system_clock_mhz": 0,
             "sdcard_profile": 0,
             "radios": 0,
+            "tcp_cli_enabled": False,
         }
         captured = {}
         items = iter([

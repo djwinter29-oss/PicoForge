@@ -51,7 +51,7 @@ public sealed record MscStatusResponse(bool Enabled, bool TransitionPending, boo
 /// <summary>Verified SD-card file benchmark progress, elapsed times, and cleanup state.</summary>
 public sealed record SelfTestStatusResponse(byte Sequence, string State, uint TargetBytes,
     uint WrittenBytes, uint ReadBytes, uint WriteElapsedMs, uint ReadElapsedMs, uint MismatchCount,
-    byte Error, byte FilesystemResult, byte RequestError, bool FileRemains, bool VolumeMounted)
+    byte Error, byte FilesystemResult, bool FileRemains, bool VolumeMounted)
 {
     public bool Active => State is "queued" or "preparing" or "writing" or "reading" or "cleanup";
     public double? WriteBytesPerSecond => WriteElapsedMs == 0 ? null : WrittenBytes * 1000.0 / WriteElapsedMs;
@@ -97,7 +97,7 @@ internal static partial class HidProtocol
     public const int TelemetryPayloadSize = 22;
     public const int StoragePayloadSize = 34;
     public const int SelfTestPayloadSize = 32;
-    public const int ControlPayloadSize = 9;
+    public const int ControlPayloadSize = 68;
     public const int IdentityFeatureSize = IdentityPayloadSize + 1;
     public const int ConfigurationFeatureSize = ConfigurationPayloadSize + 1;
     public const int ControlFeatureSize = ControlPayloadSize + 1;
@@ -161,9 +161,9 @@ internal static partial class HidProtocol
         var detectGpio = payload[16];
         Require(clock is 0 or 150 or 200 or 250, "unsupported persisted system-clock profile");
         Require(sdProfile <= 1, "unsupported persisted SD-card profile");
-        Require((flags & ~0x1F) == 0, "unknown board-configuration flags");
-        Require((flags & 0x18) == 0 || identity.WirelessSupported,
-            "radio enables reported without wireless capability");
+        Require((flags & ~0x3F) == 0, "unknown board-configuration flags");
+        Require((flags & 0x38) == 0 || identity.WirelessSupported,
+            "wireless service switches reported without wireless capability");
         Require((uartIndex <= 1 || uartIndex == byte.MaxValue)
             && ((tx == byte.MaxValue) == (rx == byte.MaxValue)), "invalid monitor UART assignment");
         Require(((flags & 0x04) == 0 || (uartIndex <= 1 && tx != byte.MaxValue && rx != byte.MaxValue)),
@@ -295,7 +295,7 @@ internal static partial class HidProtocol
         var read = ReadUInt32LittleEndian(payload[12..]);
         var mismatches = ReadUInt32LittleEndian(payload[24..]);
         Require(payload[0] == ReportVersion && (flags & ~3) == 0 && payload[31] == 0
-            && payload[28] <= 10 && payload[29] <= 19 && payload[30] <= 10
+            && payload[28] <= 10 && payload[29] <= 19 && payload[30] == 0
             && target <= 1024u * 1024u * 1024u && written <= target && read <= written
             && (state != 6 || (target != 0 && written == target && read == target && mismatches == 0
                 && (flags & 1) == 0 && payload[28] == 0)), "invalid HID self-test report");
@@ -305,15 +305,15 @@ internal static partial class HidProtocol
             5 => "cleanup", 6 => "passed", 7 => "failed", 8 => "cancelled", _ => $"unknown ({state})"
         };
         return new(payload[1], name, target, written, read, ReadUInt32LittleEndian(payload[16..]),
-            ReadUInt32LittleEndian(payload[20..]), mismatches, payload[28], payload[29], payload[30],
+            ReadUInt32LittleEndian(payload[20..]), mismatches, payload[28], payload[29],
             (flags & 1) != 0, (flags & 2) != 0);
     }
 
     public static byte[] BuildControlRequest(byte transactionId, byte opcode, byte flags, ReadOnlySpan<byte> arguments)
     {
         Require(transactionId != 0, "transaction ID must be nonzero");
-        Require(arguments.Length == 5, "control command requires five argument bytes");
-        Require(opcode != 6 || (flags & ~1) == 0, "invalid saved-settings command flags");
+        Require(arguments.Length == 64, "control command requires 64 argument bytes");
+        Require(opcode != 5 || (flags & ~3) == 0, "invalid saved-settings command flags");
         var report = new byte[ControlFeatureSize];
         report[0] = ControlReportId;
         report[1] = ReportVersion;
@@ -327,7 +327,7 @@ internal static partial class HidProtocol
     public static ControlResult ParseControlResult(ReadOnlySpan<byte> report)
     {
         var payload = FeaturePayload(report, ControlReportId, ControlPayloadSize);
-        var result = new ControlResult(payload[1], payload[2], payload[3], payload[4], payload[5..9].ToArray());
+        var result = new ControlResult(payload[1], payload[2], payload[3], payload[4], payload[5..].ToArray());
         Require(payload[0] == ReportVersion && result.Status <= 6 && result.ErrorReason <= 7,
             "invalid HID control result version, status, or error");
         if (result.Status == 0)
@@ -346,30 +346,75 @@ internal static partial class HidProtocol
             6 => result.ErrorReason == 6,
             _ => false
         }, "invalid control status/error combination");
-        Require(result.Opcode != 6 || result.Status != 3 || result.ErrorReason != 2,
-            "invalid saved-settings control error");
-        Require(result.Opcode is 1 or 2 or 3 or 4 or 6
+        Require(result.Opcode is >= 1 and <= 13
             || (result.Opcode is not 0 && result.Status == 4 && result.ErrorReason == 7),
             "control result has an unsupported opcode/status combination");
         Require(result.Opcode switch
         {
-            1 => result.Status is 1 or 2 or 3 or 4 or 6,
-            2 => result.Status is 1 or 2 or 3 or 4 or 5 or 6,
-            3 => result.Status is 1 or 2 or 3 or 5 or 6,
-            4 => result.Status is 1 or 2 or 3 or 4 or 5 or 6,
-            6 => result.Status is 1 or 2 or 3 or 4 or 5 or 6,
-            _ => result.Status == 4
+            1 => result.Status is 1 or 2 or 3 or 6,
+            2 or 3 => result.Status is 1 or 2 or 3 or 5 or 6,
+            4 or 5 or 9 or 11 => result.Status is >= 1 and <= 6,
+            6 or 7 or 8 or 12 => result.Status is >= 2 and <= 6,
+            10 or 13 => result.Status is 2 or 3 or 4 or 6,
+            _ => result.Status == 4 && result.ErrorReason == 7
         }, "control result status is invalid for its opcode");
-        if (result.Opcode == 6 && result.Status == 2)
+        Require(result.Opcode is < 1 or > 13 || result.Status != 4 || result.ErrorReason == 4,
+            "assigned opcode reported as unassigned");
+        Require(result.Status != 3 || result.ErrorReason != 2 || result.Opcode is 2 or 3,
+            "confirmation error is invalid for this opcode");
+        Require(result.Opcode != 2 || result.Status != 3 || result.ErrorReason is 1 or 2,
+            "invalid reboot error");
+        if (result.Status is 3 or 5 or 6)
         {
-            var settingsFlags = result.ResultData[3];
-            Require(result.ResultData[2] <= 1 && (settingsFlags & 0xf0) == 0
-                && ((settingsFlags & 0x04) == 0 || (settingsFlags & 0x08) != 0),
-                "invalid saved-settings result data");
+            var detail = result.ResultData[0];
+            Require(result.ResultData.AsSpan(1).IndexOfAnyExcept((byte)0) < 0 &&
+                ValidControlDetail(result, detail), "invalid control detail");
+        }
+        else if (result.Status == 2 && result.Opcode == 5)
+        {
+            Require(BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData) is 0 or 150 or 200 or 250 &&
+                result.ResultData[2] <= 1 && result.ResultData[3] <= 7 && result.ResultData[4] <= 7 &&
+                result.ResultData.AsSpan(5).IndexOfAnyExcept((byte)0) < 0, "invalid saved-settings result data");
+        }
+        else if (result.Status == 2 && result.Opcode == 12)
+        {
+            var data = result.ResultData;
+            Require(BinaryPrimitives.ReadUInt16LittleEndian(data) != 0 && data[2] < 18 && data[3] <= 32 &&
+                data.AsSpan(4 + data[3], 32 - data[3]).IndexOfAnyExcept((byte)0) < 0 &&
+                data[37] <= 7 && data.AsSpan(38).IndexOfAnyExcept((byte)0) < 0, "invalid scan entry result");
+        }
+        else if (result.Status == 2 && result.Opcode == 13)
+        {
+            Require(result.ResultData.AsSpan(16).IndexOfAnyExcept((byte)0) < 0, "invalid TCP CLI proof padding");
         }
         else
             Require(result.ResultData.All(value => value == 0), "unexpected control result data");
         return result;
+    }
+
+    private static bool ValidControlDetail(ControlResult result, byte detail)
+    {
+        var op = result.Opcode;
+        if (detail == 0)
+            return !(op == 4 && (result.Status is 5 or 6 || result.Status == 3 && result.ErrorReason == 3));
+        if (result.Status == 3 && result.ErrorReason == 3)
+            return detail switch
+            {
+                3 => op == 4,
+                16 => op == 6, 17 => op == 7, 18 => op == 8,
+                19 or 20 or 21 => op is 5 or 9,
+                22 or 23 => op == 12, 24 => op == 13, 27 => op == 5,
+                _ => false
+            };
+        if (result.Status == 5)
+            return detail switch
+            {
+                1 or 2 => op is 2 or 3 or 4 or 5,
+                25 => op is 5 or 6 or 7 or 8 or 9 or 11,
+                26 => op is 5 or 9 or 11 or 12,
+                _ => false
+            };
+        return result.Status == 6 && op == 4 && detail is 4 or 5 or 6 or 7 or 10;
     }
 
     public static void RequireCompleted(ControlResult result, byte transactionId, byte opcode)
@@ -388,6 +433,16 @@ internal static partial class HidProtocol
             7 => "unsupported command",
             _ => "command did not complete"
         };
+        if (result.ResultData[0] >= 16)
+            description = result.ResultData[0] switch
+            {
+                16 => "invalid SSID length", 17 => "invalid password", 18 => "invalid Control key length",
+                19 => "credential pair is incomplete or unsafe", 20 => "staged wireless values expired",
+                21 => "no eligible staged wireless values", 22 => "scan generation is stale",
+                23 => "scan index is out of range", 24 => "no Control key is saved",
+                25 => "a Wi-Fi test is active", 26 => "a Wi-Fi scan is active",
+                27 => "staged wireless values require explicit commit", _ => description
+            };
         throw new InvalidOperationException($"HID command rejected ({result.Status}/{result.ErrorReason}): {description}");
     }
 
@@ -406,19 +461,11 @@ internal static partial class HidProtocol
         return report.Slice(1, size);
     }
 
-    private static ReadOnlySpan<byte> FeaturePayload(ReadOnlySpan<byte> report, byte reportId, int size,
-        byte version = ReportVersion)
+    private static ReadOnlySpan<byte> FeaturePayload(ReadOnlySpan<byte> report, byte reportId, int size)
     {
-        var offset = report.Length >= size + 2 && report[0] == 0 && report[1] == reportId ? 2
-            : report.Length >= size + 2 && report[0] == reportId && report[1] == reportId
-                && report[2] == version ? 2
-            : report.Length >= size + 1 && report[0] == reportId ? 1
-            : -1;
-        Require(offset >= 0 && report.Length >= offset + size,
+        Require(report.Length == size + 1 && report[0] == reportId,
             "unexpected HID feature report length or ID");
-        Require(report[(offset + size)..].IndexOfAnyExcept((byte)0) < 0,
-            "unexpected HID feature report padding");
-        return report.Slice(offset, size);
+        return report.Slice(1, size);
     }
 
     private static uint ReadUInt32LittleEndian(ReadOnlySpan<byte> source) =>

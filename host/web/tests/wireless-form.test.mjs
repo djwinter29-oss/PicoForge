@@ -27,7 +27,7 @@ test("keyless Bluetooth reports that a control key is needed; unavailable report
   } finally { globalThis.document = previous; }
 });
 
-test("TCP switch is saved only on v2 and expired test credentials block saving", async context => {
+test("TCP switch is saved and expired test credentials block saving", async context => {
   const previous = globalThis.document;
   const elements = new Map();
   const el = id => {
@@ -39,6 +39,7 @@ test("TCP switch is saved only on v2 and expired test credentials block saving",
       addEventListener(event, callback) { this.handlers[event] = callback; },
       replaceChildren() {}, close() {}, showModal() {},
     });
+
     return elements.get(id);
   };
   globalThis.document = { querySelector: selector => el(selector.slice(1)) };
@@ -127,6 +128,52 @@ test("TCP switch is saved only on v2 and expired test credentials block saving",
   }
 });
 
+test("scanned opaque SSIDs retain their bytes through testing and saving; manual edits use UTF-8", async () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  const node = () => ({
+    value: "", children: [], handlers: {}, options: ["0", "1", "configure"].map(value => ({ value })),
+    label: { toggleAttribute() {} }, closest() { return this.label; },
+    addEventListener(event, callback) { this.handlers[event] = callback; },
+    replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); },
+    showModal() { this.open = true; }, close() { this.open = false; },
+  });
+  const el = id => {
+    if (!elements.has(id)) elements.set(id, node());
+    return elements.get(id);
+  };
+  globalThis.document = { querySelector: selector => el(selector.slice(1)), createElement: node };
+  const requests = [];
+  let form;
+  try {
+    el("settings-wifi").value = "1";
+    el("settings-ble").value = "0";
+    form = bindWirelessForm({
+      ready: () => true, supported: () => true,
+      load: async () => ({ ssid: "saved", ssid_hex: "7361766564", tcp_cli_enabled: true }),
+      scan: async () => [{ ssid: "\\xFF\\x00", ssid_hex: "ff00", rssi: -30, secured: false }],
+      test: async request => { requests.push(request); return { ipv4: "192.0.2.1", remaining_seconds: 600 }; },
+      cancelTest: async () => {},
+    });
+    await form.load();
+    await el("wifi-scan").handlers.click();
+    el("wifi-networks").children[0].handlers.click();
+    await el("wifi-connect").handlers.click();
+    assert.equal(requests[0].ssid_hex, "ff00");
+    assert.equal(form.request().ssid_hex, "ff00");
+    assert.equal(form.request().use_tested_wifi, true);
+    el("wifi-ssid").value = "manual";
+    el("wifi-ssid").handlers.input();
+    await el("wifi-connect").handlers.click();
+    assert.equal(Object.hasOwn(requests[1], "ssid_hex"), false);
+    assert.equal(Object.hasOwn(form.request(), "ssid_hex"), false);
+  } finally {
+    form?.reset();
+    globalThis.document = previous;
+  }
+});
+
 test("failed temporary Wi-Fi cancellation retains the stage and permits a safe retry", async () => {
   const previous = globalThis.document;
   const elements = new Map();
@@ -150,11 +197,15 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
   };
   let cancelCalls = 0;
   let cancelFailure = "busy";
+  let testFailure = false;
   try {
     const form = bindWirelessForm({
       load: async () => ({ ssid: "saved", wifi_enabled: true, ble_key_configured: false }),
       scan: async () => [],
-      test: async () => ({ ipv4: "192.168.1.2", remaining_seconds: 600 }),
+      test: async () => {
+        if (testFailure) throw new Error("test could not connect");
+        return { ipv4: "192.168.1.2", remaining_seconds: 600 };
+      },
       cancelTest: async () => {
         cancelCalls++;
         if (cancelFailure === "busy") throw new Error("device is busy");
@@ -188,6 +239,15 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
     assert.equal(Object.hasOwn(form.request(), "use_tested_wifi"), false);
     assert.equal(el("wireless-summary").hidden, true);
 
+    testFailure = true;
+    el("wifi-ssid").value = "failed-network";
+    await el("wifi-connect").handlers.click();
+    el("wifi-dialog").showModal();
+    await el("wifi-cancel").handlers.click();
+    assert.equal(cancelCalls, 3, "failed tests still leave candidates that require explicit discard");
+    assert.equal(el("wifi-dialog").open, false);
+
+    testFailure = false;
     el("wifi-ssid").value = "second-network";
     await el("wifi-connect").handlers.click();
     el("wifi-dialog").showModal();

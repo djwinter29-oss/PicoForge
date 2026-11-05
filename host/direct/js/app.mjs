@@ -1,15 +1,15 @@
-import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=11";
-import { renderStatus } from "./view.mjs?v=19";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=14";
+import { PicoForgeWebHid } from "./device.mjs?v=12";
+import { renderStatus } from "./view.mjs?v=20";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=15";
 import {
   bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
   parseHexBytes, randomHex,
 } from "./console-auth.mjs?v=1";
-import { bindWirelessForm } from "./wireless-form.mjs?v=21";
+import { bindWirelessForm } from "./wireless-form.mjs?v=22";
 import { deriveOperationEligibility } from "./eligibility.mjs?v=3";
 import {
-  cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
-} from "./wireless.mjs?v=13";
+  cancelWireless, readWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
+} from "./wireless.mjs?v=14";
 
 const element = id => document.querySelector(`#${id}`);
 const usbDialog = element("usb-connection-dialog");
@@ -39,7 +39,7 @@ const wirelessForm = bindWirelessForm({
   tcpReady: () => client.state.transport === "ble"
     ? operationEligibility(client.state).settingsReady
     : client.wirelessReady() && Number(settingsRadios[0].value) === 1,
-  load: async () => client.state.wireless ?? decodeWireless(await client.device.receiveFeatureReport(30)),
+  load: async () => client.state.wireless ?? readWireless(client),
   scan: () => scanWireless(client),
   test: (settings, onProgress) => testWireless(client, settings, onProgress),
   cancelTest: () => cancelWireless(client),
@@ -52,6 +52,7 @@ const operationEligibility = (state, wirelessBusy = false) => deriveOperationEli
 });
 let wirelessLoadedAt = 0;
 let wirelessReading = false;
+let wirelessPollTimer = null;
 let consoleAuthToken = null;
 
 const consoleAuthChannel = typeof window !== "undefined" && typeof window.BroadcastChannel === "function"
@@ -88,21 +89,35 @@ async function provideConsoleProof(request) {
 }
 
 async function refreshWirelessStatus() {
+  clearTimeout(wirelessPollTimer);
   const target = client;
   const device = target.device;
   const generation = target.generation;
   wirelessReading = true;
   wirelessLoadedAt = Date.now();
   try {
-    const wireless = decodeWireless(await withTimeout(device.receiveFeatureReport(30), 1500));
-    if (target === client && device === target.device && generation === target.generation) {
-      target.update({ wireless, wireless_error: null });
-    }
+    await readWireless(target, device);
   } catch (error) {
     if (target === client && device === target.device && generation === target.generation) {
-      target.update({ wireless: null, wireless_error: `Wi-Fi status read failed: ${error.message}` });
+      target.expireReports();
     }
-  } finally { wirelessReading = false; }
+  } finally {
+    wirelessReading = false;
+    scheduleWirelessPoll(target);
+  }
+}
+
+function scheduleWirelessPoll(target) {
+  if (target !== client || !target.state.connected) return;
+  wirelessPollTimer = setTimeout(() => {
+    if (target !== client || !target.state.connected) return;
+    target.expireReports();
+    if (!target.state.busy && !target.state.reboot_pending && !target.outstanding
+      && !target.wirelessOperation && !wirelessReading && !wirelessForm.operationBusy()) {
+      void refreshWirelessStatus();
+    } else scheduleWirelessPoll(target);
+  }, target.wirelessInterval ?? 2000);
+  wirelessPollTimer.unref?.();
 }
 
 function render(state) {
@@ -120,6 +135,7 @@ function render(state) {
   }
   renderStatus({ ...state, console_url: consoleUrl });
   if (!state.connected) {
+    clearTimeout(wirelessPollTimer);
     wirelessLoadedAt = 0;
     wirelessForm.reset();
     settingsDirty = false;
@@ -196,7 +212,8 @@ function render(state) {
   if (state.connected && storageReady && !state.busy) {
     void wirelessForm.load();
   }
-  if (Date.now() - wirelessLoadedAt >= 2000 && state.connected && !state.busy && !state.reboot_pending
+  if (Date.now() - wirelessLoadedAt >= (client.wirelessInterval ?? 2000)
+    && state.connected && !state.busy && !state.reboot_pending
     && !client.outstanding && !wirelessForm.operationBusy() && !wirelessReading
     && (state.hardware?.capabilities & 128)) void refreshWirelessStatus();
 }
@@ -322,7 +339,10 @@ element("confirm-configuration").addEventListener("click", () => run(async () =>
 }));
 settingsReboot.addEventListener("click", () => {
   if (settingsReboot.disabled) return;
-  element("reboot-consequence").textContent = settingsDirty || wirelessForm.dirty()
+  element("reboot-consequence").textContent = client.state.wireless?.staged_mask
+    || client.state.wireless?.staged_state & 8
+    ? "Staged wireless credentials and their expiry marker will be discarded."
+    : settingsDirty || wirelessForm.dirty()
     ? "Unsaved dashboard changes will be lost." : "Saved next-boot settings will be applied.";
   rebootDialog.showModal();
 });

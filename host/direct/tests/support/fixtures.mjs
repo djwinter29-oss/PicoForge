@@ -37,7 +37,9 @@ export function selfTest(state = 0) {
   return bytes;
 }
 export function result(transaction, opcode, status = 2, error = 0) {
-  return Uint8Array.from([1, transaction, opcode, status, error, 0, 0, 0, 0]);
+  const bytes = new Uint8Array(68);
+  bytes.set([1, transaction, opcode, status, error]);
+  return bytes;
 }
 export function emit(device, reportId, data) {
   device.dispatchEvent(Object.assign(new Event("inputreport"), { device, reportId, data: new DataView(data.buffer) }));
@@ -60,9 +62,10 @@ export function fakeConnection({ capabilities, ...options } = {}) {
       reads.push(id);
       if (id === 1) return identity(capabilities);
       if (id === 2) return config(capabilities & 8 ? "spi" : "sdio");
+      if (id === 12) { const status = new Uint8Array(48); status[0] = 1; return status; }
       const request = sent.at(-1);
       const reply = result(request[2], request[3]);
-      if (request[3] === 6) reply.set(request.slice(5, 9), 5);
+      if (request[3] === 5) reply.set(request.slice(5, 9), 5);
       return reply;
     } });
   const hid = new EventTarget(); hid.getDevices = async () => [device];
