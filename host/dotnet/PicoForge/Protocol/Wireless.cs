@@ -86,6 +86,33 @@ internal static partial class HidProtocol
     public const int WirelessCommandFeatureSize = 102;
     public const byte WirelessResultReportId = 35;
     public const int WirelessResultFeatureSize = 223;
+    public const byte TcpCliAuthReportId = 36;
+    public const int TcpCliAuthRequestSize = 20;
+    public const int TcpCliAuthResultSize = 20;
+
+    public static byte[] BuildTcpCliAuthRequest(byte transaction, ReadOnlySpan<byte> nonce)
+    {
+        if (transaction == 0 || nonce.Length != 16)
+            throw new ArgumentException("TCP CLI auth requires a transaction and a 16-byte nonce");
+        var report = new byte[TcpCliAuthRequestSize];
+        report[0] = TcpCliAuthReportId;
+        report[1] = 1;
+        report[2] = transaction;
+        nonce.CopyTo(report.AsSpan(3));
+        return report;
+    }
+
+    public static byte[] ParseTcpCliAuthResult(ReadOnlySpan<byte> report, byte transaction)
+    {
+        if (transaction == 0) throw new ArgumentException("TCP CLI auth transaction must be nonzero");
+        var payload = FeaturePayload(report, TcpCliAuthReportId, TcpCliAuthResultSize - 1);
+        Require(payload[0] == 1 && payload[1] == transaction && payload[2] is 0 or 1,
+            "invalid or stale TCP CLI auth result");
+        if (payload[2] != 1)
+            throw new InvalidOperationException(
+                "The board cannot create a TCP CLI proof; check the saved Control key and firmware");
+        return payload[3..].ToArray();
+    }
 
     public static byte[] BuildWirelessRequest(WirelessRequest settings, byte transaction,
         bool tcpCliConfigurable = true)
@@ -130,10 +157,10 @@ internal static partial class HidProtocol
         else if (settings.BleKey.Length != 0) // an empty key erases the saved key; the report field stays zero
         {
             if (settings.BleKey.Length != 64 || settings.BleKey.Any(c => !Uri.IsHexDigit(c)))
-                throw new ArgumentException("BLE key must contain 64 hexadecimal characters and be nonzero");
+                throw new ArgumentException("Control key must contain 64 hexadecimal characters and be nonzero");
             var key = Convert.FromHexString(settings.BleKey);
             if (key.All(value => value == 0))
-                throw new ArgumentException("BLE key must contain 64 hexadecimal characters and be nonzero");
+                throw new ArgumentException("Control key must contain 64 hexadecimal characters and be nonzero");
             key.CopyTo(report, 102);
         }
         return report;

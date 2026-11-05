@@ -16,7 +16,7 @@ internal sealed class ConsoleBridge : IDisposable
 
     public ConsoleBridge() => expiry = new Timer(_ => Expire(), null, 1000, 1000);
 
-    public string Open(WirelessStatusResponse wireless, string? bleKey)
+    public string Open(WirelessStatusResponse wireless, Func<byte[], byte[], byte[]>? signProof = null)
     {
         if (!wireless.WifiEnabled || wireless.WifiState != "connected" || !wireless.TcpCliStarted)
             throw new InvalidOperationException("The board's Wi-Fi TCP CLI is not available");
@@ -25,10 +25,8 @@ internal sealed class ConsoleBridge : IDisposable
             address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) ||
             address.GetAddressBytes()[0] is >= 224 and <= 239)
             throw new ArgumentException("Invalid board IPv4 address");
-        if (wireless.TcpCliAuthRequired &&
-            (bleKey is null || bleKey.Length != 64 || bleKey.Any(character => !Uri.IsHexDigit(character)) ||
-             bleKey.All(character => character == '0')))
-            throw new ArgumentException("A 64-character nonzero BLE control key is required");
+        if (wireless.TcpCliAuthRequired && signProof is null)
+            throw new InvalidOperationException("USB Control key proof is unavailable");
         lock (gate)
         {
             if (connection is not null)
@@ -38,7 +36,8 @@ internal sealed class ConsoleBridge : IDisposable
             {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
                 socket.ConnectAsync(new IPEndPoint(address, 2323), timeout.Token).AsTask().GetAwaiter().GetResult();
-                if (wireless.TcpCliAuthRequired) Authenticate(socket, bleKey!);
+                if (wireless.TcpCliAuthRequired)
+                    Authenticate(socket, signProof!);
                 socket.SendTimeout = 100;
                 connection = socket;
                 session = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -53,7 +52,7 @@ internal sealed class ConsoleBridge : IDisposable
         }
     }
 
-    private static void Authenticate(Socket socket, string bleKey)
+    private static void Authenticate(Socket socket, Func<byte[], byte[], byte[]> signProof)
     {
         var challenge = ReadChallenge(socket);
         var fields = challenge[..^2].Split(' ');
@@ -61,20 +60,15 @@ internal sealed class ConsoleBridge : IDisposable
             fields[2].Length != 32 || fields[2].Any(character => !Uri.IsHexDigit(character)) ||
             fields[3].Length != 16 || fields[3].Any(character => !Uri.IsHexDigit(character)))
             throw new IOException("Invalid TCP CLI authentication challenge");
-        byte[] key = Convert.FromHexString(bleKey);
         byte[] nonce = Convert.FromHexString(fields[2]);
         byte[] uid = Convert.FromHexString(fields[3]);
-        byte[] message = new byte[42];
-        byte[] digest = [];
+        byte[] proof = [];
         try
         {
-            nonce.CopyTo(message, 0);
-            uid.CopyTo(message, 16);
-            "PFTCPCLI1"u8.CopyTo(message.AsSpan(24));
-            "TCPCLI001"u8.CopyTo(message.AsSpan(33));
-            digest = HMACSHA256.HashData(key, message);
+            proof = signProof(nonce, uid);
+            if (proof.Length != 16) throw new InvalidOperationException("The board returned an invalid TCP CLI proof");
             var response = System.Text.Encoding.ASCII.GetBytes(
-                $"AUTH {Convert.ToHexString(digest.AsSpan(0, 16)).ToLowerInvariant()}\r\n");
+                $"AUTH {Convert.ToHexString(proof).ToLowerInvariant()}\r\n");
             try
             {
                 var sent = 0;
@@ -92,11 +86,9 @@ internal sealed class ConsoleBridge : IDisposable
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(key);
             CryptographicOperations.ZeroMemory(nonce);
             CryptographicOperations.ZeroMemory(uid);
-            CryptographicOperations.ZeroMemory(message);
-            CryptographicOperations.ZeroMemory(digest);
+            CryptographicOperations.ZeroMemory(proof);
         }
     }
 
@@ -212,14 +204,13 @@ internal sealed class ConsoleBridge : IDisposable
                 if (request.Method == "POST")
                 {
                     var payload = await request.ReadFromJsonAsync<JsonElement>(context.RequestAborted);
-                    if (payload.ValueKind != JsonValueKind.Object ||
-                        payload.EnumerateObject().Any(property => property.Name != "ble_key") ||
-                        payload.TryGetProperty("ble_key", out var keyField) &&
-                        keyField.ValueKind != JsonValueKind.String)
-                        throw new ArgumentException("Expected an empty object or a BLE control key");
-                    var bleKey = payload.TryGetProperty("ble_key", out keyField) ? keyField.GetString() : null;
-                    var wireless = dashboard.ReadWireless(request.Query["board"].ToString()).Wireless;
-                    return Results.Ok(new { session = bridge.Open(wireless, bleKey) });
+                    if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Any())
+                        throw new ArgumentException(
+                            "Expected an empty object; TCP authentication uses the connected board");
+                    var board = request.Query["board"].ToString();
+                    var wireless = dashboard.ReadWireless(board).Wireless;
+                    return Results.Ok(new { session = bridge.Open(wireless,
+                        (nonce, uid) => dashboard.TcpCliAuthProof(board, nonce, uid)) });
                 }
                 if (request.Method == "GET")
                 {

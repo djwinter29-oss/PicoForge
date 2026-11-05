@@ -1,4 +1,4 @@
-import { decodeConfigReport, withTimeout } from "./device.mjs?v=8";
+import { decodeConfigReport, withTimeout } from "./device.mjs?v=9";
 
 export function decodeWireless(report) {
   const bytes = report instanceof DataView
@@ -140,7 +140,7 @@ export function buildWireless(transaction, settings, tcpCliConfigurable = true) 
   // An empty ble_key erases the saved key; the report field stays zero.
   if (settings.ble_key) {
     if (!/^[a-f0-9]{64}$/i.test(settings.ble_key) || /^0+$/.test(settings.ble_key)) {
-      throw new Error("BLE key must be 64 nonzero hex digits.");
+      throw new Error("Control key must be 64 nonzero hex digits.");
     }
     report.set(Uint8Array.from(settings.ble_key.match(/../g), byte => parseInt(byte, 16)), 101);
   }

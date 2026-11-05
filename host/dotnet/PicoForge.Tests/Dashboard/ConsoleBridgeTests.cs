@@ -82,7 +82,9 @@ public sealed class ConsoleBridgeTests
             var key = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
             var nonce = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
             var uid = Enumerable.Range(0, 8).Select(value => (byte)value).ToArray();
-            var opening = Task.Run(() => bridge.Open(Wireless(address.ToString(), true), Convert.ToHexString(key)));
+            var opening = Task.Run(() => bridge.Open(Wireless(address.ToString(), true), (challenge, boardUid) =>
+                HMACSHA256.HashData(key, challenge.Concat(boardUid)
+                    .Concat(Encoding.ASCII.GetBytes("PFTCPCLI1TCPCLI001")).ToArray()).AsSpan(0, 16).ToArray()));
             using var peer = await listener.AcceptSocketAsync(timeout.Token);
             await peer.SendAsync(Encoding.ASCII.GetBytes(
                 $"PicoForge AUTH {Convert.ToHexString(nonce).ToLowerInvariant()} " +
@@ -100,11 +102,9 @@ public sealed class ConsoleBridgeTests
     }
 
     [Fact]
-    public void RequiresANonzeroBleKeyWhenTheBoardRequiresTcpAuthentication()
+    public void RequiresUsbProofSupportWhenTheBoardRequiresTcpAuthentication()
     {
         using var bridge = new ConsoleBridge();
-        Assert.Throws<ArgumentException>(() => bridge.Open(Wireless("192.168.66.87", true), null));
-        Assert.Throws<ArgumentException>(() =>
-            bridge.Open(Wireless("192.168.66.87", true), new string('0', 64)));
+        Assert.Throws<InvalidOperationException>(() => bridge.Open(Wireless("192.168.66.87", true)));
     }
 }

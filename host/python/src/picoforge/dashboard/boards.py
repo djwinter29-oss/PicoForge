@@ -176,6 +176,9 @@ class DashboardBoards(DashboardBackend):
     def read_wireless(self, board_id: str | None) -> WirelessDashboardResponse:
         return self._monitor(board_id).read_wireless()
 
+    def tcp_cli_auth_proof(self, board_id: str | None, nonce: bytes, uid: bytes) -> bytes:
+        return self._monitor(board_id).tcp_cli_auth_proof(nonce, uid)
+
     def scan_wireless(self, board_id: str | None) -> WirelessScanResponse:
         return self._monitor(board_id).scan_wireless()
 

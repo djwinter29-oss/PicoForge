@@ -1,4 +1,4 @@
-import { PicoForgeWebHid } from "./device.mjs?v=8";
+import { PicoForgeWebHid } from "./device.mjs?v=9";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f501";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f501`;
@@ -46,6 +46,27 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
       throw Object.assign(new Error("The board rejected the control key. Check the key, wait 2 s, and retry."),
         { final: true });
     }
+  }
+
+  async tcpCliAuthProof(nonce, uid) {
+    if (!this.state.connected || !this.bleKey || !this.bleDevice?.gatt.connected) {
+      throw new Error("Connect the matching PicoForge board over Bluetooth to authorize its Wi-Fi console");
+    }
+    if (!(nonce instanceof Uint8Array) || nonce.length !== 16
+      || !(uid instanceof Uint8Array) || uid.length !== 8) {
+      throw new Error("Invalid TCP CLI authentication challenge");
+    }
+    const expectedUid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
+    if (uid.some((byte, index) => byte !== expectedUid[index])) {
+      throw new Error("The Wi-Fi console challenge belongs to a different board");
+    }
+    const message = new Uint8Array(16 + 8 + 9 + 9);
+    message.set(nonce);
+    message.set(uid, 16);
+    message.set(new TextEncoder().encode("PFTCPCLI1"), 24);
+    message.set(new TextEncoder().encode("TCPCLI001"), 33);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
+    return mac.slice(0, 16);
   }
 
   async connect(hex) {

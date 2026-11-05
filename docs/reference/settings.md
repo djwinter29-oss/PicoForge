@@ -7,7 +7,7 @@ there is no runtime transport selector.
 | --- | --- | --- | --- |
 | System clock (`pf_sysclk_profile_t`) | `PF_SYSCLK_DEFAULT`, `PF_SYSCLK_150MHZ`, `PF_SYSCLK_200MHZ`, `PF_SYSCLK_250MHZ` | Default: keep the SDK stock clock | At boot |
 | Storage speed (`pf_storage_speed_t`) | `PF_STORAGE_SPEED_DEFAULT` (25 MHz), `PF_STORAGE_SPEED_HIGH` (50 MHz) | Default (25 MHz) | At boot |
-| W-board Wi-Fi/BLE | Radio switches, SSID, passphrase and BLE key | On; no credentials | At boot |
+| W-board Wi-Fi/BLE | Radio switches, SSID, passphrase and Control key | On; no credentials | At boot |
 
 Wireless provisioning, private credential storage, BLE authorization and client support are defined in the
 [wireless design](../guides/wireless.md).

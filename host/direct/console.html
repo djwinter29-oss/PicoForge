@@ -8,13 +8,13 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
   <link rel="stylesheet" href="css/direct.css?v=18">
   <link rel="stylesheet" href="css/console.css?v=4">
-  <script type="module" src="js/console.mjs?v=2"></script>
+  <script type="module" src="js/console.mjs?v=4"></script>
 </head>
 <body class="console-page">
   <header class="topbar">
     <a class="brand" href="./" aria-label="PicoForge Direct dashboard">
       <span class="brand-mark">PF</span>
-      <span class="brand-copy"><strong>PicoForge</strong><small>Direct · App v0.0.0-dev</small></span>
+      <span class="brand-copy"><strong>PicoForge</strong><small>Direct · App v0.0.0-debug</small></span>
     </a>
     <div class="connection">
       <span class="connection-light" aria-hidden="true"></span>
@@ -27,13 +27,10 @@
       <div>
         <h1>Wi-Fi console</h1>
         <p class="console-lede">Only one CLI session is allowed; close other USB or TCP terminals before connecting.
+          Keep the matching Direct dashboard connected over USB or Bluetooth when the board requires authentication.
           Traffic is not encrypted.</p>
       </div>
       <div class="actions">
-        <label class="console-key" for="console-auth-key">BLE control key
-          <input id="console-auth-key" type="password" maxlength="64" autocomplete="off" spellcheck="false"
-            placeholder="64 hex digits">
-        </label>
         <button class="button button-secondary" id="connect" type="button" data-state="disconnected">Connect</button>
       </div>
     </section>

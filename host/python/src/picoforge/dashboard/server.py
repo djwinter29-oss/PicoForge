@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import base64
 import binascii
@@ -13,6 +12,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from .backend import DashboardBackend
 from .boards import DashboardBoards
 from .console import ConsoleBridge
+from .. import __version__
 from ..reports import (
     build_wireless_command_report,
     build_wireless_configuration_report,
@@ -72,23 +72,14 @@ def create_app(monitor: DashboardBackend | None = None, web_root: Path | None = 
     return app
 
 
-def _app_version() -> str:
-    try:
-        return version("picoforge")
-    except PackageNotFoundError:
-        return "0.0.0-dev"
-
-
 def _register_ui_routes(app: Flask, root: Path) -> None:
-    app_version = _app_version()
-
     @app.get("/")
     def index():
-        return render_template("index.html", dashboard_type="Python", app_version=app_version)
+        return render_template("index.html", dashboard_type="Python", app_version=__version__)
 
     @app.get("/console")
     def console_page():
-        return render_template("console.html", dashboard_type="Python", app_version=app_version)
+        return render_template("console.html", dashboard_type="Python", app_version=__version__)
 
     @app.get("/favicon.svg")
     def favicon():
@@ -113,11 +104,14 @@ def _register_console_routes(app: Flask, dashboard: DashboardBackend, console: C
         try:
             if request.method == "POST":
                 payload = request.get_json(silent=True)
-                if (not isinstance(payload, dict) or set(payload) - {"ble_key"}
-                        or "ble_key" in payload and not isinstance(payload["ble_key"], str)):
-                    return jsonify({"error": "Expected an empty object or a BLE control key"}), 400
-                status = dashboard.read_wireless(request.args.get("board"))["wireless"]
-                return jsonify({"session": console.open(status, payload.get("ble_key"))})
+                if not isinstance(payload, dict) or payload:
+                    return jsonify({
+                        "error": "Expected an empty object; TCP authentication uses the connected board"
+                    }), 400
+                board_id = request.args.get("board")
+                status = dashboard.read_wireless(board_id)["wireless"]
+                sign_proof = lambda nonce, uid: dashboard.tcp_cli_auth_proof(board_id, nonce, uid)
+                return jsonify({"session": console.open(status, sign_proof)})
             session = request.args.get("session")
             if request.method == "GET":
                 data, closed = console.read(session)

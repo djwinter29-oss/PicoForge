@@ -302,7 +302,8 @@ export class PicoForgeWebHid {
     }
     Object.assign(this, { hid, onChange, now, sleep, timeout, device: null, reconnectUid: null,
       transaction: 0, outstanding: null, pendingWirelessCommand: null, reconcileWirelessCommand: null,
-      pendingWirelessSave: null, reconcileWirelessSave: null,
+      pendingWirelessSave: null, reconcileWirelessSave: null, wirelessAuthTransaction: 0,
+      wirelessAuthPending: false,
       receipts: new Map(), expiryTimer: null, generation: 0, mscPendingEnabled: null,
       selfTestPendingSequence: null, pendingStore, recoveryError: null });
     try {
@@ -586,6 +587,46 @@ export class PicoForgeWebHid {
       await this.sleep(50);
     }
     throw new Error("Command outcome uncertain: result timeout; disconnect/reconnect to read it, never replay");
+  }
+
+  async tcpCliAuthProof(nonce, uid) {
+    const hardware = this.state.hardware;
+    if (!this.device || !this.state.connected || !(hardware?.capabilities & 128)) {
+      throw new Error("Connect the matching PicoForge board over USB to authorize its Wi-Fi console");
+    }
+    if (!(nonce instanceof Uint8Array) || nonce.length !== 16
+      || !(uid instanceof Uint8Array) || uid.length !== 8) {
+      throw new Error("Invalid TCP CLI authentication challenge");
+    }
+    const expectedUid = Uint8Array.from(hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
+    if (uid.some((byte, index) => byte !== expectedUid[index])) {
+      throw new Error("The Wi-Fi console challenge belongs to a different board");
+    }
+    if (this.wirelessAuthPending) throw new Error("A TCP CLI proof is already being generated");
+    this.wirelessAuthPending = true;
+    try {
+      const device = this.device;
+      const generation = this.generation;
+      const transaction = this.wirelessAuthTransaction % 255 + 1;
+      this.wirelessAuthTransaction = transaction;
+      const request = new Uint8Array(19);
+      request.set([1, transaction]);
+      request.set(nonce, 2);
+      await withTimeout(device.sendFeatureReport(36, request), this.timeout);
+      if (device !== this.device || generation !== this.generation) {
+        throw new Error("The USB connection changed while authorizing the Wi-Fi console");
+      }
+      const response = payload(await withTimeout(device.receiveFeatureReport(36), this.timeout), 19);
+      if (response.getUint8(1) !== transaction || response.getUint8(2) > 1) {
+        throw new Error("Invalid or stale TCP CLI authentication proof");
+      }
+      if (response.getUint8(2) !== 1) {
+        throw new Error("The board could not create a TCP CLI proof; check the saved Control key and firmware");
+      }
+      return bytesAt(response, 3, 16).slice();
+    } finally {
+      this.wirelessAuthPending = false;
+    }
   }
 
   async command(opcode, options) {

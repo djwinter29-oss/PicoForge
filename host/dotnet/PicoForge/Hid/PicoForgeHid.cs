@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Security.Cryptography;
 using HidSharp;
 
 namespace PicoForge;
@@ -173,6 +174,21 @@ internal sealed class PicoForgeHid : IHidCommands, IDisposable
     {
         EnsureCapability(HidProtocol.CapabilityWireless, "wireless provisioning");
         return HidProtocol.ParseWirelessStatus(readFeature(HidProtocol.WirelessReportId, HidProtocol.WirelessFeatureSize));
+    }
+
+    public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid)
+    {
+        ArgumentNullException.ThrowIfNull(nonce);
+        ArgumentNullException.ThrowIfNull(uid);
+        EnsureCapability(HidProtocol.CapabilityWireless, "USB TCP CLI authentication");
+        identity ??= ReadInfo();
+        var expectedUid = Convert.FromHexString(identity.SerialNumber);
+        if (uid.Length != expectedUid.Length || !CryptographicOperations.FixedTimeEquals(uid, expectedUid))
+            throw new ArgumentException("TCP CLI challenge belongs to a different board");
+        transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
+        writeFeature(HidProtocol.BuildTcpCliAuthRequest(transactionId, nonce));
+        return HidProtocol.ParseTcpCliAuthResult(
+            readFeature(HidProtocol.TcpCliAuthReportId, HidProtocol.TcpCliAuthResultSize), transactionId);
     }
 
     /// <summary>Save board settings and credentials atomically, then confirm both through Reports 30 and 2.</summary>

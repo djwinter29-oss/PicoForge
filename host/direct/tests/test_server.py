@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,45 +6,61 @@ from tools.host.direct_server import DirectHandler, DirectTerminal
 
 
 class DirectTerminalTests(unittest.TestCase):
-    def test_authentication_key_must_be_nonzero_256_bit_hex(self):
-        self.assertTrue(DirectTerminal._valid_key("ab" * 32))
-        self.assertFalse(DirectTerminal._valid_key("00" * 32))
-        self.assertFalse(DirectTerminal._valid_key("ab" * 31))
-        self.assertFalse(DirectTerminal._valid_key("zz" * 32))
+    class FakeSocket:
+        def __init__(self, challenge=b""):
+            self.remaining = challenge
+            self.sent = []
+            self.closed = False
 
-    def test_open_rejects_non_lan_addresses_and_missing_authentication_key(self):
+        def settimeout(self, _timeout):
+            pass
+
+        def recv(self, size):
+            chunk, self.remaining = self.remaining[:size], self.remaining[size:]
+            return chunk
+
+        def sendall(self, data):
+            self.sent.append(data)
+
+        def close(self):
+            self.closed = True
+
+    def test_open_rejects_non_lan_addresses_and_invalid_authentication_setting(self):
         terminal = DirectTerminal()
         with self.assertRaisesRegex(ValueError, "private LAN"):
             terminal.open("8.8.8.8", False)
-        with self.assertRaisesRegex(ValueError, "control key"):
-            terminal.open("192.168.1.2", True, "")
+        with self.assertRaisesRegex(ValueError, "authentication setting"):
+            terminal.open("192.168.1.2", "true")
 
-    def test_authentication_proof_matches_board_challenge(self):
-        key = "ab" * 32
-        nonce = bytes(range(16))
-        uid = bytes(range(8))
-        challenge = f"PicoForge AUTH {nonce.hex()} {uid.hex()}\r\n".encode("ascii")
+    def test_authenticated_open_waits_for_a_board_bound_proof_before_terminal_io(self):
+        challenge = b"PicoForge AUTH 000102030405060708090a0b0c0d0e0f 0001020304050607\r\n"
+        connection = self.FakeSocket(challenge)
+        terminal = DirectTerminal()
+        with patch("tools.host.direct_server.socket.create_connection", return_value=connection), \
+                patch.object(terminal, "_touch_locked"):
+            opened = terminal.open("192.168.1.2", True)
+            self.assertEqual(opened["challenge"], {
+                "nonce": "000102030405060708090a0b0c0d0e0f", "uid": "0001020304050607",
+            })
+            with self.assertRaisesRegex(RuntimeError, "authentication is pending"):
+                terminal.write(opened["session"], b"help\r")
+            with self.assertRaisesRegex(ValueError, "Invalid TCP CLI proof"):
+                terminal.authenticate(opened["session"], "not-a-proof")
+            terminal.authenticate(opened["session"], "AB" * 16)
+            self.assertEqual(connection.sent, [b"AUTH " + b"ab" * 16 + b"\r\n"])
+            with self.assertRaisesRegex(RuntimeError, "not awaiting authentication"):
+                terminal.authenticate(opened["session"], "cd" * 16)
+            terminal.write(opened["session"], b"help\r")
+            self.assertEqual(connection.sent[-1], b"help\r")
+            terminal.close_all()
+            self.assertTrue(connection.closed)
 
-        class FakeSocket:
-            def __init__(self):
-                self.remaining = challenge
-                self.sent = b""
-
-            def settimeout(self, _timeout):
-                pass
-
-            def recv(self, size):
-                chunk, self.remaining = self.remaining[:size], self.remaining[size:]
-                return chunk
-
-            def sendall(self, data):
-                self.sent = data
-
-        connection = FakeSocket()
-        DirectTerminal._authenticate(connection, key)
-        message = nonce + uid + b"PFTCPCLI1" + b"TCPCLI001"
-        proof = hmac.new(bytes.fromhex(key), message, hashlib.sha256).digest()[:16]
-        self.assertEqual(connection.sent, b"AUTH " + proof.hex().encode("ascii") + b"\r\n")
+    def test_authenticated_open_rejects_malformed_board_challenges(self):
+        for challenge in [b"invalid\r\n", b"PicoForge AUTH 00 0001020304050607\r\n",
+                          b"PicoForge AUTH 000102030405060708090a0b0c0d0e0f 000102030405060g\r\n"]:
+            with self.subTest(challenge=challenge):
+                with self.assertRaisesRegex(ValueError, "Invalid TCP CLI authentication challenge"):
+                    DirectTerminal._read_auth_challenge(self.FakeSocket(challenge))
 
     def test_terminal_api_rejects_nonlocal_or_cross_origin_requests(self):
         handler = object.__new__(DirectHandler)
@@ -64,18 +78,21 @@ class DirectTerminalTests(unittest.TestCase):
 
     @patch("tools.host.direct_server.socket.create_connection")
     def test_open_uses_fixed_cli_port_and_closes_duplicate_connection(self, create_connection):
-        first = create_connection.return_value
+        first = self.FakeSocket()
+        create_connection.return_value = first
         terminal = DirectTerminal()
         with patch.object(terminal, "_touch_locked"):
-            session = terminal.open("192.168.1.2", False)
-            self.assertTrue(session)
+            opened = terminal.open("192.168.1.2", False)
+            self.assertTrue(opened["session"])
+            self.assertIsNone(opened["challenge"])
             self.assertEqual(create_connection.call_args.args, (("192.168.1.2", 2323),))
-            second = type(first)()
+            second = self.FakeSocket()
             create_connection.return_value = second
             with self.assertRaisesRegex(RuntimeError, "already connected"):
                 terminal.open("192.168.1.3", False)
-            second.close.assert_called_once()
+            self.assertTrue(second.closed)
             terminal.close_all()
+            self.assertTrue(first.closed)
 
 
 if __name__ == "__main__":

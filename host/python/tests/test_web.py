@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from picoforge.dashboard.server import create_app
 from picoforge.cli import parse_args
@@ -106,6 +107,22 @@ class FalseyMonitor(FakeMonitor):
 
 
 class WebTests(unittest.TestCase):
+    def test_unreleased_pages_display_the_debug_app_version(self):
+        client = create_app(FakeMonitor()).test_client()
+        for route in ("/", "/console"):
+            with self.subTest(route=route):
+                page = client.get(route).get_data(as_text=True)
+                self.assertIn("Python · App v0.0.0-debug<", page)
+
+    def test_release_pages_display_the_stamped_app_version(self):
+        with patch("picoforge.dashboard.server.__version__", "1.2.3"):
+            client = create_app(FakeMonitor()).test_client()
+            for route in ("/", "/console"):
+                with self.subTest(route=route):
+                    page = client.get(route).get_data(as_text=True)
+                    self.assertIn("Python · App v1.2.3<", page)
+                    self.assertNotIn("App v0.0.0-debug", page)
+
     def test_create_app_keeps_an_injected_falsey_dashboard(self):
         monitor = FalseyMonitor()
 

@@ -56,6 +56,12 @@ Firmware packages are attached as ZIPs, preserving the board/transport distincti
 
 ### Host Packages
 
+Unreleased Python, .NET, and Direct dashboards display **App v0.0.0-debug** on the dashboard and console pages.
+Python's development package metadata uses `0.0.0.dev0` for PEP 440 compatibility; the displayed version comes from
+the package source, not potentially stale installed metadata. Release packaging stamps all three apps with the
+validated tag's `X.Y.Z`, displayed as **App vX.Y.Z**. The app version is separate from the connected board's firmware
+version. Source checkouts do not infer a release version from Git tags at runtime.
+
 The release also includes:
 
 - `picoforge-X.Y.Z-py3-none-any.whl`: Python CLI and local dashboard.

@@ -6,6 +6,8 @@ from picoforge.hid.device import PicoForgeHid, _matches_vendor_collection, enume
 from picoforge.reports import (
     CONTROL_FEATURE_SIZE,
     SELF_TEST_INPUT_SIZE,
+    TCP_CLI_AUTH_REPORT_ID,
+    TCP_CLI_AUTH_RESULT_SIZE,
     parse_identity_report,
     parse_status_report,
 )
@@ -156,6 +158,20 @@ class HidDeviceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "LED"):
             client.set_led(True)
         self.assertEqual(client._device.sent, [])
+
+    def test_tcp_cli_auth_proof_uses_the_matching_usb_board(self):
+        client = self.connection()
+        client.identity["capabilities"] |= 128
+        nonce = bytes(range(16))
+        proof = bytes(range(16, 32))
+        client._device.feature_reports[TCP_CLI_AUTH_REPORT_ID] = [
+            bytes([TCP_CLI_AUTH_REPORT_ID, 1, 1, 1]) + proof]
+        self.assertEqual(client.tcp_cli_auth_proof(nonce, bytes.fromhex("0123456789abcdef")), proof)
+        self.assertEqual(client._device.sent, [bytes([36, 1, 1]) + nonce + b"\0"])
+        self.assertEqual(client._device.last_get, (TCP_CLI_AUTH_REPORT_ID, TCP_CLI_AUTH_RESULT_SIZE))
+        with self.assertRaisesRegex(ValueError, "different board"):
+            client.tcp_cli_auth_proof(nonce, bytes(8))
+        self.assertEqual(len(client._device.sent), 1)
 
     def test_command_result_must_match_transaction_and_opcode(self):
         client = self.connection()

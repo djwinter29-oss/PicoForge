@@ -25,9 +25,13 @@
 #include "app/runtime_stats.h"
 #if PF_ENABLE_WIRELESS
 #include "app/wireless/wireless.h"
+#include "app/wireless/wireless_auth.h"
 static bool ble_dispatch; /**< Current synchronous dispatcher targets the BLE-specific result slot. */
 static bool self_test_from_ble; /**< Pending benchmark admission belongs to the BLE result slot. */
 static pf_hid_control_result_t ble_result = { .version = PF_HID_REPORT_VERSION };
+/** USB Feature 36 result; proof bytes are cleared immediately after the host reads them. */
+static uint8_t tcp_auth_proof_result[PF_WIRELESS_AUTH_RESULT_SIZE];
+static bool tcp_auth_proof_ready;
 #endif
 
 #ifndef PF_HID_BOARD_MODEL
@@ -599,6 +603,13 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
             pf_wireless_result_report(buffer);
             return PF_WIRELESS_RESULT_SIZE;
         }
+        if (report_id == PF_WIRELESS_AUTH_REPORT_ID && reqlen >= PF_WIRELESS_AUTH_RESULT_SIZE &&
+            tcp_auth_proof_ready) {
+            memcpy(buffer, tcp_auth_proof_result, sizeof(tcp_auth_proof_result));
+            memset(tcp_auth_proof_result + 3u, 0, sizeof(tcp_auth_proof_result) - 3u);
+            tcp_auth_proof_ready = false;
+            return PF_WIRELESS_AUTH_RESULT_SIZE;
+        }
 #endif
         if (report_id == PF_HID_IDENTITY_REPORT_ID && reqlen >= sizeof(pf_hid_identity_report_t)) {
             pf_hid_identity_report_t report;
@@ -654,6 +665,19 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            uint16_t bufsize)
 {
 #if PF_ENABLE_WIRELESS
+    if (instance == 0u && report_id == PF_WIRELESS_AUTH_REPORT_ID &&
+        report_type == HID_REPORT_TYPE_FEATURE && buffer != NULL &&
+        bufsize == PF_WIRELESS_AUTH_REQUEST_SIZE) {
+        memset(tcp_auth_proof_result, 0, sizeof(tcp_auth_proof_result));
+        tcp_auth_proof_ready = false;
+        if (buffer[0] != PF_HID_REPORT_VERSION || buffer[1] == 0u || buffer[18] != 0u) return;
+        tcp_auth_proof_result[0] = PF_HID_REPORT_VERSION;
+        tcp_auth_proof_result[1] = buffer[1];
+        tcp_auth_proof_result[2] = pf_wireless_auth_tcp_cli_proof(
+            buffer + 2u, tcp_auth_proof_result + 3u) ? 1u : 0u;
+        tcp_auth_proof_ready = true;
+        return;
+    }
     if (instance == 0u && report_id == PF_WIRELESS_COMMAND_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
         buffer != NULL && bufsize == PF_WIRELESS_COMMAND_SIZE) {
         if (force_save_pending || force_save_reboot_waiting || reboot_requested)

@@ -4,7 +4,6 @@ import { consoleRequest } from "./console-api.mjs";
 const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");
 const connect = document.querySelector("#connect");
-const authKey = document.querySelector("#console-auth-key");
 const board = new URLSearchParams(location.search).get("board") ?? "";
 const encoder = new TextEncoder();
 let screen = new ConsoleTerminal();
@@ -106,7 +105,7 @@ async function open() {
   status.textContent = "Connecting to the board's TCP CLI...";
   try {
     const result = await consoleRequest(`/api/console?board=${encodeURIComponent(board)}`, "POST",
-      authKey.value ? { ble_key: authKey.value } : {}, controller.signal, 15000);
+      {}, controller.signal, 15000);
     if (controller.signal.aborted) {
       void fetch(endpoint(result.session), { method: "DELETE", keepalive: true });
       return;
@@ -130,7 +129,6 @@ async function open() {
     }
   } finally {
     if (openingController === controller) openingController = null;
-    authKey.value = "";
   }
 }
 

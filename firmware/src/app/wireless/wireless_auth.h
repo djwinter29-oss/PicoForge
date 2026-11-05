@@ -41,4 +41,12 @@ void pf_wireless_auth_device_id(uint8_t uid[8]);
 bool pf_wireless_auth_verify(const uint8_t nonce[16], const uint8_t domain[9], const uint8_t request[9],
                              const uint8_t proof[16]);
 
+/**
+ * @brief Create the fixed TCP CLI admission proof for a challenge received by the USB host.
+ * @param nonce 16-byte challenge from the active TCP CLI connection.
+ * @param proof Output buffer for the first 16 HMAC-SHA256 bytes.
+ * @return True when the configured key produced a proof.
+ */
+bool pf_wireless_auth_tcp_cli_proof(const uint8_t nonce[16], uint8_t proof[16]);
+
 #endif

@@ -196,8 +196,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   };
   const openBle = () => {
     el("ble-status").textContent = status?.ble_key_configured
-      ? "A BLE control key is saved. It cannot be read back; generate a replacement only if needed."
-      : "No BLE control key is saved. Bluetooth stays off until a key is saved.";
+      ? "A Control key is saved. It cannot be read back; generate a replacement only if needed."
+      : "No Control key is saved. Bluetooth stays off until a key is saved.";
     bleDialog.showModal();
   };
   // "input" fires before "change", so the dashboards' change handlers only ever see Enabled or Disabled.

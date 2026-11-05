@@ -25,6 +25,10 @@ from ..reports import (
     WIRELESS_FEATURE_SIZE,
     WIRELESS_RESULT_REPORT_ID,
     WIRELESS_RESULT_FEATURE_SIZE,
+    TCP_CLI_AUTH_REPORT_ID,
+    TCP_CLI_AUTH_RESULT_SIZE,
+    build_tcp_cli_auth_request,
+    parse_tcp_cli_auth_result,
     build_wireless_configuration_report,
     build_wireless_command_report,
     parse_wireless_status_report,
@@ -255,6 +259,25 @@ class PicoForgeHid:
             raise RuntimeError("Wireless provisioning is unavailable on this firmware")
         return parse_wireless_status_report(
             self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE))
+
+    def tcp_cli_auth_proof(self, nonce: bytes, uid: bytes) -> bytes:
+        """Ask this board for the fixed TCP CLI proof; never expose or copy its saved key."""
+        self._require_open()
+        identity = self.identity or self.read_info()
+        if not identity.get("capabilities", 0) & CAP_WIRELESS:
+            raise RuntimeError("USB TCP CLI authentication is unavailable on this firmware")
+        try:
+            expected_uid = bytes.fromhex(identity["serial_number"])
+        except (KeyError, ValueError) as error:
+            raise RuntimeError("The connected board identity is unavailable") from error
+        if not isinstance(uid, bytes) or len(uid) != 8 or uid != expected_uid:
+            raise ValueError("TCP CLI challenge belongs to a different board")
+        transaction_id = self._next_transaction_id()
+        request = build_tcp_cli_auth_request(transaction_id, nonce)
+        if self._device.send_feature_report(list(request)) != len(request):
+            raise OSError("failed to send TCP CLI auth challenge to the board")
+        result = self._device.get_feature_report(TCP_CLI_AUTH_REPORT_ID, TCP_CLI_AUTH_RESULT_SIZE)
+        return parse_tcp_cli_auth_result(result, transaction_id)
 
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResult:
         """Save board settings and credentials atomically; return wireless status plus confirmed settings."""

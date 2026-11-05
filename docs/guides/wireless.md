@@ -25,6 +25,8 @@ attached, `(advertising)` when discoverable, or `(starting)` while the controlle
 Disabled Bluetooth shows `Disabled`; Bluetooth switched on without a saved control key stays off and shows
 `Off (no control key)`.
 Over a Direct Bluetooth connection Wi-Fi shows the same `SSID (IP address)` values and console link as USB.
+The Direct console reuses the connected dashboard's authentication rather than asking for the Control key again;
+see [Direct dashboard authentication](./console.md#direct-dashboard-authentication).
 Firmware that predates public BLE status omits the SSID and IP address, so the
 row shows only `Connected`, `Wi-Fi (connecting)` or `Wi-Fi (disconnected)`.
 The firmware does not report a separate connecting state. If the serial is unavailable, the name is `PicoForge`.

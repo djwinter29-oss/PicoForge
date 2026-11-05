@@ -114,6 +114,7 @@ public sealed class WirelessTests
             Assert.Equal(labels[security], network.Security);
             Assert.Equal(security != 0, network.Secured);
         }
+
         report[41] = 8;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
         foreach (var (detail, phase) in new[] { (9, "Test connection lost"), (10, "Test credentials expired") })
@@ -130,6 +131,32 @@ public sealed class WirelessTests
         Assert.Equal((ushort)600, HidProtocol.ParseWirelessOperation(report).RemainingSeconds);
         report[221] = 89;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseWirelessOperation(report));
+    }
+
+    [Fact]
+    public void TcpCliProofReportsBindTheFixedOperationToOneTransaction()
+    {
+        var nonce = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
+        var request = HidProtocol.BuildTcpCliAuthRequest(7, nonce);
+        Assert.Equal(20, request.Length);
+        Assert.Equal(HidProtocol.TcpCliAuthReportId, request[0]);
+        Assert.Equal(new byte[] { 1, 7 }, request[1..3]);
+        Assert.Equal(nonce, request[3..19]);
+        Assert.Equal(0, request[19]);
+
+        var result = new byte[HidProtocol.TcpCliAuthResultSize];
+        result[0] = HidProtocol.TcpCliAuthReportId;
+        result[1] = 1;
+        result[2] = 7;
+        result[3] = 1;
+        for (var index = 0; index < 16; index++) result[4 + index] = (byte)index;
+        Assert.Equal(Enumerable.Range(0, 16).Select(value => (byte)value),
+            HidProtocol.ParseTcpCliAuthResult(result, 7));
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseTcpCliAuthResult(result, 8));
+        result[3] = 0;
+        Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseTcpCliAuthResult(result, 7));
+        Assert.Throws<ArgumentException>(() => HidProtocol.BuildTcpCliAuthRequest(0, nonce));
+        Assert.Throws<ArgumentException>(() => HidProtocol.BuildTcpCliAuthRequest(7, nonce[..15]));
     }
 
     [Fact]

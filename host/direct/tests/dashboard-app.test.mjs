@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=8";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=11";
+import { PicoForgeWebHid } from "../js/device.mjs?v=9";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=12";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -216,13 +217,16 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
 
 test("Bluetooth dialog takes the control key, then scans, and preserves transport safety", async () => {
   const saved = {
-    document: globalThis.document, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
+    document: globalThis.document, window: globalThis.window,
+    navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
     secure: Object.getOwnPropertyDescriptor(globalThis, "isSecureContext"),
     sessionStorage: Object.getOwnPropertyDescriptor(globalThis, "sessionStorage"),
+    crypto: Object.getOwnPropertyDescriptor(globalThis, "crypto"),
   };
-  const prototypes = new Map(["connect", "disconnect"].map(name =>
+  const prototypes = new Map(["connect", "disconnect", "tcpCliAuthProof"].map(name =>
     [name, PicoForgeBluetooth.prototype[name]]));
   const elements = new Map();
+  const authChannels = [];
   const el = selector => {
     if (!elements.has(selector)) elements.set(selector, { value: "", dataset: {}, valueAsNumber: 32, children: [],
       open: false, showModal() { this.open = true; },
@@ -233,15 +237,23 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     return elements.get(selector);
   };
   globalThis.document = { querySelector: el, createElement: () => ({ append() {} }) };
+  class FakeBroadcastChannel {
+    constructor(name) { this.name = name; this.messages = []; authChannels.push(this); }
+    postMessage(message) { this.messages.push(message); }
+    close() { this.closed = true; }
+  }
+  globalThis.window = { BroadcastChannel: FakeBroadcastChannel };
   Object.defineProperty(globalThis, "navigator", { configurable: true,
     value: { hid: new EventTarget(), bluetooth: {} } });
   Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
   Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: memorySessionStorage() });
+  Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
   let client;
   let scans = 0;
   let failure = false;
   let finishScan;
   let usedKey;
+  const authCalls = [];
   PicoForgeBluetooth.prototype.connect = async function (key) {
     client = this;
     scans++;
@@ -261,6 +273,10 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   PicoForgeBluetooth.prototype.disconnect = async function () {
     this.bleKey = null;
     this.clearConnection();
+  };
+  PicoForgeBluetooth.prototype.tcpCliAuthProof = async function (nonce, uid) {
+    authCalls.push([Array.from(nonce), Array.from(uid)]);
+    return Uint8Array.from({ length: 16 }, (_, index) => index);
   };
   try {
     await import(`../js/app.mjs?connections=${Date.now()}`);
@@ -298,7 +314,26 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     const wireless = { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
       tcp_cli_auth_required: true, ssid: "HomeDev", ipv4: "192.168.66.87" };
     client.update({ wireless });
-    assert.equal(el("#wifi-state").children[0]?.href, "console.html?ipv4=192.168.66.87&auth=1");
+    const consoleLink = el("#wifi-state").children[0];
+    const consoleUrl = new URL(consoleLink.href, "http://localhost");
+    assert.equal(consoleUrl.searchParams.get("ipv4"), "192.168.66.87");
+    assert.equal(consoleUrl.searchParams.get("auth"), "1");
+    const authToken = consoleUrl.searchParams.get("auth_token");
+    assert.match(authToken, /^[a-f0-9]{32}$/i);
+    const authRequest = { type: "tcp-cli-auth-request", auth_token: authToken,
+      request_id: "00112233445566778899aabbccddeeff",
+      nonce: "000102030405060708090a0b0c0d0e0f", uid: "0102030405060708" };
+    authChannels[0].onmessage({ data: authRequest });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(authCalls, [[Array.from({ length: 16 }, (_, index) => index),
+      Array.from({ length: 8 }, (_, index) => index + 1)]]);
+    assert.deepEqual(authChannels[0].messages[0], { type: "tcp-cli-auth-response", auth_token: authToken,
+      request_id: authRequest.request_id, uid: authRequest.uid, proof: "000102030405060708090a0b0c0d0e0f" });
+    authChannels[0].onmessage({ data: { ...authRequest, uid: "0807060504030201" } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(authCalls.length, 1, "the connected dashboard refuses a different board identity");
+    assert.equal(authChannels[0].messages[1].type, "tcp-cli-auth-error");
+    assert.match(authChannels[0].messages[1].error, /different board/);
     client.outstanding = { opcode: 1, transaction_id: 1 };
     client.update({ outcome_uncertain: true });
     assert.equal(el("#usb-open").disabled, true);
@@ -325,8 +360,9 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   } finally {
     for (const [name, method] of prototypes) PicoForgeBluetooth.prototype[name] = method;
     globalThis.document = saved.document;
+    globalThis.window = saved.window;
     for (const [name, descriptor] of [["navigator", saved.navigator], ["isSecureContext", saved.secure],
-      ["sessionStorage", saved.sessionStorage]]) {
+      ["sessionStorage", saved.sessionStorage], ["crypto", saved.crypto]]) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
       else delete globalThis[name];
     }

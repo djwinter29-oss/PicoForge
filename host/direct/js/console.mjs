@@ -3,18 +3,23 @@
  * The dashboard passes the board address and TCP authentication flag in the URL, read from live wireless status.
  */
 import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs?v=1";
+import {
+  bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
+  parseHexBytes, randomHex,
+} from "./console-auth.mjs?v=1";
 
 const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");
 const connect = document.querySelector("#connect");
-const authKey = document.querySelector("#console-auth-key");
 const query = new URLSearchParams(location.search);
 const ipv4 = query.get("ipv4") ?? "";
 const authRequired = query.get("auth") === "1";
+const authToken = query.get("auth_token") ?? "";
 const encoder = new TextEncoder();
 let screen = new ConsoleTerminal();
 let decoder = new TextDecoder();
 let session = null;
+let pendingSession = null;
 let sessionController = null;
 let openingController = null;
 let input = "";
@@ -133,26 +138,79 @@ async function send(text) {
   }
 }
 
+function requestTcpCliProof(challenge, signal) {
+  if (!/^[a-f0-9]{32}$/i.test(authToken)) {
+    throw new Error("Open this console from the Direct dashboard while the matching board is connected.");
+  }
+  if (typeof window.BroadcastChannel !== "function") {
+    throw new Error("This browser cannot request authorization from the Direct dashboard.");
+  }
+  const nonce = parseHexBytes(challenge?.nonce, 16, "TCP CLI nonce");
+  const uid = parseHexBytes(challenge?.uid, 8, "TCP CLI board identity");
+  const requestId = randomHex();
+  const channel = new window.BroadcastChannel(CONSOLE_AUTH_CHANNEL);
+  return new Promise((resolve, reject) => {
+    let timer;
+    const finish = (error, proof) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      channel.close();
+      if (error) reject(error);
+      else resolve(proof);
+    };
+    const abort = () => finish(signal.reason ?? new DOMException("Console request cancelled", "AbortError"));
+    channel.onmessage = event => {
+      const response = event.data;
+      if (response?.auth_token !== authToken || response.request_id !== requestId) return;
+      if (response.type === CONSOLE_AUTH_ERROR) {
+        const message = typeof response.error === "string" ? response.error
+          : "The dashboard could not authorize this console";
+        finish(new Error(message));
+      } else if (response.type === CONSOLE_AUTH_RESPONSE) {
+        if (typeof response.uid !== "string" || response.uid.toLowerCase() !== challenge.uid.toLowerCase()
+          || typeof response.proof !== "string" || !/^[a-f0-9]{32}$/i.test(response.proof)) {
+          finish(new Error("The dashboard returned an invalid TCP CLI proof"));
+        } else finish(null, response.proof.toLowerCase());
+      }
+    };
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    timer = setTimeout(() => finish(new Error(
+      "No matching authenticated dashboard responded. Connect this board over USB or Bluetooth and try again.")), 5000);
+    try {
+      channel.postMessage({ type: CONSOLE_AUTH_REQUEST, auth_token: authToken, request_id: requestId,
+        nonce: bytesToHex(nonce), uid: bytesToHex(uid) });
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error("Could not request dashboard authentication"));
+    }
+  });
+}
+
 async function open() {
   if (openingController || session) return;
-  if (authRequired && !authKey.value) {
-    status.textContent = "This board requires its 64-digit BLE control key";
-    authKey.focus();
-    return;
-  }
   const controller = new AbortController();
   openingController = controller;
   setButton("Connecting…", true);
   status.textContent = "Connecting to the board's TCP CLI...";
   try {
-    const result = await bridge("open", { ipv4, auth_required: authRequired,
-      ble_key: authRequired ? authKey.value : null }, controller.signal, 15000);
+    const result = await bridge("open", { ipv4, auth_required: authRequired }, controller.signal, 15000);
+    pendingSession = result.session;
     if (controller.signal.aborted) {
       void fetch("/api/direct-terminal/close", { method: "POST", keepalive: true,
-        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: result.session }) });
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: pendingSession }) });
+      pendingSession = null;
       return;
     }
+    if (authRequired) {
+      const proof = await requestTcpCliProof(result.challenge, controller.signal);
+      await bridge("auth", { session: result.session, proof }, controller.signal, 5000);
+    }
+    if (controller.signal.aborted) return;
     session = result.session;
+    pendingSession = null;
     openingController = null;
     sessionController = new AbortController();
     screen = new ConsoleTerminal();
@@ -165,17 +223,24 @@ async function open() {
     terminal.focus();
     void poll(session, sessionController.signal);
   } catch (error) {
+    const pending = pendingSession;
+    pendingSession = null;
+    let message = error.message;
+    if (pending) {
+      try { await bridge("close", { session: pending }, undefined, 5000); }
+      catch (closeError) {
+        message = `${message}. ${closeError.message}`;
+      }
+    }
     if (!controller.signal.aborted) {
-      status.textContent = error.message;
+      status.textContent = message;
       setButton("Connect", false);
     }
   } finally {
     if (openingController === controller) openingController = null;
-    authKey.value = "";
   }
 }
 
-authKey.closest("label").hidden = !authRequired;
 document.querySelector("#console-target").textContent = ipv4 ? `${ipv4}:2323` : "no board address";
 if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ipv4) || ipv4 === "0.0.0.0") {
   connect.disabled = true;
@@ -201,8 +266,9 @@ connect.addEventListener("click", () => { void (session ? close() : open()); });
 window.addEventListener("pagehide", () => {
   openingController?.abort();
   openingController = null;
-  const token = session;
+  const token = session ?? pendingSession;
   session = null;
+  pendingSession = null;
   sessionController?.abort();
   sessionController = null;
   if (token) {

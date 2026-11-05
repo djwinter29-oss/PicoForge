@@ -16,6 +16,8 @@ internal interface IDeviceMonitor : IHostedService, IDisposable
     IReadOnlyList<WirelessNetworkResponse> ScanWireless();
     WirelessOperationResponse TestWireless(string ssid, string password);
     bool CancelWirelessTest();
+    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) =>
+        throw new NotSupportedException("USB TCP CLI authentication is unavailable");
 }
 
 /// <summary>Serialized HID operations used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
@@ -31,6 +33,8 @@ internal interface IHidCommands
     void Reboot();
     void SetSelfTest(string action, uint sizeMib);
     WirelessStatusResponse ReadWireless();
+    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) =>
+        throw new NotSupportedException("USB TCP CLI authentication is unavailable");
     WirelessStatusResponse SetWireless(WirelessRequest settings);
     IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null);
     WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
@@ -157,6 +161,15 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             if (activeClient is null) throw new InvalidOperationException("PicoForge HID is not connected");
             return new(activeClient.ReadWireless(), Snapshot.RebootPending);
+        }
+    }
+
+    public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid)
+    {
+        lock (deviceGate)
+        {
+            if (activeClient is null) throw new InvalidOperationException("PicoForge HID is not connected");
+            return activeClient.TcpCliAuthProof(nonce, uid);
         }
     }
 

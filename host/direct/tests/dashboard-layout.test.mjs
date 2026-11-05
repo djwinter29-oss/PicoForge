@@ -7,9 +7,9 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/direct\.css\?v=18"/);
-  assert.match(html, /src="js\/app\.mjs\?v=38"/);
+  assert.match(html, /src="js\/app\.mjs\?v=39"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
-  assert.match(app, /from "\.\/device\.mjs\?v=8"/);
+  assert.match(app, /from "\.\/device\.mjs\?v=9"/);
   assert.match(app, /from "\.\/view\.mjs\?v=17"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {

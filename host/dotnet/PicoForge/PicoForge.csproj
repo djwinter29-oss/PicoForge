@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>0.0.0-dev</Version>
+    <Version>0.0.0-debug</Version>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="PicoForge.Tests" />

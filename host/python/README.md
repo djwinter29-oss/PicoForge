@@ -7,9 +7,9 @@ Python and .NET share their own frontend in `host/web`. The Direct dashboard is 
 components are shared with Direct**. See the
 [dashboard isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
 This Python host connects over USB HID, not Bluetooth LE.
-The dashboard supports Feature 30 status versions 1-4 and Feature 35 result versions 1-2, including TCP CLI
-enable/authentication settings and scan security labels. It blocks saving expired temporary test credentials after
-ten minutes; legacy firmware keeps its existing CLI settings.
+The dashboard supports Feature 30 status versions 1-4, Feature 35 result versions 1-2, and Feature 36's fixed TCP
+CLI proof report. It includes TCP CLI enable/authentication settings and scan security labels, and blocks saving
+expired temporary test credentials after ten minutes; legacy firmware keeps its existing CLI settings.
 
 ## Install
 
@@ -90,10 +90,10 @@ tools/host/hid-permissions-setup.sh
   [force-return risks](../../docs/reference/usb-hid.md#msc-force-return-safety).
 - **SD benchmark:** start/cancel the firmware self-test and view verified bytes and throughput. It writes a temporary
   file: back up card data and follow the [benchmark procedure](../../docs/guides/sdcard-benchmark.md).
-- **W-board wireless:** provision Wi-Fi and a BLE control key over USB. Bluetooth connections use the independent
+- **W-board wireless:** provision Wi-Fi and a Control key over USB. Bluetooth connections use the independent
   Direct dashboard. See [wireless setup and security limits](../../docs/guides/wireless.md).
 - **Wi-Fi console:** a connected SSID/IP link opens the local TCP console when supported by firmware. The board's TCP
-  service can require its saved BLE control key, but traffic is always unencrypted; use only on a trusted LAN. See
+  service can require its saved Control key, but traffic is always unencrypted; use only on a trusted LAN. See
   [console setup and session limits](../../docs/guides/console.md#wi-fi-tcp-terminal).
 
 Commands can be rejected or remain uncertain after a timeout/disconnect; delivery is not completion.

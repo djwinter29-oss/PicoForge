@@ -95,6 +95,10 @@ static uint8_t const hid_report_descriptor[] = {
     0x95, PF_WIRELESS_RESULT_SIZE,
     0x09, 0x23,
     0xB1, 0x02,
+    0x85, PF_WIRELESS_AUTH_REPORT_ID,
+    0x95, PF_WIRELESS_AUTH_RESULT_SIZE,
+    0x09, 0x24,
+    0xB1, 0x02,
 #endif
     0xC0,
 };

@@ -3,19 +3,6 @@
 .console-lede { margin: 6px 0 0; color: var(--muted); }
 .console-page .button { min-width: 104px; }
 .console-page .button:disabled { cursor: not-allowed; }
-.console-key { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-.console-key[hidden] { display: none; }
-.console-key input {
-  width: 18rem;
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid #cbd6d3;
-  border-radius: 7px;
-  background: var(--paper);
-  color: var(--ink);
-  font: 12px var(--mono);
-}
-.console-key input:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; border-color: var(--teal); }
 .console-window {
   overflow: hidden;
   background: #0c1d1c;
@@ -64,6 +51,4 @@
 }
 @media (max-width: 720px) {
   .console-page .page-heading { flex-direction: column; align-items: stretch; }
-  .console-key { flex-wrap: wrap; }
-  .console-key input { width: 100%; }
 }

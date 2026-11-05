@@ -36,6 +36,10 @@ class PackagingTests(unittest.TestCase):
     @unittest.skipIf(tomllib is None, "tomllib requires Python 3.11")
     def test_package_metadata_includes_repository_license(self):
         project = tomllib.loads((PROJECT / "pyproject.toml").read_text())["project"]
+        self.assertEqual(project["version"], "0.0.0.dev0")
+        packages = tomllib.loads((PROJECT / "uv.lock").read_text())["package"]
+        self.assertEqual(next(package["version"] for package in packages if package["name"] == "picoforge"),
+                         project["version"])
         self.assertEqual(project["license"], "BSD-3-Clause")
         self.assertEqual(project["license-files"], ["LICENSE"])
         self.assertEqual((PROJECT / "LICENSE").read_bytes(), (PROJECT.parents[1] / "LICENSE").read_bytes())

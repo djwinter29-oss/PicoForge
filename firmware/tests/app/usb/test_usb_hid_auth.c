@@ -7,6 +7,8 @@
 #define PF_FIRMWARE_VERSION_MAJOR 1u
 #define PF_FIRMWARE_VERSION_MINOR 2u
 #define PF_FIRMWARE_VERSION_PATCH 3u
+#include "Mockwireless.h"
+#include "Mockwireless_auth.h"
 TEST_INCLUDE_PATH("firmware/tests/support/runtime")
 TEST_INCLUDE_PATH("firmware/tests/support/storage")
 TEST_INCLUDE_PATH("firmware/tests/support/config")
@@ -17,6 +19,7 @@ static unsigned wireless_command_calls, wireless_reject_calls, wireless_result_c
 static uint8_t wireless_command[PF_WIRELESS_COMMAND_SIZE];
 static uint8_t wireless_result[PF_WIRELESS_RESULT_SIZE];
 static uint8_t rejected_transaction;
+static bool tcp_auth_proof_available = true;
 static bool tcp_client;
 static const char *tcp_close_notice;
 static unsigned tcp_closes;
@@ -51,32 +54,54 @@ void pf_tcp_cli_close(const char *notice)
     tcp_close_notice = notice;
     ++tcp_closes;
 }
-void pf_wireless_start(void) {}
-void pf_wireless_poll(void) {}
-void pf_wireless_status(uint8_t *report)
+static void mock_wireless_status(uint8_t *report, int call_count)
 {
+    (void)call_count;
     memset(report, 0, PF_WIRELESS_STATUS_SIZE);
     report[PF_WIRELESS_STATUS_VERSION_OFFSET] = 1u;
 }
-bool pf_wireless_configure(const uint8_t *report) { (void)report; ++provisioning_calls; return true; }
-void pf_wireless_command(const uint8_t *report)
+
+static bool mock_wireless_configure(const uint8_t *report, int call_count)
 {
+    (void)report;
+    (void)call_count;
+    ++provisioning_calls;
+    return true;
+}
+
+static void mock_wireless_command(const uint8_t *report, int call_count)
+{
+    (void)call_count;
     ++wireless_command_calls;
     memcpy(wireless_command, report, sizeof(wireless_command));
 }
-void pf_wireless_reject_command(uint8_t transaction)
+
+static void mock_wireless_reject_command(uint8_t transaction, int call_count)
 {
+    (void)call_count;
     ++wireless_reject_calls;
     rejected_transaction = transaction;
 }
-void pf_wireless_result_report(uint8_t *report)
+
+static void mock_wireless_result_report(uint8_t *report, int call_count)
 {
+    (void)call_count;
     ++wireless_result_calls;
     memcpy(report, wireless_result, sizeof(wireless_result));
 }
 
+static bool mock_tcp_auth_proof(const uint8_t nonce[16], uint8_t proof[16], int call_count)
+{
+    (void)call_count;
+    if (!tcp_auth_proof_available) return false;
+    for (size_t i = 0u; i < 16u; ++i) proof[i] = (uint8_t)(nonce[i] ^ 0x5au);
+    return true;
+}
+
 void setUp(void)
 {
+    Mockwireless_Init();
+    Mockwireless_auth_Init();
     requests = (void *)1;
     replies = (void *)2;
     config_available = true;
@@ -93,6 +118,15 @@ void setUp(void)
     memset(wireless_result, 0, sizeof(wireless_result));
     wireless_result[0] = 1u;
     rejected_transaction = 0u;
+    tcp_auth_proof_available = true;
+    pf_wireless_start_Ignore();
+    pf_wireless_poll_Ignore();
+    pf_wireless_status_StubWithCallback(mock_wireless_status);
+    pf_wireless_configure_StubWithCallback(mock_wireless_configure);
+    pf_wireless_command_StubWithCallback(mock_wireless_command);
+    pf_wireless_reject_command_StubWithCallback(mock_wireless_reject_command);
+    pf_wireless_result_report_StubWithCallback(mock_wireless_result_report);
+    pf_wireless_auth_tcp_cli_proof_StubWithCallback(mock_tcp_auth_proof);
     test_radios = saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
     settings_save_fails = false;
     cli_owner = NULL;
@@ -106,7 +140,14 @@ void setUp(void)
     reset_requests = reboot_usb_polls = fake_ticks = 0u;
 }
 
-void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
+void tearDown(void)
+{
+    Mockwireless_Verify();
+    Mockwireless_auth_Verify();
+    Mockwireless_Destroy();
+    Mockwireless_auth_Destroy();
+    TEST_ASSERT_FALSE(reserved);
+}
 
 void test_ble_dispatch_rejects_reboot_storage_and_flash_writes_without_touching_usb_result(void)
 {
@@ -154,6 +195,41 @@ void test_wireless_feature_has_sanitized_status_and_no_private_readback(void)
     tud_hid_set_report_cb(0u, PF_WIRELESS_CONFIG_REPORT_ID, HID_REPORT_TYPE_FEATURE, buffer, sizeof(buffer));
     TEST_ASSERT_EQUAL_UINT(1u, provisioning_calls);
     TEST_ASSERT_TRUE(reboot_requested);
+}
+
+void test_usb_tcp_cli_auth_report_signs_only_a_valid_one_use_request(void)
+{
+    uint8_t request[PF_WIRELESS_AUTH_REQUEST_SIZE] = {PF_HID_REPORT_VERSION, 7u};
+    for (size_t i = 0u; i < 16u; ++i) request[2u + i] = (uint8_t)i;
+    tud_hid_set_report_cb(0u, PF_WIRELESS_AUTH_REPORT_ID, HID_REPORT_TYPE_FEATURE,
+                          request, sizeof(request));
+    uint8_t result[PF_WIRELESS_AUTH_RESULT_SIZE] = {0};
+    TEST_ASSERT_EQUAL_UINT16(PF_WIRELESS_AUTH_RESULT_SIZE, tud_hid_get_report_cb(
+        0u, PF_WIRELESS_AUTH_REPORT_ID, HID_REPORT_TYPE_FEATURE, result, sizeof(result)));
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_REPORT_VERSION, result[0]);
+    TEST_ASSERT_EQUAL_UINT8(7u, result[1]);
+    TEST_ASSERT_EQUAL_UINT8(1u, result[2]);
+    for (size_t i = 0u; i < 16u; ++i) TEST_ASSERT_EQUAL_UINT8((uint8_t)i ^ 0x5au, result[3u + i]);
+    memset(result, 0xff, sizeof(result));
+    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(
+        0u, PF_WIRELESS_AUTH_REPORT_ID, HID_REPORT_TYPE_FEATURE, result, sizeof(result)));
+
+    tcp_auth_proof_available = false;
+    request[1] = 8u;
+    tud_hid_set_report_cb(0u, PF_WIRELESS_AUTH_REPORT_ID, HID_REPORT_TYPE_FEATURE,
+                          request, sizeof(request));
+    TEST_ASSERT_EQUAL_UINT16(PF_WIRELESS_AUTH_RESULT_SIZE, tud_hid_get_report_cb(
+        0u, PF_WIRELESS_AUTH_REPORT_ID, HID_REPORT_TYPE_FEATURE, result, sizeof(result)));
+    TEST_ASSERT_EQUAL_UINT8(8u, result[1]);
+    TEST_ASSERT_EQUAL_UINT8(0u, result[2]);
+    TEST_ASSERT_EQUAL_UINT8(0u, result[3]);
+
+    request[1] = 9u;
+    request[18] = 1u;
+    tud_hid_set_report_cb(0u, PF_WIRELESS_AUTH_REPORT_ID, HID_REPORT_TYPE_FEATURE,
+                          request, sizeof(request));
+    TEST_ASSERT_EQUAL_UINT16(0u, tud_hid_get_report_cb(
+        0u, PF_WIRELESS_AUTH_REPORT_ID, HID_REPORT_TYPE_FEATURE, result, sizeof(result)));
 }
 
 void test_wireless_scan_result_requires_a_full_feature_buffer(void)

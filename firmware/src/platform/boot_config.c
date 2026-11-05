@@ -37,7 +37,7 @@ typedef struct {
     uint16_t size; /**< sizeof(record_t). */
     uint8_t sysclk_profile; /**< pf_sysclk_profile_t value, independent of enum storage size. */
     uint8_t sdcard_profile; /**< Shared pf_storage_speed_t value for either transport. */
-    uint8_t radios_disabled; /**< Disabled radios, disabled TCP CLI, and TCP CLI authentication-required bits. */
+    uint8_t radios_disabled; /**< Disabled radios, disabled TCP CLI, and retired TCP CLI authentication bits. */
     uint8_t wireless_required; /**< 1 when the record is only valid with its wireless extension; 0 in older records. */
     uint32_t crc; /**< IEEE CRC-32 of all preceding bytes. */
 } record_t;

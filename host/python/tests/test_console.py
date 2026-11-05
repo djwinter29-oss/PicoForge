@@ -18,6 +18,11 @@ class Monitor:
         self.board = board
         return {"wireless": self.wireless}
 
+    def tcp_cli_auth_proof(self, board, nonce, uid):
+        self.board = board
+        key = bytes(range(1, 33))
+        return hmac.new(key, nonce + uid + b"PFTCPCLI1TCPCLI001", hashlib.sha256).digest()[:16]
+
 
 class ConsoleTests(unittest.TestCase):
     def setUp(self):
@@ -119,22 +124,22 @@ class ConsoleTests(unittest.TestCase):
             self.assertEqual(self.client.post("/api/console", json={}).status_code, 400)
         self.connect.assert_not_called()
 
-    def test_tcp_authentication_uses_the_ble_key_challenge_before_opening_a_session(self):
-        key = bytes(range(1, 33))
+    def test_tcp_authentication_uses_the_connected_boards_usb_proof(self):
         self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
         nonce = bytes(range(16))
         uid = bytes(range(8))
         self.peer.sendall(f"PicoForge AUTH {nonce.hex()} {uid.hex()}\r\n".encode("ascii"))
-        response = self.client.post("/api/console?board=board-a", json={"ble_key": key.hex()})
+        response = self.client.post("/api/console?board=board-a", json={})
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.monitor.board, "board-a")
+        key = bytes(range(1, 33))
         proof = hmac.new(key, nonce + uid + b"PFTCPCLI1" + b"TCPCLI001", hashlib.sha256).digest()[:16]
         self.assertEqual(self.peer.recv(64), b"AUTH " + proof.hex().encode() + b"\r\n")
         endpoint = "/api/console?session=" + response.json["session"]
         self.assertEqual(self.client.delete(endpoint).status_code, 200)
 
-    def test_tcp_authentication_rejects_missing_or_invalid_keys_before_connecting(self):
+    def test_tcp_authentication_does_not_accept_control_keys_from_the_browser(self):
         self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
-        self.assertEqual(self.client.post("/api/console", json={}).status_code, 400)
         self.assertEqual(self.client.post("/api/console", json={"ble_key": "00" * 32}).status_code, 400)
         self.assertEqual(self.client.post("/api/console", json={"ble_key": "invalid"}).status_code, 400)
         self.connect.assert_not_called()

@@ -10,6 +10,10 @@ if TYPE_CHECKING:
 
 from .common import (
     CONTROL_STATUS_NAMES,
+    REPORT_VERSION,
+    TCP_CLI_AUTH_REPORT_ID,
+    TCP_CLI_AUTH_REQUEST_SIZE,
+    TCP_CLI_AUTH_RESULT_SIZE,
     WIRELESS_COMMAND_FEATURE_SIZE,
     WIRELESS_COMMAND_REPORT_ID,
     WIRELESS_REPORT_ID,
@@ -17,6 +21,28 @@ from .common import (
     WIRELESS_RESULT_REPORT_ID,
 )
 from .common import _bytes, _feature_payload, _validate_settings
+
+
+def build_tcp_cli_auth_request(transaction_id: int, nonce: bytes) -> bytes:
+    """Build the USB-only request for a board-bound TCP CLI proof."""
+    if type(transaction_id) is not int or not 1 <= transaction_id <= 255:
+        raise ValueError("TCP CLI auth transaction must be 1..255")
+    if not isinstance(nonce, bytes) or len(nonce) != 16:
+        raise ValueError("TCP CLI auth nonce must contain exactly 16 bytes")
+    return bytes((TCP_CLI_AUTH_REPORT_ID, REPORT_VERSION, transaction_id)) + nonce + b"\0"
+
+
+def parse_tcp_cli_auth_result(report: bytes | bytearray | list[int], transaction_id: int) -> bytes:
+    """Validate the matching USB TCP CLI proof result and return its 16-byte proof."""
+    if type(transaction_id) is not int or not 1 <= transaction_id <= 255:
+        raise ValueError("TCP CLI auth transaction must be 1..255")
+    payload = _feature_payload(report, TCP_CLI_AUTH_REPORT_ID, TCP_CLI_AUTH_RESULT_SIZE - 1)
+    if payload[0] != REPORT_VERSION or payload[1] != transaction_id or payload[2] not in (0, 1):
+        raise ValueError("invalid or stale TCP CLI auth result")
+    proof = payload[3:]
+    if payload[2] != 1:
+        raise RuntimeError("The board cannot create a TCP CLI proof; check the saved Control key and firmware")
+    return proof
 
 
 def build_wireless_configuration_report(
@@ -73,10 +99,10 @@ def build_wireless_configuration_report(
         if key != "":  # an empty key erases the saved key; the payload field stays zero
             if not isinstance(key, str) or len(key) != 64 or any(
                     char not in "0123456789abcdefABCDEF" for char in key):
-                raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+                raise ValueError("Control key must contain 64 hexadecimal characters and be nonzero")
             decoded = bytes.fromhex(key)
             if not any(decoded):
-                raise ValueError("BLE key must contain 64 hexadecimal characters and be nonzero")
+                raise ValueError("Control key must contain 64 hexadecimal characters and be nonzero")
             payload[102:134] = decoded
     if use_tested:
         payload[4] |= 4

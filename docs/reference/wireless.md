@@ -101,6 +101,11 @@ reports the saved radio switches; its separate booleans indicate whether credent
   Expiry restores the saved network when enabled or releases station mode otherwise. It does not interrupt an
   active scan or overwrite its result; saving expired credentials is still rejected.
   A failed test with saved Wi-Fi disabled reports station disabled/error none; its failure remains in this report.
+- Feature **36 SET/GET** provides one narrowly scoped TCP CLI proof over USB. Both payloads are 19 bytes. SET contains
+  version `1`, a nonzero transaction, the 16-byte challenge nonce, and a zero reserved byte. GET returns version,
+  matching transaction, status (`1` for proof available), and the first 16 HMAC-SHA256 bytes for the fixed
+  `"PFTCPCLI1"`/`"TCPCLI001"` request. The proof result is cleared after it is read. This report does not expose
+  the Control key or sign arbitrary data; USB HID access can request only a proof for TCP CLI admission.
 - Native-host `GET /api/wireless` returns `{wireless, reboot_pending}` with sanitized fields. Confirmed
   `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled` (credential intent), `ssid`, optional `password`,
   optional `tcp_cli_enabled`, optional 64-hex-digit `ble_key`,
@@ -163,9 +168,17 @@ replay; protocol-domain separation prevents cross-service proof reuse; UID bindi
 binding prevents changing an authorized command. This is application authorization, **not encrypted BLE transport**
 or protection against radio jamming/connection denial. Use USB for privileged management and credentials.
 
-The TCP CLI uses a separate domain (`"PFTCPCLI1"`) and request (`"TCPCLI001"`). Whenever a control key is saved,
+The TCP CLI uses a separate domain (`"PFTCPCLI1"`) and request (`"TCPCLI001"`). Whenever a Control key is saved,
 each connection receives a one-use nonce and board UID challenge and must answer with the first 16 bytes of the
 matching HMAC-SHA256 proof. Proofs expire after ten seconds; rejected proofs are rate-limited for two seconds.
-Without a key the console is open on the saved network.
+Without a key the console is open on the saved network. Python/.NET dashboards ask the selected board to produce
+this fixed proof over USB HID after checking that the challenge UID matches that board. The Direct console asks its
+matching dashboard tab for the proof over a same-origin `BroadcastChannel`; the dashboard checks the challenge UID,
+then uses USB Feature 36 or signs with the non-extractable key from its already-unlocked BLE session. Only the
+one-use proof crosses to the console and local bridge; the Control key is not sent there. If no matching Direct
+dashboard is connected, the console refuses to connect rather than prompting for the key. Standalone TCP clients
+must compute the proof themselves. Feature 36 does not provide a general signing operation. See the
+[console guide](../guides/console.md#direct-dashboard-authentication) for the rationale and local-machine
+considerations.
 Authenticated or not, the listener accepts one CLI client, closes sessions idle for 15 minutes, and is exposed only
 on the saved Wi-Fi network. The TCP stream itself is not encrypted.

@@ -48,12 +48,22 @@ void pico_get_unique_board_id(pico_unique_board_id_t *uid) {
     verify = library.pf_wireless_auth_verify
     verify.argtypes = [ctypes.c_char_p] * 4
     verify.restype = ctypes.c_bool
+    tcp_cli_proof = library.pf_wireless_auth_tcp_cli_proof
+    tcp_cli_proof.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    tcp_cli_proof.restype = ctypes.c_bool
     key, nonce, uid = bytes(range(32)), bytes(range(16)), bytes(range(8))
     command = bytes([1, 7, 4, 0, 1, 32, 0, 0, 0])
     domain = b"PFBLECTL1"
     proof = hmac.new(key, nonce + uid + domain + command, hashlib.sha256).digest()[:16]
     set_key(key)
     assert verify(nonce, domain, command, proof)
+    tcp_nonce = bytes(range(16, 32))
+    tcp_proof = ctypes.create_string_buffer(16)
+    assert tcp_cli_proof(tcp_nonce, tcp_proof)
+    expected_tcp_proof = hmac.new(
+        key, tcp_nonce + uid + b"PFTCPCLI1" + b"TCPCLI001", hashlib.sha256
+    ).digest()[:16]
+    assert tcp_proof.raw == expected_tcp_proof
     inputs = [nonce, domain, command, proof]
     for field, data in enumerate(inputs):
         for index in range(len(data)):
@@ -64,6 +74,7 @@ void pico_get_unique_board_id(pico_unique_board_id_t *uid) {
             assert not verify(*altered)
     set_key(bytes(32))
     assert not verify(nonce, domain, command, proof)
+    assert not tcp_cli_proof(tcp_nonce, tcp_proof)
 
 
 def test_ble_rejected_proof_does_not_request_os_pairing():

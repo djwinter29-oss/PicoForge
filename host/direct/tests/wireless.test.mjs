@@ -827,6 +827,14 @@ test("BLE unlocks the session with the control key before any read and binds eac
     assert.equal(client.state.transport, "ble");
     assert.deepEqual(writes.map(item => item[0]), [33], "the session is unlocked before reports are read");
     assert.deepEqual(writes[0][1], sign(Buffer.from("SESSION01")));
+    const tcpNonce = Uint8Array.from({ length: 16 }, (_, index) => 15 - index);
+    const tcpUid = Uint8Array.from(Buffer.from(client.state.hardware.serial_number, "hex"));
+    const tcpProof = Uint8Array.from(createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
+      .update(Buffer.concat([tcpNonce, tcpUid, Buffer.from("PFTCPCLI1"), Buffer.from("TCPCLI001")]))
+      .digest().subarray(0, 16));
+    assert.deepEqual(await client.tcpCliAuthProof(tcpNonce, tcpUid), tcpProof,
+      "the already-unlocked Bluetooth session signs the fixed TCP CLI request");
+    await assert.rejects(client.tcpCliAuthProof(tcpNonce, new Uint8Array(8)), /different board/);
     writes.length = 0;
     await client.command(1, { args: [1] });
     assert.deepEqual(writes.map(item => item[0]), [20], "the LED is sent without a per-command proof");

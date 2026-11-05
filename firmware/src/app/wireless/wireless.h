@@ -16,6 +16,8 @@
 #define PF_WIRELESS_COMMAND_REPORT_ID 34u
 /** Sanitized scan and connection-test result Feature report ID. */
 #define PF_WIRELESS_RESULT_REPORT_ID 35u
+/** USB-only proof for one TCP CLI authentication challenge. */
+#define PF_WIRELESS_AUTH_REPORT_ID 36u
 /** Sanitized status payload size; no credential readback. */
 #define PF_WIRELESS_STATUS_SIZE 53u
 /** Current version of the sanitized status payload. */
@@ -59,6 +61,10 @@ typedef enum {
 #define PF_WIRELESS_REQUEST_SIZE 136u
 /** Scan/test command payload size. */
 #define PF_WIRELESS_COMMAND_SIZE 101u
+/** USB TCP CLI proof request payload size. */
+#define PF_WIRELESS_AUTH_REQUEST_SIZE 19u
+/** USB TCP CLI proof result payload size. */
+#define PF_WIRELESS_AUTH_RESULT_SIZE 19u
 /** Byte offset of the nonzero host transaction in the scan/test command payload. */
 #define PF_WIRELESS_COMMAND_TRANSACTION_OFFSET 2u
 /** RSSI sentinel used when the saved link is down or the driver cannot report it. */

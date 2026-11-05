@@ -28,6 +28,25 @@ test("explicit connect always requests selection regardless of previously author
   }
 });
 
+test("USB TCP CLI proof is board-bound and uses Feature 36 without exposing a Control key", async () => {
+  const { client, device, sent } = fakeConnection({ capabilities: 128 | 55 });
+  const proof = Uint8Array.from({ length: 16 }, (_, index) => index + 16);
+  const receive = device.receiveFeatureReport;
+  device.receiveFeatureReport = async id => {
+    if (id === 36) return Uint8Array.from([1, 1, 1, ...proof]);
+    return receive(id);
+  };
+  await client.connect();
+  const nonce = Uint8Array.from({ length: 16 }, (_, index) => index);
+  const uid = Uint8Array.from({ length: 8 }, (_, index) => index + 1);
+  assert.deepEqual(await client.tcpCliAuthProof(nonce, uid), proof);
+  assert.deepEqual(sent[0], [36, 1, 1, ...nonce, 0]);
+  await assert.rejects(client.tcpCliAuthProof(nonce, Uint8Array.from([8, 7, 6, 5, 4, 3, 2, 1])),
+    /different board/);
+  assert.equal(sent.length, 1, "a mismatched challenge is rejected before contacting the board");
+  await client.disconnect();
+});
+
 test("unavailable recovery storage fails closed and keeps its error visible across disconnect", () => {
   const unavailable = new PicoForgeWebHid(null, () => {}, { pendingStore: null });
   assert.equal(unavailable.state.outcome_uncertain, true);

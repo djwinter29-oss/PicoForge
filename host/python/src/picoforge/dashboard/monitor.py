@@ -305,6 +305,12 @@ class DeviceMonitor:
             return {"wireless": self._active_client.read_wireless(),
                     "reboot_pending": self.snapshot().get("reboot_pending", False)}
 
+    def tcp_cli_auth_proof(self, nonce: bytes, uid: bytes) -> bytes:
+        with self._device_lock:
+            if self._active_client is None:
+                raise RuntimeError("PicoForge HID is not connected")
+            return self._active_client.tcp_cli_auth_proof(nonce, uid)
+
     def scan_wireless(self) -> WirelessScanResponse:
         with self._device_lock:
             snapshot = self.snapshot()

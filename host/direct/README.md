@@ -57,19 +57,20 @@ a message or shifting the table; stale reports, disconnects, ownership transitio
 samples clear retained details. Retained values are display-only and never authorize a command.
 When Wi-Fi and the board TCP CLI are connected, click the Wi-Fi value to open the Wi-Fi console in a new tab. Like
 the Python dashboard console, it is an interactive terminal: Enter runs a command, Tab completes, and arrow keys edit
-and recall history. It relays raw keystrokes over TCP port 2323, which is unencrypted; if the board has a saved
-control key, enter that 64-digit key. The local bridge permits one terminal session and closes it
-after 15 seconds without a request. Run the included server instead of a generic static-file server to enable this
-feature.
+and recall history. It relays raw keystrokes over unencrypted TCP port 2323. The console reuses the matching Direct
+dashboard's board authentication instead of asking for the Control key again; keep that dashboard connected until
+the console authenticates. The bridge permits one terminal session and closes it after 15 seconds without a
+request. Run the included server instead of a generic static-file server to enable this feature. See the
+[console guide](../../docs/guides/console.md#direct-dashboard-authentication) for the rationale and security limits.
 
 ## Controls
 
 Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/guides/wireless.md).
-Use USB to provision radio settings and a random BLE key, then open **Bluetooth**, enter the key and scan; Bluetooth
-stays off without a saved key. See the linked wireless guide for the key-gated session.
+Use USB to provision radio settings and a random Control key, then open **Bluetooth**, enter the key and scan;
+Bluetooth stays off without a saved key. See the linked wireless guide for the key-gated session.
 Privileged management remains USB-only.
 Feature 30 status versions 1-4 and Feature 35 result versions 1-2 are accepted. Newer status versions add the saved
-TCP CLI switch and optional BLE-key authentication; result version 2 adds scan security labels and staged-test
+TCP CLI switch and optional Control key authentication; result version 2 adds scan security labels and staged-test
 lifetime. Successful temporary tests must be saved within ten minutes. Settings unavailable on older firmware remain
 unchanged.
 
@@ -87,7 +88,7 @@ If clearing temporary Wi-Fi test credentials fails, the Wi-Fi dialog stays open 
 the user retries or reconnect confirms cancellation.
 Pending operations are also retained in the current tab's `sessionStorage` so a page reload can resume same-board
 reconciliation. Recovery records contain only allowlisted transaction/readback data; wireless saves store
-a SHA-256 digest of the SSID, never the SSID, Wi-Fi password, or BLE key. Missing, inaccessible, or invalid recovery
+a SHA-256 digest of the SSID, never the SSID, Wi-Fi password, or Control key. Missing, inaccessible, or invalid recovery
 storage fails closed and blocks writes rather than allowing an untracked operation. Completed scan/test results and
 staged test credentials are not restored; the status message tells the user to explicitly repeat the scan or test.
 Keep the tab open until an uncertain operation is resolved; recovery does not survive ending the browser tab's session.

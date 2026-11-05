@@ -6,8 +6,6 @@ from __future__ import annotations
 import argparse
 import base64
 from functools import partial
-import hashlib
-import hmac
 import ipaddress
 import json
 import secrets
@@ -31,59 +29,38 @@ class DirectTerminal:
         self._lock = threading.Lock()
         self._socket: socket.socket | None = None
         self._session: str | None = None
+        self._auth_required = False
+        self._authenticated = False
         self._last_request = 0.0
         self._timer: threading.Timer | None = None
 
     @staticmethod
-    def _valid_key(key: object) -> bool:
-        if not isinstance(key, str) or len(key) != 64:
-            return False
+    def _read_auth_challenge(connection: socket.socket) -> dict[str, str]:
+        deadline = time.monotonic() + 3
+        challenge = bytearray()
+        while len(challenge) < 128 and not challenge.endswith(b"\r\n"):
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                raise TimeoutError("TCP CLI authentication challenge timed out")
+            connection.settimeout(timeout)
+            chunk = connection.recv(1)
+            if not chunk:
+                raise OSError("Board closed the TCP CLI during authentication")
+            challenge.extend(chunk)
+        if not challenge.endswith(b"\r\n"):
+            raise ValueError("Invalid TCP CLI authentication challenge")
         try:
-            value = bytearray.fromhex(key)
-        except ValueError:
-            return False
-        try:
-            return len(value) == 32 and any(value)
-        finally:
-            value[:] = bytes(len(value))
-
-    @staticmethod
-    def _authenticate(connection: socket.socket, key_text: str) -> None:
-        key = bytearray.fromhex(key_text)
-        message = bytearray()
-        proof = bytearray()
-        try:
-            deadline = time.monotonic() + 3
-            challenge = bytearray()
-            while len(challenge) < 128 and not challenge.endswith(b"\r\n"):
-                timeout = deadline - time.monotonic()
-                if timeout <= 0:
-                    raise TimeoutError("TCP CLI authentication challenge timed out")
-                connection.settimeout(timeout)
-                chunk = connection.recv(1)
-                if not chunk:
-                    raise OSError("Board closed the TCP CLI during authentication")
-                challenge.extend(chunk)
-            if not challenge.endswith(b"\r\n"):
-                raise ValueError("Invalid TCP CLI authentication challenge")
             fields = challenge[:-2].decode("ascii").split(" ")
-            if (len(fields) != 4 or fields[:2] != ["PicoForge", "AUTH"] or len(fields[2]) != 32
-                    or any(char not in "0123456789abcdefABCDEF" for char in fields[2])
-                    or len(fields[3]) != 16
-                    or any(char not in "0123456789abcdefABCDEF" for char in fields[3])):
-                raise ValueError("Invalid TCP CLI authentication challenge")
-            message.extend(bytes.fromhex(fields[2]) + bytes.fromhex(fields[3])
-                           + b"PFTCPCLI1" + b"TCPCLI001")
-            proof.extend(hmac.new(key, message, hashlib.sha256).digest()[:16])
-            connection.sendall(b"AUTH " + proof.hex().encode("ascii") + b"\r\n")
         except UnicodeDecodeError as error:
             raise ValueError("Invalid TCP CLI authentication challenge") from error
-        finally:
-            key[:] = bytes(len(key))
-            message[:] = bytes(len(message))
-            proof[:] = bytes(len(proof))
+        if (len(fields) != 4 or fields[:2] != ["PicoForge", "AUTH"] or len(fields[2]) != 32
+                or any(char not in "0123456789abcdefABCDEF" for char in fields[2])
+                or len(fields[3]) != 16
+                or any(char not in "0123456789abcdefABCDEF" for char in fields[3])):
+            raise ValueError("Invalid TCP CLI authentication challenge")
+        return {"nonce": fields[2].lower(), "uid": fields[3].lower()}
 
-    def open(self, address: object, auth_required: object, ble_key: object = None) -> str:
+    def open(self, address: object, auth_required: object) -> dict[str, object]:
         if not isinstance(auth_required, bool):
             raise ValueError("Invalid TCP CLI authentication setting")
         try:
@@ -92,24 +69,39 @@ class DirectTerminal:
             raise ValueError("Invalid board IPv4 address") from error
         if not ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_unspecified:
             raise ValueError("The board address must be a private LAN IPv4 address")
-        if auth_required and not self._valid_key(ble_key):
-            raise ValueError("A 64-character nonzero BLE control key is required")
 
         connection = socket.create_connection((str(ip), 2323), timeout=3)
         try:
-            if auth_required:
-                self._authenticate(connection, ble_key)
+            challenge = self._read_auth_challenge(connection) if auth_required else None
             connection.settimeout(0.1)
             with self._lock:
                 if self._socket is not None:
                     raise RuntimeError("A Direct terminal is already connected")
                 self._socket = connection
                 self._session = secrets.token_urlsafe(32)
+                self._auth_required = auth_required
+                self._authenticated = not auth_required
                 self._touch_locked()
-                return self._session
+                return {"session": self._session, "challenge": challenge}
         except (OSError, ValueError, RuntimeError):
             connection.close()
             raise
+
+    def authenticate(self, session: object, proof: object) -> None:
+        if (not isinstance(proof, str) or len(proof) != 32
+                or any(char not in "0123456789abcdefABCDEF" for char in proof)):
+            raise ValueError("Invalid TCP CLI proof")
+        with self._lock:
+            connection = self._require_session_locked(session, allow_pending_auth=True)
+            if not self._auth_required or self._authenticated:
+                raise RuntimeError("Terminal session is not awaiting authentication")
+            try:
+                connection.sendall(b"AUTH " + proof.lower().encode("ascii") + b"\r\n")
+            except OSError:
+                self._close_locked()
+                raise
+            self._authenticated = True
+            self._touch_locked()
 
     def _touch_locked(self) -> None:
         self._last_request = time.monotonic()
@@ -131,10 +123,12 @@ class DirectTerminal:
             else:
                 self._close_locked()
 
-    def _require_session_locked(self, session: object) -> socket.socket:
+    def _require_session_locked(self, session: object, *, allow_pending_auth: bool = False) -> socket.socket:
         if (self._socket is None or not isinstance(session, str)
                 or not secrets.compare_digest(self._session or "", session)):
             raise RuntimeError("Terminal disconnected; connect again")
+        if self._auth_required and not self._authenticated and not allow_pending_auth:
+            raise RuntimeError("Terminal authentication is pending")
         self._touch_locked()
         return self._socket
 
@@ -143,6 +137,8 @@ class DirectTerminal:
         self._timer = None
         self._socket = None
         self._session = None
+        self._auth_required = False
+        self._authenticated = False
         if timer is not None:
             timer.cancel()
         if connection is not None:
@@ -173,7 +169,7 @@ class DirectTerminal:
 
     def close(self, session: object) -> None:
         with self._lock:
-            self._require_session_locked(session)
+            self._require_session_locked(session, allow_pending_auth=True)
             self._close_locked()
 
     def close_all(self) -> None:
@@ -231,9 +227,11 @@ class DirectHandler(SimpleHTTPRequestHandler):
             if self.path == "/api/direct-terminal/health":
                 self._send_json(200, {"available": True})
             elif self.path == "/api/direct-terminal/open":
-                session = _TERMINAL.open(payload.get("ipv4"), payload.get("auth_required"),
-                                         payload.get("ble_key"))
-                self._send_json(200, {"session": session})
+                opened = _TERMINAL.open(payload.get("ipv4"), payload.get("auth_required"))
+                self._send_json(200, opened)
+            elif self.path == "/api/direct-terminal/auth":
+                _TERMINAL.authenticate(payload.get("session"), payload.get("proof"))
+                self._send_json(200, {"authenticated": True})
             elif self.path == "/api/direct-terminal/read":
                 data, closed = _TERMINAL.read(payload.get("session"))
                 self._send_json(200, {"data": base64.b64encode(data).decode("ascii"), "closed": closed})

@@ -38,7 +38,7 @@ var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 var files = new PhysicalFileProvider(webRoot);
 app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
 var appVersion = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-    ?.InformationalVersion.Split('+')[0] ?? "0.0.0-dev";
+    ?.InformationalVersion.Split('+')[0] ?? "0.0.0-debug";
 string Page(string html) => html.Replace("{{ dashboard_type }}", ".NET").Replace("{{ app_version }}", appVersion);
 var indexHtml = Page(await File.ReadAllTextAsync(Path.Combine(webRoot, "index.html")));
 app.MapGet("/", () => Results.Content(indexHtml, "text/html; charset=utf-8"));

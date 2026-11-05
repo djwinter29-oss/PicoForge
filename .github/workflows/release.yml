@@ -65,11 +65,15 @@ jobs:
           import os
           from pathlib import Path
           import re
-          path = Path("host/python/pyproject.toml")
-          text, count = re.subn(r'^version = "[^"]+"$', f'version = "{os.environ["VERSION"]}"',
-                                path.read_text(), flags=re.MULTILINE)
-          assert count == 1, "Expected one package version"
-          path.write_text(text)
+          for filename, field in (
+              ("host/python/pyproject.toml", "version"),
+              ("host/python/src/picoforge/__init__.py", "__version__"),
+          ):
+              path = Path(filename)
+              text, count = re.subn(rf'^{field} = "[^"]+"$', f'{field} = "{os.environ["VERSION"]}"',
+                                    path.read_text(), flags=re.MULTILINE)
+              assert count == 1, f"Expected one {field} in {path}"
+              path.write_text(text)
           PY
       - name: Build wheel
         run: |
@@ -88,6 +92,8 @@ jobs:
           from importlib.util import find_spec
           import os
           assert version("picoforge") == os.environ["VERSION"]
+          from picoforge import __version__
+          assert __version__ == os.environ["VERSION"]
           from picoforge.cli import main
           from picoforge.dashboard.server import create_app
           from picoforge.hid.device import PicoForgeHid
@@ -104,6 +110,11 @@ jobs:
           response = client.get("/")
           assert response.status_code == 200
           assert b"PicoForge Dashboard | Python" in response.data
+          assert f'App v{os.environ["VERSION"]}<'.encode() in response.data
+          response = client.get("/console")
+          assert response.status_code == 200
+          assert b"PicoForge Console | Python" in response.data
+          assert f'App v{os.environ["VERSION"]}<'.encode() in response.data
           response = client.get("/js/wireless-form.mjs")
           assert response.status_code == 200
           assert b"export function bindWirelessForm" in response.data
@@ -132,7 +143,7 @@ jobs:
           cp host/direct/index.html host/direct/console.html host/direct/favicon.svg LICENSE build/direct/
           cp -r host/direct/css host/direct/js build/direct/
           cp tools/host/direct_server.py build/direct/server.py
-          sed -i "s/App v0\.0\.0-dev/App v$VERSION/" build/direct/index.html build/direct/console.html
+          sed -i "s/App v0\.0\.0-debug/App v$VERSION/" build/direct/index.html build/direct/console.html
           test "$(grep -l "App v$VERSION<" build/direct/index.html build/direct/console.html | wc -l)" -eq 2
           cd build/direct
           zip -r "../../dist/picoforge-direct-v$VERSION.zip" .

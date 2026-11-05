@@ -1,6 +1,10 @@
-import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=8";
+import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=9";
 import { renderStatus } from "./view.mjs?v=17";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=11";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=12";
+import {
+  bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
+  parseHexBytes, randomHex,
+} from "./console-auth.mjs?v=1";
 import { bindWirelessForm } from "./wireless-form.mjs?v=19";
 import { deriveOperationEligibility } from "./eligibility.mjs?v=2";
 import {
@@ -38,6 +42,40 @@ const wirelessForm = bindWirelessForm({
 });
 let wirelessLoadedAt = 0;
 let wirelessReading = false;
+let consoleAuthToken = null;
+
+const consoleAuthChannel = typeof window !== "undefined" && typeof window.BroadcastChannel === "function"
+  ? new window.BroadcastChannel(CONSOLE_AUTH_CHANNEL) : null;
+
+async function provideConsoleProof(request) {
+  if (!consoleAuthToken || request?.type !== CONSOLE_AUTH_REQUEST || request.auth_token !== consoleAuthToken
+    || typeof request.request_id !== "string" || !/^[a-f0-9]{32}$/i.test(request.request_id)) return;
+  const response = { auth_token: request.auth_token, request_id: request.request_id };
+  try {
+    const nonce = parseHexBytes(request.nonce, 16, "TCP CLI nonce");
+    const uid = parseHexBytes(request.uid, 8, "TCP CLI board identity");
+    const target = client;
+    if (!target.state.connected || !target.state.hardware) {
+      throw new Error("Connect this board to the Direct dashboard over USB or Bluetooth first");
+    }
+    const boardUid = parseHexBytes(target.state.hardware.serial_number, 8, "connected board identity");
+    if (uid.some((byte, index) => byte !== boardUid[index])) {
+      throw new Error("The Wi-Fi console challenge belongs to a different board");
+    }
+    const proof = await target.tcpCliAuthProof(nonce, uid);
+    if (target !== client || !target.state.connected) {
+      throw new Error("The dashboard disconnected while authorizing the Wi-Fi console");
+    }
+    if (!(proof instanceof Uint8Array) || proof.length !== 16) {
+      throw new Error("The board returned an invalid TCP CLI proof");
+    }
+    consoleAuthChannel?.postMessage({ ...response, type: CONSOLE_AUTH_RESPONSE,
+      uid: request.uid.toLowerCase(), proof: bytesToHex(proof) });
+  } catch (error) {
+    consoleAuthChannel?.postMessage({ ...response, type: CONSOLE_AUTH_ERROR,
+      error: error instanceof Error ? error.message : "Could not authorize the Wi-Fi console" });
+  }
+}
 
 async function refreshWirelessStatus() {
   const target = client;
@@ -59,15 +97,25 @@ async function refreshWirelessStatus() {
 
 function render(state) {
   const wireless = state.wireless;
-  renderStatus({ ...state, console_url: wireless?.wifi_enabled
-    && wireless.wifi_state === "connected" && wireless.tcp_cli_started && wireless.ipv4 !== "0.0.0.0"
-    ? `console.html?ipv4=${wireless.ipv4}&auth=${Number(wireless.tcp_cli_auth_required)}` : null });
+  let consoleUrl = null;
+  if (wireless?.wifi_enabled && wireless.wifi_state === "connected" && wireless.tcp_cli_started
+    && wireless.ipv4 !== "0.0.0.0") {
+    const authRequired = Boolean(wireless.tcp_cli_auth_required);
+    const query = new URLSearchParams({ ipv4: wireless.ipv4, auth: Number(authRequired).toString() });
+    if (authRequired) {
+      consoleAuthToken ??= randomHex();
+      query.set("auth_token", consoleAuthToken);
+    }
+    consoleUrl = `console.html?${query}`;
+  }
+  renderStatus({ ...state, console_url: consoleUrl });
   if (!state.connected) {
     wirelessLoadedAt = 0;
     wirelessForm.reset();
     settingsDirty = false;
     for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
   }
+
   if (!settingsDirty && state.settings) {
     settingsClock.value = String(state.settings.system_clock_mhz);
     settingsStorage.value = String(state.settings.sdcard_profile);
@@ -280,5 +328,9 @@ for (const [name, dialog] of [["configuration", configurationDialog], ["reboot",
       dialog.close();
     }
   });
+}
+if (consoleAuthChannel) {
+  consoleAuthChannel.onmessage = event => { void provideConsoleProof(event.data); };
+  window.addEventListener?.("pagehide", () => consoleAuthChannel.close(), { once: true });
 }
 render(client.state);

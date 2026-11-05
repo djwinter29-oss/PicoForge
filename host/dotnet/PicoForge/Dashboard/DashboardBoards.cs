@@ -16,6 +16,8 @@ internal interface IDashboardBoards
     bool Reboot(string? boardId);
     bool SetSelfTest(string? boardId, string action, uint sizeMib);
     WirelessResponse ReadWireless(string? boardId);
+    byte[] TcpCliAuthProof(string? boardId, byte[] nonce, byte[] uid) =>
+        throw new NotSupportedException("USB TCP CLI authentication is unavailable");
     WirelessResponse SetWireless(string? boardId, WirelessRequest settings);
     IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId);
     WirelessOperationResponse TestWireless(string? boardId, string ssid, string password);
@@ -116,6 +118,8 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
 
     public bool SetLed(string? boardId, bool on) => Reader(boardId).SetLed(on);
     public WirelessResponse ReadWireless(string? boardId) => Reader(boardId).ReadWireless();
+    public byte[] TcpCliAuthProof(string? boardId, byte[] nonce, byte[] uid) =>
+        Reader(boardId).TcpCliAuthProof(nonce, uid);
     public WirelessResponse SetWireless(string? boardId, WirelessRequest settings) =>
         Reader(boardId).SetWireless(settings);
     public IReadOnlyList<WirelessNetworkResponse> ScanWireless(string? boardId) =>

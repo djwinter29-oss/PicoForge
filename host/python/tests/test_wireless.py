@@ -8,8 +8,10 @@ from unittest.mock import Mock, patch
 from picoforge.hid.device import PicoForgeHid
 from picoforge.dashboard.monitor import DeviceMonitor
 from picoforge.reports import (
+    build_tcp_cli_auth_request,
     build_wireless_command_report,
     build_wireless_configuration_report,
+    parse_tcp_cli_auth_result,
     parse_wireless_result_report,
     parse_wireless_status_report,
 )
@@ -53,6 +55,20 @@ def operation_result(state=2, transaction=1, page=0, networks=()):
 
 
 class WirelessTests(unittest.TestCase):
+    def test_tcp_cli_auth_report_validates_board_proof_results(self):
+        nonce = bytes(range(16))
+        request = build_tcp_cli_auth_request(7, nonce)
+        self.assertEqual(request, bytes([36, 1, 7]) + nonce + b"\0")
+        proof = bytes(range(16))
+        response = bytes([36, 1, 7, 1]) + proof
+        self.assertEqual(parse_tcp_cli_auth_result(response, 7), proof)
+        with self.assertRaisesRegex(ValueError, "stale"):
+            parse_tcp_cli_auth_result(response, 8)
+        with self.assertRaisesRegex(ValueError, "nonce"):
+            build_tcp_cli_auth_request(7, bytes(15))
+        with self.assertRaisesRegex(RuntimeError, "Control key"):
+            parse_tcp_cli_auth_result(bytes([36, 1, 7, 0]) + bytes(16), 7)
+
     def test_parses_firmware_generated_feature_30_status_vectors(self):
         authenticated = parse_wireless_status_report(
             bytes((30,)) + bytes.fromhex(STATUS_VECTORS["tcp_cli_auth_required"])

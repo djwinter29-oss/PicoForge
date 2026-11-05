@@ -29,13 +29,9 @@
       <div>
         <h1>Wi-Fi console</h1>
         <p class="console-lede">Only one CLI session is allowed; close other USB or TCP terminals before connecting.
-          Traffic is not encrypted.</p>
+          Traffic is not encrypted. The connected board proves its saved Control key over USB when required.</p>
       </div>
       <div class="actions">
-        <label class="console-key" for="console-auth-key">BLE control key
-          <input id="console-auth-key" type="password" autocomplete="off" spellcheck="false"
-            placeholder="Only if TCP auth is enabled">
-        </label>
         <button class="button button-secondary" id="connect" type="button" data-state="disconnected">Connect</button>
       </div>
     </section>

@@ -297,7 +297,7 @@ void test_corrupt_or_unknown_records_give_defaults(void)
 {
     const struct { unsigned offset; uint8_t value; bool reseal; } cases[] = {
         {0u, 'X', true}, {4u, 2u, true}, {6u, 15u, true}, {8u, 4u, true}, {9u, 2u, true},
-        {10u, 8u, true}, {11u, 2u, true}, {8u, 1u, false}, {15u, 0u, false},
+        {10u, 16u, true}, {11u, 2u, true}, {8u, 1u, false}, {15u, 0u, false},
     };
     for (unsigned i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         store(PF_SYSCLK_200MHZ, PF_STORAGE_SPEED_HIGH);
@@ -454,28 +454,32 @@ void test_tcp_cli_switch_defaults_enabled_and_survives_radio_changes_and_reboot(
     TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_WIFI, pf_boot_config_radios());
 }
 
-void test_tcp_cli_auth_requires_saved_key_and_survives_profile_updates(void)
+void test_control_key_requires_nonzero_value_and_survives_profile_updates(void)
 {
     uint8_t key[32] = {0u};
     store(PF_SYSCLK_DEFAULT, PF_STORAGE_SPEED_DEFAULT);
-    TEST_ASSERT_FALSE(pf_boot_config_set_tcp_cli_auth_required(true));
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
     TEST_ASSERT_FALSE(pf_boot_config_ble_key_configured());
-    TEST_ASSERT_FALSE(pf_boot_config_set_tcp_cli_auth_required(true));
     key[0] = 0x42u;
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
-    TEST_ASSERT_TRUE(pf_boot_config_set_tcp_cli_auth_required(true));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
     reboot();
-    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_auth_required());
     TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
     TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
     reboot();
-    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_auth_required());
     TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
+}
+
+void test_retired_tcp_cli_auth_bit_still_loads(void)
+{
+    store(PF_SYSCLK_200MHZ, PF_STORAGE_SPEED_HIGH);
+    stored_bytes()[10] |= 8u;
+    reseal();
+    reboot();
+    TEST_ASSERT_EQUAL(PF_SYSCLK_200MHZ, pf_boot_config_sysclk());
 }
 
 void test_unsafe_flash_state_fails_without_writing_and_write_can_retry(void)
