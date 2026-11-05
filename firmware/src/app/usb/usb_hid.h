@@ -46,7 +46,7 @@
 #define PF_HID_CAP_SDIO (1u << 4)
 #define PF_HID_CAP_SELF_TEST (1u << 5)
 #define PF_HID_CAP_FORCE_SAVE (1u << 6) /**< Confirmed settings save/reboot while MSC owns media. */
-#define PF_HID_CAP_WIRELESS (1u << 7) /**< USB radio provisioning and restricted BLE controls on W boards. */
+#define PF_HID_CAP_WIRELESS (1u << 7) /**< USB radio provisioning and authenticated BLE controls on W boards. */
 
 /** @} */
 
@@ -93,6 +93,14 @@
 #define PF_HID_OPCODE_MSC 3u
 #define PF_HID_OPCODE_SELF_TEST 4u
 #define PF_HID_OPCODE_SAVE_SETTINGS 6u
+/** @} */
+
+/** @name Opcode 6 save-settings flags and result bits @{ */
+#define PF_HID_SAVE_SETTINGS_FORCE_MSC (1u << 0) /**< Confirm save while USB MSC owns the card. */
+#define PF_HID_SAVE_SETTINGS_SET_TCP_CLI (1u << 1) /**< Save arguments[4] as the TCP CLI enable switch. */
+#define PF_HID_SETTINGS_RESULT_RADIO_MASK 0x03u /**< Radio enables in result_data[3], bits 0-1. */
+#define PF_HID_SETTINGS_RESULT_TCP_CLI_ENABLED (1u << 2) /**< Saved TCP CLI switch is on. */
+#define PF_HID_SETTINGS_RESULT_TCP_CLI_INCLUDED (1u << 3) /**< Result includes the saved TCP CLI switch. */
 /** @} */
 
 /** @name Feature 20 result status (control result @c status) @{ */
@@ -217,7 +225,7 @@ typedef struct __attribute__((packed)) {
     uint8_t opcode; /**< Operation associated with the result. */
     uint8_t status; /**< Idle, Pending, Completed, Invalid, Unsupported, Busy, or Failed. */
     uint8_t error_reason; /**< Zero on success; otherwise command error enum. */
-    uint8_t result_data[4]; /**< Saved-setting result for opcode six, zero otherwise. */
+    uint8_t result_data[4]; /**< Saved settings for opcode six, zero otherwise. */
 } pf_hid_control_result_t;
 
 _Static_assert(sizeof(pf_hid_identity_report_t) == PF_HID_IDENTITY_PAYLOAD_SIZE, "identity report size changed");
@@ -264,7 +272,7 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
 void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t sequence);
 
 #if PF_ENABLE_WIRELESS
-/** @brief Execute a validated BLE LED/benchmark request on the USB owner task; false rejects unsupported writes. */
+/** @brief Execute an authenticated BLE LED, reboot, benchmark, or settings request on the USB owner task. */
 bool pf_hid_ble_control(const pf_hid_control_request_t *request);
 /** @brief Read the BLE-specific result slot; USB results remain independent. */
 void pf_hid_ble_result(pf_hid_control_result_t *report);

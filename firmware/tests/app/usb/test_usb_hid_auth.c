@@ -128,6 +128,10 @@ void setUp(void)
     pf_wireless_result_report_StubWithCallback(mock_wireless_result_report);
     pf_wireless_auth_tcp_cli_proof_StubWithCallback(mock_tcp_auth_proof);
     test_radios = saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+    test_tcp_cli_enabled = saved_tcp_cli_enabled = true;
+    test_sysclk = saved_sysclk = PF_SYSCLK_DEFAULT;
+    test_sd_speed = saved_sd_speed = PF_STORAGE_SPEED_DEFAULT;
+    settings_save_calls = 0u;
     settings_save_fails = false;
     cli_owner = NULL;
     fake_connected = tcp_client = false;
@@ -149,7 +153,7 @@ void tearDown(void)
     TEST_ASSERT_FALSE(reserved);
 }
 
-void test_ble_dispatch_rejects_reboot_storage_and_flash_writes_without_touching_usb_result(void)
+void test_ble_dispatch_keeps_storage_ownership_usb_only(void)
 {
     control_result.transaction_id = 99u;
     pf_hid_control_request_t request = {.version = 1u, .transaction_id = 1u, .opcode = PF_HID_OPCODE_LED};
@@ -157,17 +161,66 @@ void test_ble_dispatch_rejects_reboot_storage_and_flash_writes_without_touching_
     TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_COMPLETED, ble_result.status);
     TEST_ASSERT_EQUAL_UINT8(99u, control_result.transaction_id);
     TEST_ASSERT_EQUAL_UINT(1u, led_requests);
-    const uint8_t prohibited[] = {PF_HID_OPCODE_REBOOT, PF_HID_OPCODE_MSC, PF_HID_OPCODE_SAVE_SETTINGS};
-    for (unsigned i = 0u; i < sizeof(prohibited); ++i) {
-        request.opcode = prohibited[i];
-        TEST_ASSERT_FALSE(pf_hid_ble_control(&request));
-    }
+    request.opcode = PF_HID_OPCODE_MSC;
+    TEST_ASSERT_FALSE(pf_hid_ble_control(&request));
     TEST_ASSERT_FALSE(reboot_requested);
     TEST_ASSERT_EQUAL_UINT(0u, msc_requests);
     TEST_ASSERT_EQUAL_UINT(0u, provisioning_calls);
     pf_hid_identity_report_t identity;
     pf_hid_build_identity_report(&identity);
     TEST_ASSERT_TRUE(identity.capabilities & PF_HID_CAP_WIRELESS);
+}
+
+void test_ble_dispatch_allows_confirmed_reboot_without_changing_usb_result(void)
+{
+    control_result.transaction_id = 99u;
+    pf_hid_control_request_t request = {.version = 1u, .transaction_id = 1u,
+        .opcode = PF_HID_OPCODE_REBOOT, .flags = 1u};
+    TEST_ASSERT_TRUE(pf_hid_ble_control(&request));
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_COMPLETED, ble_result.status);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_OPCODE_REBOOT, ble_result.opcode);
+    TEST_ASSERT_EQUAL_UINT8(99u, control_result.transaction_id);
+    TEST_ASSERT_TRUE(reboot_requested);
+    TEST_ASSERT_TRUE(pf_hid_take_reboot_request());
+}
+
+void test_ble_dispatch_saves_clock_storage_and_tcp_cli_without_changing_radios(void)
+{
+    control_result.transaction_id = 99u;
+    pf_hid_control_request_t request = {.version = 1u, .transaction_id = 2u,
+        .opcode = PF_HID_OPCODE_SAVE_SETTINGS, .flags = PF_HID_SAVE_SETTINGS_SET_TCP_CLI,
+        .arguments = {200u, 0u, PF_STORAGE_SPEED_HIGH, PF_WIRELESS_WIFI | PF_WIRELESS_BLE, 0u}};
+    TEST_ASSERT_TRUE(pf_hid_ble_control(&request));
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_COMPLETED, ble_result.status);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_OPCODE_SAVE_SETTINGS, ble_result.opcode);
+    TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE |
+        PF_HID_SETTINGS_RESULT_TCP_CLI_INCLUDED, ble_result.result_data[3]);
+    TEST_ASSERT_FALSE(pf_boot_config_tcp_cli_enabled());
+    TEST_ASSERT_EQUAL_UINT(1u, settings_save_calls);
+    TEST_ASSERT_TRUE(reboot_requested);
+    TEST_ASSERT_EQUAL_UINT8(99u, control_result.transaction_id);
+}
+
+void test_ble_dispatch_rejects_radio_changes_and_forced_saves(void)
+{
+    pf_hid_control_request_t request = {.version = 1u, .transaction_id = 3u,
+        .opcode = PF_HID_OPCODE_SAVE_SETTINGS,
+        .arguments = {150u, 0u, PF_STORAGE_SPEED_DEFAULT, PF_WIRELESS_BLE, 0u}};
+    TEST_ASSERT_TRUE(pf_hid_ble_control(&request));
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, ble_result.status);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_ERROR_ARGUMENT, ble_result.error_reason);
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+    TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE, test_radios);
+
+    msc_enabled = true;
+    request.transaction_id = 4u;
+    request.flags = PF_HID_SAVE_SETTINGS_FORCE_MSC;
+    request.arguments[3] = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+    TEST_ASSERT_TRUE(pf_hid_ble_control(&request));
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, ble_result.status);
+    TEST_ASSERT_EQUAL_UINT8(PF_HID_ERROR_ARGUMENT, ble_result.error_reason);
+    TEST_ASSERT_EQUAL_UINT(0u, settings_save_calls);
+    TEST_ASSERT_FALSE(reboot_requested);
 }
 
 void test_ble_dispatch_refuses_interference_during_save_and_pending_admission(void)

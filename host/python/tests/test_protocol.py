@@ -60,9 +60,15 @@ class ProtocolTests(unittest.TestCase):
         settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         self.assertEqual(build_settings_command_report(settings, 3, force=True),
                          bytes([20, 1, 3, 6, 1, 200, 0, 1, 0, 0]))
+        self.assertEqual(build_settings_command_report(settings, 3, tcp_cli_enabled=True),
+                         bytes([20, 1, 3, 6, 2, 200, 0, 1, 0, 1]))
+        self.assertEqual(build_settings_command_report(settings, 3, force=True, tcp_cli_enabled=False),
+                         bytes([20, 1, 3, 6, 3, 200, 0, 1, 0, 0]))
         self.assertEqual(build_settings_command_report(settings, 3)[4], 0)
         with self.assertRaises(ValueError):
             build_settings_command_report(settings, force="yes")
+        with self.assertRaises(ValueError):
+            build_settings_command_report(settings, tcp_cli_enabled=1)
 
     def test_identity_and_board_configuration_decode(self):
         self.assertEqual(self.identity["device_uid"], "0123456789ABCDEF")
@@ -194,6 +200,10 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["saved_settings"], {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0})
         self.assertEqual(parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 2]))["saved_settings"],
                          {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2})
+        self.assertEqual(parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 14]))["saved_settings"],
+                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2, "tcp_cli_enabled": True})
+        self.assertEqual(parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 8]))["saved_settings"],
+                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False})
         self.assertEqual(build_settings_command_report({"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 1}, 2),
                          bytes([20, 1, 2, 6, 0, 200, 0, 1, 1, 0]))
         with self.assertRaises(ValueError):
@@ -204,6 +214,7 @@ class ProtocolTests(unittest.TestCase):
             bytes([20, 1, 11, 3, 4, 4, 0, 0, 0, 0]),
             bytes([20, 1, 11, 6, 2, 0, 0, 0, 2, 0]),
             bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 4]),
+            bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 16]),
         ):
             with self.subTest(report=malformed), self.assertRaises(ValueError):
                 parse_control_result_report(malformed)

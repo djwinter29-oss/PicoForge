@@ -129,17 +129,18 @@ leaves the BLE link off. Service UUID: `50fc0000-7c91-4d70-8b32-6e856443f501`. C
 suffix and replace `0000` with the hexadecimal report ID: `0001`, `0002`, `0003`, `000a`, `000b`, `0014`, `001e`.
 Reads return the corresponding payload without a HID report ID. Characteristics use ATT long reads where needed;
 the first read freezes the value for subsequent read-blob offsets. Report `0014` has the BLE-specific command
-result; writes accept only existing opcode 1 (LED) or 4 (benchmark). Reports are polled; no notification MTU
-assumption is needed.
+result; writes accept opcode 1 (LED), 2 (confirmed reboot), 4 (benchmark), or 6 (save settings). Reports are polled;
+no notification MTU assumption is needed.
 
 Each connection starts locked: only the GAP name, `0001` identity (it carries the UID the proofs bind) and the
 `0020` nonce are readable; other reads and all writes return `0x80`. To unlock, read `0020`, then write the first
 16 bytes of HMAC-SHA256 over `nonce[16] || board_UID[8] || "PFBLECTL1" || "SESSION01"` to `0021`. A rejected or
 rate-limited unlock returns `0x80`. The unlock lasts until disconnect; it then opens all reads, including `001e`
-status with the SSID and IPv4 address, and the LED.
+status with the SSID and IPv4 address.
 
 On an unlocked link, opcode 1 (LED) only identifies the board, so it needs no further proof: write the request to
-`0014` and read the result. An LED write leaves any pending nonce, proof, and rate limit unchanged.
+`0014` and read the result. An LED write leaves any pending nonce, proof, and rate limit unchanged. Reboot, benchmark,
+and settings commands require a fresh proof each time.
 
 For **every** other command:
 
@@ -155,7 +156,10 @@ for two seconds. A missing, rejected or rate-limited proof returns ATT applicati
 Authentication (`0x05`), which would make the central start OS pairing and drop the link. Fresh nonces prevent
 replay; protocol-domain separation prevents cross-service proof reuse; UID binding prevents cross-board reuse; request
 binding prevents changing an authorized command. This is application authorization, **not encrypted BLE transport**
-or protection against radio jamming/connection denial. Use USB for privileged management and credentials.
+or protection against radio jamming/connection denial. The Direct dashboard can save system clock, SD-card profile,
+and the TCP CLI enable switch, and can request a confirmed reboot over BLE. Those settings contain no Wi-Fi
+credentials or Control key. BLE saves preserve the saved radio mask; radio switches, credential provisioning, and
+forced saves remain USB-only. USB mass-storage ownership stays USB-only.
 
 The TCP CLI uses a separate domain (`"PFTCPCLI1"`) and request (`"TCPCLI001"`). Whenever a Control key is saved,
 each connection receives a one-use nonce and board UID challenge and must answer with the first 16 bytes of the

@@ -361,8 +361,12 @@ internal static partial class HidProtocol
             _ => result.Status == 4
         }, "control result status is invalid for its opcode");
         if (result.Opcode == 6 && result.Status == 2)
-            Require(result.ResultData[2] <= 1 && result.ResultData[3] <= 3,
+        {
+            var settingsFlags = result.ResultData[3];
+            Require(result.ResultData[2] <= 1 && (settingsFlags & 0xf0) == 0
+                && ((settingsFlags & 0x04) == 0 || (settingsFlags & 0x08) != 0),
                 "invalid saved-settings result data");
+        }
         else
             Require(result.ResultData.All(value => value == 0), "unexpected control result data");
         return result;

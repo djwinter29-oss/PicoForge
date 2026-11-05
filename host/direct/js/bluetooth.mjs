@@ -1,4 +1,4 @@
-import { PicoForgeWebHid } from "./device.mjs?v=10";
+import { PicoForgeWebHid } from "./device.mjs?v=11";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f501";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f501`;
@@ -82,7 +82,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
         close: async () => this.bleDevice.gatt.disconnect(),
         receiveFeatureReport: async id => this.characteristics.get(id).readValue(),
         sendFeatureReport: async (id, report) => {
-          if (id !== 20 || ![1, 4].includes(report[2])) throw new Error("This operation requires USB.");
+          if (id !== 20 || ![1, 2, 4, 6].includes(report[2])) throw new Error("This operation requires USB.");
           // The LED only identifies the board, so firmware accepts it without a proof.
           if (report[2] === 1) return this.characteristics.get(20).writeValueWithResponse(report);
           const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
@@ -143,7 +143,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
   }
 
   async command(opcode, options) {
-    if (![1, 4].includes(opcode)) throw new Error("This operation requires USB.");
+    if (![1, 2, 4, 6].includes(opcode)) throw new Error("This operation requires USB.");
     return super.command(opcode, options);
   }
 

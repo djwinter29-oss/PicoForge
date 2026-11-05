@@ -37,6 +37,7 @@ void setUp(void)
     cli_session = 9u;
     test_sysclk = saved_sysclk = PF_SYSCLK_200MHZ;
     test_sd_speed = saved_sd_speed = PF_STORAGE_SPEED_DEFAULT;
+    test_tcp_cli_enabled = saved_tcp_cli_enabled = true;
     settings_save_calls = 0u;
     settings_save_fails = false;
     prepare_save_fails = false;
@@ -314,7 +315,7 @@ void test_forced_save_uses_bounded_no_get_deadlines_and_rejects_invalid_flags(vo
     send_control(1u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
     TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, read_control_result().status);
     msc_enabled = true;
-    send_control(2u, PF_HID_OPCODE_SAVE_SETTINGS, 2u, arguments);
+    send_control(2u, PF_HID_OPCODE_SAVE_SETTINGS, 4u, arguments);
     TEST_ASSERT_EQUAL_UINT8(PF_HID_COMMAND_INVALID, read_control_result().status);
     send_control(3u, PF_HID_OPCODE_SAVE_SETTINGS, 1u, arguments);
     fake_ticks += 499u;

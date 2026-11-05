@@ -188,6 +188,8 @@ public sealed class ProtocolTests
         Assert.Equal((byte)1, parsed.ResultData[2]);
         result[9] = 3;
         Assert.Equal((byte)3, HidProtocol.ParseControlResult(result).ResultData[3]);
+        result[9] = 14;
+        Assert.Equal((byte)14, HidProtocol.ParseControlResult(result).ResultData[3]);
         result[9] = 4;
         Assert.Throws<InvalidOperationException>(() => HidProtocol.ParseControlResult(result));
         result[9] = 0;

@@ -33,14 +33,18 @@ from .common import (
 
 
 def build_settings_command_report(
-    settings: dict[str, object], transaction_id: int = 1, *, force: bool = False
+    settings: dict[str, object], transaction_id: int = 1, *, force: bool = False,
+    tcp_cli_enabled: bool | None = None,
 ) -> bytes:
     """Build Feature report 20 opcode 6 to save persistent settings."""
     clock, profile, radios = _validate_settings(settings)
     if type(force) is not bool:
         raise ValueError("Forced settings save confirmation must be boolean")
-    return build_control_command_report(transaction_id, 6, flags=int(force),
-                                        arguments=struct.pack("<HBB", clock, profile, radios) + b"\0")
+    if tcp_cli_enabled is not None and type(tcp_cli_enabled) is not bool:
+        raise ValueError("TCP CLI setting must be boolean")
+    arguments = struct.pack("<HBB", clock, profile, radios) + bytes((int(tcp_cli_enabled or False),))
+    flags = int(force) | (2 if tcp_cli_enabled is not None else 0)
+    return build_control_command_report(transaction_id, 6, flags=flags, arguments=arguments)
 
 def build_control_command_report(
     transaction_id: int,
@@ -76,7 +80,9 @@ def build_control_command_report(
             raise ValueError("invalid self-test command fields")
     if opcode == 6:
         clock, profile = struct.unpack_from("<HB", args)
-        if flags & ~1 or args[3] > 3 or args[4] or clock not in (0, 150, 200, 250) or profile not in (0, 1):
+        set_tcp_cli = bool(flags & 2)
+        if (flags & ~3 or args[3] > 3 or (args[4] > 1 if set_tcp_cli else args[4] != 0)
+                or clock not in (0, 150, 200, 250) or profile not in (0, 1)):
             raise ValueError("invalid persistent settings command fields")
     if opcode not in (1, 2, 3, 4, 6):
         raise ValueError("control opcode is unsupported")
@@ -122,13 +128,20 @@ def parse_control_result_report(
         raise ValueError("HID control result data is only valid for settings")
     saved_settings = None
     if opcode == 6:
-        clock, profile, radios = struct.unpack("<HBB", result_data)
-        if radios > 3 or (status == CONTROL_COMPLETED and (clock not in (0, 150, 200, 250) or profile not in (0, 1))):
+        clock, profile, result_flags = struct.unpack("<HBB", result_data)
+        radios = result_flags & 3
+        tcp_cli_included = bool(result_flags & 8)
+        tcp_cli_enabled = bool(result_flags & 4)
+        if result_flags & 0xF0 or (tcp_cli_enabled and not tcp_cli_included) or (
+            status == CONTROL_COMPLETED and (clock not in (0, 150, 200, 250) or profile not in (0, 1))
+        ):
             raise ValueError("invalid HID settings result data")
         if status != CONTROL_COMPLETED and any(result_data):
             raise ValueError("unsuccessful settings command returned result data")
         if status == CONTROL_COMPLETED:
             saved_settings = {"system_clock_mhz": clock, "sdcard_profile": profile, "radios": radios}
+            if tcp_cli_included:
+                saved_settings["tcp_cli_enabled"] = tcp_cli_enabled
     return {
         "version": version,
         "transaction_id": transaction_id,

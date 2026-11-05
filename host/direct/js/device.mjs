@@ -24,9 +24,14 @@ function requireValid(condition, label) {
 const validClock = clock => [0, 150, 200, 250].includes(clock);
 // radios: bit 0 Wi-Fi, bit 1 Bluetooth; omitted (0) on boards without a radio.
 const validSettings = settings => settings && validClock(settings.system_clock_mhz)
-  && [0, 1].includes(settings.sdcard_profile) && [undefined, 0, 1, 2, 3].includes(settings.radios);
+  && [0, 1].includes(settings.sdcard_profile) && [undefined, 0, 1, 2, 3].includes(settings.radios)
+  && (settings.tcp_cli_enabled === undefined || typeof settings.tcp_cli_enabled === "boolean");
 const bytesAt = (view, offset, size) => new Uint8Array(view.buffer, view.byteOffset + offset, size);
 const zero = bytes => bytes.every(byte => byte === 0);
+const SAVE_SETTINGS_FORCE_MSC = 1;
+const SAVE_SETTINGS_SET_TCP_CLI = 2;
+const SETTINGS_RESULT_TCP_CLI_ENABLED = 1 << 2;
+const SETTINGS_RESULT_TCP_CLI_INCLUDED = 1 << 3;
 
 export function decodeIdentityReport(report) {
   const view = payload(report, 26);
@@ -199,8 +204,9 @@ export function buildControlRequest(transaction, opcode, { flags = 0, args = [] 
         : opcode === 4 ? flags === 0 && arg <= 1
           && (arg === 0 ? unused(5) : new DataView(report.buffer).getUint32(5, true) >= 1
             && new DataView(report.buffer).getUint32(5, true) <= 1024)
-          : opcode === 6 && flags <= 1 && validClock(report[4] | report[5] << 8)
-            && report[6] <= 1 && report[7] <= 3 && unused(8), "control request");
+          : opcode === 6 && flags <= (SAVE_SETTINGS_FORCE_MSC | SAVE_SETTINGS_SET_TCP_CLI)
+            && validClock(report[4] | report[5] << 8) && report[6] <= 1 && report[7] <= 3
+            && ((flags & SAVE_SETTINGS_SET_TCP_CLI) ? report[8] <= 1 : report[8] === 0), "control request");
   return report;
 }
 
@@ -211,8 +217,11 @@ export function decodeControlResult(report) {
   const status = view.getUint8(3);
   const error = view.getUint8(4);
   const known = [1, 2, 3, 4, 6].includes(opcode);
+  const settingsResult = view.getUint8(8);
+  const tcpCliIncluded = Boolean(settingsResult & SETTINGS_RESULT_TCP_CLI_INCLUDED);
   const settings = { system_clock_mhz: view.getUint16(5, true), sdcard_profile: view.getUint8(7),
-    radios: view.getUint8(8) };
+    radios: settingsResult & 3 };
+  if (tcpCliIncluded) settings.tcp_cli_enabled = Boolean(settingsResult & SETTINGS_RESULT_TCP_CLI_ENABLED);
   const allowedErrors = [[0], [0], [0], [1, 2, 3], [4, 7], [5], [6]];
   requireValid(allowedErrors[status]?.includes(error)
     && (status === 0 ? transaction === 0 && opcode === 0
@@ -221,7 +230,9 @@ export function decodeControlResult(report) {
         && !(status === 3 && error === 2 && ![2, 3].includes(opcode))
         && !(opcode === 2 && status === 3 && error === 3) : status === 4 && error === 7))
     && (opcode === 6 && status === 2
-      ? validSettings(settings) : zero(bytesAt(view, 5, 4))), "control result");
+      ? validSettings(settings) && !(settingsResult & 0xf0)
+        && (tcpCliIncluded || !(settingsResult & SETTINGS_RESULT_TCP_CLI_ENABLED))
+      : zero(bytesAt(view, 5, 4))), "control result");
   return { transaction_id: transaction, opcode, status, error_reason: error,
     settings: opcode === 6 && status === 2 ? settings : null };
 }
@@ -240,11 +251,12 @@ const EMPTY = {
   self_test_command_pending: false, msc_command_pending: false, reboot_pending: false,
 };
 const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile
-  && (a.radios ?? 0) === (b.radios ?? 0);
+  && (a.radios ?? 0) === (b.radios ?? 0) && a.tcp_cli_enabled === b.tcp_cli_enabled;
 const PENDING_OPERATION_KEY = "picoforge.direct.pending-operation";
 const isUid = value => typeof value === "string" && /^[A-F0-9]{16}$/i.test(value);
 const validBoardSettings = value => value && [0, 150, 200, 250].includes(value.system_clock_mhz)
-  && [0, 1].includes(value.sdcard_profile) && [0, 1, 2, 3].includes(value.radios);
+  && [0, 1].includes(value.sdcard_profile) && [0, 1, 2, 3].includes(value.radios)
+  && (value.tcp_cli_enabled === undefined || typeof value.tcp_cli_enabled === "boolean");
 const hasExactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 function validatePendingOperation(record) {
@@ -252,10 +264,13 @@ function validatePendingOperation(record) {
   if (record.kind === "control") {
     const request = record.request;
     const requestKeys = request?.opcode === 6 ? ["transaction_id", "opcode", "settings"] : ["transaction_id", "opcode"];
+    const settingsKeys = request?.settings && Object.hasOwn(request.settings, "tcp_cli_enabled")
+      ? ["system_clock_mhz", "sdcard_profile", "radios", "tcp_cli_enabled"]
+      : ["system_clock_mhz", "sdcard_profile", "radios"];
     if (!hasExactKeys(record, ["version", "kind", "uid", "request"])
       || !hasExactKeys(request, requestKeys) || !Number.isInteger(request.transaction_id) || request.transaction_id < 1
       || request.transaction_id > 255 || ![1, 2, 3, 4, 6].includes(request.opcode)
-      || request.opcode === 6 && (!hasExactKeys(request.settings, ["system_clock_mhz", "sdcard_profile", "radios"])
+      || request.opcode === 6 && (!hasExactKeys(request.settings, settingsKeys)
         || !validBoardSettings(request.settings))) throw new Error("Invalid saved control transaction");
   } else if (record.kind === "wireless-command") {
     const states = ({ 1: [2], 2: [2], 3: [5], 4: [0] })[record.operation];
@@ -640,13 +655,15 @@ export class PicoForgeWebHid {
     if (bit && !(this.state.hardware.capabilities & bit)) throw new Error("Unavailable capability");
     const transaction = this.transaction % 255 + 1;
     const report = buildControlRequest(transaction, opcode, options);
-    const forcedSave = opcode === 6 && report[3] === 1;
+    const forcedSave = opcode === 6 && Boolean(report[3] & SAVE_SETTINGS_FORCE_MSC);
     this.reconnectedResult = null;
     this.reconnectError = null;
     this.transaction = transaction;
     const request = { transaction_id: transaction, opcode };
-    if (opcode === 6) request.settings = { system_clock_mhz: report[4] | report[5] << 8,
-      sdcard_profile: report[6], radios: report[7] };
+    const settingsToSave = opcode === 6 ? { system_clock_mhz: report[4] | report[5] << 8,
+      sdcard_profile: report[6], radios: report[7],
+      ...(report[3] & SAVE_SETTINGS_SET_TCP_CLI ? { tcp_cli_enabled: Boolean(report[8]) } : {}) } : null;
+    if (settingsToSave) request.settings = settingsToSave;
     const device = this.device;
     const generation = this.generation;
     this.outstanding = request;
@@ -676,7 +693,7 @@ export class PicoForgeWebHid {
       }
       if (opcode === 6) {
         const saved = result.settings;
-        if (!sameSettings(saved, request.settings)) {
+        if (!sameSettings(saved, settingsToSave)) {
           this.update({ outcome_uncertain: true });
           throw new Error("Firmware did not confirm the selected values");
         }
@@ -704,8 +721,7 @@ export class PicoForgeWebHid {
           throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
         }
         if (result?.transaction_id === transaction && result.opcode === opcode && result.status === 2
-          && sameSettings(result.settings, { system_clock_mhz: report[4] | report[5] << 8,
-            sdcard_profile: report[6], radios: report[7] })) {
+          && sameSettings(result.settings, settingsToSave)) {
           this.update({ settings: result.settings, reboot_pending: true, outcome_uncertain: false });
           return result;
         }
@@ -768,17 +784,21 @@ export class PicoForgeWebHid {
     return this.command(4, { args: [Number(action === "start"), ...size] });
   }
 
-  async saveSettings(settings, force = false) {
+  async saveSettings(settings, force = false, tcpCliEnabled) {
     requireValid(validSettings(settings), "boot settings");
     requireValid(typeof force === "boolean", "forced save confirmation");
+    requireValid(tcpCliEnabled === undefined || typeof tcpCliEnabled === "boolean", "TCP CLI setting");
     if (!this.storageReady() || this.state.self_test?.active ||
       (this.state.msc.enabled && !force) || (force && !this.state.msc.enabled)) {
       this.update({ settings_message: "Fresh idle firmware-owned storage required before saving." });
       return false;
     }
     try {
-      await this.command(6, { flags: Number(force), args: [settings.system_clock_mhz & 255,
-        settings.system_clock_mhz >> 8, settings.sdcard_profile, settings.radios ?? 0] });
+      const args = [settings.system_clock_mhz & 255, settings.system_clock_mhz >> 8,
+        settings.sdcard_profile, settings.radios ?? 0];
+      if (tcpCliEnabled !== undefined) args.push(Number(tcpCliEnabled));
+      const flags = Number(force) | (tcpCliEnabled === undefined ? 0 : SAVE_SETTINGS_SET_TCP_CLI);
+      await this.command(6, { flags, args });
       this.update({ settings_message: "Settings saved. Waiting for the board to reboot." });
       return true;
     } catch (error) {

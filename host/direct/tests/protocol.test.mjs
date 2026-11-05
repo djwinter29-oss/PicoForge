@@ -223,9 +223,12 @@ test("control request builders encode new nine-byte envelopes and reject malform
   assert.deepEqual([...buildControlRequest(1, 1, { args: [1] })], [1, 1, 1, 0, 1, 0, 0, 0, 0]);
   assert.deepEqual([...buildControlRequest(255, 3, { flags: 1, args: [2] })], [1, 255, 3, 1, 2, 0, 0, 0, 0]);
   assert.deepEqual([...buildControlRequest(2, 6, { args: [200, 0, 1] })], [1, 2, 6, 0, 200, 0, 1, 0, 0]);
+  assert.deepEqual([...buildControlRequest(2, 6, { flags: 2, args: [200, 0, 1, 3, 1] })],
+    [1, 2, 6, 2, 200, 0, 1, 3, 1]);
   for (const [opcode, options] of [[2, {}], [1, { flags: 1 }], [1, { args: [0, 1] }],
     [3, { args: [2] }], [3, { flags: 1, args: [1] }], [4, { args: [0, 1] }],
-    [4, { args: [1, 0, 0, 0, 0] }], [6, { args: [100, 0, 0] }], [5, {}]]) {
+    [4, { args: [1, 0, 0, 0, 0] }], [6, { args: [100, 0, 0] }],
+    [6, { args: [200, 0, 0, 0, 1] }], [6, { flags: 2, args: [200, 0, 0, 0, 2] }], [5, {}]]) {
     assert.throws(() => buildControlRequest(1, opcode, options), `opcode ${opcode}`);
   }
   assert.throws(() => buildControlRequest(0, 1));
@@ -258,7 +261,14 @@ test("control results enforce every opcode/status/error combination and zero res
   assert.deepEqual(decodeControlResult(saved).settings, { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 });
   saved[8] = 3;
   assert.equal(decodeControlResult(saved).settings.radios, 3);
+  saved[8] = 14;
+  assert.deepEqual(decodeControlResult(saved).settings,
+    { system_clock_mhz: 200, sdcard_profile: 1, radios: 2, tcp_cli_enabled: true });
+  saved[8] = 8;
+  assert.equal(decodeControlResult(saved).settings.tcp_cli_enabled, false);
   saved[8] = 4;
+  assert.throws(() => decodeControlResult(saved));
+  saved[8] = 16;
   assert.throws(() => decodeControlResult(saved));
 });
 

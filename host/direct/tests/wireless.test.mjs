@@ -794,9 +794,14 @@ test("BLE unlocks the session with the control key before any read and binds eac
     for (const id of [1, 2, 3, 10, 11, 20, 30, 32, 33]) {
       characteristics.set(id, {
         async readValue() {
+          const request = writes.at(-1)?.[1];
           const bytes = id === 1 ? identity(128 | 55) : id === 2 ? config() : id === 3 ? telemetry()
             : id === 10 ? storage() : id === 11 ? selfTest() : id === 32 ? nonce
-              : result(writes.at(-1)?.[1]?.[1] ?? 1, writes.at(-1)?.[1]?.[2] ?? 1);
+              : result(request?.[1] ?? 1, request?.[2] ?? 1);
+          if (id === 20 && request?.[2] === 6) {
+            bytes[5] = request[4]; bytes[6] = request[5]; bytes[7] = request[6];
+            bytes[8] = request[7] | (request[3] & 2 ? 8 | (request[8] ? 4 : 0) : 0);
+          }
           return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         },
         async writeValueWithResponse(bytes) { writes.push([id, [...bytes]]); },
@@ -845,10 +850,20 @@ test("BLE unlocks the session with the control key before any read and binds eac
     await client.command(4, { args: [0, 0, 0, 0, 0] });
     assert.deepEqual(writes.map(item => item[0]), [33, 20]);
     assert.deepEqual(writes[0][1], sign(writes[1][1]));
-    for (const opcode of [2, 3, 6]) await assert.rejects(client.command(opcode), /requires USB/);
-    assert.equal(writes.length, 2);
     client.update({ self_test_command_pending: false }); // stands in for the next self-test report
+    writes.length = 0;
+    await client.command(2, { flags: 1 });
+    assert.deepEqual(writes.map(item => item[0]), [33, 20], "BLE reboot is proved per command");
+    assert.deepEqual(writes[0][1], sign(writes[1][1]));
+    client.update({ reboot_pending: false });
+    writes.length = 0;
+    await client.command(6, { flags: 2, args: [200, 0, 1, 3, 1] });
+    assert.deepEqual(writes.map(item => item[0]), [33, 20], "BLE settings save is proved per command");
+    assert.deepEqual(writes[0][1], sign(writes[1][1]));
+    assert.equal(client.state.settings.tcp_cli_enabled, true);
+    await assert.rejects(client.command(3), /requires USB/);
     characteristics.get(20).writeValueWithResponse = async () => { throw new Error("GATT Error Unknown."); };
+    client.update({ reboot_pending: false });
     await assert.rejects(client.command(4, { args: [0, 0, 0, 0, 0] }), /rejected the control key/);
     assert.equal(client.state.connected, true, "a rejected key must not drop the link");
     assert.equal(Boolean(client.state.outcome_uncertain), false);

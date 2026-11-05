@@ -11,7 +11,7 @@ export function deriveOperationEligibility(state, {
   return {
     blocked,
     storageReady,
-    settingsReady: !blocked && storageReady && !bluetooth,
+    settingsReady: !blocked && storageReady && (!bluetooth || !state.msc?.enabled),
     connectionLocked: state.connected || state.reconnecting || outstanding || state.outcome_uncertain,
   };
 }

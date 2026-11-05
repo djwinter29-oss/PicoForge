@@ -67,8 +67,10 @@ request. Run the included server instead of a generic static-file server to enab
 Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/guides/wireless.md).
 Use USB to provision radio settings and a random Control key, then open **Bluetooth**, enter the key and scan;
 Bluetooth stays off without a saved key. See the linked wireless guide for the key-gated session.
-Privileged management remains USB-only. Wireless Features 30, 31, 34, and 35 use version 1. Successful temporary
-Wi-Fi tests must be saved within ten minutes.
+The authenticated Bluetooth session can change system clock, SD-card speed, and the TCP CLI enable switch, and can
+request a confirmed reboot. Radio switches, Wi-Fi credentials, Control-key provisioning, forced saves, and USB
+storage ownership remain USB-only. Wireless Features 30, 31, 34, and 35 use version 1. Successful temporary Wi-Fi
+tests must be saved within ten minutes.
 
 All operations serialize Feature 20 SET/GET transactions, matching both transaction ID and opcode.
 An acceptance result does not prove storage ownership changed or a self-test finished; the dashboard waits for

@@ -48,7 +48,9 @@ test("operation eligibility centralizes connection, freshness, and transport gat
   }
 
   assert.equal(deriveOperationEligibility(readyState(), { ...options, wirelessBusy: true }).blocked, true);
-  assert.equal(deriveOperationEligibility(readyState(), { ...options, bluetooth: true }).settingsReady, false);
+  assert.equal(deriveOperationEligibility(readyState(), { ...options, bluetooth: true }).settingsReady, true);
+  assert.equal(deriveOperationEligibility({ ...readyState(), msc: { enabled: true, transition_pending: false } },
+    { ...options, bluetooth: true }).settingsReady, false);
   assert.equal(deriveOperationEligibility(readyState(), { ...options, outstanding: {} }).connectionLocked, true);
 });
 

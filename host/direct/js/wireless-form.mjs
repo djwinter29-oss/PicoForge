@@ -44,7 +44,9 @@ export function renderWirelessStatus(snapshot) {
 }
 
 /** Bind the staged Wi-Fi/Bluetooth dialogs to one atomic boot configuration save. */
-export function bindWirelessForm({ load, scan, test, cancelTest, ready, supported, changed = () => {} }) {
+export function bindWirelessForm({
+  load, scan, test, cancelTest, ready, loadReady = ready, tcpReady = null, supported, changed = () => {},
+}) {
   const el = id => document.querySelector(`#${id}`);
   const wifiDialog = el("wifi-dialog");
   const bleDialog = el("ble-dialog");
@@ -72,11 +74,12 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   const testExpired = () => radioOn("settings-wifi") && wifiStage?.use_tested_wifi && remainingTestSeconds() === 0;
   const refresh = () => {
     const available = supported();
-    const tcpReady = available && ready() && !busy && radioOn("settings-wifi");
+    const canSetTcpCli = tcpReady ? tcpReady() : ready() && radioOn("settings-wifi");
+    const tcpEnabled = available && canSetTcpCli && !busy;
     const wifiBlocked = busy || wifiCanceling || wifiCancelError !== null;
     const tcp = el("settings-tcp-cli");
     if (tcp) {
-      tcp.disabled = !tcpReady || !status;
+      tcp.disabled = !tcpEnabled || !status;
       tcp.closest?.("label")?.toggleAttribute("hidden", !available);
     }
     for (const id of ["settings-wifi", "settings-ble"]) {
@@ -355,8 +358,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       clearWifiInputs();
       clearBleKey();
       if (saved) {
-        status = saved;
-        if (el("settings-tcp-cli")) el("settings-tcp-cli").value = (saved.tcp_cli_enabled ?? true) ? "1" : "0";
+        status = { ...status, ...saved };
+        if (el("settings-tcp-cli")) el("settings-tcp-cli").value = (status.tcp_cli_enabled ?? true) ? "1" : "0";
         clearInterval(stagedTimer);
         stagedTimer = null;
         loaded = true;
@@ -415,7 +418,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       if (recoveredCancellation) changed();
     },
     async load() {
-      if (loading || loaded || Date.now() < retryAfter || !supported() || !ready()) return;
+      if (loading || loaded || Date.now() < retryAfter || !supported() || !loadReady()) return;
       loading = true;
       const current = generation;
       try {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { PicoForgeWebHid } from "../js/device.mjs?v=10";
-import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=13";
+import { PicoForgeWebHid } from "../js/device.mjs?v=11";
+import { PicoForgeBluetooth } from "../js/bluetooth.mjs?v=14";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
@@ -221,7 +221,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     sessionStorage: Object.getOwnPropertyDescriptor(globalThis, "sessionStorage"),
     crypto: Object.getOwnPropertyDescriptor(globalThis, "crypto"),
   };
-  const prototypes = new Map(["connect", "disconnect", "tcpCliAuthProof"].map(name =>
+  const prototypes = new Map(["connect", "disconnect", "tcpCliAuthProof", "saveSettings", "reboot"].map(name =>
     [name, PicoForgeBluetooth.prototype[name]]));
   const elements = new Map();
   const authChannels = [];
@@ -252,6 +252,15 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   let finishScan;
   let usedKey;
   const authCalls = [];
+  const settingsCommands = [];
+  PicoForgeBluetooth.prototype.saveSettings = async function (settings, force, tcpCliEnabled) {
+    settingsCommands.push(["save", settings, force, tcpCliEnabled]);
+    this.update({ settings: { ...this.state.settings, ...settings,
+      ...(tcpCliEnabled === undefined ? {} : { tcp_cli_enabled: tcpCliEnabled }) },
+    reboot_pending: true });
+    return true;
+  };
+  PicoForgeBluetooth.prototype.reboot = async confirmed => { settingsCommands.push(["reboot", confirmed]); };
   PicoForgeBluetooth.prototype.connect = async function (key) {
     client = this;
     scans++;
@@ -264,9 +273,18 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     }
     this.bleKey = {};
     this.bleDevice = { name: "Nearby PicoForge" };
-    this.update({ connected: true, busy: false, transport: "ble", hardware: decodeIdentityReport(identity()),
-      board_status: { led_available: true, led_on: false }, freshness: { 10: "fresh", 11: "fresh" },
-      msc: { enabled: false }, self_test: decodeSelfTestReport(selfTest()) });
+    const hardware = decodeIdentityReport(identity(128 | 55));
+    const wirelessReport = new Uint8Array(53);
+    wirelessReport[0] = 1;
+    this.device = { async receiveFeatureReport() { return wirelessReport; }, removeEventListener() {} };
+    this.update({ connected: true, busy: false, transport: "ble", hardware,
+      settings: decodeConfigReport(config(), hardware), settings_supported: true,
+      board_status: { led_available: true, led_on: false },
+      freshness: { 3: "fresh", 10: "fresh", 11: "fresh" },
+      msc: { enabled: false, transition_pending: false }, self_test: decodeSelfTestReport(selfTest()),
+      memory: { sample_valid: true, initialized: true },
+      wireless: { ssid: "HomeDev", wifi_enabled: true, ble_enabled: true, password_configured: true,
+        ble_key_configured: true, tcp_cli_enabled: true } });
   };
   PicoForgeBluetooth.prototype.disconnect = async function () {
     this.bleKey = null;
@@ -309,6 +327,27 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     assert.equal(el("#bluetooth-connection-dialog").open, false, "a successful unlock closes the dialog");
     assert.equal(el("#usb-open").disabled, true);
     assert.equal(el("#led-control").disabled, false);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(el("#settings-clock").disabled, false, "BLE enables clock configuration");
+    assert.equal(el("#settings-storage").disabled, false, "BLE enables SD profile configuration");
+    assert.equal(el("#settings-wifi").disabled, true, "radio assignments stay USB-only");
+    assert.equal(el("#settings-ble").disabled, true, "radio assignments stay USB-only");
+    assert.equal(el("#settings-tcp-cli").disabled, false, "BLE can toggle TCP CLI without Wi-Fi provisioning");
+    assert.equal(el("#msc-control").disabled, true, "storage ownership stays USB-only");
+    await el("#settings-reboot").click();
+    await el("#confirm-reboot").click();
+    assert.deepEqual(settingsCommands, [["reboot", true]]);
+    el("#settings-clock").value = "250";
+    el("#settings-clock").change();
+    el("#settings-tcp-cli").value = "0";
+    el("#settings-tcp-cli").change();
+    await el("#settings-save").click();
+    assert.match(el("#configuration-dialog-profile").textContent, /TCP CLI: Disabled/);
+    assert.match(el("#configuration-wireless-warning").textContent, /without sending Wi-Fi credentials/);
+    await el("#confirm-configuration").click();
+    assert.deepEqual(settingsCommands[1], ["save",
+      { system_clock_mhz: 250, sdcard_profile: 1, radios: 0 }, false, false]);
+    client.update({ reboot_pending: false });
     const wireless = { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
       tcp_cli_auth_required: true, ssid: "HomeDev", ipv4: "192.168.66.87" };
     client.update({ wireless });

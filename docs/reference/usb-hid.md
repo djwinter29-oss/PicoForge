@@ -439,7 +439,7 @@ the meaning of the fields.
 | `3` | MSC control | Bit 0 confirms force-return data-loss risk only; other bits zero. | Byte 0 action: `0` normal disable, `1` enable, `2` force return; bytes 1-4 zero. |
 | `4` | SD self-test | `0` | Byte 0 action: `0` cancel, `1` start; bytes 1-4 little-endian MiB size. |
 | `5` | Unassigned | - | Reject as unsupported. |
-| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); byte 3 radio enables (bit 0 Wi-Fi, bit 1 BLE; zero without capability bit 7); byte 4 zero. |
+| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; bit 1 includes a TCP CLI switch; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); byte 3 radio enables (bit 0 Wi-Fi, bit 1 BLE; zero without capability bit 7); byte 4 is `0` or `1` when flag bit 1 is set, otherwise zero. |
 | Other | Unassigned | - | Reject as unsupported. |
 
 LED Off/On are idempotent. Reboot requires explicit confirmation. MSC action `0` is the normal disable request;
@@ -449,7 +449,9 @@ Action `2` is force return without a safe-eject guarantee and requires explicit 
 start accepts 1-1024 MiB; cancel requires zero size. System-clock values are `0`, `150`,
 `200`, or `250` MHz; SD-card profile values are `0` Standard and `1` High-Speed. A successful settings save schedules
 reboot automatically; verify the saved values in the matching Feature `20` result, then refresh Feature `2` after
-reboot. Do not submit a second reboot command.
+reboot. Do not submit a second reboot command. BLE accepts opcode `2` and authenticated opcode `6` without the
+forced-save flag. A BLE settings save must keep the saved radio mask unchanged; only the clock, SD-card profile, and
+optional TCP CLI switch can be changed over BLE. Radio switches, credentials, and forced saves remain USB-only.
 
 ### GET Result
 
@@ -462,7 +464,7 @@ GET returns the latest operation without executing it again or consuming its res
 | 2 | 1 | `opcode` | Operation associated with the result; `0` if none. |
 | 3 | 1 | `status` | Result state below. |
 | 4 | 1 | `error_reason` | Error enum below; zero when none. |
-| 5 | 4 | `result_data` | Verified saved settings for opcode 6 in the opcode-6 argument layout; zero for other operations. |
+| 5 | 4 | `result_data` | Verified saved settings for opcode 6; zero for other operations. |
 | **Total** | **9** | | **10 bytes including report ID.** |
 
 Status values: `0` Idle, `1` Pending, `2` Completed, `3` Invalid, `4` Unsupported, `5` Busy, `6` Failed.
@@ -503,9 +505,12 @@ the host must treat the SET failure as authoritative and must not wait for a mat
 requests with a valid envelope update the result slot with the matching transaction ID and Invalid status. Unknown
 status or error values and disallowed status/error/opcode combinations are protocol errors.
 
-For opcode 6, `Completed` means the write passed readback verification and `result_data` contains system-clock MHz
-(little-endian two bytes) and the SD-card profile in byte 2; byte 3 is zero. Feature report `2` is the authoritative
-read path for persisted settings. For opcode 3, completion means the MSC operation was accepted/queued; report `10`
+For opcode 6, `Completed` means the write passed readback verification. `result_data` contains system-clock MHz
+(little-endian two bytes) and the SD-card profile in byte 2. In byte 3, bits 0-1 are the saved radio mask, bit 2 is
+the saved TCP CLI switch, and bit 3 indicates that bit 2 was included; bits 4-7 are zero. When bit 3 is clear, the TCP
+CLI setting was not part of this save, and bit 2 must be zero. Feature report `2` is the authoritative read path for
+persisted clock, SD-card, and radio settings; the opcode-6 result confirms the TCP CLI switch because report `2` does
+not include it. For opcode 3, completion means the MSC operation was accepted/queued; report `10`
 owns its state. For opcode 4, completion means the self-test operation was accepted/queued; report `11` owns its
 progress and terminal status. For reboot, completion means reset was scheduled, not that the host observed a
 successful reboot.

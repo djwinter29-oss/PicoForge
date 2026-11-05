@@ -9,6 +9,7 @@
 static pf_sysclk_profile_t test_sysclk, saved_sysclk;
 static pf_storage_speed_t test_sd_speed, saved_sd_speed;
 static uint8_t test_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE, saved_radios = PF_WIRELESS_WIFI | PF_WIRELESS_BLE;
+static bool test_tcp_cli_enabled = true, saved_tcp_cli_enabled = true;
 static unsigned settings_save_calls;
 static bool settings_save_fails;
 static bool msc_enabled;
@@ -52,6 +53,13 @@ bool pf_boot_config_set_radios(uint8_t radios)
     return true;
 }
 
+bool pf_boot_config_tcp_cli_enabled(void) { return test_tcp_cli_enabled; }
+bool pf_boot_config_set_tcp_cli_enabled(bool enabled)
+{
+    test_tcp_cli_enabled = enabled;
+    return true;
+}
+
 bool pf_boot_config_save(void)
 {
     ++settings_save_calls;
@@ -61,6 +69,7 @@ bool pf_boot_config_save(void)
     saved_sysclk = test_sysclk;
     saved_sd_speed = test_sd_speed;
     saved_radios = test_radios;
+    saved_tcp_cli_enabled = test_tcp_cli_enabled;
     return true;
 }
 
@@ -69,6 +78,7 @@ void pf_boot_config_discard(void)
     test_sysclk = saved_sysclk;
     test_sd_speed = saved_sd_speed;
     test_radios = saved_radios;
+    test_tcp_cli_enabled = saved_tcp_cli_enabled;
 }
 
 static bool unavailable, reserved, initialized, mounted, queue_fails, retained_cid;

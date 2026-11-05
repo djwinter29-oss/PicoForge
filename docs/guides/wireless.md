@@ -111,7 +111,8 @@ and GAP Device Name, so the picker can tell boards apart.
 The board advertises only when Bluetooth is enabled and a control key is saved. Enter the USB-provisioned control
 key before **Scan for boards**; after the link is established the dashboard proves the key once to unlock the session,
 and the board refuses every read except identity until it does. A rejected key closes the link and starts a
-two-second lockout. The LED then needs no further proof; each benchmark start/cancel is proved again. The browser must
+two-second lockout. The LED needs no further proof; reboot, settings saves, and each benchmark start/cancel are proved
+again. The browser must
 be within radio range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.
@@ -121,7 +122,10 @@ Transport switching is blocked during a connection, reconnection, pending comman
 The key is held only as a non-exportable browser CryptoKey and forgotten on disconnect or a failed connection;
 the input is cleared on submission and dialog dismissal.
 This generated 32-byte key authenticates commands; it is not a Bluetooth pairing password and does not encrypt the link.
-BLE cannot save configuration, provision credentials, reboot, or transfer USB storage ownership.
+The Direct dashboard can save system clock, SD-card profile, and the TCP CLI enable switch, and request a confirmed
+reboot over BLE. It cannot change radio switches, provision Wi-Fi credentials or the Control key, force a save while
+USB owns storage, or transfer USB storage ownership. These authenticated settings commands contain no credentials;
+the BLE link itself remains unencrypted.
 Only one BLE connection is supported; disconnects never replay a command or reconnect automatically.
 
 ## Implementation Reference
