@@ -133,7 +133,8 @@ Six extra lwIP timer slots bound probing and delayed IPv4 replies. Recheck this 
 Service UUID: `50fc0000-7c91-4d70-8b32-6e856443f501`. Characteristic UUIDs use the same suffix and replace
 `0000` with the hexadecimal report ID: `0001`, `0002`, `0003`, `000a`, `000b`, `0014`, `001e`.
 Reads return the corresponding payload without a HID report ID; `001e` zeroes the IPv4 address and SSID (bytes
-5-41) because BLE diagnostics are unauthenticated. Characteristics use ATT long reads where needed;
+5-41) until the connection proves the control key with the status unlock below. Characteristics use ATT long reads
+where needed;
 the first read freezes the value for subsequent read-blob offsets. Report `0014` has the BLE-specific command
 result; writes accept only existing opcode 1 (LED) or 4 (benchmark). Reports are polled; no notification MTU
 assumption is needed.
@@ -150,6 +151,11 @@ For **every** other command:
    request includes version/transaction/opcode/flags/arguments.
 3. Write the first 16 MAC bytes to `0021`, then write that exact request to `0014`.
 4. Read the original matching result; never replay SET following timeout/disconnect.
+
+Status unlock: read `0020`, then write to `0021` the proof for the fixed request `"STATUS001"` (no `0014` write).
+A matching proof consumes the challenge and makes `001e` include the IPv4 address and SSID until the BLE link drops.
+Any other proof stays pending for the next `0014` control write, as above. Direct sends this unlock when a control
+key is entered; view-only and keyless sessions keep the redacted status.
 
 The device consumes a challenge/proof once, compares MAC bytes without early exit, and rate-limits failed proofs
 for two seconds. A missing, rejected or rate-limited proof returns ATT application error `0x80`, not Insufficient

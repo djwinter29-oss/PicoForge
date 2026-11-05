@@ -23,8 +23,9 @@ state every two seconds while no wireless operation is pending. The value is `SS
 A Bluetooth row shows the advertised name `PicoForge-<USB serial>` followed by `(connected)` while a central is
 attached, `(advertising)` when discoverable, or `(starting)` while the controller is not yet working.
 These link states also apply to keyless, view-only Bluetooth. Disabled Bluetooth shows `Disabled`.
-Over a Direct Bluetooth connection the board omits the SSID and IP address, so Wi-Fi shows only `Connected`,
-`Wi-Fi (connecting)` or `Wi-Fi (disconnected)`.
+Over a Direct Bluetooth connection the board omits the SSID and IP address until a control key is entered, so view-only
+Bluetooth shows only `Connected`, `Wi-Fi (connecting)` or `Wi-Fi (disconnected)`. With the control key, Wi-Fi shows
+the same `SSID (IP address)` values as USB.
 The firmware does not report a separate connecting state. If the serial is unavailable, the name is `PicoForge`.
 Missing reports show `--`, and read failures show `Unavailable` with the error in the value's tooltip.
 If initialization fails with TCP authentication required but no saved control key, the Wi-Fi value shows

@@ -38,12 +38,15 @@ typedef enum {
 } pf_bluetooth_state_t;
 
 static bool control_key_available; /**< False when BLE is enabled for public diagnostics only. */
+static bool status_authorized; /**< This connection proved the key; status reads include the SSID and IPv4. */
 static bool challenge_valid; /**< Nonce issued once and usable for one authentication attempt. */
 static bool proof_valid; /**< A 16-byte proof is ready for exactly one subsequent control request. */
 static uint8_t proof[16]; /**< Submitted per-command MAC, cleared on use or disconnect. */
 static uint8_t nonce[16]; /**< Fresh random challenge, invalidated by use or disconnect. */
 /** @brief Protocol domain separating BLE control proofs from TCP CLI proofs. */
 static const uint8_t ble_auth_domain[9] = {'P', 'F', 'B', 'L', 'E', 'C', 'T', 'L', '1'};
+/** @brief Fixed proof request that unlocks full wireless status reads; never dispatched as a control. */
+static const uint8_t ble_status_request[9] = {'S', 'T', 'A', 'T', 'U', 'S', '0', '0', '1'};
 static uint64_t auth_retry_us; /**< Failed authentication rate limit; never blocks the owner task. */
 /** Properly aligned typed report storage, frozen for the current ATT long read. */
 static union {
@@ -82,7 +85,7 @@ const btstack_tlv_t *__wrap_btstack_tlv_flash_bank_init_instance(btstack_tlv_fla
 /** @brief Reset per-connection authorization and read snapshots, then begin/restart peripheral advertising. */
 static void advertise(void)
 {
-    proof_valid = challenge_valid = false;
+    proof_valid = challenge_valid = status_authorized = false;
     read_handle = 0u;
     read_length = 0u;
     memset(proof, 0, sizeof(proof));
@@ -152,10 +155,12 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
             pf_hid_ble_result(&read_buffer.result);
             read_length = sizeof(pf_hid_control_result_t);
         } else if (handle == BLE_HANDLE(001e)) {
-            /* Unauthenticated BLE readers get state and flags only, never the saved SSID or the LAN address. */
+            /* Readers that have not proven the key get state and flags only, never the SSID or the LAN address. */
             pf_wireless_status(read_buffer.bytes);
-            memset(read_buffer.bytes + PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET, 0,
-                   PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET - PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET);
+            if (!status_authorized) {
+                memset(read_buffer.bytes + PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET, 0,
+                       PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET - PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET);
+            }
             read_length = PF_WIRELESS_STATUS_SIZE;
         } else if (handle == BLE_HANDLE(0020)) {
             if (!pf_wireless_auth_new_nonce(nonce)) return 0u;
@@ -196,6 +201,14 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
         if (!control_key_available || !challenge_valid || time_us_64() < auth_retry_us)
             return BLE_ERROR_CONTROL_REJECTED;
         memcpy(proof, buffer, sizeof(proof));
+        /* A STATUS001 proof is consumed here; any other proof waits for exactly one control write. */
+        if (pf_wireless_auth_verify(nonce, ble_auth_domain, ble_status_request, proof)) {
+            status_authorized = true;
+            challenge_valid = false;
+            memset(nonce, 0, sizeof(nonce));
+            memset(proof, 0, sizeof(proof));
+            return 0;
+        }
         proof_valid = true;
         return 0;
     }

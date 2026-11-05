@@ -67,6 +67,9 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
       [{ wifi_enabled: true, ssid: "", wifi_state: "connected", ipv4: "0.0.0.0" }, "Connected"],
       [{ wifi_enabled: true, ssid: "", wifi_state: "connecting" }, "Wi-Fi (connecting)"],
       [{ wifi_enabled: false, ssid: "", wifi_state: "disabled" }, "Disabled"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connected", ipv4: "192.168.66.87" },
+        "HomeDev (192.168.66.87)"],
+      [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connecting" }, "HomeDev (connecting)"],
     ]) {
       render({ ...state, transport: "ble", wireless });
       assert.equal(el("#wifi-state").textContent, expected);

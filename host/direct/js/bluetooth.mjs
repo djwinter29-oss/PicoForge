@@ -44,15 +44,9 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
           // The LED only identifies the board, so firmware accepts it without a proof.
           if (report[2] === 1) return this.characteristics.get(20).writeValueWithResponse(report);
           if (!this.bleKey) throw new Error("Enter the USB-provisioned BLE control key first.");
-          const value = await this.characteristics.get(32).readValue();
-          const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-          if (nonce.length !== 16) throw new Error("Invalid BLE authorization challenge");
-          const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
-          const domain = new TextEncoder().encode("PFBLECTL1");
-          const message = new Uint8Array([...nonce, ...uid, ...domain, ...report]);
-          const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
+          const mac = await this.prove(report);
           try {
-            await this.characteristics.get(33).writeValueWithResponse(mac.slice(0, 16));
+            await this.characteristics.get(33).writeValueWithResponse(mac);
             await this.characteristics.get(20).writeValueWithResponse(report);
           } catch (error) {
             // Firmware answers a bad, missing or rate-limited proof with an ATT application error.
@@ -102,6 +96,26 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
       this.accessMode = "control";
     }
     finally { bytes.fill(0); }
+    // A STATUS001 proof unlocks the SSID and IPv4 in wireless status reads until this BLE link drops. A wrong key
+    // leaves status redacted; firmware rejects that key on the next proven command.
+    const proof = await this.prove(new TextEncoder().encode("STATUS001"));
+    try { await this.characteristics.get(33).writeValueWithResponse(proof); } catch (error) {
+      this.bleKey = null;
+      this.accessMode = null;
+      if (!this.bleDevice?.gatt.connected) throw error;
+      throw new Error("The board rejected the BLE control key. Check the key, wait 2 s, and retry.");
+    }
+  }
+
+  /** Sign a fresh one-use challenge for a nine-byte request; returns the 16-byte proof. */
+  async prove(request) {
+    const value = await this.characteristics.get(32).readValue();
+    const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (nonce.length !== 16) throw new Error("Invalid BLE authorization challenge");
+    const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
+    const domain = new TextEncoder().encode("PFBLECTL1");
+    const message = new Uint8Array([...nonce, ...uid, ...domain, ...request]);
+    return new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message)).slice(0, 16);
   }
 
   setViewOnly() {

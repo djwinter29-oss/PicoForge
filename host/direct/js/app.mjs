@@ -73,7 +73,7 @@ async function refreshWirelessStatus() {
 function render(state) {
   const wireless = state.wireless;
   renderStatus({ ...state, console_url: wireless?.wifi_enabled && wireless.wifi_state === "connected"
-    && wireless.tcp_cli_started ? "#wifi-terminal" : null });
+    && wireless.tcp_cli_started && wireless.ipv4 !== "0.0.0.0" ? "#wifi-terminal" : null });
   if (!state.connected) {
     wirelessLoadedAt = 0;
     wirelessForm.reset();
@@ -235,6 +235,7 @@ element("ble-authorize").addEventListener("click", () => run(async () => {
       target.accessMode = null;
       throw new Error("Bluetooth disconnected while loading the control key. Scan and connect again.");
     }
+    wirelessLoadedAt = 0;
     target.update({ error: null });
     bluetoothDialog.close();
   }

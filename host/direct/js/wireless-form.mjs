@@ -30,11 +30,11 @@ export function renderWirelessStatus(snapshot) {
       : name === "wifi" && snapshot.hardware?.serial_number
         ? `picoforge-${snapshot.hardware.serial_number}.local` : "");
   };
-  // BLE status omits SSID and IP, so Bluetooth shows only the link state.
-  const bluetooth = snapshot.transport === "ble";
-  render("wifi", () => !wireless.wifi_enabled || (!bluetooth && !wireless.ssid) ? "Disabled"
-    : wireless.wifi_state === "connected" ? (bluetooth ? "Connected" : `${wireless.ssid} (${wireless.ipv4})`)
-      : `${bluetooth ? "Wi-Fi" : wireless.ssid} (${wireless.wifi_state === "connecting" ? "connecting"
+  // BLE status omits SSID and IP until the connection proves the control key, so show only the link state then.
+  const redacted = snapshot.transport === "ble" && !wireless?.ssid;
+  render("wifi", () => !wireless.wifi_enabled || (!redacted && !wireless.ssid) ? "Disabled"
+    : wireless.wifi_state === "connected" ? (redacted ? "Connected" : `${wireless.ssid} (${wireless.ipv4})`)
+      : `${redacted ? "Wi-Fi" : wireless.ssid} (${wireless.wifi_state === "connecting" ? "connecting"
         : "disconnected"})`);
   render("ble", () => {
     if (!wireless.ble_enabled) return "Disabled";

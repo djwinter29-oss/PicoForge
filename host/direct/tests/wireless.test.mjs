@@ -830,13 +830,14 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     writes.length = 0;
     await client.setControlKey("ab".repeat(32));
     assert.equal(client.accessMode, "control");
+    const uid = Buffer.from(client.state.hardware.serial_number, "hex");
+    const proofFor = request => [...createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
+      .update(Buffer.concat([nonce, uid, Buffer.from("PFBLECTL1"), Buffer.from(request)])).digest().subarray(0, 16)];
+    assert.deepEqual(writes, [[33, proofFor("STATUS001")]], "loading the key unlocks full wireless status");
+    writes.length = 0;
     await client.command(4, { args: [0, 0, 0, 0, 0] });
     assert.deepEqual(writes.map(item => item[0]), [33, 20]);
-    const uid = Buffer.from(client.state.hardware.serial_number, "hex");
-    const expected = createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
-      .update(Buffer.concat([nonce, uid, Buffer.from("PFBLECTL1"), Buffer.from(writes[1][1])]))
-      .digest().subarray(0, 16);
-    assert.deepEqual(writes[0][1], [...expected]);
+    assert.deepEqual(writes[0][1], proofFor(writes[1][1]));
     for (const opcode of [2, 3, 6]) await assert.rejects(client.command(opcode), /requires USB/);
     assert.equal(writes.length, 2);
     client.update({ self_test_command_pending: false }); // stands in for the next self-test report
@@ -844,6 +845,9 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
     await assert.rejects(client.command(4, { args: [0, 0, 0, 0, 0] }), /rejected the BLE control key/);
     assert.equal(client.state.connected, true, "a rejected key must not drop the link");
     assert.equal(Boolean(client.state.outcome_uncertain), false);
+    characteristics.get(33).writeValueWithResponse = async () => { throw new Error("GATT Error Unknown."); };
+    await assert.rejects(client.setControlKey("ab".repeat(32)), /rejected the BLE control key/);
+    assert.equal(client.accessMode, null, "a keyless or rate-limited board must not keep a control key loaded");
     await client.disconnect();
     assert.equal(client.bleKey, null);
     assert.equal(client.accessMode, null);
