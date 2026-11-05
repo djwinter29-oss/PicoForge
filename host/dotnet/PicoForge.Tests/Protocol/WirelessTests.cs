@@ -25,7 +25,6 @@ public sealed class WirelessTests
         report[1] = version;
         var expected = HidProtocol.ParseWirelessStatus(report);
         Assert.Equal(version >= 2, expected.TcpCliConfigurable);
-        Assert.Equal(version >= 3, expected.TcpCliAuthConfigurable);
         foreach (var prefix in new byte[] { 0, HidProtocol.WirelessReportId })
         {
             var framed = new byte[256];
@@ -77,15 +76,13 @@ public sealed class WirelessTests
     public void V2TcpSwitchSecurityAndExpiryDetails()
     {
         var request = Settings();
-        Assert.Equal(83, HidProtocol.BuildWirelessRequest(request, 1)[4]);
-        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1, false, false)[4]);
+        Assert.Equal(19, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1, false)[4]);
         request.TcpCliEnabled = false;
-        Assert.Equal(75, HidProtocol.BuildWirelessRequest(request, 1)[4]);
-        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 1, false, false));
+        Assert.Equal(11, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        Assert.Throws<ArgumentException>(() => HidProtocol.BuildWirelessRequest(request, 1, false));
         request.TcpCliEnabled = true;
-        Assert.Equal(67, HidProtocol.BuildWirelessRequest(request, 1)[4]);
-        request.TcpCliAuthRequired = true;
-        Assert.Equal(35, HidProtocol.BuildWirelessRequest(request, 1)[4]);
+        Assert.Equal(3, HidProtocol.BuildWirelessRequest(request, 1)[4]);
         var status = Report();
         status[1] = 3;
         status[48] = 1;
@@ -228,7 +225,7 @@ public sealed class WirelessTests
     {
         var report = HidProtocol.BuildWirelessRequest(Settings(), 255);
         Assert.Equal(137, report.Length);
-        Assert.Equal(new byte[] { 31, 2, 255, 3, 83 }, report[..5]);
+        Assert.Equal(new byte[] { 31, 2, 255, 3, 19 }, report[..5]);
         Assert.Equal(Encoding.UTF8.GetBytes("Pico網"), report[5..12]);
         Assert.All(report[38..134], value => Assert.Equal(0, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
@@ -236,7 +233,7 @@ public sealed class WirelessTests
         request.Password = "secret12";
         request.BleKey = new string('a', 64);
         report = HidProtocol.BuildWirelessRequest(request, 1);
-        Assert.Equal(80, report[4]);
+        Assert.Equal(16, report[4]);
         Assert.Equal(Encoding.ASCII.GetBytes("secret12\0"), report[38..47]);
         Assert.All(report[102..134], value => Assert.Equal(0xaa, value));
         Assert.Equal(new byte[] { 200, 0, 1 }, report[134..]);
@@ -250,7 +247,7 @@ public sealed class WirelessTests
         erase.BleKey = "";
         erase.Board = new(200, 1, 0);
         report = HidProtocol.BuildWirelessRequest(erase, 3);
-        Assert.Equal(48, report[4]);
+        Assert.Equal(16, report[4]);
         Assert.All(report[5..134], value => Assert.Equal(0, value));
     }
 
@@ -300,6 +297,7 @@ public sealed class WirelessTests
     [InlineData("\"ble_key\":\"0000000000000000000000000000000000000000000000000000000000000000\"")]
     [InlineData("\"confirm_reboot\":false")]
     [InlineData("\"force\":true")]
+    [InlineData("\"tcp_cli_auth_required\":true")]
     [InlineData("\"board\":null")]
     [InlineData("\"board\":{\"sdcard_profile\":1}")]
     [InlineData("\"board\":{\"system_clock_mhz\":175,\"sdcard_profile\":1}")]

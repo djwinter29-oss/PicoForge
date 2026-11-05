@@ -7,19 +7,18 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=2"/);
   assert.match(html, /href="css\/direct\.css\?v=18"/);
-  assert.match(html, /src="js\/app\.mjs\?v=37"/);
+  assert.match(html, /src="js\/app\.mjs\?v=38"/);
   const app = readFileSync(new URL("../js/app.mjs", import.meta.url), "utf8");
-  assert.match(app, /from "\.\/device\.mjs\?v=7"/);
-  assert.match(app, /from "\.\/view\.mjs\?v=16"/);
+  assert.match(app, /from "\.\/device\.mjs\?v=8"/);
+  assert.match(app, /from "\.\/view\.mjs\?v=17"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
     assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));
     assert.match(html, new RegExp(`<dialog[^>]*id="${name}-connection-dialog"[\\s\\S]*?aria-labelledby=`));
     assert.match(html, new RegExp(`id="${name}-connection-status" role="status" aria-live="polite"`));
   }
-  assert.match(html, /id="bluetooth-access-step" hidden/);
-  assert.match(html, /id="ble-view-only"[^>]*>Continue view only<\/button>/);
-  assert.match(html, /id="ble-access-status" role="status" aria-live="polite" hidden/);
+  assert.doesNotMatch(html, /settings-tcp-auth|ble-view-only|ble-authorize|bluetooth-access-step/);
+  assert.match(html, /id="ble-control-key"[^>]*type="password"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
@@ -35,9 +34,9 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     assert.match(settings, /id="settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
     const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
     assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
-      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli", "settings-tcp-auth"]);
+      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli"]);
     assert.match(board, /<label for="settings-wifi" hidden>[\s\S]*<label for="settings-ble" hidden>/);
-    for (const id of ["settings-tcp-cli", "settings-tcp-auth"]) {
+    for (const id of ["settings-tcp-cli"]) {
       assert.match(board, new RegExp(`<label for="${id}" hidden>[\\s\\S]*?<select id="${id}"`));
       const attributes = board.match(new RegExp(`<select id="${id}"([^>]*)>`))[1];
       assert.match(attributes, /title="[^"]+"/);

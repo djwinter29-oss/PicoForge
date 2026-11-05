@@ -57,17 +57,16 @@ a message or shifting the table; stale reports, disconnects, ownership transitio
 samples clear retained details. Retained values are display-only and never authorize a command.
 When Wi-Fi and the board TCP CLI are connected, click the Wi-Fi value to open the Wi-Fi console in a new tab. Like
 the Python dashboard console, it is an interactive terminal: Enter runs a command, Tab completes, and arrow keys edit
-and recall history. It relays raw keystrokes over TCP port 2323, which is unencrypted; if the board requires TCP
-authentication, enter its saved 64-digit BLE control key. The local bridge permits one terminal session and closes it
+and recall history. It relays raw keystrokes over TCP port 2323, which is unencrypted; if the board has a saved
+control key, enter that 64-digit key. The local bridge permits one terminal session and closes it
 after 15 seconds without a request. Run the included server instead of a generic static-file server to enable this
-feature. View-only Bluetooth shows the SSID and IP address without the console link; enter the control key in the
-Bluetooth dialog to enable it.
+feature.
 
 ## Controls
 
 Pico W/Pico 2 W also support optional [Wi-Fi configuration and BLE connections](../../docs/guides/wireless.md).
-Use USB to provision radio settings and a random BLE key, then open **Bluetooth** for public diagnostics and
-key-authorized LED/benchmark controls. See the linked wireless guide for scanning and entering the key.
+Use USB to provision radio settings and a random BLE key, then open **Bluetooth**, enter the key and scan; Bluetooth
+stays off without a saved key. See the linked wireless guide for the key-gated session.
 Privileged management remains USB-only.
 Feature 30 status versions 1-4 and Feature 35 result versions 1-2 are accepted. Newer status versions add the saved
 TCP CLI switch and optional BLE-key authentication; result version 2 adds scan security labels and staged-test

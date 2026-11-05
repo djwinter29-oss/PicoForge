@@ -1,5 +1,5 @@
 export function deriveOperationEligibility(state, {
-  bluetooth, bleClient, accessMode, outstanding, wirelessBusy,
+  bluetooth, outstanding, wirelessBusy,
 }) {
   const selfTestReady = !(state.hardware?.capabilities & 32)
     || (state.freshness[11] === "fresh" && state.self_test?.valid_for_control);
@@ -13,6 +13,5 @@ export function deriveOperationEligibility(state, {
     storageReady,
     settingsReady: !blocked && storageReady && !bluetooth,
     connectionLocked: state.connected || state.reconnecting || outstanding || state.outcome_uncertain,
-    bleAccessChoicePending: bleClient && state.connected && accessMode === null,
   };
 }

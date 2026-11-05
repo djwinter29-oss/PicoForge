@@ -81,11 +81,11 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(diagnostics["rssi"], -61)
 
     def test_v2_tcp_switch_security_and_test_expiry_details(self):
-        for enabled, flags in ((None, 83), (True, 67), (False, 75)):
+        for enabled, flags in ((None, 19), (True, 3), (False, 11)):
             config = settings(**({} if enabled is None else {"tcp_cli_enabled": enabled}))
             self.assertEqual(build_wireless_configuration_report(config)[4], flags)
         self.assertEqual(build_wireless_configuration_report(
-            settings(), tcp_cli_configurable=False, tcp_cli_auth_configurable=False)[4], 3)
+            settings(), tcp_cli_configurable=False)[4], 3)
         for value in (None, 0, "false"):
             with self.assertRaises(ValueError):
                 build_wireless_configuration_report(settings(tcp_cli_enabled=value))
@@ -133,21 +133,10 @@ class WirelessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_wireless_result_report(staged)
 
-    def test_tcp_auth_configuration_flags_and_readback(self):
-        before, after = bytearray(status(0, 0)), bytearray(status())
-        before[1] = after[1] = 3
-        after[48] |= 2
-        client = self.client([before, after])
-        result = client.set_wireless(settings(tcp_cli_auth_required=True))
-        self.assertTrue(result["tcp_cli_auth_required"])
-        self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 51)
-
-        before = bytearray(status(0, 0))
-        before[44] = 0
-        client = self.client([before])
-        with self.assertRaisesRegex(ValueError, "BLE control key"):
-            client.set_wireless(settings(tcp_cli_auth_required=True))
-        client._device.send_feature_report.assert_not_called()
+    def test_tcp_auth_follows_the_saved_key_and_has_no_setting(self):
+        with self.assertRaisesRegex(ValueError, "Unknown"):
+            build_wireless_configuration_report(settings(tcp_cli_auth_required=True))
+        self.assertFalse(build_wireless_configuration_report(settings())[4] & 96)
 
     def test_tcp_switch_save_verifies_readback_and_preserves_legacy_flags(self):
         for mismatch in (False, True):
@@ -164,7 +153,7 @@ class WirelessTests(unittest.TestCase):
             self.assertEqual(client._command_uncertain, mismatch)
         client = self.client([status(0, 0), status()])
         client.set_wireless(settings())
-        self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 83)
+        self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 19)
 
     def test_dashboard_serves_the_shared_wireless_form_without_a_ble_dashboard(self):
         client = create_app(Mock()).test_client()
@@ -188,22 +177,22 @@ class WirelessTests(unittest.TestCase):
     def test_builder_offsets_sizes_and_preserved_credentials(self):
         report = build_wireless_configuration_report(settings(), 255)
         self.assertEqual(len(report), 137)
-        self.assertEqual(report[:5], bytes([31, 2, 255, 3, 83]))
+        self.assertEqual(report[:5], bytes([31, 2, 255, 3, 19]))
         self.assertEqual(report[134:], bytes([200, 0, 1]))
         tested = build_wireless_configuration_report(settings(use_tested_wifi=True))
-        self.assertEqual(tested[4], 86)
+        self.assertEqual(tested[4], 22)
         self.assertEqual(tested[38:102], bytes(64))
         self.assertEqual(report[5:12], "Pico網".encode())
         self.assertEqual(report[38:134], bytes(96))
         report = build_wireless_configuration_report(settings(password="secret12", ble_key="ab" * 32))
-        self.assertEqual(report[4], 80)
+        self.assertEqual(report[4], 16)
         self.assertEqual(report[38:47], b"secret12\0")
         self.assertEqual(report[102:134], b"\xab" * 32)
         self.assertEqual(report[134:], bytes([200, 0, 1]))
         erase = build_wireless_configuration_report({
             "wifi_enabled": False, "ble_enabled": False, "ssid": "", "password": "", "ble_key": "",
             "confirm_reboot": True, "board": {**BOARD, "radios": 0}})
-        self.assertEqual(erase[3:5], bytes([0, 48]), "empty credentials erase instead of preserving")
+        self.assertEqual(erase[3:5], bytes([0, 16]), "empty credentials erase instead of preserving")
         self.assertEqual(erase[5:134], bytes(129))
 
     def test_input_rejection_never_echoes_credentials(self):

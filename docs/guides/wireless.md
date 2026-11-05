@@ -3,7 +3,7 @@
 Pico W and Pico 2 W images include the pinned Pico SDK CYW43, lwIP and BTstack implementations. Non-wireless
 images do not link those stacks. W images always start the CYW43 chip at boot because it drives the board LED, but a
 radio starts only when its Board configuration switch is enabled. Wi-Fi also requires network credentials;
-Bluetooth without a control key advertises view-only diagnostics.
+Bluetooth also requires a saved control key and stays off without one.
 The switches default on (including older settings records); credentials default empty.
 This implementation has host checks and target builds, not physical radio qualification.
 
@@ -13,7 +13,7 @@ Connect through USB and use the Wi-Fi and Bluetooth dropdowns beside System cloc
 configuration in the Python/.NET dashboard or Board configuration in the Direct dashboard. Each offers
 **Enabled**, **Disabled**, and **Configure…**. Configure… opens the Wi-Fi scan/test or Bluetooth key dialog and leaves
 the dropdown unchanged; a passed Wi-Fi test or a generated key switches it to Enabled. Wi-Fi Enabled requires a saved
-or tested network. Bluetooth Enabled without a key runs view-only. Switching a saved-enabled radio to Disabled erases
+or tested network. Bluetooth Enabled without a key stays off. Switching a saved-enabled radio to Disabled erases
 its saved credentials (SSID and password, or control key) on **Save&Reboot**. The server dashboard provisions its
 selected USB-attached board; the browser does not need Bluetooth access.
 
@@ -22,15 +22,13 @@ state every two seconds while no wireless operation is pending. The value is `SS
 `SSID (connecting)`, or `SSID (disconnected)`; Wi-Fi switched off or an empty saved SSID shows `Disabled`.
 A Bluetooth row shows the advertised name `PicoForge-<USB serial>` followed by `(connected)` while a central is
 attached, `(advertising)` when discoverable, or `(starting)` while the controller is not yet working.
-These link states also apply to keyless, view-only Bluetooth. Disabled Bluetooth shows `Disabled`.
-Over a Direct Bluetooth connection Wi-Fi shows the same `SSID (IP address)` values as USB, but the console link appears
-only after a control key is entered. Firmware that predates public BLE status omits the SSID and IP address, so the
+Disabled Bluetooth shows `Disabled`; Bluetooth switched on without a saved control key stays off and shows
+`Off (no control key)`.
+Over a Direct Bluetooth connection Wi-Fi shows the same `SSID (IP address)` values and console link as USB.
+Firmware that predates public BLE status omits the SSID and IP address, so the
 row shows only `Connected`, `Wi-Fi (connecting)` or `Wi-Fi (disconnected)`.
 The firmware does not report a separate connecting state. If the serial is unavailable, the name is `PicoForge`.
 Missing reports show `--`, and read failures show `Unavailable` with the error in the value's tooltip.
-If initialization fails with TCP authentication required but no saved control key, the Wi-Fi value shows
-`TCP authentication needs a key`. Save a BLE control key or disable TCP authentication, then **Save&Reboot**.
-The hint is suppressed when changed settings already require a restart.
 The configuration section shows only a staged Wi-Fi test reminder until saved, not duplicate live connection details.
 
 The Wi-Fi dialog scans nearby networks and lets the user select an SSID or enter a hidden one manually. Enter a
@@ -58,7 +56,9 @@ The server dashboard stops waiting after 40 seconds; an uncertain result blocks 
 is restarted and the board reconnected. Tests are never automatically replayed.
 SSID length is at most 32 UTF-8 bytes; passphrases are 8-63 printable ASCII characters, while an empty password
 tests an open network. The Bluetooth dialog generates a random control key; copy it to a password manager before
-saving because the board never returns it. **Save&Reboot** commits the clock, SD Card speed,
+saving because the board never returns it. Bluetooth **Enabled** is unavailable until a key is saved or generated.
+There is no separate TCP authentication setting: saving a key requires it for the Wi-Fi CLI, and erasing the key
+opens the CLI again. **Save&Reboot** commits the clock, SD Card speed,
 radio switches and staged credentials together as one atomic save.
 
 Saving credentials requires fresh, idle firmware-owned storage. USB sharing, transitions, benchmark work, outstanding
@@ -85,9 +85,9 @@ a connection test, a lost link or a rejoin closes the
 client and turns new clients away until the saved network is back. Scan and test commands enable the station
 interface only after validation; with saved Wi-Fi disabled, it is released again when the driver scan finishes
 (including after its timeout), the test fails or the staged test is cleared or expires. The service switch defaults
-on for compatibility and can be saved off without disabling Wi-Fi or changing its credentials. TCP authentication
-can be enabled with the saved BLE control key; the host config dialog requires a configured or newly generated key.
-Authenticated sessions still use unencrypted TCP. The normal Wi-Fi
+on for compatibility and can be saved off without disabling Wi-Fi or changing its credentials. A saved control key
+always requires TCP authentication; without a key the console is open on the saved network. Authenticated sessions
+still use unencrypted TCP. The normal Wi-Fi
 state describes the station, including a test; the status IP is zero on a test network to avoid pairing it with the
 saved SSID. Only the test-result report carries the tested address.
 The board also answers `picoforge-<USB serial>.local` on the saved network and advertises the CLI via
@@ -106,19 +106,18 @@ Direct dashboard: its **USB** and **Bluetooth** buttons open separate connection
 nearby-device picker using the browser computer's Bluetooth adapter, filtered to the PicoForge service or name.
 Each board advertises the PicoForge service UUID and returns the name `PicoForge-<USB serial>` in its scan response
 and GAP Device Name, so the picker can tell boards apart.
-The board must have Bluetooth enabled, but does not need a saved key to advertise. After connecting, choose
-**Continue view only** for public diagnostics and the board LED, or enter the USB-provisioned control key and select
-**Enable controls** to start/cancel a benchmark. The LED identifies the board and needs no key; other controls stay
-disabled until a valid key is entered. The key is checked by the board on every command, not when entered. The browser must be within radio
-range and support Web
+The board advertises only when Bluetooth is enabled and a control key is saved. Enter the USB-provisioned control
+key before **Scan for boards**; after the link is established the dashboard proves the key once to unlock the session,
+and the board refuses every read except identity until it does. A rejected key closes the link and starts a
+two-second lockout. The LED then needs no further proof; each benchmark start/cancel is proved again. The browser must
+be within radio range and support Web
 Bluetooth on localhost or HTTPS (desktop Chrome/Edge where supported by the operating system). USB WebHID
 provisioning likewise addresses a board attached to the browser computer.
 
-BLE diagnostics are public and the link is not encrypted. Reopen **Bluetooth** to change access mode or disconnect;
-use **USB** to disconnect a USB board.
+The BLE link is not encrypted. Reopen **Bluetooth** to disconnect; use **USB** to disconnect a USB board.
 Transport switching is blocked during a connection, reconnection, pending command, or uncertain command outcome.
-The key is held only as a non-exportable browser CryptoKey and forgotten on disconnect or when switching to view-only;
-the input is cleared on submission, dialog dismissal, and disconnect.
+The key is held only as a non-exportable browser CryptoKey and forgotten on disconnect or a failed connection;
+the input is cleared on submission and dialog dismissal.
 This generated 32-byte key authenticates commands; it is not a Bluetooth pairing password and does not encrypt the link.
 BLE cannot save configuration, provision credentials, reboot, or transfer USB storage ownership.
 Only one BLE connection is supported; disconnects never replay a command or reconnect automatically.

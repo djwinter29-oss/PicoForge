@@ -157,7 +157,6 @@ class WirelessStatus(TypedDict):
     tcp_cli_enabled: bool
     tcp_cli_configurable: bool
     tcp_cli_auth_required: bool
-    tcp_cli_auth_configurable: bool
     wifi_auth_state: str | None
     reconnect_count: int
     rssi: int | None

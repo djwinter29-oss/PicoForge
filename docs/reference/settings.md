@@ -77,13 +77,12 @@ not change the active clock or bus immediately.
 On W boards (capability bit 7) the dashboards also show **Wi-Fi** and **Bluetooth** next-boot switches, enabled by
 default; Pico/Pico 2 builds hide them and must send `radios` as `0`. `POST /api/settings` accepts optional `radios`;
 omitting it keeps the saved switches.
-The wireless boot controls also include **TCP CLI** and **TCP CLI authentication** dropdowns. TCP CLI is greyed out
-when Wi-Fi is disabled; authentication is greyed out when Wi-Fi, Bluetooth, or TCP CLI is disabled. Authentication
-requires a saved or staged BLE key. Disabled controls retain their selection until saving; disabling Bluetooth clears
-its key and therefore disables authentication on save. Both are also greyed out until the board's wireless status
-confirms support, for example while connected through Bluetooth. Pico/Pico 2 builds hide all four wireless boot
-controls.
-The TCP dropdowns show usage hints on hover; the hints also remain available as screen-reader descriptions.
+The wireless boot controls also include a **TCP CLI** dropdown. It is greyed out when Wi-Fi is disabled and keeps
+its selection until saving; it is also greyed out until the board's wireless status confirms support, for example
+while connected through Bluetooth. TCP CLI authentication has no setting: it is required exactly when a control key
+is saved. Bluetooth **Enabled** needs a saved or staged key, and disabling Bluetooth erases the key on save.
+Pico/Pico 2 builds hide all three wireless boot controls.
+The TCP dropdown shows a usage hint on hover; the hint also remains available as a screen-reader description.
 
 ### Forced Save and Reboot
 

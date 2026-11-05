@@ -270,10 +270,10 @@ function validatePendingOperation(record) {
     if (!hasExactKeys(record, ["version", "kind", "uid", "transaction", "expected"])
       || !Number.isInteger(record.transaction) || record.transaction < 1 || record.transaction > 255
       || !hasExactKeys(record.expected, ["wireless", "board"])
-      || !hasExactKeys(expected, ["tcp_cli_enabled", "tcp_cli_auth_required", "wifi_enabled", "ble_enabled",
+      || !hasExactKeys(expected, ["tcp_cli_enabled", "wifi_enabled", "ble_enabled",
         "ssid_digest", "password_configured", "ble_key_configured"])
       || !/^[a-f0-9]{64}$/.test(expected.ssid_digest)
-      || ![expected.tcp_cli_enabled, expected.tcp_cli_auth_required, expected.wifi_enabled,
+      || ![expected.tcp_cli_enabled, expected.wifi_enabled,
         expected.ble_enabled, expected.password_configured, expected.ble_key_configured].every(
         value => typeof value === "boolean") || !validBoardSettings(record.expected.board)) {
       throw new Error("Invalid saved wireless configuration transaction");

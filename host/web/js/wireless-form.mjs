@@ -5,15 +5,13 @@
 export function renderWirelessStatus(snapshot) {
   const wireless = snapshot.wireless;
   const unavailable = !snapshot.connected ? "--" : snapshot.wireless_error ? "Unavailable" : !wireless ? "--" : null;
-  const missingAuthKey = !unavailable && wireless.error === 1 && wireless.tcp_cli_auth_required
-    && !wireless.ble_key_configured && !wireless.restart_required;
   const consoleReady = !unavailable && wireless?.wifi_enabled && wireless.wifi_state === "connected"
     && wireless.tcp_cli_started && snapshot.console_url;
   const render = (name, text) => {
     document.querySelector(`#${name}-diagnostics`).hidden = !(snapshot.hardware?.capabilities & 128);
     const status = document.querySelector(`#${name}-state`);
     const label = unavailable ?? `${text()}${name === "wifi" && wireless?.restart_required
-      ? " · restart required" : ""}${name === "wifi" && missingAuthKey ? " · TCP authentication needs a key" : ""}`;
+      ? " · restart required" : ""}`;
     if (name === "wifi" && consoleReady) {
       const existing = status.querySelector?.("a");
       const link = existing ?? document.createElement("a");
@@ -24,9 +22,7 @@ export function renderWirelessStatus(snapshot) {
       link.title = "Open the Wi-Fi CLI console in a new tab";
       if (!existing) status.replaceChildren(link);
     } else status.textContent = label;
-    status.title = snapshot.wireless_error ?? (name === "wifi" && missingAuthKey
-      ? "Wireless initialization failed. Save a BLE control key or disable TCP authentication, then Save&Reboot."
-      : name === "wifi" && wireless?.restart_required
+    status.title = snapshot.wireless_error ?? (name === "wifi" && wireless?.restart_required
       ? "Saved wireless settings differ from the settings applied at boot; restart required."
       : name === "wifi" && snapshot.hardware?.serial_number
         ? `picoforge-${snapshot.hardware.serial_number}.local` : "");
@@ -36,6 +32,7 @@ export function renderWirelessStatus(snapshot) {
       : wireless.wifi_state === "connecting" ? "connecting" : "disconnected"})`);
   render("ble", () => {
     if (!wireless.ble_enabled) return "Disabled";
+    if (!wireless.ble_key_configured && wireless.ble_state === "off") return "Off (no control key)";
     const name = snapshot.hardware?.serial_number ? `PicoForge-${snapshot.hardware.serial_number}` : "PicoForge";
     const state = wireless.ble_state === "connected" ? "connected"
       : wireless.ble_state === "advertising" ? "advertising" : "starting";
@@ -70,9 +67,6 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   const remainingTestSeconds = () => wifiStage
     ? Math.max(0, wifiStage.remaining_seconds - Math.floor((Date.now() - wifiStage.tested_at) / 1000)) : 0;
   const testExpired = () => radioOn("settings-wifi") && wifiStage?.use_tested_wifi && remainingTestSeconds() === 0;
-  const keyAvailable = () => radioOn("settings-ble") && (keyDirty
-    ? /^[a-f0-9]{64}$/i.test(el("ble-secret").value) && !/^0+$/.test(el("ble-secret").value)
-    : Boolean(status?.ble_key_configured));
   const refresh = () => {
     const available = supported();
     const tcpReady = available && ready() && !busy && !wifiCancelError && radioOn("settings-wifi");
@@ -82,20 +76,16 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       tcp.disabled = !tcpReady || !status?.tcp_cli_configurable;
       tcp.closest?.("label")?.toggleAttribute("hidden", !available);
     }
-    const tcpAuth = el("settings-tcp-auth");
-    if (tcpAuth) {
-      tcpAuth.disabled = !tcpReady || !radioOn("settings-ble") || !radioOn("settings-tcp-cli")
-        || !status?.tcp_cli_auth_configurable || !radioOn("settings-tcp-auth") && !keyAvailable();
-      tcpAuth.closest?.("label")?.toggleAttribute("hidden", !available);
-    }
     for (const id of ["settings-wifi", "settings-ble"]) {
       const configure = option(id, "configure");
       if (configure) configure.disabled = !ready() || busy || wifiCanceling
         || id === "settings-ble" && wifiCancelError !== null;
     }
-    // Wi-Fi needs a network before it can be enabled; Bluetooth without a key is view-only.
+    // Wi-Fi needs a network and Bluetooth needs a control key before either can be enabled.
     const wifiOn = option("settings-wifi", "1");
     if (wifiOn) wifiOn.disabled = Boolean(status && !wifiStage && !status.ssid);
+    const bleOn = option("settings-ble", "1");
+    if (bleOn) bleOn.disabled = Boolean(status && !keyDirty && !status.ble_key_configured);
     for (const id of ["wifi-scan", "wifi-other", "wifi-connect", "ble-generate", "ble-copy"]) {
       el(id).disabled = !ready() || busy || wifiCanceling || wifiCancelError !== null;
     }
@@ -123,11 +113,8 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     !radioOn("settings-wifi") && status.wifi_enabled && (status.ssid || status.password_configured)
     || !radioOn("settings-ble") && status.ble_enabled && status.ble_key_configured));
   const dirty = () => Boolean(wifiStage || keyDirty || erasing() || status?.tcp_cli_configurable
-    && radioOn("settings-tcp-cli") !== status.tcp_cli_enabled || status?.tcp_cli_auth_configurable
-    && radioOn("settings-tcp-auth") !== status.tcp_cli_auth_required);
-  for (const id of ["settings-tcp-cli", "settings-tcp-auth"]) {
-    el(id)?.addEventListener("change", () => { refresh(); changed(); });
-  }
+    && radioOn("settings-tcp-cli") !== status.tcp_cli_enabled);
+  el("settings-tcp-cli")?.addEventListener("change", () => { refresh(); changed(); });
   const enableRadio = id => {
     if (radioOn(id)) return;
     el(id).value = "1";
@@ -212,7 +199,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   const openBle = () => {
     el("ble-status").textContent = status?.ble_key_configured
       ? "A BLE control key is saved. It cannot be read back; generate a replacement only if needed."
-      : "No BLE control key is saved.";
+      : "No BLE control key is saved. Bluetooth stays off until a key is saved.";
     bleDialog.showModal();
   };
   // "input" fires before "change", so the dashboards' change handlers only ever see Enabled or Disabled.
@@ -358,9 +345,6 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       const config = { wifi_enabled: wifi, ble_enabled: ble,
         ssid: wifi ? wifiStage?.ssid ?? status?.ssid ?? "" : "", confirm_reboot: true };
       if (status?.tcp_cli_configurable) config.tcp_cli_enabled = radioOn("settings-tcp-cli");
-      if (status?.tcp_cli_auth_configurable) {
-        config.tcp_cli_auth_required = radioOn("settings-tcp-auth") && keyAvailable();
-      }
       if (wifi && wifiStage?.use_tested_wifi) config.use_tested_wifi = true;
       if (!wifi && (status?.ssid || status?.password_configured)) config.password = "";
       if (ble && keyDirty) config.ble_key = el("ble-secret").value;
@@ -374,7 +358,6 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       if (saved) {
         status = saved;
         if (el("settings-tcp-cli")) el("settings-tcp-cli").value = (saved.tcp_cli_enabled ?? true) ? "1" : "0";
-        if (el("settings-tcp-auth")) el("settings-tcp-auth").value = saved.tcp_cli_auth_required ? "1" : "0";
         clearInterval(stagedTimer);
         stagedTimer = null;
         loaded = true;
@@ -403,7 +386,6 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       busy = false;
       status = null;
       if (el("settings-tcp-cli")) el("settings-tcp-cli").value = "1";
-      if (el("settings-tcp-auth")) el("settings-tcp-auth").value = "0";
       loaded = false;
       retryAfter = 0;
       wifiStage = null;
@@ -427,7 +409,6 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
         if (generation !== current) return;
         status = fresh;
         if (el("settings-tcp-cli")) el("settings-tcp-cli").value = (fresh.tcp_cli_enabled ?? true) ? "1" : "0";
-        if (el("settings-tcp-auth")) el("settings-tcp-auth").value = fresh.tcp_cli_auth_required ? "1" : "0";
         loaded = true;
         if (!wifiStage && !wifiEdited) el("wifi-ssid").value = status.ssid;
       } catch (error) {

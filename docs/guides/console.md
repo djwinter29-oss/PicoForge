@@ -197,7 +197,7 @@ TCP session receives a busy line and its input is discarded. A second TCP client
 the owning connection ends the session and cancels its pending output, exactly like dropping DTR. TCP keepalive
 drops a vanished client after about 50 seconds idle.
 
-TCP authentication is optional and uses the board's saved BLE control key. When enabled, clients must answer a
+TCP authentication is required whenever the board has a saved control key and off otherwise. Clients must answer a
 one-use challenge within ten seconds; the Python and .NET web consoles ask for the key and perform the proof. Raw
 PuTTY/`nc` sessions need a client that implements the proof described in the
 [wireless reference](../reference/wireless.md#ble-contract-and-authorization). Rejected proofs are rate-limited for

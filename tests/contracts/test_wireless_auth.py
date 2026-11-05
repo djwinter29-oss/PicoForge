@@ -70,4 +70,4 @@ def test_ble_rejected_proof_does_not_request_os_pairing():
     source = (ROOT / "firmware/src/app/wireless/bluetooth/bluetooth.c").read_text()
     assert "ATT_ERROR_INSUFFICIENT_AUTHENTICATION" not in source
     assert "#define BLE_ERROR_CONTROL_REJECTED 0x80" in source
-    assert source.count("return BLE_ERROR_CONTROL_REJECTED;") == 2
+    assert source.count("return BLE_ERROR_CONTROL_REJECTED;") == 3

@@ -22,7 +22,7 @@
 #define PF_WIRELESS_STATUS_VERSION 4u
 /** Status service flag: the saved-LAN TCP CLI is disabled. */
 #define PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED (1u << 0u)
-/** Status service flag: TCP CLI clients must provide an HMAC proof. */
+/** Status service flag: TCP CLI clients must provide an HMAC proof; set whenever a control key was loaded at boot. */
 #define PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED (1u << 1u)
 /**
  * @brief Byte offsets in the sanitized wireless status payload.

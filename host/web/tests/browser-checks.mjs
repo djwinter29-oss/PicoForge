@@ -59,7 +59,7 @@ const mock = `<script>
     });
     if (url.pathname === "/api/wireless") return response({ wireless: {
       ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
-      ble_key_configured: false, tcp_cli_configurable: false, tcp_cli_auth_configurable: false
+      ble_key_configured: false, tcp_cli_configurable: false
     } });
     if (url.pathname === "/api/wireless/test") return response({
       test: { remaining_seconds: 600, ipv4: "192.0.2.2" }

@@ -76,7 +76,7 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
     }
     for (const [wireless, expected] of [
       [{ ble_enabled: false, ble_key_configured: true, ble_state: "advertising" }, "Disabled"],
-      [{ ble_enabled: true, ble_key_configured: false, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],
+      [{ ble_enabled: true, ble_key_configured: false, ble_state: "off" }, "Off (no control key)"],
       [{ ble_enabled: true, ble_key_configured: true, ble_state: "off" }, "PicoForge-892BA313F9BB56E1 (starting)"],
       [{ ble_enabled: true, ble_key_configured: true, ble_state: "advertising" },
         "PicoForge-892BA313F9BB56E1 (advertising)"],

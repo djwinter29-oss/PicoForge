@@ -55,12 +55,12 @@ test("parses firmware-generated Feature 30 status vectors", () => {
 
 test("v2 TCP switch, security masks and test lifecycle details retain legacy compatibility", () => {
   const settings = { wifi_enabled: false, ble_enabled: false, ssid: "", board: BOARD };
-  assert.equal(buildWireless(1, settings)[3], 83);
-  assert.equal(buildWireless(1, settings, false, false)[3], 3);
-  assert.equal(buildWireless(1, { ...settings, tcp_cli_enabled: false })[3], 75);
-  assert.equal(buildWireless(1, { ...settings, tcp_cli_enabled: true })[3], 67);
-  assert.equal(buildWireless(1, { ...settings, tcp_cli_auth_required: true })[3], 51);
-  assert.throws(() => buildWireless(1, { ...settings, tcp_cli_enabled: false }, false, false));
+  assert.equal(buildWireless(1, settings)[3], 19);
+  assert.equal(buildWireless(1, settings, false)[3], 3);
+  assert.equal(buildWireless(1, { ...settings, tcp_cli_enabled: false })[3], 11);
+  assert.equal(buildWireless(1, { ...settings, tcp_cli_enabled: true })[3], 3);
+  assert.throws(() => buildWireless(1, { ...settings, tcp_cli_auth_required: true }), /follows the saved control key/);
+  assert.throws(() => buildWireless(1, { ...settings, tcp_cli_enabled: false }, false));
   assert.throws(() => buildWireless(1, { ...settings, tcp_cli_enabled: 0 }));
   const status = new Uint8Array(52);
   status[0] = 3;
@@ -72,7 +72,6 @@ test("v2 TCP switch, security masks and test lifecycle details retain legacy com
   statusV4[47] = 2;
   statusV4[49] = 7;
   statusV4[52] = 1;
-  assert.equal(decodeWireless(statusV4).tcp_cli_auth_configurable, true);
   assert.equal(decodeWireless(statusV4).reconnect_count, 7);
   assert.equal(decodeWireless(statusV4).restart_required, true);
   status[47] = 4;
@@ -132,7 +131,7 @@ test("disabling a saved radio erases its credentials; Wi-Fi Enabled needs a netw
     assert.deepEqual(form.request(), { wifi_enabled: false, ble_enabled: false, ssid: "", confirm_reboot: true,
       password: "", ble_key: "" });
     assert.equal(buildWireless(1, { ...form.request(), board: { system_clock_mhz: 0, sdcard_profile: 0,
-      radios: 0 } })[3], 48, "erasing the BLE key also disables TCP authentication");
+      radios: 0 } })[3], 16, "erasing the BLE key sends no retired TCP authentication flags");
     pick("settings-ble", "1");
     assert.equal(Object.hasOwn(form.request(), "ble_key"), false, "Enabled keeps the saved key");
     saved = { ssid: "", password_configured: false, wifi_enabled: false, ble_enabled: false,
@@ -143,7 +142,7 @@ test("disabling a saved radio erases its credentials; Wi-Fi Enabled needs a netw
     await form.load();
     assert.equal(form.dirty(), false, "a radio that was already off has nothing to erase");
     assert.equal(el("settings-wifi").options[0].disabled, true, "Wi-Fi cannot be enabled without a network");
-    assert.equal(el("settings-ble").options[0].disabled, false, "keyless Bluetooth stays view-only");
+    assert.equal(el("settings-ble").options[0].disabled, true, "Bluetooth cannot be enabled without a key");
   } finally {
     globalThis.document = previous;
   }
@@ -307,7 +306,7 @@ test("failed temporary Wi-Fi cancellation retains staged state until retry or re
   const previous = globalThis.document;
   const elements = new Map();
   const ids = ["wifi-dialog", "ble-dialog", "settings-wifi", "settings-ble", "settings-tcp-cli",
-    "settings-tcp-auth", "wifi-scan", "wifi-other", "wifi-connect", "wifi-cancel", "wifi-ssid",
+    "wifi-scan", "wifi-other", "wifi-connect", "wifi-cancel", "wifi-ssid",
     "wifi-password", "wifi-password-label", "wifi-manual-label", "wifi-networks", "wifi-status",
     "wireless-summary", "ble-generate", "ble-copy", "ble-cancel", "ble-secret", "ble-status"];
   for (const id of ids) {
@@ -430,11 +429,11 @@ test("USB wireless payloads preserve omitted secrets and reject malformed creden
     ble_key: "ab".repeat(32), board };
   const request = buildWireless(7, settings);
   assert.equal(request.length, 136);
-  assert.deepEqual([...request.slice(0, 4)], [2, 7, 3, 80]);
+  assert.deepEqual([...request.slice(0, 4)], [2, 7, 3, 16]);
   assert.equal(request[101], 0xab);
   assert.deepEqual([...request.slice(133)], [250, 0, 1]);
   const keep = buildWireless(8, { wifi_enabled: false, ble_enabled: true, ssid: "", board: { ...board, radios: 2 } });
-  assert.equal(keep[3], 83);
+  assert.equal(keep[3], 19);
   for (const change of [{ ssid: "x".repeat(33) }, { ssid: "bad\0ssid" }, { password: "short" },
     { password: "é".repeat(8) }, { ble_key: "0".repeat(64) }, { wifi_enabled: 1 }, { board: undefined },
     { wifi_enabled: false },
@@ -780,7 +779,7 @@ test("USB wireless save treats loss of a preserved secret as uncertain, never su
   await client.disconnect();
 });
 
-test("BLE reads diagnostics without a key but authenticates each restricted write with a command-bound proof", async () => {
+test("BLE unlocks the session with the control key before any read and binds each benchmark to a proof", async () => {
   const oldCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
   let client;
@@ -810,44 +809,49 @@ test("BLE reads diagnostics without a key but authenticates each restricted writ
       },
       disconnect() { this.connected = false; ble.dispatchEvent(new Event("gattserverdisconnected")); },
     };
+    let prompts = 0;
     const bluetooth = { async requestDevice(options) {
+      prompts++;
       assert.deepEqual(options, { filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }], optionalServices: [BLE_SERVICE] });
       return ble;
     } };
     client = new PicoForgeBluetooth(bluetooth, () => {}, { sleep: async () => {}, pendingStore: memoryPendingStore() });
-    await client.connect();
+    await client.connect("00".repeat(32));
+    assert.match(client.state.error, /64 nonzero hex/);
+    assert.equal(prompts, 0, "an invalid key is rejected before the device prompt");
+    const sign = request => [...createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
+      .update(Buffer.concat([nonce, Buffer.from(client.state.hardware.serial_number, "hex"), Buffer.from("PFBLECTL1"),
+        Buffer.from(request)])).digest().subarray(0, 16)];
+    await client.connect("ab".repeat(32));
     assert.equal(client.state.connected, true);
     assert.equal(client.state.transport, "ble");
-    assert.equal(client.accessMode, null, "access requires an explicit choice after connecting");
-    await assert.rejects(client.command(4, { args: [1] }), /key/);
-    assert.equal(writes.length, 0);
-    client.setViewOnly();
-    assert.equal(client.accessMode, "view-only");
-    await assert.rejects(client.command(4, { args: [1] }), /Control/);
-    assert.equal(writes.length, 0);
-    await client.command(1, { args: [1] });
-    assert.deepEqual(writes.map(item => item[0]), [20], "the LED is sent without a proof");
+    assert.deepEqual(writes.map(item => item[0]), [33], "the session is unlocked before reports are read");
+    assert.deepEqual(writes[0][1], sign(Buffer.from("SESSION01")));
     writes.length = 0;
-    await client.setControlKey("ab".repeat(32));
-    assert.equal(client.accessMode, "control");
+    await client.command(1, { args: [1] });
+    assert.deepEqual(writes.map(item => item[0]), [20], "the LED is sent without a per-command proof");
+    writes.length = 0;
     await client.command(4, { args: [0, 0, 0, 0, 0] });
     assert.deepEqual(writes.map(item => item[0]), [33, 20]);
-    const uid = Buffer.from(client.state.hardware.serial_number, "hex");
-    const expected = createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
-      .update(Buffer.concat([nonce, uid, Buffer.from("PFBLECTL1"), Buffer.from(writes[1][1])]))
-      .digest().subarray(0, 16);
-    assert.deepEqual(writes[0][1], [...expected]);
+    assert.deepEqual(writes[0][1], sign(writes[1][1]));
     for (const opcode of [2, 3, 6]) await assert.rejects(client.command(opcode), /requires USB/);
     assert.equal(writes.length, 2);
     client.update({ self_test_command_pending: false }); // stands in for the next self-test report
     characteristics.get(20).writeValueWithResponse = async () => { throw new Error("GATT Error Unknown."); };
-    await assert.rejects(client.command(4, { args: [0, 0, 0, 0, 0] }), /rejected the BLE control key/);
+    await assert.rejects(client.command(4, { args: [0, 0, 0, 0, 0] }), /rejected the control key/);
     assert.equal(client.state.connected, true, "a rejected key must not drop the link");
     assert.equal(Boolean(client.state.outcome_uncertain), false);
     await client.disconnect();
     assert.equal(client.bleKey, null);
-    assert.equal(client.accessMode, null);
     assert.equal(client.state.connected, false);
+
+    characteristics.get(33).writeValueWithResponse = async () => { throw new Error("GATT Error Unknown."); };
+    prompts = 0;
+    await client.connect("cd".repeat(32));
+    assert.equal(client.state.connected, false);
+    assert.match(client.state.error, /rejected the control key/);
+    assert.equal(prompts, 1);
+    assert.equal(client.bleKey, null, "a rejected unlock is final and forgets the key");
   } finally {
     if (client?.state.connected) await client.disconnect();
     if (oldCrypto) Object.defineProperty(globalThis, "crypto", oldCrypto);
@@ -860,7 +864,8 @@ test("BLE retries first-link discovery on the chosen board and keeps the failure
   const added = [];
   const addEventListener = ble.addEventListener.bind(ble);
   ble.addEventListener = (type, handler) => { added.push(handler); addEventListener(type, handler); };
-  const reads = { 1: identity(128 | 55), 2: config(), 3: telemetry(), 10: storage(), 11: selfTest() };
+  const reads = { 1: identity(128 | 55), 2: config(), 3: telemetry(), 10: storage(), 11: selfTest(),
+    32: new Uint8Array(16) };
   let failures = 1;
   let connects = 0;
   ble.gatt = { connected: false,
@@ -871,7 +876,8 @@ test("BLE retries first-link discovery on the chosen board and keeps the failure
         if (failures-- > 0) throw new Error("No Services matching UUID found in Device.");
         return { async getCharacteristic(uuid) {
           const bytes = reads[parseInt(uuid.slice(4, 8), 16)] ?? new Uint8Array(16);
-          return { async readValue() { return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); } };
+          return { async readValue() { return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); },
+            async writeValueWithResponse() {} };
         } };
       } };
     },
@@ -880,21 +886,22 @@ test("BLE retries first-link discovery on the chosen board and keeps the failure
   let prompts = 0;
   const client = new PicoForgeBluetooth({ async requestDevice() { prompts++; return ble; } }, () => {},
     { sleep: async () => {}, pendingStore: memoryPendingStore() });
-  await client.connect();
+  const key = "ab".repeat(32);
+  await client.connect(key);
   assert.equal(client.state.connected, true, "the first-link discovery failure is retried");
   assert.deepEqual([prompts, connects], [1, 2], "retries reuse the chosen board without a new prompt");
   await client.disconnect();
 
   failures = 3;
   connects = 0;
-  await client.connect();
+  await client.connect(key);
   assert.equal(client.state.connected, false);
   assert.equal(connects, 3, "setup is retried a bounded number of times");
   assert.match(client.state.error, /No Services/, "the late disconnect event must not erase the reason");
   assert.equal(new Set(added).size, 1, "repeated scans of one board register one disconnect handler");
 
   failures = 0;
-  await client.connect();
+  await client.connect(key);
   assert.equal(client.state.connected, true);
   ble.gatt.disconnect();
   assert.equal(client.state.connected, false, "a link loss after setup still clears the connection");

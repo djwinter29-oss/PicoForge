@@ -21,7 +21,6 @@ from .common import _bytes, _feature_payload, _validate_settings
 
 def build_wireless_configuration_report(
     settings: dict[str, object], transaction_id: int = 1, *, tcp_cli_configurable: bool = True,
-    tcp_cli_auth_configurable: bool = True,
 ) -> bytes:
     """Build Feature 31 v2: board settings, radio switches and credentials in one atomic save."""
     if not isinstance(settings, dict):
@@ -29,7 +28,7 @@ def build_wireless_configuration_report(
     if settings.get("confirm_reboot") is not True:
         raise ValueError("Explicit confirm_reboot: true is required")
     if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "password", "ble_key", "confirm_reboot", "board",
-                       "use_tested_wifi", "tcp_cli_enabled", "tcp_cli_auth_required"}:
+                       "use_tested_wifi", "tcp_cli_enabled"}:
         raise ValueError("Unknown wireless configuration field")
     if type(settings.get("wifi_enabled")) is not bool or type(settings.get("ble_enabled")) is not bool:
         raise ValueError("wifi_enabled and ble_enabled must be boolean")
@@ -39,9 +38,6 @@ def build_wireless_configuration_report(
     if "tcp_cli_enabled" in settings and (
             type(settings["tcp_cli_enabled"]) is not bool or not tcp_cli_configurable):
         raise ValueError("TCP CLI setting requires a boolean and wireless status v2")
-    if "tcp_cli_auth_required" in settings and (
-            type(settings["tcp_cli_auth_required"]) is not bool or not tcp_cli_auth_configurable):
-        raise ValueError("TCP CLI authentication setting requires wireless status v3")
     if "board" not in settings:
         raise ValueError("board settings are required")
     clock, profile, radios = _validate_settings(settings["board"])
@@ -60,14 +56,6 @@ def build_wireless_configuration_report(
     payload[:5] = bytes([31, 2, transaction_id, radios, 0])
     if tcp_cli_configurable:
         payload[4] |= 16 if "tcp_cli_enabled" not in settings else 8 if not settings["tcp_cli_enabled"] else 0
-    if tcp_cli_auth_configurable:
-        if "tcp_cli_auth_required" in settings:
-            if settings["tcp_cli_auth_required"]:
-                payload[4] |= 32
-        elif "ble_key" in settings and settings["ble_key"] == "":
-            payload[4] |= 32
-        else:
-            payload[4] |= 64
     payload[134:137] = struct.pack("<HB", clock, profile)
     payload[5:5 + len(encoded)] = encoded
     if "password" not in settings and not use_tested:
@@ -198,7 +186,7 @@ def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> Wirel
         "error": payload[44], "ble_state": ("off", "advertising", "connected")[payload[45]],
         "tcp_cli_started": bool(payload[46]),
         "tcp_cli_enabled": not bool(payload[47] & 1), "tcp_cli_configurable": payload[0] >= 2,
-        "tcp_cli_auth_required": bool(payload[47] & 2), "tcp_cli_auth_configurable": payload[0] >= 3,
+        "tcp_cli_auth_required": bool(payload[47] & 2),
         "wifi_auth_state": (None if payload[0] < 3 else
                             ("try_wpa2", "try_sae", "wpa2", "sae")[payload[48]]),
         "reconnect_count": int.from_bytes(payload[49:51], "little") if payload[0] >= 3 else 0,

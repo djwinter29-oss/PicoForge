@@ -108,8 +108,8 @@ Implemented features are not blanket hardware qualification. Radio qualification
 mass-storage compatibility, and power-loss recovery remain limited. Review the
 [qualification gaps](docs/validation/qualification-gaps.md) and [test records](docs/validation/records/README.md).
 
-The Wi-Fi TCP CLI is unencrypted; unless BLE-key authentication is configured, it is also unauthenticated. Use it
-only on trusted LANs. BLE diagnostics are public, and control-key authentication does not encrypt the BLE link.
+The Wi-Fi TCP CLI is unencrypted; without a saved control key, it is also unauthenticated. Use it
+only on trusted LANs. Bluetooth runs only with a saved control key, and that key does not encrypt the BLE link.
 
 ## Documentation
 

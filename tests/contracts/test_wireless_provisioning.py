@@ -83,8 +83,6 @@ bool pf_boot_config_set_wifi_password(const char *p) {
 }
 bool pf_boot_config_set_ble_key(const uint8_t key[32]) { (void)key; return true; }
 void pf_boot_config_ble_key(uint8_t key[32]) { memset(key, shared_key_available ? 0xA5 : 0, 32u); }
-bool pf_boot_config_tcp_cli_auth_required(void) { return tcp_auth_required; }
-bool pf_boot_config_set_tcp_cli_auth_required(bool required) { tcp_auth_required = required; return true; }
 bool pf_boot_config_wireless_restart_required(void) { return restart_required; }
 bool pf_boot_config_set_wifi_auth_state(pf_wifi_auth_state_t state) { (void)state; return true; }
 pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void) { return PF_WIFI_AUTH_TRY_WPA2; }
@@ -104,7 +102,8 @@ bool pf_wifi_prepare(void) { return wifi_prepared; }
 void pf_wifi_start(void) { ++wifi_starts; }
 static bool saved_link_up = true, tcp_serving_set;
 bool pf_tcp_cli_serving(void) { return tcp_listener && tcp_serving_set; }
-bool pf_tcp_cli_set_auth_required(bool required) { return !required || shared_key_available; }
+bool pf_tcp_cli_set_auth_required(bool required)
+{ if (required && !shared_key_available) return false; tcp_auth_required = required; return true; }
 bool pf_tcp_cli_auth_required(void) { return tcp_auth_required; }
 void pf_tcp_cli_poll(bool serving, uint64_t poll_now) {
     tcp_serving_set = serving;
@@ -119,6 +118,7 @@ void pf_wireless_auth_set_key(const uint8_t key[32]) {
     shared_key_available = false;
     if (key) for (unsigned i = 0u; i < 32u; ++i) shared_key_available |= key[i] != 0u;
 }
+bool pf_wireless_auth_available(void) { return shared_key_available; }
 void pf_wifi_mdns_poll(bool saved_up, bool tcp_up, uint64_t poll_now) { (void)saved_up; (void)tcp_up; (void)poll_now; }
 bool pf_wifi_saved_link_up(void) { return saved_link_up; }
 static uint8_t wifi_error;
@@ -173,14 +173,14 @@ int main(int argc, char **argv)
         strcpy(ssid, "PicoForge");
         strcpy(saved_password, "configured");
         wifi_prepared = ble_prepared = ble_start_result = true;
-        tcp_auth_required = shared_key_available = restart_required = true;
+        shared_key_available = restart_required = true;
         pf_wireless_start();
         pf_wireless_poll();
         pf_wireless_status(status);
         printf("{\"tcp_cli_auth_required\":\"");
         print_status_hex(status);
         tcp_cli_enabled = false;
-        tcp_auth_required = false;
+        shared_key_available = false;
         pf_wireless_start();
         pf_wireless_poll();
         pf_wireless_status(status);
@@ -197,27 +197,22 @@ int main(int argc, char **argv)
         return 0;
     }
     if (argc > 1) {
-        tcp_auth_required = true;
+        /* A saved control key always requires TCP CLI proofs; there is no separate switch to forget. */
+        shared_key_available = true;
         pf_wireless_start();
         pf_wireless_status(status);
-        assert(status[PF_WIRELESS_STATUS_ERROR_OFFSET] == PF_WIRELESS_ERROR_INIT);
-        assert(status[PF_WIRELESS_STATUS_VERSION_OFFSET] == PF_WIRELESS_STATUS_VERSION);
-        assert((status[PF_WIRELESS_STATUS_SERVICES_OFFSET] &
-                PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED) != 0u);
-        assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0u);
-        pf_wireless_poll();
-        assert(tcp_cli_starts == 0u && zeroizes == 1u);
+        assert(status[PF_WIRELESS_STATUS_ERROR_OFFSET] == PF_WIRELESS_ERROR_NONE);
+        assert(status[PF_WIRELESS_STATUS_SERVICES_OFFSET] == PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED);
+        assert(tcp_auth_required && zeroizes == 1u);
         return 0;
     }
     /* With both radios off, the chip still starts for the W-board LED, but no radio is enabled. */
     assert(!pf_wireless_led_put(true) && led_level == -1);
-    tcp_auth_required = true;
     chip_init_result = -1;
     pf_wireless_start();
     assert(chip_inits == 1 && !pf_wireless_led_put(true) && led_level == -1);
     pf_wireless_status(status);
     assert(status[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] == 0u);
-    tcp_auth_required = false;
     chip_init_result = 0;
     pf_wireless_start();
     assert(chip_inits == 2 && led_level == 0);
@@ -346,11 +341,10 @@ int main(int argc, char **argv)
     report[3] |= 24u;
     const unsigned before_invalid = saves;
     assert(!pf_wireless_configure(report) && saves == before_invalid);
+    /* Retired TCP authentication flags from older hosts are accepted and ignored. */
     request(report, 150, 0);
     report[3] |= 96u;
-    assert(!pf_wireless_configure(report) && saves == before_invalid);
-    request(report, 150, 0);
-    assert(pf_wireless_configure(report) && tcp_cli_enabled);
+    assert(pf_wireless_configure(report) && saves == before_invalid + 1u && tcp_cli_enabled);
     request(report, 150, 0);
     save_result = false;
     const unsigned before_failed_save_zeroizes = zeroizes;
@@ -369,7 +363,7 @@ int main(int argc, char **argv)
     ], check=False, capture_output=True, text=True)
     assert compiled.returncode == 0, compiled.stderr
     subprocess.run([str(binary)], check=True)
-    subprocess.run([str(binary), "missing-auth-key"], check=True)
+    subprocess.run([str(binary), "saved-key"], check=True)
     generated_vectors = subprocess.run([str(binary), "status-vectors"], check=True,
                                        capture_output=True, text=True).stdout
     # On an intentional status change, regenerate the fixture from this binary's `status-vectors` output.

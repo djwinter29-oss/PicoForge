@@ -10,7 +10,7 @@ public sealed record WirelessStatusResponse(bool WifiEnabled, bool BleEnabled, s
     bool PasswordConfigured, bool BleKeyConfigured, string Status, byte TransactionId,
     string WifiState, string Ipv4, byte Error, string BleState = "off", bool TcpCliStarted = false,
     bool TcpCliEnabled = true, bool TcpCliConfigurable = false, bool TcpCliAuthRequired = false,
-    bool TcpCliAuthConfigurable = false, string? WifiAuthState = null, ushort ReconnectCount = 0, int? Rssi = null,
+    string? WifiAuthState = null, ushort ReconnectCount = 0, int? Rssi = null,
     bool RestartRequired = false);
 
 /// <summary>Wireless status with acknowledgement of an imminent reboot and, after a save, the confirmed board settings.</summary>
@@ -40,8 +40,6 @@ public sealed class WirelessRequest
     public bool? BleEnabled { get; set; }
     /// <summary>Enable unauthenticated LAN CLI access; omitted preserves the saved switch.</summary>
     public bool? TcpCliEnabled { get; set; }
-    /// <summary>Require the saved BLE control key to authenticate LAN CLI sessions.</summary>
-    public bool? TcpCliAuthRequired { get; set; }
     public string? Ssid { get; set; }
     public string? Password { get; set; }
     public string? BleKey { get; set; }
@@ -66,8 +64,6 @@ public sealed class WirelessRequest
                 json.TryGetProperty("ble_key", out var key) && key.ValueKind != JsonValueKind.String ||
                 json.TryGetProperty("tcp_cli_enabled", out var tcp) &&
                     tcp.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
-                json.TryGetProperty("tcp_cli_auth_required", out var tcpAuth) &&
-                    tcpAuth.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
                 !json.TryGetProperty("board", out var board) || board.ValueKind != JsonValueKind.Object ||
                 !board.TryGetProperty("system_clock_mhz", out _) || !board.TryGetProperty("sdcard_profile", out _))
                 throw new JsonException();
@@ -92,12 +88,10 @@ internal static partial class HidProtocol
     public const int WirelessResultFeatureSize = 223;
 
     public static byte[] BuildWirelessRequest(WirelessRequest settings, byte transaction,
-        bool tcpCliConfigurable = true, bool tcpCliAuthConfigurable = true)
+        bool tcpCliConfigurable = true)
     {
         if (!tcpCliConfigurable && settings.TcpCliEnabled is not null)
             throw new ArgumentException("TCP CLI setting requires wireless status v2");
-        if (!tcpCliAuthConfigurable && settings.TcpCliAuthRequired is not null)
-            throw new ArgumentException("TCP CLI authentication setting requires wireless status v3");
         if (!settings.ConfirmReboot || transaction == 0 || settings.WifiEnabled is null ||
             settings.BleEnabled is null || settings.Ssid is null || settings.Extra?.Count > 0 ||
             settings.Board is not { SystemClockMhz: 0 or 150 or 200 or 250, SdCardProfile: 0 or 1, Radios: >= 0 and <= 3 })
@@ -117,10 +111,6 @@ internal static partial class HidProtocol
         report[3] = (byte)settings.Board.Radios;
         if (tcpCliConfigurable)
             report[4] = settings.TcpCliEnabled is null ? (byte)16 : settings.TcpCliEnabled.Value ? (byte)0 : (byte)8;
-        if (tcpCliAuthConfigurable)
-            report[4] |= settings.TcpCliAuthRequired is null
-                ? settings.BleKey == "" ? (byte)32 : (byte)64
-                : settings.TcpCliAuthRequired.Value ? (byte)32 : (byte)0;
         if (settings.UseTestedWifi) report[4] |= 4;
         BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(134), (ushort)settings.Board.SystemClockMhz);
         report[136] = (byte)settings.Board.SdCardProfile;
@@ -250,7 +240,7 @@ internal static partial class HidProtocol
             payload[3], new[] { "disabled", "connecting", "connected", "failed" }[payload[4]],
             $"{payload[5]}.{payload[6]}.{payload[7]}.{payload[8]}", payload[44],
             new[] { "off", "advertising", "connected" }[payload[45]], payload[46] != 0,
-            (payload[47] & 1) == 0, payload[0] >= 2, (payload[47] & 2) != 0, payload[0] >= 3,
+            (payload[47] & 1) == 0, payload[0] >= 2, (payload[47] & 2) != 0,
             payload[0] < 3 ? null : new[] { "try_wpa2", "try_sae", "wpa2", "sae" }[payload[48]],
             payload[0] < 3 ? (ushort)0 : BinaryPrimitives.ReadUInt16LittleEndian(payload[49..]),
             payload[0] < 3 || payload[51] == 127 ? null : unchecked((sbyte)payload[51]),

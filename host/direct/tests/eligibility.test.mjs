@@ -15,12 +15,12 @@ const readyState = () => ({
   msc_command_pending: false,
   reconnecting: false,
 });
-const options = { bluetooth: false, bleClient: false, accessMode: null, outstanding: null, wirelessBusy: false };
+const options = { bluetooth: false, outstanding: null, wirelessBusy: false };
 
 test("operation eligibility centralizes connection, freshness, and transport gates", () => {
   const ready = deriveOperationEligibility(readyState(), options);
   assert.deepEqual(ready, { blocked: false, storageReady: true, settingsReady: true,
-    connectionLocked: true, bleAccessChoicePending: false });
+    connectionLocked: true });
 
   for (const change of [
     { connected: false },
@@ -50,9 +50,6 @@ test("operation eligibility centralizes connection, freshness, and transport gat
   assert.equal(deriveOperationEligibility(readyState(), { ...options, wirelessBusy: true }).blocked, true);
   assert.equal(deriveOperationEligibility(readyState(), { ...options, bluetooth: true }).settingsReady, false);
   assert.equal(deriveOperationEligibility(readyState(), { ...options, outstanding: {} }).connectionLocked, true);
-  assert.equal(deriveOperationEligibility({ ...readyState(), connected: true }, {
-    ...options, bleClient: true, accessMode: null,
-  }).bleAccessChoicePending, true);
 });
 
 test("boards without self-test capability do not require self-test freshness", () => {

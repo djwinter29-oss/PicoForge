@@ -1,6 +1,6 @@
 /**
  * @file bluetooth.c
- * @brief BLE GATT diagnostics, per-command authorization and nonpersistent advertising.
+ * @brief Key-gated BLE GATT diagnostics and control, per-command benchmark proofs and nonpersistent advertising.
  */
 #include "app/wireless/bluetooth/bluetooth.h"
 #include "app/wireless/wireless.h"
@@ -33,13 +33,16 @@ typedef enum {
     PF_BLUETOOTH_STATE_CONNECTED = 2, /**< A central is connected. */
 } pf_bluetooth_state_t;
 
-static bool control_key_available; /**< False when BLE is enabled for public diagnostics only. */
+static bool control_key_available; /**< A control key is loaded; BLE does not start without one. */
+static bool session_authorized; /**< This connection proved the key; until then only identity and nonce read. */
 static bool challenge_valid; /**< Nonce issued once and usable for one authentication attempt. */
 static bool proof_valid; /**< A 16-byte proof is ready for exactly one subsequent control request. */
 static uint8_t proof[16]; /**< Submitted per-command MAC, cleared on use or disconnect. */
 static uint8_t nonce[16]; /**< Fresh random challenge, invalidated by use or disconnect. */
 /** @brief Protocol domain separating BLE control proofs from TCP CLI proofs. */
 static const uint8_t ble_auth_domain[9] = {'P', 'F', 'B', 'L', 'E', 'C', 'T', 'L', '1'};
+/** @brief Fixed proof request that unlocks the connection; never dispatched as a control. */
+static const uint8_t ble_session_request[9] = {'S', 'E', 'S', 'S', 'I', 'O', 'N', '0', '1'};
 static uint64_t auth_retry_us; /**< Failed authentication rate limit; never blocks the owner task. */
 /** Properly aligned typed report storage, frozen for the current ATT long read. */
 static union {
@@ -78,7 +81,7 @@ const btstack_tlv_t *__wrap_btstack_tlv_flash_bank_init_instance(btstack_tlv_fla
 /** @brief Reset per-connection authorization and read snapshots, then begin/restart peripheral advertising. */
 static void advertise(void)
 {
-    proof_valid = challenge_valid = false;
+    proof_valid = challenge_valid = session_authorized = false;
     read_handle = 0u;
     read_length = 0u;
     memset(proof, 0, sizeof(proof));
@@ -112,6 +115,10 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
     if (handle == ATT_CHARACTERISTIC_GAP_DEVICE_NAME_01_VALUE_HANDLE) {
         return att_read_callback_handle_blob(scan_response + 2u, sizeof(scan_response) - 2u, offset, buffer,
                                              buffer_size);
+    }
+    /* Identity carries the UID that the session proof binds; everything else waits for the unlock. */
+    if (!session_authorized && handle != BLE_HANDLE(0001) && handle != BLE_HANDLE(0020)) {
+        return (uint16_t)(ATT_READ_ERROR_CODE_OFFSET + BLE_ERROR_CONTROL_REJECTED);
     }
     if (buffer == NULL) {
         switch (handle) {
@@ -148,7 +155,7 @@ static uint16_t read_callback(hci_con_handle_t connection, uint16_t handle, uint
             pf_hid_ble_result(&read_buffer.result);
             read_length = sizeof(pf_hid_control_result_t);
         } else if (handle == BLE_HANDLE(001e)) {
-            /* Status is public diagnostics: the SSID and LAN address are shown to any reader in radio range. */
+            /* Unlocked readers see the saved SSID and LAN address, as USB readers do. */
             pf_wireless_status(read_buffer.bytes);
             read_length = PF_WIRELESS_STATUS_SIZE;
         } else if (handle == BLE_HANDLE(0020)) {
@@ -179,7 +186,7 @@ static bool authenticate(const uint8_t *request)
     return accepted;
 }
 
-/** @brief Accept authorization proofs, the open LED identify control and proven controls; never flash writes. */
+/** @brief Unlock the connection, then accept proofs, the LED identify control and proven controls; never flash. */
 static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t transaction_mode,
                            uint16_t offset, uint8_t *buffer, uint16_t size)
 {
@@ -191,13 +198,17 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
             return BLE_ERROR_CONTROL_REJECTED;
         memcpy(proof, buffer, sizeof(proof));
         proof_valid = true;
-        return 0;
+        /* The first proof on a connection unlocks it; later proofs wait for exactly one control write. */
+        if (session_authorized) return 0;
+        session_authorized = authenticate(ble_session_request);
+        return session_authorized ? 0 : BLE_ERROR_CONTROL_REJECTED;
     }
     if (handle != BLE_HANDLE(0014)) return ATT_ERROR_WRITE_NOT_PERMITTED;
+    if (!session_authorized) return BLE_ERROR_CONTROL_REJECTED;
     if (size != sizeof(pf_hid_control_request_t)) return ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH;
     pf_hid_control_request_t request;
     memcpy(&request, buffer, sizeof(request));
-    /* The LED only identifies a board and exposes nothing; it skips the proof without touching nonce/rate state. */
+    /* On an unlocked link the LED only identifies a board; it skips the proof without touching nonce/rate state. */
     if (request.opcode != PF_HID_OPCODE_LED && !authenticate(buffer)) return BLE_ERROR_CONTROL_REJECTED;
     return pf_hid_ble_control(&request) ? 0 : ATT_ERROR_REQUEST_NOT_SUPPORTED;
 }
@@ -206,7 +217,9 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
 bool pf_bluetooth_prepare(void)
 {
     control_key_available = pf_wireless_auth_available();
-    return (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;
+    const bool enabled = (pf_boot_config_radios() & PF_WIRELESS_BLE) != 0u;
+    if (enabled && !control_key_available) PF_LOGGING_WARNING("ble", "Bluetooth is off until a control key is saved");
+    return enabled && control_key_available;
 }
 
 /** @copydoc pf_bluetooth_state */

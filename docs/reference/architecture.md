@@ -59,7 +59,7 @@ before accepting a run; existing files are left untouched. See the
 .NET dashboards expose the controls and calculate average read/write metrics.
 
 W-board images also provide optional [Wi-Fi and BLE](../guides/wireless.md). Radio switches default enabled, but credentials
-default empty; Wi-Fi needs a network and BLE can advertise view-only without a control key.
+default empty; Wi-Fi needs a network and BLE needs a control key.
 SDK poll-mode radio work runs on the
 USB owner task; authenticated BLE LED/benchmark commands reuse existing admission with separate result slots.
 USB-only credential provisioning and existing storage ownership rules remain in force.

@@ -1,11 +1,11 @@
-import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=7";
-import { renderStatus } from "./view.mjs?v=16";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=10";
-import { bindWirelessForm } from "./wireless-form.mjs?v=18";
-import { deriveOperationEligibility } from "./eligibility.mjs?v=1";
+import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=8";
+import { renderStatus } from "./view.mjs?v=17";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=11";
+import { bindWirelessForm } from "./wireless-form.mjs?v=19";
+import { deriveOperationEligibility } from "./eligibility.mjs?v=2";
 import {
   cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
-} from "./wireless.mjs?v=10";
+} from "./wireless.mjs?v=11";
 
 const element = id => document.querySelector(`#${id}`);
 const usbDialog = element("usb-connection-dialog");
@@ -59,9 +59,7 @@ async function refreshWirelessStatus() {
 
 function render(state) {
   const wireless = state.wireless;
-  // View-only Bluetooth shows the network but no console link; older firmware also zeroes the IPv4 over Bluetooth.
-  const consoleAllowed = !(client instanceof PicoForgeBluetooth) || client.accessMode === "control";
-  renderStatus({ ...state, console_url: consoleAllowed && wireless?.wifi_enabled
+  renderStatus({ ...state, console_url: wireless?.wifi_enabled
     && wireless.wifi_state === "connected" && wireless.tcp_cli_started && wireless.ipv4 !== "0.0.0.0"
     ? `console.html?ipv4=${wireless.ipv4}&auth=${Number(wireless.tcp_cli_auth_required)}` : null });
   if (!state.connected) {
@@ -79,8 +77,6 @@ function render(state) {
   const bleClient = client instanceof PicoForgeBluetooth;
   const eligibility = deriveOperationEligibility(state, {
     bluetooth,
-    bleClient,
-    accessMode: bleClient ? client.accessMode : null,
     outstanding: client.outstanding,
     wirelessBusy: wirelessForm.operationBusy(),
   });
@@ -93,18 +89,9 @@ function render(state) {
   element("bluetooth-scan").disabled = state.busy || !bleClient || state.connected
     || !globalThis.isSecureContext || !navigator.bluetooth;
   element("bluetooth-disconnect").disabled = state.busy || !bleClient || !state.connected;
-  element("bluetooth-access-step").hidden = !bleClient || !state.connected;
-  element("ble-view-only").disabled = state.busy || !bleClient || !state.connected;
-  element("ble-authorize").disabled = state.busy || !bleClient || !state.connected;
-  element("ble-control-key").disabled = element("ble-authorize").disabled;
-  const bleAccessStatus = element("ble-access-status");
-  bleAccessStatus.hidden = !bleClient || !state.connected;
-  bleAccessStatus.textContent = !state.connected ? ""
-    : client.accessMode === "control" ? "Bluetooth access: control mode; the board checks the key on every command."
-      : client.accessMode === "view-only" ? "Bluetooth access: view only; only the board LED can be switched."
-        : "Bluetooth access: choose View only or enter the control key.";
+  element("ble-control-key").disabled = element("bluetooth-scan").disabled;
   element("usb-connection-close").disabled = state.busy;
-  element("bluetooth-connection-close").disabled = state.busy || eligibility.bleAccessChoicePending;
+  element("bluetooth-connection-close").disabled = state.busy;
   element("usb-connection-status").textContent = !globalThis.isSecureContext || !navigator.hid
     ? "USB HID requires a supported browser on HTTPS or localhost."
     : !bleClient && state.error ? state.error
@@ -114,21 +101,11 @@ function render(state) {
   element("bluetooth-connection-status").textContent = !globalThis.isSecureContext || !navigator.bluetooth
     ? "Web Bluetooth requires a supported browser and operating system on HTTPS or localhost."
     : bleClient && state.error ? state.error
-    : bleClient && state.busy ? (state.connected ? "Loading control key…"
-      : "Select a nearby board; connecting through Bluetooth…")
+    : bleClient && state.busy ? "Select a nearby board; connecting through Bluetooth…"
     : bleClient && state.connected
-      ? `Connected to ${client.bleDevice?.name || state.hardware?.board_name || "PicoForge"}. `
-        + (client.accessMode === "control" ? "Control mode selected."
-          : client.accessMode === "view-only" ? "View-only diagnostics."
-            : "Choose View only or enter the control key to enable controls.")
-      : "Scan for nearby PicoForge boards.";
-  if (!state.connected) element("ble-control-key").value = "";
+      ? `Connected to ${client.bleDevice?.name || state.hardware?.board_name || "PicoForge"}.`
+      : "Enter the control key, then scan for nearby PicoForge boards.";
   ledControl.disabled = blocked || !state.board_status?.led_available || !(state.hardware?.capabilities & 1);
-  if (bluetooth && client.accessMode !== "control") {
-    ledControl.disabled ||= client.accessMode === null;
-    element("self-test-start").disabled = true;
-    element("self-test-cancel").disabled = true;
-  }
   mscControl.disabled = blocked || !storageReady || bluetooth;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
   for (const id of ["settings-wifi", "settings-ble"]) {
@@ -196,52 +173,25 @@ element("usb-connect").addEventListener("click", () => run(async () => {
 }));
 element("bluetooth-scan").addEventListener("click", () => run(async () => {
   if (element("bluetooth-scan").disabled) return;
-  await client.connect();
-  if (client.state.connected) element("ble-view-only").focus();
+  const key = element("ble-control-key").value;
+  element("ble-control-key").value = "";
+  await client.connect(key);
+  if (client.state.connected) bluetoothDialog.close();
 }));
 element("bluetooth-disconnect").addEventListener("click", () => run(async () => {
   if (!element("bluetooth-disconnect").disabled) await client.disconnect();
-}));
-element("ble-view-only").addEventListener("click", () => run(async () => {
-  if (element("ble-view-only").disabled) return;
-  client.setViewOnly();
-  bluetoothDialog.close();
-}));
-element("ble-authorize").addEventListener("click", () => run(async () => {
-  if (element("ble-authorize").disabled) return;
-  const target = client;
-  const generation = target.generation;
-  target.update({ busy: true, error: null });
-  try {
-    await target.setControlKey(element("ble-control-key").value);
-    if (target !== client || generation !== target.generation || !target.state.connected) {
-      target.bleKey = null;
-      target.accessMode = null;
-      throw new Error("Bluetooth disconnected while loading the control key. Scan and connect again.");
-    }
-    target.update({ error: null });
-    bluetoothDialog.close();
-  }
-  finally {
-    element("ble-control-key").value = "";
-    if (target === client) target.update({ busy: false });
-  }
 }));
 for (const [name, dialog] of [["usb", usbDialog], ["bluetooth", bluetoothDialog]]) {
   element(`${name}-connection-close`).addEventListener("click", () => {
     if (!client.state.busy) dialog.close();
   });
   dialog.addEventListener("cancel", event => {
-    const bleAccessChoicePending = name === "bluetooth" && client instanceof PicoForgeBluetooth
-      && client.state.connected && client.accessMode === null;
-    if (client.state.busy || bleAccessChoicePending) event.preventDefault();
+    if (client.state.busy) event.preventDefault();
   });
   dialog.addEventListener("keydown", event => {
     if (event.key === "Escape") {
       event.preventDefault();
-      const bleAccessChoicePending = name === "bluetooth" && client instanceof PicoForgeBluetooth
-        && client.state.connected && client.accessMode === null;
-      if (!client.state.busy && !bleAccessChoicePending) dialog.close();
+      if (!client.state.busy) dialog.close();
     }
   });
   dialog.addEventListener("close", () => { element("ble-control-key").value = ""; });

@@ -82,10 +82,6 @@ bool pf_boot_config_set_radios(uint8_t radios);
 bool pf_boot_config_tcp_cli_enabled(void);
 /** @brief Stage the saved-LAN TCP CLI switch; persist with pf_boot_config_save(), applied at the next boot. */
 bool pf_boot_config_set_tcp_cli_enabled(bool enabled);
-/** @brief Return whether TCP CLI clients must prove possession of the saved BLE HMAC key. */
-bool pf_boot_config_tcp_cli_auth_required(void);
-/** @brief Stage whether TCP CLI clients must prove possession of the saved BLE HMAC key. */
-bool pf_boot_config_set_tcp_cli_auth_required(bool required);
 /** @brief Return the saved Wi-Fi authentication state; older records default to trying WPA2. */
 pf_wifi_auth_state_t pf_boot_config_wifi_auth_state(void);
 /** @brief Stage the Wi-Fi authentication state with credentials; persist with pf_boot_config_save(). */

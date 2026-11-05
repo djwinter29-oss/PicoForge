@@ -37,7 +37,7 @@ The record is followed by a 144-byte wireless extension in the same page:
 little-endian magic `0x4c574650`, version `1`, size `144`, a reserved byte/SSID[33]/password[64]/key[32], two
 reserved zero bytes, and CRC-32 over its first 140 bytes. The first byte was a pair of provisioning flags in earlier
 firmware; it is ignored when loading those records and written as zero on the next save. Old records retain
-default-enabled master switches but have no provisioned credentials: Wi-Fi stays off and BLE can advertise view-only.
+default-enabled master switches but have no provisioned credentials: Wi-Fi and BLE stay off.
 Every save sets the profile record's wireless-required byte, so a bad or torn extension loads complete defaults rather
 than new profiles without credentials; older records (byte `0`) without an extension keep their profiles. Profile saves
 preserve the extension. A Feature 31 update stages the clock, SD profile, radio switches and all credentials and saves
@@ -62,19 +62,19 @@ reports the saved radio switches; its separate booleans indicate whether credent
   takes precedence over Wi-Fi join errors until a later start succeeds), BLE link at 45
   (off/advertising/connected = 0/1/2; off until the controller is working), TCP CLI serving boolean
   at 46 (listener started and the saved network joined; zero during a connection test, without a link, and on older
-  firmware), service flags at 47 (bit 0 disables the saved-LAN TCP CLI; bit 1 requires HMAC authentication),
+  firmware), service flags at 47 (bit 0 disables the saved-LAN TCP CLI; bit 1 requires HMAC
+  authentication, set whenever a control key was loaded at boot),
   saved-network auth mode at 48, little-endian reconnect count at 49-50, signed RSSI at 51 (`127` unavailable), and
   restart-required at 52 (`1` when saved wireless settings differ from boot-applied values).
   Versions 1-3 retain the 52-byte payload and zero/omit fields added by later versions; updated hosts accept versions
   1-4.
 - Feature **31 SET**, 136 payload bytes: version `2` at 0, nonzero transaction at 1, radio switches at 2 (Wi-Fi
   bit 0, BLE bit 1), flags at 3 (preserve password bit 0, preserve key bit 1, use successfully tested Wi-Fi
-  credentials bit 2, disable TCP CLI bit 3, preserve TCP CLI switch bit 4, require TCP HMAC authentication bit 5,
-  preserve TCP authentication setting bit 6), SSID at 4-36, password at 37-100,
+  credentials bit 2, disable TCP CLI bit 3, preserve TCP CLI switch bit 4; bits 5-6 were the retired TCP
+  authentication switch and are accepted and ignored), SSID at 4-36, password at 37-100,
   key at 101-132, little-endian clock MHz at 133-134
   (opcode 6 values) and SD profile at 135. A cleared preserve flag with an empty password or all-zero key erases
-  that credential. TCP disable/preserve and require-auth/preserve-auth pairs are mutually exclusive; neither means
-  enable/disable authentication, respectively. Unknown flags,
+  that credential. TCP disable/preserve are mutually exclusive; neither means enable. Unknown flags,
   other versions or radio flags inconsistent with the settings are rejected.
   There is **no Feature 31 readback**; hosts confirm the board fields through Report 2.
 - Feature **34 SET**, 101 payload bytes: version `1` at 0, operation at 1 (scan `1`, select page `2`, test join
@@ -103,7 +103,7 @@ reports the saved radio switches; its separate booleans indicate whether credent
   A failed test with saved Wi-Fi disabled reports station disabled/error none; its failure remains in this report.
 - Native-host `GET /api/wireless` returns `{wireless, reboot_pending}` with sanitized fields. Confirmed
   `POST /api/wireless` accepts `wifi_enabled`, `ble_enabled` (credential intent), `ssid`, optional `password`,
-  optional `tcp_cli_enabled`, optional `tcp_cli_auth_required`, optional 64-hex-digit `ble_key`,
+  optional `tcp_cli_enabled`, optional 64-hex-digit `ble_key`,
   required `board` (the `/api/settings` clock, profile and radios object) and
   required `confirm_reboot:true`. It returns `{wireless, settings, reboot_pending}` after verifying both reports.
   Omitted secrets are preserved; secrets are never returned.
@@ -118,7 +118,7 @@ reports the saved radio switches; its separate booleans indicate whether credent
 The pinned SDK `pico_lwip_mdns` responder answers IPv4 hostname queries for `picoforge-<USB serial>.local` only on
 the saved network. It is removed before a credential test or station shutdown and re-registered after reconnect.
 While the TCP CLI listens, DNS-SD advertises `_picoforge._tcp` on port 2323 with TXT values `v=1` and
-`auth=0`/`auth=1` for the configured authentication policy. No outbound resolver is enabled. Registration and
+`auth=0`/`auth=1` for whether a control key requires authentication. No outbound resolver is enabled. Registration and
 listener allocation failures are logged and retried at five-second intervals. Name conflicts are logged rather than
 silently changing the device identity. mDNS requires multicast support on the LAN and an mDNS-capable host resolver;
 direct IPv4 access remains available.
@@ -130,17 +130,22 @@ Six extra lwIP timer slots bound probing and delayed IPv4 replies. Recheck this 
 
 ## BLE contract and authorization
 
-Service UUID: `50fc0000-7c91-4d70-8b32-6e856443f501`. Characteristic UUIDs use the same suffix and replace
-`0000` with the hexadecimal report ID: `0001`, `0002`, `0003`, `000a`, `000b`, `0014`, `001e`.
-Reads return the corresponding payload without a HID report ID; `001e` status, including the IPv4 address and SSID,
-is public to any reader in radio range. Characteristics use ATT long reads where needed;
+BLE starts only when its switch is on **and** a control key is saved; enabling it without a key logs a warning and
+leaves the BLE link off. Service UUID: `50fc0000-7c91-4d70-8b32-6e856443f501`. Characteristic UUIDs use the same
+suffix and replace `0000` with the hexadecimal report ID: `0001`, `0002`, `0003`, `000a`, `000b`, `0014`, `001e`.
+Reads return the corresponding payload without a HID report ID. Characteristics use ATT long reads where needed;
 the first read freezes the value for subsequent read-blob offsets. Report `0014` has the BLE-specific command
 result; writes accept only existing opcode 1 (LED) or 4 (benchmark). Reports are polled; no notification MTU
 assumption is needed.
 
-Opcode 1 (LED) only identifies the board, so it needs no proof: write the request to `0014` and read the result.
-Anyone in radio range can therefore switch the LED; confirm a board by its advertised serial before destructive USB
-actions. An LED write leaves any pending nonce, proof, and rate limit unchanged.
+Each connection starts locked: only the GAP name, `0001` identity (it carries the UID the proofs bind) and the
+`0020` nonce are readable; other reads and all writes return `0x80`. To unlock, read `0020`, then write the first
+16 bytes of HMAC-SHA256 over `nonce[16] || board_UID[8] || "PFBLECTL1" || "SESSION01"` to `0021`. A rejected or
+rate-limited unlock returns `0x80`. The unlock lasts until disconnect; it then opens all reads, including `001e`
+status with the SSID and IPv4 address, and the LED.
+
+On an unlocked link, opcode 1 (LED) only identifies the board, so it needs no further proof: write the request to
+`0014` and read the result. An LED write leaves any pending nonce, proof, and rate limit unchanged.
 
 For **every** other command:
 
@@ -158,8 +163,9 @@ replay; protocol-domain separation prevents cross-service proof reuse; UID bindi
 binding prevents changing an authorized command. This is application authorization, **not encrypted BLE transport**
 or protection against radio jamming/connection denial. Use USB for privileged management and credentials.
 
-The TCP CLI uses a separate domain (`"PFTCPCLI1"`) and request (`"TCPCLI001"`). When authentication is enabled,
+The TCP CLI uses a separate domain (`"PFTCPCLI1"`) and request (`"TCPCLI001"`). Whenever a control key is saved,
 each connection receives a one-use nonce and board UID challenge and must answer with the first 16 bytes of the
 matching HMAC-SHA256 proof. Proofs expire after ten seconds; rejected proofs are rate-limited for two seconds.
+Without a key the console is open on the saved network.
 Authenticated or not, the listener accepts one CLI client, closes sessions idle for 15 minutes, and is exposed only
 on the saved Wi-Fi network. The TCP stream itself is not encrypted.

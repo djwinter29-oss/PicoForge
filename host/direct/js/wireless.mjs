@@ -1,4 +1,4 @@
-import { decodeConfigReport, withTimeout } from "./device.mjs?v=7";
+import { decodeConfigReport, withTimeout } from "./device.mjs?v=8";
 
 export function decodeWireless(report) {
   const bytes = report instanceof DataView
@@ -21,7 +21,7 @@ export function decodeWireless(report) {
     password_configured: Boolean(bytes[42]), ble_key_configured: Boolean(bytes[43]), error: bytes[44],
     ble_state: ["off", "advertising", "connected"][bytes[45]], tcp_cli_started: Boolean(bytes[46]),
     tcp_cli_enabled: !(bytes[47] & 1), tcp_cli_configurable: bytes[0] >= 2,
-    tcp_cli_auth_required: Boolean(bytes[47] & 2), tcp_cli_auth_configurable: bytes[0] >= 3,
+    tcp_cli_auth_required: Boolean(bytes[47] & 2),
     wifi_auth_state: bytes[0] < 3 ? null : ["try_wpa2", "try_sae", "wpa2", "sae"][bytes[48]],
     reconnect_count: bytes[0] < 3 ? 0 : new DataView(bytes.buffer, bytes.byteOffset).getUint16(49, true),
     rssi: bytes[0] < 3 || bytes[51] === 127 ? null : new DataView(bytes.buffer, bytes.byteOffset).getInt8(51),
@@ -103,14 +103,13 @@ export function decodeWirelessResult(report) {
     remaining_seconds: staged ? remainingSeconds : 0 };
 }
 
-export function buildWireless(transaction, settings, tcpCliConfigurable = true, tcpCliAuthConfigurable = true) {
+export function buildWireless(transaction, settings, tcpCliConfigurable = true) {
   if (settings.tcp_cli_enabled !== undefined
     && (typeof settings.tcp_cli_enabled !== "boolean" || !tcpCliConfigurable)) {
     throw new Error("TCP CLI setting requires a boolean and wireless status v2");
   }
-  if (settings.tcp_cli_auth_required !== undefined
-    && (typeof settings.tcp_cli_auth_required !== "boolean" || !tcpCliAuthConfigurable)) {
-    throw new Error("TCP CLI authentication setting requires wireless status v3");
+  if (settings.tcp_cli_auth_required !== undefined) {
+    throw new Error("TCP CLI authentication follows the saved control key and cannot be set");
   }
   if (!Number.isInteger(transaction) || transaction < 1 || transaction > 255 ||
     typeof settings.wifi_enabled !== "boolean" || typeof settings.ble_enabled !== "boolean") {
@@ -128,9 +127,7 @@ export function buildWireless(transaction, settings, tcpCliConfigurable = true, 
   report.set([2, transaction, board.radios,
     Number(settings.password === undefined && !settings.use_tested_wifi)
       | Number(settings.ble_key === undefined) << 1 | Number(Boolean(settings.use_tested_wifi)) << 2
-      | (tcpCliConfigurable ? settings.tcp_cli_enabled === undefined ? 16 : settings.tcp_cli_enabled ? 0 : 8 : 0)
-      | (tcpCliAuthConfigurable ? settings.tcp_cli_auth_required === undefined
-        ? settings.ble_key === "" ? 32 : 64 : settings.tcp_cli_auth_required ? 32 : 0 : 0)]);
+      | (tcpCliConfigurable ? settings.tcp_cli_enabled === undefined ? 16 : settings.tcp_cli_enabled ? 0 : 8 : 0)]);
   report.set([board.system_clock_mhz & 255, board.system_clock_mhz >> 8, board.sdcard_profile], 133);
   report.set(ssid, 4);
   if (settings.password !== undefined) {
@@ -262,7 +259,6 @@ async function digestText(value) {
 
 async function wirelessSaveMatches(wireless, expected) {
   return wireless.tcp_cli_enabled === expected.tcp_cli_enabled
-    && wireless.tcp_cli_auth_required === expected.tcp_cli_auth_required
     && wireless.wifi_enabled === expected.wifi_enabled
     && wireless.ble_enabled === expected.ble_enabled
     && await digestText(wireless.ssid) === expected.ssid_digest
@@ -303,17 +299,10 @@ export async function saveWireless(client, settings) {
   try {
     const previous = decodeWireless(await withTimeout(device.receiveFeatureReport(30), 1000));
     if (device !== client.device || generation !== client.generation) throw new Error("Wireless save interrupted by disconnect.");
-    const authRequired = settings.tcp_cli_auth_required
-      ?? (settings.ble_key === "" ? false : previous.tcp_cli_auth_required);
-    const keyAvailable = settings.ble_key === undefined
-      ? previous.ble_key_configured : Boolean(settings.ble_key);
-    if (authRequired && !keyAvailable) throw new Error("TCP CLI authentication requires a configured BLE control key");
-    report = buildWireless(transaction, settings, previous.tcp_cli_configurable,
-      previous.tcp_cli_auth_configurable);
+    report = buildWireless(transaction, settings, previous.tcp_cli_configurable);
     pending = { uid: client.state.hardware.serial_number, transaction,
       expected: { wireless: {
         tcp_cli_enabled: settings.tcp_cli_enabled ?? previous.tcp_cli_enabled,
-        tcp_cli_auth_required: authRequired,
         wifi_enabled: settings.wifi_enabled, ble_enabled: settings.ble_enabled,
         ssid_digest: await digestText(settings.ssid),
         password_configured: settings.use_tested_wifi

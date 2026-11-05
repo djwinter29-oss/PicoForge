@@ -262,16 +262,8 @@ class PicoForgeHid:
         if self._command_uncertain:
             raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
         previous = self.read_wireless()
-        auth_required = settings.get(
-            "tcp_cli_auth_required",
-            False if settings.get("ble_key") == "" else previous["tcp_cli_auth_required"])
-        key_available = (bool(settings["ble_key"]) if "ble_key" in settings
-                         else previous["ble_key_configured"])
-        if auth_required and not key_available:
-            raise ValueError("TCP CLI authentication requires a configured BLE control key")
         command = build_wireless_configuration_report(
-            settings, self._next_transaction_id(), tcp_cli_configurable=previous["tcp_cli_configurable"],
-            tcp_cli_auth_configurable=previous["tcp_cli_auth_configurable"])
+            settings, self._next_transaction_id(), tcp_cli_configurable=previous["tcp_cli_configurable"])
         if previous["status"] in ("pending", "busy"):
             raise RuntimeError("Wireless provisioning is busy")
         self._command_uncertain = True
@@ -285,7 +277,6 @@ class PicoForgeHid:
                     if result["status"] == "completed":
                         expected = {
                             "tcp_cli_enabled": settings.get("tcp_cli_enabled", previous["tcp_cli_enabled"]),
-                            "tcp_cli_auth_required": auth_required,
                             "wifi_enabled": settings["wifi_enabled"],
                             "ble_enabled": settings["ble_enabled"],
                             "ssid": command[5:38].split(b"\0", 1)[0].decode("utf-8"),

@@ -13,9 +13,9 @@ test("server dashboard keeps radio dialogs, confirmation controls and benchmark 
     assert.match(settings, /id="settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
     const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
     assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
-      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli", "settings-tcp-auth"]);
+      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli"]);
     assert.match(board, /<label for="settings-wifi" hidden>[\s\S]*<label for="settings-ble" hidden>/);
-    for (const id of ["settings-tcp-cli", "settings-tcp-auth"]) {
+    for (const id of ["settings-tcp-cli"]) {
       assert.match(board, new RegExp(`<label for="${id}" hidden>[\\s\\S]*?<select id="${id}"`));
       const attributes = board.match(new RegExp(`<select id="${id}"([^>]*)>`))[1];
       assert.match(attributes, /title="[^"]+"/);
