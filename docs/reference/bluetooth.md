@@ -1,11 +1,11 @@
 # Bluetooth LE Protocol
 
-This reference owns the Bluetooth LE wire protocol of Pico W and Pico 2 W images: startup gating, advertising, the
-GATT layout, session unlock, per-command proofs, the 9-byte control form, and ATT error codes. Breaking wire changes
-use a new service UUID; compatible additions MAY retain this UUID. Byte 0 of each report and control payload remains
-its payload version. Payload layouts reused from USB and cross-transport command semantics are defined once in the
-[USB HID reference](usb-hid.md). Radio execution, credential persistence and the shared key store are in the
-[wireless reference](wireless.md). For user setup, see the [wireless guide](../guides/wireless.md).
+This reference owns the Bluetooth LE wire protocol of Pico W and Pico 2 W images: startup gating, advertising, the GATT
+layout, session unlock, per-command proofs, the 9-byte control form, and ATT error codes. Breaking wire changes use a
+new service UUID; compatible additions MAY retain this UUID. Byte 0 of each report and control payload remains its
+payload version. Payload layouts reused from USB and cross-transport command semantics are defined once in the [USB HID
+reference](usb-hid.md). Radio execution, credential persistence and the shared key store are in the [wireless
+integration](../development/wireless-integration.md). For user setup, see the [wireless guide](../guides/wireless.md).
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described
 in BCP 14 (RFC 2119, RFC 8174) when, and only when, they appear in all capitals.
@@ -297,8 +297,8 @@ and BLE requests never clear a pending USB TCP CLI proof. See [Feature `20` resu
 Clients MUST serialize control requests. A timeout before the `0014` Write Response leaves admission uncertain; a
 disconnect after a successful response but before the result read can hide the terminal result. Clients MUST
 reconnect and inspect the result or resulting device state; clients MUST NOT replay a state-changing request with
-an uncertain outcome. The result-slot lifetime and limitations are described in [Result](#result). BTstack's ATT transaction
-timeout is 30 seconds; clients MUST abandon the transaction and reconnect on timeout.
+an uncertain outcome. The result-slot lifetime and limitations are described in [Result](#result). BTstack's ATT
+transaction timeout is 30 seconds; clients MUST abandon the transaction and reconnect on timeout.
 
 Accepted reboot and save-and-reboot commands are followed by a reset after the firmware's 1000 ms
 `PF_HID_REBOOT_DELAY_MS` grace period, intended to allow the result read. This is not a guarantee that a slow
@@ -331,7 +331,7 @@ mechanism.
 | Passive traffic observation | The Control key never crosses the link. | Pairing is optional and not required by PicoForge; without peer-initiated Just Works pairing, observers within radio range can read unlocked status (including SSID and IPv4 address) and command traffic. |
 | Cross-session result disclosure | None. The BLE result slot is shared across connections and survives disconnects. | A later central can read the previous central's last admitted command result. Successful opcode `5` results include the saved clock, SD-card profile and switch mask; transaction IDs do not identify the originating connection. |
 | Proof replay or alteration | One-use challenges and HMAC request binding prevent reuse of a proof for a different request. | The pinned Pico SDK generator has no formal cryptographic unpredictability or uniqueness guarantee; repeated or predictable nonces weaken replay protection. See [Session Unlock](#session-unlock). |
-| Cross-board or cross-protocol proof reuse | The proof binds the board UID and uses the `PFBLECTL1` domain, distinct from TCP CLI's `PFTCPCLI1` ([TCP CLI authorization](wireless.md#tcp-cli-authorization)). | There is no board-authentication proof; the client SHOULD verify the selected UID before trusting status. |
+| Cross-board or cross-protocol proof reuse | The proof binds the board UID and uses the `PFBLECTL1` domain, distinct from TCP CLI's `PFTCPCLI1` ([TCP CLI authorization](../development/wireless-integration.md#tcp-cli-authorization)). | There is no board-authentication proof; the client SHOULD verify the selected UID before trusting status. |
 | Active attacker on a live link | A command proof is bound to one exact request and is accepted once. | An attacker able to inject traffic into an unlocked connection can race an observed proof and its exact bound command, or control/proxy the live link. Proofs do not provide link security. |
 | Session left unattended | Authorization is cleared on disconnect. | There is no idle relock; clients SHOULD disconnect when finished. |
 | Device tracking | None. | The stable advertised name and public address permit tracking. |
@@ -368,10 +368,10 @@ Hardware qualification is pending; host tests cannot establish radio behavior.
 
 ## Implementation
 
-`bluetooth.c` owns BLE state and callbacks; `bluetooth_profile.gatt` defines the attributes. `wireless_auth.c`
-owns the key and proofs. `usb_hid.c` dispatches BLE controls through `pf_hid_ble_control` and shared admission
-helpers. BLE work runs on the shared wireless owner task (see
-[execution and storage safety](wireless.md#execution-and-storage-safety)). The Direct client is in
-`host/direct/js`; Python and .NET hosts do not use BLE. The current controller event handler consumes the legacy
-LE Connection Complete event emitted by CYW43; add Enhanced Connection Complete handling if controller privacy
-or a controller that emits enhanced events is introduced.
+`bluetooth.c` owns BLE state and callbacks; `bluetooth_profile.gatt` defines the attributes. `wireless_auth.c` owns the
+key and proofs. `usb_hid.c` dispatches BLE controls through `pf_hid_ble_control` and shared admission helpers. BLE work
+runs on the shared wireless owner task (see [execution and storage
+safety](../development/wireless-integration.md#execution-and-storage-safety)). The Direct client is in `host/direct/js`;
+Python and .NET hosts do not use BLE. The current controller event handler consumes the legacy LE Connection Complete
+event emitted by CYW43; add Enhanced Connection Complete handling if controller privacy or a controller that emits
+enhanced events is introduced.

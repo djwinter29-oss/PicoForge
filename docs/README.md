@@ -24,7 +24,7 @@ Keep each topic in one authoritative document; other guides link to it rather th
 | Runtime, storage ownership, automount and worker admission | [Architecture](reference/architecture.md) |
 | Clock profiles, flash settings and forced-save safety | [Settings](reference/settings.md) |
 | USB management report layouts and command semantics | [USB HID reference](reference/usb-hid.md) |
-| Radio execution, credential extension, provisioning and TCP CLI authorization | [Wireless reference](reference/wireless.md) |
+| Radio execution, credential extension, provisioning and TCP CLI authorization | [Wireless integration](development/wireless-integration.md) |
 | BLE advertising, GATT layout, authorization and command form | [Bluetooth LE protocol](reference/bluetooth.md) |
 | SD protocol, block interfaces and recovery | [SD driver](reference/sdcard/driver.md) |
 | PIO/SPI engine lifecycle and wire timing | [Physical links](reference/sdcard/physical-links.md) |

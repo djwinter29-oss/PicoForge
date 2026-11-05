@@ -215,18 +215,18 @@ the owning connection ends the session and cancels its pending output, exactly l
 drops a vanished client after about 50 seconds idle.
 
 TCP authentication is required whenever the board has a saved Control key and off otherwise. Clients must answer a
-one-use challenge within ten seconds. The Python and .NET dashboards request a narrowly scoped proof from the
-selected board over USB HID; the key is not entered in or sent through the browser. The Direct dashboard reuses its
-matching live USB or already-authenticated Bluetooth connection to provide the same fixed-purpose proof; keep the
-dashboard connected until the console connects. The key is never entered in the console or sent to the local bridge.
-Raw PuTTY/`nc` sessions need a client that implements the proof described in the
-[wireless reference](../reference/wireless.md#tcp-cli-authorization). Rejected proofs are rate-limited for
-two seconds. The firmware closes an otherwise authenticated session after 15 minutes without traffic; keepalive
-still detects a vanished peer after about 50 seconds. Authentication gates admission but does not encrypt TCP;
-commands and output remain readable to a LAN observer. Anyone who can connect can run every CLI command, including
-`--confirm` destructive ones. Use only a trusted LAN.
-Firmware logs include the peer IP for connections, successful/rejected proofs, cooldown refusals, challenge failures,
-and authentication or idle timeouts. Keys, proofs and command contents are not included in these connection logs.
+one-use challenge within ten seconds. The Python and .NET dashboards request a narrowly scoped proof from the selected
+board over USB HID; the key is not entered in or sent through the browser. The Direct dashboard reuses its matching live
+USB or already-authenticated Bluetooth connection to provide the same fixed-purpose proof; keep the dashboard connected
+until the console connects. The key is never entered in the console or sent to the local bridge. Raw PuTTY/`nc` sessions
+need a client that implements the proof described in the [wireless
+integration](../development/wireless-integration.md#tcp-cli-authorization). Rejected proofs are rate-limited for two
+seconds. The firmware closes an otherwise authenticated session after 15 minutes without traffic; keepalive still
+detects a vanished peer after about 50 seconds. Authentication gates admission but does not encrypt TCP; commands and
+output remain readable to a LAN observer. Anyone who can connect can run every CLI command, including `--confirm`
+destructive ones. Use only a trusted LAN. Firmware logs include the peer IP for connections, successful/rejected proofs,
+cooldown refusals, challenge failures, and authentication or idle timeouts. Keys, proofs and command contents are not
+included in these connection logs.
 
 ## Faulted MSC Recovery
 

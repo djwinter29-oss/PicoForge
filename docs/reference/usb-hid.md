@@ -74,10 +74,10 @@ use two's complement. Feature `20` uses a 69-byte HIDAPI buffer and Feature `12`
 control transfers, not oversized interrupt endpoints. USB control transfers can span multiple 64-byte endpoint
 packets. The layouts use version `1`, independent of firmware semantic version.
 
-This document owns the Feature `12` and `20` byte layouts. It also owns the wireless command rules,
-including staging, testing, expiry and scan. The [wireless design](wireless.md) owns radio behavior, credential
-persistence, and security considerations. The [Bluetooth LE protocol](bluetooth.md) owns everything carried over
-Bluetooth, including how these reports map to GATT characteristics.
+This document owns the Feature `12` and `20` byte layouts. It also owns the wireless command rules, including staging,
+testing, expiry and scan. The [wireless integration](../development/wireless-integration.md) owns radio behavior,
+credential persistence, and security considerations. The [Bluetooth LE protocol](bluetooth.md) owns everything carried
+over Bluetooth, including how these reports map to GATT characteristics.
 
 ### Connection and Read Flow
 
@@ -519,7 +519,7 @@ the Control key or signs arbitrary data. The proof result is retained for up to 
 SET with a valid envelope updates the USB result slot. GET does not consume it, so USB transport retries are safe.
 The TCP CLI challenge is one-use and rejects
 replay. See the
-[wireless design](wireless.md) for proof domains and security rationale.
+[wireless integration](../development/wireless-integration.md) for proof domains and security rationale.
 
 ### GET Result
 

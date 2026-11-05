@@ -1,16 +1,17 @@
-# Wireless Integration and Protocol
+# Wireless Integration
 
-This reference owns shared radio execution, Wi-Fi, credential persistence, provisioning security, and TCP CLI
-authorization. Everything specific to Bluetooth is in the [Bluetooth LE protocol](bluetooth.md).
+This document owns shared radio execution, Wi-Fi, credential persistence, provisioning security, and TCP CLI
+authorization. Everything specific to Bluetooth is in the [Bluetooth LE protocol](../reference/bluetooth.md).
 For user setup and restrictions, see [the wireless guide](../guides/wireless.md).
 
 ## Execution and storage safety
 
 The application groups radio-specific code under `firmware/src/app/wireless`: `wifi/` contains `wifi.c/.h` for station
 connection and reconnects, `mdns.c/.h` for saved-network hostname discovery, and `tcp_cli.c/.h` for the raw TCP console.
-`bluetooth/` holds the [Bluetooth implementation](bluetooth.md#implementation). `wireless_auth.c/.h` at the wireless
-root owns the shared key, nonce, board UID and protocol-separated proof verification. The common `wireless.c/.h` owns
-SDK initialization/polling, wireless status, staged Feature `20` commands, and atomic settings/credential saves.
+`bluetooth/` holds the [Bluetooth implementation](../reference/bluetooth.md#implementation). `wireless_auth.c/.h` at the
+wireless root owns the shared key, nonce, board UID and protocol-separated proof verification. The common
+`wireless.c/.h` owns SDK initialization/polling, wireless status, staged Feature `20` commands, and atomic
+settings/credential saves.
 
 SDK poll-mode wireless work runs on the existing USB owner task. It creates no additional FreeRTOS tasks, preserves the
 static-allocation policy, and never invokes FatFs from a radio callback. On W images that owner task is pinned to its
@@ -24,26 +25,25 @@ is not a dynamically detected capability. HID capability and telemetry fields ad
 current report contract.
 
 Only the boot configuration service writes flash; Bluetooth keeps no persistent state (see
-[pairing and bonding](bluetooth.md#pairing-and-bonding)).
+[pairing and bonding](../reference/bluetooth.md#pairing-and-bonding)).
 
-The version-2 [settings record](settings.md#record-format) stores the clock and SD profiles, the service switches
-(byte 10 bits 0/1 disable Wi-Fi/BLE and bit 2 disables the TCP CLI), the saved Wi-Fi authentication state, SSID,
-passphrase and Control key under one CRC. The CLI switch defaults enabled for erased records, is independent of the
-radio bits returned by Report 2, and is preserved by ordinary clock/speed/radio updates. The listener serves only
+The version-2 [settings record](../reference/settings.md#record-format) stores the clock and SD profiles, the service
+switches (byte 10 bits 0/1 disable Wi-Fi/BLE and bit 2 disables the TCP CLI), the saved Wi-Fi authentication state,
+SSID, passphrase and Control key under one CRC. The CLI switch defaults enabled for erased records, is independent of
+the radio bits returned by Report 2, and is preserved by ordinary clock/speed/radio updates. The listener serves only
 while a Control key is saved, regardless of the CLI switch; clearing the key disables TCP CLI service rather than
-falling back to unauthenticated access. A bad or torn record loads
-complete defaults with no credentials, so Wi-Fi and BLE stay off until provisioned. Feature `20` opcodes `6`-`8`
-stage credentials in RAM; opcode `5` saves them only when its explicit commit flag is set, together with the clock,
-SD profile, and service switches. The single verified record prevents partial persistent updates.
-Flash remains **unencrypted**: physical/debug access can recover credentials. Erasing settings clears them.
-Passwords and keys are never included in status, diagnostic logs or readback reports.
+falling back to unauthenticated access. A bad or torn record loads complete defaults with no credentials, so Wi-Fi and
+BLE stay off until provisioned. Feature `20` opcodes `6`-`8` stage credentials in RAM; opcode `5` saves them only when
+its explicit commit flag is set, together with the clock, SD profile, and service switches. The single verified record
+prevents partial persistent updates. Flash remains **unencrypted**: physical/debug access can recover credentials.
+Erasing settings clears them. Passwords and keys are never included in status, diagnostic logs or readback reports.
 
 ## Provisioning lifecycle
 
-The [USB HID report reference](usb-hid.md#wireless-command-rules) is the sole source for the wireless wire contract:
-Report `1` capability, Report `2` service switches, Feature `12` status, Feature `20` opcodes, credential limits,
-staging, testing, expiry, scan, proof and validation. This section adds only radio and security
-behavior that those reports do not define.
+The [USB HID report reference](../reference/usb-hid.md#wireless-command-rules) is the sole source for the wireless wire
+contract: Report `1` capability, Report `2` service switches, Feature `12` status, Feature `20` opcodes, credential
+limits, staging, testing, expiry, scan, proof and validation. This section adds only radio and security behavior that
+those reports do not define.
 
 - Secrets are accepted only by staging commands. They are never returned in a command result, status report,
   diagnostic log or native-host response.
@@ -76,17 +76,15 @@ Six extra lwIP timer slots bound probing and delayed IPv4 replies. Recheck this 
 Whenever a Control key is saved, each connection receives the CRLF-terminated line
 `PicoForge AUTH <nonce hex> <UID hex>` and must answer `AUTH <proof hex>` plus CRLF, where the proof is the first
 16 bytes of `HMAC-SHA256(key, nonce[16] || UID[8] || "PFTCPCLI1" || "TCPCLI001")`. The domain differs from BLE's
-`PFBLECTL1` (see the [Bluetooth LE protocol](bluetooth.md#command-proofs)), so proofs never cross services. Proofs
-expire after ten seconds; rejected proofs are rate-limited for two seconds.
-Without a key the listener does not serve. Python/.NET dashboards ask the selected board to produce
-this fixed proof through Feature `20` opcode `13` after checking that the challenge UID matches that board. The Direct
-console asks its matching dashboard tab for the proof over a same-origin `BroadcastChannel`; the dashboard checks
-the challenge UID, then uses Feature `20` opcode `13` over USB or signs with the non-extractable key from its
-already-unlocked BLE session. Only the
-one-use proof crosses to the console and local bridge; the Control key is not sent there. If no matching Direct
+`PFBLECTL1` (see the [Bluetooth LE protocol](../reference/bluetooth.md#command-proofs)), so proofs never cross
+services. Proofs expire after ten seconds; rejected proofs are rate-limited for two seconds. Without a key the
+listener does not serve. Python/.NET dashboards ask the selected board to produce this fixed proof through Feature
+`20` opcode `13` after checking that the challenge UID matches that board. The Direct console asks its matching
+dashboard tab for the proof over a same-origin `BroadcastChannel`; the dashboard checks the challenge UID, then uses
+Feature `20` opcode `13` over USB or signs with the non-extractable key from its already-unlocked BLE session. Only
+the one-use proof crosses to the console and local bridge; the Control key is not sent there. If no matching Direct
 dashboard is connected, the console refuses to connect rather than prompting for the key. Standalone TCP clients
 must compute the proof themselves. Feature `20` opcode `13` does not provide a general signing operation. See the
 [console guide](../guides/console.md#direct-dashboard-authentication) for the rationale and local-machine
-considerations.
-Authenticated or not, the listener accepts one CLI client, closes sessions idle for 15 minutes, and is exposed only
-on the saved Wi-Fi network. The TCP stream itself is not encrypted.
+considerations. Authenticated or not, the listener accepts one CLI client, closes sessions idle for 15 minutes, and
+is exposed only on the saved Wi-Fi network. The TCP stream itself is not encrypted.

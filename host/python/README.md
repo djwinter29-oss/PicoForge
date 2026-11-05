@@ -105,9 +105,9 @@ Builds and host tests do not establish physical hardware reliability; see the
 
 ## Development and License
 
-For host tests and frontend ownership, see [Host Tools Development](../../docs/development/host-tools.md).
-Detailed wire reports and local wireless API semantics belong in the
-[USB HID reference](../../docs/reference/usb-hid.md) and [wireless reference](../../docs/reference/wireless.md).
+For host tests and frontend ownership, see [Host Tools Development](../../docs/development/host-tools.md). Detailed wire
+reports and local wireless API semantics belong in the [USB HID reference](../../docs/reference/usb-hid.md) and
+[wireless integration](../../docs/development/wireless-integration.md).
 
 The package uses the **BSD-3-Clause** license. Its [LICENSE](LICENSE) mirrors the
 [repository license](../../LICENSE) and is included in built wheels; keep both copies identical.
