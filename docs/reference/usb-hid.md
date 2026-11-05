@@ -25,9 +25,9 @@ Storage ownership changes medium availability, not the USB configuration. The de
 The USB manufacturer string is `djwinter29` and the product string is `PicoForge`; its serial string is the Pico SDK
 unique board ID.
 
-CDC ACM is the [Embedded CLI console](../guides/console.md). UART debug logs use the board monitor UART, independently of
-USB CDC. HID carries no CLI text, file data, or SD block data. MSC is the host-facing block interface while it owns
-the card.
+CDC ACM is the [Embedded CLI console](../guides/console.md). UART debug logs use the board monitor UART,
+independently of USB CDC. HID carries no CLI text, file data, or SD block data. MSC is the host-facing block
+interface while it owns the card.
 
 ## Ownership
 
@@ -38,8 +38,8 @@ the card.
 | Live board measurements | Input `3` | Periodic telemetry; unavailable readings use their sentinels or validity flag. |
 | SD, filesystem, and MSC state | Input `10` | Storage snapshot with independent SD-sample validity. |
 | Benchmark progress/results | Input `11` | Requires Report `1` bit 5; sampled independently of storage. |
-| LED, reboot, MSC, benchmark, settings, and wireless operations | Feature `20` | Typed SET opcode; GET returns the latest operation result/data. |
 | Live wireless status and scan progress | Feature `12` | Read-only; available when Report `1` capability bit 7 is set. |
+| LED, reboot, MSC, benchmark, settings, and wireless operations | Feature `20` | Typed SET opcode; GET returns the latest operation result/data. |
 | CLI and normal storage commands | CDC ACM | Text command interface, not HID payloads. |
 | Host file/block access | MSC | Available only while the host owns the SD card. |
 
@@ -58,7 +58,7 @@ These are logical groups, not separate HID usage pages or mandatory dashboard ta
 | `3` | Board Telemetry | Input | Device publishes / host reads | 22 bytes | PicoUART-compatible board measurements plus PicoForge status. |
 | `10` | Storage Status | Input | Device publishes / host reads | 34 bytes | SD, filesystem, and MSC status. |
 | `11` | Storage Benchmark Status | Input | Device publishes / host reads | 32 bytes | Storage benchmark state and progress. |
-| `12` | Wireless Status | Feature | Host reads | 46 bytes | Wireless link, test, scan, and service status; requires capability bit 7. |
+| `12` | Wireless Status | Feature | Host reads | 48 bytes | Wireless link, test, scan, staging, and service status; requires capability bit 7. |
 | `20` | Control Command & Result | Feature | Host writes/reads | 68 bytes | Common command/result envelope, including wireless configuration, test, scan, and TCP CLI proof. |
 
 Names are documentation labels, not additional wire fields.
@@ -70,14 +70,13 @@ payload in its data buffer. A .NET or other host adapter must follow its library
 normalize to the payload defined here before decoding. Some Feature-report APIs add a transport framing byte or
 fixed-size padding; remove only framing explicitly documented by that API, never a payload byte based only on its
 value. Validate the exact payload length after normalization. Multi-byte integers are little-endian; signed integers
-use two's complement. Feature `20` uses a 69-byte HIDAPI buffer and Feature `12` uses a 47-byte HIDAPI buffer over
+use two's complement. Feature `20` uses a 69-byte HIDAPI buffer and Feature `12` uses a 49-byte HIDAPI buffer over
 control transfers, not oversized interrupt endpoints. USB control transfers can span multiple 64-byte endpoint
-packets. The firmware TinyUSB HID control buffer must be at least 69 bytes in every build; configure it to 128 bytes
-for headroom and consistent wireless/non-wireless behavior. The layouts use version `1`, independent of firmware
-semantic version.
+packets. The layouts use version `1`, independent of firmware semantic version.
 
-This document owns the Feature `12` and `20` byte layouts. The [wireless design](wireless.md) owns radio behavior,
-credential lifecycle, and security considerations. BLE's restricted Feature `20` command form is specified below.
+This document owns the Feature `12` and `20` byte layouts. It also owns the wireless command rules,
+including staging, testing, expiry and scan. The [wireless design](wireless.md) owns radio behavior, credential
+persistence, and security considerations. BLE's restricted Feature `20` command form is specified below.
 
 ### Connection and Read Flow
 
@@ -103,7 +102,7 @@ Read after connection. Identity and capabilities remain stable for that boot.
 | 13 | 1 | `firmware_patch` | Firmware semantic-version patch. |
 | 14 | 1 | `mcu` | `1` RP2040; `2` RP2350. |
 | 15 | 1 | `board_model` | Configured target: `1` Pico; `2` Pico 2; `3` Pico 2 W; `4` Pico W. |
-| 16 | 1 | Reserved | Zero; hosts must ignore this byte. |
+| 16 | 1 | `capabilities_extension` | Capability bits 8-15; currently all zero. |
 | 17 | 1 | `capabilities` | Static device and storage-transport capabilities. |
 | 18 | 4 | `ram_total_bytes` | Total on-chip SRAM for the MCU/linker layout; not free memory. |
 | 22 | 4 | `ram_reserved_bytes` | Static and SDK-reserved SRAM for this firmware build. |
@@ -148,7 +147,12 @@ Capability bits:
 | 4 | SDIO-PIO storage transport selected for this firmware build. |
 | 5 | Storage benchmark control and status available. |
 | 6 | Explicitly confirmed settings save/reboot while USB owns storage. |
-| 7 | Wi-Fi/BLE capability; wireless credential, test, scan, and TCP CLI proof commands are USB-only. |
+| 7 | Wi-Fi/BLE hardware and firmware capability. |
+
+`capabilities` contains bits 0-7. `capabilities_extension` contains bits 8-15, with bit 0 representing capability
+bit 8. All extension bits are currently unassigned and must be zero; hosts must ignore unknown bits.
+When bit 7 is clear, Feature `12` is unavailable and wireless opcodes `6`-`13` return Unsupported (`4`). These
+credential, test, scan, and TCP CLI proof operations are USB-only.
 
 For bit 1, the host must explicitly confirm the standalone reboot request. Bit 2 advertises saving persistent boot
 settings with a firmware-scheduled reboot; bit 6 adds the forced host-owned save path and does not replace bit 2.
@@ -212,11 +216,11 @@ values; report `3` carries the active system-clock frequency and report `10` car
 clock. After a successful opcode `5` save, firmware returns the verified saved values in the control result and
 queues a reboot through the existing deferred USB reboot path. During the one-second grace period, firmware
 continues servicing USB control transfers so the host can read the completion result before reset.
-Hosts must not send a second reboot command or
-require a configuration read before disconnect; reread report `2` after reconnection. The SD-card profile is a request applied to the
-build-selected transport from report `1`: Standard disables High-Speed timing; High-Speed permits CMD6 negotiation
-within the transport's firmware ceiling, system-clock limit, and card capability. It does not guarantee that
-High-Speed timing was negotiated. GPIO values are GPIO numbers, not header-pin numbers; `255` means unassigned. For
+Hosts must not send a second reboot command or require a configuration read before disconnect; reread report `2`
+after reconnection. The SD-card profile is a request applied to the build-selected transport from report `1`:
+Standard disables High-Speed timing; High-Speed permits CMD6 negotiation within the transport's firmware ceiling,
+system-clock limit, and card capability. It does not guarantee that High-Speed timing was negotiated. GPIO values
+are GPIO numbers, not header-pin numbers; `255` means unassigned. For
 SDIO-PIO, storage slots 0-5 are CLK, CMD, DAT0-DAT3. For SPI, slots 0-3 are CLK, MOSI, MISO, CS and slots 4-5 are
 `255`. Report `1`'s transport capability determines the slot interpretation. These pins describe the build profile;
 they do not prove a peripheral is active.
@@ -228,12 +232,13 @@ state.
 The card-detect flag is set exactly when
 `card_detect_gpio` is assigned; otherwise that field is `255`. The LED-configured flag is set exactly when
 `led_gpio` is assigned. A configured GPIO LED requires Report `1` capability bit 0. A non-GPIO LED, such as the
-CYW43-driven Pico W/Pico 2 W LED, also advertises that capability but leaves the GPIO flag clear and `led_gpio` at `255`.
+CYW43-driven Pico W/Pico 2 W LED, also advertises that capability but leaves the GPIO flag clear and `led_gpio`
+at `255`.
 `monitor_uart_index` is `0` or `1` when available and `255` when unavailable; TX and RX are either both
 assigned or both `255`. If the monitor-UART-enabled flag is set, the index and both GPIOs must be assigned; when
 clear, those pins may still describe a configured but disabled UART. Every assigned GPIO must be valid for the
-reported MCU and configured board. For SDIO-PIO all six storage GPIOs must be assigned; for SPI the first four must
-be assigned and slots 4-5 must be `255`. GPIO values are numbers, not pin-header positions.
+reported MCU and configured board. For SDIO-PIO all six storage GPIOs must be assigned; for SPI the first four
+must be assigned and slots 4-5 must be `255`. GPIO values are numbers, not pin-header positions.
 
 The transport-neutral profile is `0` for Standard (25 MHz target) and `1` for High-Speed (50 MHz target).
 The selected transport and board determine the achievable clock; the requested profile does not guarantee that
@@ -373,24 +378,26 @@ publication and wraps modulo 256.
 | 24 | 4 | `mismatch_count` | Mismatched bytes. |
 | 28 | 1 | `benchmark_error` | Execution error enum. |
 | 29 | 1 | `filesystem_result` | FatFs result when applicable. |
-| 30 | 1 | `benchmark_request_error` | Most recent benchmark request error; zero none. |
+| 30 | 1 | `reserved` | Zero. |
 | 31 | 1 | `reserved` | Zero. |
 | **Total** | **32** | | **33 bytes including report ID.** |
 
+The two trailing reserved bytes keep this report payload aligned to 32 bytes and available for future versioned
+extension; they are zero in version `1`.
+
 Benchmark states: `0` Idle, `1` Queued, `2` Preparing, `3` Writing, `4` Reading/verifying, `5` Cleanup, `6` Passed,
-`7` Failed, `8` Cancelled; `9`-`255` unassigned. Error values: `0` none, `1` busy, `2` USB owns storage,
-`3` invalid size, `4` card unavailable, `5` insufficient space, `6` test file exists, `7` filesystem I/O,
+`7` Failed, `8` Cancelled; `9`-`255` unassigned. Report `11` benchmark error values: `0` none, `1` busy,
+`2` USB owns storage, `3` invalid size, `4` card unavailable, `5` insufficient space, `6` test file exists,
+`7` filesystem I/O,
 `8` verification, `9` cleanup, `10` filesystem not mounted; `11`-`255` unassigned.
-`benchmark_error` is zero except in Failed state, where it uses execution errors `4`, `5`, or `7`-`9`. Errors `1`,
-`2`, `3`, `6`, and `10` are request/precondition rejections and appear only in `benchmark_request_error`.
-A card or space failure discovered during execution is error `4` or `5` in
-`benchmark_error`; the same condition detected before accepting a start is reported in `benchmark_request_error`.
-Filesystem I/O error `7` may appear in `benchmark_request_error` only when the preflight check of the existing test
-file fails before the test is accepted; after acceptance, filesystem I/O failures use `benchmark_error`. Thus error
-`7` in the two fields is distinguished by whether the test run was accepted. `benchmark_request_error` may contain
-`1`-`7`, or `10`; codes `8` and `9` are execution-only. It is set when a valid-envelope opcode `4`
-request is rejected and cleared when a subsequent opcode `4` request is accepted, including an accepted cancel
-no-op. A malformed report envelope does not change it. After reboot it is zero.
+`benchmark_error` is zero except in Failed state, where it uses Report `11` errors `4`, `5`, or `7`-`9`. Feature
+`20` opcode `4` uses the corresponding numeric values as global details for benchmark preflight results; the
+namespaces are distinct. Details `1`-`3`, `6`, and `10` are returned only in the Feature `20` command result, not
+in `benchmark_error`. A card or space failure discovered during execution is error `4` or `5` in
+`benchmark_error`; the same condition detected before accepting a start is returned in the command result.
+Filesystem I/O error `7` may be returned in the command result only when the preflight check of the existing test
+file fails before the test is accepted; after acceptance, filesystem I/O failures use `benchmark_error`.
+`benchmark_error` codes `8` and `9` are execution-only.
 `filesystem_result` is nonzero and contains the FatFs result when `benchmark_error` is `7` (filesystem I/O). For
 error `9` (cleanup), it contains the FatFs result only when the cleanup failure came from a FatFs operation;
 otherwise it is zero. It is zero for every other execution error and in all states other than Failed. Unknown enum
@@ -399,14 +406,13 @@ values must be retained and displayed as unknown, but treated as invalid for sta
 The benchmark uses the [default-mounted filesystem](architecture.md#storage-ownership-lifecycle); startup and
 normal USB return trigger mounting independently of opcode `4`. The test never mounts or unmounts it.
 A start request is accepted only after preflight checks succeed and storage is reserved; acceptance publishes Queued,
-after which the operation
-may advance through Preparing and execution. Before acceptance, size, ownership, card, space, existing-file, and
-file-check errors reject the start: no test run is queued, and Report `11` retains the prior test result while
-updating `benchmark_request_error`. Error `10` reports that the required filesystem is not mounted.
+after which the operation may advance through Preparing and execution. Before acceptance, size, ownership, card,
+space, existing-file, file-check, and filesystem-mount errors reject the start: no test run is queued, and Report `11`
+retains the prior test result.
 Starting an accepted test replaces the prior
 retained test result: it sets the target,
 zeros progress counters, timings, mismatch count, execution error, and filesystem result, then publishes Queued.
-Rejected starts preserve the prior test result and update only `benchmark_request_error`. Cancelling a running test
+Rejected starts preserve the prior test result. Cancelling a running test
 retains its partial counters and timings in the terminal Cancelled state; cancelling when no test is active is a
 completed no-op and does not erase the retained result. Terminal results remain available until a new test is
 accepted or the device reboots; the report does not automatically return to Idle after a terminal result. After
@@ -444,8 +450,8 @@ separate 9-byte form, described below.
 | `3` | MSC control | Bit 0 confirms force-return data-loss risk only; other bits zero. | Byte 0 action: `0` normal disable, `1` enable, `2` force return; bytes 1-63 zero. |
 | `4` | Storage benchmark | `0` | Byte 0 action: `0` cancel, `1` start; bytes 1-4 little-endian MiB size; bytes 5-63 zero. |
 | `5` | Save settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; bit 1 commits staged wireless credentials; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); byte 3 switches (bit 0 Wi-Fi, bit 1 BLE, bit 2 TCP CLI); bytes 4-63 zero. |
-| `6` | Stage Wi-Fi SSID | `0` | Byte 0 length; bytes 1-32 UTF-8 SSID (1-32 bytes); remaining bytes zero. Length `0` stages clearing the Wi-Fi network and password. |
-| `7` | Stage Wi-Fi password | `0` | Byte 0 length; bytes 1-63 printable ASCII password; remaining bytes zero. Length `0` selects an open network; otherwise valid lengths are 8-63 bytes. |
+| `6` | Stage Wi-Fi SSID | `0` | Byte 0 length; bytes 1-32 SSID bytes (1-32 bytes); remaining bytes zero. Length `0` stages clearing the Wi-Fi network and password. |
+| `7` | Stage Wi-Fi password | `0` | Byte 0 length; bytes 1-63 printable ASCII password; remaining bytes zero. Length `0` selects an open network; otherwise valid lengths are 8-63 bytes. A 64-character hexadecimal raw PSK is not supported. |
 | `8` | Stage Control key | `0` | Byte 0 length; bytes 1-32 raw key (exactly 32 bytes); remaining bytes zero. Length `0` stages clearing the key. |
 | `9` | Test Wi-Fi | `0` | All zero. |
 | `10` | Cancel test and discard staged values | `0` | All zero. |
@@ -454,7 +460,9 @@ separate 9-byte form, described below.
 | `13` | TCP CLI proof | `0` | Bytes 0-15: 16-byte challenge nonce; bytes 16-63 zero. |
 | Other | Unassigned | - | Reject as unsupported. |
 
-LED Off/On are idempotent. Reboot requires explicit confirmation. MSC action `0` is the normal disable request;
+LED Off/On are idempotent. Reboot requires explicit confirmation and discards staged wireless values and their
+expiry marker; hosts should warn before reboot when Report `12` indicates staged values or an expiry marker.
+MSC action `0` is the normal disable request;
 the host application is responsible for safely ejecting first, and the device checks its SCSI eject indication
 (unless media removal is confirmed), removal prevention, and device sync without claiming host-cache durability.
 Action `2` is force return without a safe-eject guarantee and requires explicit data-loss confirmation. Benchmark
@@ -467,46 +475,78 @@ Wireless operations are available only when Report `1` capability bit 7 is set. 
 Unsupported/error `4`. Credential staging, test, scan, and TCP CLI proof are USB-only.
 
 Opcodes `6`-`8` stage values in RAM; they do not write flash or reboot. Op `5` flag bit 1 explicitly commits staged
-wireless values in the same verified flash save as board settings. If staged wireless values exist and bit 1 is clear,
-op `5` is Invalid rather than silently discarding them during reboot. If bit 1 is set with no staged wireless values,
-op `5` is Invalid. A successful save schedules reboot; refresh Reports `2` and `30` after reconnection. Staged
-secrets are wiped after a successful commit, by op `10`, on reboot, or after their ten-minute lifetime.
+wireless values in the same verified flash save as board settings. If unexpired staged wireless values exist and
+bit 1 is clear, op `5` is Invalid with detail `27` rather than silently discarding them during reboot. If bit 1 is
+set after staged values expire, op `5` is Invalid with the staged-values-expired detail. If bit 1 is set with no
+staged values and no expiry marker, it is Invalid with the no-staged-values detail. If only an expiry marker remains
+and bit 1 is clear, the save may proceed; a successful save clears the marker and schedules reboot. Refresh Reports
+`2` and `12` after reconnection. Staged secrets are wiped after a successful commit, by op `10`, on reboot, or after
+their ten-minute lifetime. Expiry retains only a non-secret marker until the next USB staging command, USB op `10`,
+a successful save without wireless commit, or reboot.
 
 Testing never combines a newly staged SSID with the saved password. If a staged SSID differs from the saved SSID, a
 password must also be staged (length zero explicitly means an open network) before testing or committing. Staging
 an empty SSID to forget the network is exempt from this rule. A saved password may be used only when the target SSID
 is byte-for-byte equal to the saved SSID; a password-only update uses the saved SSID. Testing an unchanged saved
-pair without staging a candidate is not a provisioning test. Staging during a test returns Busy. A successful test
-is valid only for that exact credential pair; staging either field again invalidates the test.
+pair without staging a candidate is not a provisioning test and returns Invalid with the no-staged-values detail.
+Staging during a test returns Busy with the test-active detail. Staging during a scan is allowed and does not
+affect the scan. A successful test is valid only for that exact credential pair; staging either field again
+invalidates the test.
 
 Staged values expire ten minutes after the last staging command. Successful testing restarts the ten-minute save
 window. Restaging after a successful test invalidates that test and restarts the staged-value lifetime; a new
-successful test starts a new save window. Expiry wipes candidate secrets and makes them unavailable to op `5`.
-Saving without testing is allowed.
+successful test starts a new save window. Expiry wipes candidate secrets, invalidates the test result for commit,
+disconnects an active candidate test link, and returns Wi-Fi to the saved network when enabled. The expired state
+is reported in Report `12`'s `staged_state` byte; op `5` and op `9` report expired values with the
+staged-values-expired detail. Saving without testing is allowed.
 
-Op `10` cancels an active test, discards staged values, and returns to the saved network when Wi-Fi is enabled.
-Op `11` completes when a scan is accepted, not when it finishes; Feature `12` publishes scan state. A scan is limited
-to 18 strongest unique networks and fails if it does not finish within ten seconds. An accepted new scan clears the
-prior list and advances the 16-bit scan generation. A scan while another scan or test is active returns Busy; a test
+Op `10` cancels an active test, discards staged values and any expiry marker, and returns to the saved network when
+Wi-Fi is enabled. While a scan is active, op `10` discards staged values but leaves the scan running. Op `11`
+completes when a scan is accepted, not when it finishes; Feature `12` publishes scan state. A scan is limited to 18
+strongest unique networks and fails if it does not finish within ten seconds. An accepted new scan clears the prior
+list and advances the 16-bit scan generation. A scan while another scan or test is active returns Busy; a test
 while a scan is active returns Busy. Committing staged wireless values while a test or scan is active returns Busy.
+These operations use the test-active or scan-active detail as applicable.
 Op `12` requires both an index and the generation returned by Feature `12`; it returns Busy until the scan completes,
 and Invalid for a mismatched generation or index outside the completed list. Scan security bits are privacy
 bit 0, WPA bit 1, and RSN bit 2. RSN denotes a WPA2/WPA3-family advertisement, not verified WPA3 support; enterprise
 modes are not distinguished. Scan results contain no credentials.
 
-Op `13` returns only the first 16 bytes of the HMAC-SHA256 proof for the fixed TCP CLI admission request. It never
-exposes the Control key or signs arbitrary data. The proof result is retained for up to ten seconds or until another
-command is accepted. GET does not consume it, so transport retries are safe; the TCP CLI challenge is one-use and
-rejects replay. See the [wireless design](wireless.md) for proof domains and security rationale.
+Op `13` requires a saved Control key; without one it returns Invalid with the no-Control-key-saved detail. It
+returns only the first 16 bytes of the HMAC-SHA256 proof for the fixed TCP CLI admission request. It never exposes
+the Control key or signs arbitrary data. The proof result is retained for up to ten seconds or until another USB
+SET with a valid envelope updates the USB result slot. GET does not consume it, so USB transport retries are safe;
+BLE commands do not replace the USB result slot or clear the proof. The TCP CLI challenge is one-use and rejects
+replay. See the
+[wireless design](wireless.md) for proof domains and security rationale.
 
 ### BLE Feature 20 Form
 
 The BLE control characteristic uses a separate 9-byte request/result form, not a truncated USB Feature report.
-It accepts only opcodes `1`, `2`, and `5`. The request fields retain the same first nine-byte positions as the USB
-layout; op `5` arguments are clock MHz (2 bytes), SD-card profile, and switch mask (Wi-Fi, BLE, TCP CLI), with the
-fifth argument byte zero. An authenticated BLE op `5` may change the TCP CLI switch but must leave Wi-Fi and BLE
-radio bits equal to the saved mask. Forced-save and wireless-commit flags are forbidden over BLE. Wireless opcodes
-`6`-`13` are USB-only.
+It accepts opcodes `1`, `2`, and `5`. On an unlocked link, an invalid request envelope (length other than 9,
+version other than 1, or transaction ID zero) returns ATT application error `0x81` and leaves the BLE result slot
+unchanged. Envelope validation precedes proof validation and does not consume a pending challenge or proof. A
+locked-link check precedes envelope validation: every write while locked returns ATT application error `0x80`
+without checking the envelope. A valid-envelope non-LED write requires a fresh proof and consumes it. After proof
+validation, assigned opcodes unavailable over BLE update the BLE result slot with Unsupported/error `4`;
+unassigned opcodes update it with Unsupported/error `7`. Failed or missing proof returns ATT application error
+`0x80` and does not update the result slot.
+The 9-byte request is `version`, `transaction_id`, `opcode`, `flags`, then five argument bytes. For op `5`, those
+argument bytes are clock MHz (2 bytes), SD-card profile, switch mask
+(Wi-Fi, BLE, TCP CLI), and zero. An authenticated BLE op `5` may change the TCP CLI switch but must leave Wi-Fi and
+BLE radio bits equal to the saved mask. A request that changes either radio switch returns Invalid/error `3` with
+detail `0`. Forced-save and wireless-commit flags are forbidden over BLE.
+
+The 9-byte result is `version`, `transaction_id`, `opcode`, `status`, `error_reason`, then four result-data bytes.
+Status and error values match USB Feature `20`. For Invalid, Busy, or Failed, result-data byte 0 contains the
+applicable detail and bytes 1-3 are zero. Unsupported and other results without data have four zero data bytes.
+For successful op `5`, the four bytes contain clock MHz (little-endian), SD-card profile, and saved switch mask;
+other successful results have zero data. The wireless commit mask is USB-only and is not present in the BLE result.
+For otherwise-valid BLE opcodes `2` and `5`, if unexpired wireless values are staged over USB, return Busy/error
+`5` with detail `28` and do not save or reboot. This prevents a BLE save or reboot from silently discarding the
+USB host's staged values. Wireless opcodes `6`-`13` are USB-only.
+Feature `12` is a 48-byte BLE characteristic value and is read using ATT long reads; firmware must honor the read
+offset and return the frozen snapshot across read-blob requests.
 
 ### GET Result
 
@@ -520,19 +560,59 @@ for every opcode; unused result bytes are zero.
 | 2 | 1 | `opcode` | Operation associated with the result; `0` if none. |
 | 3 | 1 | `status` | Result state below. |
 | 4 | 1 | `error_reason` | Error enum below; zero when none. |
-| 5 | 63 | `result_data` | Opcode-specific result data. |
+| 5 | 63 | `result_data` | Opcode-specific result data, including optional detail for Invalid, Busy, and Failed. |
 | **Total** | **68** | | **69 bytes including report ID.** |
 
-Opcode `5` result data bytes 0-1 contain the verified clock MHz (little-endian), byte 2 the SD-card profile, and
-byte 3 the saved switch mask (Wi-Fi, BLE, TCP CLI in bits 0-2); bytes 4-62 are zero. Opcode `12` result data bytes
-0-1 contain the scan generation, byte 2 the requested index, byte 3 the SSID length, bytes 4-35 the zero-padded
-SSID, byte 36 signed RSSI, and byte 37 security bits; bytes 38-62 are zero. Opcode `13` result data bytes 0-15
-contain the proof; bytes 16-62 are zero. All other result data is zero.
+For Invalid, Busy, or Failed results, `result_data[0]` carries a detail value when one is defined; otherwise it is
+zero. Bytes 1-62 are zero for these results. For successful opcode `5`, result data bytes 0-1 contain the verified
+clock MHz (little-endian), byte 2 the SD-card profile, byte 3 the saved switch mask (Wi-Fi, BLE, TCP CLI in bits
+0-2), and byte 4 the wireless commit mask (bit 0 SSID, bit 1 password, bit 2 Control key);
+bytes 5-62 are zero. The commit mask is zero when no wireless values were committed. For successful opcode `12`,
+result data bytes 0-1 contain the scan generation, byte 2 the requested index, byte 3 the SSID length, bytes 4-35
+the zero-padded SSID bytes, byte 36 signed RSSI, and byte 37 security bits; bytes 38-62 are zero. For successful
+opcode `13`, result data bytes 0-15 contain the proof; bytes 16-62 are zero. All other successful result data is zero.
 
 Status values: `0` Idle, `1` Pending, `2` Completed, `3` Invalid, `4` Unsupported, `5` Busy, `6` Failed.
 Error values: `0` none; `1` malformed opcode-specific flags or unused arguments; `2` missing confirmation;
 `3` invalid operation argument or setting; `4` unavailable capability; `5` busy; `6` operation failed;
-`7` unsupported opcode. Status/error combinations are restricted as follows:
+`7` unsupported opcode.
+
+The detail byte has one global namespace: `1`-`15` are benchmark/storage, `16`-`31` wireless, and `32`-`255`
+reserved for future use. Report `11`'s `benchmark_error` retains its existing values `1`-`10`. In Feature `20`,
+details `8` and `9` are Report `11`-only, `11`-`15` and `29`-`31` are reserved, and wireless details `16`-`28`
+are assigned below. Each value has the same meaning wherever it is used; the applicability column limits valid
+Feature `20` results. Details are zero for Idle, Pending, Completed, and Unsupported results.
+
+| Detail | Meaning | Feature `20` use |
+| ---: | --- | --- |
+| `1` | Conflicting work. | Busy/error `5`: opcode `4`, or storage conflicts on `2`, `3`, `5`. |
+| `2` | USB/MSC owns storage. | Busy/error `5`: opcode `4`, or storage conflicts on `2`, `3`, `5`. |
+| `3` | Invalid benchmark size. | Invalid/error `3`: opcode `4`. |
+| `4` | Card unavailable. | Failed/error `6`: opcode `4`. |
+| `5` | Insufficient space. | Failed/error `6`: opcode `4`. |
+| `6` | Benchmark test file already exists. | Failed/error `6`: opcode `4`. |
+| `7` | Preflight filesystem I/O failure. | Failed/error `6`: opcode `4`. |
+| `8` | Benchmark verification failure. | Report `11` only; not used in Feature `20`. |
+| `9` | Benchmark cleanup failure. | Report `11` only; not used in Feature `20`. |
+| `10` | Filesystem not mounted. | Failed/error `6`: opcode `4`. |
+| `11`-`15` | Reserved in Feature `20`; Report `11` values remain unassigned. | - |
+| `16` | SSID length invalid. | Invalid/error `3`: opcode `6`. |
+| `17` | Password length or character invalid. | Invalid/error `3`: opcode `7`. |
+| `18` | Control-key length invalid. | Invalid/error `3`: opcode `8`. |
+| `19` | Credential pair incomplete or unsafe. | Invalid/error `3`: opcodes `5`, `9`. |
+| `20` | Staged values expired. | Invalid/error `3`: opcodes `5`, `9`. |
+| `21` | No staged values eligible for this operation. | Invalid/error `3`: opcodes `5`, `9`. |
+| `22` | Scan generation is stale. | Invalid/error `3`: opcode `12`. |
+| `23` | Scan index is out of range. | Invalid/error `3`: opcode `12`. |
+| `24` | No Control key is saved. | Invalid/error `3`: opcode `13`. |
+| `25` | A Wi-Fi test is active. | Busy/error `5`: wireless commit on `5`, or opcodes `6`-`9`, `11`. |
+| `26` | A Wi-Fi scan is active. | Busy/error `5`: wireless commit on `5`, or opcodes `9`, `11`, `12`. |
+| `27` | Unexpired wireless values are staged but the commit flag is clear. | Invalid/error `3`: opcode `5`. |
+| `28` | Unexpired USB-staged wireless values block this BLE operation. | Busy/error `5`: BLE opcodes `2`, `5`. |
+| `29`-`31` | Reserved. | - |
+| `32`-`255` | Reserved. | - |
+
+Status/error combinations are restricted as follows:
 
 | Status | Allowed error | Meaning |
 | --- | --- | --- |
@@ -541,35 +621,60 @@ Error values: `0` none; `1` malformed opcode-specific flags or unused arguments;
 | `2` Completed | `0` | Operation completed, or an asynchronous operation was accepted and queued. |
 | `3` Invalid | `1`, `2`, `3` | Request has a recognized opcode and transaction ID but invalid flags, arguments, or missing confirmation. |
 | `4` Unsupported | `4`, `7` | Operation is not available under current capabilities, or opcode is unassigned. |
-| `5` Busy | `5` | Operation cannot start while a conflicting operation owns required resources. |
+| `5` Busy | `5` | Operation cannot start while a conflicting operation owns required resources; detail may refine the cause. |
 | `6` Failed | `6` | Operation processing began but could not complete, including a benchmark start preflight failure. |
 
-Opcode-specific results: opcode `1` permits Pending, Completed, Invalid (`1`/`3`), or Failed; opcode `2` permits
-Pending, Completed, Invalid (`1`/`2`), Busy, or Failed; opcode `3` permits Pending, Completed, Invalid
-(`1`/`2`/`3`), Busy, or Failed; opcode `4` permits Pending, Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy,
-or Failed; opcode `5` permits Pending, Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy, or Failed;
-opcodes `6`-`8` and `12` permit Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy, or Failed; opcodes `9` and
-`11` permit Pending, Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy, or Failed; opcode `10` permits
-Completed, Invalid (`1`/`3`), Unsupported (`4`), or Failed; opcode `13` permits Completed, Invalid (`1`/`3`),
-Unsupported (`4`), Busy, or Failed. Opcode `4` returns Unsupported (`4`) when Report `1` bit 5 is clear. Opcode
+| Opcode | Allowed statuses |
+| --- | --- |
+| `1` | Pending, Completed, Invalid (`1`/`3`), Failed |
+| `2` | Pending, Completed, Invalid (`1`/`2`), Busy, Failed |
+| `3` | Pending, Completed, Invalid (`1`/`2`/`3`), Busy, Failed |
+| `4` | Pending, Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy, Failed |
+| `5` | Pending, Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy, Failed |
+| `6`-`8`, `12` | Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy, Failed |
+| `9`, `11` | Pending, Completed, Invalid (`1`/`3`), Unsupported (`4`), Busy, Failed |
+| `10` | Completed, Invalid (`1`/`3`), Unsupported (`4`), Failed |
+| `13` | Completed, Invalid (`1`/`3`), Unsupported (`4`), Failed |
+
+When multiple rejection conditions apply, the first matching class below determines the result. One exception is
+that additional USB SETs during an in-flight forced save are ignored after envelope validation. BLE SETs follow the
+ordering below; only otherwise-valid BLE opcodes `2` and `5` are blocked by a forced USB save.
+
+1. Invalid transport envelope: reject the SET without changing that transport's result slot.
+2. Unsupported capability or opcode: Unsupported (`4` or `7`).
+3. Malformed flags or arguments: Invalid (`1` or `3`).
+4. Missing confirmation: Invalid (`2`).
+5. Resource conflict: Busy (`5`), including USB staging that blocks BLE opcodes `2` and `5`, and an in-flight
+   forced USB save that blocks otherwise-valid BLE opcodes `2` and `5`.
+6. Stateful operation precondition: Invalid (`3`) with detail `19`-`24` or `27`, or detail `0` when none is defined.
+   This includes staged-wireless state, scan-generation/index validation, the saved-Control-key requirement, and the
+   BLE saved-radio-switch restriction.
+7. Operation failure: Failed (`6`).
+
+Within class 3, validate request bytes without consulting device state. Class 6 depends on live or saved device
+state. Resource conflicts are checked first, so Busy takes priority over a state-dependent Invalid result. Except
+for ignored USB SETs during an in-flight forced save, every request with a valid envelope updates that transport's
+result slot with the result determined by this ordering.
+
+Opcode `4` returns Unsupported (`4`) when Report `1` bit 5 is clear. Opcode
 `3` is supported whenever either selected-transport bit 3 or 4 is set and must not return Unsupported on the basis
 of a separate MSC capability. Wireless opcodes `6`-`13` return Unsupported (`4`) when capability bit 7 is clear.
-Unassigned opcodes return Unsupported (`7`).
-For opcode `4`, Invalid/error `3` reports an invalid size and Report `11` records request error `3`; Busy/error `5`
-reports request error `1` (conflicting work) or `2` (MSC ownership). Failed/error `6` reports preflight request
-errors `4` (card unavailable), `5` (insufficient space), `6` (test file exists), `7` (preflight file-check I/O), or
-`10` (filesystem not mounted). These preflight failures occur after command processing begins but before the test is
-accepted; they are not queued and do not replace the retained test result. Report `11` updates
-`benchmark_request_error` with the specific benchmark error. Once preflight succeeds and the test is accepted, the
-command result is Completed/error `0` (or Pending/error `0` while acceptance is being processed), and Report `11`
-publishes Queued and owns subsequent progress and terminal state. Completed for opcode `3` means the MSC transition
-was accepted/queued; for opcode `4` it means the benchmark was accepted/queued. Their progress and terminal state
-are reported by `10` and `11`, respectively.
+Unassigned opcodes return Unsupported (`7`). The opcode-status table describes USB Feature `20`; BLE-specific
+Unsupported results for assigned opcodes are defined in the BLE form below.
+For opcode `4`, Invalid/error `3` returns benchmark detail `3` (invalid size); Busy/error `5` returns detail `1`
+(conflicting work) or `2` (MSC ownership). Failed/error `6` returns preflight detail `4` (card unavailable), `5`
+(insufficient space), `6` (test file exists), `7` (preflight file-check I/O), or `10` (filesystem not mounted).
+These preflight failures occur after command processing begins but before the test is accepted; they are not queued
+and do not replace the retained test result. Once preflight succeeds and the test is accepted, the command result is
+Completed/error `0` (or Pending/error `0` while acceptance is being processed), and Report `11` publishes Queued and
+owns subsequent progress and terminal state.
+Storage-related Busy/error `5` for opcodes `2`, `3`, and `5` uses detail `1` for conflicting work and detail `2`
+for MSC ownership. Opcode `5` uses wireless details `25` and `26` for active Wi-Fi tests and scans.
 
-A SET with an invalid report length, version, or zero transaction ID is rejected without changing the last result;
-the host must treat the SET failure as authoritative and must not wait for a matching GET result. Other invalid
-requests with a valid envelope update the result slot with the matching transaction ID and Invalid status. Unknown
-status or error values and disallowed status/error/opcode combinations are protocol errors.
+A SET with an invalid payload length, version, or zero transaction ID is rejected without changing that transport's
+last result; the host must treat the SET failure as authoritative and must not wait for a matching GET result. Other
+invalid requests with a valid envelope update that transport's result slot with the matching transaction ID and
+Invalid status. Unknown status or error values and disallowed status/error/opcode combinations are protocol errors.
 
 For opcode `5`, `Completed` means the settings and any explicitly included staged wireless values passed readback
 verification and reset was scheduled. Feature `2` is the authoritative read path for saved switches and profiles;
@@ -579,47 +684,63 @@ progress and terminal status. Opcode `9` and `11` completion means a Wi-Fi test 
 owns its progress and terminal status. For standalone reboot, completion means reset was scheduled, not that the
 host observed a successful reboot.
 
-The TCP CLI proof result is retained for up to ten seconds or until another command is accepted. GET does not consume
-it, so transport retries are safe; the TCP CLI challenge is one-use and rejects replay.
-
 An accepted opcode `3` transition waits for the matching Feature `20` result GET to finish before disconnecting HID.
 If the host does not read the result, the transition proceeds after a bounded 500 ms grace period. This allows the
 host to observe acceptance without making ownership depend indefinitely on a GET.
 
-There is one result slot. Only one host should issue writes at a time, and it must serialize requests: do not submit
-another command until the prior command's result is terminal and any associated asynchronous lifecycle is understood.
-A later accepted operation replaces the prior result. The host should advance transaction IDs through `1`-`255`,
-never reuse an ID while an earlier request using it could still be outstanding or confused with the current result,
-and match both transaction ID and opcode in GET. IDs do not provide multi-client locking or deduplication. A
-timeout/disconnect makes outcome uncertain; do not automatically replay reboot, save, or force-return requests, and
-do not send another command while an earlier request's outcome remains uncertain. GET is non-destructive and never
-extends or restarts a pending operation.
+USB Feature `20` and the BLE control characteristic have separate result slots and transaction-ID sequences. A
+request on one transport never replaces the other transport's result. Each transport must serialize its own
+requests: do not submit another command there until the prior command's result is terminal and any associated
+asynchronous lifecycle is understood. Resource conflicts are arbitrated across transports and return Busy as defined
+for the operation. A later accepted operation replaces the result in its own transport's slot. Hosts advance
+transaction IDs through `1`-`255` independently per transport, never reusing an ID while an earlier request using it
+could still be outstanding or confused with the current result, and match both transaction ID and opcode in that
+transport's GET/result. IDs do not provide multi-client locking or deduplication. A timeout/disconnect makes outcome
+uncertain; do not automatically replay reboot, save, or force-return requests, and do not send another command on
+that transport while an earlier request's outcome remains uncertain. GET is non-destructive and never extends or
+restarts a pending operation.
 
 ## Report ID 12: Wireless Status
 
 Feature report `12` is read-only and available when Report `1` capability bit 7 is set. It reports wireless runtime,
 test and scan state; saved switches are read from Report `2`. USB and the authenticated BLE status characteristic
-return the same 46-byte payload.
+return the same 48-byte payload. It is a Feature report because hosts poll this shared USB/BLE snapshot on demand,
+rather than receiving periodic Input reports.
 
 | Offset | Size | Field | Meaning |
 | -----: | ---: | ----- | ------- |
 | 0 | 1 | `version` | Layout version, `1`. |
 | 1 | 1 | `wifi_state` | `0` off; `1` connecting; `2` connected; `3` failed; `4` testing/joining; `5` test joined; `6` test failed. |
-| 2 | 1 | `detail` | `0` none; `1` radio initialization failed; `2` network not found; `3` password rejected; `4` no DHCP address; `5` timed out; `6` tested link lost; `7` staged values expired; `8`-`255` reserved. |
+| 2 | 1 | `detail` | `0` none; `1` radio initialization failed; `2` network not found; `3` password rejected; `4` no DHCP address; `5` timed out; `6` tested link lost; `7`-`255` reserved. |
 | 3 | 1 | `ble_state` | `0` off; `1` advertising; `2` connected. |
-| 4 | 1 | `flags` | Bit 0 Wi-Fi network configured; bit 1 Control key saved; bit 2 TCP CLI listener serving; bit 3 restart required; bits 4-7 zero. |
-| 5 | 4 | `ipv4` | Address of the current saved or test link; zero when not connected. |
-| 9 | 1 | `ssid_length` | Length in UTF-8 bytes, `0`-`32`. |
-| 10 | 32 | `ssid` | Test SSID while a test is active or its result is retained; otherwise saved SSID. Zero-padded. |
+| 4 | 1 | `flags` | Bit 0 network configured; bit 1 key saved; bit 2 CLI serving; bit 3 reserved (zero); bit 4 SSID staged; bit 5 password staged (including an implicit clear); bit 6 key staged; bit 7 pair tested. |
+| 5 | 4 | `ipv4` | Address of the current saved or test link as four display-order octets (`a.b.c.d`, network order); zero when not connected. |
+| 9 | 1 | `ssid_length` | Length in bytes, `0`-`32`. |
+| 10 | 32 | `ssid` | Opaque SSID bytes for the active/retained test candidate, otherwise saved SSID. Zero-padded. |
 | 42 | 1 | `scan_state` | `0` idle; `1` scanning; `2` complete; `3` failed. |
 | 43 | 2 | `scan_generation` | Little-endian generation of the current scan result. |
 | 45 | 1 | `scan_count` | Number of retained results, `0`-`18`; zero until a scan completes. |
-| **Total** | **46** | | **47 bytes including report ID.** |
+| 46 | 1 | `test_generation` | Zero before a test; otherwise `1`-`255`, incremented for each accepted test and skipping zero on wrap. |
+| 47 | 1 | `staged_state` | Bit 0 empty SSID; bit 1 empty candidate password (may be implicit); bit 2 empty key; bit 3 staged values expired; bits 4-7 zero. |
+| **Total** | **48** | | **49 bytes including report ID.** |
 
-`wifi_state` and `detail` are interpreted together. Detail is zero when no Wi-Fi or test error applies; reserved
-detail values must be zero on transmission and ignored by hosts. `flags` bit 2 reports whether the TCP CLI listener
-is actually serving, not merely whether it is enabled in Report `2`. Clearing the Control key disables BLE and makes
-an enabled TCP CLI unauthenticated on the saved LAN; hosts must clearly confirm this consequence before clearing it.
+`wifi_state` and `detail` are interpreted together. Detail is zero when no Wi-Fi/test error applies; reserved detail
+values must be zero on transmission and ignored by hosts. `flags` bit 3 is reserved, zero on transmission, and
+ignored by hosts. The staged flags report candidate-presence and test-validity only; they never expose secret
+contents. Staging an
+empty SSID implicitly stages an empty password, so both flag bits 4 and 5 are set. `staged_state` describes effective
+candidate values and expiry, so clients can distinguish forgetting the network, selecting an open network, clearing
+the key, or expired staged values. Bits 0-2 are meaningful only when their corresponding staged flag bits 4-6 are
+set; when bit 3 (expired) is set, staged flag bits 4-7 are clear. Bit 7 applies only to the staged SSID/password
+pair; it is set when that exact pair passed testing and remains unexpired. It is informational: saving without
+testing remains allowed, and a staged Control key is not tested by Wi-Fi association.
+Test status is associated with `test_generation`; it is zero before any accepted test, increments for each accepted
+test (including one that fails immediately), and skips zero when wrapping from 255 to 1. Preserve it with that test's
+result. It is independent of scan generation.
+`ssid` contains raw network bytes, not a NUL-terminated string. Hosts display valid printable UTF-8 normally and
+escape invalid UTF-8 bytes and control characters (for example `\xNN`) without altering the bytes used for matching.
+`flags` bit 2 reports whether the TCP CLI listener is actually serving, not merely whether it is enabled in Report `2`.
+The listener only serves when a Control key is saved; clearing the key disables TCP CLI service as well as BLE.
 
 A new accepted scan clears the previous result, advances the nonzero 16-bit generation (zero before any scan), and
 begins in state `scanning`. Completion publishes the retained count and state `complete`; failure publishes `failed`
@@ -627,6 +748,10 @@ and count zero.
 Entries are read with opcode `12`; each request supplies the generation and index so firmware can reject stale or
 out-of-range reads. The strongest 18 unique SSIDs are retained. Report `12` is a current snapshot, not an atomic
 snapshot with Report `2` or Feature `20`.
+
+Hosts poll Feature `12` every 500 ms while a Wi-Fi test or scan is active and every 2 seconds otherwise. A status
+snapshot is stale after three polling intervals (1.5 seconds while active; 6 seconds otherwise); hosts must display
+stale status as such and must not enable an operation based on stale staged flags or scan state.
 
 ### Confirmed Save and Reboot While Shared
 
@@ -646,8 +771,11 @@ After verified saving, reconnect HID without usable MSC and keep media USB-reser
 nor the worker starts new card I/O. Publish Completed with the original transaction and verified settings.
 Reboot waits for that result GET, or a five-second fallback deadline, followed by the existing one-second USB result
 grace period. Boot then follows the [default-mounted storage lifecycle](architecture.md#storage-ownership-lifecycle).
-Additional control writes while the forced transaction is outstanding are ignored with a UART warning to preserve
-its result slot; hosts must serialize writes. GET never replays a save.
+Additional USB Feature `20` SETs while the forced transaction is outstanding are ignored with a UART warning to
+preserve the USB result slot. BLE opcode `1` remains available because it does not access storage. Otherwise-valid
+BLE opcodes `2` and `5` return Busy/error `5` in the BLE result slot and perform no action; their detail is `1`
+(conflicting work). If unexpired USB staging also exists, the forced-save conflict takes precedence over detail
+`28`. Hosts must serialize writes on each transport. GET never replays a save.
 
 Clients reconnect only to the same verified device UID and poll the original opcode/transaction result. Never replay
 SET or infer completion from reconnection. Timeout, mismatched identity, or invalid result leaves outcome uncertain
@@ -667,17 +795,18 @@ success-shaped queued acknowledgement. The host must wait for the active operati
 if appropriate.
 
 Read-only diagnostics that do not access card data may coexist with storage work, subject to the interface's normal
-response handling. No request may access the SD card through firmware while MSC owns it. This arbiter does not replace
-the single HID result-slot rule: hosts still serialize HID writes, and the device also rejects conflicting work
-originating from CDC.
+response handling. No request may access the SD card through firmware while MSC owns it. This arbiter does not
+replace the per-transport HID result-slot rule: hosts still serialize writes on each transport, and the device also
+rejects conflicting work originating from CDC.
 
 ### MSC Force-Return Safety
 
 MSC is disabled at boot; firmware automatically mounts configured media according to the
 [storage lifecycle](architecture.md#storage-ownership-lifecycle). Only explicit USB enable transfers ownership;
 starting a benchmark or opening a dashboard does not. For opcode `3`, action `1` enables MSC only when the SD card is
-initialized and no storage command or reply is outstanding. If firmware has mounted the filesystem, the storage worker unmounts it before
-ownership transfer. A successful unmount pauses automount before USB ownership moves to the host. An unmount failure
+initialized and no storage command or reply is outstanding. If firmware has mounted the filesystem, the storage
+worker unmounts it before ownership transfer. A successful unmount pauses automount before USB ownership moves to
+the host. An unmount failure
 rejects the request, leaves firmware ownership intact, and does not format the card. Both enable and disable requests
 are rejected while unrelated storage work or replies are outstanding. Repeating action `1` while MSC is already
 enabled completes as a no-op; repeating action `0` while MSC is already disabled completes as a no-op and does not
@@ -722,10 +851,10 @@ The card is never automatically formatted or repaired.
    `2` for the persisted next-boot clock and SD-card profiles, reset cause, and GPIO configuration; use Feature
    `1`'s transport capability to interpret the storage GPIOs.
 2. If Report `1` capability bit 7 is set, read Feature `12` for wireless status and poll it while tests or scans are
-   active. Start Input monitoring for reports `3` and `10`; also monitor report `11` only if Report `1` capability bit 5 is
-   set. If bit 5 is clear, do not subscribe to Report `11`, expect it to be published, or enable opcode `4`. Track
-   freshness independently. A valid storage report can have an unavailable SD sample; honor `sd_flags` bit 6 and do
-   not infer that zero card values mean an empty card.
+   active. Start Input monitoring for reports `3` and `10`; also monitor report `11` only if Report `1` capability
+   bit 5 is set. If bit 5 is clear, do not subscribe to Report `11`, expect it to be published, or enable opcode `4`.
+   Track freshness independently. A valid storage report can have an unavailable SD sample; honor `sd_flags` bit 6
+   and do not infer that zero card values mean an empty card.
 3. Submit all writable operations through report `20` with a fresh nonzero transaction ID. Read GET until the matching
    result is terminal. For opcode `3`, `Completed` means the transition was accepted/queued, not that ownership
    changed: keep monitoring report `10` until
@@ -737,7 +866,7 @@ The card is never automatically formatted or repaired.
 5. Read persisted settings from Feature `2`. To save and apply them, confirm with the user, issue opcode `5`, and
    verify the saved values in its completion result. Firmware reboots automatically only after a successful save.
    To commit staged wireless credentials, explicitly set opcode `5` flag bit 1; do not set it for a settings-only
-   save. Reconnect and reread Feature `2` and `30`; opcode `2` remains available for a standalone reboot.
+   save. Reconnect and reread Feature `2` and `12`; opcode `2` remains available for a standalone reboot.
 
 Validate report type, ID, exact length, version, reserved fields, enums, and cross-field constraints. Check that
 Report `1` selects exactly one storage transport and that its assigned board model agrees with the MCU; Report `2`'s
@@ -765,20 +894,48 @@ Current versioned report layouts use version `1`; hosts accept that version only
 previous layouts. Increment the affected report's version when an incompatible field, length, unit, validation rule,
 or lifecycle changes. Layout versions are independent of firmware semantic version.
 
-Conformance tests cover report types and lengths, API report-ID framing, field validation, stale telemetry,
-configuration cross-field rules, storage-state validity and ownership transitions, profile validation and
-build-selected transport behavior, command validation and results, cross-interface resource arbitration, benchmark
-result retention, wireless staging and atomic commit, exact SSID/password/key constraints, unsafe credential-pair
-rejection, test/scan exclusion, scan generation and index validation, Feature `12` status, BLE command restrictions,
-proof expiry and replay rejection, CID decoding, and the PicoUART report prefix. Host tests and firmware cross-builds
-do not verify physical USB behavior. Qualify CDC, 69-byte Feature `20` transfers, HID, MSC transitions, and
-re-enumeration on RP2040 and RP2350 hardware before product use.
+Conformance tests cover:
+
+1. **Reports**
+   - [ ] Report types and lengths, API report-ID framing, field validation, stale telemetry, configuration
+     cross-field rules, storage-state validity and ownership transitions, profile validation, and build-selected
+     transport behavior.
+   - [ ] Reserved Report `12` flag validation, benchmark result retention, Feature `12` stale-status behavior and
+     BLE long reads, CID decoding, and the PicoUART report prefix.
+2. **Commands**
+   - [ ] Command validation and results, global detail-value mapping and status applicability, and storage Busy
+     details for opcodes `2`, `3`, and `5`.
+   - [ ] Wireless staging flags and `staged_state` (including implicit password clear and expiry), test-generation
+     initialization and wrap, staged-state expiry status, and scan generation and index validation.
+   - [ ] Opcode `2` staged-value discard warning; opcode `5` commit mask and expiry-marker clearing by successful
+     saves or reboot; opaque SSID round-tripping and host escaping.
+   - [ ] Control-key requirements for TCP CLI service and opcode `13`, atomic credential commit, test/scan exclusion,
+     and staging and opcode `10` behavior during scans.
+   - [ ] USB result-slot replacement and replay rejection.
+3. **Precedence**
+   - [ ] Error-precedence pairs: envelope rejection preserves the result slot; Unsupported precedes malformed
+     arguments; Busy precedes stateful preconditions; request-only validation is distinct from state-dependent
+     validation.
+4. **BLE**
+   - [ ] Separate USB/BLE result slots and transaction-ID sequences; BLE request/result layouts and command
+     restrictions, including radio-switch rejection with detail zero.
+   - [ ] Invalid envelope returns `0x81` without slot or proof consumption; assigned and unassigned BLE Unsupported
+     results and proof consumption; proof expiry.
+5. **Concurrency**
+   - [ ] Cross-transport resource arbitration, BLE save/reboot blocking during unexpired USB staging, USB forced-save
+     SET suppression, and BLE Busy slot handling and LED availability.
+
+Host tests and firmware cross-builds do not verify physical USB behavior. Qualify CDC, 69-byte Feature `20` transfers,
+49-byte Report `12` BLE long reads, HID, MSC transitions, and re-enumeration on RP2040 and RP2350 hardware before
+product use.
 
 ## Implementation and Integration
 
-The descriptor and firmware implementation are in `firmware/src/app/usb`; storage benchmark admission and execution
-are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and Direct dashboard clients implement the same
-report contract. Settings saves write the persistent record's single SD profile, which Report `2` exposes.
+The descriptor and firmware implementation are in `firmware/src/app/usb`; configure the TinyUSB HID control buffer
+to at least 69 bytes in every build (128 bytes is the current headroom target). Storage benchmark admission and
+execution are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and Direct dashboard clients
+implement the same report contract. Settings saves write the persistent record's single SD profile, which Report
+`2` exposes.
 An accepted benchmark is preflighted by the sole storage worker before its prior result is replaced. The reserved
 `/PFTEST.BIN` path is never overwritten. MSC transitions allow a bounded interval for the matching Feature `20`
 result GET before ownership changes.

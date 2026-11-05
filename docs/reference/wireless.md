@@ -1,6 +1,6 @@
 # Wireless Integration and Protocol
 
-This reference owns radio execution, credential persistence, USB provisioning reports, and BLE authorization.
+This reference owns radio execution, credential persistence, provisioning security, and BLE authorization.
 For user setup and restrictions, see [the wireless guide](../guides/wireless.md).
 
 ## Execution and storage safety
@@ -15,9 +15,9 @@ status, staged Feature `20` commands, and atomic settings/credential saves.
 SDK poll-mode wireless work runs on the existing USB owner task. It creates no additional FreeRTOS tasks, preserves
 the static-allocation policy, and never invokes FatFs from a radio callback. On W images that owner task is pinned to
 its startup core before initializing the SDK at boot: poll-context checks and CYW43 IRQ ownership require it. The same
-task drives the CYW43 LED. Non-wireless builds keep the existing all-core task affinity. BLE controls reuse the existing LED
-and benchmark admission helpers. USB and BLE retain separate command-result slots, with the original benchmark
-admission tied to its source. Storage ownership remains exclusive.
+task drives the CYW43 LED. Non-wireless builds keep the existing all-core task affinity. BLE controls reuse the
+existing LED and benchmark admission helpers. USB and BLE retain separate command-result slots; the original
+benchmark admission remains tied to its source. Storage ownership remains exclusive.
 
 All supported boards advertise LED control. `config/board.c` selects direct GPIO for Pico/Pico 2 and a CYW43 writer
 for W boards at build time. The wireless owner initializes the chip and clears its LED even with both radios disabled.
@@ -33,62 +33,39 @@ writes flash; persistent Bluetooth bonding is not supported.
 The version-1 [settings record](settings.md#record-format) stores the clock and SD profiles, the service switches
 (byte 10 bits 0/1 disable Wi-Fi/BLE and bit 2 disables the TCP CLI), the saved Wi-Fi authentication state, SSID,
 passphrase and Control key under one CRC. The CLI switch defaults enabled for erased records, is independent of the
-radio bits returned by Report 2, and is preserved by ordinary clock/speed/radio updates. A bad or torn record loads
+radio bits returned by Report 2, and is preserved by ordinary clock/speed/radio updates. The listener serves only
+while a Control key is saved, regardless of the CLI switch; clearing the key disables TCP CLI service rather than
+falling back to unauthenticated access. A bad or torn record loads
 complete defaults with no credentials, so Wi-Fi and BLE stay off until provisioned. Feature `20` opcodes `6`-`8`
 stage credentials in RAM; opcode `5` saves them only when its explicit commit flag is set, together with the clock,
 SD profile, and service switches. The single verified record prevents partial persistent updates.
 Flash remains **unencrypted**: physical/debug access can recover credentials. Erasing settings clears them.
 Passwords and keys are never included in status, diagnostic logs or readback reports.
 
-## USB contract
+## Provisioning lifecycle
 
-Report `1` bit 7 denotes wireless capability. Report `2` `board_flags` bits 3-5 contain the persisted Wi-Fi, BLE,
-and TCP CLI switches. Feature `20` owns wireless commands and their immediate results; Feature `12` owns live
-wireless, test, and scan status. All wire layouts and opcode arguments are defined by the
-[USB HID report reference](usb-hid.md); this document describes lifecycle and security behavior.
+The [USB HID report reference](usb-hid.md#wireless-command-rules) is the sole source for the wireless wire contract:
+Report `1` capability, Report `2` service switches, Feature `12` status, Feature `20` opcodes, credential limits,
+staging, testing, expiry, scan, proof, BLE command form and validation. This section adds only radio and security
+behavior that those reports do not define.
 
-- Feature `20` opcodes `6`-`8` stage the SSID, Wi-Fi password, and Control key in RAM. Op `5` saves them only when
-  its explicit staged-wireless-commit flag is set, and commits them atomically with the clock, SD profile and
-  service switches. The verified save schedules reboot. Secrets are never returned in a result or status report.
-- SSIDs are valid UTF-8 of at most 32 bytes. Passwords are printable ASCII: empty for an open network, or 8-63
-  bytes. A 64-character hexadecimal raw PSK is not supported. The Control key is exactly 32 raw bytes; length zero
-  clears it.
-- Feature `20` op `9` tests a staged candidate without saving it. A new SSID cannot be tested or committed with the
-  saved password; stage a password too. When the SSID is unchanged, a staged password may use that SSID. Testing
-  only saved credentials is not a provisioning test. A successful test is valid only for the exact pair tested;
-  restaging either field invalidates it. Staged values expire ten minutes after the last setter; successful testing
-  restarts the ten-minute save window. Restaging after a successful test invalidates it and restarts the staged-value
-  lifetime; a new successful test starts a new save window.
-- A saved password may be used only when the target SSID exactly matches the saved SSID. A scan and a connection
-  test are mutually exclusive. Starting another scan or test, or committing staged Wi-Fi values, while one is
-  active returns Busy; op `12` returns Busy until scan results are complete.
+- Secrets are accepted only by staging commands. They are never returned in a command result, status report,
+  diagnostic log or native-host response.
 - When saving a tested pair, persist the authentication mode proven by the test. For a changed SSID saved without
   testing, reset to the normal WPA2-first behavior. If only the password changes for the same SSID, preserve the
   saved authentication mode.
-- Op `10` cancels a test and discards staged values. Staging while a test is active returns Busy. Clearing the
-  Control key also disables BLE; if TCP CLI remains enabled, it is unauthenticated on the saved LAN, so the host
-  must make that consequence explicit before confirming.
-- Op `11` starts a scan and returns after acceptance. Feature `12` reports progress and the 16-bit scan generation;
-  op `12` reads an entry by index and generation. Results contain at most 18 strongest unique SSIDs and expose only
-  SSID, RSSI and security bits.
-- Op `13` requests a proof for one fixed TCP CLI admission challenge. It is not a general signing API and never
-  exposes the Control key. The proof is one-use at the TCP CLI and cached in the command result for at most ten
-  seconds or until another command is accepted.
-- Wireless credential, test, scan and proof commands are USB-only. BLE Feature `20` has a 9-byte form that permits
-  only LED, confirmed reboot and settings save; an authenticated BLE save may change the TCP CLI switch but must
-  preserve both radio switches. Forced saves and wireless credential commits are USB-only.
+- Clearing the Control key disables BLE and prevents the TCP CLI listener from serving until a key is saved again.
 - Native-host `GET /api/wireless` returns sanitized status. Confirmed `POST /api/wireless` stages provided
   credentials with ops `6`-`8`, optionally tests with op `9`, then commits through op `5` with the explicit
   wireless-commit flag. Omitted credentials are not staged. `POST /api/wireless/scan` uses op `11` and reads each
-  result through op `12`; `POST /api/wireless/test` and `/cancel` use ops `9` and `10`. Passwords and keys are
-  accepted only in requests and are never included in responses.
+  result through op `12`; `POST /api/wireless/test` and `/cancel` use ops `9` and `10`.
 
 ## Saved-network service discovery
 
 The pinned SDK `pico_lwip_mdns` responder answers IPv4 hostname queries for `picoforge-<USB serial>.local` only on
 the saved network. It is removed before a credential test or station shutdown and re-registered after reconnect.
-While the TCP CLI listens, DNS-SD advertises `_picoforge._tcp` on port 2323 with TXT values `v=1` and
-`auth=0`/`auth=1` for whether a control key requires authentication. No outbound resolver is enabled. Registration and
+While the TCP CLI listens, DNS-SD advertises `_picoforge._tcp` on port 2323 with TXT values `v=1` and `auth=1`.
+No outbound resolver is enabled. Registration and
 listener allocation failures are logged and retried at five-second intervals. Name conflicts are logged rather than
 silently changing the device identity. mDNS requires multicast support on the LAN and an mDNS-capable host resolver;
 direct IPv4 access remains available.
@@ -103,11 +80,20 @@ Six extra lwIP timer slots bound probing and delayed IPv4 replies. Recheck this 
 BLE starts only when its switch is on **and** a control key is saved; enabling it without a key logs a warning and
 leaves the BLE link off. Service UUID: `50fc0000-7c91-4d70-8b32-6e856443f501`. Characteristic UUIDs use the same
 suffix and replace `0000` with the hexadecimal report ID: `0001`, `0002`, `0003`, `000a`, `000b`, `000c`, `0014`.
-Reads return the corresponding payload without a HID report ID. Characteristics use ATT long reads where needed;
-the first read freezes the value for subsequent read-blob offsets. Report `0014` has the BLE-specific 9-byte
-command/result form; writes accept opcode 1 (LED), 2 (confirmed reboot), or 5 (save settings). The BLE form does not
-support wireless staging, test, scan, or TCP CLI proof, and does not use a long write or require a larger MTU.
-Reports are polled; no notification MTU assumption is needed.
+Reads return the corresponding payload without a HID report ID. The 48-byte Report `000c` status value uses an ATT
+long read; firmware honors the read offset and freezes the snapshot for subsequent read-blob offsets. Other
+characteristics use ATT long reads where needed. Report `0014` has the BLE-specific 9-byte
+command/result form; writes accept opcode 1 (LED), 2 (confirmed reboot), or 5 (save settings). The lock check
+precedes envelope validation: writes on a locked link return ATT application error `0x80` without checking the
+envelope. On an unlocked link, an invalid request envelope returns ATT application error `0x81`, leaves the result
+slot unchanged, and does not consume proof. After proof validation, assigned opcodes unavailable over BLE return
+Unsupported/error `4`, and unassigned opcodes return Unsupported/error `7`; these results update the BLE result
+slot. Every valid-envelope non-LED write, including an unsupported opcode, requires and consumes a fresh proof.
+Error `0x80` remains for locked
+writes and missing, rejected or rate-limited proofs. The BLE form does not support wireless staging, test, scan, or
+TCP CLI proof, and does not use a long write or require a larger MTU. See the
+[USB HID reference](usb-hid.md#ble-feature-20-form) for envelope and result details. Reports are polled; no
+notification MTU assumption is needed.
 
 Each connection starts locked: only the GAP name, `0001` identity (it carries the UID the proofs bind) and the
 `0020` nonce are readable; other reads and all writes return `0x80`. To unlock, read `0020`, then write the first
@@ -141,7 +127,7 @@ switches; credential commits and forced saves remain USB-only. USB mass-storage 
 The TCP CLI uses a separate domain (`"PFTCPCLI1"`) and request (`"TCPCLI001"`). Whenever a Control key is saved,
 each connection receives a one-use nonce and board UID challenge and must answer with the first 16 bytes of the
 matching HMAC-SHA256 proof. Proofs expire after ten seconds; rejected proofs are rate-limited for two seconds.
-Without a key the console is open on the saved network. Python/.NET dashboards ask the selected board to produce
+Without a key the listener does not serve. Python/.NET dashboards ask the selected board to produce
 this fixed proof through Feature `20` opcode `13` after checking that the challenge UID matches that board. The Direct
 console asks its matching dashboard tab for the proof over a same-origin `BroadcastChannel`; the dashboard checks
 the challenge UID, then uses Feature `20` opcode `13` over USB or signs with the non-extractable key from its

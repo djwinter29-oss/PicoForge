@@ -87,9 +87,9 @@ a connection test, a lost link or a rejoin closes the
 client and turns new clients away until the saved network is back. Scan and test commands enable the station
 interface only after validation; with saved Wi-Fi disabled, it is released again when the driver scan finishes
 (including after its timeout), the test fails or the staged test is cleared or expires. The service switch defaults
-on and can be saved off without disabling Wi-Fi or changing its credentials. A saved control key
-always requires TCP authentication; without a key the console is open on the saved network. Authenticated sessions
-still use unencrypted TCP. The normal Wi-Fi
+on and can be saved off without disabling Wi-Fi or changing its credentials. A saved control key requires TCP
+authentication for every session. Without a key, the listener does not serve. Authenticated sessions still use
+unencrypted TCP. The normal Wi-Fi
 state describes the station, including a test; the status IP is zero on a test network to avoid pairing it with the
 saved SSID. Only the test-result report carries the tested address.
 The board also answers `picoforge-<USB serial>.local` on the saved network and advertises the CLI via
@@ -138,9 +138,9 @@ Radio task ownership, persistence, USB report layouts, native-host APIs, and BLE
 Host checks cover flash-record validation, HMAC vectors and byte mutations, payload boundaries, missing keys,
 restricted BLE writes, single-SET behavior, secret-free status and API errors. The production Wi-Fi state-machine
 check covers boot gating, the exact 30-second DHCP deadline, capped exponential saved-network retries, link loss, join
-failures, the WPA3-SAE fallback and IPv4 bytes, exact ten-minute staged-credential expiry, scan security flags, delayed scan
-cleanup, listener retry pacing, and mDNS registration/removal. BLE checks assert one report build per read and stable
-read-blob snapshots. Firmware builds cover both W MCUs.
+failures, the WPA3-SAE fallback and IPv4 bytes, exact ten-minute staged-credential expiry, scan security flags,
+delayed scan cleanup, listener retry pacing, and mDNS registration/removal. BLE checks assert one report build per
+read and stable read-blob snapshots. Firmware builds cover both W MCUs.
 Hardware acceptance still requires both boards, simultaneous Wi-Fi/BLE with SPI and SDIO benchmarks, reconnects,
 wrong keys/replays, DHCP timeout, wrong WPA2 and WPA3 passwords, a WPA3-only network join, Wi-Fi loss/retry, USB
 sharing exclusion, stack high-water measurements, and confirming that BTstack never mutates the settings sector.
