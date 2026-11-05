@@ -361,7 +361,7 @@ See [firmware test guidance](../../../firmware/tests/README.md#host-behavior-reg
 [test_sd_ports.py](../../../tests/artifacts/test_sd_ports.py) inspects cross-build artifacts.
 `validate.sh` also builds both ports and transports for RP2040/RP2350 and inspects
 the bare-metal compilation database and ELF for kernel dependencies and a single
-selected port. These are host/build checks, not physical-card qualification.
+selected port.
 
 ### Block API
 
@@ -482,8 +482,8 @@ SPI initialization stage 10 identifies CMD6 failures; existing stage numbers are
 
 The SDK chooses the highest realizable SPI rate not exceeding the selected ceiling, using `clk_peri` and an even
 prescaler multiplied by an integer post-divider. With `clk_peri` equal to SYSCLK, a 50 MHz ceiling yields 37.5 MHz at
-150 MHz, exactly 50 MHz at 200 MHz, and 41.67 MHz at 250 MHz. These are divider calculations, not hardware qualification
-of High-Speed SPI. HID and `storage get status` report the actual configured rate, not the requested ceiling.
+150 MHz, exactly 50 MHz at 200 MHz, and 41.67 MHz at 250 MHz. These are divider calculations. HID and
+`storage get status` report the actual configured rate, not the requested ceiling.
 Class 10 is a write-performance class, not a guarantee of 50 MHz SPI support. Runtime I/O errors do not lower clocks
 or replay uncertain writes.
 
@@ -506,12 +506,12 @@ driver. CSD must advertise a default transfer rate of at least 25 MHz.
 The saved storage profile supplies the target for both SDIO and SPI. A 25 MHz target never negotiates High Speed.
 For a 50 MHz target at or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default
 Speed and records the host limit. Above 100 MHz it requests 50 MHz and the transport clamps to its PIO ceiling (SYSCLK / 4):
-at most 37.5 MHz at 150 MHz CPU and up to 50 MHz at 250 MHz CPU. Negotiation and divider calculations do not
-qualify a board, card, wiring, or overclock; see [release qualification](../../deployment/release.md).
+at most 37.5 MHz at 150 MHz CPU and up to 50 MHz at 250 MHz CPU. Actual operation depends on the board, card, wiring,
+and clock; see the [release guide](../../deployment/release.md).
 Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
 group-1 support, busy status and selected function. After DAT0 is ready, it leaves
 CLK running at the old rate for 1 ms before targeting up to 50 MHz. This bounded
-settling interval was required by the lab card; other cards still require qualification.
+settling interval was required by the lab card; other cards may have different timing margins.
 CMD13 and CRC-checked LBA 0 validate the faster bus. A failure permits
 exactly one 25 MHz attempt, including a CMD6 switch back to Default-Speed
 timing and repeat validation; failure of that attempt aborts initialization.
@@ -519,7 +519,7 @@ Unsupported/rejected High Speed is nonfatal only while card operation can be
 confirmed. Runtime read/write errors never trigger speed negotiation or replay.
 
 Use the saved Default profile for Default-Speed operation or High-Speed to request negotiation.
-Neither profile qualifies an overclock. Historical measurements are in the
+Neither profile changes voltage or makes an out-of-spec clock supported. Historical measurements are in the
 [test records](../../validation/records/README.md).
 
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
@@ -527,8 +527,8 @@ The Default-Speed clock divider is a whole number of system cycles, rounded up s
 20.833 MHz. High-Speed dividers are even and limited to 3.0 so the cycle-locked TX and shortened RX programs stay valid;
 the [clock planning table](physical-links.md#clock-planning) lists each rule. This deterministic divider
 rounding is not adaptive speed selection.
-Use SDK-supported clock settings and check
-effective-clock telemetry; an accepted divider does not qualify an overclock.
+Use SDK-supported clock settings and check effective-clock telemetry; an accepted divider does not change MCU or
+card operating limits.
 Failures are reported rather than hidden by lower-speed reinitialization.
 Set SYSCLK before initialization; do not change it during a transfer. An idle
 clock change requires card reinitialization so the host can recalculate timing.
@@ -827,11 +827,7 @@ data-bearing backend seam (actual bytes, ownership, RMW, batch counts, sense and
 checked completion). It does not execute TinyUSB's BOT state machine or physical
 SD transport. Existing SDK TinyUSB tests require an external test environment;
 there is no configured runnable full-stack host BOT integration in this repository.
-BOT reset/short-transfer/CSW error integration and real USB-to-card completion
-remain HIL validation gaps, including the review's GIL/integration gap; no Python
-GIL behavior is inferred from these C host tests. No dependencies were installed.
-
-For a future authorized controlled measurement, use the same board/card,
+For controlled measurements, use the same board/card,
 firmware options, clock and contiguous LBA range on both revisions; record
 artifact hashes and actual bus clock, SCSI command sector counts and observed
 backend counts. Record total wall time and bytes per run, repeat read/write runs with matched sync and
@@ -839,21 +835,17 @@ cache policy, and report distributions/errors. Changing staging requires its own
 BOT/short-input/abort validation before an A/B performance claim. Do not run this
 recipe on media without separate explicit authorization.
 
-The historical target records identify earlier artifacts, not this remediation.
-Software models cannot measure PIO/DMA scheduling, command gaps, or card busy time.
-No controlled before/after benchmark or HIL run is available for these changes,
-including the new low-end candidate. No hardware qualification or throughput gain
-is claimed. Measure command gaps, CRC/copy, filesystem allocation (normal versus
-preallocated files), and card busy time before choosing further optimizations.
+Software models do not measure PIO/DMA scheduling, command gaps, or card busy time. Measure command gaps, CRC/copy,
+filesystem allocation (normal versus preallocated files), and card busy time when evaluating further optimizations.
 
 | Review improvement | Current status |
 | --- | --- |
 | Phase profiling and failure diagnostics | Removed: phase profiling had overlapping windows and no product consumer; the last failure is reported through `pf_storage_get_status()` |
 | Preserve batching after transient faults | Not implemented: a runtime failure invalidates the card, aborts the host, and refuses replay; later explicit or worker initialization resolves open streams only after a successful stop |
 | Remove initialization-only payload storage | Implemented for payload storage; initialization keeps its single-sector LBA 0 validation, and transfer CRC checks are retained |
-| Fuse CRC and payload copying | Opt-in `PF_SDIO_PIO_FUSED_COPY` CMake option, OFF by default; both variants host-tested; target speed unmeasured |
-| Interrupt-backed synchronous native waits | Opt-in `PF_SDCARD_INTERRUPT_WAIT`, OFF by default; adapter and notification races host-tested; target scheduling unqualified |
-| SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks; SB128 filesystem tests qualified at 25 MHz, not 50 MHz |
+| Fuse CRC/payload copy | Opt-in `PF_SDIO_PIO_FUSED_COPY`, OFF by default; host tests compare both variants |
+| IRQ wait | Opt-in `PF_SDCARD_INTERRUPT_WAIT`, OFF by default; host tests cover adapter races |
+| SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks |
 | Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](../../validation/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
 | Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD-card performance test](../../guides/sdcard-benchmark.md) |
 | Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
@@ -870,8 +862,8 @@ running scheduler retains polling. Waiter registration, notification and timeout
 kernel critical sections, including the SMP kernel lock when enabled. The ISR notifies and clears the waiter
 before releasing its critical section, so cleanup cannot race a notification to an expired waiter.
 Initialization and IRQ ownership remain on the startup core; the serialized waiting task need not own that core.
-Host tests cover cross-core timeout exclusion and duplicate/early completion; target SMP scheduling remains
-unqualified. Concurrent card operations are still unsupported without the execution-port reservation.
+Host tests cover cross-core timeout exclusion and duplicate/early completion. Concurrent card operations are still
+unsupported without the execution-port reservation.
 
 `PF_SDIO_PIO_FUSED_COPY` and `PF_SDCARD_INTERRUPT_WAIT` are independent
 compile-time axes: the former fuses CRC/payload copying in the protocol data
@@ -976,28 +968,22 @@ host control-flow checks, not USB enumeration/scheduling or physical BOT tests.
 Use the existing [test guidance](../../../firmware/tests/README.md) and
 [project validation entry point](../../../tools/validation/validate.sh).
 
-Host tests and timing models do not establish electrical margins or target
-hardware safety. Physical qualification is card, board, wiring, and clock
-specific; see [hardware records](../../guides/hardware.md#sd-card-breakout),
+Electrical behavior and sustained transfer results depend on the card, board, wiring, and clock; see
+[hardware setup](../../guides/hardware.md#sd-card-breakout), the
 [SD-card performance test](../../guides/sdcard-benchmark.md), and [test records](../../validation/records/README.md).
-Read-only initialization success does not qualify high-speed writes. Power-loss
-recovery, complete MSC lifecycles, and sustained endurance require separate
-qualification. CSD v1/v2 capacity must fit the 32-bit block contract; SDUC,
-64-bit LBAs, asynchronous requests, and a one-bit native block backend are not
+Read-only initialization does not exercise high-speed writes. Power-loss recovery, complete MSC lifecycles, and
+sustained endurance involve behavior beyond card initialization. CSD v1/v2 capacity must fit the 32-bit block
+contract; SDUC, 64-bit LBAs, asynchronous requests, and a one-bit native block backend are not
 implemented.
 
-Release qualification must record, for each supported board/card/transport
-combination, card initialization stability, read/write self-test results,
-effective clock, stack high-water marks, card removal during active I/O, checked
-USB host eject and BOT reset behavior, and power interruption during data and
-filesystem-metadata writes. Host regressions are prerequisites, not substitutes,
-for those hardware records.
+For board-level SD checks and controlled measurements, see the
+[firmware testing guide](../../development/firmware-testing.md#sd-card-transport-board-checks).
 
 ## Historical Records
 
 Dated, configuration-specific observations and review follow-ups are kept out of this reference in
-[test records](../../validation/records/README.md); they may describe earlier clocking, recovery, and qualification algorithms and
-do not qualify the current firmware or other cards. Most relevant:
+[test records](../../validation/records/README.md); read each with its original firmware, card, and clock context.
+Most relevant:
 
 - [Earlier SDIO observations (undated)](../../validation/records/earlier-sdio-qualification-undated.md): card/clock throughput
   table and why 50 MHz needs high-speed TX.

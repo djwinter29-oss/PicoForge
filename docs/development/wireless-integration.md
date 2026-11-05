@@ -56,6 +56,29 @@ those reports do not define.
   wireless-commit flag. Omitted credentials are not staged. `POST /api/wireless/scan` uses op `11` and reads each
   result through op `12`; `POST /api/wireless/test` and `/cancel` use ops `9` and `10`.
 
+## Wi-Fi station behavior
+
+The station joins existing 2.4 GHz open, WPA2-PSK, WPA2/WPA3 transition, or WPA3-SAE networks and obtains IPv4
+through DHCP. WEP, WPA-only, enterprise networks, and 64-hex-digit raw PSKs are unsupported. Scan results cannot
+identify SAE, so a connection test with the default authentication state tries WPA2 first. It falls back once to
+WPA3-SAE only when the network is not found or association fails before authentication; password rejection and DHCP
+timeout do not trigger fallback. After a successful fallback, subsequent attempts use that mode until reboot.
+
+Saved association and DHCP attempts have a 30-second deadline. Failures and dropped links retry with capped
+exponential backoff from five to 60 seconds, reset after a successful connection. Scans time out after ten seconds.
+The CYW43 driver may report a wrong WPA2 password as repeated handshake timeouts rather than a bad-auth status; a
+test fails after two dropped handshakes (about 16 seconds).
+
+A credential test disconnects the existing station before attempting the new network. If the driver refuses the
+disconnect request, the firmware retries every five seconds until accepted. Failed tests return to the saved network
+as soon as the test link disconnects and do not increase its reconnect backoff. Successful test credentials remain
+staged for ten minutes, even if the host disconnects. Expiry wipes the staged passphrase and restores the saved
+network, or disables station mode when saved Wi-Fi is off. When saved Wi-Fi is disabled, station mode is enabled
+only for a validated scan or test and released after scan completion/timeout, failed test, cancellation, or expiry.
+The TCP listener and mDNS responder are tied to the saved station network, never a candidate test network. A
+credential test or lost saved link closes the TCP client and suspends new connections until the saved network
+reconnects.
+
 ## Saved-network service discovery
 
 The pinned SDK `pico_lwip_mdns` responder answers IPv4 hostname queries for `picoforge-<USB serial>.local` only on
@@ -88,3 +111,5 @@ must compute the proof themselves. Feature `20` opcode `13` does not provide a g
 [console guide](../guides/console.md#direct-dashboard-authentication) for the rationale and local-machine
 considerations. Authenticated or not, the listener accepts one CLI client, closes sessions idle for 15 minutes, and
 is exposed only on the saved Wi-Fi network. The TCP stream itself is not encrypted.
+lwIP uses 4-byte heap alignment for Cortex-M packet-buffer stores. Its TCP budget is an 8 KiB heap, three PCBs,
+1460-byte MSS, and 2 x MSS send and window buffers.

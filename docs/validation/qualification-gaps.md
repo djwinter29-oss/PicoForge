@@ -14,7 +14,8 @@ follow the [getting-started safety precautions](../guides/getting-started.md#bef
 - **Power-loss recovery:** existing validation does not establish filesystem integrity or data durability after
   interrupted writes or unexpected power loss.
 - **W-board radios:** physical Wi-Fi association/reconnect, BLE access/control, and coexistence with USB and storage
-  remain unqualified. See the [wireless qualification scope](../guides/wireless.md).
+  remain unqualified. See the
+  [wireless and BLE board checks](../development/firmware-testing.md#wireless-and-ble-board-checks).
 - **Python host timing and lifecycle:** the 50 ms HID polling interval, real report freshness, CPU cost under multiple
   monitors, USB detach/reconnect, MSC ownership handoff, and shutdown during wireless operations have not yet been
   qualified on physical boards. Follow the [Python host hardware procedure](../development/host-tools.md#qualify-the-python-host-with-hardware).

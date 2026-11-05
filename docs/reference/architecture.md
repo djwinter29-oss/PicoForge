@@ -129,8 +129,8 @@ Two-core scheduling does not provide a hard real-time guarantee.
 On W boards, the SDK poll-mode radio work shares the USB owner task so the required SDK context remains controlled.
 USB DCD operations have a separate low-level cross-core guard; application callbacks and synchronous MSC media I/O
 do not run while that guard is held. This is an integration constraint, not a general lock for application code.
-Changes to USB classes, event sources, or callback latency require rechecking the guard's bounded event queue and
-hardware qualification.
+Changes to USB classes, event sources, or callback latency require rechecking the guard's bounded event queue under
+the resulting workload.
 
 ## Main Runtime Flows
 
@@ -202,8 +202,7 @@ application behavior, use a narrow explicit interface rather than including appl
   attempt; failure leaves the volume unmounted and blocks automatic retries. It never claims host-cache durability.
 - [Confirmed forced settings save/reboot](settings.md#forced-save-and-reboot) syncs and detaches before flash save,
   keeping media USB-reserved and unavailable until successful reset; failures do not schedule reboot.
-- Uncertain failed writes are not replayed. Host tests cover exclusion, failed sync retention, no-replay, and recovery
-  rejection/completion; they do not establish physical USB BOT or power-loss qualification.
+- Uncertain failed writes are not replayed.
 
 ### Storage Ownership Lifecycle
 
@@ -334,5 +333,4 @@ Use [firmware testing](../development/firmware-testing.md) for builds and hardwa
 [test ownership index](../../tests/README.md) for fixtures and suite boundaries. The
 [release guide](../deployment/release.md) owns current CI matrices, package contents, and publication. Historical
 software checks belong in [review records](../validation/records/static-review-remediation.md); their old matrix and
-command results are not current build instructions. Outstanding physical validation is tracked in
-[qualification gaps](../validation/qualification-gaps.md).
+command results are not current build instructions.

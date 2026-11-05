@@ -7,7 +7,7 @@ hardware limits are in [firmware test guidance](../../firmware/tests/README.md) 
 clients, while physical USB behavior remains a hardware-qualification item. The
 [HID Report Reference](../reference/usb-hid.md) is authoritative for the current contract.
 W-board host checks and target builds do not qualify physical Wi-Fi/BLE; the
-[wireless acceptance scope](../guides/wireless.md#qualification) lists the required hardware checks.
+[wireless and BLE board checks](#wireless-and-ble-board-checks) are required for physical qualification.
 
 ## Prerequisites
 
@@ -132,3 +132,65 @@ Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS p
 Record preparation/status visibility separately from storage correctness. The protocol has no distinct
 mounting/checking phase; existing wire states must not be reinterpreted to fake one.
 Host mocks cannot establish real flush/eject behavior or filesystem integrity after forced return.
+
+### Wireless and BLE Board Checks
+
+Host checks cover settings-record validation, proof vectors and mutations, payload boundaries, missing keys,
+restricted BLE writes, single-SET behavior, secret-free status and API errors. Wi-Fi state-machine tests cover boot
+gating, association deadlines, reconnects, WPA3-SAE fallback, staged-credential expiry, scan cleanup, listener
+retry pacing, and mDNS registration/removal. BLE checks cover report snapshots and read behavior. W-board builds do
+not qualify physical radio behavior.
+
+Use both Pico W and Pico 2 W with a test access point and expendable SD media. Record the firmware revision, board,
+transport, host OS, and access point configuration. Do not use production credentials.
+
+1. Exercise open, WPA2, WPA3-transition and WPA3-only joins, wrong WPA2/WPA3 passwords, DHCP timeout, link loss and
+   reconnect. Verify scan, credential testing, staged-test link loss, Cancel, failed-test cleanup and the ten-minute
+   staging expiry with the host connected and disconnected.
+2. Verify BLE advertising and access with valid and invalid keys, rejected proofs, replayed commands, disconnect,
+   reconnect and simultaneous Wi-Fi activity. Check scan data, pairing behavior, long reads, Database Hash visibility,
+   advertising timing, Service Changed confirmation/timeout, and cache rediscovery. Record the client and OS.
+   Confirm unauthorized writes remain rejected and BTstack does not write the settings sector.
+3. Verify the TCP CLI is blocked when its saved switch is off after reboot, then enable it and confirm an authenticated
+   client can connect. Also check that no saved key blocks clients. Verify hostname/DNS-SD resolution after DHCP and
+   reconnect. Test a hostname conflict, no discovery on the test network, and disconnect while delayed mDNS replies
+   are pending.
+4. Repeat simultaneous Wi-Fi/BLE activity with USB storage ownership and storage benchmarks across SPI and SDIO
+   configurations. Verify storage admission remains exclusive, capture task stack high-water observations, and
+   record any USB, radio, or storage failures.
+
+Record results in the [validation records](../validation/records/README.md). Partial runs and untested combinations
+remain qualification gaps; host checks and target builds do not substitute for these board checks.
+
+### Boot Settings Board Checks
+
+Record the firmware commit, SDK/FreeRTOS revisions, board/MCU/flash model, transport, build clock, selected profiles,
+and host OS. Use expendable media, stop SD writes, disable MSC, and prevent USB/probe back-power during interruption
+tests.
+
+1. In a diagnostic build, count erase/program callback entries and observe task counts and lockout-task reclamation
+   without logging from the flash callback. Keep `flash_safe_execute()` exclusive to boot-config and keep the task
+   population fixed.
+2. From the USB task, alternate two settings for 100 saves without rebooting; verify each result, no stuck
+   reclamation state, and task count returning to baseline. Repeat with CDC/HID traffic active, then reboot and check
+   the final profiles. Use a diagnostic caller for the no-reboot loop because normal successful HID saves reboot.
+3. Save identical settings 100 times and confirm the erase/program counters do not increase. Interrupt power at
+   varied points during 20 changing-setting saves; after each restart, verify boot succeeds with a complete old/new
+   record or complete defaults, never mixed fields. Save again to check recovery.
+4. Record save counts, timings, USB disconnects/timeouts, reboot results, and errors.
+
+### USB HID Board Checks
+
+Exercise CDC, 69-byte Feature `20` transfers, 49-byte Report `12` transfers, HID, MSC transitions, and USB
+re-enumeration on RP2040 and RP2350 hardware. Verify forced settings saves use the documented confirmation and
+transaction flow, and that hosts never replay an uncertain command. Use the
+[USB HID reference](../reference/usb-hid.md) for wire details and the storage lifecycle checks above for card
+ownership behavior.
+
+### SD-Card Transport Board Checks
+
+For each supported board/card/transport combination, record card initialization, read/write self-test results,
+effective bus clock, and task stack high-water marks. Exercise card removal during I/O, host eject and BOT reset
+behavior, and power interruption during data and filesystem-metadata writes using expendable media. Read-only
+initialization does not exercise high-speed writes; follow the
+[SD-card performance procedure](../guides/sdcard-benchmark.md) for throughput measurements.

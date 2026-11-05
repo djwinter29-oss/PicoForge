@@ -358,14 +358,6 @@ force a save, or change USB storage ownership.
 | BT-002 | HMAC-SHA256 BLE and TCP proof vectors, including the worked vector above. | `tests/contracts/test_wireless_auth.py` |
 | BT-003 | Service Changed subscription/fallback, UUID lookup, proof signing and the restricted 9-byte command envelope. | `host/direct/tests/wireless.test.mjs` |
 
-Hardware qualification is pending; host tests cannot establish radio behavior.
-
-| Test | Requirement | Platforms | Firmware | Date | Result | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| BT-H01 | Scan data, pairing, long reads, reconnects and Database Hash visibility. | Pico W, Pico 2 W; record BLE client and OS. | — | — | Pending | Record observed advertising and GATT behavior. |
-| BT-H02 | Advertising timing, Wi-Fi/SD coexistence and connection loss during reboot/save. | Pico W, Pico 2 W. | — | — | Pending | Record radio/storage conditions and command outcome. |
-| BT-H03 | Service Changed confirmation and timeout disconnect; cache rediscovery after a database update. | Pico W and Pico 2 W; Chrome on Windows, Android and macOS. | — | — | Pending | Verify stale-handle recovery, no resend after CCCD toggle, and disconnect after missing confirmation. |
-
 ## Implementation
 
 `bluetooth.c` owns BLE state and callbacks; `bluetooth_profile.gatt` defines the attributes. `wireless_auth.c` owns the

@@ -248,9 +248,8 @@ speed. Builds always use the SDK stock clock; select another clock through the s
 
 **Clock safety.** The selector offers values, not a guarantee that each one works on every board/MCU combination.
 150 MHz on RP2040 and 200/250 MHz are outside the respective MCU specifications, and QSPI flash is clocked from
-`clk_sys`, so higher profiles also affect flash timing. Treat out-of-spec profiles as experimental. Do not advertise a
-profile as supported for a product until that exact board, MCU, flash, clock and peripheral combination has been
-qualified. Host model tests do not qualify any runtime clock profile.
+`clk_sys`, so higher profiles also affect flash timing. Treat out-of-spec profiles as experimental and do not
+advertise them as supported for a product.
 
 ## SD-Card Speed
 
@@ -361,25 +360,5 @@ creation, after task creation but before programming, and after programming duri
 tests interrupt the record at every byte boundary, check complete defaults with no credentials after reboot, then
 verify recovery through a successful save. Separate system-clock tests exercise modelled clock and regulator APIs.
 
-Real flash erase/program, power loss, clock changes and bus speeds on hardware are not covered and need a board.
-
-### Board qualification (pending)
-
-This procedure has not been executed as part of the host checks. Run it on both RP2040 and RP2350 boards before
-claiming hardware qualification; use only clock profiles already qualified for the exact board.
-
-1. Record the firmware commit, SDK/FreeRTOS revisions, board/MCU/flash model, transport, build clock, selected
-   profiles, and host OS. Use expendable media and disable MSC and storage work before saves.
-2. In a temporary diagnostic build, count erase/program callback entries and observe task counts and reclamation
-   timeouts without printing inside the flash callback. Keep this module the sole safe-execute caller and keep the
-   application task population fixed.
-3. From the USB task, alternate two distinct settings for 100 saves without rebooting between saves. Verify each
-   result, no stuck reclamation state, and the task count returning to its baseline. Repeat with normal CDC/HID
-   traffic active (MSC still disabled), then reboot and verify the final profiles. Use a diagnostic caller for the
-   no-reboot loop: the normal successful HID save command intentionally requests reboot.
-4. Save identical settings 100 times. Verify every call succeeds without increasing the erase/program counters.
-5. With SD writes stopped, interrupt board power at varied points during 20 changing-setting saves. Prevent USB or
-   probe back-powering. After each restart, verify boot succeeds and settings are either a valid old/new complete
-   record or complete defaults, never an invalid mixed record. Save again to confirm recovery.
-6. Record actual counts, timings, USB disconnects/timeouts, reboot results, and any failures. Mark unexecuted or
-   interrupted steps pending; host-model passes are not substitutes for these results.
+For board-level settings checks, see the
+[Boot Settings Board Checks](../development/firmware-testing.md#boot-settings-board-checks).

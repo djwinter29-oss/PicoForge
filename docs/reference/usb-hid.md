@@ -749,7 +749,7 @@ must serialize writes on each transport. GET never replays a save.
 Clients reconnect only to the same verified device UID and poll the original opcode/transaction result. Never replay
 SET or infer completion from reconnection. Timeout, mismatched identity, or invalid result leaves outcome uncertain
 and blocks further writes. The [settings safety policy](settings.md#forced-save-and-reboot) explains confirmation
-and host-cache risks. This workflow has host/model coverage, not physical USB/power-loss qualification.
+and host-cache risks.
 
 ### Cross-Interface Resource Arbitration
 
@@ -895,10 +895,6 @@ Conformance tests cover:
 Bluetooth checks, including its cross-transport Busy results, are listed in the
 [Bluetooth LE conformance list](bluetooth.md#conformance).
 
-Host tests and firmware cross-builds do not verify physical USB behavior. Qualify CDC, 69-byte Feature `20` transfers,
-49-byte Report `12` transfers, HID, MSC transitions, and re-enumeration on RP2040 and RP2350 hardware before
-product use.
-
 ## Implementation and Integration
 
 The descriptor and firmware implementation are in `firmware/src/app/usb`; the TinyUSB HID control buffer is
@@ -912,6 +908,4 @@ implement the same report contract. Settings saves write the persistent record's
 An accepted benchmark is preflighted by the sole storage worker before its prior result is replaced. The reserved
 `/PFTEST.BIN` path is never overwritten. MSC transitions allow a bounded interval for the matching Feature `20`
 result GET before ownership changes.
-
-This describes software implementation, not hardware qualification. HID report delivery, MSC ownership changes,
-host safe-eject behavior, and reconnect handling still require physical validation on the supported boards.
+For board-level USB checks, see the [firmware testing guide](../development/firmware-testing.md#usb-hid-board-checks).
