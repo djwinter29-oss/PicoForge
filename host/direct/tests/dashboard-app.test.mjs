@@ -333,6 +333,8 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     assert.equal(el("#settings-wifi").disabled, true, "radio assignments stay USB-only");
     assert.equal(el("#settings-ble").disabled, true, "radio assignments stay USB-only");
     assert.equal(el("#settings-tcp-cli").disabled, false, "BLE can toggle TCP CLI without Wi-Fi provisioning");
+    assert.equal(el("#wifi-scan").disabled, true, "Wi-Fi provisioning actions stay USB-only");
+    assert.equal(el("#ble-generate").disabled, true, "Control-key provisioning stays USB-only");
     assert.equal(el("#msc-control").disabled, true, "storage ownership stays USB-only");
     await el("#settings-reboot").click();
     await el("#confirm-reboot").click();
