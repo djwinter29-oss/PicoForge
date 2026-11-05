@@ -340,7 +340,9 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     el("#bluetooth-open").click();
     assert.match(el("#bluetooth-connection-status").textContent, /Connected to Nearby PicoForge/);
     assert.equal(el("#ble-control-key").disabled, true);
-    await el("#bluetooth-disconnect").click();
+    assert.equal(el("#bluetooth-scan").textContent, "Disconnect", "one button toggles while connected");
+    assert.equal(el("#bluetooth-scan").disabled, false);
+    await el("#bluetooth-scan").click();
     assert.equal(client.bleKey, null);
     assert.equal(el("#usb-open").disabled, true, "disconnect must not discard a pending command to switch transport");
     client.outstanding = null;

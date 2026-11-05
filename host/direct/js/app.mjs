@@ -134,10 +134,11 @@ function render(state) {
   element("usb-connect").textContent = !bleClient && (state.connected || state.reconnecting)
     ? "Disconnect" : "Select board";
   element("usb-connect").disabled = state.busy || bleClient || !globalThis.isSecureContext || !navigator.hid;
-  element("bluetooth-scan").disabled = state.busy || !bleClient || state.connected
-    || !globalThis.isSecureContext || !navigator.bluetooth;
-  element("bluetooth-disconnect").disabled = state.busy || !bleClient || !state.connected;
-  element("ble-control-key").disabled = element("bluetooth-scan").disabled;
+  const bleLinked = bleClient && (state.connected || state.reconnecting);
+  const bleUnsupported = !globalThis.isSecureContext || !navigator.bluetooth;
+  element("bluetooth-scan").textContent = bleLinked ? "Disconnect" : "Scan for boards";
+  element("bluetooth-scan").disabled = state.busy || !bleClient || (!bleLinked && bleUnsupported);
+  element("ble-control-key").disabled = state.busy || !bleClient || bleLinked || bleUnsupported;
   element("usb-connection-close").disabled = state.busy;
   element("bluetooth-connection-close").disabled = state.busy;
   element("usb-connection-status").textContent = !globalThis.isSecureContext || !navigator.hid
@@ -221,13 +222,14 @@ element("usb-connect").addEventListener("click", () => run(async () => {
 }));
 element("bluetooth-scan").addEventListener("click", () => run(async () => {
   if (element("bluetooth-scan").disabled) return;
+  if (client.state.connected || client.state.reconnecting) {
+    await client.disconnect();
+    return;
+  }
   const key = element("ble-control-key").value;
   element("ble-control-key").value = "";
   await client.connect(key);
   if (client.state.connected) bluetoothDialog.close();
-}));
-element("bluetooth-disconnect").addEventListener("click", () => run(async () => {
-  if (!element("bluetooth-disconnect").disabled) await client.disconnect();
 }));
 for (const [name, dialog] of [["usb", usbDialog], ["bluetooth", bluetoothDialog]]) {
   element(`${name}-connection-close`).addEventListener("click", () => {

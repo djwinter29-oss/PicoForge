@@ -35,6 +35,7 @@ let selectedBoard = null;
 let selectedBoardLabel = "";
 let knownBoards = [];
 let scanningBoards = false;
+let unknownBoardRescanAt = 0;
 let selectionVersion = 0;
 let wirelessLoadedAt = 0;
 let wirelessOutcomeUncertain = false;
@@ -370,6 +371,12 @@ async function updateStatus() {
     renderStatus(currentSnapshot);
   } catch (error) {
     if (version !== selectionVersion) return;
+    // A restarted server forgets board IDs until the next scan; re-register instead of polling 409s forever.
+    if (error.status === 409 && error.message.startsWith("unknown board")
+      && Date.now() - unknownBoardRescanAt >= 5000) {
+      unknownBoardRescanAt = Date.now();
+      void rescanBoards();
+    }
     statusReadError = error.message;
     const failedSnapshot = currentSnapshot?.connected
       ? { ...currentSnapshot, error: `Status unavailable: ${error.message}`,

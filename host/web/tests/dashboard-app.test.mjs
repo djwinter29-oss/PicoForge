@@ -57,6 +57,7 @@ test("shared dashboard preserves drafts and command state across status failures
     settings_supported: true, settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
     memory: { mode: "spi" }, msc: { enabled: false, transition_pending: false }, self_test: null };
   let statusFails = false;
+  let statusUnknownBoard = false;
   let boardScanFails = false;
   let release;
   let gate;
@@ -130,6 +131,8 @@ test("shared dashboard preserves drafts and command state across status failures
     }
     if (url.startsWith("/api/status?board=")) {
       if (statusFails) throw new Error("status down");
+      if (statusUnknownBoard) return { ok: false, status: 409,
+        json: async () => ({ error: "unknown board; rescan and select a listed board" }) };
       return { ok: true, json: async () => structuredClone(connected) };
     }
     if (url.startsWith("/api/wireless/test?board=")) {
@@ -240,6 +243,16 @@ test("shared dashboard preserves drafts and command state across status failures
     statusFails = false;
     await tick();
     assert.equal(elements.get("#settings-clock").value, "250");
+    const scansBefore = requestedUrls.filter(url => url === "/api/boards").length;
+    statusUnknownBoard = true;
+    await tick();
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requestedUrls.filter(url => url === "/api/boards").length, scansBefore + 1,
+      "a restarted server's unknown-board reply triggers one rate-limited rescan");
+    statusUnknownBoard = false;
+    await tick();
+    assert.equal(elements.get("#board-select").value, "board-a", "the rescan keeps the selected board");
     elements.get("#settings-clock").value = "200";
     handlers.get("#settings-clock:change")();
     boardScanFails = true;

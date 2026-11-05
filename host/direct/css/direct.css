@@ -141,7 +141,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 #wifi-diagnostics, #ble-diagnostics { grid-column: span 3; }
 #wifi-diagnostics[hidden], #ble-diagnostics[hidden] { display: none; }
 .runtime[aria-labelledby="settings-title"] .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 
 .self-test-controls {
@@ -236,14 +236,15 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .status-line[data-active="true"] .status-mark { background: var(--teal); }
 
 @media (max-width: 1200px) {
-  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: row; }
+  .settings-controls > label[for="settings-tcp-cli"]:not([hidden]) { grid-column: span 2; }
 }
 
 @media (max-width: 960px) {
   .identity, .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
 }
 
 @media (max-width: 720px) {
@@ -265,5 +266,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
   .connection { font-size: 12px; }
   h1 { font-size: 26px; }
   .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls,
-  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: minmax(0, 1fr); }
+  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: minmax(0, 1fr); grid-auto-flow: row; }
+  .settings-controls > label[for="settings-tcp-cli"]:not([hidden]) { grid-column: auto; }
 }
