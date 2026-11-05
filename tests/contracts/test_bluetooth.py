@@ -330,7 +330,7 @@ int main(void)
     cccd[0] = 2u;
     assert(write_cb(1u, SERVICE_CHANGED_CCCD, ATT_TRANSACTION_MODE_NONE, 0u, cccd, sizeof(cccd)) == 0);
     pf_bluetooth_poll();
-    assert(indication_count == 3u && disconnect_count == 2u);
+    assert(indication_count == 3u && disconnect_count == 3u);
     cccd[0] = 1u;
     assert(write_cb(1u, SERVICE_CHANGED_CCCD, ATT_TRANSACTION_MODE_NONE, 0u, cccd, sizeof(cccd)) ==
            ATT_ERROR_VALUE_NOT_ALLOWED);

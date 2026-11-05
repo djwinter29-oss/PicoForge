@@ -56,26 +56,31 @@ any bank access, because its default Pico W flash banks overlap the settings sec
 Service UUID: `50fc0000-7c91-4d70-8b32-6e856443f502` (wire revision 2). The final byte increments for breaking
 wire changes; revision 1 used `...f501`. Report characteristics use the hexadecimal USB report ID and return that
 report's payload **without** the report ID byte. Suffixes `0001`–`00ff` are reserved for report mirrors; `0100`
-and above are BLE-specific.
+and above are BLE-specific. Clients must reject an unsupported payload version for a known report or control
+characteristic. Clients may ignore unknown characteristics unless they are required for an operation they use.
 
 The Generic Attribute service includes Service Changed (`0x2A05`) and Database Hash (`0x2B2A`). The database is
 static during a boot, but firmware updates can change it. The Database Hash is public for clients that compare it;
-the server does not implement Robust Caching or Client Supported Features. The PicoForge service UUID remains
-unchanged because these standard GATT attributes do not change its wire contract. The GAP Appearance is Unknown;
-Device Information exposes manufacturer `PicoForge` and the firmware revision.
+the server does not implement Robust Caching or Client Supported Features. Cache invalidation behavior is described
+below. The PicoForge service UUID remains unchanged because these standard GATT attributes do not change its wire
+contract. The GAP Appearance is Unknown; Device Information exposes manufacturer `PicoForge` and the firmware
+revision.
 
 ### Service Changed and Caching
 
 The Core specification (Vol 3, Part G, §2.5.2) limits an unbonded client's attribute cache to the current
 connection. This server nevertheless sends one full-range (`0x0001`–`0xFFFF`) Service Changed indication after
 subscription on each connection as a compatibility measure for stacks retaining caches across connections.
-Because the indication invalidates the whole range every time, clients must rediscover the database and cannot
-reuse cached handles across connections. This avoids persisting per-peer cache state.
+Clients must honor the indication and rediscover the database; they must not reuse cached handles across
+connections. This avoids persisting per-peer cache state.
 
 The firmware marks the indication sent only after the client confirms it, and does not send another on that
 connection even if the CCCD is toggled. If confirmation times out (BTstack's 30-second ATT transaction timeout),
 the firmware requests a link disconnect to release the single-connection slot; it retries the disconnect request
-if BTstack initially rejects it.
+if BTstack initially rejects it. A CCCD write that arrives before the link drops cannot queue another indication
+while that timeout disconnect is pending. The disconnect can interrupt a concurrent control exchange; if a
+state-changing request may have been admitted, follow the [uncertain-outcome rule](#control-characteristic) and
+inspect the result rather than replaying it.
 
 The Direct client subscribes before PicoForge discovery when Generic Attribute and Service Changed are available.
 If lookup or subscription fails with `NotAllowedError`, `NotFoundError`, `NotSupportedError` or `SecurityError`, it
@@ -88,7 +93,7 @@ return ATT error `0x80`.
 | --- | --- | --- | ---: | --- |
 | GAP `0x2A00` | Read | Read | 26 | Device name, as in the scan response. |
 | GAP `0x2A01` | Read | Read | 2 | Appearance `0` (Unknown). |
-| GATT `0x2A05` | Indicate | N/A | 4 | Service Changed handle range, little-endian `0x0001`–`0xFFFF`; submitted once per connection after subscription. |
+| GATT `0x2A05` | Indicate | N/A | 4 | Full-range Service Changed indication after subscription; transient submission errors are retried, but it is not resent after confirmation. |
 | GATT `0x2902` | Read, Write, Write Without Response | Read/write | 2 | Service Changed CCCD; `0` disables, `2` enables indication. Write Requests report validation errors; Write Without Response does not. |
 | GATT `0x2B2A` | Read | Read | 16 | BTstack-generated GATT Database Hash. |
 | Device Information `0x2A29` | Read | Read | 9 | Manufacturer name `PicoForge`. |
@@ -135,8 +140,8 @@ To unlock:
    `HMAC-SHA256(key, nonce[16] || UID[8] || "PFBLECTL1" || "SESSION01")`.
 
 An accepted proof unlocks the connection until it disconnects. Disconnect clears the unlock, nonce, proof and any
-frozen read snapshot. A rejected proof starts a two-second retry delay that persists across disconnect/reconnect;
-reconnecting does not reset the deadline.
+frozen read snapshot. Rejected-proof consumption and retry-delay behavior are specified under
+[Command Proofs](#command-proofs).
 
 The 16-byte challenge is assembled from two Pico SDK `get_rand_64()` outputs. The pinned SDK uses a
 non-cryptographic PRNG and mixes configured entropy sources: the default RP2040 build uses ROSC, timer and bus
@@ -160,11 +165,11 @@ proof:
 
 The ASCII domain and request strings have no terminator. A nonce and proof are used once whether the check passes or
 fails. A missing proof does not consume a challenge or start the lockout. A rejected proof consumes both, starts a
-two-second delay and returns `0x80`; proof operations during that delay return `0x82`. Missing key/challenge returns
-`0x83`. MAC comparison does not exit early. A rejected session proof leaves the link locked; the Direct dashboard
-then disconnects.
+two-second delay that persists across disconnect/reconnect, and returns `0x80`; proof operations during that delay
+return `0x82`. Missing key/challenge returns `0x83`. MAC comparison does not exit early. A rejected session proof
+leaves the link locked; the Direct dashboard then disconnects.
 
-The board does not enforce transaction-ID uniqueness; clients should advance the nonzero ID for every command and
+The board does not enforce transaction-ID uniqueness; clients must advance the nonzero ID for every command and
 serialize writes. The result is synchronous: `Pending` is not a BLE command outcome.
 
 ### Worked Proof Vector
@@ -197,6 +202,7 @@ sequenceDiagram
     P-->>C: Write Response; connection is unlocked
     C->>P: Read 0100; receive a fresh nonce
     C->>P: Write 0101; HMAC(key, nonce || UID || domain || 9-byte request)
+    P-->>C: Write Response; proof accepted
     C->>P: Write 0014; exact 9-byte request
     P-->>C: Write Response; result is terminal
     C->>P: Read 0014; match transaction ID and opcode
@@ -212,7 +218,7 @@ Writes to `0014` use a 9-byte form, not a truncated USB Feature `20` report. Sta
 | Offset | Size | Field | Meaning |
 | -----: | ---: | ----- | ------- |
 | 0 | 1 | `version` | `1`. |
-| 1 | 1 | `transaction_id` | Nonzero; client advances independently of the USB sequence. Firmware does not reject duplicates. |
+| 1 | 1 | `transaction_id` | Nonzero; client advances independently of the USB sequence. |
 | 2 | 1 | `opcode` | `1` LED, `2` confirmed reboot, or `5` save settings and reboot. |
 | 3 | 1 | `flags` | As USB Feature `20` for the opcode; forced-save and wireless-commit bits are forbidden. |
 | 4 | 5 | `arguments` | Opcode arguments; unused bytes zero. |
@@ -241,8 +247,8 @@ The wireless commit mask is USB-only and is never present in a BLE result.
 2. Invalid envelope (length other than 9, version other than `1`, or transaction ID `0`): ATT error `0x81`. The
    result slot, nonce and proof are unchanged.
 3. For non-LED requests, authentication checks lockout first (`0x82`), then missing key/challenge (`0x83`), then
-   proof state or MAC (`0x80` for missing/rejected proof). A missing proof does not consume the challenge or start
-   lockout; a rejected MAC does both. The result slot is unchanged. LED requests skip authentication.
+   proof state or MAC (`0x80` for missing/rejected proof). LED requests skip authentication. See
+   [Command Proofs](#command-proofs) for challenge consumption and retry-delay behavior.
 4. Opcodes `3`, `4` and `6`-`13` (assigned but USB-only): Unsupported/error `4` in the result slot.
    Unassigned opcodes: Unsupported/error `7`.
 5. Opcodes `1`, `2` and `5` follow the shared [error precedence](usb-hid.md#get-result) for their arguments and
@@ -287,22 +293,18 @@ mechanism.
 
 ## Security Properties
 
-One-use nonces prevent replay only when they are unpredictable and not repeated; the current Pico SDK source has
-no formal cryptographic unpredictability or uniqueness guarantee (see [Session Unlock](#session-unlock)). The
-`PFBLECTL1` domain prevents reuse of TCP CLI proofs (`PFTCPCLI1`, see
-[TCP CLI authorization](wireless.md#tcp-cli-authorization)); UID binding prevents reuse across boards; and request
-binding prevents changing the command covered by a proof. This is application authorization, not a guarantee of
-link encryption. On a connection without peer-initiated pairing, a passive observer within radio range can read
-unlocked status (including SSID and IPv4 address) and command traffic. A peer may initiate Just
-Works pairing, which can encrypt that connection depending on the peer and stack, but PicoForge neither requires nor
-relies on it. The key never crosses the link. An active attacker able to inject traffic into an unlocked connection
-can race an observed one-use proof and its exact bound command; request binding does not protect against an attacker
-controlling or proxying the live link. Do not treat reboot or save proofs as link security.
-There is no board-authentication proof, no idle relock, and the stable name and public address allow tracking;
-disconnect when finished and verify the selected UID before trusting status. These are accepted tradeoffs for this
-local development tool. A central can also deny service by jamming or holding the single connection. BLE cannot
-stage credentials, test or scan Wi-Fi, produce TCP CLI proofs, run benchmarks, change radio switches, force a save,
-or change USB storage ownership.
+| Threat | Existing controls | Residual risk |
+| --- | --- | --- |
+| Passive traffic observation | The Control key never crosses the link. | Pairing is optional and not required by PicoForge; without peer-initiated Just Works pairing, observers within radio range can read unlocked status (including SSID and IPv4 address) and command traffic. |
+| Proof replay or alteration | One-use challenges and HMAC request binding prevent reuse of a proof for a different request. | The pinned Pico SDK generator has no formal cryptographic unpredictability or uniqueness guarantee; repeated or predictable nonces weaken replay protection. See [Session Unlock](#session-unlock). |
+| Cross-board or cross-protocol proof reuse | The proof binds the board UID and uses the `PFBLECTL1` domain, distinct from TCP CLI's `PFTCPCLI1` ([TCP CLI authorization](wireless.md#tcp-cli-authorization)). | There is no board-authentication proof; the client should verify the selected UID before trusting status. |
+| Active attacker on a live link | A command proof is bound to one exact request and is accepted once. | An attacker able to inject traffic into an unlocked connection can race an observed proof and its exact bound command, or control/proxy the live link. Proofs do not provide link security. |
+| Session left unattended | Authorization is cleared on disconnect. | There is no idle relock; disconnect when finished. |
+| Device tracking | None. | The stable advertised name and public address permit tracking. |
+| Denial of service | One central is served at a time; disconnecting frees the slot. | A central can hold that connection, and radio jamming can prevent communication. |
+
+These are accepted tradeoffs for a local development tool. BLE cannot stage credentials, test or scan Wi-Fi, produce
+TCP CLI proofs, run benchmarks, change radio switches, force a save, or change USB storage ownership.
 
 Connection interval and supervision timeout are negotiated by the BLE stacks; PicoForge does not request custom
 values or promise a disconnect-detection deadline. Diagnostic notifications are intentionally omitted: the
@@ -321,10 +323,18 @@ negotiation for Web Bluetooth clients.
 | BT-H02 | Advertising timing, Wi-Fi/SD coexistence and connection loss during reboot/save. | Hardware on Pico W and Pico 2 W. |
 | BT-H03 | Service Changed confirmation and timeout disconnect, cache rediscovery after a database update. | Pico W/Pico 2 W; Chrome on Windows, Android and macOS. |
 
-For BT-H03, confirm the indication, check for stale-handle errors and rediscover the full range. Also verify that
-disabling/re-enabling the CCCD does not resend it, and that missing confirmation causes the firmware to disconnect
-the peer after the BTstack timeout. BT-H01/H02/H03 remain hardware qualifications; host tests cannot establish radio
-behavior.
+Hardware qualification status: **host-verified, hardware pending**. No BT-H01, BT-H02 or BT-H03 hardware results
+have been recorded; host tests cannot establish radio behavior.
+
+| Test | Board | Firmware | Client/OS | Date | Result | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| BT-H01 | — | — | — | — | Pending | Scan data, pairing, long reads, reconnects and Database Hash visibility. |
+| BT-H02 | — | — | — | — | Pending | Advertising timing, Wi-Fi/SD coexistence and connection loss during reboot/save. |
+| BT-H03 | — | — | — | — | Pending | Confirm Service Changed, verify rediscovery and stale-handle behavior; test timeout disconnect and CCCD toggling. |
+
+For BT-H03, test on Pico W and Pico 2 W with Chrome on Windows, Android and macOS. Verify the indication is
+confirmed, disabling/re-enabling the CCCD does not resend it, and missing confirmation causes disconnect after the
+BTstack timeout.
 
 ## Implementation
 
