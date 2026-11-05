@@ -1,4 +1,5 @@
-import { PicoForgeWebHid } from "./device.mjs?v=12";
+import { PicoForgeWebHid } from "./device.mjs?v=47";
+import { BLE_OPCODES, CAP, OP, hexToBytes, parseHexBytes } from "./protocol.mjs?v=47";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f502";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f502`;
@@ -9,11 +10,11 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
   constructor(bluetooth, onChange, options) {
     super(undefined, onChange, options);
     this.bluetooth = bluetooth;
-    this.bleTransport = true;
     this.characteristics = new Map();
     this.pollTimer = null;
     this.bleKey = null;
-    this.state = { ...this.state, error: bluetooth ? null : "Web Bluetooth is unavailable in this browser." };
+    this.state = { ...this.state, link: "ble",
+      error: bluetooth ? null : "Web Bluetooth is unavailable in this browser." };
     this.connecting = false;
     // Stable reference: browsers reuse one BluetoothDevice per board, so repeated scans must not stack handlers.
     this.onBleDisconnected = () => {
@@ -58,14 +59,6 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     if (!this.state.connected || !this.bleKey || !this.bleDevice?.gatt.connected) {
       throw new Error("Connect the matching PicoForge board over Bluetooth to authorize its Wi-Fi console");
     }
-    if (!(nonce instanceof Uint8Array) || nonce.length !== 16
-      || !(uid instanceof Uint8Array) || uid.length !== 8) {
-      throw new Error("Invalid TCP CLI authentication challenge");
-    }
-    const expectedUid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
-    if (uid.some((byte, index) => byte !== expectedUid[index])) {
-      throw new Error("The Wi-Fi console challenge belongs to a different board");
-    }
     const message = new Uint8Array(16 + 8 + 9 + 9);
     message.set(nonce);
     message.set(uid, 16);
@@ -86,36 +79,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
         optionalServices: [BLE_SERVICE, GATT_SERVICE],
       });
       this.bleDevice.addEventListener("gattserverdisconnected", this.onBleDisconnected);
-      const adapter = new EventTarget();
-      Object.assign(adapter, { opened: true, open: async () => {},
-        close: async () => this.bleDevice.gatt.disconnect(),
-        receiveFeatureReport: async id => {
-          const value = await this.characteristics.get(id).readValue();
-          if (id !== 20) return value;
-          if (value.byteLength !== 9) throw new Error("Expected exactly 9 BLE result bytes");
-          const report = new Uint8Array(68);
-          report.set(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
-          return report;
-        },
-        sendFeatureReport: async (id, report) => {
-          if (id !== 20 || report.length !== 68 || ![1, 2, 5].includes(report[2])
-            || report.subarray(9).some(Boolean) || report[2] === 5 && report[3] !== 0) {
-            throw new Error("This operation requires USB.");
-          }
-          const request = report.slice(0, 9);
-          // The LED only identifies the board, so firmware accepts it without a proof.
-          if (report[2] === 1) return this.characteristics.get(20).writeValueWithResponse(request);
-          const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
-          try {
-            await this.prove(uid, request);
-            await this.characteristics.get(20).writeValueWithResponse(request);
-          } catch (error) {
-            // Firmware answers a bad, missing or rate-limited proof with an ATT application error.
-            if (error.final) throw error;
-            if (!this.bleDevice.gatt.connected) throw error;
-            throw new Error("The board rejected or rate-limited the proof. Check the Control key or wait 2 s.");
-          }
-        } });
+      const adapter = this.adapter();
       if (this.outstanding && this.bleUid) this.reconnectUid = this.bleUid;
       // ponytail: the first link to a newly permitted board often fails GATT discovery or the first read; later
       // links use the browser's cache. Only read-only setup is retried, a fixed 3 times, on the chosen device.
@@ -146,7 +110,6 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
         }
       }
       this.bleUid = this.state.hardware.serial_number;
-      this.update({ transport: "ble" });
       this.connecting = false;
       if (!this.bleDevice.gatt.connected) return this.onBleDisconnected();
       await this.pollReports();
@@ -161,11 +124,43 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     }
   }
 
+  /**
+   * @brief Present the GATT link as the HID-like device attachDevice and command expect. Writes other than the LED
+   * carry a fresh key proof; command() already restricted the opcode to BLE_OPCODES.
+   */
+  adapter() {
+    return Object.assign(new EventTarget(), { opened: true, open: async () => {},
+      close: async () => this.bleDevice.gatt.disconnect(),
+      receiveFeatureReport: async id => {
+        const value = await this.characteristics.get(id).readValue();
+        if (id !== 20) return value;
+        if (value.byteLength !== 9) throw new Error("Expected exactly 9 BLE result bytes");
+        const report = new Uint8Array(68);
+        report.set(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+        return report;
+      },
+      sendFeatureReport: async (id, report) => {
+        if (id !== 20 || report.length !== 68 || report.subarray(9).some(Boolean)
+          || report[2] === OP.SAVE_SETTINGS && report[3] !== 0) {
+          throw new Error("This operation requires USB.");
+        }
+        const request = report.slice(0, 9);
+        // The LED only identifies the board, so firmware accepts it without a proof.
+        if (report[2] === OP.LED) return this.characteristics.get(20).writeValueWithResponse(request);
+        try {
+          await this.prove(hexToBytes(this.state.hardware.serial_number), request);
+          await this.characteristics.get(20).writeValueWithResponse(request);
+        } catch (error) {
+          // Firmware answers a bad, missing or rate-limited proof with an ATT application error.
+          if (error.final) throw error;
+          if (!this.bleDevice.gatt.connected) throw error;
+          throw new Error("The board rejected or rate-limited the proof. Check the Control key or wait 2 s.");
+        }
+      } });
+  }
+
   async setControlKey(hex) {
-    if (!/^[a-f0-9]{64}$/i.test(hex ?? "")) {
-      throw new Error("Control key must be 64 hex digits.");
-    }
-    const bytes = Uint8Array.from(hex.match(/../g), byte => parseInt(byte, 16));
+    const bytes = parseHexBytes(hex ?? "", 32, "Control key (64 hex digits)");
     try {
       this.bleKey = await crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
     }
@@ -173,7 +168,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
   }
 
   async command(opcode, options) {
-    if (![1, 2, 5].includes(opcode)) throw new Error("This operation requires USB.");
+    if (!BLE_OPCODES.includes(opcode)) throw new Error("This operation requires USB.");
     return super.command(opcode, options);
   }
 
@@ -181,7 +176,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     if (!this.device || !this.state.connected) return;
     if (!this.state.busy && !this.outstanding) {
       try {
-        for (const id of [3, 10, ...(this.state.hardware.capabilities & 32 ? [11] : [])]) {
+        for (const id of [3, 10, ...(this.state.hardware.capabilities & CAP.SELF_TEST ? [11] : [])]) {
           const device = this.device;
           const data = await this.characteristics.get(id).readValue();
           this.onInputReport({ device, reportId: id, data });
@@ -189,6 +184,12 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
       } catch (error) { this.update({ error: `BLE status read failed: ${error.message}` }); }
     }
     if (this.state.connected) this.pollTimer = setTimeout(() => this.pollReports(), 250);
+  }
+
+  dispose() {
+    clearTimeout(this.pollTimer);
+    this.bleDevice?.removeEventListener("gattserverdisconnected", this.onBleDisconnected);
+    super.dispose();
   }
 
   async disconnect() {

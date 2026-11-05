@@ -28,15 +28,16 @@ public sealed class SharedDashboardAssetsTests
     {
         var path = Path.Combine(WebRoot(), "tests/status-contract.json");
         using var contract = JsonDocument.Parse(File.ReadAllText(path));
-        var empty = new StatusResponse(false, null, null, null, null, null, null, null);
+        var empty = new StatusResponse(false, null, null, null, null, null);
         var populated = empty with
         {
             Connected = true,
-            Memory = new(1, true, true, true, true, "sd", "spi", 25_000_000, 1024, 524_288, null),
-            Msc = new(true, false, false),
-            FilesystemFormat = "fat32",
-            Settings = new(250, 0, 1),
-            BoardConfiguration = new(200, 1, 0, 0, 1, [2, 3, 4, 5, 255, 255], 0x38, 2, 25, 255)
+            Memory = new(1, true, true, true, true, "sd", "spi", 25_000_000, 1024, 524_288, null)
+            {
+                Msc = new(true, false, false), FilesystemFormat = "fat32"
+            },
+            BoardConfiguration = new BoardConfigurationResponse(200, 1, 0, 0, 1, [2, 3, 4, 5, 255, 255], 0x38, 2, 25,
+                255) { NextBoot = new(250, 0, 1) }
         };
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
         foreach (var status in new[] { empty, populated })

@@ -103,7 +103,7 @@ test("shared dashboard preserves drafts and command state across status failures
   const requestTimeouts = [];
   context.mock.method(Date, "now", () => now);
   context.mock.method(AbortSignal, "timeout", milliseconds => {
-    assert.ok([5000, 10000, 15000, 40000].includes(milliseconds),
+    assert.ok([5000, 10000, 15000, 20000, 40000].includes(milliseconds),
       "dashboard requests use endpoint-appropriate deadlines");
     requestTimeouts.push(milliseconds);
     return new AbortController().signal;

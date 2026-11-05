@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { createHmac, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeBluetooth, BLE_SERVICE } from "../js/bluetooth.mjs";
-import { PicoForgeWebHid, buildControlRequest, decodeControlResult } from "../js/device.mjs";
+import { PicoForgeBluetooth, BLE_SERVICE } from "../js/bluetooth.mjs?v=47";
+import { PicoForgeWebHid, buildControlRequest, decodeControlResult } from "../js/device.mjs?v=47";
 import {
-  cancelWireless, decodeWireless, displaySsid, readWireless, registerWirelessRecovery,
-  saveWireless, scanWireless, ssidBytes, testWireless,
-} from "../js/wireless.mjs";
+  cancelWireless, readWireless,
+  saveWireless, scanWireless, testWireless, wirelessPollInterval,
+} from "../js/wireless.mjs?v=47";
+import { decodeWireless, displaySsid, ssidBytes } from "../js/protocol.mjs?v=47";
 import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result } from "./support/fixtures.mjs";
 
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
@@ -29,7 +30,6 @@ async function connected() {
     sleep: async milliseconds => { now += milliseconds; } });
   await setup.client.connect();
   emit(setup.device, 10, storage()); emit(setup.device, 11, selfTest());
-  registerWirelessRecovery(setup.client);
   return setup;
 }
 
@@ -83,10 +83,9 @@ test("Report12 uses exact48byte vectors, raw SSIDs and no fabricated removed dia
   assert.equal(wireless.ssid, "PicoForge");
   assert.equal(wireless.ssid_hex, "5069636f466f726765");
   assert.equal(wireless.tcp_cli_started, true);
-  assert.equal(wireless.tcp_cli_auth_required, true);
   assert.equal(wireless.wifi_enabled, true);
   for (const field of ["rssi", "reconnect_count", "wifi_auth_state", "restart_required", "password_configured",
-    "transaction_id"]) assert.equal(Object.hasOwn(wireless, field), false, field);
+    "transaction_id", "tcp_cli_auth_required", "error"]) assert.equal(Object.hasOwn(wireless, field), false, field);
   const candidate = decodeWireless(Buffer.from(vectors.tested_candidate, "hex"));
   assert.equal(candidate.pair_tested, true);
   assert.equal(candidate.test_generation, 1);
@@ -239,7 +238,6 @@ test("uncertain command recovery stores no secrets, reads same UID+tx+opcode and
   assert.deepEqual(record.request, { transaction_id: 1, opcode: 6 });
   fail = false;
   const restored = new PicoForgeWebHid(setup.hid, () => {}, { pendingStore: setup.pendingStore });
-  registerWirelessRecovery(restored);
   await restored.attachDevice(setup.device);
   assert.equal(restored.state.outcome_uncertain, false);
   assert.equal(setup.sent.length, 1);
@@ -263,8 +261,7 @@ test("accepted test lifecycle survives reload, enforces generation and never sto
     assert.equal(JSON.parse(raw).kind, "wireless-lifecycle");
     interrupt = false;
     const restored = new PicoForgeWebHid(setup.hid, () => {}, { pendingStore: setup.pendingStore });
-    registerWirelessRecovery(restored);
-    await restored.attachDevice(setup.device);
+      await restored.attachDevice(setup.device);
     assert.equal(restored.state.outcome_uncertain, wrongGeneration);
     assert.equal(setup.sent.length, 3);
     await restored.disconnect(); await setup.client.disconnect();
@@ -315,7 +312,7 @@ test("Report12 freshness uses active500ms/idle2s and invalid reads never refresh
   now = 6000; setup.client.expireReports(); assert.equal(setup.client.state.wireless, null);
   current = status({ state: 4, flags: 48, testGeneration: 1 });
   await readWireless(setup.client);
-  assert.equal(setup.client.wirelessInterval, 500);
+  assert.equal(wirelessPollInterval(setup.client.state.wireless), 500);
   current = new Uint8Array(53);
   now = 7499; await assert.rejects(readWireless(setup.client));
   setup.client.expireReports(); assert.ok(setup.client.state.wireless);

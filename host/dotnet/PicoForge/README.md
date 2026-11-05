@@ -49,7 +49,8 @@ Build and publish always copy the current `host/web` assets into `wwwroot`; the 
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
 Wireless uses the version-1 [Report 12 and Feature 20 contract](../../../docs/reference/usb-hid.md).
-Report 2 supplies all saved service switches; omitted credentials are not staged. Tested saves commit the staged
+Report 2 supplies all saved service switches; it is cached per HID handle and re-read after a settings save or
+reconnect, so a Wi-Fi poll reads only Report 12. Omitted credentials are not staged. Tested saves commit the staged
 pair without restaging it. Status and scan entries include escaped `ssid` labels and lossless `ssid_hex`; test/save
 requests accept `ssid_hex` for opaque network names. A successful test returns a conservative 600-second countdown;
 fresh firmware staging flags remain authoritative. Removed password/auth-mode/reconnect diagnostics are not invented.

@@ -14,6 +14,7 @@ namespace PicoForge.Tests;
 /// Hot-path timings for the docs' .NET baseline. The ceilings are 10-50x the measured values so the check only fails on
 /// a real regression, not on a slow CI host.
 /// </summary>
+[Trait("Category", "Performance")]
 public sealed class PerformanceTests(ITestOutputHelper output)
 {
     [Fact]
@@ -23,10 +24,11 @@ public sealed class PerformanceTests(ITestOutputHelper output)
             100_000, 520_192, 1);
         var status = new StatusResponse(true, null,
             new("PicoForge", "RP2350", 2, "0001020304050607", Capabilities: 0xec), runtime, DateTimeOffset.UtcNow,
-            runtime.ToBoardStatus(),
-            new(1, true, true, true, true, "sd", "spi", 25_000_000, 1024, 524_288,
-                new(0x1b, "SD", "CARD1", "2.1", 0x12345678, 2021, 4)),
-            new(false, false, false), FilesystemFormat: "fat32", Settings: new(200, 1, 3),
+            new MemoryStatusResponse(1, true, true, true, true, "sd", "spi", 25_000_000, 1024, 524_288,
+                new(0x1b, "SD", "CARD1", "2.1", 0x12345678, 2021, 4))
+            {
+                Msc = new(false, false, false), FilesystemFormat = "fat32"
+            },
             BoardConfiguration: new(200, 1, 0, 0, 1, [2, 3, 4, 5, 255, 255], 0x38, 2, 25, 255));
         using var monitor = new DeviceMonitor();
         monitor.Attach(new ForcedSaveTests.Commands(), status);

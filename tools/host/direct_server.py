@@ -29,7 +29,6 @@ class DirectTerminal:
         self._lock = threading.Lock()
         self._socket: socket.socket | None = None
         self._session: str | None = None
-        self._auth_required = False
         self._authenticated = False
         self._last_request = 0.0
         self._timer: threading.Timer | None = None
@@ -60,9 +59,8 @@ class DirectTerminal:
             raise ValueError("Invalid TCP CLI authentication challenge")
         return {"nonce": fields[2].lower(), "uid": fields[3].lower()}
 
-    def open(self, address: object, auth_required: object) -> dict[str, object]:
-        if not isinstance(auth_required, bool):
-            raise ValueError("Invalid TCP CLI authentication setting")
+    def open(self, address: object) -> dict[str, object]:
+        """Connect and read the challenge; firmware always requires TCP CLI authentication."""
         try:
             ip = ipaddress.IPv4Address(address)
         except (ipaddress.AddressValueError, TypeError) as error:
@@ -72,15 +70,14 @@ class DirectTerminal:
 
         connection = socket.create_connection((str(ip), 2323), timeout=3)
         try:
-            challenge = self._read_auth_challenge(connection) if auth_required else None
+            challenge = self._read_auth_challenge(connection)
             connection.settimeout(0.1)
             with self._lock:
                 if self._socket is not None:
                     raise RuntimeError("A Direct terminal is already connected")
                 self._socket = connection
                 self._session = secrets.token_urlsafe(32)
-                self._auth_required = auth_required
-                self._authenticated = not auth_required
+                self._authenticated = False
                 self._touch_locked()
                 return {"session": self._session, "challenge": challenge}
         except (OSError, ValueError, RuntimeError):
@@ -93,7 +90,7 @@ class DirectTerminal:
             raise ValueError("Invalid TCP CLI proof")
         with self._lock:
             connection = self._require_session_locked(session, allow_pending_auth=True)
-            if not self._auth_required or self._authenticated:
+            if self._authenticated:
                 raise RuntimeError("Terminal session is not awaiting authentication")
             try:
                 connection.sendall(b"AUTH " + proof.lower().encode("ascii") + b"\r\n")
@@ -127,7 +124,7 @@ class DirectTerminal:
         if (self._socket is None or not isinstance(session, str)
                 or not secrets.compare_digest(self._session or "", session)):
             raise RuntimeError("Terminal disconnected; connect again")
-        if self._auth_required and not self._authenticated and not allow_pending_auth:
+        if not self._authenticated and not allow_pending_auth:
             raise RuntimeError("Terminal authentication is pending")
         self._touch_locked()
         return self._socket
@@ -137,7 +134,6 @@ class DirectTerminal:
         self._timer = None
         self._socket = None
         self._session = None
-        self._auth_required = False
         self._authenticated = False
         if timer is not None:
             timer.cancel()
@@ -224,10 +220,8 @@ class DirectHandler(SimpleHTTPRequestHandler):
             return
         try:
             payload = self._read_json()
-            if self.path == "/api/direct-terminal/health":
-                self._send_json(200, {"available": True})
-            elif self.path == "/api/direct-terminal/open":
-                opened = _TERMINAL.open(payload.get("ipv4"), payload.get("auth_required"))
+            if self.path == "/api/direct-terminal/open":
+                opened = _TERMINAL.open(payload.get("ipv4"))
                 self._send_json(200, opened)
             elif self.path == "/api/direct-terminal/auth":
                 _TERMINAL.authenticate(payload.get("session"), payload.get("proof"))

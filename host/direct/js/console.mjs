@@ -1,19 +1,18 @@
 /**
  * Direct Wi-Fi CLI console: the Python dashboard's interactive terminal, relayed through the Direct local bridge.
- * The dashboard passes the board address and TCP authentication flag in the URL, read from live wireless status.
+ * The dashboard passes the board address and its auth pairing token in the URL; firmware always requires TCP auth.
  */
-import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs?v=1";
+import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs?v=47";
 import {
   bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
   parseHexBytes, randomHex,
-} from "./console-auth.mjs?v=1";
+} from "./console-auth.mjs?v=47";
 
 const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");
 const connect = document.querySelector("#connect");
 const query = new URLSearchParams(location.search);
 const ipv4 = query.get("ipv4") ?? "";
-const authRequired = query.get("auth") === "1";
 const authToken = query.get("auth_token") ?? "";
 const encoder = new TextEncoder();
 let screen = new ConsoleTerminal();
@@ -196,7 +195,7 @@ async function open() {
   setButton("Connecting…", true);
   status.textContent = "Connecting to the board's TCP CLI...";
   try {
-    const result = await bridge("open", { ipv4, auth_required: authRequired }, controller.signal, 15000);
+    const result = await bridge("open", { ipv4 }, controller.signal, 15000);
     pendingSession = result.session;
     if (controller.signal.aborted) {
       void fetch("/api/direct-terminal/close", { method: "POST", keepalive: true,
@@ -204,10 +203,8 @@ async function open() {
       pendingSession = null;
       return;
     }
-    if (authRequired) {
-      const proof = await requestTcpCliProof(result.challenge, controller.signal);
-      await bridge("auth", { session: result.session, proof }, controller.signal, 5000);
-    }
+    const proof = await requestTcpCliProof(result.challenge, controller.signal);
+    await bridge("auth", { session: result.session, proof }, controller.signal, 5000);
     if (controller.signal.aborted) return;
     session = result.session;
     pendingSession = null;

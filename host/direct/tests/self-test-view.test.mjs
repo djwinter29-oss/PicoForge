@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderStatus, renderSelfTest } from "../js/view.mjs";
-import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs";
+import { renderStatus, renderSelfTest } from "../js/view.mjs?v=47";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs?v=47";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 function withDocument(run) {
@@ -71,7 +71,7 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
         "HomeDev (192.168.66.87)"],
       [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connecting" }, "HomeDev (connecting)"],
     ]) {
-      render({ ...state, transport: "ble", wireless });
+      render({ ...state, link: "ble", wireless });
       assert.equal(el("#wifi-state").textContent, expected);
     }
     for (const [wireless, expected] of [
@@ -121,7 +121,7 @@ test("self-test writes require fresh, known, mounted, firmware-owned state and v
     value => { value.self_test_command_pending = true; },
     value => { value.outcome_uncertain = true; },
     value => { value.busy = true; },
-    value => { value.transport = "ble"; },
+    value => { value.link = "ble"; },
   ]) {
     const changed = snapshot(); mutate(changed);
     renderSelfTest(changed);
@@ -171,8 +171,7 @@ test("self-test presents retained throughput and unknown enums without obsolete 
 test("identity RAM stays build accounting while stale inputs show no current values", () => withDocument(el => {
   const state = snapshot();
   state.runtime = { uptime_ms: 9007199254740993n, system_clock_hz: 200000000,
-    cpu_usage_core0_basis_points: 1234, cpu_usage_core1_basis_points: null };
-  state.board_status = { led_available: true, led_on: true };
+    cpu_usage_core0_basis_points: 1234, cpu_usage_core1_basis_points: null, led_available: true, led_on: true };
   renderStatus(state);
   assert.equal(el("#ram-usage").textContent, "64.0 / 520 KiB (12.3%)");
   assert.equal(el("#board-model").textContent, "Pico 2 (RP2350)");
@@ -187,7 +186,7 @@ test("identity RAM stays build accounting while stale inputs show no current val
     ["GP18", "GP19", "GP20", "GP21", "GP22", "GP23", "GP8"],
   ]);
   assert.deepEqual(el("#settings-clock").children.map(option => option.value), ["0", "200", "250"]);
-  state.runtime = null; state.board_status = null; state.memory = null; state.msc = null; state.self_test = null;
+  state.runtime = null; state.memory = null; state.msc = null; state.self_test = null;
   state.freshness = { 3: "stale", 10: "stale", 11: "stale" };
   renderStatus(state);
   assert.equal(el("#identity-clock").textContent, "--");

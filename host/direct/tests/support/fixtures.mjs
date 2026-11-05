@@ -1,4 +1,4 @@
-import { PicoForgeWebHid } from "../../js/device.mjs";
+import { PicoForgeWebHid } from "../../js/device.mjs?v=47";
 
 export function identity(capabilities = 1 | 2 | 4 | 16 | 32) {
   const bytes = new Uint8Array(26);

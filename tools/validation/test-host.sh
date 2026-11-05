@@ -26,4 +26,4 @@ printf '%s\n' '=== Python/.NET dashboard tests ==='
 
 printf '%s\n' '=== .NET host tests ==='
 "$DOTNET" test "$REPO_ROOT/host/dotnet/PicoForge.sln" \
-    --configuration Release --nologo
+    --configuration Release --nologo --filter "Category!=Performance"

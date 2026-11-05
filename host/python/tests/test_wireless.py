@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from helpers import make_monitor
 from picoforge.dashboard.server import create_app
-from picoforge.hid.device import PicoForgeHid
+from picoforge.hid.device import PicoForgeHid, WirelessTestCancelled
 from picoforge.reports import (
     build_tcp_cli_auth_request, build_wireless_command_report, build_settings_command_report,
     parse_control_result_report, parse_tcp_cli_auth_result, parse_wireless_status_report,
@@ -295,6 +295,16 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(command[5:], [0] * 64)
         client._device.get_feature_report.assert_called_once_with(20, 69)
 
+    def test_cancelled_test_sends_cancel_and_leaves_outcome_known(self):
+        client = self.client([status(), result(6, 1), result(7, 2), result(9, 3), result(10, 4)])
+        stop = threading.Event()
+        stop.set()
+        with self.assertRaises(WirelessTestCancelled):
+            client.test_wireless("Pico", "secret12", cancel=stop)
+        sent = [call.args[0][3] for call in client._device.send_feature_report.call_args_list]
+        self.assertEqual(sent, [6, 7, 9, 10])
+        self.assertFalse(client._command_uncertain)
+
     def test_timeout_does_not_replay_scan_save_or_proof(self):
         # A stale result cannot resolve a SET, even when its opcode matches.
         for opcode in (5, 11, 13):
@@ -519,7 +529,7 @@ class WirelessTests(unittest.TestCase):
             {"kind": "self_test", "data": {"active": False}}, None,
         ]
 
-        def joining(ssid, password, *, on_poll, on_progress):
+        def joining(ssid, password, *, on_poll, on_progress, cancel):
             on_progress("Connecting to Wi-Fi")
             self.assertEqual(monitor.snapshot()["wireless_phase"], "Connecting to Wi-Fi")
             monitor._input_received_at = {3: 0, 10: 0, 11: 0}
@@ -536,6 +546,44 @@ class WirelessTests(unittest.TestCase):
         client.test_wireless.side_effect = joining
         self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
         self.assertIsNone(monitor.snapshot()["wireless_phase"])
+
+    def test_cancel_reaches_running_test_while_other_commands_get_busy(self):
+        for finishes_first in (False, True):
+            with self.subTest(finishes_first=finishes_first):
+                monitor, client = self.monitor()
+                monitor._snapshot["self_test"] = {"active": False}
+                started = threading.Event()
+
+                def joining(ssid, password, *, on_poll, on_progress, cancel):
+                    started.set()
+                    self.assertTrue(cancel.wait(10), "never cancelled")
+                    if finishes_first:
+                        return {"state": 5}
+                    client.cancel_wireless_test()
+                    raise WirelessTestCancelled("Wi-Fi test cancelled")
+
+                client.test_wireless.side_effect = joining
+                outcome = []
+                worker = threading.Thread(target=lambda: outcome.append(self.run_test(monitor)))
+                worker.start()
+                self.assertTrue(started.wait(2))
+                with patch("picoforge.dashboard.monitor._BUSY_WAIT_SECONDS", 0.1), \
+                        self.assertRaisesRegex(RuntimeError, "busy with another command"):
+                    monitor.set_self_test("start", 1)
+                client.set_self_test.assert_not_called()
+                self.assertEqual(monitor.cancel_wireless_test(), {"cancelled": True})
+                worker.join(2)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(outcome, [5 if finishes_first else "cancelled"])
+                client.cancel_wireless_test.assert_called_once_with()
+                self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+
+    @staticmethod
+    def run_test(monitor):
+        try:
+            return monitor.test_wireless("Pico", "secret12")["test"]["state"]
+        except WirelessTestCancelled:
+            return "cancelled"
 
     def test_monitor_proof_uncertainty_propagates_to_other_writes(self):
         monitor, client = self.monitor()

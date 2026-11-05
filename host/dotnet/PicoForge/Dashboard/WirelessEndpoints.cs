@@ -14,30 +14,48 @@ internal static class WirelessEndpoints
     /// <summary>Maps the Wi-Fi routes; <see cref="UseApiErrors"/> supplies errors and these 503 messages.</summary>
     public static IEndpointRouteBuilder MapWirelessEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/api/wireless", SetWireless).WithMetadata(
-            new UnavailableMessage("Wireless provisioning outcome is uncertain; command was not resent"));
-        endpoints.MapPost("/api/wireless/scan", (string? board, IDashboardBoards dashboard) =>
-                Results.Ok(new { networks = dashboard.Monitor(board).ScanWireless() }))
+        endpoints.MapPost("/api/wireless", SetWireless)
+            .WithName("SetWireless")
+            .WithSummary("Stage and atomically save Wi-Fi, Bluetooth and TCP CLI settings")
+            .Produces<WirelessResponse>(StatusCodes.Status200OK)
+            .Errors(CommandErrors)
+            .WithMetadata(new UnavailableMessage("Wireless provisioning outcome is uncertain; command was not resent"));
+        endpoints.MapPost("/api/wireless/scan", (string? board, IDashboardBoards dashboard, CancellationToken cancel) =>
+                Results.Ok(new { networks = dashboard.Monitor(board).ScanWireless(cancel) }))
+            .WithName("ScanWireless")
+            .WithSummary("Scan for nearby Wi-Fi networks")
+            .Errors(CommandErrors)
             .WithMetadata(new UnavailableMessage("Wireless scan failed"));
-        endpoints.MapPost("/api/wireless/test", TestWireless).WithMetadata(new UnavailableMessage(
-            $"Wi-Fi test result is uncertain. {Retry}", $"Wi-Fi test timed out; outcome is uncertain. {Retry}"));
-        endpoints.MapPost("/api/wireless/cancel", (string? board, IDashboardBoards dashboard) =>
+        endpoints.MapPost("/api/wireless/test", TestWireless)
+            .WithName("TestWireless")
+            .WithSummary("Join a Wi-Fi network as a test without saving it")
+            .Errors(CommandErrors)
+            .WithMetadata(new UnavailableMessage($"Wi-Fi test result is uncertain. {Retry}",
+                $"Wi-Fi test timed out; outcome is uncertain. {Retry}"));
+        // A cancel during a running test returns at once; the test sends it at its next poll.
+        endpoints.MapPost("/api/wireless/cancel",
+            (string? board, IDashboardBoards dashboard, CancellationToken cancel) =>
             {
-                dashboard.Monitor(board).CancelWirelessTest();
+                dashboard.Monitor(board).CancelWirelessTest(cancel);
                 return Results.Ok(new { cancelled = true });
             })
+            .WithName("CancelWirelessTest")
+            .WithSummary("Cancel a Wi-Fi test and clear its test credentials")
+            .Errors(CommandErrors)
             .WithMetadata(new UnavailableMessage("Could not clear the wireless test credentials"));
         return endpoints;
     }
 
     // Bad input is 400 whatever the board state, so parse before selecting the board.
-    private static IResult SetWireless(JsonElement request, string? board, IDashboardBoards dashboard)
+    private static IResult SetWireless(JsonElement request, string? board, IDashboardBoards dashboard,
+        CancellationToken cancel)
     {
         var settings = WirelessRequest.Parse(request);
-        return Results.Ok(dashboard.Monitor(board).SetWireless(settings));
+        return Results.Ok(dashboard.Monitor(board).SetWireless(settings, cancel));
     }
 
-    private static IResult TestWireless(JsonElement request, string? board, IDashboardBoards dashboard)
+    private static IResult TestWireless(JsonElement request, string? board, IDashboardBoards dashboard,
+        CancellationToken cancel)
     {
         WirelessTestRequest test;
         try
@@ -54,7 +72,7 @@ internal static class WirelessEndpoints
         }
         return Results.Ok(new
         {
-            test = dashboard.Monitor(board).TestWireless(test.Ssid ?? "", test.Password ?? "", test.SsidHex)
+            test = dashboard.Monitor(board).TestWireless(test.Ssid ?? "", test.Password ?? "", test.SsidHex, cancel)
         });
     }
 }

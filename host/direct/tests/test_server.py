@@ -25,20 +25,18 @@ class DirectTerminalTests(unittest.TestCase):
         def close(self):
             self.closed = True
 
-    def test_open_rejects_non_lan_addresses_and_invalid_authentication_setting(self):
-        terminal = DirectTerminal()
+    CHALLENGE = b"PicoForge AUTH 000102030405060708090a0b0c0d0e0f 0001020304050607\r\n"
+
+    def test_open_rejects_non_lan_addresses(self):
         with self.assertRaisesRegex(ValueError, "private LAN"):
-            terminal.open("8.8.8.8", False)
-        with self.assertRaisesRegex(ValueError, "authentication setting"):
-            terminal.open("192.168.1.2", "true")
+            DirectTerminal().open("8.8.8.8")
 
     def test_authenticated_open_waits_for_a_board_bound_proof_before_terminal_io(self):
-        challenge = b"PicoForge AUTH 000102030405060708090a0b0c0d0e0f 0001020304050607\r\n"
-        connection = self.FakeSocket(challenge)
+        connection = self.FakeSocket(self.CHALLENGE)
         terminal = DirectTerminal()
         with patch("tools.host.direct_server.socket.create_connection", return_value=connection), \
                 patch.object(terminal, "_touch_locked"):
-            opened = terminal.open("192.168.1.2", True)
+            opened = terminal.open("192.168.1.2")
             self.assertEqual(opened["challenge"], {
                 "nonce": "000102030405060708090a0b0c0d0e0f", "uid": "0001020304050607",
             })
@@ -78,18 +76,17 @@ class DirectTerminalTests(unittest.TestCase):
 
     @patch("tools.host.direct_server.socket.create_connection")
     def test_open_uses_fixed_cli_port_and_closes_duplicate_connection(self, create_connection):
-        first = self.FakeSocket()
+        first = self.FakeSocket(self.CHALLENGE)
         create_connection.return_value = first
         terminal = DirectTerminal()
         with patch.object(terminal, "_touch_locked"):
-            opened = terminal.open("192.168.1.2", False)
+            opened = terminal.open("192.168.1.2")
             self.assertTrue(opened["session"])
-            self.assertIsNone(opened["challenge"])
             self.assertEqual(create_connection.call_args.args, (("192.168.1.2", 2323),))
-            second = self.FakeSocket()
+            second = self.FakeSocket(self.CHALLENGE)
             create_connection.return_value = second
             with self.assertRaisesRegex(RuntimeError, "already connected"):
-                terminal.open("192.168.1.3", False)
+                terminal.open("192.168.1.3")
             self.assertTrue(second.closed)
             terminal.close_all()
             self.assertTrue(first.closed)

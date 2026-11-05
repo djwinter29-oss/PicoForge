@@ -32,11 +32,21 @@ using that board before connecting; the chooser cannot override another applicat
 ## Protocol and connection
 
 The firmware and all host dashboards use version 1 of the authoritative
-[HID Report Reference](../../docs/reference/usb-hid.md). Physical USB qualification remains outstanding.
-It requires Feature 1 identity (26 payload bytes), Feature 2 board configuration (17), Feature 20 control/result
-(68), wireless Feature 12 (48, capability bit 7), and Input 3 telemetry (22), 10 storage (34), and optionally
-11 self-test (32, capability bit 5).
+[HID Report Reference](../../docs/reference/usb-hid.md), which lists every report and its exact length.
 Mandatory identity and configuration reports must be valid before the dashboard enables commands.
+
+Modules in `js/` keep one owner per concern:
+
+| Module | Owns |
+|---|---|
+| `protocol.mjs` | Opcode and capability names, pure report and Wi-Fi codecs, control-request rules, validators |
+| `device.mjs` | `PicoForgeWebHid` connection, serialized transactions and reconnect recovery |
+| `bluetooth.mjs` | `PicoForgeBluetooth` restricted BLE link over the same client interface |
+| `wireless.mjs` | Wi-Fi staging, scan, test, save workflows and the Feature 12 poll interval |
+| `recovery.mjs` | Allowlisted `sessionStorage` pending-operation records |
+| `eligibility.mjs` | The single source of command readiness rules |
+| `view.mjs` | All status and control rendering from one state snapshot |
+| `wireless-form.mjs`, `app.mjs` | The Wi-Fi dialog phase machine and page wiring (one coalesced render path) |
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.
@@ -88,10 +98,9 @@ are never resent automatically.
 If clearing temporary Wi-Fi test credentials fails, the Wi-Fi dialog stays open and saving remains blocked until
 the user retries or reconnect confirms cancellation.
 Pending operations are also retained in the current tab's `sessionStorage` so a page reload can resume same-board
-reconciliation. Recovery records contain only allowlisted transaction/profile/commit-mask or generation data, never the
-SSID,
-Wi-Fi password, or Control key. Missing, inaccessible, or invalid recovery storage fails closed and blocks writes
-rather than allowing an untracked operation. Dialog state and secrets are not restored after a page reload.
+reconciliation. Recovery records contain only allowlisted transaction/profile/commit-mask or generation data,
+never the SSID, Wi-Fi password, or Control key. Missing, inaccessible, or invalid recovery storage fails closed and
+blocks writes rather than allowing an untracked operation. Dialog state and secrets are not restored after a page reload.
 Keep the tab open until an uncertain operation is resolved; recovery does not survive ending the browser tab's session.
 USB sharing hides the benchmark from submission until fresh status confirms the requested
 ownership and a finished transition, or an explicit rejection. Self-test acceptance keeps controls pending until
@@ -145,5 +154,4 @@ tools/host/run-direct.sh --port 8000
 ```
 
 The page reports dialog focus and Escape behavior, narrow viewport overflow, and Wi-Fi cancellation failure/retry
-using mocked device operations. These browser checks do not replace physical WebHID/USB qualification, which still
-requires firmware implementing the version-1 reports and RP2040/RP2350 hardware.
+using mocked device operations.

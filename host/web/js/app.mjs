@@ -137,7 +137,7 @@ const wirelessForm = bindWirelessForm({
   ready: wirelessReady,
   load: async () => currentSnapshot.wireless,
   scan: async () => {
-    const response = await fetchWithDeadline(boardUrl("/api/wireless/scan"), { method: "POST" }, 10000);
+    const response = await fetchWithDeadline(boardUrl("/api/wireless/scan"), { method: "POST" }, 20000);
     const result = await responseJson(response, `Wireless scan returned HTTP ${response.status}`);
     return result.networks;
   },

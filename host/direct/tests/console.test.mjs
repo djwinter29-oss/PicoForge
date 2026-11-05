@@ -34,7 +34,7 @@ test("Direct console uses the connected dashboard for authentication without ask
     close() { this.closed = true; }
   }
   globalThis.document = { querySelector: element, createElement: () => ({}), createTextNode: text => ({ text }) };
-  globalThis.location = { search: "?ipv4=192.168.66.87&auth=1&auth_token=0123456789abcdef0123456789abcdef" };
+  globalThis.location = { search: "?ipv4=192.168.66.87&auth_token=0123456789abcdef0123456789abcdef" };
   globalThis.window = { addEventListener: (type, handler) => windowHandlers.set(type, handler),
     BroadcastChannel: FakeBroadcastChannel, getSelection: () => ({ toString: () => "" }), confirm: () => true };
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
@@ -59,7 +59,7 @@ test("Direct console uses the connected dashboard for authentication without ask
     assert.doesNotMatch(readFileSync(new URL("../console.html", import.meta.url), "utf8"), /console-auth-key/);
     handlers.get("#connect:click")();
     await tick();
-    assert.deepEqual(calls[0], ["open", { ipv4: "192.168.66.87", auth_required: true }]);
+    assert.deepEqual(calls[0], ["open", { ipv4: "192.168.66.87" }]);
     assert.deepEqual(channels[0].request, { type: "tcp-cli-auth-request",
       auth_token: "0123456789abcdef0123456789abcdef", request_id: channels[0].request.request_id,
       nonce: "000102030405060708090a0b0c0d0e0f", uid: "0102030405060708" });

@@ -56,6 +56,16 @@ class MonitorMscTests(unittest.TestCase):
         self.assertFalse(snapshot["connected"])
         self.assertIsNone(snapshot["control_result"])
 
+    def test_led_on_disconnected_board_is_unavailable_not_conflict(self):
+        self.monitor._active_client = None
+        with self.assertRaises(ConnectionError):
+            self.monitor.set_led(True)
+        self.monitor._active_client = self.client
+        self.monitor._snapshot = {**_empty_snapshot(), "connected": True, "hardware": {"led_available": False}}
+        with self.assertRaisesRegex(RuntimeError, "The board LED is unavailable"):
+            self.monitor.set_led(True)
+        self.client.set_led.assert_not_called()
+
     def test_confirmed_return_uses_only_hid_on_each_host_platform(self):
         for platform in ("linux", "win32", "darwin"):
             with self.subTest(platform=platform), patch.object(sys, "platform", platform), \

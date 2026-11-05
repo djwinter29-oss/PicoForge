@@ -14,7 +14,6 @@ public sealed record WirelessStatusResponse(bool WifiEnabled, bool BleEnabled, s
     bool KeyStaged, bool PairTested, byte StagedState, byte ScanState, ushort ScanGeneration, byte ScanCount,
     byte TestGeneration)
 {
-    public bool TcpCliAuthRequired => BleKeyConfigured;
     public string Phase => HidProtocol.WifiDetail(Error);
 }
 
@@ -86,10 +85,9 @@ internal static partial class HidProtocol
     public static void ValidateWirelessRequest(WirelessRequest settings)
     {
         if (!settings.ConfirmReboot || settings.WifiEnabled is null || settings.BleEnabled is null ||
-            settings.Extra?.Count > 0 ||
-            settings.Board is not
-                { SystemClockMhz: 0 or 150 or 200 or 250, SdCardProfile: 0 or 1, Radios: >= 0 and <= 3 })
+            settings.Extra?.Count > 0 || settings.Board is null)
             throw new ArgumentException("Invalid wireless configuration or missing reboot confirmation");
+        ValidateSettings(settings.Board);
         if (settings.WifiEnabled.Value != ((settings.Board.Radios & 1) != 0) ||
             settings.BleEnabled.Value != ((settings.Board.Radios & 2) != 0))
             throw new ArgumentException("Wireless enable flags must match the board radio switches");
@@ -133,9 +131,10 @@ internal static partial class HidProtocol
         return Convert.FromHexString(key);
     }
 
-    public static byte[] StagingArguments(byte opcode, ReadOnlySpan<byte> value)
+    public static byte[] StagingArguments(Opcode opcode, ReadOnlySpan<byte> value)
     {
-        if (opcode is not (6 or 7 or 8) || value.Length > (opcode == 7 ? 63 : 32))
+        if (opcode is not (Opcode.StageSsid or Opcode.StagePassword or Opcode.StageKey) ||
+            value.Length > (opcode == Opcode.StagePassword ? 63 : 32))
             throw new ArgumentException("Invalid staging arguments");
         var arguments = new byte[64];
         arguments[0] = (byte)value.Length;
@@ -166,12 +165,13 @@ internal static partial class HidProtocol
             (payload[3] == 0 || (flags & 2) != 0) &&
             (payload[1] < 4 || payload[46] != 0), "Invalid wireless status fields");
         var ssid = payload.Slice(10, payload[9]).ToArray();
-        return new((configuration.BoardFlags & 8) != 0, (configuration.BoardFlags & 16) != 0, DisplaySsid(ssid),
+        var saved = configuration.BoardFlags;
+        return new((saved & BoardFlagWifi) != 0, (saved & BoardFlagBle) != 0, DisplaySsid(ssid),
             new[] { "disabled", "connecting", "connected", "failed", "testing", "test_joined",
                 "test_failed" }[payload[1]],
             string.Join(".", payload[5..9].ToArray()), payload[2] <= 6 ? payload[2] : (byte)0,
             new[] { "off", "advertising", "connected" }[payload[3]], (flags & 4) != 0,
-            (configuration.BoardFlags & 32) != 0, (flags & 1) != 0, (flags & 2) != 0,
+            (saved & BoardFlagTcpCli) != 0, (flags & 1) != 0, (flags & 2) != 0,
             Convert.ToHexString(ssid), (flags & 16) != 0, (flags & 32) != 0,
             (flags & 64) != 0, (flags & 128) != 0, staged, payload[42], scanGeneration, payload[45], payload[46]);
     }
@@ -179,7 +179,7 @@ internal static partial class HidProtocol
     public static WirelessNetworkResponse ParseScanEntry(ControlResult result, ushort generation, byte index)
     {
         var data = result.ResultData;
-        Require(result.Opcode == 12 && result.Status == 2 &&
+        Require(result.Opcode == Opcode.WifiEntry && result.Status == 2 &&
             BinaryPrimitives.ReadUInt16LittleEndian(data) == generation && data[2] == index,
             "Scan entry belongs to another scan");
         var ssid = data.AsSpan(4, data[3]).ToArray();

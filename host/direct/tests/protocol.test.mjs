@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   PicoForgeWebHid, decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
   decodeSelfTestReport,
-  decodeControlResult, buildControlRequest, matchesPicoForge,
-} from "../js/device.mjs";
+  decodeControlResult, buildControlRequest, matchesPicoForge, OP, encodeSettings, decodeSettings,
+} from "../js/device.mjs?v=47";
 import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit } from "./support/fixtures.mjs";
 
 test("explicit connect always requests selection regardless of previously authorized devices", async () => {
@@ -39,9 +39,9 @@ test("USB TCP CLI proof is board-bound and serialized through Feature 20 opcode 
   await client.connect();
   const nonce = Uint8Array.from({ length: 16 }, (_, index) => index);
   const uid = Uint8Array.from({ length: 8 }, (_, index) => index + 1);
-  assert.deepEqual(await client.tcpCliAuthProof(nonce, uid), proof);
+  assert.deepEqual(await client.authorizeConsole(nonce, uid), proof);
   assert.deepEqual(sent[0], [20, 1, 1, 13, 0, ...nonce, ...Array(48).fill(0)]);
-  await assert.rejects(client.tcpCliAuthProof(nonce, Uint8Array.from([8, 7, 6, 5, 4, 3, 2, 1])),
+  await assert.rejects(client.authorizeConsole(nonce, Uint8Array.from([8, 7, 6, 5, 4, 3, 2, 1])),
     /different board/);
   assert.equal(sent.length, 1, "a mismatched challenge is rejected before contacting the board");
   await client.disconnect();
@@ -229,10 +229,12 @@ test("control request builders encode exact 68-byte envelopes and reject malform
   for (const [opcode, options] of [[2, {}], [1, { flags: 1 }], [1, { args: [0, 1] }],
     [3, { args: [2] }], [3, { flags: 1, args: [1] }], [4, { args: [0, 1] }],
     [4, { args: [1, 0, 0, 0, 0] }], [5, { args: [100, 0, 0] }],
-    [5, { args: [200, 0, 0, 0, 1] }], [5, { flags: 4, args: [200, 0, 0, 0] }], [6, { args: [33] }]]) {
+    [5, { args: [200, 0, 0, 0, 1] }], [5, { flags: 4, args: [200, 0, 0, 0] }], [6, { args: [33] }],
+    [0, {}], [14, {}], [4, { args: [1, 1, 4, 0, 0] }], [10, { flags: 1 }], [11, { args: [1] }]]) {
     assert.throws(() => buildControlRequest(1, opcode, options), `opcode ${opcode}`);
   }
   assert.throws(() => buildControlRequest(0, 1));
+  assert.equal(buildControlRequest(1, 4, { args: [1, 0, 4, 0, 0] })[6], 4, "1024 MiB is the self-test ceiling");
 });
 
 test("control results enforce every opcode/status/error combination and zero result data", () => {
@@ -326,7 +328,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   assert.equal(client.state.runtime, null);
   hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
   assert.equal(client.expiryTimer, null);
-  for (const field of ["hardware", "settings", "runtime", "board_status", "memory", "msc", "self_test"]) {
+  for (const field of ["hardware", "settings", "runtime", "memory", "msc", "self_test"]) {
     assert.equal(client.state[field], null, field);
   }
   await client.attachDevice(device);
@@ -354,7 +356,7 @@ test("transactions serialize, match ID and opcode, poll Pending, wrap IDs, and d
   await pending;
   assert.deepEqual(sent[0], [20, 1, 1, 1, 0, 1, ...Array(63).fill(0)]);
   assert.equal(calls, 4);
-  assert.equal(client.state.board_status.led_on, false, "acceptance is not an Input snapshot");
+  assert.equal(client.state.runtime.led_on, false, "acceptance is not an Input snapshot");
   await client.disconnect();
 });
 
@@ -403,7 +405,7 @@ test("stale/capability gates stop command writes, including self-test and confir
   await client.connect();
   emit(device, 3, telemetry()); emit(device, 10, storage());
   await assert.rejects(client.reboot(true), /capability/);
-  assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }), false);
+  await assert.rejects(client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }), /capability/);
   await assert.rejects(client.setSelfTest("start", 32), /self-test/);
   now = 1500;
   await assert.rejects(client.setLed(true), /Fresh LED/);
@@ -472,6 +474,7 @@ test("pending control transactions survive a page reload and reconcile without r
   await restored.attachDevice(device);
   assert.equal(restored.state.outcome_uncertain, false);
   assert.match(restored.state.recovery_message, /confirmed after reconnect/);
+  assert.equal(restored.state.recovered_opcode, OP.LED, "the form keys recovery on the opcode, not the text");
   assert.equal(pendingStore.getItem("picoforge.direct.pending-operation"), null);
   assert.equal(sent.length, 1, "recovery reads the result and never resends the command");
   await restored.disconnect();
@@ -517,8 +520,7 @@ test("settings completion remains serialized and verifies saved values without a
   await assert.rejects(client.setLed(true), /unavailable/);
   const incorrect = result(1, 5); incorrect[5] = 150; incorrect[7] = 1;
   release(incorrect);
-  assert.equal(await saving, false);
-  assert.match(client.state.settings_message, /did not confirm/);
+  await assert.rejects(saving, /did not confirm/);
   assert.equal(sent.length, 1);
   assert.equal(client.state.settings.system_clock_mhz, 200);
   await client.disconnect();
@@ -528,7 +530,7 @@ test("W-board settings save sends and verifies the radio enables", async () => {
   const { client, device, sent } = fakeConnection({ capabilities: 1 | 2 | 4 | 16 | 32 | 128 });
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
-  assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1, radios: 2 }), true);
+  await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1, radios: 2 });
   assert.deepEqual(sent[0], [20, 1, 1, 5, 0, 200, 0, 1, 2, ...Array(60).fill(0)]);
   assert.equal(client.state.settings.radios, 2);
   await client.disconnect();
@@ -538,7 +540,7 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   const { client, device, sent } = fakeConnection();
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
-  assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }), true);
+  await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 });
   assert.deepEqual(sent[0], [20, 1, 1, 5, 0, 200, 0, 1, 0, ...Array(60).fill(0)]);
   assert.equal(sent.length, 1, "firmware reboot requires no second command");
   assert.equal(client.state.reboot_pending, true);
@@ -590,12 +592,13 @@ test("confirmed forced settings save reconnects to the original result without r
       if (incorrect && id === 20) response[5] = 150;
       return response;
     };
-    assert.equal(await client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }, true), !incorrect);
+    const saving = client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }, true);
+    if (incorrect) await assert.rejects(saving, /did not confirm/);
+    else await saving;
     assert.deepEqual(sent, [[20, 1, 1, 5, 1, 200, 0, 1, 0, ...Array(60).fill(0)]]);
     assert.equal(client.state.outcome_uncertain, incorrect);
     assert.equal(Boolean(client.state.reboot_pending), !incorrect);
     if (incorrect) {
-      assert.match(client.state.settings_message, /did not confirm/);
       await assert.rejects(client.command(1, { args: [1] }), /uncertain/);
     }
     await client.disconnect();
@@ -714,4 +717,25 @@ test("development HID filter uses authorized vendor collection and both USB conf
   assert.equal(matchesPicoForge(device), true);
   device.productId = 0x4012; assert.equal(matchesPicoForge(device), true);
   device.collections[0].usage = 2; assert.equal(matchesPicoForge(device), false);
+});
+
+test("settings codec round-trips the four save-settings argument bytes", () => {
+  const settings = { system_clock_mhz: 300, sdcard_profile: 1, radios: 3, tcp_cli_enabled: true };
+  const args = encodeSettings(settings, true);
+  assert.deepEqual(args, [44, 1, 1, 7]);
+  assert.deepEqual(decodeSettings(args), settings);
+  assert.deepEqual(decodeSettings(encodeSettings({ ...settings, radios: undefined }, false)),
+    { ...settings, radios: 0, tcp_cli_enabled: false });
+});
+
+test("a disposed client ignores HID events and stops its expiry timer", async () => {
+  const { client, device, hid } = fakeConnection();
+  await client.connect();
+  emit(device, 3, telemetry());
+  const receipt = client.receipts.get(3);
+  client.dispose();
+  hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
+  emit(device, 3, telemetry());
+  assert.equal(client.state.connected, true, "a replaced client must not react to the shared navigator.hid");
+  assert.equal(client.receipts.get(3), receipt, "input reports no longer reach a disposed client");
 });

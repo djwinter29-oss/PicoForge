@@ -98,14 +98,15 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                     ?? (serialNumber is null && devicePath is null ? boards.FirstOrDefault()?.Id : null));
             }
             // ponytail: An unresolved write keeps this monitor and board entry until shutdown so reconnects cannot
-            // silently clear the write block. It may retain one board indefinitely; safe clearing needs firmware recovery.
+            // silently clear the write block. It may retain one board indefinitely; safe clearing needs firmware
+            // recovery.
             foreach (var monitor in expiredMonitors) monitor.Dispose();
             return listing;
         }
     }
 
     public StatusResponse Snapshot(string? boardId) => boardId is null
-        ? new(false, null, null, null, null, null, null, null)
+        ? new(false, null)
         : Monitor(boardId).Snapshot;
 
     public IDeviceMonitor Monitor(string? boardId)
@@ -165,7 +166,7 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                 ObjectDisposedException.ThrowIf(disposed, this);
                 if (!started)
                 {
-                    try { monitor.StartAsync(CancellationToken.None).GetAwaiter().GetResult(); }
+                    try { monitor.Start(); }
                     catch
                     {
                         monitor.Dispose();

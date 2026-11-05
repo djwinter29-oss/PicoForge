@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,7 +27,7 @@ public sealed class ProtocolTests
         Assert.Equal((ushort)200, configuration.StoredSystemClockMhz);
         Assert.Equal((byte)1, configuration.StoredSdCardProfile);
         Assert.Equal(new byte[] { 10, 11, 12, 13, 14, 15 }, configuration.StorageGpios);
-        Assert.Equal(new BootSettingsResponse(200, 1, 0), HidProtocol.ToBootSettings(configuration));
+        Assert.Equal((200, 1, 0), (configuration.SystemClockMhz, configuration.SdCardProfile, configuration.Radios));
     }
 
     [Fact]
@@ -49,8 +50,8 @@ public sealed class ProtocolTests
         Assert.Throws<InvalidDataException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
         var wireless = IdentityReport();
         wireless[18] |= HidProtocol.CapabilityWireless;
-        Assert.Equal(new BootSettingsResponse(200, 1, 2), HidProtocol.ToBootSettings(
-            HidProtocol.ParseConfigurationReport(config, HidProtocol.ParseIdentityReport(wireless))));
+        var radios = HidProtocol.ParseConfigurationReport(config, HidProtocol.ParseIdentityReport(wireless));
+        Assert.Equal((200, 1, 2), (radios.SystemClockMhz, radios.SdCardProfile, radios.Radios));
         config[14] = (byte)((ConfigurationReport()[14] & 7) | 0x20);
         Assert.Throws<InvalidDataException>(() => HidProtocol.ParseConfigurationReport(config, hardware));
         Assert.Equal(0x20, HidProtocol.ParseConfigurationReport(config,
@@ -123,7 +124,7 @@ public sealed class ProtocolTests
         Assert.Equal("sdio", result.Memory!.Mode);
         Assert.Equal((byte)2, result.Memory.SpeedMode);
         Assert.Equal((ulong)2_097_152, result.Memory.CapacityBytes);
-        Assert.Equal("exfat", result.FilesystemFormat);
+        Assert.Equal("exfat", result.Memory.FilesystemFormat);
         Assert.Equal(2026, result.Memory.Manufacturer!.ManufactureYear);
         Assert.Equal(10, result.Memory.Manufacturer.ManufactureMonth);
 
@@ -139,7 +140,7 @@ public sealed class ProtocolTests
         var unavailable = HidProtocol.ParseStorageReport(report,
             HidProtocol.ParseIdentityReport(IdentityReport()));
         Assert.False(unavailable.Memory!.SampleValid);
-        Assert.True(unavailable.Msc!.Enabled);
+        Assert.True(unavailable.Memory.Msc!.Enabled);
 
         report[4] = 1;
         Assert.Throws<InvalidDataException>(() => HidProtocol.ParseStorageReport(report,
@@ -186,12 +187,67 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public void OpcodesAndFlagBitsMatchFirmware()
+    {
+        var usb = Path.Combine(SharedDashboardAssetsTests.WebRoot(), "../../firmware/src/app/usb");
+        var source = File.ReadAllText(Path.Combine(usb, "usb_hid.h")) +
+            File.ReadAllText(Path.Combine(usb, "usb_hid.c"));
+        int Define(string name)
+        {
+            var match = Regex.Match(source, $@"#define {name} \(?(\d+)u(?: << (\d+))?\)?");
+            Assert.True(match.Success, name);
+            var value = int.Parse(match.Groups[1].Value);
+            return match.Groups[2].Success ? value << int.Parse(match.Groups[2].Value) : value;
+        }
+        Assert.Equal(Enum.GetValues<Opcode>().Select(opcode => (int)opcode),
+            Regex.Matches(source, @"#define PF_HID_OPCODE_\w+ (\d+)u")
+                .Select(match => int.Parse(match.Groups[1].Value)));
+        Assert.Equal(HidProtocol.BoardFlagCardDetect, Define("PF_HID_BOARD_FLAG_CARD_DETECT"));
+        Assert.Equal(HidProtocol.BoardFlagLed, Define("PF_HID_BOARD_FLAG_LED"));
+        Assert.Equal(HidProtocol.BoardFlagMonitorUart, Define("PF_HID_BOARD_FLAG_MONITOR_UART"));
+        Assert.Equal(HidProtocol.BoardRadioShift, Define("PF_HID_BOARD_RADIO_SHIFT"));
+        Assert.Equal(HidProtocol.BoardFlagWifi, 1 << HidProtocol.BoardRadioShift);
+        Assert.Equal(HidProtocol.SaveForceMsc, Define("PF_HID_SAVE_SETTINGS_FORCE_MSC"));
+        Assert.Equal(HidProtocol.SaveCommitWireless, Define("PF_HID_SAVE_SETTINGS_COMMIT_WIRELESS"));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 0, false)]
+    [InlineData(250, 1, 3, true)]
+    public void SettingsEncoderRoundTripsThroughTheSaveResult(int clock, int profile, int radios, bool tcpCli)
+    {
+        var arguments = HidProtocol.EncodeSettings(new(clock, profile, radios), tcpCli);
+        var report = new byte[HidProtocol.ControlFeatureSize];
+        report[0] = HidProtocol.ControlReportId;
+        report[1] = report[2] = 1;
+        report[3] = (byte)Opcode.SaveSettings;
+        report[4] = 2;
+        arguments.AsSpan(0, 4).CopyTo(report.AsSpan(6));
+        report[10] = 3;
+        var result = HidProtocol.ParseControlResult(report);
+        Assert.Equal(clock, BinaryPrimitives.ReadUInt16LittleEndian(result.ResultData));
+        Assert.Equal(profile, result.ResultData[2]);
+        Assert.Equal(radios | (tcpCli ? HidProtocol.SwitchTcpCli : 0), result.ResultData[3]);
+        Assert.True(HidProtocol.SettingsConfirmed(result, arguments, 3));
+        Assert.False(HidProtocol.SettingsConfirmed(result, arguments, 0));
+        arguments[3] ^= HidProtocol.SwitchTcpCli;
+        Assert.False(HidProtocol.SettingsConfirmed(result, arguments, 3));
+    }
+
+    [Theory]
+    [InlineData(100, 0, 0)]
+    [InlineData(200, 2, 0)]
+    [InlineData(200, 0, 4)]
+    public void SettingsValidationRejectsValuesFirmwareRefuses(int clock, int profile, int radios) =>
+        Assert.Throws<ArgumentException>(() => HidProtocol.ValidateSettings(new(clock, profile, radios)));
+
+    [Fact]
     public void BuildsAndValidatesControlTransactionResults()
     {
         var arguments = new byte[64];
         arguments[0] = 200;
         arguments[2] = 1;
-        var request = HidProtocol.BuildControlRequest(7, 5, 0, arguments);
+        var request = HidProtocol.BuildControlRequest(7, Opcode.SaveSettings, 0, arguments);
         Assert.Equal(69, request.Length);
         Assert.Equal(new byte[] { 20, 1, 7, 5, 0, 200, 0, 1, 0, 0 }, request[..10]);
         Assert.All(request[10..], value => Assert.Equal(0, value));
@@ -205,7 +261,7 @@ public sealed class ProtocolTests
         result[6] = 200;
         result[8] = 1;
         var parsed = HidProtocol.ParseControlResult(result);
-        HidProtocol.RequireCompleted(parsed, 7, 5);
+        HidProtocol.RequireCompleted(parsed, 7, Opcode.SaveSettings);
         Assert.Equal((byte)1, parsed.ResultData[2]);
         result[9] = 3;
         Assert.Equal((byte)3, HidProtocol.ParseControlResult(result).ResultData[3]);
@@ -258,7 +314,7 @@ public sealed class ProtocolTests
 
         using var openApi = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
         Assert.True(openApi.RootElement.GetProperty("paths").GetProperty("/api/status")
-            .GetProperty("get").GetProperty("responses").TryGetProperty("409", out _));
+            .GetProperty("get").GetProperty("responses").TryGetProperty("404", out _));
         await app.StopAsync();
     }
 
@@ -274,7 +330,9 @@ public sealed class ProtocolTests
             new ArgumentException("bad input"), new JsonException("bad json"), new KeyNotFoundException("no board"),
             new InvalidOperationException("busy"), new NotSupportedException("no capability"),
             new IOException("unplugged"), new InvalidDataException("garbled"), new TimeoutException("slow"),
-            new UnauthorizedAccessException("denied"), new NullReferenceException("bug")
+            new UnauthorizedAccessException("denied"), new FormatException("bad hex"),
+            new System.Net.Sockets.SocketException(10061), new OperationCanceledException("gave up"),
+            new BoardBusyException(), new NullReferenceException("bug")
         ];
         for (var index = 0; index < errors.Length; index++)
         {
@@ -285,10 +343,12 @@ public sealed class ProtocolTests
             .WithMetadata(new StatusEndpoints.UnavailableMessage("friendly", "too slow"));
         app.MapGet("/api/masked-timeout", () => { throw new TimeoutException("raw"); })
             .WithMetadata(new StatusEndpoints.UnavailableMessage("friendly", "too slow"));
+        app.MapGet("/api/detail", () => { throw new IOException("refused"); })
+            .WithMetadata(new StatusEndpoints.UnavailableMessage("TCP console connection failed", WithDetail: true));
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
 
-        int[] expected = [400, 400, 404, 409, 409, 503, 503, 503, 503, 500];
+        int[] expected = [400, 400, 404, 409, 409, 503, 503, 503, 503, 400, 503, 503, 409, 500];
         for (var index = 0; index < errors.Length; index++)
         {
             var response = await client.GetAsync($"/api/fail/{index}");
@@ -297,7 +357,11 @@ public sealed class ProtocolTests
             Assert.Equal(expected[index] == 500 ? "Internal server error" : errors[index].Message,
                 body.GetProperty("error").GetString());
         }
-        foreach (var (path, message) in new[] { ("/api/masked", "friendly"), ("/api/masked-timeout", "too slow") })
+        foreach (var (path, message) in new[]
+        {
+            ("/api/masked", "friendly"), ("/api/masked-timeout", "too slow"),
+            ("/api/detail", "TCP console connection failed: refused")
+        })
         {
             var response = await client.GetAsync(path);
             Assert.Equal(503, (int)response.StatusCode);
@@ -374,10 +438,10 @@ public sealed class ProtocolTests
     {
         public BootSettingsResponse? LastSettings { get; private set; }
         public bool RebootRequested { get; private set; }
-        public override StatusResponse Snapshot { get; set; } = new(true, null, null, null, null, null, null, null,
-            Settings: new BootSettingsResponse(0, 0, 0));
-        public override BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false) =>
-            LastSettings = settings;
-        public override void Reboot() => RebootRequested = true;
+        public override StatusResponse Snapshot { get; set; } = new(true, null, null, null, null, null,
+            BoardConfiguration: new(0, 0, 0, 0, 0, [], 0, 0, 0, 0));
+        public override BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false,
+            CancellationToken cancel = default) => LastSettings = settings;
+        public override void Reboot(CancellationToken cancel = default) => RebootRequested = true;
     }
 }

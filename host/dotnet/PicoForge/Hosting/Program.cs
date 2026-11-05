@@ -10,7 +10,6 @@ builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 builder.Services.AddOpenApi();
-builder.Services.AddProblemDetails();
 // Binding failures throw so UseApiErrors returns them as {error} like every other API error.
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 builder.Services.AddSingleton<DashboardBoards>();
@@ -18,8 +17,6 @@ builder.Services.AddSingleton<IDashboardBoards>(services => services.GetRequired
 builder.Services.AddSingleton<ConsoleBridge>();
 
 var app = builder.Build();
-app.UseExceptionHandler();
-app.UseStatusCodePages();
 app.Use(async (context, next) =>
 {
     if (context.Request.Host.Host is not ("localhost" or "127.0.0.1"))
@@ -31,8 +28,8 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Frame-Options"] = "DENY";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
     context.Response.Headers["Cache-Control"] = "no-store";
-    context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'; img-src 'self'; frame-ancestors 'none'";
+    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; connect-src 'self'; " +
+        "style-src 'self'; script-src 'self'; img-src 'self'; frame-ancestors 'none'";
     await next();
 });
 app.UseSameOriginApiWrites();

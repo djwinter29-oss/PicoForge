@@ -329,7 +329,8 @@ public sealed class WirelessTests
     {
         using var wire = new Wire { StaleScanEntry = true };
         Assert.Throws<InvalidDataException>(() => wire.Hid.ScanWireless());
-        Assert.True(wire.Hid.CommandOutcomeUncertain);
+        // Opcode 12 only reads a result, so a mismatched entry is bad data, not an unresolved write.
+        Assert.False(wire.Hid.CommandOutcomeUncertain);
     }
 
     [Fact]
@@ -341,6 +342,18 @@ public sealed class WirelessTests
         var result = wire.Hid.TestWireless("Pico", "secret12", () => polls++);
         Assert.Equal(1, result.TestGeneration);
         Assert.True(polls > 0);
+    }
+
+    [Fact]
+    public void CancelledTestSendsCancelAndLeavesOutcomeKnown()
+    {
+        using var wire = new Wire();
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+        Assert.Throws<WirelessTestCancelledException>(() =>
+            wire.Hid.TestWireless("Pico", "secret12", cancel: stop.Token));
+        Assert.Equal(new byte[] { 6, 7, 9, 10 }, wire.Writes.Select(report => report[3]));
+        Assert.False(wire.Hid.CommandOutcomeUncertain);
     }
 
     [Fact]
@@ -398,15 +411,17 @@ public sealed class WirelessTests
         Assert.Single(wire.Writes);
     }
 
-    [Theory]
-    [InlineData("1234567")]
-    [InlineData("line\nbreak")]
-    [InlineData("1234567890123456789012345678901234567890123456789012345678901234")]
-    public void PasswordValidationFailsBeforeStaging(string password)
+    [Fact]
+    public void WirelessPollReadsConfigurationOnceUntilASave()
     {
         using var wire = new Wire();
-        Assert.Throws<ArgumentException>(() => wire.Hid.TestWireless("Pico", password));
-        Assert.Empty(wire.Writes);
+        wire.Hid.ReadConfiguration();
+        wire.Hid.ReadWireless();
+        wire.Hid.ReadWireless();
+        Assert.Equal(1, wire.ConfigurationReads);
+        wire.Hid.SetWireless(Settings());
+        wire.Hid.ReadWireless();
+        Assert.Equal(2, wire.ConfigurationReads);
     }
 
     [Fact]
@@ -423,6 +438,14 @@ public sealed class WirelessTests
         app.MapWirelessEndpoints();
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        // Endpoints validate once; PicoForgeHid trusts them, so a bad password must never reach the monitor.
+        foreach (var password in new[] { "1234567", "line\nbreak", new string('1', 64) })
+        {
+            var rejected = await client.PostAsJsonAsync("/api/wireless/test?board=board-a",
+                new { ssid = "Pico", password });
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        }
+        Assert.Equal(0, dashboard.Tests);
         foreach (var body in new[] { "null", "[]", "{}", "{\"password\":\"secret\\n12\"}" })
         {
             var response = await client.PostAsync("/api/wireless?board=board-a",
@@ -467,6 +490,7 @@ public sealed class WirelessTests
         public bool WrongSaveMask { get; set; }
         public bool ProofReadFailure { get; set; }
         public int Reopens { get; private set; }
+        public int ConfigurationReads { get; private set; }
         private byte[] result = Result(1);
 
         public Wire() => Hid = new(Hardware, Read, Write, _ => Reopens++);
@@ -476,6 +500,7 @@ public sealed class WirelessTests
             Assert.Equal(id switch { 2 => 18, 12 => 49, 20 => 69, _ => throw new Exception("old report") }, size);
             if (id == 2)
             {
+                ConfigurationReads++;
                 if (FailConfiguration) throw new IOException("missing mandatory configuration");
                 return Configuration(ConfigurationFlags);
             }
@@ -547,21 +572,25 @@ public sealed class WirelessTests
     private sealed class WirelessMonitor : TestMonitor
     {
         public string? SsidHex { get; private set; }
+        public int Tests { get; private set; }
         public WirelessRequest? Saved { get; private set; }
         private static WirelessStatusResponse CurrentWireless => HidProtocol.ParseWirelessStatus(Status(),
             HidProtocol.ParseConfigurationReport(Configuration(), Hardware));
-        public override WirelessResponse ReadWireless() => new(CurrentWireless, false);
-        public override WirelessResponse SetWireless(WirelessRequest settings)
+        public override WirelessResponse ReadWireless(CancellationToken cancel = default) =>
+            new(CurrentWireless, false);
+        public override WirelessResponse SetWireless(WirelessRequest settings, CancellationToken cancel = default)
         {
             Saved = settings;
             return new(CurrentWireless, true, settings.Board);
         }
-        public override IReadOnlyList<WirelessNetworkResponse> ScanWireless() => [];
-        public override WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null)
+        public override IReadOnlyList<WirelessNetworkResponse> ScanWireless(CancellationToken cancel = default) => [];
+        public override WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null,
+            CancellationToken cancel = default)
         {
             SsidHex = ssidHex;
+            Tests++;
             return new(5, 5, "192.168.1.2", 0, 1);
         }
-        public override void CancelWirelessTest() { }
+        public override void CancelWirelessTest(CancellationToken cancel = default) { }
     }
 }

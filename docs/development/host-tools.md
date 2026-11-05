@@ -113,7 +113,7 @@ They can also be run individually:
 python3 -m unittest discover -s host/python/tests -v
 node --test host/direct/tests/*.test.mjs
 node --test host/web/tests/*.test.mjs
-dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo
+dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo --filter "Category!=Performance"
 ```
 
 Python tests cover the package and local web API; .NET tests cover the protocol and host behavior; Direct tests cover
@@ -153,15 +153,17 @@ host/python/.venv/bin/python tools/validation/bench-python-dashboard.py [--board
 | `GET /api/status` through Flask | 1/s per visible tab | ~0.6 ms | Many tabs or noticeable status latency |
 | 50 ms input poll loop | 20 wakes/s per board | 2.4-5.5 ms CPU/s with mocked HID; ~1 ms CPU/s for a running dashboard with a real board | Idle CPU exceeds ~1% per board |
 
-Save, scan and connection-test commands hold the device lock across several USB round trips; time them by hand on
-hardware before splitting that lock, and split it only where the write-safety rules still hold.
+Save, scan and connection-test commands hold the device lock across several USB round trips (see
+[command ownership](#command-ownership-and-cancellation)); time them by hand on hardware before splitting that lock, and
+split it only where the write-safety rules still hold.
 
 ### .NET dashboard performance baseline
 
-`PerformanceTests` times the status hot paths with a mocked board and fails only past ceilings 10-50x the baseline:
+`PerformanceTests` times the status hot paths with a mocked board and fails only past ceilings 10-50x the baseline.
+It is in the `Performance` category, which the default host suite skips; run it on its own:
 
 ```sh
-dotnet test host/dotnet/PicoForge.sln -c Release --filter PerformanceTests --logger "console;verbosity=detailed"
+dotnet test host/dotnet/PicoForge.sln -c Release --filter Category=Performance --logger "console;verbosity=detailed"
 ```
 
 | Path | Rate | Baseline (2026-11-05, x86-64 Linux, Release) | Revisit when |
@@ -170,8 +172,8 @@ dotnet test host/dotnet/PicoForge.sln -c Release --filter PerformanceTests --log
 | Status JSON serialization | Each `GET /api/status` | 17-33 us | One status exceeds 0.5 ms |
 | `GET /api/status` through Kestrel | 1/s per visible tab | 0.25-0.32 ms | Many tabs or noticeable status latency |
 
-HID commands block one thread-pool thread under the device lock, up to 5 s for a forced save. That is acceptable for
-a localhost dashboard; move HID I/O to a dedicated thread only if concurrent requests start queueing.
+HID commands block one thread-pool thread under the device lock, up to 35 s for a connection test. That is acceptable
+for a localhost dashboard; move HID I/O to a dedicated thread only if concurrent requests start queueing.
 
 ## Shared Frontend and Protocol Boundaries
 
@@ -200,16 +202,34 @@ Every `/api` error body is `{"error": "<message>"}`, and both servers map failur
 
 | Status | Meaning | Python | .NET |
 |---|---|---|---|
-| 400 | Rejected input, before any HID write | `InvalidRequest` | `ArgumentException`, `JsonException`, bad binding |
+| 400 | Rejected input, before any HID write | `InvalidRequest` | `ArgumentException`, `JsonException`, `FormatException`, bad binding |
 | 404 | Unknown `board` ID | `LookupError` | `KeyNotFoundException` |
 | 409 | Board state conflict or firmware refusal; retry after the state changes | `RuntimeError` | `InvalidOperationException`, `NotSupportedException` |
-| 503 | HID I/O, timeout, disconnect or malformed board data | `OSError`, other `ValueError` | `IOException`, `TimeoutException`, `InvalidDataException` |
+| 503 | HID or TCP I/O, timeout, disconnect or malformed board data | `OSError`, other `ValueError` | `IOException`, `TimeoutException`, `InvalidDataException`, `UnauthorizedAccessException`, `SocketException`, `OperationCanceledException` |
 | 500 | Server fault; logged, and the message is not exposed | anything else | anything else |
 
 Wi-Fi endpoints replace 503 transport detail with a fixed per-endpoint message, for example "Wireless provisioning
-outcome is uncertain; command was not resent". The board monitor never stops on a fault: it reports the error in the
+outcome is uncertain; command was not resent". Console connect reports "TCP console connection failed: <detail>" and
+logs it as a warning. The board monitor never stops on a fault: it reports the error in the
 snapshot, prefixed "Internal monitor error" for a server fault, and reconnects after 1 s. A stored `busy` control result
 is history and does not block later commands; the per-device lock serializes them.
+
+Each rule has one owner. Endpoints reject a malformed request with 400 whatever the board state; the HID client
+guards firmware capabilities and report field lengths, and in Python also protocol ranges because the CLI calls it
+directly (.NET has no CLI, so its endpoints are the only range check); the monitor checks only board state
+(connection, storage ownership, self-test, pending reboot).
+
+### Command ownership and cancellation
+
+One command owns a board at a time. A scan holds it for up to 15 s and a connection test for up to 35 s, so an API
+command waits at most 2 s for the board and then returns 409 "Board is busy with another command; retry when it
+finishes"; .NET also stops waiting when the request is aborted. The monitor's own polling waits without a limit.
+
+`POST /api/wireless/cancel` during a running test does not wait for the board. It flags the test, which sends opcode
+`10` at its next 0.5 s poll, clears its in-flight uncertainty (the cancelled test never reports a result), and fails
+with "Wi-Fi test cancelled"; the cancel request returns `{"cancelled": true}` at once. A cancel that arrives after the
+test's last poll is sent when the test returns. With no test running, cancel sends opcode `10` directly. The browser
+waits 20 s for a scan (2 s board wait plus the 15 s scan) and 40 s for a test.
 
 Command replies share a top-level key: `msc` for `POST /api/msc` and `/api/msc/force-return`, `settings` for
 `POST /api/settings`, `networks`, `test` and `cancelled` for the Wi-Fi scan, test and cancel routes. Python also returns

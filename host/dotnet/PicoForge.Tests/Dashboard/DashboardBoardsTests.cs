@@ -46,7 +46,7 @@ public sealed class DashboardBoardsTests
     [Fact]
     public void SerialBackedMonitorsSurviveBriefDisconnectAndExpireAfterGracePeriod()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new ManualTime();
         HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
         var created = new List<FakeDeviceMonitor>();
         using var boards = new DashboardBoards(null, null, () => attached, (_, _) =>
@@ -102,7 +102,7 @@ public sealed class DashboardBoardsTests
     [Fact]
     public void UncertainCommandKeepsMonitorAndWriteBlockAcrossStaleBoardExpiry()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new ManualTime();
         HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
         var monitor = new FakeDeviceMonitor
         {
@@ -241,23 +241,11 @@ public sealed class DashboardBoardsTests
         await monitor.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
     }
 
-    private sealed class ManualTimeProvider : TimeProvider
-    {
-        private DateTimeOffset now = DateTimeOffset.UnixEpoch;
-
-        public override DateTimeOffset GetUtcNow() => now;
-
-        public void Advance(TimeSpan amount) => now += amount;
-    }
 
     private sealed class FakeDeviceMonitor : TestMonitor
     {
         public Action? OnStart { get; init; }
 
-        public override Task StartAsync(CancellationToken cancellationToken)
-        {
-            OnStart?.Invoke();
-            return Task.CompletedTask;
-        }
+        public override void Start() => OnStart?.Invoke();
     }
 }

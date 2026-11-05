@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bindWirelessForm, renderWirelessStatus } from "../js/wireless-form.mjs";
+import { bindWirelessForm } from "../js/wireless-form.mjs?v=47";
+import { renderWirelessStatus } from "../js/view.mjs?v=47";
 
 test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
   const previous = globalThis.document;
@@ -98,11 +99,11 @@ test("connected Wi-Fi CLI status links to the console in a new tab", () => {
   }) };
   try {
     renderWirelessStatus({ connected: true, hardware: { capabilities: 128 },
-      console_url: "console.html?ipv4=192.168.1.9&auth=1",
+      console_url: "console.html?ipv4=192.168.1.9",
       wireless: { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
         ssid: "HomeDev", ipv4: "192.168.1.9", ble_enabled: false } });
     assert.equal(wifi.children[0].textContent, "HomeDev (192.168.1.9)");
-    assert.equal(wifi.children[0].href, "console.html?ipv4=192.168.1.9&auth=1");
+    assert.equal(wifi.children[0].href, "console.html?ipv4=192.168.1.9");
     assert.equal(wifi.children[0].target, "_blank");
     assert.equal(wifi.children[0].rel, "noopener noreferrer");
   } finally { globalThis.document = previous; }
@@ -196,4 +197,71 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
     if (previousCrypto) Object.defineProperty(globalThis, "crypto", previousCrypto);
     else delete globalThis.crypto;
   }
+});
+
+test("one form phase serializes scan, test and cancel, and a reset drops late results", async () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  const el = id => {
+    if (!elements.has(id)) elements.set(id, {
+      value: "", children: [], handlers: {}, open: false, textContent: "",
+      options: ["0", "1", "configure"].map(value => ({ value })),
+      addEventListener(event, callback) { this.handlers[event] = callback; },
+      replaceChildren(...children) { this.children = children; },
+      close() { this.open = false; }, showModal() { this.open = true; },
+    });
+    return elements.get(id);
+  };
+  globalThis.document = { querySelector: selector => el(selector.slice(1)) };
+  const deferred = () => {
+    let resolve, reject;
+    const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+    return { promise, resolve, reject };
+  };
+  let scan, check, cancel;
+  try {
+    el("settings-wifi").value = "1";
+    el("settings-ble").value = "0";
+    const form = bindWirelessForm({ load: async () => ({ ssid: "saved", wifi_enabled: true }),
+      ready: () => true, supported: () => true,
+      scan: () => (scan = deferred()).promise, test: () => (check = deferred()).promise,
+      cancelTest: () => (cancel = deferred()).promise });
+    await form.load();
+
+    const scanning = el("wifi-scan").handlers.click();
+    assert.equal(form.operationBusy(), true, "scanning owns the device");
+    assert.equal(el("wifi-connect").disabled, true);
+    form.reset();
+    assert.equal(form.operationBusy(), false, "reset returns to idle");
+    scan.resolve([{ ssid: "late", ssid_hex: "6c617465", rssi: -40, secured: true }]);
+    await scanning;
+    assert.equal(el("wifi-networks").children.length, 0, "a scan from before the reset is ignored");
+    assert.equal(form.operationBusy(), false);
+
+    await form.load();
+    el("wifi-ssid").value = "home";
+    el("wifi-password").value = "password";
+    const testing = el("wifi-connect").handlers.click();
+    assert.equal(el("wifi-connect").textContent, "Testing…");
+    assert.equal(el("wifi-cancel").disabled, true, "cancel waits for the test result");
+    check.reject(new Error("Password rejected"));
+    await testing;
+    assert.equal(el("wifi-connect").textContent, "Test connection");
+    assert.equal(form.operationBusy(), false);
+
+    const canceling = el("wifi-cancel").handlers.click();
+    assert.equal(el("wifi-cancel").textContent, "Clearing…");
+    assert.equal(form.canSave(), false);
+    cancel.reject(new Error("link lost"));
+    await canceling;
+    assert.equal(el("wifi-cancel").textContent, "Retry clearing test");
+    assert.equal(form.operationBusy(), true, "an uncleared test blocks other device work");
+    assert.throws(() => form.request(), /Clear the temporary Wi-Fi test/);
+    const retry = el("wifi-cancel").handlers.click();
+    cancel.resolve();
+    await retry;
+    assert.equal(el("wifi-cancel").textContent, "Cancel");
+    assert.equal(form.operationBusy(), false);
+    assert.equal(form.canSave(), true);
+  } finally { globalThis.document = previous; }
 });

@@ -214,8 +214,8 @@ TCP session receives a busy line and its input is discarded. A second TCP client
 the owning connection ends the session and cancels its pending output, exactly like dropping DTR. TCP keepalive
 drops a vanished client after about 50 seconds idle.
 
-TCP authentication is required whenever the board has a saved Control key and off otherwise. Clients must answer a
-one-use challenge within ten seconds. The Python and .NET dashboards request a narrowly scoped proof from the selected
+TCP authentication is always required; without a saved Control key no proof can succeed, so save a key before using
+the TCP CLI. Clients must answer a one-use challenge within ten seconds. The Python and .NET dashboards request a narrowly scoped proof from the selected
 board over USB HID; the key is not entered in or sent through the browser. The Direct dashboard reuses its matching live
 USB or already-authenticated Bluetooth connection to provide the same fixed-purpose proof; keep the dashboard connected
 until the console connects. The key is never entered in the console or sent to the local bridge. Raw PuTTY/`nc` sessions

@@ -1,6 +1,6 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -18,9 +18,11 @@ public sealed class ForcedSaveTests
     private static HardwareInfoResponse Hardware(byte capabilities = 0x4c) =>
         new("PicoForge", "RP2350", 2, "0001020304050607", Capabilities: capabilities);
 
-    private static DeviceMonitor Attached(IHidCommands commands, StatusResponse status)
+    private static readonly BoardConfigurationResponse Configuration = new(200, 1, 0, 0, 0, [], 0, 0, 0, 0);
+
+    private static DeviceMonitor Attached(IHidCommands commands, StatusResponse status, TimeProvider? time = null)
     {
-        var monitor = new DeviceMonitor();
+        var monitor = new DeviceMonitor(() => throw new NotSupportedException(), null, time);
         monitor.Attach(commands, status);
         return monitor;
     }
@@ -29,8 +31,19 @@ public sealed class ForcedSaveTests
         Assert.True(Record.Exception(command) is InvalidOperationException or IOException);
 
     private static StatusResponse Ready(bool enabled = true, byte capabilities = 0x4c) =>
-        new(true, null, Hardware(capabilities), null, null, null, null,
-            new(enabled, false, false), Settings: Settings);
+        WithMsc(new(enabled, false, false), capabilities);
+
+    private static StatusResponse WithMsc(MscStatusResponse? msc, byte capabilities = 0x4c) =>
+        new(true, null, Hardware(capabilities), null, null,
+            new MemoryStatusResponse(1, true, true, true, false, null, null, null, null, null, null) { Msc = msc },
+            BoardConfiguration: Configuration);
+
+    private static StatusResponse WirelessReady() => Ready(enabled: false, capabilities: 0xec) with
+    {
+        SelfTest = new(1, "idle", 0, 0, 0, 0, 0, 0, 0, 0, false, false),
+        SelfTestStale = false,
+        StorageStale = false
+    };
 
     [Theory]
     [InlineData(0)]
@@ -42,7 +55,7 @@ public sealed class ForcedSaveTests
         var arguments = new byte[64];
         arguments[0] = 200;
         arguments[2] = 1;
-        var request = HidProtocol.BuildControlRequest(7, 5, flags, arguments);
+        var request = HidProtocol.BuildControlRequest(7, Opcode.SaveSettings, flags, arguments);
         Assert.Equal(69, request.Length);
         Assert.Equal(new byte[] { 20, 1, 7, 5, flags, 200, 0, 1, 0, 0 }, request[..10]);
         Assert.All(request[10..], value => Assert.Equal(0, value));
@@ -54,7 +67,8 @@ public sealed class ForcedSaveTests
     [InlineData(128)]
     [InlineData(255)]
     public void SaveRejectsReservedFlags(byte flags) =>
-        Assert.Throws<ArgumentException>(() => HidProtocol.BuildControlRequest(7, 5, flags, new byte[64]));
+        Assert.Throws<ArgumentException>(() =>
+            HidProtocol.BuildControlRequest(7, Opcode.SaveSettings, flags, new byte[64]));
 
     [Theory]
     [InlineData(false)]
@@ -169,12 +183,15 @@ public sealed class ForcedSaveTests
     public void PendingTimeoutDoesNotReplayAndRemainsUncertain(bool force)
     {
         var writes = new List<byte[]>();
-        using var hid = Hid((_, _) => Result(1), writes.Add,
-            _ => Assert.Fail("a pending response must not trigger reconnect"));
-        var started = Environment.TickCount64;
+        var time = new ManualTime();
+        using var hid = Hid((_, _) =>
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            return Result(1);
+        }, writes.Add, _ => Assert.Fail("a pending response must not trigger reconnect"), time);
+        var started = time.GetTimestamp();
         var error = Assert.Throws<TimeoutException>(() => hid.SetSettings(Settings, force));
-        var elapsed = Environment.TickCount64 - started;
-        Assert.InRange(elapsed, force ? 5000 : 1000, force ? 7000 : 3000);
+        Assert.Equal(TimeSpan.FromMilliseconds(force ? 5000 : 1000), time.GetElapsedTime(started));
         Assert.Single(writes);
         Assert.Equal(force ? (byte)1 : (byte)0, writes[0][4]);
         Assert.True(hid.CommandOutcomeUncertain);
@@ -227,7 +244,7 @@ public sealed class ForcedSaveTests
         Assert.Empty(commands.Forces);
         Assert.Equal(Settings, monitor.SetSettings(Settings, true));
         Assert.Equal(new[] { true }, commands.Forces);
-        Assert.False(monitor.Snapshot.Msc!.Enabled);
+        Assert.False(monitor.Snapshot.Memory!.Msc!.Enabled);
 
         monitor.Attach(commands, Ready(false, 0x0c));
         Assert.Equal(Settings, monitor.SetSettings(Settings));
@@ -258,13 +275,16 @@ public sealed class ForcedSaveTests
     public void MonitorOnlyTreatsConfirmedBoundedMscDisconnectAsReconnecting(
         string kind, bool confirmed, bool expired, bool reconnecting)
     {
-        using var monitor = Attached(new Commands(), Ready(kind == "noop"));
-        var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        var time = new ManualTime();
+        var commands = new Commands();
+        using var monitor = Attached(commands, Ready(kind == "noop"), time);
         if (confirmed) monitor.SetMsc(true);
-        if (expired)
-            typeof(DeviceMonitor).GetField("mscReconnectDeadline", fields)!.SetValue(monitor, Environment.TickCount64 - 1);
+        if (expired) time.Advance(TimeSpan.FromSeconds(6));
         if (kind == "uncertain")
-            typeof(DeviceMonitor).GetField("commandOutcomeUncertain", fields)!.SetValue(monitor, true);
+        {
+            commands.Failure = new TimeoutException("self-test result unavailable");
+            Assert.Throws<TimeoutException>(() => monitor.SetSelfTest("start", 1));
+        }
         Exception error = kind switch
         {
             "missing" => new IOException("PicoForge HID interface not found; check USB"),
@@ -286,7 +306,7 @@ public sealed class ForcedSaveTests
         using var monitor = new DeviceMonitor();
         foreach (var status in new[]
         {
-            Ready(false) with { Msc = new(false, true, false) },
+            WithMsc(new(false, true, false)),
             Ready(false) with { SelfTest = new(1, "queued", 1024, 0, 0, 0, 0, 0, 0, 0, false, true) },
             Ready()
         })
@@ -317,22 +337,65 @@ public sealed class ForcedSaveTests
     }
 
     [Fact]
-    public async Task SnapshotHidesSectionsThatAgeOutWithoutNewReports()
+    public void SnapshotHidesSectionsThatAgeOutWithoutNewReports()
     {
+        var time = new ManualTime();
         var runtime = new RuntimeStatusResponse(1, 1, 200_000_000, true, false, false, null, true, false);
-        using var monitor = Attached(new Commands(), Ready() with
-        {
-            Runtime = runtime, BoardStatus = runtime.ToBoardStatus(), TelemetryStale = false
-        });
+        using var monitor = Attached(new Commands(), Ready() with { Runtime = runtime, TelemetryStale = false }, time);
         Assert.NotNull(monitor.Snapshot.Runtime);
-        await Task.Delay(800);
+        time.Advance(TimeSpan.FromMilliseconds(800));
         var aged = monitor.Snapshot;
         Assert.Null(aged.Runtime);
         Assert.True(aged.TelemetryStale);
-        Assert.NotNull(aged.Msc);
-        await Task.Delay(800);
-        Assert.Null(monitor.Snapshot.Msc);
+        Assert.NotNull(aged.Memory?.Msc);
+        time.Advance(TimeSpan.FromMilliseconds(800));
+        Assert.Null(monitor.Snapshot.Memory);
         Assert.True(monitor.Snapshot.StorageStale);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelReachesRunningWifiTestWhileOtherCommandsGetBusy(bool testFinishesFirst)
+    {
+        var commands = new Commands { TestFinishesBeforeCancelCheck = testFinishesFirst };
+        using var monitor = Attached(commands, WirelessReady());
+        var test = Task.Run(() => monitor.TestWireless("Pico", "secret12"));
+        Assert.True(commands.TestStarted.Wait(TimeSpan.FromSeconds(2)));
+
+        var busy = Stopwatch.StartNew();
+        Assert.Throws<BoardBusyException>(() => monitor.SetSelfTest("start", 1));
+        Assert.InRange(busy.ElapsedMilliseconds, 1500, 5000);
+        Assert.Equal(0, commands.SelfTests);
+
+        var cancel = Stopwatch.StartNew();
+        monitor.CancelWirelessTest();
+        Assert.True(cancel.ElapsedMilliseconds < 1000, "cancel must not wait for the running test");
+        if (testFinishesFirst) Assert.Equal(5, (await test).State);
+        else await Assert.ThrowsAsync<WirelessTestCancelledException>(() => test);
+        Assert.Equal(1, commands.Cancels);
+        Assert.False(monitor.Snapshot.CommandOutcomeUncertain);
+    }
+
+    [Fact]
+    public void AbortedRequestStopsWaitingWithoutSending()
+    {
+        var commands = new Commands();
+        using var monitor = Attached(commands, WirelessReady());
+        var test = Task.Run(() => monitor.TestWireless("Pico", "secret12"));
+        Assert.True(commands.TestStarted.Wait(TimeSpan.FromSeconds(2)));
+        using var aborted = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        Assert.Throws<OperationCanceledException>(() => monitor.SetSelfTest("start", 1, aborted.Token));
+        Assert.Equal(0, commands.SelfTests);
+        monitor.CancelWirelessTest();
+        Assert.Throws<AggregateException>(() => test.Wait());
+    }
+
+    [Fact]
+    public void LedOnDisconnectedBoardIsUnavailableNotConflict()
+    {
+        using var monitor = Attached(new Commands(), Ready() with { Connected = false });
+        Assert.Throws<IOException>(() => monitor.SetLed(true));
     }
 
     [Fact]
@@ -343,12 +406,7 @@ public sealed class ForcedSaveTests
             CancelUncertain = true,
             CancelFailure = new TimeoutException("wireless cancel timed out")
         };
-        using var monitor = Attached(commands, Ready(enabled: false, capabilities: 0xec) with
-        {
-            SelfTest = new(1, "idle", 0, 0, 0, 0, 0, 0, 0, 0, false, false),
-            SelfTestStale = false,
-            StorageStale = false
-        });
+        using var monitor = Attached(commands, WirelessReady());
 
         Assert.Throws<TimeoutException>(() => monitor.CancelWirelessTest());
         Assert.True(monitor.Snapshot.CommandOutcomeUncertain);
@@ -429,8 +487,8 @@ public sealed class ForcedSaveTests
     [
         Ready(false),
         Ready() with { Connected = false },
-        Ready() with { Msc = null },
-        Ready() with { Msc = new(true, true, false) },
+        WithMsc(null),
+        WithMsc(new(true, true, false)),
         Ready() with { SelfTest = new(1, "writing", 1024, 0, 0, 0, 0, 0, 0, 0, false, true) }
     ];
 
@@ -445,10 +503,11 @@ public sealed class ForcedSaveTests
         return report;
     }
 
-    private static PicoForgeHid Hid(Func<byte, int, byte[]> read, Action<byte[]> write, Action<string> reopen) =>
+    private static PicoForgeHid Hid(Func<byte, int, byte[]> read, Action<byte[]> write, Action<string> reopen,
+        TimeProvider? time = null) =>
         new(Hardware(), (id, size) => id == 2
             ? [2, 1, 200, 0, 1, 255, 255, 255, 2, 3, 4, 5, 255, 255, 0, 0, 255, 255]
-            : read(id, size), write, reopen);
+            : read(id, size), write, reopen, time);
 
     internal sealed class Commands : IHidCommands
     {
@@ -457,13 +516,16 @@ public sealed class ForcedSaveTests
         public Exception? CancelFailure { get; set; }
         public bool CancelUncertain { get; set; }
         public int Reboots { get; private set; }
+        public int SelfTests { get; private set; }
+        public int Cancels { get; private set; }
+        public bool TestFinishesBeforeCancelCheck { get; init; }
+        public ManualResetEventSlim TestStarted { get; } = new();
         public bool CommandOutcomeUncertain => Failure is not null || CancelUncertain;
         public InputReport? ReadInputReport(int timeoutMilliseconds = 250) =>
             throw new NotSupportedException();
         public void SetLed(bool on) { }
         public void SetMsc(bool enabled, bool force = false) { }
         public BoardConfigurationResponse ReadConfiguration() => throw new NotSupportedException();
-        public BootSettingsResponse ReadSettings() => Settings;
         public BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false)
         {
             Forces.Add(force);
@@ -471,17 +533,29 @@ public sealed class ForcedSaveTests
             return settings;
         }
         public void Reboot() => Reboots++;
-        public void SetSelfTest(string action, uint sizeMib) { }
+        public void SetSelfTest(string action, uint sizeMib)
+        {
+            if (Failure is not null) throw Failure;
+            SelfTests++;
+        }
         public WirelessStatusResponse ReadWireless() => throw new NotSupportedException();
         public WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new NotSupportedException();
         public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null) =>
             throw new NotSupportedException();
+        // Mirrors PicoForgeHid: the test thread sends the cancel itself, or misses it after its last check.
         public WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
-            Action<string>? onProgress = null, string? ssidHex = null) => throw new NotSupportedException();
+            Action<string>? onProgress = null, string? ssidHex = null, CancellationToken cancel = default)
+        {
+            TestStarted.Set();
+            if (!cancel.WaitHandle.WaitOne(TimeSpan.FromSeconds(10))) throw new TimeoutException("never cancelled");
+            if (TestFinishesBeforeCancelCheck) return new(5, 5, "192.168.1.2", 0, 1);
+            CancelWirelessTest();
+            throw new WirelessTestCancelledException();
+        }
         public void CancelWirelessTest()
         {
             if (CancelFailure is not null) throw CancelFailure;
-            throw new NotSupportedException();
+            Cancels++;
         }
     }
 }

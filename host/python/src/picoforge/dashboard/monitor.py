@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 import logging
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
-from ..hid.device import PicoForgeHid
+from ..hid.device import PicoForgeHid, WirelessTestCancelled
 from ..hid.models import InputReport, MscStatus, WirelessNetwork, WirelessOperation, WirelessStatus
 from .models import (
     DashboardSnapshot,
@@ -19,6 +20,7 @@ from .models import (
 _LOGGER = logging.getLogger(__name__)
 _MSC_RECONNECT_TIMEOUT_SECONDS = 5.0
 _INPUT_POLL_INTERVAL_SECONDS = 0.05
+_BUSY_WAIT_SECONDS = 2.0
 # Input report kind -> (report ID, maximum age before the section is withheld, stale flag); matches .NET.
 _REPORTS = {
     "runtime": (3, 0.750, "telemetry_stale"),
@@ -82,6 +84,7 @@ class DeviceMonitor:
         self._command_outcome_uncertain = False
         self._msc_reconnect_deadline = 0.0
         self._msc_reconnect_enabled: bool | None = None
+        self._wireless_test_cancel: threading.Event | None = None
         self._thread = threading.Thread(target=self._run, name="picoforge-hid-monitor", daemon=True)
         if autostart:
             self._thread.start()
@@ -119,6 +122,18 @@ class DeviceMonitor:
             raise ConnectionError("PicoForge HID is not connected")
         return self._active_client
 
+    @contextmanager
+    def _device(self) -> Iterator[None]:
+        """Own the board for one API command, or refuse quickly while a long Wi-Fi operation holds it."""
+        # ponytail: a 2 s wait turns a 15 s scan or 35 s test into a quick 409 instead of a hung request; queue
+        # commands per board if users need them to run after the operation instead of retrying.
+        if not self._device_lock.acquire(timeout=_BUSY_WAIT_SECONDS):
+            raise RuntimeError("Board is busy with another command; retry when it finishes")
+        try:
+            yield
+        finally:
+            self._device_lock.release()
+
     def _send_control(self, method: Callable[..., Any], *args: object, **kwargs: object) -> Any:
         if self._command_outcome_uncertain:
             raise RuntimeError("a prior command outcome is uncertain; no further writes are allowed")
@@ -139,11 +154,12 @@ class DeviceMonitor:
             raise RuntimeError(f"{action} command {result['status']}: {result['error']}")
 
     def set_led(self, on: bool) -> dict[str, Any]:
-        hardware = self.snapshot().get("hardware")
-        if not isinstance(hardware, dict) or hardware.get("led_available") is not True:
-            raise RuntimeError("PicoForge HID is disconnected or the board LED is unavailable")
-        with self._device_lock:
-            result = self._send_control(self._client().set_led, on)
+        with self._device():
+            client = self._client()
+            hardware = self.snapshot().get("hardware")
+            if not isinstance(hardware, dict) or hardware.get("led_available") is not True:
+                raise RuntimeError("The board LED is unavailable")
+            result = self._send_control(client.set_led, on)
             self._publish_result(result, "LED")
         with self._lock:
             runtime = self._snapshot.get("runtime")
@@ -154,7 +170,7 @@ class DeviceMonitor:
     def set_msc(self, enable: bool, *, force: bool = False) -> dict[str, Any]:
         if force and enable:
             raise RuntimeError("Force return requires disabling MSC")
-        with self._device_lock:
+        with self._device():
             client = self._client()
             msc = _msc(self.snapshot()) or {}
             if force and (not msc.get("enabled") or msc.get("transition_pending")):
@@ -176,19 +192,19 @@ class DeviceMonitor:
         return {"msc": status, "control_result": result}
 
     def reboot(self) -> dict[str, Any]:
-        with self._device_lock:
+        with self._device():
             result = self._send_control(self._client().reboot)
             self._publish_result(result, "reboot")
             return {"control_result": result}
 
     def set_self_test(self, action: str, size_mib: int | None = None) -> dict[str, Any]:
-        with self._device_lock:
+        with self._device():
             result = self._send_control(self._client().set_self_test, action, size_mib)
             self._publish_result(result, "self-test")
             return {"control_result": result}
 
     def set_settings(self, settings: dict[str, object], *, force: bool = False) -> dict[str, Any]:
-        with self._device_lock:
+        with self._device():
             snapshot = self.snapshot()
             client = self._client()
             if snapshot.get("settings_supported") is not True:
@@ -225,11 +241,11 @@ class DeviceMonitor:
             )
 
     def read_wireless(self) -> WirelessStatus:
-        with self._device_lock:
+        with self._device():
             return self._client().read_wireless()
 
     def tcp_cli_auth_proof(self, nonce: bytes, uid: bytes) -> bytes:
-        with self._device_lock:
+        with self._device():
             return self._send_control(self._client().tcp_cli_auth_proof, nonce, uid)
 
     def _require_wireless_idle(self) -> PicoForgeHid:
@@ -254,19 +270,31 @@ class DeviceMonitor:
         return client
 
     def scan_wireless(self) -> dict[str, list[WirelessNetwork]]:
-        with self._device_lock:
+        with self._device():
             client = self._require_wireless_idle()
             return {"networks": self._send_control(client.scan_wireless, on_poll=self._drain_input_reports)}
 
     def test_wireless(self, ssid: str | bytes, password: str = "") -> dict[str, WirelessOperation]:
-        with self._device_lock:
+        with self._device():
             client = self._require_wireless_idle()
+            stop = threading.Event()
+            with self._lock:
+                self._wireless_test_cancel = stop
+            cancel_sent = False
             try:
                 return {"test": self._send_control(client.test_wireless, ssid, password,
                                                    on_poll=self._drain_input_reports,
-                                                   on_progress=self._set_wireless_phase)}
+                                                   on_progress=self._set_wireless_phase, cancel=stop)}
+            except WirelessTestCancelled:
+                cancel_sent = True
+                raise
             finally:
+                with self._lock:
+                    self._wireless_test_cancel = None
                 self._set_wireless_phase(None)
+                # A cancel that arrived after the client's last check must still clear the test credentials.
+                if stop.is_set() and not cancel_sent and not self._command_outcome_uncertain:
+                    self._send_control(client.cancel_wireless_test)
 
     def _set_wireless_phase(self, phase: str | None) -> None:
         with self._lock:
@@ -302,13 +330,18 @@ class DeviceMonitor:
             })
 
     def cancel_wireless_test(self) -> dict[str, bool]:
-        with self._device_lock:
+        # A running test owns the board for up to 35 s; it sends the cancel at its next 0.5 s poll instead.
+        with self._lock:
+            if self._wireless_test_cancel is not None:
+                self._wireless_test_cancel.set()
+                return {"cancelled": True}
+        with self._device():
             client = self._require_wireless_idle()
             self._send_control(client.cancel_wireless_test)
             return {"cancelled": True}
 
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResponse:
-        with self._device_lock:
+        with self._device():
             client = self._require_wireless_idle()
             result = dict(self._send_control(client.set_wireless, settings))
             saved = result.pop("settings")

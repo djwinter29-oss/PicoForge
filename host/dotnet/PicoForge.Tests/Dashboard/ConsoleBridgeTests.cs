@@ -54,6 +54,34 @@ public sealed class ConsoleBridgeTests
         finally { listener.Stop(); }
     }
 
+    [Fact]
+    public async Task ExpiresAnIdleSessionOnTheInjectedClock()
+    {
+        var address = Dns.GetHostAddresses(Dns.GetHostName()).First(ip =>
+            ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip));
+        var listener = new TcpListener(address, 2323);
+        listener.Start();
+        try
+        {
+            var time = new ManualTime();
+            using var bridge = new ConsoleBridge(time);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var opening = Task.Run(() => bridge.Open(Wireless(address.ToString()), (_, _) => new byte[16]));
+            using var peer = await listener.AcceptSocketAsync(timeout.Token);
+            await peer.SendAsync(Encoding.ASCII.GetBytes(
+                "PicoForge AUTH 00000000000000000000000000000000 0001020304050607\r\n"),
+                SocketFlags.None, timeout.Token);
+            var token = await opening.WaitAsync(timeout.Token);
+            time.Advance(TimeSpan.FromSeconds(14));
+            bridge.Expire();
+            Assert.Empty(bridge.Read(token).Data);
+            time.Advance(TimeSpan.FromSeconds(15));
+            bridge.Expire();
+            Assert.Throws<InvalidOperationException>(() => bridge.Read(token));
+        }
+        finally { listener.Stop(); }
+    }
+
     [Theory]
     [InlineData("127.0.0.1")]
     [InlineData("224.0.0.1")]

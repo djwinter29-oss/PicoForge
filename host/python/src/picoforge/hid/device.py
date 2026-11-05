@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from math import ceil
 from functools import wraps
-from threading import RLock
+from threading import Event, RLock
 from time import monotonic, sleep
 from typing import Any, Callable
 
@@ -130,6 +130,10 @@ def _select_device(serial_number: str | None, device_path: str | None) -> dict[s
     if len(matches) != 1:
         raise RuntimeError("multiple PicoForge HID interfaces matched; select one with --serial or --device-path")
     return matches[0]
+
+
+class WirelessTestCancelled(RuntimeError):
+    """A connection test stopped after this client sent the Wi-Fi cancel command."""
 
 
 def _serialized(method):
@@ -395,7 +399,7 @@ class PicoForgeHid:
     @_serialized
     def test_wireless(
         self, ssid: str, password: str = "", *, on_poll: Callable[[], None] | None = None,
-        on_progress: Callable[[str], None] | None = None,
+        on_progress: Callable[[str], None] | None = None, cancel: Event | None = None,
     ) -> WirelessOperation:
         """Test a temporary network join; firmware retains credentials only in RAM after success."""
         self._require_open()
@@ -407,7 +411,7 @@ class PicoForgeHid:
         self._wireless_command(7, value=password)
         result = self._wireless_command(9)
         status = self._poll_wireless("test", previous["test_generation"], 35.0,
-                                     on_poll=on_poll, on_progress=on_progress)
+                                     on_poll=on_poll, on_progress=on_progress, cancel=cancel)
         self._tested_generation = status["test_generation"]
         self._tested_at = monotonic()
         return {"transaction_id": result["transaction_id"], "state": 5, "page": 0,
@@ -442,12 +446,18 @@ class PicoForgeHid:
     def _poll_wireless(
         self, kind: str, previous_generation: int, timeout: float, *,
         on_poll: Callable[[], None] | None = None, on_progress: Callable[[str], None] | None = None,
+        cancel: Event | None = None,
     ) -> WirelessStatus:
         deadline = monotonic() + timeout
         modulus = 65535 if kind == "scan" else 255
         expected_generation = previous_generation % modulus + 1
         self._command_uncertain = True
         while monotonic() < deadline:
+            if cancel is not None and cancel.is_set():
+                # Opcode 10 drops the test, so its result never arrives; the cancel reply is the known outcome.
+                self._command_uncertain = False
+                self.cancel_wireless_test()
+                raise WirelessTestCancelled("Wi-Fi test cancelled")
             if on_poll is not None:
                 on_poll()
             status = self.read_wireless()
@@ -465,7 +475,10 @@ class PicoForgeHid:
                     return status
                 if on_progress is not None:
                     on_progress(status["phase"] or "Connecting to Wi-Fi")
-            sleep(0.5)
+            if cancel is None:
+                sleep(0.5)
+            else:
+                cancel.wait(0.5)
         raise TimeoutError("Wireless operation timed out; do not resend until its result is checked")
 
     @_serialized
