@@ -915,7 +915,7 @@ sequenceDiagram
     participant USB as USB/MSC integration
     participant Host as USB host
     FW->>Card: Startup initialization (MSC disabled)
-    FW->>FW: Mount existing filesystem; keep mounted for firmware use
+    FW->>FW: Mount existing filesystem - keep mounted for firmware use
     FW->>Card: Firmware block operations and sync
     Host->>USB: Explicit enable USB drive request
     FW->>FW: Finish work, close files, unmount filesystem

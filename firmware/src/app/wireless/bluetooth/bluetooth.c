@@ -86,6 +86,7 @@ static uint8_t service_changed_cccd[2]; /**< Current connection's readable indic
 static bool service_changed_pending; /**< CCCD enabled; indication waits for the current ATT response to finish. */
 static bool service_changed_awaiting_confirmation; /**< Indication submitted but not yet confirmed. */
 static bool service_changed_sent; /**< Full-range invalidation confirmed on this connection. */
+static bool service_changed_failed; /**< Indication timed out; do not retry before the next connection. */
 static uint8_t service_changed_last_error; /**< Last transient indication error, to avoid logging every poll. */
 static bool service_changed_disconnect_pending; /**< Timed-out indication requires a link disconnect. */
 static hci_con_handle_t service_changed_disconnect_connection; /**< Connection queued for timeout disconnect. */
@@ -127,6 +128,7 @@ static void advertise(void)
     service_changed_pending = false;
     service_changed_awaiting_confirmation = false;
     service_changed_sent = false;
+    service_changed_failed = false;
     service_changed_last_error = 0u;
     service_changed_disconnect_pending = false;
     service_changed_disconnect_connection = 0u;
@@ -169,6 +171,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             service_changed_sent = true;
         } else if (status != ATT_HANDLE_VALUE_INDICATION_DISCONNECT) {
             service_changed_pending = false;
+            service_changed_failed = true;
             service_changed_disconnect_pending = true;
             service_changed_disconnect_connection =
                 att_event_handle_value_indication_complete_get_conn_handle(packet);
@@ -316,6 +319,7 @@ static int write_callback(hci_con_handle_t connection, uint16_t handle, uint16_t
         service_changed_cccd[0] = buffer[0];
         service_changed_cccd[1] = buffer[1];
         service_changed_pending = configuration == 2u && !service_changed_sent &&
+                                  !service_changed_failed &&
                                   !service_changed_disconnect_pending &&
                                   !service_changed_awaiting_confirmation;
         service_changed_connection = connection;

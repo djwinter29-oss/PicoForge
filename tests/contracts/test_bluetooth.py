@@ -313,6 +313,10 @@ int main(void)
     disconnect_status = ERROR_CODE_SUCCESS;
     pf_bluetooth_poll();
     assert(indication_count == 2u && disconnect_count == 3u && disconnected_handle == 1u);
+    cccd[0] = 2u;
+    assert(write_cb(1u, SERVICE_CHANGED_CCCD, ATT_TRANSACTION_MODE_NONE, 0u, cccd, sizeof(cccd)) == 0);
+    pf_bluetooth_poll();
+    assert(indication_count == 2u && disconnect_count == 3u);
     event(HCI_EVENT_DISCONNECTION_COMPLETE, 0u, 0u);
     assert(pf_bluetooth_state() == 1u && advertising_enables == 2u);
     event(HCI_EVENT_LE_META, HCI_SUBEVENT_LE_CONNECTION_COMPLETE, ERROR_CODE_SUCCESS);
