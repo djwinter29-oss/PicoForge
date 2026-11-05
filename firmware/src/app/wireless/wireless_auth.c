@@ -13,6 +13,10 @@
 
 static uint8_t auth_key[32]; /**< Shared BLE/TCP control key, wiped when cleared. */
 static bool key_available; /**< False until a nonzero key is loaded. */
+/** @brief Protocol domain separating USB-assisted TCP CLI admission from all other proofs. */
+static const uint8_t tcp_cli_domain[9] = {'P', 'F', 'T', 'C', 'P', 'C', 'L', 'I', '1'};
+/** @brief Fixed request admitted by the TCP CLI; the USB interface cannot sign arbitrary messages. */
+static const uint8_t tcp_cli_request[9] = {'T', 'C', 'P', 'C', 'L', 'I', '0', '0', '1'};
 
 /** @copydoc pf_wireless_auth_set_key */
 void pf_wireless_auth_set_key(const uint8_t key[32])
@@ -75,4 +79,23 @@ bool pf_wireless_auth_verify(const uint8_t nonce[16], const uint8_t domain[9], c
     mbedtls_platform_zeroize(expected, sizeof(expected));
     mbedtls_platform_zeroize(message, sizeof(message));
     return rc == 0 && different == 0u;
+}
+
+/** @copydoc pf_wireless_auth_tcp_cli_proof */
+bool pf_wireless_auth_tcp_cli_proof(const uint8_t nonce[16], uint8_t proof[16])
+{
+    if (!key_available || nonce == NULL || proof == NULL) return false;
+    uint8_t message[42];
+    uint8_t digest[32];
+    memcpy(message, nonce, 16u);
+    pf_wireless_auth_device_id(message + 16u);
+    memcpy(message + 24u, tcp_cli_domain, sizeof(tcp_cli_domain));
+    memcpy(message + 33u, tcp_cli_request, sizeof(tcp_cli_request));
+    const mbedtls_md_info_t *algorithm = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    const int rc = mbedtls_md_hmac(algorithm, auth_key, sizeof(auth_key), message, sizeof(message), digest);
+    if (rc == 0) memcpy(proof, digest, 16u);
+    else mbedtls_platform_zeroize(proof, 16u);
+    mbedtls_platform_zeroize(digest, sizeof(digest));
+    mbedtls_platform_zeroize(message, sizeof(message));
+    return rc == 0;
 }

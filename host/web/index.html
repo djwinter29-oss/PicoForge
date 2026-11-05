@@ -13,7 +13,9 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="PicoForge host status">
       <span class="brand-mark">PF</span>
-      <span class="brand-copy"><small>{{ dashboard_type }}</small><strong>PicoForge</strong></span>
+      <span class="brand-copy">
+        <strong>PicoForge</strong><small>{{ dashboard_type }} · App v{{ app_version }}</small>
+      </span>
     </a>
     <div class="connection" id="connection" data-state="disconnected">
       <span class="connection-light" aria-hidden="true"></span>
@@ -97,14 +99,6 @@
           </select>
           <small id="settings-tcp-cli-help" hidden>LAN access to the board CLI. Requires Wi-Fi.</small>
         </label>
-        <label for="settings-tcp-auth" hidden>TCP CLI authentication
-          <select id="settings-tcp-auth" aria-describedby="settings-tcp-auth-help"
-            title="Requires Bluetooth and a key. TCP traffic is unencrypted." disabled>
-            <option value="1">Require BLE key</option>
-            <option value="0" selected>No authentication</option>
-          </select>
-          <small id="settings-tcp-auth-help" hidden>Requires Bluetooth and a key. TCP traffic is unencrypted.</small>
-        </label>
       </div>
       <p id="wireless-summary" role="status" aria-live="polite"></p>
       <details class="pin-map-disclosure">
@@ -151,6 +145,9 @@
         <button class="button button-secondary" id="msc-control" type="button" disabled>Enable USB drive</button>
       </div>
       <p class="sample-time storage-note" id="msc-note" role="status" hidden></p>
+      <button class="button button-secondary" id="msc-status-refresh" type="button" hidden>
+        Check ownership status
+      </button>
       <p class="sample-time" id="memory-note">Waiting for card status</p>
       <dl class="runtime-grid">
         <div><dt>Memory state</dt><dd id="memory-state">--</dd></div>
@@ -198,7 +195,7 @@
         Close all CLI ports and stop external traffic first. Stop any storage test or USB drive activity before saving.
       </p>
       <p class="configuration-warning" id="configuration-wireless-warning" hidden>
-        Wi-Fi and Bluetooth credentials are saved with these settings. Keep a copy of the BLE key; it cannot be read
+        Wi-Fi and Bluetooth credentials are saved with these settings. Keep a copy of the Control key; it cannot be read
         back. Flash credentials are not encrypted.
       </p>
       <p class="configuration-warning" id="configuration-force-warning" hidden>
@@ -265,7 +262,7 @@
     <p>Scan for nearby networks or enter a network name. A connection test does not save credentials to flash.</p>
     <button class="button button-secondary" id="wifi-scan" type="button">Scan for networks</button>
     <p id="wifi-status" role="status" aria-live="polite"></p>
-    <div id="wifi-networks" class="wifi-networks" role="listbox" aria-label="Available Wi-Fi networks"></div>
+    <div id="wifi-networks" class="wifi-networks" role="group" aria-label="Available Wi-Fi networks"></div>
     <button class="button button-secondary" id="wifi-other" type="button">Other network…</button>
     <label id="wifi-manual-label" hidden>Network name (SSID)
       <input id="wifi-ssid" maxlength="32" autocomplete="off"></label>

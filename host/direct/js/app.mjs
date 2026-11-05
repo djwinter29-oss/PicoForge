@@ -1,8 +1,15 @@
-import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=6";
-import { renderStatus } from "./view.mjs?v=12";
-import { PicoForgeBluetooth } from "./bluetooth.mjs?v=7";
-import { bindWirelessForm } from "./wireless-form.mjs?v=15";
-import { cancelWireless, decodeWireless, saveWireless, scanWireless, testWireless } from "./wireless.mjs?v=9";
+import { PicoForgeWebHid, withTimeout } from "./device.mjs?v=11";
+import { renderStatus } from "./view.mjs?v=19";
+import { PicoForgeBluetooth } from "./bluetooth.mjs?v=14";
+import {
+  bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
+  parseHexBytes, randomHex,
+} from "./console-auth.mjs?v=1";
+import { bindWirelessForm } from "./wireless-form.mjs?v=21";
+import { deriveOperationEligibility } from "./eligibility.mjs?v=3";
+import {
+  cancelWireless, decodeWireless, registerWirelessRecovery, saveWireless, scanWireless, testWireless,
+} from "./wireless.mjs?v=13";
 
 const element = id => document.querySelector(`#${id}`);
 const usbDialog = element("usb-connection-dialog");
@@ -23,23 +30,62 @@ const shareDialog = element("share-dialog");
 let settingsDirty = false;
 let configurationForceSave = false;
 let client = new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
+registerWirelessRecovery(client);
 const wirelessForm = bindWirelessForm({
   supported: () => Boolean(client.state.hardware?.capabilities & 128),
-  ready: () => client.state.connected && client.state.transport !== "ble" && !client.state.busy &&
-    !client.state.outcome_uncertain && !client.state.reboot_pending &&
-    client.state.freshness[10] === "fresh" && client.state.msc && !client.state.msc.enabled &&
-    !client.state.msc.transition_pending && !client.state.msc_command_pending &&
-    !client.state.self_test_command_pending && !client.state.self_test?.active &&
-    (!(client.state.hardware?.capabilities & 32) ||
-      (client.state.freshness[11] === "fresh" && client.state.self_test?.valid_for_control)),
+  ready: () => client.wirelessReady(),
+  loadReady: () => client.state.transport === "ble"
+    ? operationEligibility(client.state).settingsReady : client.wirelessReady(),
+  tcpReady: () => client.state.transport === "ble"
+    ? operationEligibility(client.state).settingsReady
+    : client.wirelessReady() && Number(settingsRadios[0].value) === 1,
   load: async () => client.state.wireless ?? decodeWireless(await client.device.receiveFeatureReport(30)),
   scan: () => scanWireless(client),
   test: (settings, onProgress) => testWireless(client, settings, onProgress),
   cancelTest: () => cancelWireless(client),
   changed: () => render(client.state),
 });
+const operationEligibility = (state, wirelessBusy = false) => deriveOperationEligibility(state, {
+  bluetooth: state.transport === "ble",
+  outstanding: client.outstanding,
+  wirelessBusy,
+});
 let wirelessLoadedAt = 0;
 let wirelessReading = false;
+let consoleAuthToken = null;
+
+const consoleAuthChannel = typeof window !== "undefined" && typeof window.BroadcastChannel === "function"
+  ? new window.BroadcastChannel(CONSOLE_AUTH_CHANNEL) : null;
+
+async function provideConsoleProof(request) {
+  if (!consoleAuthToken || request?.type !== CONSOLE_AUTH_REQUEST || request.auth_token !== consoleAuthToken
+    || typeof request.request_id !== "string" || !/^[a-f0-9]{32}$/i.test(request.request_id)) return;
+  const response = { auth_token: request.auth_token, request_id: request.request_id };
+  try {
+    const nonce = parseHexBytes(request.nonce, 16, "TCP CLI nonce");
+    const uid = parseHexBytes(request.uid, 8, "TCP CLI board identity");
+    const target = client;
+    if (!target.state.connected || !target.state.hardware) {
+      throw new Error("Connect this board to the Direct dashboard over USB or Bluetooth first");
+    }
+    const boardUid = parseHexBytes(target.state.hardware.serial_number, 8, "connected board identity");
+    if (uid.some((byte, index) => byte !== boardUid[index])) {
+      throw new Error("The Wi-Fi console challenge belongs to a different board");
+    }
+    const proof = await target.tcpCliAuthProof(nonce, uid);
+    if (target !== client || !target.state.connected) {
+      throw new Error("The dashboard disconnected while authorizing the Wi-Fi console");
+    }
+    if (!(proof instanceof Uint8Array) || proof.length !== 16) {
+      throw new Error("The board returned an invalid TCP CLI proof");
+    }
+    consoleAuthChannel?.postMessage({ ...response, type: CONSOLE_AUTH_RESPONSE,
+      uid: request.uid.toLowerCase(), proof: bytesToHex(proof) });
+  } catch (error) {
+    consoleAuthChannel?.postMessage({ ...response, type: CONSOLE_AUTH_ERROR,
+      error: error instanceof Error ? error.message : "Could not authorize the Wi-Fi console" });
+  }
+}
 
 async function refreshWirelessStatus() {
   const target = client;
@@ -60,48 +106,47 @@ async function refreshWirelessStatus() {
 }
 
 function render(state) {
-  renderStatus(state);
+  const wireless = state.wireless;
+  let consoleUrl = null;
+  if (wireless?.wifi_enabled && wireless.wifi_state === "connected" && wireless.tcp_cli_started
+    && wireless.ipv4 !== "0.0.0.0") {
+    const authRequired = Boolean(wireless.tcp_cli_auth_required);
+    const query = new URLSearchParams({ ipv4: wireless.ipv4, auth: Number(authRequired).toString() });
+    if (authRequired) {
+      consoleAuthToken ??= randomHex();
+      query.set("auth_token", consoleAuthToken);
+    }
+    consoleUrl = `console.html?${query}`;
+  }
+  renderStatus({ ...state, console_url: consoleUrl });
   if (!state.connected) {
     wirelessLoadedAt = 0;
     wirelessForm.reset();
     settingsDirty = false;
     for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
   }
+
   if (!settingsDirty && state.settings) {
     settingsClock.value = String(state.settings.system_clock_mhz);
     settingsStorage.value = String(state.settings.sdcard_profile);
     settingsRadios.forEach((control, bit) => { control.value = String(state.settings.radios >> bit & 1); });
   }
-  const blocked = state.busy || state.outcome_uncertain || state.reboot_pending || !state.connected;
   const bluetooth = state.transport === "ble";
-  const selfTestReady = !(state.hardware?.capabilities & 32)
-    || (state.freshness[11] === "fresh" && state.self_test?.valid_for_control);
-  const storageReady = state.freshness[10] === "fresh" && selfTestReady
-    && !state.msc?.transition_pending && !state.self_test?.active
-    && !state.self_test_command_pending && !state.msc_command_pending;
   const bleClient = client instanceof PicoForgeBluetooth;
-  const connectionLocked = state.connected || state.reconnecting || client.outstanding || state.outcome_uncertain;
-  element("usb-open").disabled = state.busy || Boolean(connectionLocked && bleClient);
-  element("bluetooth-open").disabled = state.busy || Boolean(connectionLocked && !bleClient);
+  const eligibility = operationEligibility(state, wirelessForm.operationBusy());
+  const { blocked, storageReady, settingsReady } = eligibility;
+  element("usb-open").disabled = state.busy || Boolean(eligibility.connectionLocked && bleClient);
+  element("bluetooth-open").disabled = state.busy || Boolean(eligibility.connectionLocked && !bleClient);
   element("usb-connect").textContent = !bleClient && (state.connected || state.reconnecting)
     ? "Disconnect" : "Select board";
   element("usb-connect").disabled = state.busy || bleClient || !globalThis.isSecureContext || !navigator.hid;
-  element("bluetooth-scan").disabled = state.busy || !bleClient || state.connected
-    || !globalThis.isSecureContext || !navigator.bluetooth;
-  element("bluetooth-disconnect").disabled = state.busy || !bleClient || !state.connected;
-  element("bluetooth-access-step").hidden = !bleClient || !state.connected;
-  element("ble-view-only").disabled = state.busy || !bleClient || !state.connected;
-  element("ble-authorize").disabled = state.busy || !bleClient || !state.connected;
-  element("ble-control-key").disabled = element("ble-authorize").disabled;
-  const bleAccessStatus = element("ble-access-status");
-  bleAccessStatus.hidden = !bleClient || !state.connected;
-  bleAccessStatus.textContent = !state.connected ? ""
-    : client.accessMode === "control" ? "Bluetooth access: control mode; the board checks the key on every command."
-      : client.accessMode === "view-only" ? "Bluetooth access: view only; only the board LED can be switched."
-        : "Bluetooth access: choose View only or enter the control key.";
+  const bleLinked = bleClient && (state.connected || state.reconnecting);
+  const bleUnsupported = !globalThis.isSecureContext || !navigator.bluetooth;
+  element("bluetooth-scan").textContent = bleLinked ? "Disconnect" : "Scan for boards";
+  element("bluetooth-scan").disabled = state.busy || !bleClient || (!bleLinked && bleUnsupported);
+  element("ble-control-key").disabled = state.busy || !bleClient || bleLinked || bleUnsupported;
   element("usb-connection-close").disabled = state.busy;
-  const bleAccessChoicePending = bleClient && state.connected && client.accessMode === null;
-  element("bluetooth-connection-close").disabled = state.busy || bleAccessChoicePending;
+  element("bluetooth-connection-close").disabled = state.busy;
   element("usb-connection-status").textContent = !globalThis.isSecureContext || !navigator.hid
     ? "USB HID requires a supported browser on HTTPS or localhost."
     : !bleClient && state.error ? state.error
@@ -111,24 +156,13 @@ function render(state) {
   element("bluetooth-connection-status").textContent = !globalThis.isSecureContext || !navigator.bluetooth
     ? "Web Bluetooth requires a supported browser and operating system on HTTPS or localhost."
     : bleClient && state.error ? state.error
-    : bleClient && state.busy ? (state.connected ? "Loading control key…"
-      : "Select a nearby board; connecting through Bluetooth…")
+    : bleClient && state.busy ? "Select a nearby board; connecting through Bluetooth…"
     : bleClient && state.connected
-      ? `Connected to ${client.bleDevice?.name || state.hardware?.board_name || "PicoForge"}. `
-        + (client.accessMode === "control" ? "Control mode selected."
-          : client.accessMode === "view-only" ? "View-only diagnostics."
-            : "Choose View only or enter the control key to enable controls.")
-      : "Scan for nearby PicoForge boards.";
-  if (!state.connected) element("ble-control-key").value = "";
+      ? `Connected to ${client.bleDevice?.name || state.hardware?.board_name || "PicoForge"}.`
+      : "Enter the control key, then scan for nearby PicoForge boards.";
   ledControl.disabled = blocked || !state.board_status?.led_available || !(state.hardware?.capabilities & 1);
-  if (bluetooth && client.accessMode !== "control") {
-    ledControl.disabled ||= client.accessMode === null;
-    element("self-test-start").disabled = true;
-    element("self-test-cancel").disabled = true;
-  }
   mscControl.disabled = blocked || !storageReady || bluetooth;
   mscControl.textContent = state.msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  const settingsReady = !blocked && storageReady && !bluetooth;
   for (const id of ["settings-wifi", "settings-ble"]) {
     document.querySelector(`label[for="${id}"]`).hidden = !(state.hardware?.capabilities & 128);
   }
@@ -139,16 +173,15 @@ function render(state) {
   settingsSave.disabled ||= !wirelessForm.canSave();
   // Credentials have no forced-save path: provisioning requires firmware-owned storage.
   settingsSave.disabled ||= wirelessForm.dirty() && Boolean(state.msc?.enabled);
-  settingsSave.disabled ||= Boolean(state.msc?.enabled && !(state.hardware?.capabilities & 64));
   settingsReboot.disabled = !settingsReady || state.msc?.enabled || !(state.hardware?.capabilities & 2);
   element("settings-note").textContent = state.settings_message
     || (!state.connected ? "Connect to read the saved settings."
       : !state.settings_supported ? "Persistent settings save is unavailable."
+        : bluetooth && state.msc?.enabled ? "USB storage owns the card; settings and reboot require firmware-owned storage."
         : !storageReady ? (state.self_test?.active || state.self_test_command_pending
           ? "" : "Waiting for fresh, idle storage status.")
-          : state.msc?.enabled && !(state.hardware?.capabilities & 64)
-            ? "Update firmware or return storage to Pico before saving settings."
-            : "");
+          : bluetooth ? "Over Bluetooth, clock, SD Card, TCP CLI, and reboot are available; radio and credential provisioning remain USB-only."
+          : "");
   element("settings-note").hidden = !element("settings-note").textContent;
   element("status-message").hidden = !state.error && !element("settings-note").hidden;
   element("msc-note").textContent = state.reconnecting
@@ -158,8 +191,9 @@ function render(state) {
         ? "Waiting for the storage ownership transition result."
         : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
   element("msc-note").hidden = !element("msc-note").textContent;
-  wirelessForm.update();
-  if (state.connected && state.wireless && storageReady && !state.busy && !bluetooth) {
+  wirelessForm.update(state);
+  if (bluetooth) settingsRadios.forEach(control => { control.disabled = true; });
+  if (state.connected && storageReady && !state.busy) {
     void wirelessForm.load();
   }
   if (Date.now() - wirelessLoadedAt >= 2000 && state.connected && !state.busy && !state.reboot_pending
@@ -178,6 +212,7 @@ for (const [id, dialog, bluetooth] of [["usb-open", usbDialog, false],
     if ((client instanceof PicoForgeBluetooth) !== bluetooth) {
       client = bluetooth ? new PicoForgeBluetooth(globalThis.isSecureContext ? navigator.bluetooth : undefined, render)
         : new PicoForgeWebHid(globalThis.isSecureContext ? navigator.hid : undefined, render);
+      registerWirelessRecovery(client);
     }
     render(client.state);
     dialog.showModal();
@@ -193,52 +228,26 @@ element("usb-connect").addEventListener("click", () => run(async () => {
 }));
 element("bluetooth-scan").addEventListener("click", () => run(async () => {
   if (element("bluetooth-scan").disabled) return;
-  await client.connect();
-  if (client.state.connected) element("ble-view-only").focus();
-}));
-element("bluetooth-disconnect").addEventListener("click", () => run(async () => {
-  if (!element("bluetooth-disconnect").disabled) await client.disconnect();
-}));
-element("ble-view-only").addEventListener("click", () => run(async () => {
-  if (element("ble-view-only").disabled) return;
-  client.setViewOnly();
-  bluetoothDialog.close();
-}));
-element("ble-authorize").addEventListener("click", () => run(async () => {
-  if (element("ble-authorize").disabled) return;
-  const target = client;
-  const generation = target.generation;
-  target.update({ busy: true, error: null });
-  try {
-    await target.setControlKey(element("ble-control-key").value);
-    if (target !== client || generation !== target.generation || !target.state.connected) {
-      target.bleKey = null;
-      target.accessMode = null;
-      throw new Error("Bluetooth disconnected while loading the control key. Scan and connect again.");
-    }
-    target.update({ error: null });
-    bluetoothDialog.close();
+  if (client.state.connected || client.state.reconnecting) {
+    await client.disconnect();
+    return;
   }
-  finally {
-    element("ble-control-key").value = "";
-    if (target === client) target.update({ busy: false });
-  }
+  const key = element("ble-control-key").value;
+  element("ble-control-key").value = "";
+  await client.connect(key);
+  if (client.state.connected) bluetoothDialog.close();
 }));
 for (const [name, dialog] of [["usb", usbDialog], ["bluetooth", bluetoothDialog]]) {
   element(`${name}-connection-close`).addEventListener("click", () => {
     if (!client.state.busy) dialog.close();
   });
   dialog.addEventListener("cancel", event => {
-    const bleAccessChoicePending = name === "bluetooth" && client instanceof PicoForgeBluetooth
-      && client.state.connected && client.accessMode === null;
-    if (client.state.busy || bleAccessChoicePending) event.preventDefault();
+    if (client.state.busy) event.preventDefault();
   });
   dialog.addEventListener("keydown", event => {
     if (event.key === "Escape") {
       event.preventDefault();
-      const bleAccessChoicePending = name === "bluetooth" && client instanceof PicoForgeBluetooth
-        && client.state.connected && client.accessMode === null;
-      if (!client.state.busy && !bleAccessChoicePending) dialog.close();
+      if (!client.state.busy) dialog.close();
     }
   });
   dialog.addEventListener("close", () => { element("ble-control-key").value = ""; });
@@ -264,15 +273,23 @@ for (const control of [settingsClock, settingsStorage, ...settingsRadios]) {
 }
 settingsSave.addEventListener("click", () => {
   if (settingsSave.disabled) return;
+  const bluetooth = client.state.transport === "ble";
   configurationForceSave = Boolean(client.state.msc?.enabled);
   element("configuration-force-warning").hidden = !configurationForceSave;
-  element("configuration-wireless-warning").hidden = !wirelessForm.dirty();
+  const wirelessWarning = element("configuration-wireless-warning");
+  wirelessWarning.textContent = bluetooth
+    ? "This saves the TCP CLI switch without sending Wi-Fi credentials or the Control key. Bluetooth is authenticated but not encrypted."
+    : "Wi-Fi and Bluetooth credentials are saved with these settings. Keep a copy of the Control key; it cannot be read back. Flash credentials are not encrypted.";
+  wirelessWarning.hidden = !wirelessForm.dirty();
   const clock = Number(settingsClock.value);
   element("configuration-dialog-profile").textContent =
     `System clock: ${clock ? `${clock} MHz` : "Default"}. `
     + `SD Card: ${Number(settingsStorage.value) === 1 ? "High-Speed" : "Standard"}.`
-    + (client.state.hardware?.capabilities & 128 ? ` Wi-Fi: ${selectedRadios() & 1 ? "Enabled" : "Disabled"}.`
-      + ` Bluetooth: ${selectedRadios() & 2 ? "Enabled" : "Disabled"}.` : "");
+    + (!bluetooth && client.state.hardware?.capabilities & 128
+      ? ` Wi-Fi: ${selectedRadios() & 1 ? "Enabled" : "Disabled"}.`
+        + ` Bluetooth: ${selectedRadios() & 2 ? "Enabled" : "Disabled"}.` : "")
+    + (bluetooth && wirelessForm.dirty()
+      ? ` TCP CLI: ${element("settings-tcp-cli").value === "1" ? "Enabled" : "Disabled"}.` : "");
   configurationDialog.showModal();
 });
 element("confirm-configuration").addEventListener("click", () => run(async () => {
@@ -280,10 +297,16 @@ element("confirm-configuration").addEventListener("click", () => run(async () =>
   configurationDialog.close();
   if (settingsSave.disabled) return;
   if (Boolean(client.state.msc?.enabled) !== configurationForceSave) return;
+  const bluetooth = client.state.transport === "ble";
+  const tcpCliEnabled = bluetooth && wirelessForm.dirty()
+    ? element("settings-tcp-cli").value === "1" : undefined;
   const settings = { system_clock_mhz: Number(settingsClock.value), sdcard_profile: Number(settingsStorage.value),
-    radios: selectedRadios() };
-  if (!wirelessForm.dirty()) {
-    if (await client.saveSettings(settings, configurationForceSave)) settingsDirty = false;
+    radios: bluetooth ? client.state.settings?.radios ?? 0 : selectedRadios() };
+  if (bluetooth || !wirelessForm.dirty()) {
+    if (await client.saveSettings(settings, configurationForceSave, tcpCliEnabled)) {
+      if (tcpCliEnabled !== undefined) wirelessForm.finish({ tcp_cli_enabled: tcpCliEnabled });
+      settingsDirty = false;
+    }
   } else {
     try {
       wirelessForm.finish(await saveWireless(client, { ...wirelessForm.request(),
@@ -327,5 +350,9 @@ for (const [name, dialog] of [["configuration", configurationDialog], ["reboot",
       dialog.close();
     }
   });
+}
+if (consoleAuthChannel) {
+  consoleAuthChannel.onmessage = event => { void provideConsoleProof(event.data); };
+  window.addEventListener?.("pagehide", () => consoleAuthChannel.close(), { once: true });
 }
 render(client.state);

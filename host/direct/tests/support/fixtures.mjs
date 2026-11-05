@@ -45,6 +45,12 @@ export function emit(device, reportId, data) {
 export function fakeConnection({ capabilities, ...options } = {}) {
   const reads = [];
   const sent = [];
+  const saved = new Map();
+  const pendingStore = {
+    getItem(key) { return saved.get(key) ?? null; },
+    setItem(key, value) { saved.set(key, value); },
+    removeItem(key) { saved.delete(key); },
+  };
   const device = new EventTarget();
   Object.assign(device, { vendorId: 0xcafe, productId: 0x4011,
     collections: [{ usagePage: 0xff00, usage: 1 }], opened: false,
@@ -61,6 +67,6 @@ export function fakeConnection({ capabilities, ...options } = {}) {
     } });
   const hid = new EventTarget(); hid.getDevices = async () => [device];
   hid.requestDevice = async () => [device];
-  const client = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, ...options });
-  return { client, device, hid, reads, sent };
+  const client = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, pendingStore, ...options });
+  return { client, device, hid, reads, sent, pendingStore };
 }

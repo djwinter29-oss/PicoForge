@@ -4,10 +4,10 @@ import hmac
 import socket
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from picoforge.console import ConsoleBridge
-from picoforge.web import create_app
+from picoforge.dashboard.console import ConsoleBridge
+from picoforge.dashboard.server import create_app, run_server
 
 
 class Monitor:
@@ -18,6 +18,11 @@ class Monitor:
         self.board = board
         return {"wireless": self.wireless}
 
+    def tcp_cli_auth_proof(self, board, nonce, uid):
+        self.board = board
+        key = bytes(range(1, 33))
+        return hmac.new(key, nonce + uid + b"PFTCPCLI1TCPCLI001", hashlib.sha256).digest()[:16]
+
 
 class ConsoleTests(unittest.TestCase):
     def setUp(self):
@@ -25,7 +30,10 @@ class ConsoleTests(unittest.TestCase):
         self.peer.settimeout(1)
         self.addCleanup(self.client_socket.close)
         self.addCleanup(self.peer.close)
-        self.connect = patch("picoforge.console.socket.create_connection", return_value=self.client_socket).start()
+        self.connect = patch(
+            "picoforge.dashboard.console.socket.create_connection",
+            return_value=self.client_socket,
+        ).start()
         self.addCleanup(patch.stopall)
         self.monitor = Monitor()
         self.app = create_app(self.monitor)
@@ -84,28 +92,54 @@ class ConsoleTests(unittest.TestCase):
         self.connect.side_effect = OSError("connection refused")
         self.assertEqual(self.client.post("/api/console", json={}).status_code, 503)
 
+    def test_close_all_disconnects_an_active_console_session(self):
+        endpoint = self.open()
+        bridge = self.app.extensions["picoforge_console"]
+        bridge.close_all()
+        self.assertEqual(self.peer.recv(1), b"")
+        with self.assertRaises(RuntimeError):
+            bridge.read(endpoint.split("session=", 1)[1])
+
+    def test_server_shutdown_closes_console_and_dashboard(self):
+        dashboard = Mock()
+        connection = Mock()
+
+        def stop_server(app, **_kwargs):
+            app.extensions["picoforge_console"]._socket = connection
+            app.extensions["picoforge_console"]._session = "active"
+            raise RuntimeError("server stopped")
+
+        with patch("picoforge.dashboard.server.DashboardBoards", return_value=dashboard), \
+                patch("picoforge.dashboard.server.Flask.run", autospec=True,
+                   side_effect=stop_server):
+            with self.assertRaisesRegex(RuntimeError, "server stopped"):
+                run_server()
+
+        connection.close.assert_called_once()
+        dashboard.close.assert_called_once()
+
     def test_invalid_board_addresses_are_not_used_as_proxy_targets(self):
         for ip in ("127.0.0.1", "224.0.0.1", "0.0.0.0", "255.255.255.255", "bad", "::1"):
             self.monitor.wireless = {**self.monitor.wireless, "ipv4": ip}
             self.assertEqual(self.client.post("/api/console", json={}).status_code, 400)
         self.connect.assert_not_called()
 
-    def test_tcp_authentication_uses_the_ble_key_challenge_before_opening_a_session(self):
-        key = bytes(range(1, 33))
+    def test_tcp_authentication_uses_the_connected_boards_usb_proof(self):
         self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
         nonce = bytes(range(16))
         uid = bytes(range(8))
         self.peer.sendall(f"PicoForge AUTH {nonce.hex()} {uid.hex()}\r\n".encode("ascii"))
-        response = self.client.post("/api/console?board=board-a", json={"ble_key": key.hex()})
+        response = self.client.post("/api/console?board=board-a", json={})
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.monitor.board, "board-a")
+        key = bytes(range(1, 33))
         proof = hmac.new(key, nonce + uid + b"PFTCPCLI1" + b"TCPCLI001", hashlib.sha256).digest()[:16]
         self.assertEqual(self.peer.recv(64), b"AUTH " + proof.hex().encode() + b"\r\n")
         endpoint = "/api/console?session=" + response.json["session"]
         self.assertEqual(self.client.delete(endpoint).status_code, 200)
 
-    def test_tcp_authentication_rejects_missing_or_invalid_keys_before_connecting(self):
+    def test_tcp_authentication_does_not_accept_control_keys_from_the_browser(self):
         self.monitor.wireless = {**self.monitor.wireless, "tcp_cli_auth_required": True}
-        self.assertEqual(self.client.post("/api/console", json={}).status_code, 400)
         self.assertEqual(self.client.post("/api/console", json={"ble_key": "00" * 32}).status_code, 400)
         self.assertEqual(self.client.post("/api/console", json={"ble_key": "invalid"}).status_code, 400)
         self.connect.assert_not_called()

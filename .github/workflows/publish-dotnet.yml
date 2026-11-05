@@ -94,7 +94,13 @@ jobs:
                       assert process.poll() is None, "Standalone host exited before readiness"
                       try:
                           with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as response:
-                              assert b"PicoForge Dashboard | .NET" in response.read()
+                              page = response.read()
+                              assert b"PicoForge Dashboard | .NET" in page
+                              assert f"App v{version}<".encode() in page
+                          with urllib.request.urlopen(f"http://127.0.0.1:{port}/console", timeout=1) as response:
+                              page = response.read()
+                              assert b"PicoForge Console | .NET" in page
+                              assert f"App v{version}<".encode() in page
                           break
                       except urllib.error.URLError:
                           time.sleep(0.1)

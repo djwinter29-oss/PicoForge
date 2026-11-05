@@ -13,17 +13,21 @@ dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 status/command requests include its ID as `?board=<id>`. `GET /api/status` returns the selected board's hardware
 identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected
 board's LED; `POST /api/settings` saves supported boot settings and verifies HID readback.
+Serial-identified boards retain their monitor for at least 30 seconds after disappearing from a successful rescan,
+allowing brief USB reconnects without losing selection. Monitors with uncertain command outcomes remain pinned
+until host shutdown so reconnects cannot clear the write block. Boards without serial numbers use their HID device
+path as identity and are removed from the registry on the first successful rescan where they are absent. A path-only
+identity cannot distinguish a different serial-less board reusing that path unless a rescan observes the gap.
 `POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Current firmware keeps CDC, HID and MSC connected;
 MSC reports no medium while Pico owns the card. Safely eject before disabling to return the card to PicoForge.
-With older firmware, expected HID disconnects after a confirmed MSC command show **Reconnecting** for up to
-five seconds. Persistent errors, invalid reports, permission failures and uncertain command outcomes remain errors.
+Persistent errors, invalid reports, permission failures and uncertain command outcomes remain errors.
 `POST /api/self-test` starts or cancels the SD-card test and acknowledges HID delivery with HTTP 202.
 See [the performance-test guide](../../../docs/guides/sdcard-benchmark.md) for safety and metric definitions.
 Run with `ASPNETCORE_ENVIRONMENT=Development` to expose `/openapi/v1.json`.
 The dashboard's **Return to Pico** action requires explicit data-loss confirmation and requests Pico-side
 host-access revocation/remount without any host OS eject command. See the
 [force-return design](../../../docs/reference/usb-hid.md#msc-force-return-safety) for its
-one-attempt remount policy and host-cache risks. The legacy safe-disable API remains available for manual-eject clients.
+one-attempt remount policy and host-cache risks. The safe-disable API remains available for manual-eject clients.
 If a HID write times out or its result cannot be matched, the dashboard marks the command outcome uncertain and blocks
 further writes rather than replaying or overwriting the result.
 **Enable USB drive** also opens a storage-handoff confirmation dialog; Cancel or Escape sends no command.
@@ -32,15 +36,26 @@ including a host-cache data-loss warning; `POST /api/settings` requests it only 
 Device sync and detach must succeed before saving, and the original result is verified after reconnect without
 SET replay. See the [forced-save policy](../../../docs/reference/settings.md#forced-save-and-reboot).
 Self-tests and transitions still block saving; standalone reboot remains blocked while USB owns storage.
+
+## Source Layout
+
+- `Hosting/` — application startup and dependency registration.
+- `Protocol/` — HID report models, validation, and wireless report codecs.
+- `Hid/` — USB HID transport and serialized device monitoring.
+- `Dashboard/` — board selection, grouped status/wireless endpoints, and TCP console bridge.
+
+The folders organize implementation by responsibility while retaining the existing `PicoForge` namespace.
 Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
-Feature 30 status versions 1-4 and Feature 35 result versions 1-2 are supported, including the saved TCP CLI switch,
-optional BLE-key authentication, scan security labels, and staged-test lifetime. The dashboard blocks saving
-temporary test credentials after ten minutes and preserves legacy firmware's CLI settings.
+Wireless Features 30, 31, 34 and 35 use version 1; Feature 36 uses the fixed TCP CLI proof format. The dashboard
+supports the saved TCP CLI switch, Control key authentication, scan security labels, and staged-test lifetime, and
+blocks saving temporary test credentials after ten minutes.
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.
+The host polls HID input every 50 ms, below firmware's 250 ms telemetry and 500 ms storage/self-test report periods,
+and reuses an input buffer per HID client to reduce idle wakeups and recurring allocations.
 
 The [storage lifecycle](../../../docs/reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
 startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
@@ -48,3 +63,6 @@ USB sharing temporarily grants the host exclusive access; firmware file operatio
 Wait for fresh mounted status after return, not merely HID reconnection. Start uses the existing mount and checks
 free space before accepting temporary writes; that scan can delay progress, but is not a mount-only action.
 Wait for its command result rather than clicking again. Self-test cleanup leaves the filesystem mounted.
+Board monitoring starts asynchronously on first access, so the first status response can briefly show that it is
+waiting for HID while identity and configuration are read in the background. The monitor polls every 50 ms and
+reuses input and feature report buffers per HID client to reduce idle wakeups and recurring allocations.

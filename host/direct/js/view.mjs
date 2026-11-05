@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "./wireless-form.mjs?v=15";
+import { renderWirelessStatus } from "./wireless-form.mjs?v=21";
 
 function uptimeLabel(milliseconds) {
   if (typeof milliseconds === "bigint") {
@@ -87,9 +87,9 @@ export function renderStatus(snapshot) {
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = snapshot.error
-    ?? (snapshot.reboot_pending ? "Reboot accepted; waiting for USB reconnection"
-      : snapshot.reconnecting ? "USB device reconnecting; reopening HID automatically"
-      : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device");
+    ?? (snapshot.reconnecting ? "USB device reconnecting; reopening HID automatically"
+      : snapshot.recovery_message ?? (snapshot.reboot_pending ? "Reboot accepted; waiting for USB reconnection"
+        : runtime ? "HID status is live" : connected ? "Waiting for first status report" : "Select a PicoForge device"));
   for (const [id, label] of [[3, "telemetry"], [10, "storage"], [11, "self-test"]]) {
     const status = document.querySelector(`#${label}-freshness`);
     status.textContent = id === 11 && !(hardware?.capabilities & 32)
@@ -102,6 +102,10 @@ export function renderStatus(snapshot) {
 function renderBoardConfiguration(snapshot) {
   const config = snapshot.settings;
   const spi = Boolean(snapshot.hardware?.capabilities & 8);
+  const signature = JSON.stringify([spi, config?.monitor_uart_index, config?.monitor_uart_tx_gpio,
+    config?.monitor_uart_rx_gpio, config?.storage_gpios, config?.card_detect_gpio, config?.reset_cause]);
+  const uartTable = document.querySelector("#board-uart");
+  if (signature === uartTable.dataset.boardConfiguration) return;
   const signals = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
   const renderPins = (selector, labels, pins) => {
     const headings = document.createElement("tr");
@@ -128,6 +132,7 @@ function renderBoardConfiguration(snapshot) {
   document.querySelector("#board-reset-cause").textContent = config
     ? ["Unknown", "Power-on", "Watchdog", "Software request", "Watchdog after HardFault"][config.reset_cause]
       ?? `Unassigned (${config.reset_cause})` : "--";
+  uartTable.dataset.boardConfiguration = signature;
 }
 
 function updateClockOptions(select, mcu, savedClock) {
@@ -212,7 +217,7 @@ export function renderSelfTest(snapshot) {
   const speed = value => value == null ? "--" : `${(value / 1048576).toFixed(2)} MiB/s`;
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", preparing: "Preparing", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
-  const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
+  const errors = ["", "Storage busy", "USB host owns the card", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
   set("#self-test-state", status ? `${labels[status.state] ?? status.state} · ${Math.floor(status.progress_percent ?? 0)}%`
     : "Unavailable");
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;

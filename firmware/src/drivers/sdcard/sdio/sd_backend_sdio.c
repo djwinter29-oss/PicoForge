@@ -394,16 +394,6 @@ void pf_sd_sdio_get_last_short_response(uint8_t *command, uint32_t *argument,
     }
 }
 
-void pf_sd_sdio_get_last_response_words(uint32_t words[5], size_t *word_count)
-{
-    if (words != NULL) {
-        memcpy(words, native_host.last_response_words, sizeof(native_host.last_response_words));
-    }
-    if (word_count != NULL) {
-        *word_count = native_host.last_response_word_count;
-    }
-}
-
 pf_sd_result_t pf_sd_backend_init(const pf_sd_config_t *config)
 {
     if (!config_is_valid(config)) {

@@ -25,9 +25,13 @@
 #include "app/runtime_stats.h"
 #if PF_ENABLE_WIRELESS
 #include "app/wireless/wireless.h"
+#include "app/wireless/wireless_auth.h"
 static bool ble_dispatch; /**< Current synchronous dispatcher targets the BLE-specific result slot. */
 static bool self_test_from_ble; /**< Pending benchmark admission belongs to the BLE result slot. */
 static pf_hid_control_result_t ble_result = { .version = PF_HID_REPORT_VERSION };
+/** USB Feature 36 result; proof bytes are cleared immediately after the host reads them. */
+static uint8_t tcp_auth_proof_result[PF_WIRELESS_AUTH_RESULT_SIZE];
+static bool tcp_auth_proof_ready;
 #endif
 
 #ifndef PF_HID_BOARD_MODEL
@@ -476,16 +480,23 @@ static outcome_t handle_self_test(const pf_hid_control_request_t *request)
 bool pf_hid_ble_control(const pf_hid_control_request_t *request)
 {
     if (request->version != PF_HID_REPORT_VERSION || request->transaction_id == 0u ||
-        (request->opcode != PF_HID_OPCODE_LED && request->opcode != PF_HID_OPCODE_SELF_TEST)) return false;
+        (request->opcode != PF_HID_OPCODE_LED && request->opcode != PF_HID_OPCODE_REBOOT &&
+         request->opcode != PF_HID_OPCODE_SELF_TEST && request->opcode != PF_HID_OPCODE_SAVE_SETTINGS)) return false;
     outcome_t result = busy_outcome();
     if (!pf_hid_control_pending()) {
         ble_dispatch = true;
-        result = request->opcode == PF_HID_OPCODE_LED ? handle_led(request)
+        switch (request->opcode) {
+        case PF_HID_OPCODE_LED: result = handle_led(request); break;
+        case PF_HID_OPCODE_REBOOT: result = handle_reboot(request); break;
+        case PF_HID_OPCODE_SAVE_SETTINGS: result = handle_save_settings(request); break;
+        case PF_HID_OPCODE_SELF_TEST:
 #if PF_ENABLE_STORAGE_BENCHMARK
-            : handle_self_test(request);
+            result = handle_self_test(request);
 #else
-            : outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
+            result = outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
 #endif
+            break;
+        }
     }
     ble_dispatch = true;
     set_result(request, result.status, result.error, result.data);
@@ -506,16 +517,30 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
     const uint16_t system_clock_mhz = read_u16_le(request->arguments);
     const uint8_t sdcard_profile = request->arguments[2];
     const uint8_t radios = request->arguments[3];
+    const bool force = (request->flags & PF_HID_SAVE_SETTINGS_FORCE_MSC) != 0u;
+    const bool set_tcp_cli = (request->flags & PF_HID_SAVE_SETTINGS_SET_TCP_CLI) != 0u;
     outcome_t result;
 
-    const bool force = request->flags == 1u;
-    if ((request->flags & (uint8_t)~1u) != 0u || !trailing_arguments_zero(request->arguments, 4u)) {
+    if ((request->flags & (uint8_t)~(PF_HID_SAVE_SETTINGS_FORCE_MSC | PF_HID_SAVE_SETTINGS_SET_TCP_CLI)) != 0u ||
+        (!set_tcp_cli && request->arguments[4] != 0u)) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
-    if ((radios & ~PF_HID_RADIO_MASK) != 0u ||
+    if (set_tcp_cli && request->arguments[4] > 1u) {
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+    if (set_tcp_cli && PF_HID_RADIO_MASK == 0u) {
+        return outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
+    }
+#if PF_ENABLE_WIRELESS
+    if (ble_dispatch && (force || radios != pf_boot_config_radios())) {
+        return invalid(PF_HID_ERROR_ARGUMENT);
+    }
+#endif
+    if ((radios & (uint8_t)~PF_HID_RADIO_MASK) != 0u ||
         !pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(system_clock_mhz)) ||
         !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile) ||
-        (PF_HID_RADIO_MASK != 0u && !pf_boot_config_set_radios(radios))) {
+        (PF_HID_RADIO_MASK != 0u && !pf_boot_config_set_radios(radios)) ||
+        (set_tcp_cli && !pf_boot_config_set_tcp_cli_enabled(request->arguments[4] != 0u))) {
         return invalid(PF_HID_ERROR_ARGUMENT);
     }
     if (pf_usb_msc_transition_pending() || pf_storage_worker_busy() ||
@@ -543,7 +568,8 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
     result.data[0] = (uint8_t)system_clock_mhz;
     result.data[1] = (uint8_t)(system_clock_mhz >> 8u);
     result.data[2] = sdcard_profile;
-    result.data[3] = radios;
+    result.data[3] = radios | (set_tcp_cli ? PF_HID_SETTINGS_RESULT_TCP_CLI_INCLUDED |
+        (request->arguments[4] != 0u ? PF_HID_SETTINGS_RESULT_TCP_CLI_ENABLED : 0u) : 0u);
     reboot_requested = true;
     return result;
 }
@@ -598,6 +624,13 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
         if (report_id == PF_WIRELESS_RESULT_REPORT_ID && reqlen >= PF_WIRELESS_RESULT_SIZE) {
             pf_wireless_result_report(buffer);
             return PF_WIRELESS_RESULT_SIZE;
+        }
+        if (report_id == PF_WIRELESS_AUTH_REPORT_ID && reqlen >= PF_WIRELESS_AUTH_RESULT_SIZE &&
+            tcp_auth_proof_ready) {
+            memcpy(buffer, tcp_auth_proof_result, sizeof(tcp_auth_proof_result));
+            memset(tcp_auth_proof_result + 3u, 0, sizeof(tcp_auth_proof_result) - 3u);
+            tcp_auth_proof_ready = false;
+            return PF_WIRELESS_AUTH_RESULT_SIZE;
         }
 #endif
         if (report_id == PF_HID_IDENTITY_REPORT_ID && reqlen >= sizeof(pf_hid_identity_report_t)) {
@@ -654,6 +687,19 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            uint16_t bufsize)
 {
 #if PF_ENABLE_WIRELESS
+    if (instance == 0u && report_id == PF_WIRELESS_AUTH_REPORT_ID &&
+        report_type == HID_REPORT_TYPE_FEATURE && buffer != NULL &&
+        bufsize == PF_WIRELESS_AUTH_REQUEST_SIZE) {
+        memset(tcp_auth_proof_result, 0, sizeof(tcp_auth_proof_result));
+        tcp_auth_proof_ready = false;
+        if (buffer[0] != PF_HID_REPORT_VERSION || buffer[1] == 0u || buffer[18] != 0u) return;
+        tcp_auth_proof_result[0] = PF_HID_REPORT_VERSION;
+        tcp_auth_proof_result[1] = buffer[1];
+        tcp_auth_proof_result[2] = pf_wireless_auth_tcp_cli_proof(
+            buffer + 2u, tcp_auth_proof_result + 3u) ? 1u : 0u;
+        tcp_auth_proof_ready = true;
+        return;
+    }
     if (instance == 0u && report_id == PF_WIRELESS_COMMAND_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
         buffer != NULL && bufsize == PF_WIRELESS_COMMAND_SIZE) {
         if (force_save_pending || force_save_reboot_waiting || reboot_requested)

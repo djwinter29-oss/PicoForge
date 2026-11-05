@@ -3,29 +3,46 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PicoForge Wi-Fi console</title>
-  <link rel="icon" href="/favicon.svg">
+  <meta name="color-scheme" content="light">
+  <title>PicoForge Console | {{ dashboard_type }}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
   <link rel="stylesheet" href="/css/dashboard.css">
   <link rel="stylesheet" href="/css/console.css">
   <script type="module" src="/js/console.mjs"></script>
 </head>
-<body>
-  <main>
-    <h1>PicoForge Wi-Fi console</h1>
-    <p>Raw TCP CLI through this local dashboard. The board may require its saved BLE control key; TCP traffic is not
-      encrypted.</p>
-    <p>Click the terminal to type. Enter runs a command; Tab completes; arrow keys edit and recall history.</p>
-    <div class="console-controls">
-      <button id="connect" type="button">Connect</button>
-      <button id="disconnect" type="button" disabled>Disconnect</button>
-      <span id="console-status" role="status" aria-live="polite">Disconnected</span>
+<body class="console-page">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="PicoForge dashboard">
+      <span class="brand-mark">PF</span>
+      <span class="brand-copy">
+        <strong>PicoForge</strong><small>{{ dashboard_type }} · App v{{ app_version }}</small>
+      </span>
+    </a>
+    <div class="connection">
+      <span class="connection-light" aria-hidden="true"></span>
+      <span>TCP port 2323</span>
     </div>
-    <label for="console-auth-key">BLE control key (only if board authentication is enabled)
-      <input id="console-auth-key" type="password" autocomplete="off" spellcheck="false">
-    </label>
-    <pre id="terminal" tabindex="0" role="textbox" aria-label="PicoForge CLI terminal"
-      aria-multiline="true" aria-readonly="true"></pre>
-    <p>Only one CLI session is allowed. Close other USB CDC or TCP terminals before connecting.</p>
+  </header>
+
+  <main>
+    <section class="page-heading">
+      <div>
+        <h1>Wi-Fi console</h1>
+        <p class="console-lede">Only one CLI session is allowed; close other USB or TCP terminals before connecting.</p>
+      </div>
+      <div class="actions">
+        <button class="button button-secondary" id="connect" type="button" data-state="disconnected">Connect</button>
+      </div>
+    </section>
+
+    <section class="console-window" aria-label="CLI session">
+      <div class="console-bar">
+        <span id="console-status" role="status" aria-live="polite">Disconnected</span>
+        <span>Enter runs · Tab completes · ↑/↓ history · Shift+Tab leaves</span>
+      </div>
+      <pre id="terminal" tabindex="0" role="textbox" aria-label="PicoForge CLI terminal"
+        aria-multiline="true" aria-readonly="true"></pre>
+    </section>
   </main>
 </body>
 </html>

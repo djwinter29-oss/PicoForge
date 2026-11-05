@@ -1,4 +1,4 @@
-import { PicoForgeWebHid } from "./device.mjs?v=6";
+import { PicoForgeWebHid } from "./device.mjs?v=11";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f501";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f501`;
@@ -11,7 +11,6 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     this.characteristics = new Map();
     this.pollTimer = null;
     this.bleKey = null;
-    this.accessMode = null;
     this.state = { ...this.state, error: bluetooth ? null : "Web Bluetooth is unavailable in this browser." };
     this.connecting = false;
     // Stable reference: browsers reuse one BluetoothDevice per board, so repeated scans must not stack handlers.
@@ -20,7 +19,6 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
       if (this.connecting || !this.state.connected) return;
       clearTimeout(this.pollTimer);
       this.bleKey = null;
-      this.accessMode = null;
       this.characteristics.clear();
       this.clearConnection();
       this.update({ reconnecting: false, error: this.outstanding
@@ -28,11 +26,55 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     };
   }
 
-  async connect() {
+  /** Sign request with the control key over a fresh nonce and write the 16-byte proof; uid is the raw board ID. */
+  async prove(uid, request) {
+    const value = await this.characteristics.get(32).readValue();
+    const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (nonce.length !== 16) throw new Error("Invalid BLE authorization challenge");
+    const message = new Uint8Array([...nonce, ...uid, ...new TextEncoder().encode("PFBLECTL1"), ...request]);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
+    await this.characteristics.get(33).writeValueWithResponse(mac.slice(0, 16));
+  }
+
+  /** The board refuses every read but identity until the connection proves the key once. */
+  async unlock() {
+    const value = await this.characteristics.get(1).readValue();
+    const uid = new Uint8Array(value.buffer.slice(value.byteOffset + 3, value.byteOffset + 11));
+    try { await this.prove(uid, new TextEncoder().encode("SESSION01")); }
+    catch (error) {
+      if (!this.bleDevice.gatt.connected) throw error;
+      throw Object.assign(new Error("The board rejected the control key. Check the key, wait 2 s, and retry."),
+        { final: true });
+    }
+  }
+
+  async tcpCliAuthProof(nonce, uid) {
+    if (!this.state.connected || !this.bleKey || !this.bleDevice?.gatt.connected) {
+      throw new Error("Connect the matching PicoForge board over Bluetooth to authorize its Wi-Fi console");
+    }
+    if (!(nonce instanceof Uint8Array) || nonce.length !== 16
+      || !(uid instanceof Uint8Array) || uid.length !== 8) {
+      throw new Error("Invalid TCP CLI authentication challenge");
+    }
+    const expectedUid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
+    if (uid.some((byte, index) => byte !== expectedUid[index])) {
+      throw new Error("The Wi-Fi console challenge belongs to a different board");
+    }
+    const message = new Uint8Array(16 + 8 + 9 + 9);
+    message.set(nonce);
+    message.set(uid, 16);
+    message.set(new TextEncoder().encode("PFTCPCLI1"), 24);
+    message.set(new TextEncoder().encode("TCPCLI001"), 33);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
+    return mac.slice(0, 16);
+  }
+
+  async connect(hex) {
     if (!this.bluetooth || this.state.busy || this.state.connected) return;
     this.update({ busy: true, error: null });
     this.connecting = true;
     try {
+      await this.setControlKey(hex);
       this.bleDevice = await this.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }], optionalServices: [BLE_SERVICE] });
       this.bleDevice.addEventListener("gattserverdisconnected", this.onBleDisconnected);
       const adapter = new EventTarget();
@@ -40,24 +82,17 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
         close: async () => this.bleDevice.gatt.disconnect(),
         receiveFeatureReport: async id => this.characteristics.get(id).readValue(),
         sendFeatureReport: async (id, report) => {
-          if (id !== 20 || ![1, 4].includes(report[2])) throw new Error("This operation requires USB.");
+          if (id !== 20 || ![1, 2, 4, 6].includes(report[2])) throw new Error("This operation requires USB.");
           // The LED only identifies the board, so firmware accepts it without a proof.
           if (report[2] === 1) return this.characteristics.get(20).writeValueWithResponse(report);
-          if (!this.bleKey) throw new Error("Enter the USB-provisioned BLE control key first.");
-          const value = await this.characteristics.get(32).readValue();
-          const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-          if (nonce.length !== 16) throw new Error("Invalid BLE authorization challenge");
           const uid = Uint8Array.from(this.state.hardware.serial_number.match(/../g), byte => parseInt(byte, 16));
-          const domain = new TextEncoder().encode("PFBLECTL1");
-          const message = new Uint8Array([...nonce, ...uid, ...domain, ...report]);
-          const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
           try {
-            await this.characteristics.get(33).writeValueWithResponse(mac.slice(0, 16));
+            await this.prove(uid, report);
             await this.characteristics.get(20).writeValueWithResponse(report);
           } catch (error) {
             // Firmware answers a bad, missing or rate-limited proof with an ATT application error.
             if (!this.bleDevice.gatt.connected) throw error;
-            throw new Error("The board rejected the BLE control key. Check the key, wait 2 s, and retry.");
+            throw new Error("The board rejected the control key. Check the key, wait 2 s, and retry.");
           }
         } });
       if (this.outstanding && this.bleUid) this.reconnectUid = this.bleUid;
@@ -70,12 +105,13 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
           for (const id of [1, 2, 3, 10, 11, 20, 30, 32, 33]) {
             this.characteristics.set(id, await service.getCharacteristic(characteristic(id)));
           }
+          await this.unlock();
           await this.attachDevice(adapter);
           if (!this.state.connected) throw new Error(this.state.error || "BLE connection initialization failed");
           break;
         } catch (error) {
           this.bleDevice.gatt.disconnect();
-          if (attempt === 3) throw error;
+          if (attempt === 3 || error.final) throw error;
           await this.sleep(500);
         }
       }
@@ -86,6 +122,7 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
       await this.pollReports();
     } catch (error) {
       this.bleDevice?.gatt.disconnect();
+      this.bleKey = null;
       this.characteristics.clear();
       this.update({ error: error.message, busy: false });
     } finally {
@@ -95,26 +132,18 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
   }
 
   async setControlKey(hex) {
-    if (!/^[a-f0-9]{64}$/i.test(hex) || /^0+$/.test(hex)) throw new Error("BLE key must be 64 nonzero hex digits.");
+    if (!/^[a-f0-9]{64}$/i.test(hex ?? "") || /^0+$/.test(hex)) {
+      throw new Error("Control key must be 64 nonzero hex digits.");
+    }
     const bytes = Uint8Array.from(hex.match(/../g), byte => parseInt(byte, 16));
     try {
       this.bleKey = await crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-      this.accessMode = "control";
     }
     finally { bytes.fill(0); }
   }
 
-  setViewOnly() {
-    this.bleKey = null;
-    this.accessMode = "view-only";
-    this.update({ error: null });
-  }
-
   async command(opcode, options) {
-    if (![1, 4].includes(opcode)) throw new Error("This operation requires USB.");
-    if (opcode !== 1 && (this.accessMode !== "control" || !this.bleKey)) {
-      throw new Error("Choose Control and enter the saved key to enable BLE commands.");
-    }
+    if (![1, 2, 4, 6].includes(opcode)) throw new Error("This operation requires USB.");
     return super.command(opcode, options);
   }
 
@@ -136,7 +165,6 @@ export class PicoForgeBluetooth extends PicoForgeWebHid {
     if (this.state.busy) return;
     clearTimeout(this.pollTimer);
     this.bleKey = null;
-    this.accessMode = null;
     this.characteristics.clear();
     await super.disconnect();
   }

@@ -36,6 +36,7 @@ typedef struct { int unused; } hal_flash_bank_t;
 #define ATT_ERROR_REQUEST_NOT_SUPPORTED 0x06
 #define ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH 0x0d
 #define ATT_ERROR_WRITE_NOT_PERMITTED 0x03
+#define ATT_READ_ERROR_CODE_OFFSET 0xfe00u
 #define BLUETOOTH_DATA_TYPE_FLAGS 0x01
 #define BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS 0x07
 #define BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME 0x09
@@ -115,7 +116,7 @@ void pf_boot_config_ble_key(uint8_t out[32]) { memcpy(out, key, sizeof(key)); }
 bool pf_boot_config_ble_key_configured(void)
 { uint8_t bits = 0u; for (unsigned i = 0u; i < 32u; ++i) bits |= key[i]; return bits != 0u; }
 uint8_t pf_boot_config_radios(void) { return PF_WIRELESS_BLE; }
-/* Fake verifier: the proof echoes the nonce; the real HMAC is covered by test_wireless_auth.py. */
+/* Fake verifier: the proof is the nonce with byte 0 XOR request byte 0; the real HMAC is in test_wireless_auth.py. */
 void pf_wireless_auth_set_key(const uint8_t k[32]) { (void)k; }
 bool pf_wireless_auth_available(void) { return key[0] != 0u; }
 bool pf_wireless_auth_new_nonce(uint8_t nonce[16])
@@ -130,8 +131,8 @@ void pf_wireless_auth_device_id(uint8_t uid[8]) { memset(uid, 0x5a, 8u); }
 bool pf_wireless_auth_verify(const uint8_t nonce[16], const uint8_t domain[9], const uint8_t request[9],
                              const uint8_t proof[16])
 {
-    (void)request;
-    return memcmp(domain, "PFBLECTL1", 9u) == 0 && memcmp(nonce, proof, 16u) == 0;
+    return memcmp(domain, "PFBLECTL1", 9u) == 0 && (uint8_t)(nonce[0] ^ request[0]) == proof[0] &&
+           memcmp(nonce + 1, proof + 1, 15u) == 0;
 }
 void pf_wireless_status(uint8_t *report) { memset(report, 0xa5, PF_WIRELESS_STATUS_SIZE); }
 void pf_hid_build_identity_report(pf_hid_identity_report_t *report) { memset(report, 1, sizeof(*report)); }
@@ -160,6 +161,15 @@ static void read_nonce(uint8_t nonce[16])
     assert(read_cb(1u, HANDLE(0020), 0u, nonce, 16u) == 16u);
 }
 
+/* Turn a fresh nonce into the fake proof for a request starting with first. */
+static uint8_t *prove(uint8_t nonce[16], uint8_t first)
+{
+    nonce[0] ^= first;
+    return nonce;
+}
+
+static int proof_write(uint8_t *proof) { return write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, proof, 16u); }
+
 static void __attribute__((noinline)) clobber_stack(void)
 {
     volatile uint8_t junk[512];
@@ -171,10 +181,49 @@ int main(void)
     uint8_t request[sizeof(pf_hid_control_request_t)] = {1u, 7u, 4u};
     uint8_t led[sizeof(pf_hid_control_request_t)] = {1u, 8u, PF_HID_OPCODE_LED, 0u, 1u};
     uint8_t nonce[16], other[16], buffer[64];
+    const uint16_t rejected_read = ATT_READ_ERROR_CODE_OFFSET + 0x80u;
+
+    /* Bluetooth never starts without a saved control key, even when its switch is on. */
+    assert(!pf_bluetooth_prepare());
+    key[0] = 1u;
+    assert(pf_bluetooth_prepare() && pf_bluetooth_start());
+    clobber_stack();
+    assert(advertising_length == 21u && advertising[0] == 2u && advertising[2] == 6u && advertising[20] == 0x50u);
+    assert(scan_response_length == 2u + 10u + 16u && memcmp(scan_response + 2, "PicoForge-FFFF", 14u) == 0);
+    assert(pf_bluetooth_state() == 0u);
+    event(BTSTACK_EVENT_STATE, HCI_STATE_WORKING, 0u);
+    assert(pf_bluetooth_state() == 1u && advertising_enables == 1u);
+    event(HCI_EVENT_LE_META, HCI_SUBEVENT_LE_CONNECTION_COMPLETE, ERROR_CODE_SUCCESS);
+    assert(pf_bluetooth_state() == 2u);
+
+    /* Before the session proof, only the name, identity and nonce read; every write, LED included, is refused. */
+    assert(read_cb(1u, ATT_CHARACTERISTIC_GAP_DEVICE_NAME_01_VALUE_HANDLE, 0u, buffer, sizeof(buffer)) == 26u);
+    assert(read_cb(1u, HANDLE(0001), 0u, buffer, sizeof(buffer)) == sizeof(pf_hid_identity_report_t));
+    const uint16_t locked_handles[] = {HANDLE(0002), HANDLE(0003), HANDLE(000a), HANDLE(000b), HANDLE(0014),
+                                       HANDLE(001e)};
+    for (unsigned i = 0u; i < sizeof(locked_handles) / sizeof(locked_handles[0]); ++i) {
+        assert(read_cb(1u, locked_handles[i], 0u, NULL, 0u) == rejected_read);
+        assert(read_cb(1u, locked_handles[i], 0u, buffer, sizeof(buffer)) == rejected_read);
+    }
+    assert(telemetry_builds == 0u && storage_builds == 0u && benchmark_builds == 0u);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0x80);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
+    assert(controls == 0u);
+
+    /* A control proof cannot unlock the session; a wrong proof starts a two-second lockout. */
+    read_nonce(nonce);
+    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 15u) ==
+           ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH);
+    assert(proof_write(prove(nonce, 1u)) == 0x80);
+    read_nonce(nonce);
+    now = 1999999u;
+    assert(proof_write(prove(nonce, 'S')) == 0x80);
+    now = 2000000u;
+    assert(read_cb(1u, HANDLE(0003), 0u, NULL, 0u) == rejected_read);
+    assert(proof_write(nonce) == 0);
+    assert(proof_write(nonce) == 0x80);
 
     /* BTstack length probes, including discovery, must not build reports or advance sequence numbers. */
-    assert(pf_bluetooth_prepare() && pf_bluetooth_start());
-    assert(pf_bluetooth_state() == 0u);
     for (unsigned i = 0; i < 2u; ++i) {
         assert(read_cb(1u, HANDLE(0003), 0u, NULL, 0u) == sizeof(pf_hid_telemetry_report_t));
         assert(read_cb(1u, HANDLE(000a), 0u, NULL, 0u) == sizeof(pf_hid_storage_report_t));
@@ -190,83 +239,65 @@ int main(void)
     assert(read_cb(1u, HANDLE(000b), 0u, buffer, 8u) == 8u && buffer[0] == 2u);
     assert(telemetry_builds == 1u && storage_builds == 1u && benchmark_builds == 1u);
 
-    /* Without a key, BLE allows only diagnostics and the LED identify control; proofs and other controls are refused. */
-    assert(pf_bluetooth_prepare());
-    assert(pf_bluetooth_start());
-    clobber_stack();
-    assert(advertising_length == 21u && advertising[0] == 2u && advertising[2] == 6u && advertising[20] == 0x50u);
-    assert(scan_response_length == 2u + 10u + 16u && memcmp(scan_response + 2, "PicoForge-FFFF", 14u) == 0);
-    event(BTSTACK_EVENT_STATE, HCI_STATE_WORKING, 0u);
-    assert(pf_bluetooth_state() == 1u && advertising_enables == 1u);
-    event(HCI_EVENT_LE_META, HCI_SUBEVENT_LE_CONNECTION_COMPLETE, ERROR_CODE_SUCCESS);
-    assert(pf_bluetooth_state() == 2u);
-    read_nonce(nonce);
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0x80);
-    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
-    assert(controls == 0u);
-    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0 && controls == 1u);
-    controls = 0u;
-
-    /* Status is readable without a proof, but never carries the SSID or LAN address. */
+    /* Unlocked readers get full status, including the SSID and LAN address. */
     assert(read_cb(1u, HANDLE(001e), 0u, buffer, sizeof(buffer)) == PF_WIRELESS_STATUS_SIZE);
     for (unsigned i = PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET; i < PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET; ++i) {
-        assert(buffer[i] == 0u);
+        assert(buffer[i] == 0xa5);
     }
-    assert(buffer[PF_WIRELESS_STATUS_WIFI_STATE_OFFSET] == 0xa5 && buffer[PF_WIRELESS_STATUS_ERROR_OFFSET] == 0xa5);
 
-    /* With a key, each control needs a fresh nonce and a matching proof, used exactly once. */
-    key[0] = 1u;
-    assert(pf_bluetooth_prepare());
-    read_nonce(nonce);
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 15u) ==
-           ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH);
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0);
-    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0);
-    assert(controls == 1u);
+    /* On an unlocked link the LED needs no proof, but each other control needs a fresh one-use proof. */
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0 && controls == 1u);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0x80);
+    read_nonce(nonce);
+    assert(proof_write(prove(nonce, 1u)) == 0);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0);
+    assert(controls == 2u);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
+    assert(proof_write(nonce) == 0x80);
 
     /* A new nonce invalidates an earlier proof; a wrong proof starts a two-second lockout. */
     read_nonce(nonce);
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0);
+    assert(proof_write(prove(nonce, 1u)) == 0);
     read_nonce(other);
     assert(memcmp(nonce, other, 16u) != 0);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
     read_nonce(nonce);
-    other[0] ^= 1u;
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, other, 16u) == 0);
+    assert(proof_write(nonce) == 0);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
     read_nonce(nonce);
-    now = 1999999u;
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0x80);
-    now = 2000000u;
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0);
+    now = 3999999u;
+    assert(proof_write(prove(nonce, 1u)) == 0x80);
+    now = 4000000u;
+    assert(proof_write(nonce) == 0);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0);
-    assert(controls == 2u);
+    assert(controls == 3u);
 
-    /* An open LED write neither consumes nor rejects a pending proof. */
+    /* An LED write neither consumes nor rejects a pending proof. */
     read_nonce(nonce);
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0);
-    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0 && controls == 3u);
+    assert(proof_write(prove(nonce, 1u)) == 0);
+    assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0 && controls == 4u);
     assert(write_cb(1u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0);
-    assert(controls == 4u);
+    assert(controls == 5u);
 
-    /* A disconnect drops the pending proof and the frozen long-read snapshot. */
+    /* A disconnect drops the session, the pending proof and the frozen long-read snapshot. */
     read_nonce(nonce);
-    assert(write_cb(1u, HANDLE(0021), ATT_TRANSACTION_MODE_NONE, 0u, nonce, 16u) == 0);
+    assert(proof_write(prove(nonce, 1u)) == 0);
     assert(read_cb(1u, HANDLE(0001), 0u, buffer, 8u) == 8u);
     event(HCI_EVENT_DISCONNECTION_COMPLETE, 0u, 0u);
     assert(pf_bluetooth_state() == 1u && advertising_enables == 2u);
     assert(read_cb(2u, HANDLE(0001), 8u, buffer, 8u) == 0u);
+    assert(read_cb(2u, HANDLE(001e), 0u, buffer, sizeof(buffer)) == rejected_read);
+    assert(write_cb(2u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, led, sizeof(led)) == 0x80);
     assert(write_cb(2u, HANDLE(0014), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) == 0x80);
     assert(write_cb(2u, HANDLE(0002), ATT_TRANSACTION_MODE_NONE, 0u, request, sizeof(request)) ==
            ATT_ERROR_WRITE_NOT_PERMITTED);
+    assert(controls == 5u);
     return 0;
 }
 """
 
 
-def test_ble_authorization_redaction_and_disconnect_reset(tmp_path):
+def test_ble_requires_key_session_proof_and_disconnect_reset(tmp_path):
     (tmp_path / "pico").mkdir()
     (tmp_path / "btstack.h").write_text(FAKE_BTSTACK)
     (tmp_path / "btstack_tlv_none.h").write_text(

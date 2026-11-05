@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "./wireless-form.mjs?v=15";
+import { renderWirelessStatus } from "./wireless-form.mjs?v=17";
 
 function uptimeLabel(milliseconds) {
   if (!Number.isFinite(milliseconds)) return "--";
@@ -12,6 +12,9 @@ function uptimeLabel(milliseconds) {
 
 let lastStorageDetails = null;
 let cardAbsent = false;
+let boardConfigurationSignature = null;
+let boardConfigurationElements = null;
+let boardConfigurationDocument = null;
 
 export function renderStatus(snapshot) {
   const connected = Boolean(snapshot.connected);
@@ -73,16 +76,18 @@ export function renderStatus(snapshot) {
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Return to Pico" : "Enable USB drive";
   mscControl.disabled = snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
-    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
-    || Boolean(msc?.enabled && !msc.force_return_supported);
-  document.querySelector("#msc-note").textContent = msc?.enabled && !msc.force_return_supported
-    ? "Update firmware to disable the USB drive from Pico; this firmware requires manual host eject."
+    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending);
+  document.querySelector("#msc-note").textContent = snapshot.msc_outcome_uncertain
+    ? "Storage command outcome is uncertain. Check fresh ownership status before taking action."
     : msc?.request_rejected
     ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
       : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
     : msc?.transition_pending ? "Storage handoff in progress; waiting for fresh ownership status."
       : "";
   document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
+  const mscStatusRefresh = document.querySelector("#msc-status-refresh");
+  mscStatusRefresh.hidden = !snapshot.msc_outcome_uncertain;
+  mscStatusRefresh.disabled = Boolean(snapshot.status_read_error || snapshot.status_reading);
   renderBoardConfiguration(snapshot);
   renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc);
   renderSelfTest(snapshot);
@@ -126,8 +131,8 @@ function renderSettings(snapshot) {
   // Credentials have no forced-save path: provisioning requires firmware-owned storage.
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready
     || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(snapshot.wireless_dirty && msc?.enabled)
-    || !((snapshot.hardware?.capabilities ?? 0) & 2)
-    || Boolean(msc?.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64));
+    || Boolean(snapshot.wireless_dirty && snapshot.wireless_stage_valid === false)
+    || !((snapshot.hardware?.capabilities ?? 0) & 2);
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
     || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
     || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
@@ -136,8 +141,6 @@ function renderSettings(snapshot) {
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
         : !msc ? "Waiting for storage ownership status."
-          : msc.enabled && !((snapshot.hardware?.capabilities ?? 0) & 64)
-            ? "Update firmware or return storage to Pico before saving settings."
           : msc.transition_pending ? "Wait for the USB storage transition before saving settings."
             : "");
   document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
@@ -177,10 +180,24 @@ export function storageSpeed(settings) {
 }
 
 function renderBoardConfiguration(snapshot) {
+  if (boardConfigurationDocument !== document) {
+    boardConfigurationDocument = document;
+    boardConfigurationSignature = null;
+    boardConfigurationElements = {
+      uartTitle: document.querySelector("#board-uart-title"),
+      storageTitle: document.querySelector("#board-storage-title"),
+      uartTable: document.querySelector("#board-uart"),
+      storageTable: document.querySelector("#board-storage-pins"),
+      resetCause: document.querySelector("#board-reset-cause"),
+    };
+  }
+  const { uartTitle, storageTitle, uartTable, storageTable, resetCause } = boardConfigurationElements;
   const configuration = snapshot.board_configuration;
-  const set = (selector, value) => { document.querySelector(selector).textContent = value; };
+  const setText = (element, value) => {
+    if (element.textContent !== value) element.textContent = value;
+  };
   const formatPin = pin => pin === 255 || pin == null ? "Unassigned" : `GP${pin}`;
-  const renderPins = (selector, signals, pins) => {
+  const renderPins = (table, signals, pins) => {
     const headings = document.createElement("tr");
     const values = document.createElement("tr");
     signals.forEach((signal, index) => {
@@ -192,24 +209,28 @@ function renderBoardConfiguration(snapshot) {
       headings.append(heading);
       values.append(cell);
     });
-    document.querySelector(selector).replaceChildren(headings, values);
+    table.replaceChildren(headings, values);
   };
   const spi = Boolean(snapshot.hardware?.capabilities & 8);
   const labels = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
-  set("#board-uart-title", configuration && configuration.monitor_uart_index !== 255
-    ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
-  set("#board-storage-title", configuration ? `Storage (${spi ? "SPI" : "SDIO-PIO"})` : "Storage");
-  renderPins("#board-uart", ["TX", "RX"],
-    [configuration?.monitor_uart_tx_gpio, configuration?.monitor_uart_rx_gpio]);
-  renderPins("#board-storage-pins", [...labels, "Card detect"],
-    [...labels.map((_, index) => configuration?.storage_gpios[index]), configuration?.card_detect_gpio]);
+  const signature = JSON.stringify([spi, configuration]);
+  if (signature !== boardConfigurationSignature) {
+    boardConfigurationSignature = signature;
+    setText(uartTitle, configuration && configuration.monitor_uart_index !== 255
+      ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
+    setText(storageTitle, configuration ? `Storage (${spi ? "SPI" : "SDIO-PIO"})` : "Storage");
+    renderPins(uartTable, ["TX", "RX"],
+      [configuration?.monitor_uart_tx_gpio, configuration?.monitor_uart_rx_gpio]);
+    renderPins(storageTable, [...labels, "Card detect"],
+      [...labels.map((_, index) => configuration?.storage_gpios[index]), configuration?.card_detect_gpio]);
+  }
   if (!configuration) {
-    set("#board-reset-cause", "--");
+    setText(resetCause, "--");
     return;
   }
-  const resetCause = ({ 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" })[configuration.reset_cause]
+  const resetCauseLabel = ({ 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" })[configuration.reset_cause]
     ?? `Unassigned (${configuration.reset_cause})`;
-  set("#board-reset-cause", resetCause);
+  setText(resetCause, resetCauseLabel);
 }
 
 function renderMemory(memory, filesystemFormat, stale, msc) {
@@ -285,7 +306,7 @@ export function renderSelfTest(snapshot) {
   const speed = value => value == null ? "--" : `${(value / 1048576).toFixed(2)} MiB/s`;
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
   const labels = { idle: "Idle", queued: "Queued", mounting: "Mounting", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
-  const errors = ["", "Storage busy", "USB host owns the card", "Filesystem already mounted", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
+  const errors = ["", "Storage busy", "USB host owns the card", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
   set("#self-test-state", status ? `${labels[status.state] ?? "Unknown"} · ${Math.floor(status.progress_percent ?? 0)}%`
     : "Unavailable");
   document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;

@@ -11,18 +11,14 @@
 
 /** Default-Speed transfer target; the PIO divider rounds down when not exactly representable. */
 #define PF_SD_SDIO_TRANSFER_CLOCK_HZ 25000000u
-/** Initialization diagnostic stages; retained numeric values include legacy coarse stages. */
+/** Initialization diagnostic stages. */
 typedef enum {
     PF_SD_SDIO_INIT_STAGE_NONE = 0, /**< No initialization failure. */
     PF_SD_SDIO_INIT_STAGE_IDLE, /**< CMD0 reset. */
-    PF_SD_SDIO_INIT_STAGE_IF_CONDITION, /**< Legacy coarse CMD8 stage. */
     PF_SD_SDIO_INIT_STAGE_OPERATING_CONDITION, /**< ACMD41 setup. */
-    PF_SD_SDIO_INIT_STAGE_CID, /**< Legacy coarse CID stage. */
     PF_SD_SDIO_INIT_STAGE_RCA, /**< CMD3 relative address assignment. */
     PF_SD_SDIO_INIT_STAGE_CSD, /**< CMD9 register and capacity validation. */
-    PF_SD_SDIO_INIT_STAGE_SELECT, /**< Legacy coarse card selection stage. */
     PF_SD_SDIO_INIT_STAGE_BUS_WIDTH, /**< ACMD6 four-bit selection. */
-    PF_SD_SDIO_INIT_STAGE_BLOCK_LENGTH, /**< Retained legacy block-length stage. */
     PF_SD_SDIO_INIT_STAGE_TRANSFER_CLOCK, /**< Transfer-clock setup and validation. */
     PF_SD_SDIO_INIT_STAGE_CMD8_RESPONSE, /**< CMD8 exchange and response validation. */
     PF_SD_SDIO_INIT_STAGE_CMD8_CLASSIFY, /**< CMD8 voltage and card-version classification. */
@@ -56,8 +52,6 @@ void pf_sd_sdio_get_init_response(uint8_t response[6]);
 /** Copy the most recently decoded short command response and its request. */
 void pf_sd_sdio_get_last_short_response(uint8_t *command, uint32_t *argument,
                                          uint32_t *response_argument);
-/** Copy all five retained response words and the number captured, including partial responses. */
-void pf_sd_sdio_get_last_response_words(uint32_t words[5], size_t *word_count);
 /** @} */
 
 #endif

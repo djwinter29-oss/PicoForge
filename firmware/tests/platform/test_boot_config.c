@@ -82,9 +82,9 @@ static uint8_t *stored_bytes(void)
     return pf_test_flash + BOOT_CONFIG_FLASH_OFFSET;
 }
 
-static wireless_record_t *stored_wireless(void)
+static record_t *stored_record(void)
 {
-    return (wireless_record_t *)(stored_bytes() + sizeof(record_t));
+    return (record_t *)stored_bytes();
 }
 
 static void reseal(void)
@@ -93,21 +93,15 @@ static void reseal(void)
     stored->crc = crc32(stored, offsetof(record_t, crc));
 }
 
-static void reseal_wireless(void)
-{
-    wireless_record_t *stored = stored_wireless();
-    stored->crc = crc32(stored, offsetof(wireless_record_t, crc));
-}
-
 static void store(uint8_t sysclk_profile, uint8_t sdcard_profile)
 {
-    const uint8_t header[] = {'P', 'F', 'C', 'F', 1, 0, 16, 0};
+    const uint8_t header[] = {'P', 'F', 'C', 'F', 1, 0, sizeof(record_t), 0};
     uint8_t *bytes = stored_bytes();
+    memset(bytes, 0, sizeof(record_t));
     memcpy(bytes, header, sizeof(header));
     record_t *stored = (record_t *)bytes;
     stored->sysclk_profile = sysclk_profile;
     stored->sdcard_profile = sdcard_profile;
-    stored->radios_disabled = stored->wireless_required = 0u;
     reseal();
 }
 
@@ -115,7 +109,6 @@ static void reboot(void)
 {
     loaded = false;
     config = (record_t){0};
-    memset(&wireless, 0, sizeof(wireless));
     save_in_progress = false;
     lockout_pending = false;
     tasks_before_lockout = 0u;
@@ -212,9 +205,9 @@ void test_save_writes_the_v1_profile_layout_and_survives_reboot(void)
             TEST_ASSERT_TRUE(pf_boot_config_set_sysclk((pf_sysclk_profile_t)i));
             TEST_ASSERT_TRUE(pf_boot_config_set_storage_speed((pf_storage_speed_t)speed));
             TEST_ASSERT_TRUE(pf_boot_config_save());
-            TEST_ASSERT_EQUAL_HEX8_ARRAY(((uint8_t[]){'P', 'F', 'C', 'F', 1, 0, 16, 0,
-                                                      (uint8_t)i, (uint8_t)speed, 0u, 1u}),
-                                         stored_bytes(), 12);
+            TEST_ASSERT_EQUAL_HEX8_ARRAY(((uint8_t[]){'P', 'F', 'C', 'F', 1, 0, 148u, 0,
+                                                      (uint8_t)i, (uint8_t)speed, 0u}),
+                                         stored_bytes(), 11);
             reboot();
             TEST_ASSERT_EQUAL(i, pf_boot_config_sysclk());
             TEST_ASSERT_EQUAL(speed, pf_boot_config_storage_speed());
@@ -222,7 +215,7 @@ void test_save_writes_the_v1_profile_layout_and_survives_reboot(void)
     }
 }
 
-void test_radios_default_on_for_erased_and_older_records_and_persist_disables(void)
+void test_radios_default_on_for_erased_and_saved_records_and_persist_disables(void)
 {
     TEST_ASSERT_EQUAL_HEX8(PF_WIRELESS_WIFI | PF_WIRELESS_BLE, pf_boot_config_radios());
     store(PF_SYSCLK_150MHZ, PF_STORAGE_SPEED_HIGH);
@@ -297,7 +290,8 @@ void test_corrupt_or_unknown_records_give_defaults(void)
 {
     const struct { unsigned offset; uint8_t value; bool reseal; } cases[] = {
         {0u, 'X', true}, {4u, 2u, true}, {6u, 15u, true}, {8u, 4u, true}, {9u, 2u, true},
-        {10u, 8u, true}, {11u, 2u, true}, {8u, 1u, false}, {15u, 0u, false},
+        {10u, 8u, true}, {11u, 4u, true}, {12u, 0xffu, true}, {144u, 0u, false}, {141u, 1u, true},
+        {8u, 1u, false},
     };
     for (unsigned i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         store(PF_SYSCLK_200MHZ, PF_STORAGE_SPEED_HIGH);
@@ -325,7 +319,7 @@ void test_save_only_touches_the_reserved_sector_and_pads_the_page(void)
     TEST_ASSERT_TRUE(pf_boot_config_save());
     TEST_ASSERT_TRUE(record_valid((const record_t *)stored_bytes()));
     TEST_ASSERT_EQUAL_UINT8(0x5au, pf_test_flash[BOOT_CONFIG_FLASH_OFFSET - 1u]);
-    for (size_t i = sizeof(record_t) + sizeof(wireless_record_t); i < FLASH_SECTOR_SIZE; ++i) {
+    for (size_t i = sizeof(record_t); i < FLASH_SECTOR_SIZE; ++i) {
         TEST_ASSERT_EQUAL_HEX8(0xffu, stored_bytes()[i]);
     }
     TEST_ASSERT_EQUAL_UINT(1u, pf_test_erase_calls);
@@ -352,9 +346,9 @@ void test_wireless_credentials_default_empty_and_survive_profile_updates(void)
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
-    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_TRY_WPA2, stored_wireless()->settings.wifi_auth_state);
-    stored_wireless()->settings.wifi_auth_state = PF_WIFI_AUTH_SAE;
-    reseal_wireless();
+    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_TRY_WPA2, stored_record()->wireless.wifi_auth_state);
+    stored_record()->wireless.wifi_auth_state = PF_WIFI_AUTH_SAE;
+    reseal();
     reboot();
     pf_boot_config_wifi_ssid(ssid);
     pf_boot_config_wifi_password(password);
@@ -366,7 +360,7 @@ void test_wireless_credentials_default_empty_and_survive_profile_updates(void)
     TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_250MHZ));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
-    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_SAE, stored_wireless()->settings.wifi_auth_state);
+    TEST_ASSERT_EQUAL(PF_WIFI_AUTH_SAE, stored_record()->wireless.wifi_auth_state);
     reboot();
     pf_boot_config_wifi_ssid(ssid);
     pf_boot_config_wifi_password(password);
@@ -376,7 +370,7 @@ void test_wireless_credentials_default_empty_and_survive_profile_updates(void)
     TEST_ASSERT_EQUAL(PF_WIFI_AUTH_SAE, pf_boot_config_wifi_auth_state());
     for (size_t i = 0u; i < sizeof(key); ++i) TEST_ASSERT_EQUAL_UINT8(0x5au, key[i]);
     TEST_ASSERT_EQUAL(PF_SYSCLK_250MHZ, pf_boot_config_sysclk());
-    stored_bytes()[sizeof(record_t) + offsetof(wireless_record_t, settings) + 1u] ^= 1u;
+    stored_bytes()[offsetof(record_t, wireless) + 1u] ^= 1u;
     reboot();
     pf_boot_config_wifi_ssid(ssid);
     TEST_ASSERT_EQUAL_STRING("", ssid);
@@ -454,27 +448,22 @@ void test_tcp_cli_switch_defaults_enabled_and_survives_radio_changes_and_reboot(
     TEST_ASSERT_EQUAL_UINT8(PF_WIRELESS_WIFI, pf_boot_config_radios());
 }
 
-void test_tcp_cli_auth_requires_saved_key_and_survives_profile_updates(void)
+void test_control_key_requires_nonzero_value_and_survives_profile_updates(void)
 {
     uint8_t key[32] = {0u};
     store(PF_SYSCLK_DEFAULT, PF_STORAGE_SPEED_DEFAULT);
-    TEST_ASSERT_FALSE(pf_boot_config_set_tcp_cli_auth_required(true));
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
     TEST_ASSERT_FALSE(pf_boot_config_ble_key_configured());
-    TEST_ASSERT_FALSE(pf_boot_config_set_tcp_cli_auth_required(true));
     key[0] = 0x42u;
     TEST_ASSERT_TRUE(pf_boot_config_set_ble_key(key));
-    TEST_ASSERT_TRUE(pf_boot_config_set_tcp_cli_auth_required(true));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
     reboot();
-    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_auth_required());
     TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
     TEST_ASSERT_TRUE(pf_boot_config_set_sysclk(PF_SYSCLK_200MHZ));
     scheduler_state = taskSCHEDULER_RUNNING;
     TEST_ASSERT_TRUE(pf_boot_config_save());
     reboot();
-    TEST_ASSERT_TRUE(pf_boot_config_tcp_cli_auth_required());
     TEST_ASSERT_TRUE(pf_boot_config_ble_key_configured());
 }
 
@@ -517,7 +506,7 @@ void test_failure_before_task_creation_needs_no_reclamation_and_can_retry(void)
 void test_partial_program_defaults_after_reboot_and_successful_save_recovers(void)
 {
     char ssid[33];
-    for (size_t bytes = 1u; bytes < sizeof(record_t) + sizeof(wireless_record_t); ++bytes) {
+    for (size_t bytes = 1u; bytes < sizeof(record_t); ++bytes) {
         store(PF_SYSCLK_150MHZ, PF_STORAGE_SPEED_DEFAULT);
         reboot();
         scheduler_state = taskSCHEDULER_RUNNING;

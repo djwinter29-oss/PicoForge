@@ -22,13 +22,12 @@
 #include "app/storage/storage_worker.h"
 
 static bool wifi_enabled; /**< Wi-Fi master switch and credentials allow startup. */
-static bool ble_enabled; /**< BLE master switch allows advertising; a key is required only for control. */
+static bool ble_enabled; /**< BLE switch is on and a control key is saved; BLE never runs without a key. */
 static bool started; /**< Shared SDK context initialized successfully. */
 static uint8_t init_error; /**< Sticky SDK or BLE initialization failure. */
 static uint8_t save_status; /**< Last provisioning result, using Feature 20 status values. */
 static uint8_t save_transaction; /**< Last USB provisioning transaction ID. */
 static bool tcp_cli_enabled; /**< Boot-applied saved-LAN console switch. */
-static bool tcp_cli_auth_required; /**< Boot-applied challenge-response switch. */
 static uint8_t configured_radios; /**< Cached boot/saved radio mask for status reads. */
 static char configured_ssid[PF_WIFI_SSID_SIZE]; /**< Cached saved SSID for status reads. */
 static bool password_configured; /**< Cached credential-presence flag. */
@@ -37,7 +36,7 @@ static bool restart_required; /**< Saved wireless settings differ from the value
 
 /** @brief Feature 31 configuration request byte offsets and flags. */
 enum {
-    REQUEST_VERSION = 0, /**< Payload version, always 2. */
+    REQUEST_VERSION = 0, /**< Payload version, always 1. */
     REQUEST_TRANSACTION = 1, /**< Nonzero host transaction. */
     REQUEST_RADIOS = 2, /**< PF_WIRELESS_* radio switches. */
     REQUEST_FLAGS = 3, /**< REQUEST_KEEP_* and REQUEST_USE_TESTED bits. */
@@ -49,32 +48,13 @@ enum {
     REQUEST_KEEP_PASSWORD = 1, /**< Keep the saved passphrase. */
     REQUEST_KEEP_KEY = 2, /**< Keep the saved BLE key. */
     REQUEST_USE_TESTED = 4, /**< Save the staged tested credentials. */
-    REQUEST_DISABLE_TCP_CLI = 8, /**< Disable unauthenticated saved-LAN console access after reboot. */
-    REQUEST_KEEP_TCP_CLI = 16, /**< Preserve the saved console switch. */
-    REQUEST_REQUIRE_TCP_AUTH = 32, /**< Require a proof made with the configured BLE key. */
-    REQUEST_KEEP_TCP_AUTH = 64, /**< Preserve the saved TCP authentication switch. */
+    REQUEST_DISABLE_TCP_CLI = 8, /**< Disable saved-LAN console access after reboot. */
 };
 
 /** @brief Return whether USB mass storage or the storage worker owns the shared flash/radio admission. */
 static bool storage_busy(void)
 {
     return pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending() || pf_storage_worker_busy();
-}
-
-/** @brief Validate supported Feature 31 flags and their mutually exclusive choices. */
-static bool valid_request_flags(uint8_t flags)
-{
-    static const uint8_t exclusive_pairs[][2] = {
-        {REQUEST_DISABLE_TCP_CLI, REQUEST_KEEP_TCP_CLI},
-        {REQUEST_REQUIRE_TCP_AUTH, REQUEST_KEEP_TCP_AUTH},
-    };
-    const uint8_t supported = REQUEST_KEEP_PASSWORD | REQUEST_KEEP_KEY | REQUEST_USE_TESTED |
-        REQUEST_DISABLE_TCP_CLI | REQUEST_KEEP_TCP_CLI | REQUEST_REQUIRE_TCP_AUTH | REQUEST_KEEP_TCP_AUTH;
-    if ((flags & (uint8_t)~supported) != 0u) return false;
-    for (size_t i = 0u; i < sizeof(exclusive_pairs) / sizeof(exclusive_pairs[0]); ++i) {
-        if ((flags & exclusive_pairs[i][0]) != 0u && (flags & exclusive_pairs[i][1]) != 0u) return false;
-    }
-    return true;
 }
 
 /** @brief Initialize the shared SDK once, always on the USB owner task/core. */
@@ -101,7 +81,6 @@ static void refresh_saved_wireless(void)
     password_configured = pf_boot_config_wifi_password_configured();
     ble_key_configured = pf_boot_config_ble_key_configured();
     tcp_cli_enabled = pf_boot_config_tcp_cli_enabled();
-    tcp_cli_auth_required = pf_boot_config_tcp_cli_auth_required();
     restart_required = pf_boot_config_wireless_restart_required();
 }
 
@@ -125,11 +104,8 @@ void pf_wireless_start(void)
     ble_enabled = pf_bluetooth_prepare();
     /* The chip starts even with both radios off because it owns the board LED; radios stay off unless enabled. */
     if (!ensure_started()) return;
-    if (!pf_tcp_cli_set_auth_required(tcp_cli_auth_required)) {
-        init_error = PF_WIRELESS_ERROR_INIT;
-        PF_LOGGING_ERROR("wireless", "TCP CLI authentication key unavailable");
-        tcp_cli_enabled = false;
-    }
+    /* A saved control key always protects the TCP CLI; without one the console is open on the saved LAN. */
+    (void)pf_tcp_cli_set_auth_required(pf_wireless_auth_available());
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
     if (wifi_enabled) {
         pf_wifi_start();
@@ -171,7 +147,7 @@ void pf_wireless_status(uint8_t *report)
     report[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] = pf_tcp_cli_serving();
     report[PF_WIRELESS_STATUS_SERVICES_OFFSET] =
         (tcp_cli_enabled ? 0u : PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED) |
-        (tcp_cli_auth_required ? PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED : 0u);
+        (pf_tcp_cli_auth_required() ? PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED : 0u);
     pf_wifi_auth_state_t auth_state;
     uint16_t reconnects;
     int8_t rssi;
@@ -216,7 +192,8 @@ bool pf_wireless_configure(const uint8_t *report)
     const bool use_tested = (flags & REQUEST_USE_TESTED) != 0u;
     save_transaction = report[REQUEST_TRANSACTION];
     save_status = PF_HID_COMMAND_INVALID;
-    if (report[REQUEST_VERSION] != 2u || save_transaction == 0u || !valid_request_flags(flags)) return false;
+    const uint8_t supported = REQUEST_KEEP_PASSWORD | REQUEST_KEEP_KEY | REQUEST_USE_TESTED | REQUEST_DISABLE_TCP_CLI;
+    if (report[REQUEST_VERSION] != 1u || save_transaction == 0u || (flags & (uint8_t)~supported) != 0u) return false;
     if (storage_busy()) {
         save_status = PF_HID_COMMAND_BUSY;
         return false;
@@ -255,13 +232,10 @@ bool pf_wireless_configure(const uint8_t *report)
     const bool valid = pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(clock_mhz)) &&
         pf_boot_config_set_storage_speed((pf_storage_speed_t)report[REQUEST_STORAGE_SPEED]) &&
         pf_boot_config_set_radios(report[REQUEST_RADIOS]) &&
-        ((flags & REQUEST_KEEP_TCP_CLI) != 0u ||
-         pf_boot_config_set_tcp_cli_enabled((flags & REQUEST_DISABLE_TCP_CLI) == 0u)) &&
+        pf_boot_config_set_tcp_cli_enabled((flags & REQUEST_DISABLE_TCP_CLI) == 0u) &&
         pf_boot_config_set_wifi_ssid(credentials.next_ssid) &&
         (keep_password || pf_boot_config_set_wifi_password(credentials.next_password)) &&
         (keep_key || pf_boot_config_set_ble_key(credentials.next_key)) &&
-        ((flags & REQUEST_KEEP_TCP_AUTH) != 0u ||
-         pf_boot_config_set_tcp_cli_auth_required((flags & REQUEST_REQUIRE_TCP_AUTH) != 0u)) &&
         pf_boot_config_set_wifi_auth_state(next_auth_state);
     if (!valid) {
         pf_boot_config_discard();

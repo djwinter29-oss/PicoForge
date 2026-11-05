@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 
 import pytest
 
@@ -154,10 +155,14 @@ def test_host_packages_and_publishers_share_validated_artifacts():
         assert f"rid: {rid}" in dotnet
     assert '--self-contained true' in dotnet
     assert "shutil.unpack_archive(archive, directory)" in dotnet
-    assert 'assert b"PicoForge Dashboard | .NET" in response.read()' in dotnet
+    assert 'assert b"PicoForge Dashboard | .NET" in page' in dotnet
+    assert 'assert b"PicoForge Console | .NET" in page' in dotnet
+    assert 'assert f"App v{version}<".encode() in page' in dotnet
     assert 'assert version("picoforge") == os.environ["VERSION"]' in packages
     assert 'web = files("picoforge").joinpath("web")' in packages
     assert 'assert b"PicoForge Dashboard | Python" in response.data' in packages
+    assert 'assert b"PicoForge Console | Python" in response.data' in packages
+    assert 'assert __version__ == os.environ["VERSION"]' in packages
     for name, artifact, pattern in (
         ("pypi", "release-python", "picoforge-$version-py3-none-any.whl"),
         ("direct", "release-direct", "picoforge-direct-v$version.zip"),
@@ -168,6 +173,49 @@ def test_host_packages_and_publishers_share_validated_artifacts():
         assert "gh release download" in publish
     assert "gh-action-pypi-publish@" in (ROOT / ".github/workflows/publish-pypi.yml").read_text()
     assert "deploy-pages@" in (ROOT / ".github/workflows/publish-direct.yml").read_text()
+
+
+def test_unreleased_host_versions_are_debug():
+    assert '<Version>0.0.0-debug</Version>' in (ROOT / "host/dotnet/PicoForge/PicoForge.csproj").read_text()
+    assert '__version__ = "0.0.0-debug"' in (ROOT / "host/python/src/picoforge/__init__.py").read_text()
+    for page in ("index.html", "console.html"):
+        assert "Direct · App v0.0.0-debug<" in (ROOT / "host/direct" / page).read_text()
+
+
+def test_python_release_stamps_metadata_and_app_version(tmp_path):
+    result = subprocess.run(
+        ["ruby", "-ryaml", "-rjson", "-e", "puts JSON.generate(YAML.load_file(ARGV[0]))",
+         str(ROOT / ".github/workflows/release.yml")],
+        check=True, capture_output=True, text=True,
+    )
+    workflow = json.loads(result.stdout)
+    script = next(step["run"] for step in workflow["jobs"]["python"]["steps"]
+                  if step.get("name") == "Set release package version")
+    paths = ("host/python/pyproject.toml", "host/python/src/picoforge/__init__.py")
+    for name in paths:
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / name).read_bytes())
+    source, = re.findall(r"python - <<'PY'\n(.*?)\nPY", script, re.DOTALL)
+    subprocess.run([sys.executable, "-c", source], cwd=tmp_path,
+                   env={**os.environ, "VERSION": "1.2.3"}, check=True)
+    assert 'version = "1.2.3"' in (tmp_path / paths[0]).read_text()
+    assert '__version__ = "1.2.3"' in (tmp_path / paths[1]).read_text()
+
+
+def test_direct_release_stamps_both_app_headers(tmp_path):
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    script = next(line.strip() for line in workflow.splitlines() if line.strip().startswith('sed -i "s/App v'))
+    output = tmp_path / "build/direct"
+    output.mkdir(parents=True)
+    for page in ("index.html", "console.html"):
+        (output / page).write_bytes((ROOT / "host/direct" / page).read_bytes())
+    subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path,
+                   env={**os.environ, "VERSION": "1.2.3"}, check=True)
+    for page in ("index.html", "console.html"):
+        text = (output / page).read_text()
+        assert "Direct · App v1.2.3<" in text
+        assert "App v0.0.0-debug" not in text
 
 
 @pytest.mark.parametrize("name", (

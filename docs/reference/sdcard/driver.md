@@ -294,8 +294,6 @@ card identification.
 
 The facade's `backend_configured` flag only records a valid backend initialization attempt and permits later backend
 dispatch. It does not establish configuration locking or media readiness; the selected backend performs those checks.
-The legacy public `pf_sd_transport_t` enum is retained solely for source compatibility, not runtime selection.
-Its numeric values are not interchangeable with the descriptor's `pf_sd_link_mode_t`.
 There is no public
 runtime transport-switch or card-deinitialization API. Switching a card from SPI
 back to native mode can require removing card power, not just resetting the MCU.

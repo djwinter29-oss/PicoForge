@@ -38,15 +38,6 @@ typedef enum {
     PF_SD_IO_ERROR, /**< Transfer or completion failed; partial effects are possible. */
 } pf_sd_result_t;
 
-/** Legacy implementation identifiers retained for source compatibility; not a runtime selector.
- * Current configuration uses pf_sd_link_mode_t, while CMake selects the implementation.
- * Numeric values are not interchangeable with pf_sd_link_mode_t.
- */
-typedef enum {
-    PF_SD_TRANSPORT_SDIO_PIO = 0, /**< Legacy native PIO implementation identifier. */
-    PF_SD_TRANSPORT_SPI, /**< Legacy SPI implementation identifier. */
-} pf_sd_transport_t;
-
 /** Detailed native failure; public operation result values remain unchanged. */
 typedef enum {
     PF_SD_DETAIL_NONE = 0, /**< No detailed failure recorded. */

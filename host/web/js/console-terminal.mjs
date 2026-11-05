@@ -59,11 +59,12 @@ export class ConsoleTerminal {
 
   /** Return text surrounding the cursor for safe text-node rendering (never HTML). */
   display() {
-    const lines = [...this.lines];
-    lines[this.row] = lines[this.row].padEnd(this.column + 1, " ");
-    const offset = lines.slice(0, this.row).reduce((size, line) => size + line.length + 1, 0) + this.column;
-    const text = lines.join("\n");
-    return [text.slice(0, offset), text[offset], text.slice(offset + 1)];
+    const line = this.lines[this.row].padEnd(this.column + 1, " ");
+    const before = this.row ? `${this.lines.slice(0, this.row).join("\n")}\n${line.slice(0, this.column)}`
+      : line.slice(0, this.column);
+    const after = `${line.slice(this.column + 1)}${this.row < this.lines.length - 1
+      ? `\n${this.lines.slice(this.row + 1).join("\n")}` : ""}`;
+    return [before, line[this.column], after];
   }
 }
 

@@ -30,7 +30,7 @@ test("server dashboard presents expected USB reconnection without hiding real er
   }
 });
 
-test("shared dashboard handlers survive a status failure that clears the snapshot mid-command", async context => {
+test("shared dashboard preserves drafts and command state across status failures", async context => {
   const handlers = new Map();
   /** Pick Configure… the way a browser does: focus, then an input event before change. */
   const configureRadio = radio => {
@@ -54,16 +54,29 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   const connected = { connected: true, error: null, board_status: { led_available: true, led_on: false },
     hardware: { product_name: "PicoForge", board_model: "Pico 2", mcu: "RP2350", capabilities: 2 | 16,
       ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
-    settings_supported: true, settings: { system_clock_mhz: 200, sdcard_profile: 0 },
+    settings_supported: true, settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
     memory: { mode: "spi" }, msc: { enabled: false, transition_pending: false }, self_test: null };
   let statusFails = false;
+  let statusUnknownBoard = false;
+  let boardScanFails = false;
   let release;
   let gate;
+  let ledGate = Promise.resolve();
+  let ledTimeout = false;
+  const ledRequestedStates = [];
+  let mscGate = Promise.resolve();
+  let mscTimeout = false;
   const requestedUrls = [];
   const savedSettings = [];
   let saveFails = false;
+  let settingsFailure = "save";
+  let settingsOutcomeConflict = false;
+  let settingsTimeout = false;
   let readbackMismatch = false;
   let rebootFails = false;
+  let rebootResponseError = false;
+  let ledResponseError = false;
+  let selfTestResponseError = false;
   let selfTestSucceeds = false;
   let mscSucceeds = false;
   let wirelessFailure = 0;
@@ -76,9 +89,12 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
   let wirelessReadFails = false;
   let wirelessReadGate = null;
   let wirelessNow = Date.now();
+  const requestTimeouts = [];
   context.mock.method(Date, "now", () => wirelessNow);
   context.mock.method(AbortSignal, "timeout", milliseconds => {
-    assert.ok([5000, 40000].includes(milliseconds), "status reads and connection tests have bounded HTTP deadlines");
+    assert.ok([5000, 10000, 15000, 40000].includes(milliseconds),
+      "dashboard requests use endpoint-appropriate deadlines");
+    requestTimeouts.push(milliseconds);
     return new AbortController().signal;
   });
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
@@ -86,15 +102,25 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     querySelector: element,
     createElement: () => ({ value: "", textContent: "", children: [],
       append(...children) { this.children.push(...children); } }),
+    addEventListener: (type, handler) => handlers.set(`document:${type}`, handler),
   };
   globalThis.window = { setInterval: callback => { tick = callback; }, confirm: () => true };
   const saveAndConfirm = async () => {
     handlers.get("#settings-save:click")();
     await handlers.get("#confirm-configuration:click")();
   };
+  const switchBoard = async id => {
+    elements.get("#board-select").value = id;
+    handlers.get("#board-select:change")();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(elements.get("#board-select").value, id, `board ${id} is selectable after the prior request settles`);
+  };
   globalThis.fetch = async (url, options = {}) => {
     requestedUrls.push(url);
+    assert.ok(options.signal instanceof AbortSignal, "dashboard API requests have a deadline");
     if (url === "/api/boards") {
+      if (boardScanFails) throw new Error("scan down");
       return { ok: true, json: async () => ({
         boards: [
           { id: "board-a", product_name: "PicoForge", serial_number: "board-A", device_path: "/hid/a" },
@@ -105,6 +131,8 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     }
     if (url.startsWith("/api/status?board=")) {
       if (statusFails) throw new Error("status down");
+      if (statusUnknownBoard) return { ok: false, status: 409,
+        json: async () => ({ error: "unknown board; rescan and select a listed board" }) };
       return { ok: true, json: async () => structuredClone(connected) };
     }
     if (url.startsWith("/api/wireless/test?board=")) {
@@ -118,7 +146,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       if (options.method !== "POST") await wirelessReadGate;
       if (options.method !== "POST" && wirelessReadFails) throw new Error("wireless down");
       if (options.method !== "POST") return { ok: true, json: async () => ({
-        wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false, wifi_state: wirelessState, ipv4: "192.168.1.9" },
+        wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false, tcp_cli_enabled: true, wifi_state: wirelessState, ipv4: "192.168.1.9" },
         reboot_pending: false,
       }) };
       const settings = JSON.parse(options.body);
@@ -135,23 +163,50 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       if (confirm_data_loss !== undefined) assert.equal(confirm_data_loss, true);
       assert.equal(Boolean(confirm_data_loss), Boolean(connected.msc.enabled));
       savedSettings.push(settings);
-      return { ok: !saveFails, json: async () => ({ error: "save rejected",
+      if (settingsTimeout) throw new DOMException("HTTP deadline", "TimeoutError");
+      const status = settingsOutcomeConflict ? 409
+        : saveFails ? settingsFailure === "unsupported" ? 503 : 409 : 200;
+      return { ok: !saveFails && !settingsOutcomeConflict, status,
+        json: async () => ({ error: settingsOutcomeConflict
+          ? "Forced save outcome is uncertain; the command was not resent"
+          : settingsFailure === "unsupported" ? "HID settings command is not supported" : "save rejected",
         settings: readbackMismatch ? { ...settings, sdcard_profile: 99 } : settings }) };
     }
     if (url.startsWith("/api/reboot?board=")) {
       assert.deepEqual(JSON.parse(options.body), { confirm: true });
-      return { ok: !rebootFails, status: rebootFails ? 503 : 200 };
+      return { ok: !rebootFails && !rebootResponseError,
+        status: rebootResponseError ? 409 : rebootFails ? 503 : 200,
+        json: async () => ({ error: rebootResponseError
+          ? "Reboot outcome is uncertain; command was not resent" : "Reboot delivery failed" }) };
+    }
+    if (url.startsWith("/api/led?board=")) {
+      await ledGate;
+      if (ledTimeout) throw new DOMException("HTTP deadline", "TimeoutError");
+      ledRequestedStates.push(JSON.parse(options.body).on);
+      if (ledResponseError) return { ok: false, status: 409, json: async () => ({
+        error: "LED outcome is uncertain; command was not resent",
+      }) };
+      const board_status = { led_available: true, led_on: JSON.parse(options.body).on };
+      return { ok: true, json: async () => ({ board_status }) };
     }
     if (url.startsWith("/api/msc/force-return?board=")) {
       assert.deepEqual(JSON.parse(options.body), { confirm_data_loss: true });
+      await mscGate;
+      if (mscTimeout) throw new DOMException("HTTP deadline", "TimeoutError");
       return { ok: true, json: async () => ({ msc: { enabled: false } }) };
     }
-    if (url.startsWith("/api/self-test") && selfTestSucceeds) {
-      await gate;
-      return { ok: true, status: 202 };
+    if (url.startsWith("/api/self-test")) {
+      if (selfTestResponseError) return { ok: false, status: 409, json: async () => ({
+        detail: "Benchmark outcome is uncertain; command was not resent",
+      }) };
+      if (selfTestSucceeds) {
+        await gate;
+        return { ok: true, status: 202 };
+      }
     }
     if (url.startsWith("/api/msc?") && mscSucceeds) {
       await gate;
+      if (mscTimeout) throw new DOMException("HTTP deadline", "TimeoutError");
       return { ok: true, json: async () => ({ msc: { enabled: false, transition_pending: true } }) };
     }
     await gate;
@@ -163,9 +218,50 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(typeof handlers.get("#reboot-control:click"), "function");
     assert.equal(typeof tick, "function", "startup must register status polling");
-    assert.equal(elements.get("#connection-label").textContent, "Connected");
+    assert.equal(elements.get("#connection-label").textContent, "Connected",
+      elements.get("#status-message").textContent);
     assert.equal(elements.get("#settings-note").textContent, "");
     assert.equal(elements.get("#settings-note").hidden, true);
+    const statusRequests = () => requestedUrls.filter(url => url.startsWith("/api/status?")).length;
+    const visibleStatusRequests = statusRequests();
+    globalThis.document.hidden = true;
+    tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(statusRequests(), visibleStatusRequests, "background tabs pause status polling");
+    globalThis.document.hidden = false;
+    handlers.get("document:visibilitychange")();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(statusRequests(), visibleStatusRequests + 1, "returning to the tab refreshes status immediately");
+    elements.get("#settings-clock").value = "250";
+    handlers.get("#settings-clock:change")();
+    statusFails = true;
+    await tick();
+    assert.equal(elements.get("#settings-clock").value, "250", "a transient status error preserves settings drafts");
+    assert.equal(elements.get("#settings-clock").disabled, true, "commands stay disabled while status is stale");
+    assert.match(elements.get("#status-message").textContent, /Status unavailable/);
+    statusFails = false;
+    await tick();
+    assert.equal(elements.get("#settings-clock").value, "250");
+    const scansBefore = requestedUrls.filter(url => url === "/api/boards").length;
+    statusUnknownBoard = true;
+    await tick();
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requestedUrls.filter(url => url === "/api/boards").length, scansBefore + 1,
+      "a restarted server's unknown-board reply triggers one rate-limited rescan");
+    statusUnknownBoard = false;
+    await tick();
+    assert.equal(elements.get("#board-select").value, "board-a", "the rescan keeps the selected board");
+    elements.get("#settings-clock").value = "200";
+    handlers.get("#settings-clock:change")();
+    boardScanFails = true;
+    await handlers.get("#rescan-boards:click")();
+    assert.equal(elements.get("#settings-clock").value, "200",
+      "a failed rescan preserves the selected board and drafts");
+    assert.match(elements.get("#status-message").textContent, /Board scan failed/);
+    boardScanFails = false;
+    await tick();
     for (const testState of [
       { self_test: { active: true, state: "writing" } },
       { self_test_command_pending: true },
@@ -274,11 +370,11 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       await tick();
       assert.equal(benchmark.hidden, !rejected);
       if (!rejected) {
-        connected.msc.force_return_supported = true;
         await handlers.get("#msc-control:click")();
         await handlers.get("#confirm-return:click")();
         assert.equal(benchmark.hidden, true, "return must wait for ownership telemetry");
         connected.msc = { enabled: false, transition_pending: false };
+        await new Promise(resolve => setImmediate(resolve));
         await tick();
         assert.equal(Boolean(benchmark.hidden), false);
       }
@@ -343,6 +439,16 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
         ? [["CLK", "MOSI", "MISO", "CS", "Card detect"], ["GP2", "GP3", "GP4", "GP5", "GP8"]]
         : [["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3", "Card detect"],
           ["GP2", "GP3", "GP4", "GP5", "GP6", "GP7", "GP8"]]);
+      const uartRows = elements.get("#board-uart").children;
+      const storageRows = elements.get("#board-storage-pins").children;
+      renderStatus({ ...connected, board_configuration: {
+        storage_transport: transport, storage_gpios: [2, 3, 4, 5, 6, 7], card_detect_gpio: 8,
+        monitor_uart_index: 0, monitor_uart_tx_gpio: 0, monitor_uart_rx_gpio: 255, reset_cause: 2,
+      } });
+      assert.strictEqual(elements.get("#board-uart").children, uartRows,
+        "unchanged UART pin configuration keeps its rendered rows");
+      assert.strictEqual(elements.get("#board-storage-pins").children, storageRows,
+        "unchanged storage pin configuration keeps its rendered rows");
     }
     renderStatus(connected);
     assert.equal(elements.get("#board-model").textContent, "Pico 2 (RP2350)");
@@ -411,8 +517,9 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.deepEqual(savedSettings[1], { system_clock_mhz: 250, sdcard_profile: 1, radios: 0 });
     elements.get("#settings-clock").value = "200";
     handlers.get("#settings-clock:change")();
-    for (const failure of ["save", "readback"]) {
-      saveFails = failure === "save";
+    for (const failure of ["save", "readback", "unsupported"]) {
+      saveFails = failure !== "readback";
+      settingsFailure = failure;
       readbackMismatch = failure === "readback";
       await saveAndConfirm();
       assert.equal(requestedUrls.at(-1), "/api/settings?board=board-a", "failed save must not reboot");
@@ -423,14 +530,126 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     readbackMismatch = false;
     await saveAndConfirm();
     assert.match(elements.get("#settings-note").textContent, /Settings saved. Reboot requested/);
+    settingsOutcomeConflict = true;
+    elements.get("#settings-clock").value = "250";
+    handlers.get("#settings-clock:change")();
+    const beforeUncertainConflict = savedSettings.length;
+    await saveAndConfirm();
+    assert.equal(savedSettings.length, beforeUncertainConflict + 1);
+    assert.match(elements.get("#settings-note").textContent, /outcome is uncertain/);
+    await saveAndConfirm();
+    assert.equal(savedSettings.length, beforeUncertainConflict + 1,
+      "an explicit uncertain HTTP 409 is not treated as a definite rejection");
+    settingsOutcomeConflict = false;
+    connected.settings = { ...connected.settings, ...savedSettings.at(-1) };
+    await tick();
+    assert.match(elements.get("#settings-note").textContent, /readback matches/);
+    connected.settings = { ...connected.settings, system_clock_mhz: 200, sdcard_profile: 0 };
+    await tick();
+    settingsTimeout = true;
+    elements.get("#settings-clock").value = "250";
+    handlers.get("#settings-clock:change")();
+    const beforeUncertainSave = savedSettings.length;
+    await saveAndConfirm();
+    assert.equal(savedSettings.length, beforeUncertainSave + 1);
+    assert.match(elements.get("#settings-note").textContent, /outcome is uncertain/);
+    assert.equal(elements.get("#settings-save").disabled, true);
+    await saveAndConfirm();
+    assert.equal(savedSettings.length, beforeUncertainSave + 1, "an uncertain save is not resent");
+    settingsTimeout = false;
+    const oldSettings = { ...connected.settings };
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    assert.equal(elements.get("#settings-save").disabled, true,
+      "switching back restores the unresolved settings outcome");
+    await saveAndConfirm();
+    assert.equal(savedSettings.length, beforeUncertainSave + 1,
+      "the unresolved settings save is not replayed after switching boards");
+    connected.settings = oldSettings;
+    connected.connected = false;
+    await tick();
+    connected.connected = true;
+    await tick();
+    assert.equal(elements.get("#settings-clock").disabled, true,
+      "disconnect alone does not clear an uncertain settings outcome");
+    connected.settings = { ...connected.settings, ...savedSettings.at(-1) };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await tick();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.match(elements.get("#settings-note").textContent, /readback matches/);
+    assert.equal(elements.get("#settings-save").disabled, true, "matching status resolves the pending save");
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    assert.equal(elements.get("#settings-clock").disabled, false,
+      "reconciliation remains cleared after switching away and back again");
+    connected.settings = { ...connected.settings, system_clock_mhz: 200, sdcard_profile: 0 };
+    await tick();
     rebootFails = true;
     await handlers.get("#reboot-control:click")();
     await handlers.get("#confirm-reboot:click")();
-    assert.match(elements.get("#settings-note").textContent, /Reboot failed/);
+    assert.match(elements.get("#settings-note").textContent, /outcome is uncertain/);
     rebootFails = false;
+    const rebootRequests = requestedUrls.filter(url => url.startsWith("/api/reboot?")).length;
+    await handlers.get("#reboot-control:click")();
+    await handlers.get("#confirm-reboot:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/reboot?")).length, rebootRequests,
+      "a server error with an unknown reboot outcome is not resent");
+    connected.reboot_pending = true;
+    await tick();
+    connected.reboot_pending = false;
+    await tick();
     await handlers.get("#reboot-control:click")();
     await handlers.get("#confirm-reboot:click")();
     assert.equal(requestedUrls.at(-1), "/api/reboot?board=board-a");
+    ledResponseError = true;
+    const ledBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledBeforeConflict + 1);
+    assert.match(elements.get("#status-message").textContent, /LED outcome is uncertain; command was not resent/);
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledBeforeConflict + 1,
+      "an uncertain LED 409 is not resent");
+    ledResponseError = false;
+    connected.board_status.led_on = ledRequestedStates.at(-1);
+    await new Promise(resolve => setImmediate(resolve));
+    await tick();
+    assert.doesNotMatch(elements.get("#status-message").textContent, /LED outcome is uncertain/,
+      `reconciled LED state: ${connected.board_status.led_on}`);
+    connected.board_status.led_on = false;
+    await tick();
+    rebootResponseError = true;
+    const rebootBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/reboot?")).length;
+    await handlers.get("#reboot-control:click")();
+    await handlers.get("#confirm-reboot:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/reboot?")).length, rebootBeforeConflict + 1,
+      `${elements.get("#reboot-control").disabled}; ${elements.get("#status-message").textContent}; `
+      + elements.get("#settings-note").textContent);
+    assert.match(elements.get("#settings-note").textContent, /Reboot outcome is uncertain; command was not resent/);
+    rebootResponseError = false;
+    connected.reboot_pending = true;
+    await tick();
+    connected.reboot_pending = false;
+    await tick();
+    connected.self_test = { sequence: 5, active: false, state: "idle" };
+    await tick();
+    selfTestResponseError = true;
+    const selfTestBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/self-test")).length;
+    await handlers.get("#self-test-start:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, selfTestBeforeConflict + 1);
+    assert.match(elements.get("#status-message").textContent, /Benchmark outcome is uncertain; command was not resent/);
+    await handlers.get("#self-test-start:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, selfTestBeforeConflict + 1,
+      "an uncertain benchmark 409 is not resent");
+    selfTestResponseError = false;
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    const selfTestRequestsAfterSwitch = requestedUrls.filter(url => url.startsWith("/api/self-test")).length;
+    await handlers.get("#self-test-start:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/self-test")).length, selfTestRequestsAfterSwitch,
+      "switching back restores the benchmark sequence awaiting reconciliation");
+    connected.self_test = { sequence: 7, active: false, state: "idle" };
+    await tick();
     for (const name of ["#led-control:click", "#msc-control:click", "#self-test-start:click"]) {
       gate = new Promise(resolve => { release = resolve; });
       statusFails = false;
@@ -448,13 +667,61 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
       await assert.doesNotReject(async () => pending, name);
     }
     assert.ok(requestedUrls.includes("/api/led?board=board-a"));
+    connected.self_test = { sequence: 9, active: false, state: "idle" };
     statusFails = false;
-    connected.msc = { enabled: true, force_return_supported: true, transition_pending: false };
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    const ledRequestsBeforeGate = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    let finishLed;
+    ledGate = new Promise(resolve => { finishLed = resolve; });
+    const pendingLed = handlers.get("#led-control:click")();
+    await new Promise(resolve => setImmediate(resolve));
+    const ledRequests = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    assert.equal(ledRequests, ledRequestsBeforeGate + 1, "the LED request remains in flight while its response is gated");
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledRequests,
+      "a second LED action is ignored while the first is pending");
+    elements.get("#board-select").value = "board-b";
+    handlers.get("#board-select:change")();
+    assert.equal(elements.get("#board-select").value, "board-a",
+      "board selection stays locked while a command request is in flight");
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    finishLed();
+    await pendingLed;
+    ledGate = Promise.resolve();
+    assert.equal(elements.get("#led-control").textContent, "Board LED: On",
+      "the in-flight LED response updates its still-selected board");
+    elements.get("#board-select").value = "board-a";
+    handlers.get("#board-select:change")();
+    await new Promise(resolve => setImmediate(resolve));
+    statusFails = false;
+    connected.board_status.led_on = false;
+    await tick();
+    await new Promise(resolve => setImmediate(resolve));
+    ledTimeout = true;
+    const beforeUncertainLed = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, beforeUncertainLed + 1);
+    assert.match(elements.get("#status-message").textContent, /LED command outcome is uncertain/);
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, beforeUncertainLed + 1,
+      "an uncertain LED command is not resent");
+    ledTimeout = false;
+    await switchBoard("board-b");
+    await switchBoard("board-a");
+    const ledRequestsAfterSwitch = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
+    await handlers.get("#led-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/led?")).length, ledRequestsAfterSwitch,
+      "switching back restores the unresolved LED outcome and prevents replay");
+    connected.board_status.led_on = true;
+    await new Promise(resolve => setImmediate(resolve));
+    await tick();
+    assert.equal(elements.get("#led-control").textContent, "Board LED: On",
+      "fresh LED status reconciles the timed-out command");
+    connected.msc = { enabled: true, transition_pending: false };
     await tick();
     assert.equal(elements.get("#settings-clock").disabled, false, "local editing is safe during host ownership");
-    assert.equal(elements.get("#settings-save").disabled, true, "old firmware cannot force save");
-    connected.hardware.capabilities |= 64;
-    await tick();
     elements.get("#settings-clock").value = "250";
     handlers.get("#settings-clock:change")();
     await handlers.get("#settings-save:click")();
@@ -478,8 +745,22 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#return-dialog").open, false);
     assert.equal(requestedUrls.length, beforeReturn);
     await handlers.get("#msc-control:click")();
-    await handlers.get("#confirm-return:click")();
+    let finishMsc;
+    mscGate = new Promise(resolve => { finishMsc = resolve; });
+    const pendingMsc = handlers.get("#confirm-return:click")();
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(requestedUrls.at(-1), "/api/msc/force-return?board=board-a");
+    elements.get("#board-select").value = "board-b";
+    handlers.get("#board-select:change")();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    finishMsc();
+    await pendingMsc;
+    mscGate = Promise.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(elements.get("#msc-control").textContent, "Return to Pico",
+      "a late storage response must not overwrite the newly selected board");
     assert.equal(elements.get("#return-dialog").open, false);
     elements.get("#board-select").value = "board-b";
     handlers.get("#board-select:change")();
@@ -498,6 +779,44 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(elements.get("#settings-ble").value, "1");
     assert.equal(elements.get("#wifi-ssid").value, "saved");
     assert.equal(elements.get("#wifi-state").textContent, "saved (192.168.1.9)");
+    mscSucceeds = true;
+    mscTimeout = true;
+    gate = Promise.resolve();
+    await handlers.get("#msc-control:click")();
+    const mscRequests = requestedUrls.filter(url => url.startsWith("/api/msc?")).length;
+    await handlers.get("#confirm-share:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/msc?")).length, mscRequests + 1);
+    assert.match(elements.get("#status-message").textContent, /outcome is uncertain/);
+    assert.equal(elements.get("#msc-status-refresh").hidden, false);
+    await handlers.get("#confirm-share:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/msc?")).length, mscRequests + 1,
+      "an uncertain MSC command is not resent while ownership is unresolved");
+    const statusReadsBeforeRefresh = requestedUrls.filter(url => url.startsWith("/api/status?")).length;
+    for (let attempt = 0; elements.get("#msc-status-refresh").disabled && attempt < 10; attempt++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(elements.get("#msc-status-refresh").disabled, false);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    await handlers.get("#msc-status-refresh:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/status?")).length, statusReadsBeforeRefresh + 1,
+      "the user can explicitly refresh ownership while a command outcome is uncertain");
+    await new Promise(resolve => setImmediate(resolve));
+    mscTimeout = false;
+    await switchBoard("board-a");
+    await switchBoard("board-b");
+    const mscRequestsAfterSwitch = requestedUrls.filter(url => url.startsWith("/api/msc?")).length;
+    await handlers.get("#msc-control:click")();
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/msc?")).length, mscRequestsAfterSwitch,
+      "switching back restores unresolved storage ownership and prevents command replay");
+    connected.msc = { enabled: true, transition_pending: false };
+    await tick();
+    assert.equal(elements.get("#msc-control").textContent, "Return to Pico",
+      "fresh ownership status reconciles the timed-out MSC command");
+    assert.equal(elements.get("#msc-status-refresh").hidden, true);
+    connected.msc = { enabled: false, transition_pending: false };
+    await tick();
+    await switchBoard("board-b");
     let finishWirelessRead;
     wirelessReadGate = new Promise(resolve => { finishWirelessRead = resolve; });
     wirelessNow += 2000;
@@ -549,6 +868,8 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     let finishWirelessTest;
     wirelessTestGate = new Promise(resolve => { finishWirelessTest = resolve; });
     const testing = handlers.get("#wifi-connect:click")();
+    assert.equal(elements.get("#board-select").disabled, true, "board selection locks immediately during a test");
+    assert.equal(elements.get("#rescan-boards").disabled, true, "board rescan locks immediately during a test");
     await tick();
     assert.equal(elements.get("#board-select").disabled, true);
     assert.equal(elements.get("#rescan-boards").disabled, true);
@@ -558,11 +879,23 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     const beforeSwitch = requestedUrls.length;
     elements.get("#board-select").value = "board-a";
     handlers.get("#board-select:change")();
+    assert.equal(elements.get("#board-select").value, "board-b", "a rejected selection restores the actual board");
     assert.equal(requestedUrls.length, beforeSwitch, "board switching must not interrupt a pending test");
     finishWirelessTest();
     await testing;
+    for (const timeout of [5000, 10000, 15000, 40000]) {
+      assert.ok(requestTimeouts.includes(timeout), `expected a ${timeout} ms request deadline`);
+    }
     wirelessTestGate = null;
     assert.deepEqual(testedWireless.at(-1), { ssid: "new-network", password: "new-passphrase" });
+    elements.get("#wifi-ssid").value = "edited-network";
+    handlers.get("#wifi-ssid:input")();
+    elements.get("#wifi-password").value = "edited-passphrase";
+    handlers.get("#wifi-password:input")();
+    assert.equal(elements.get("#settings-save").disabled, true,
+      "editing either credential invalidates the previously tested stage");
+    await handlers.get("#wifi-connect:click")();
+    assert.deepEqual(testedWireless.at(-1), { ssid: "edited-network", password: "edited-passphrase" });
     assert.equal(elements.get("#settings-save").disabled, false);
     assert.equal(elements.get("#settings-save").disabled, false, "staged wireless settings enable combined save");
     configureRadio("ble");
@@ -596,6 +929,7 @@ test("shared dashboard handlers survive a status failure that clears the snapsho
     assert.equal(wirelessSettings[1].wifi_enabled, true);
     assert.equal(wirelessSettings[1].ble_enabled, true);
     assert.equal(wirelessSettings[1].use_tested_wifi, true);
+    assert.equal(wirelessSettings[1].ssid, "edited-network");
     assert.equal(Object.hasOwn(wirelessSettings[1], "password"), false);
     assert.deepEqual(wirelessSettings[1].board, { system_clock_mhz: 200, sdcard_profile: 0, radios: 3 });
     assert.match(elements.get("#wifi-status").textContent, /saved/);

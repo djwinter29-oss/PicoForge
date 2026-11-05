@@ -13,9 +13,9 @@ test("server dashboard keeps radio dialogs, confirmation controls and benchmark 
     assert.match(settings, /id="settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
     const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
     assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
-      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli", "settings-tcp-auth"]);
+      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli"]);
     assert.match(board, /<label for="settings-wifi" hidden>[\s\S]*<label for="settings-ble" hidden>/);
-    for (const id of ["settings-tcp-cli", "settings-tcp-auth"]) {
+    for (const id of ["settings-tcp-cli"]) {
       assert.match(board, new RegExp(`<label for="${id}" hidden>[\\s\\S]*?<select id="${id}"`));
       const attributes = board.match(new RegExp(`<select id="${id}"([^>]*)>`))[1];
       assert.match(attributes, /title="[^"]+"/);
@@ -26,6 +26,9 @@ test("server dashboard keeps radio dialogs, confirmation controls and benchmark 
     assert.doesNotMatch(settings, /id="wifi-ssid"|id="wifi-password"|id="ble-secret"/);
     assert.match(dashboard, /<dialog[^>]*id="wifi-dialog"/);
     assert.match(dashboard, /<dialog[^>]*id="ble-dialog"/);
+    assert.match(dashboard, /id="msc-status-refresh"[^>]*hidden/);
+    assert.match(dashboard, /id="wifi-networks"[^>]*role="group"/);
+    assert.doesNotMatch(dashboard, /role="listbox"|role="option"/);
     assert.doesNotMatch(dashboard, /id="wireless-save"/);
     assert.match(dashboard, /id="configuration-wireless-warning" hidden/);
     assert.match(footer, /role="status" aria-live="polite"/);

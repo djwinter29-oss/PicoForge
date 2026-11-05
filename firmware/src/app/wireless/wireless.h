@@ -16,13 +16,15 @@
 #define PF_WIRELESS_COMMAND_REPORT_ID 34u
 /** Sanitized scan and connection-test result Feature report ID. */
 #define PF_WIRELESS_RESULT_REPORT_ID 35u
+/** USB-only proof for one TCP CLI authentication challenge. */
+#define PF_WIRELESS_AUTH_REPORT_ID 36u
 /** Sanitized status payload size; no credential readback. */
 #define PF_WIRELESS_STATUS_SIZE 53u
 /** Current version of the sanitized status payload. */
-#define PF_WIRELESS_STATUS_VERSION 4u
+#define PF_WIRELESS_STATUS_VERSION 1u
 /** Status service flag: the saved-LAN TCP CLI is disabled. */
 #define PF_WIRELESS_STATUS_SERVICE_TCP_CLI_DISABLED (1u << 0u)
-/** Status service flag: TCP CLI clients must provide an HMAC proof. */
+/** Status service flag: TCP CLI clients must provide an HMAC proof; set whenever a control key was loaded at boot. */
 #define PF_WIRELESS_STATUS_SERVICE_TCP_CLI_AUTH_REQUIRED (1u << 1u)
 /**
  * @brief Byte offsets in the sanitized wireless status payload.
@@ -42,11 +44,11 @@ typedef enum {
     PF_WIRELESS_STATUS_ERROR_OFFSET = 44u, /**< Last wireless error code. */
     PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET = 45u, /**< Bluetooth connection state. */
     PF_WIRELESS_STATUS_TCP_CLI_OFFSET = 46u, /**< Whether the TCP CLI accepts clients on the saved network. */
-    PF_WIRELESS_STATUS_SERVICES_OFFSET = 47u, /**< Version 3: bit 0 disables CLI; bit 1 requires its HMAC proof. */
+    PF_WIRELESS_STATUS_SERVICES_OFFSET = 47u, /**< Bit 0 disables the CLI; bit 1 requires its HMAC proof. */
     PF_WIRELESS_STATUS_AUTH_STATE_OFFSET = 48u, /**< pf_wifi_auth_state_t for the saved network. */
     PF_WIRELESS_STATUS_RECONNECT_COUNT_OFFSET = 49u, /**< Little-endian saved-link loss count. */
     PF_WIRELESS_STATUS_RSSI_OFFSET = 51u, /**< Signed dBm; 127 when unavailable. */
-    PF_WIRELESS_STATUS_RESTART_REQUIRED_OFFSET = 52u, /**< Version 4: saved wireless settings differ from boot state. */
+    PF_WIRELESS_STATUS_RESTART_REQUIRED_OFFSET = 52u, /**< Saved wireless settings differ from boot state. */
 } pf_wireless_status_offset_t;
 /** @brief Feature 30 byte 44 error codes; an initialization failure takes precedence over Wi-Fi errors. */
 typedef enum {
@@ -59,6 +61,10 @@ typedef enum {
 #define PF_WIRELESS_REQUEST_SIZE 136u
 /** Scan/test command payload size. */
 #define PF_WIRELESS_COMMAND_SIZE 101u
+/** USB TCP CLI proof request payload size. */
+#define PF_WIRELESS_AUTH_REQUEST_SIZE 19u
+/** USB TCP CLI proof result payload size. */
+#define PF_WIRELESS_AUTH_RESULT_SIZE 19u
 /** Byte offset of the nonzero host transaction in the scan/test command payload. */
 #define PF_WIRELESS_COMMAND_TRANSACTION_OFFSET 2u
 /** RSSI sentinel used when the saved link is down or the driver cannot report it. */
@@ -84,7 +90,7 @@ void pf_wireless_command(const uint8_t *report);
 void pf_wireless_reject_command(uint8_t transaction);
 /** @brief Copy sanitized scan/test results into a PF_WIRELESS_RESULT_SIZE buffer. */
 void pf_wireless_result_report(uint8_t *report);
-/** @brief Validate and save a version-2 USB board configuration and credential update.
+/** @brief Validate and save a version-1 USB board configuration and credential update.
  *
  * Clock, SD profile, radio switches and credentials are saved together or none are: a validation or save failure
  * discards the staged values, and the next access reloads flash. The caller queues the existing deferred reboot after

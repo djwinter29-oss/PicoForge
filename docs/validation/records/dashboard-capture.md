@@ -1,12 +1,21 @@
 # Demonstration Records
 
-This document records observed interface behavior within the [project scope](../../../README.md#project-scope).
-The connected screenshot is included in the [README](../../../README.md).
-Demonstrations are not hardware qualification.
+This document records interface observations within the project scope.
+The [README](../../../README.md) shows a clearly labeled simulated Direct dashboard preview; the earlier Python
+host observation is documented below. Demonstrations are not hardware qualification.
 
-## Captured Dashboard
+## Simulated Direct Dashboard Preview
 
-[Python dashboard screenshot](../../assets/dashboard-python.jpg), captured on 2026-10-26 from the running Python host:
+The [full dashboard view](../../assets/dashboard-direct-demo.png) was captured on 2026-11-03 from the current Direct
+dashboard using mocked HID reports. It renders an illustrative Pico 2 W / RP2350 with Wi-Fi and Bluetooth enabled
+and connected, and SDIO storage reporting a 60 GiB exFAT SanDisk card. The displayed manufacturer, product, serial,
+capacity, and ready state are sample values. No physical board, SD card, Wi-Fi network, or Bluetooth device was
+connected. Every displayed reading and connected state is synthetic; this preview does not demonstrate firmware,
+USB, SD-card, wireless, or benchmark behavior and is not hardware evidence.
+
+## Earlier Python Dashboard Observation
+
+The Python dashboard was observed on 2026-10-26. Its screenshot has since been removed from the repository:
 
 - Pico 2 (RP2350), UID `575393D4D2C8C043`, system clock 150 MHz.
 - Reported firmware version `0.0.0`; the running firmware source revision was not established by this capture.
@@ -15,7 +24,7 @@ Demonstrations are not hardware qualification.
 - The page reported a connected board and live HID telemetry. No settings, ownership, or card contents were changed.
 - Self-test results were already displayed, not generated or independently verified during capture.
 
-This image documents the visible interface and reported state, not performance or hardware qualification.
+These notes record the observed interface and reported state, not performance or hardware qualification.
 
 ## Evidence Requirements
 

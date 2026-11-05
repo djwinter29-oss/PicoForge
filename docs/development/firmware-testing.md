@@ -127,7 +127,7 @@ Exercise the supported RP2040/RP2350 and SPI/SDIO configurations; one board/OS p
    Confirm once; verify sync/detach precede flash programming, the original result is checked after HID reconnect
    without SET replay, no card I/O resumes before reset, and boot returns to automatic firmware mounting.
    Use controlled sync/detach/flash-failure fixtures to verify no reboot on failure and explicit diagnostics.
-   Older firmware must not receive a forced-save request, and self-test/transition busy gates must still apply.
+   Self-test/transition busy gates must still apply to forced saves.
 
 Record preparation/status visibility separately from storage correctness. The protocol has no distinct
 mounting/checking phase; existing wire states must not be reinterpreted to fake one.

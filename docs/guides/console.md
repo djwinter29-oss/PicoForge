@@ -177,12 +177,31 @@ so Tab completion and history keys do not work. Save the settings as a named ses
 In the Python and .NET dashboards, the connected **SSID (IP)** label in Live diagnostics becomes a link when the
 firmware reports that the TCP CLI is serving. Clicking it opens a separate web console tab and connects
 automatically. Type in the terminal; there is no local echo. Use **Disconnect** to release it or **Connect** to
-reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser request.
+reconnect. Closing the tab also releases the session; an abandoned tab expires after 15 seconds without a browser
+request.
+Browser requests have bounded deadlines; disconnect aborts pending requests, and input with an uncertain delivery
+result is never automatically resent.
 The local host relays bounded raw bytes over TCP, using same-origin HTTP polling between browser and host; browsers
-cannot open raw TCP sockets themselves. Targets come only from the selected USB board's wireless status, not a
-user-supplied host or port. Once connected, the console does not require the USB connection to remain open.
-The Direct dashboard has no local bridge, so use PuTTY there. Flash the updated firmware and restart the local
-dashboard to enable the link; older firmware that does not report listener state retains the plain-text label.
+cannot open raw TCP sockets themselves. Python and .NET targets come only from the selected USB board's wireless
+status, not a user-supplied host or port. The Direct dashboard also provides this console when hosted locally with
+its included bridge; its hosted static site does not. Direct targets come from the connected board's live wireless
+status. Once the TCP session is authenticated, the dashboard connection can close.
+
+#### Direct dashboard authentication
+
+A saved Control key still gates the TCP CLI; removing the second prompt does not disable that requirement. Direct
+reuses the dashboard's existing board authentication: a Bluetooth session already accepted the key to unlock BLE
+and keeps it as a non-extractable WebCrypto key for that session; over USB, firmware creates a fixed-purpose proof
+through Feature 36. Direct verifies that the TCP challenge UID matches the connected board. The console receives only
+the one-use proof, never the Control key. Entering the same key again would not add a separate factor or strengthen
+the challenge-response check.
+
+The matching dashboard tab must stay connected until the console authenticates. The tabs exchange the challenge
+and proof over a same-origin `BroadcastChannel`, correlated with a per-page random value in the console URL. That
+value is not the Control key, but URLs may be retained in browser history and local server access logs. The Direct
+bridge accepts loopback, same-origin requests and forwards the proof; it does not authenticate local OS users or
+processes. Treat a shared computer as trusted. If no matching dashboard responds, the console fails closed and asks
+you to connect the board there; it does not fall back to a key-entry field.
 
 The web console supports the Embedded CLI's cursor movement, character insertion/deletion and saved cursor escapes.
 It keeps at most 1000 lines of 512 columns; it is not a general-purpose VT100/color terminal. Input is limited to
@@ -194,13 +213,17 @@ TCP session receives a busy line and its input is discarded. A second TCP client
 the owning connection ends the session and cancels its pending output, exactly like dropping DTR. TCP keepalive
 drops a vanished client after about 50 seconds idle.
 
-TCP authentication is optional and uses the board's saved BLE control key. When enabled, clients must answer a
-one-use challenge within ten seconds; the Python and .NET web consoles ask for the key and perform the proof. Raw
-PuTTY/`nc` sessions need a client that implements the proof described in the
+TCP authentication is required whenever the board has a saved Control key and off otherwise. Clients must answer a
+one-use challenge within ten seconds. The Python and .NET dashboards request a narrowly scoped proof from the
+selected board over USB HID; the key is not entered in or sent through the browser. The Direct dashboard reuses its
+matching live USB or already-authenticated Bluetooth connection to provide the same fixed-purpose proof; keep the
+dashboard connected until the console connects. The key is never entered in the console or sent to the local bridge.
+Raw PuTTY/`nc` sessions need a client that implements the proof described in the
 [wireless reference](../reference/wireless.md#ble-contract-and-authorization). Rejected proofs are rate-limited for
 two seconds. The firmware closes an otherwise authenticated session after 15 minutes without traffic; keepalive
-still detects a vanished peer after about 50 seconds. Authentication does not encrypt TCP traffic, and anyone who
-can connect can run every CLI command, including `--confirm` destructive ones. Use only a trusted LAN.
+still detects a vanished peer after about 50 seconds. Authentication gates admission but does not encrypt TCP;
+commands and output remain readable to a LAN observer. Anyone who can connect can run every CLI command, including
+`--confirm` destructive ones. Use only a trusted LAN.
 Firmware logs include the peer IP for connections, successful/rejected proofs, cooldown refusals, challenge failures,
 and authentication or idle timeouts. Keys, proofs and command contents are not included in these connection logs.
 

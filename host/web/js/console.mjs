@@ -1,30 +1,20 @@
 import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs";
+import { consoleRequest } from "./console-api.mjs";
 
 const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");
 const connect = document.querySelector("#connect");
-const disconnect = document.querySelector("#disconnect");
-const authKey = document.querySelector("#console-auth-key");
 const board = new URLSearchParams(location.search).get("board") ?? "";
 const encoder = new TextEncoder();
 let screen = new ConsoleTerminal();
 let decoder = new TextDecoder();
 let session = null;
+let sessionController = null;
+let openingController = null;
 let input = "";
 let sending = false;
 
 const endpoint = token => `/api/console?session=${encodeURIComponent(token)}`;
-async function request(url, method = "GET", payload) {
-  const response = await fetch(url, {
-    method, cache: "no-store",
-    ...(payload === undefined ? {} : {
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-    }),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? result.detail ?? `HTTP ${response.status}`);
-  return result;
-}
 
 function render() {
   const [before, current, after] = screen.display();
@@ -35,31 +25,42 @@ function render() {
   terminal.scrollTop = terminal.scrollHeight;
 }
 
+/** Show one Connect/Disconnect toggle; the connected state also drives the top-bar light via CSS. */
+function setButton(label, disabled, connected = false) {
+  connect.textContent = label;
+  connect.disabled = disabled;
+  connect.setAttribute("data-state", connected ? "connected" : "disconnected");
+}
+
 async function close(message = "Disconnected") {
   const token = session;
+  const controller = sessionController;
   session = null;
+  sessionController = null;
+  controller?.abort();
   input = "";
   status.textContent = message;
-  disconnect.disabled = true;
   terminal.setAttribute("aria-readonly", "true");
-  connect.disabled = true;
+  setButton("Connect", true);
   if (token) {
-    try { await request(endpoint(token), "DELETE"); }
+    try { await consoleRequest(endpoint(token), "DELETE", undefined, undefined, 5000); }
     catch (error) { status.textContent = `${message}. ${error.message}`; }
   }
   connect.disabled = false;
 }
 
-async function poll(token) {
+async function poll(token, signal) {
   while (session === token) {
     try {
-      const result = await request(endpoint(token));
+      const result = await consoleRequest(endpoint(token), "GET", undefined, signal, 10000);
       if (session !== token) return;
       const bytes = Uint8Array.from(atob(result.data), character => character.charCodeAt(0));
-      screen.write(decoder.decode(bytes, { stream: !result.closed }));
-      render();
+      const text = decoder.decode(bytes, { stream: !result.closed });
+      if (text) {
+        screen.write(text);
+        render();
+      }
       if (result.closed) {
-        session = null;
         await close("Connection closed by board; check terminal output before retrying commands");
         return;
       }
@@ -81,11 +82,12 @@ async function send(text) {
   if (sending) return;
   sending = true;
   const token = session;
+  const signal = sessionController?.signal;
   try {
     while (input && session === token) {
       const data = encoder.encode(input);
       input = "";
-      await request(endpoint(token), "PUT", { data: btoa(String.fromCharCode(...data)) });
+      await consoleRequest(endpoint(token), "PUT", { data: btoa(String.fromCharCode(...data)) }, signal, 10000);
     }
   } catch (error) {
     if (session === token) await close(`${error.message}; input was not resent`);
@@ -96,26 +98,37 @@ async function send(text) {
 }
 
 async function open() {
-  connect.disabled = true;
+  if (openingController || session) return;
+  const controller = new AbortController();
+  openingController = controller;
+  setButton("Connecting…", true);
   status.textContent = "Connecting to the board's TCP CLI...";
   try {
-    const result = await request(`/api/console?board=${encodeURIComponent(board)}`, "POST",
-      authKey.value ? { ble_key: authKey.value } : {});
+    const result = await consoleRequest(`/api/console?board=${encodeURIComponent(board)}`, "POST",
+      {}, controller.signal, 15000);
+    if (controller.signal.aborted) {
+      void fetch(endpoint(result.session), { method: "DELETE", keepalive: true });
+      return;
+    }
     session = result.session;
+    openingController = null;
+    sessionController = new AbortController();
     screen = new ConsoleTerminal();
     decoder = new TextDecoder();
     input = "";
     render();
     status.textContent = "Connected";
-    disconnect.disabled = false;
+    setButton("Disconnect", false, true);
     terminal.setAttribute("aria-readonly", "false");
     terminal.focus();
-    void poll(session);
+    void poll(session, sessionController.signal);
   } catch (error) {
-    status.textContent = error.message;
-    connect.disabled = false;
+    if (!controller.signal.aborted) {
+      status.textContent = error.message;
+      setButton("Connect", false);
+    }
   } finally {
-    authKey.value = "";
+    if (openingController === controller) openingController = null;
   }
 }
 
@@ -134,8 +147,13 @@ terminal.addEventListener("paste", event => {
   if (text.includes("\r") && !window.confirm("Pasted text includes Enter and may execute commands. Continue?")) return;
   void send(text);
 });
-connect.addEventListener("click", () => { void open(); });
-disconnect.addEventListener("click", () => { void close(); });
+connect.addEventListener("click", () => { void (session ? close() : open()); });
 window.addEventListener("pagehide", () => {
-  if (session) void fetch(endpoint(session), { method: "DELETE", keepalive: true });
+  openingController?.abort();
+  openingController = null;
+  const token = session;
+  session = null;
+  sessionController?.abort();
+  sessionController = null;
+  if (token) void fetch(endpoint(token), { method: "DELETE", keepalive: true });
 });

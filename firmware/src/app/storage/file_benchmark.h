@@ -41,20 +41,19 @@ typedef enum {
     PF_FILE_BENCHMARK_CANCELLED = 8, /**< Cancellation completed without another error. */
 } pf_file_benchmark_state_t;
 
-/** Failure/admission reason; reserved values remain assigned for HID compatibility. */
+/** Failure/admission reason reported over HID. */
 typedef enum {
     PF_FILE_BENCHMARK_ERROR_NONE = 0, /**< No error. */
     PF_FILE_BENCHMARK_ERROR_BUSY = 1, /**< Another operation or cleanup holds admission. */
     PF_FILE_BENCHMARK_ERROR_USB_OWNER = 2, /**< USB owns the media. */
-    PF_FILE_BENCHMARK_ERROR_MOUNTED = 3, /**< Reserved legacy rejection; not emitted. */
-    PF_FILE_BENCHMARK_ERROR_SIZE = 4, /**< Requested size is outside supported bounds. */
-    PF_FILE_BENCHMARK_ERROR_MEDIA = 5, /**< Selected media is unavailable; wire label is card. */
-    PF_FILE_BENCHMARK_ERROR_SPACE = 6, /**< Insufficient free filesystem space. */
-    PF_FILE_BENCHMARK_ERROR_EXISTS = 7, /**< File creation encountered an existing entry. */
-    PF_FILE_BENCHMARK_ERROR_FILESYSTEM = 8, /**< FatFs operation or short transfer failed. */
-    PF_FILE_BENCHMARK_ERROR_VERIFY = 9, /**< Readback differed from the generated pattern. */
-    PF_FILE_BENCHMARK_ERROR_CLEANUP = 10, /**< Benchmark file cleanup failed. */
-    PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED = 11, /**< An existing mount is required. */
+    PF_FILE_BENCHMARK_ERROR_SIZE = 3, /**< Requested size is outside supported bounds. */
+    PF_FILE_BENCHMARK_ERROR_MEDIA = 4, /**< Selected media is unavailable; wire label is card. */
+    PF_FILE_BENCHMARK_ERROR_SPACE = 5, /**< Insufficient free filesystem space. */
+    PF_FILE_BENCHMARK_ERROR_EXISTS = 6, /**< File creation encountered an existing entry. */
+    PF_FILE_BENCHMARK_ERROR_FILESYSTEM = 7, /**< FatFs operation or short transfer failed. */
+    PF_FILE_BENCHMARK_ERROR_VERIFY = 8, /**< Readback differed from the generated pattern. */
+    PF_FILE_BENCHMARK_ERROR_CLEANUP = 9, /**< Benchmark file cleanup failed. */
+    PF_FILE_BENCHMARK_ERROR_NOT_MOUNTED = 10, /**< An existing mount is required. */
 } pf_file_benchmark_error_t;
 
 /** Cleanup could not remove the benchmark file. */

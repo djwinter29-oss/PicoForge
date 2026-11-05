@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "picoforge"
-version = "0.1.0"
+version = "0.0.0.dev0"
 description = "PicoForge USB HID control, diagnostics, and local dashboard"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,7 +32,7 @@ picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
 package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
-packages = ["picoforge", "picoforge.web"]
+packages = ["picoforge", "picoforge.web", "picoforge.reports", "picoforge.hid", "picoforge.dashboard"]
 
 [tool.setuptools.package-data]
 "picoforge.web" = ["index.html", "console.html", "favicon.svg", "css/*.css", "js/*.mjs"]

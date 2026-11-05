@@ -93,7 +93,7 @@ headers; the common lifecycle has no device-shaped transfer operation. Concrete 
 board/storage composition and physical-engine tests.
 
 Native clients observe only availability/health, actual/maximum clock and the raw DAT0 level. Physical ownership and
-PIO response packing are not exposed. Legacy packed-response diagnostics are retained by the SD host, not the transport.
+PIO response packing are not exposed.
 Error/idle callbacks are borrowed and invoked synchronously. TX start acquires physical TX programs internally and retains
 them across adjacent payloads. Returning to CMD signaling is a hardware-only idle operation; SD recovery still decides
 when CMD12 is required and never replays an uncertain write. Descriptor, buffer, deadline and hardware-state validation

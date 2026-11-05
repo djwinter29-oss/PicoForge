@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from picoforge.web import create_app
+from picoforge.dashboard.server import create_app
 from picoforge.cli import parse_args
 
 
@@ -43,11 +44,10 @@ class FakeMonitor:
                 "led_on": False,
             },
             "msc": {"enabled": False, "transition_pending": False, "request_rejected": False},
-            "settings": {"system_clock_mhz": 0, "sdcard_profile": 0},
+            "settings": {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0},
             "board_configuration": {
                 "stored_sysclk_profile": 0, "stored_sdcard_profile": 0,
-                "system_clock_mhz": 0, "sdcard_profile": 0,
-                "sdio_bus_mhz": 25, "spi_bus_mhz": 0,
+                "system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0,
             },
             "settings_supported": True,
             "settings_message": None,
@@ -81,15 +81,8 @@ class FakeMonitor:
     def set_settings(self, board_id, settings, *, force=False):
         self.last_board_id = board_id
         self.last_force_save = force
-        if "sdcard_profile" in settings:
-            result = settings
-        else:
-            result = {
-                "system_clock_mhz": settings["system_clock_mhz"],
-                "sdcard_profile": int(settings["sdio_bus_mhz"] == 50),
-            }
-        self.last_settings = result
-        return result
+        self.last_settings = settings
+        return settings
 
     def set_self_test(self, board_id, action, size_mib):
         self.last_board_id = board_id
@@ -100,7 +93,34 @@ class FakeMonitor:
         return {"status": "completed", "opcode": 2, "transaction_id": 1}
 
 
+class FalseyMonitor(FakeMonitor):
+    def __bool__(self) -> bool:
+        return False
+
+
 class WebTests(unittest.TestCase):
+    def test_unreleased_pages_display_the_debug_app_version(self):
+        client = create_app(FakeMonitor()).test_client()
+        for route in ("/", "/console"):
+            with self.subTest(route=route):
+                page = client.get(route).get_data(as_text=True)
+                self.assertIn("Python · App v0.0.0-debug<", page)
+
+    def test_release_pages_display_the_stamped_app_version(self):
+        with patch("picoforge.dashboard.server.__version__", "1.2.3"):
+            client = create_app(FakeMonitor()).test_client()
+            for route in ("/", "/console"):
+                with self.subTest(route=route):
+                    page = client.get(route).get_data(as_text=True)
+                    self.assertIn("Python · App v1.2.3<", page)
+                    self.assertNotIn("App v0.0.0-debug", page)
+
+    def test_create_app_keeps_an_injected_falsey_dashboard(self):
+        monitor = FalseyMonitor()
+
+        app = create_app(monitor)
+
+        self.assertIs(app.extensions["picoforge_monitor"], monitor)
     def test_server_dashboard_does_not_serve_browser_bluetooth_page(self):
         client = create_app(FakeMonitor()).test_client()
         self.assertEqual(client.get("/ble/").status_code, 404)
@@ -113,7 +133,7 @@ class WebTests(unittest.TestCase):
     def test_settings_force_confirmation_is_explicit_boolean(self):
         monitor = FakeMonitor()
         client = create_app(monitor).test_client()
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         for invalid in ["yes", 1, None]:
             response = client.post("/api/settings", json={**settings, "confirm_data_loss": invalid},
                                    base_url="http://127.0.0.1")
@@ -133,7 +153,10 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"<title>PicoForge Dashboard | Python</title>", response.data)
-        self.assertIn(b"<small>Python</small>", response.data)
+        self.assertRegex(response.data, rb"<small>Python \xc2\xb7 App v[0-9][^<]*</small>")
+        console = create_app(FakeMonitor()).test_client().get("/console", base_url="http://127.0.0.1")
+        self.assertIn(b"<title>PicoForge Console | Python</title>", console.data)
+        self.assertRegex(console.data, rb"<small>Python \xc2\xb7 App v[0-9][^<]*</small>")
 
     def test_status_route_returns_snapshot_and_security_headers(self):
         app = create_app(FakeMonitor())
@@ -147,12 +170,31 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.json["runtime"]["ram_used_bytes"], 65536)
         self.assertEqual(response.json["runtime"]["ram_total_bytes"], 532480)
         self.assertEqual(response.json["board_status"]["temperature_centidegrees"], 2345)
-        self.assertEqual(response.json["settings"], {"system_clock_mhz": 0, "sdcard_profile": 0})
+        self.assertEqual(response.json["settings"], {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0})
         self.assertIn("board_configuration", response.json)
         self.assertFalse(response.json["telemetry_stale"])
         self.assertIn("10", response.json["report_freshness"])
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_api_error_statuses_distinguish_bad_input_conflicts_and_unavailable_devices(self):
+        class FailingMonitor(FakeMonitor):
+            def snapshot(self, board_id=None):
+                raise RuntimeError("device busy")
+
+            def boards(self):
+                raise OSError("HID enumeration failed")
+
+        monitor = FailingMonitor()
+        client = create_app(monitor).test_client()
+
+        self.assertEqual(client.post("/api/led", json={"on": 1}).status_code, 400)
+        conflict = client.get("/api/status")
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.json["error"], "device busy")
+        unavailable = client.get("/api/boards")
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(unavailable.json["error"], "HID enumeration failed")
 
     def test_boards_route_lists_selectable_devices(self):
         response = create_app(FakeMonitor()).test_client().get(
@@ -183,36 +225,19 @@ class WebTests(unittest.TestCase):
     def test_settings_endpoint_validates_and_returns_confirmed_values(self):
         monitor = FakeMonitor()
         client = create_app(monitor).test_client()
-        settings = {"system_clock_mhz": 200, "sdio_bus_mhz": 50, "spi_bus_mhz": 50}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2}
         for invalid in (
             {**settings, "system_clock_mhz": 100},
-            {**settings, "sdio_bus_mhz": 40},
-            {**settings, "spi_bus_mhz": True},
-            {"system_clock_mhz": 200},
+            {**settings, "sdcard_profile": 2},
+            {**settings, "radios": True},
+            {"system_clock_mhz": 200, "sdcard_profile": 1},
         ):
             response = client.post("/api/settings", json=invalid, base_url="http://127.0.0.1")
             self.assertEqual(response.status_code, 400)
         response = client.post("/api/settings?board=board-a", json=settings, base_url="http://127.0.0.1")
         self.assertEqual(response.status_code, 200)
-        expected = {"system_clock_mhz": 200, "sdcard_profile": 1}
-        self.assertEqual(response.json["settings"], expected)
-        self.assertEqual(monitor.last_settings, expected)
-
-    def test_settings_endpoint_accepts_canonical_profile_shape(self):
-        monitor = FakeMonitor()
-        response = create_app(monitor).test_client().post(
-            "/api/settings?board=board-a",
-            json={"system_clock_mhz": 150, "sdcard_profile": 0},
-            base_url="http://127.0.0.1",
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json["settings"], {"system_clock_mhz": 150, "sdcard_profile": 0})
-        response = create_app(monitor).test_client().post(
-            "/api/settings?board=board-a",
-            json={"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 2},
-            base_url="http://127.0.0.1",
-        )
-        self.assertEqual(monitor.last_settings["radios"], 2)
+        self.assertEqual(response.json["settings"], settings)
+        self.assertEqual(monitor.last_settings, settings)
 
     def test_settings_endpoint_reports_invalid_device_readback_as_service_error(self):
         class InvalidReadbackMonitor(FakeMonitor):
@@ -221,7 +246,7 @@ class WebTests(unittest.TestCase):
 
         response = create_app(InvalidReadbackMonitor()).test_client().post(
             "/api/settings",
-            json={"system_clock_mhz": 150, "sdio_bus_mhz": 0, "spi_bus_mhz": 0},
+            json={"system_clock_mhz": 150, "sdcard_profile": 0, "radios": 0},
             base_url="http://127.0.0.1",
         )
         self.assertEqual(response.status_code, 503)

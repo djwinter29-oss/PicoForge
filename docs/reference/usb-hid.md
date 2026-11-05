@@ -150,8 +150,8 @@ Capability bits:
 
 For bit 1, the host must explicitly confirm the standalone reboot request. Bit 2 advertises saving persistent boot
 settings with a firmware-scheduled reboot; bit 6 adds the forced host-owned save path and does not replace bit 2.
-Clients must not send a forced save without bit 6 or silently fall back to normal save/reboot. Older clients that
-reject the previously reserved bit require an update alongside this firmware. Exactly one of bits 3 and 4 is set, identifying the transport
+Current firmware always sets bit 6. Clients must not silently fall back to a normal save/reboot when a forced save is
+refused. Exactly one of bits 3 and 4 is set, identifying the transport
 selected at build time. Either selected storage transport implies that MSC control is supported; MSC has no separate
 capability bit. Use the transport bit to interpret report `2`'s storage GPIO layout. Bit 5 makes self-test control
 and status available together; when clear, Report `11` is unavailable and must not be published, and opcode `4`
@@ -230,11 +230,9 @@ clear, those pins may still describe a configured but disabled UART. Every assig
 reported MCU and configured board. For SDIO-PIO all six storage GPIOs must be assigned; for SPI the first four must
 be assigned and slots 4-5 must be `255`. GPIO values are numbers, not pin-header positions.
 
-The profile is the transport-neutral replacement for the current per-transport MHz setting. During migration,
-SDIO_PIO settings `0`/`25` map to Standard and `50` maps to High-Speed; SPI `25` maps to Standard and `50` maps to
-High-Speed. SPI `0` maps to High-Speed to preserve its current 50 MHz board-profile ceiling. With no valid stored
-record, use Standard for SDIO_PIO and High-Speed for SPI to preserve current defaults. A new-format save stores the
-profile enum; Standard maps to the selected transport's 25 MHz setting and High-Speed to its 50 MHz setting.
+The transport-neutral profile is `0` for Standard (25 MHz target) and `1` for High-Speed (50 MHz target).
+The selected transport and board determine the achievable clock; the requested profile does not guarantee that
+the target frequency is reached.
 
 Reset cause is independent of clock-selection reason and may be Unknown if the platform cannot distinguish it.
 PicoForge currently reports Watchdog (`2`) when the SDK detects a watchdog reset, including software-requested
@@ -376,20 +374,20 @@ publication and wraps modulo 256.
 
 Self-test states: `0` Idle, `1` Queued, `2` Preparing, `3` Writing, `4` Reading/verifying, `5` Cleanup, `6` Passed,
 `7` Failed, `8` Cancelled; `9`-`255` unassigned. Error values: `0` none, `1` busy, `2` USB owns storage,
-`3` reserved (never emitted), `4` invalid size, `5` card unavailable, `6` insufficient space, `7` test file exists,
-`8` filesystem I/O, `9` verification, `10` cleanup, `11` filesystem not mounted; `12`-`255` unassigned.
-`self_test_error` is zero except in Failed state, where it uses execution errors `5`, `6`, or `8`-`10`. Errors `1`,
-`2`, `4`, `7`, and `11` are request/precondition rejections and appear only in `self_test_request_error`; code `3`
-is reserved and never emitted. A card or space failure discovered during execution is error `5` or `6` in
+`3` invalid size, `4` card unavailable, `5` insufficient space, `6` test file exists, `7` filesystem I/O,
+`8` verification, `9` cleanup, `10` filesystem not mounted; `11`-`255` unassigned.
+`self_test_error` is zero except in Failed state, where it uses execution errors `4`, `5`, or `7`-`9`. Errors `1`,
+`2`, `3`, `6`, and `10` are request/precondition rejections and appear only in `self_test_request_error`.
+A card or space failure discovered during execution is error `4` or `5` in
 `self_test_error`; the same condition detected before accepting a start is reported in `self_test_request_error`.
-Filesystem I/O error `8` may appear in `self_test_request_error` only when the preflight check of the existing test
+Filesystem I/O error `7` may appear in `self_test_request_error` only when the preflight check of the existing test
 file fails before the test is accepted; after acceptance, filesystem I/O failures use `self_test_error`. Thus error
-`8` in the two fields is distinguished by whether the test run was accepted. `self_test_request_error` may contain
-`1`, `2`, `4`-`8`, or `11`; codes `9` and `10` are execution-only. It is set when a valid-envelope opcode `4`
+`7` in the two fields is distinguished by whether the test run was accepted. `self_test_request_error` may contain
+`1`-`7`, or `10`; codes `8` and `9` are execution-only. It is set when a valid-envelope opcode `4`
 request is rejected and cleared when a subsequent opcode `4` request is accepted, including an accepted cancel
 no-op. A malformed report envelope does not change it. After reboot it is zero.
-`filesystem_result` is nonzero and contains the FatFs result when `self_test_error` is `8` (filesystem I/O). For
-error `10` (cleanup), it contains the FatFs result only when the cleanup failure came from a FatFs operation;
+`filesystem_result` is nonzero and contains the FatFs result when `self_test_error` is `7` (filesystem I/O). For
+error `9` (cleanup), it contains the FatFs result only when the cleanup failure came from a FatFs operation;
 otherwise it is zero. It is zero for every other execution error and in all states other than Failed. Unknown enum
 values must be retained and displayed as unknown, but treated as invalid for state transitions and safety decisions.
 
@@ -399,8 +397,8 @@ A start request is accepted only after preflight checks succeed and storage is r
 after which the operation
 may advance through Preparing and execution. Before acceptance, size, ownership, card, space, existing-file, and
 file-check errors reject the start: no test run is queued, and Report `11` retains the prior test result while
-updating `self_test_request_error`. Error `11` reports that the required filesystem is not mounted; error `3` is
-reserved to preserve the prior enum assignment and must not be emitted. Starting an accepted test replaces the prior
+updating `self_test_request_error`. Error `10` reports that the required filesystem is not mounted.
+Starting an accepted test replaces the prior
 retained test result: it sets the target,
 zeros progress counters, timings, mismatch count, execution error, and filesystem result, then publishes Queued.
 Rejected starts preserve the prior test result and update only `self_test_request_error`. Cancelling a running test
@@ -441,7 +439,7 @@ the meaning of the fields.
 | `3` | MSC control | Bit 0 confirms force-return data-loss risk only; other bits zero. | Byte 0 action: `0` normal disable, `1` enable, `2` force return; bytes 1-4 zero. |
 | `4` | SD self-test | `0` | Byte 0 action: `0` cancel, `1` start; bytes 1-4 little-endian MiB size. |
 | `5` | Unassigned | - | Reject as unsupported. |
-| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); byte 3 radio enables (bit 0 Wi-Fi, bit 1 BLE; zero without capability bit 7); byte 4 zero. |
+| `6` | Save persistent settings and reboot | Bit 0 confirms forced-save host-cache data-loss risk; bit 1 includes a TCP CLI switch; other bits zero. | Bytes 0-1 system-clock MHz; byte 2 SD-card profile (`0` Standard, `1` High-Speed); byte 3 radio enables (bit 0 Wi-Fi, bit 1 BLE; zero without capability bit 7); byte 4 is `0` or `1` when flag bit 1 is set, otherwise zero. |
 | Other | Unassigned | - | Reject as unsupported. |
 
 LED Off/On are idempotent. Reboot requires explicit confirmation. MSC action `0` is the normal disable request;
@@ -451,7 +449,9 @@ Action `2` is force return without a safe-eject guarantee and requires explicit 
 start accepts 1-1024 MiB; cancel requires zero size. System-clock values are `0`, `150`,
 `200`, or `250` MHz; SD-card profile values are `0` Standard and `1` High-Speed. A successful settings save schedules
 reboot automatically; verify the saved values in the matching Feature `20` result, then refresh Feature `2` after
-reboot. Do not submit a second reboot command.
+reboot. Do not submit a second reboot command. BLE accepts opcode `2` and authenticated opcode `6` without the
+forced-save flag. A BLE settings save must keep the saved radio mask unchanged; only the clock, SD-card profile, and
+optional TCP CLI switch can be changed over BLE. Radio switches, credentials, and forced saves remain USB-only.
 
 ### GET Result
 
@@ -464,7 +464,7 @@ GET returns the latest operation without executing it again or consuming its res
 | 2 | 1 | `opcode` | Operation associated with the result; `0` if none. |
 | 3 | 1 | `status` | Result state below. |
 | 4 | 1 | `error_reason` | Error enum below; zero when none. |
-| 5 | 4 | `result_data` | Verified saved settings for opcode 6 in the opcode-6 argument layout; zero for other operations. |
+| 5 | 4 | `result_data` | Verified saved settings for opcode 6; zero for other operations. |
 | **Total** | **9** | | **10 bytes including report ID.** |
 
 Status values: `0` Idle, `1` Pending, `2` Completed, `3` Invalid, `4` Unsupported, `5` Busy, `6` Failed.
@@ -489,10 +489,10 @@ Unsupported (`4`), Busy, or Failed; opcode `6` permits Pending, Completed, Inval
 Busy, or Failed. Opcode `4` returns Unsupported (`4`) when Report `1` bit 5 is clear. Opcode `3` is supported
 whenever either selected-transport bit 3 or 4 is set and must not return Unsupported (`4`) on the basis of a
 separate MSC capability. Opcode `5` and unknown opcodes return Unsupported (`7`).
-For opcode `4`, Invalid/error `3` reports an invalid size and Report `11` records request error `4`; Busy/error `5`
+For opcode `4`, Invalid/error `3` reports an invalid size and Report `11` records request error `3`; Busy/error `5`
 reports request error `1` (conflicting work) or `2` (MSC ownership). Failed/error `6` reports preflight request
-errors `5` (card unavailable), `6` (insufficient space), `7` (test file exists), `8` (preflight file-check I/O), or
-`11` (filesystem not mounted). These preflight failures occur after command processing begins but before the test is
+errors `4` (card unavailable), `5` (insufficient space), `6` (test file exists), `7` (preflight file-check I/O), or
+`10` (filesystem not mounted). These preflight failures occur after command processing begins but before the test is
 accepted; they are not queued and do not replace the retained test result. Report `11` updates
 `self_test_request_error` with the specific self-test error. Once preflight succeeds and the test is accepted, the
 command result is Completed/error `0` (or Pending/error `0` while acceptance is being processed), and Report `11`
@@ -505,9 +505,12 @@ the host must treat the SET failure as authoritative and must not wait for a mat
 requests with a valid envelope update the result slot with the matching transaction ID and Invalid status. Unknown
 status or error values and disallowed status/error/opcode combinations are protocol errors.
 
-For opcode 6, `Completed` means the write passed readback verification and `result_data` contains system-clock MHz
-(little-endian two bytes) and the SD-card profile in byte 2; byte 3 is zero. Feature report `2` is the authoritative
-read path for persisted settings. For opcode 3, completion means the MSC operation was accepted/queued; report `10`
+For opcode 6, `Completed` means the write passed readback verification. `result_data` contains system-clock MHz
+(little-endian two bytes) and the SD-card profile in byte 2. In byte 3, bits 0-1 are the saved radio mask, bit 2 is
+the saved TCP CLI switch, and bit 3 indicates that bit 2 was included; bits 4-7 are zero. When bit 3 is clear, the TCP
+CLI setting was not part of this save, and bit 2 must be zero. Feature report `2` is the authoritative read path for
+persisted clock, SD-card, and radio settings; the opcode-6 result confirms the TCP CLI switch because report `2` does
+not include it. For opcode 3, completion means the MSC operation was accepted/queued; report `10`
 owns its state. For opcode 4, completion means the self-test operation was accepted/queued; report `11` owns its
 progress and terminal status. For reboot, completion means reset was scheduled, not that the host observed a
 successful reboot.
@@ -627,8 +630,7 @@ The card is never automatically formatted or repaired.
    fresh mounted filesystem status; normal-disable completion can precede background remount. Do not retry an uncertain
    non-idempotent operation.
 4. Use report `10` for storage/MSC state and, when capability bit 5 is set, report `11` for self-test progress and
-   terminal status; SET acknowledgement is not operation completion. If older firmware re-enumerates for MSC,
-   reopen the same authorized device and reread reports `1` and `2`.
+   terminal status; SET acknowledgement is not operation completion.
 5. Read persisted settings from Feature `2`. To save and apply them, confirm with the user, issue opcode `6`, and
    verify the saved values in its completion result. Firmware reboots automatically only after a successful save.
    Reconnect and reread Feature `2`; opcode `2` remains available for a standalone reboot.
@@ -655,13 +657,14 @@ may show prior values as explicitly historical, but must label them stale.
 
 ## Design Validation
 
-Each report layout starts at version `1`. Increment the affected report's version when an incompatible field, length,
-unit, validation rule, or lifecycle changes. Layout versions are independent of firmware semantic version.
+Current versioned report layouts use version `1`; hosts accept that version only and do not negotiate or decode
+previous layouts. Increment the affected report's version when an incompatible field, length, unit, validation rule,
+or lifecycle changes. Layout versions are independent of firmware semantic version.
 
 Conformance tests cover report types and lengths, API report-ID framing, field validation, stale telemetry,
-configuration cross-field rules, storage-state validity and ownership transitions, profile migration for the
-build-selected transport, command validation and results, cross-interface resource arbitration, self-test result
-retention, CID decoding, and PicoUART prefix compatibility. Host tests and firmware cross-builds do not verify
+configuration cross-field rules, storage-state validity and ownership transitions, profile validation and
+build-selected transport behavior, command validation and results, cross-interface resource arbitration, self-test
+result retention, CID decoding, and the PicoUART report prefix. Host tests and firmware cross-builds do not verify
 physical USB behavior. Qualify CDC, HID, MSC transitions, and re-enumeration on RP2040 and RP2350 hardware before
 product use.
 
@@ -669,10 +672,10 @@ product use.
 
 The descriptor and firmware implementation are in `firmware/src/app/usb`; storage self-test admission and execution
 are in `firmware/src/app/storage`. The Python, .NET, shared dashboard, and Direct dashboard clients implement the same
-report contract. Settings saves preserve the existing persistent-record format and update only the selected
-transport's legacy speed field; Report `2` exposes the transport-neutral profile. An accepted self-test is
-preflighted by the sole storage worker before its prior result is replaced. The reserved `/PFTEST.BIN` path is never
-overwritten. MSC transitions allow a bounded interval for the matching Feature `20` result GET before ownership changes.
+report contract. Settings saves write the persistent record's single SD profile, which Report `2` exposes.
+An accepted self-test is preflighted by the sole storage worker before its prior result is replaced. The reserved
+`/PFTEST.BIN` path is never overwritten. MSC transitions allow a bounded interval for the matching Feature `20`
+result GET before ownership changes.
 
 This describes software implementation, not hardware qualification. HID report delivery, MSC ownership changes,
 host safe-eject behavior, and reconnect handling still require physical validation on the supported boards.
