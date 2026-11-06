@@ -19,6 +19,82 @@ const benchmarkReady = async ({ connected, state }) => {
   await state.tick();
 };
 
+test("clean-host recovery requires the originating board's reconnect and fresh status without replay", async context => {
+  for (const operation of ["self-test", "msc", "msc/force-return"]) {
+    for (const unrelated of [false, true]) {
+      await context.test(`${operation}: ${unrelated ? "unrelated result" : "no result"}`, async context => {
+        const fixture = await appFixture(context);
+        const { state, connected, boardStatuses, handlers, elements, requestedUrls, switchBoard } = fixture;
+        await benchmarkReady(fixture);
+        connected.command_resync_supported = true;
+        if (operation === "msc/force-return") {
+          connected.msc.enabled = true;
+          await state.tick();
+        }
+        state.responses.set(`/api/${operation}`, () => { throw new TypeError("request never delivered"); });
+        const send = async () => {
+          if (operation === "self-test") await handlers.get("#self-test-start:click")();
+          else {
+            await handlers.get("#msc-control:click")();
+            await handlers.get(operation === "msc" ? "#confirm-share:click" : "#confirm-return:click")();
+          }
+        };
+        await send();
+        await settle();
+        assert.equal(connected.command_outcome_uncertain, undefined, "host has no uncertainty to reconcile");
+        assert.equal(elements.get("#command-resync").hidden, false, "local storage failures expose Re-sync");
+        state.resyncResult = { uncertain: false, control_result: unrelated ? { opcode: 1, status: "failed" } : null };
+        await handlers.get("#command-resync:click")();
+        for (let poll = 0; poll < 2; poll++) await state.tick();
+        assert.match(elements.get("#status-message").textContent, /Disconnect and reconnect this board/);
+        assert.equal(elements.get("#led-control").disabled, true);
+        await send();
+        assert.equal(requestedUrls.filter(url => url.startsWith(`/api/${operation}?`)).length, 1);
+        await switchBoard("board-b");
+        assert.equal(elements.get("#board-model").textContent, "Pico (RP2040)");
+        assert.equal(elements.get("#settings-clock").value, "133");
+        assert.equal(elements.get("#led-control").textContent, "Board LED: On");
+        assert.equal(elements.get("#led-control").disabled, false);
+        boardStatuses.get("board-b").connected = false;
+        await state.tick();
+        boardStatuses.get("board-b").connected = true;
+        await state.tick();
+        await switchBoard("board-a");
+        assert.equal(elements.get("#led-control").disabled, true, "another board's reconnect cannot settle A");
+        state.statusFails = true;
+        await state.tick();
+        state.statusFails = false;
+        await state.tick();
+        assert.equal(elements.get("#led-control").disabled, true, "HTTP failure is not an observed disconnect");
+        state.responses.set("/api/status", () => reply({}));
+        await state.tick();
+        state.responses.delete("/api/status");
+        await state.tick();
+        assert.equal(elements.get("#led-control").disabled, true, "missing connection state is not a disconnect");
+        connected.connected = false;
+        await state.tick();
+        connected.connected = true;
+        connected.storage_stale = true;
+        await state.tick();
+        assert.equal(elements.get("#led-control").disabled, true, "reconnection alone is insufficient");
+        await handlers.get("#command-resync:click")();
+        assert.equal(elements.get("#led-control").disabled, true, "another clean-host reply cannot bypass freshness");
+        connected.storage_stale = false;
+        await state.tick();
+        assert.equal(elements.get("#command-resync").hidden, true);
+        assert.equal(elements.get("#msc-control").disabled, false);
+        assert.equal(elements.get("#self-test-start").disabled, operation === "msc/force-return");
+        assert.equal(requestedUrls.filter(url => url.startsWith(`/api/${operation}?`)).length, 1);
+        state.responses.set(`/api/${operation}`, () => reply(operation === "self-test"
+          ? {} : { msc: { enabled: operation === "msc", transition_pending: true } }));
+        await send();
+        assert.equal(requestedUrls.filter(url => url.startsWith(`/api/${operation}?`)).length, 2,
+          "only an explicit user action retries the command");
+      });
+    }
+  }
+});
+
 test("final failed Re-sync releases only the matching command gate and retains explicit-retry feedback", async context => {
   for (const [operation, opcode] of [["self-test", 4], ["msc", 3]]) {
     for (const status of ["failed", "busy", "invalid", "unsupported"]) {

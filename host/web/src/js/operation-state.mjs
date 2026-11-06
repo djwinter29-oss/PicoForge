@@ -10,8 +10,10 @@
  * @property {boolean} [command_resync_supported]
  * @property {boolean} [wireless_cleanup_required]
  * @property {boolean} [reboot_pending]
+ * @property {boolean} [telemetry_stale]
+ * @property {boolean} [storage_stale]
  * @property {{led_available?: boolean, led_on?: boolean}} [runtime]
- * @property {{transition_pending?: boolean, enabled?: boolean}} [msc]
+ * @property {{transition_pending?: boolean, enabled?: boolean, request_rejected?: boolean}} [msc]
  * @property {{initialized?: boolean}} [memory]
  * @property {{active?: boolean, state?: string, sequence?: number}} [self_test]
  * @property {import("./dashboard-api.mjs").BootSettings | null} [settings]
@@ -37,7 +39,8 @@
  *
  * @typedef {{kind: "reconnect" | "resync"} | {kind: "led", on: boolean}
  *   | {kind: "settings", expected: import("./dashboard-api.mjs").BootSettings}
- *   | {kind: "self-test", sequence: number}} Recovery
+ *   | {kind: "self-test", sequence: number} | {kind: "msc", enabled: boolean}
+ *   | {kind: "reconnect-status", opcode: 3 | 4, disconnected: boolean}} Recovery
  * @typedef {Recovery & {message: string}} UncertainCommand
  */
 
@@ -54,8 +57,33 @@ export function commandSettled(command, snapshot) {
       && snapshot.settings?.radios === command.expected.radios;
     case "self-test": return Number.isInteger(snapshot.self_test?.sequence)
       && snapshot.self_test?.sequence !== command.sequence;
+    case "msc": return Boolean(snapshot.connected && !snapshot.storage_stale && !snapshot.msc?.transition_pending
+      && (snapshot.msc?.enabled === command.enabled || snapshot.msc?.request_rejected));
+    case "reconnect-status": return Boolean(command.disconnected && snapshot.connected === true
+      && !snapshot.telemetry_stale && !snapshot.storage_stale
+      && !snapshot.command_outcome_uncertain && !snapshot.outcome_uncertain
+      && (command.opcode === 3 ? typeof snapshot.msc?.enabled === "boolean"
+        : Number.isInteger(snapshot.self_test?.sequence)));
     default: return false;
   }
+}
+
+/** A clean host without the pending command's result is not proof of non-delivery.
+ * @param {import("./dashboard-api.mjs").ControlResult | null} result
+ * @param {boolean} mscPending
+ * @param {boolean} selfTestPending
+ * @param {UncertainCommand | null} command
+ * @returns {UncertainCommand | null}
+ */
+export function unresolvedCommand(result, mscPending, selfTestPending, command) {
+  const opcode = command?.kind === "reconnect-status" ? command.opcode : mscPending ? 3 : selfTestPending ? 4 : null;
+  if (opcode === null || result?.opcode === opcode) return null;
+  return {
+    kind: "reconnect-status", opcode,
+    disconnected: command?.kind === "reconnect-status" && command.disconnected,
+    message: "No matching command result is available. Disconnect and reconnect this board, then wait for fresh "
+      + "status before retrying explicitly. The command was not resent.",
+  };
 }
 
 /** Terminal acknowledgement is not fresh ownership or benchmark progress.

@@ -6,7 +6,9 @@ import { bindWirelessForm } from "./wireless-form.mjs?v=19";
 import {
   acknowledge, DashboardError, reconciledResult, responseJson, savedSettings, scannedNetworks,
 } from "./dashboard-api.mjs";
-import { commandEffects, commandSettled, operationState as deriveOperationState } from "./operation-state.mjs";
+import {
+  commandEffects, commandSettled, operationState as deriveOperationState, unresolvedCommand,
+} from "./operation-state.mjs";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -348,7 +350,9 @@ async function resyncCommandOutcome() {
     const result = await responseJson(response, `Command re-sync returned HTTP ${response.status}`, true);
     if (version !== selectionVersion) return;
     const control = reconciledResult(result);
-    uncertainCommand = null;
+    uncertainCommand = unresolvedCommand(control, mscPendingEnabled !== null,
+      selfTestPendingSequence !== null, uncertainCommand);
+    if (uncertainCommand?.kind === "reconnect-status") mscError = null;
     ledError = null;
     currentSnapshot.command_outcome_uncertain = false;
     currentSnapshot.error = null;
@@ -377,12 +381,20 @@ async function updateStatus() {
     if (version !== selectionVersion) return;
     if (mscRequestInProgress || settingsRequestInProgress) return;
     statusReadError = null;
+    if (uncertainCommand?.kind === "reconnect-status" && snapshot.connected === false)
+      uncertainCommand.disconnected = true;
     if (rebootPending !== null) {
       if (!snapshot.connected) rebootPending = "disconnected";
       else if (snapshot.reboot_pending) rebootPending = "observed";
       else if (rebootPending !== "requested") rebootPending = null;
     }
     if (commandSettled(uncertainCommand, snapshot)) {
+      if (uncertainCommand.kind === "reconnect-status") {
+        if (uncertainCommand.opcode === 3) {
+          mscPendingEnabled = null;
+          mscError = null;
+        } else selfTestPendingSequence = null;
+      }
       if (uncertainCommand.kind === "settings") {
         settingsDirty = settingsStorageDirty = false;
         settingsMessage = "Settings readback matches the requested values.";
@@ -563,7 +575,9 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
     }
   } catch (error) {
     if (version === selectionVersion) {
-      const uncertain = hasUnknownOutcome(error);
+      const uncertain = markCommandOutcomeUncertain(error,
+        "Storage command outcome is uncertain. Use Re-sync or wait for fresh ownership status before retrying.",
+        { kind: "msc", enabled: mscPendingEnabled });
       if (!uncertain) mscPendingEnabled = null;
       mscError = uncertain
         ? "Storage command outcome is uncertain; waiting for updated ownership status before retrying."

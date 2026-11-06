@@ -43,6 +43,13 @@ export async function appFixture(context) {
     board_configuration: { monitor_uart_index: 255, monitor_uart_tx_gpio: 255, monitor_uart_rx_gpio: 255,
       storage_gpios: [2, 3, 4, 5, 255, 255], card_detect_gpio: 255, reset_cause: 1 },
     memory: { mode: "spi" }, msc: { enabled: false, transition_pending: false }, self_test: null };
+  const secondBoard = structuredClone(connected);
+  secondBoard.hardware.board_model = "Pico";
+  secondBoard.hardware.mcu = "RP2040";
+  secondBoard.settings.system_clock_mhz = 133;
+  secondBoard.runtime.led_on = true;
+  secondBoard.self_test = { sequence: 91, active: false, state: "idle" };
+  const boardStatuses = new Map([["board-a", connected], ["board-b", secondBoard]]);
   const ledRequestedStates = [];
   const requestedUrls = [];
   const savedSettings = [];
@@ -75,6 +82,7 @@ export async function appFixture(context) {
   };
   const reconnect = async () => {
     await new Promise(resolve => setImmediate(resolve));
+    const connected = boardStatuses.get(elements.get("#board-select").value);
     connected.connected = false;
     await state.tick();
     connected.connected = true;
@@ -85,6 +93,7 @@ export async function appFixture(context) {
   globalThis.fetch = async (url, options = {}) => {
     requestedUrls.push(url);
     assert.ok(options.signal instanceof AbortSignal, "dashboard API requests have a deadline");
+    const connected = boardStatuses.get(new URL(url, "http://localhost").searchParams.get("board"));
     const response = state.responses.get(url.split("?")[0]);
     if (response) return response(options);
     if (url === "/api/boards") {
@@ -197,6 +206,6 @@ export async function appFixture(context) {
   return {
     state, connected, handlers, elements, configureRadio, requestedUrls, savedSettings, wirelessSettings,
     testedWireless, requestTimeouts, ledRequestedStates, saveAndConfirm, switchBoard,
-    reconnect,
+    reconnect, boardStatuses,
   };
 }

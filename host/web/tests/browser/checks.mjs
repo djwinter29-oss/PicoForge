@@ -62,7 +62,7 @@ const mock = `<script>
   };
   window.sharedBrowserState = {connected, unknown: false, scans: 0, leds: 0, tests: 0,
     ledUncertain: false, mismatch: false, cleanupFailure: false, cleanups: 0,
-    scanInvalid: false, wirelessScans: 0, resyncs: 0, failedCommand: null, mscRequests: 0};
+    scanInvalid: false, wirelessScans: 0, resyncs: 0, failedCommand: null, noResultCommand: null, mscRequests: 0};
   window.fetch = async (input, options = {}) => {
     const url = new URL(input, document.baseURI);
     const state = window.sharedBrowserState;
@@ -86,10 +86,11 @@ const mock = `<script>
       }
       return response({uncertain: false});
     }
-    if (url.pathname === "/api/msc" || url.pathname === "/api/self-test" && state.failedCommand === 4) {
+    if (url.pathname === "/api/msc" || url.pathname === "/api/self-test"
+      && (state.failedCommand === 4 || state.noResultCommand === 4)) {
       if (url.pathname === "/api/msc") state.mscRequests++;
       else state.tests++;
-      connected.command_outcome_uncertain = true;
+      if (state.noResultCommand === null) connected.command_outcome_uncertain = true;
       throw new TypeError("lost command response");
     }
     if (url.pathname === "/api/led") {
@@ -346,6 +347,45 @@ await run("replacement Control key cannot receive stale clipboard feedback", asy
   await new Promise(resolve => setTimeout(resolve, 0));
   check(page.querySelector("#ble-status").textContent === message, "stale clipboard success replaced current feedback");
   page.querySelector("#ble-cancel").click();
+});
+
+await run("clean-host no-result recovery waits for reconnect and fresh status without replay", async () => {
+  const state = dashboardWindow.sharedBrowserState;
+  const el = id => page.querySelector(`#${id}`);
+  const refresh = () => page.dispatchEvent(new Event("visibilitychange"));
+  for (const opcode of [4, 3]) {
+    state.noResultCommand = opcode;
+    const requests = opcode === 4 ? state.tests : state.mscRequests;
+    if (opcode === 4) el("self-test-start").click();
+    else {
+      el("msc-control").click();
+      el("confirm-share").click();
+    }
+    await waitFor(() => !el("command-resync").hidden && !el("command-resync").disabled,
+      "browser-only failure did not offer Re-sync");
+    check(!state.connected.command_outcome_uncertain, "fixture should not invent a host-side command result");
+    el("command-resync").click();
+    await waitFor(() => el("status-message").textContent.includes("Disconnect and reconnect this board"),
+      "no-result recovery did not explain its reconnect requirement");
+    check(el("self-test-start").disabled && el("msc-control").disabled && el("led-control").disabled,
+      "clean host incorrectly released unresolved command gates");
+    state.connected.connected = false;
+    refresh();
+    await waitFor(() => el("settings-note").textContent === "Waiting for a PicoForge connection.",
+      "disconnect not observed");
+    state.connected.connected = true;
+    state.connected.storage_stale = true;
+    refresh();
+    await waitFor(() => el("status-message").textContent.includes("Disconnect and reconnect this board"),
+      "reconnecting status did not retain the obligation");
+    check(el("led-control").disabled, "stale reconnect released the gate");
+    state.connected.storage_stale = false;
+    refresh();
+    await waitFor(() => !el("led-control").disabled && !el("msc-control").disabled
+      && !el("self-test-start").disabled, "fresh status after reconnect did not release local pending state");
+    check((opcode === 4 ? state.tests : state.mscRequests) === requests + 1, "recovery replayed a command");
+    state.noResultCommand = null;
+  }
 });
 
 if (results) results.dataset.done = "true";

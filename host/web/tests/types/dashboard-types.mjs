@@ -3,7 +3,7 @@
 
 // @ts-check
 import { acknowledge, reconciledResult, responseJson, savedSettings, scannedNetworks } from "../../src/js/dashboard-api.mjs";
-import { commandEffects, commandSettled, operationState } from "../../src/js/operation-state.mjs";
+import { commandEffects, commandSettled, operationState, unresolvedCommand } from "../../src/js/operation-state.mjs";
 
 const state = operationState({ connected: true }, { uncertain: false }, 32);
 state.canStartSelfTest.valueOf();
@@ -23,6 +23,15 @@ scannedNetworks(result)[0].ssid_hex.toLowerCase();
 // @ts-expect-error Validated signal strength is numeric.
 scannedNetworks(result)[0].rssi.toUpperCase();
 commandSettled({ kind: "led", on: true, message: "uncertain" }, {});
+commandSettled({ kind: "reconnect-status", opcode: 3, disconnected: false, message: "uncertain" }, {});
+const unresolved = unresolvedCommand(null, true, false, null);
+if (unresolved?.kind === "reconnect-status") unresolved.disconnected.valueOf();
+// @ts-expect-error Reconnect recovery must name a storage or benchmark command.
+commandSettled({ kind: "reconnect-status", opcode: 1, disconnected: false, message: "uncertain" }, {});
+// @ts-expect-error Reconnect observation is a boolean, not a truthy string.
+commandSettled({ kind: "reconnect-status", opcode: 4, disconnected: "true", message: "uncertain" }, {});
+// @ts-expect-error Storage recovery carries the requested boolean ownership state.
+commandSettled({ kind: "msc", enabled: "true", message: "uncertain" }, {});
 // @ts-expect-error LED recovery must carry the requested boolean state.
 commandSettled({ kind: "led", on: "true", message: "uncertain" }, {});
 // @ts-expect-error Recovery reasons cannot be arbitrary strings.

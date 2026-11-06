@@ -549,8 +549,10 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
   }
   assert.ok(requestedUrls.includes("/api/led?board=board-a"));
   connected.self_test = { sequence: 9, active: false, state: "idle" };
+  connected.msc.request_rejected = true;
   state.statusFails = false;
   await state.tick();
+  connected.msc.request_rejected = false;
   await new Promise(resolve => setImmediate(resolve));
   const ledRequestsBeforeGate = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
   let finishLed;
@@ -654,9 +656,10 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
 
 test("wireless provisioning and cancellation preserve draft and uncertainty invariants", async context => {
   const {
-    state, connected, handlers, elements, configureRadio, requestedUrls, savedSettings, wirelessSettings,
+    state, boardStatuses, handlers, elements, configureRadio, requestedUrls, savedSettings, wirelessSettings,
     testedWireless, requestTimeouts, saveAndConfirm, switchBoard, reconnect,
   } = await appFixture(context);
+  const connected = boardStatuses.get("board-b");
   await switchBoard("board-b");
   connected.hardware.capabilities = 128 | 16 | 2;
   connected.settings.radios = 3;
@@ -806,7 +809,7 @@ test("wireless provisioning and cancellation preserve draft and uncertainty inva
   assert.equal(wirelessSettings[1].use_tested_wifi, true);
   assert.equal(wirelessSettings[1].ssid, "edited-network");
   assert.equal(Object.hasOwn(wirelessSettings[1], "password"), false);
-  assert.deepEqual(wirelessSettings[1].board, { system_clock_mhz: 200, sdcard_profile: 0, radios: 3 });
+  assert.deepEqual(wirelessSettings[1].board, { system_clock_mhz: 133, sdcard_profile: 0, radios: 3 });
   assert.match(elements.get("#wifi-status").textContent, /saved/);
   assert.match(elements.get("#settings-note").textContent, /Settings saved. Reboot requested/);
   assert.equal(elements.get("#settings-save").disabled, true);
@@ -830,6 +833,10 @@ test("wireless provisioning and cancellation preserve draft and uncertainty inva
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(elements.get("#wifi-password").value, "");
   assert.equal(elements.get("#ble-secret").value, "");
+  const firstBoard = boardStatuses.get("board-a");
+  firstBoard.hardware.capabilities |= 128;
+  firstBoard.storage_stale = false;
+  await state.tick();
   state.wirelessFailure = 409;
   state.wirelessError = "Wireless outcome is uncertain";
   configureRadio("wifi");

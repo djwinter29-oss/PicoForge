@@ -3,12 +3,43 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commandEffects, commandSettled, operationState } from "../../src/js/operation-state.mjs";
+import { commandEffects, commandSettled, operationState, unresolvedCommand } from "../../src/js/operation-state.mjs";
 
 const ready = {
   connected: true, runtime: { led_available: true }, msc: { enabled: false }, memory: { initialized: true },
   self_test: { active: false, state: "idle" }, filesystem_format: "exfat",
 };
+
+test("missing and unrelated results require a matching reconnect and fresh board facts", () => {
+  for (const opcode of [3, 4]) {
+    const facts = { ...ready, self_test: { sequence: 4 } };
+    for (const result of [null, { opcode: 1, status: "completed" }]) {
+      const command = unresolvedCommand(result, opcode === 3, opcode === 4, null);
+      assert.equal(command.opcode, opcode);
+      assert.equal(commandSettled(command, facts), false);
+      const disconnected = { ...command, disconnected: true };
+      assert.equal(commandSettled(disconnected, { connected: false }), false);
+      assert.equal(commandSettled(disconnected, facts), true);
+      assert.equal(commandSettled(disconnected, { ...facts, connected: "true" }), false);
+      for (const flag of ["telemetry_stale", "storage_stale", "command_outcome_uncertain", "outcome_uncertain"])
+        assert.equal(commandSettled(disconnected, { ...facts, [flag]: true }), false, flag);
+      assert.equal(commandSettled(disconnected, { connected: true }), false);
+      assert.equal(unresolvedCommand(null, opcode === 3, opcode === 4, disconnected).disconnected, true);
+      assert.equal(unresolvedCommand(null, false, false, disconnected).opcode, opcode,
+        "readback clearing a pending marker must not erase the reconnect requirement");
+    }
+    for (const status of ["completed", "failed", "busy", "invalid", "unsupported"])
+      assert.equal(unresolvedCommand({ opcode, status }, opcode === 3, opcode === 4, null), null);
+  }
+  assert.equal(unresolvedCommand(null, false, false, null), null);
+  const msc = { kind: "msc", enabled: true, message: "uncertain" };
+  assert.equal(commandSettled(msc, ready), false);
+  assert.equal(commandSettled(msc, { ...ready, connected: false, msc: { enabled: true } }), false);
+  assert.equal(commandSettled(msc, { ...ready, msc: { enabled: true } }), true);
+  assert.equal(commandSettled(msc, { ...ready, msc: { enabled: true }, storage_stale: true }), false);
+  assert.equal(commandSettled(msc, { ...ready, msc: { enabled: true, transition_pending: true } }), false);
+  assert.equal(commandSettled(msc, { ...ready, msc: { enabled: false, request_rejected: true } }), true);
+});
 
 test("terminal effects release only failed matching gates and preserve successful observation requirements", () => {
   for (let opcode = 1; opcode <= 13; opcode++) {

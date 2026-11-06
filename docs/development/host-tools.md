@@ -75,14 +75,20 @@ visible across polling and board selection until an explicit retry. Successful a
 ownership or benchmark-sequence evidence, and successful save/reboot results retain their reboot obligation.
 Malformed or non-terminal reconciliation results cannot release local gates. No recovery path automatically replays
 the original command.
+Browser-only benchmark and storage delivery failures also expose Re-sync. If the host has no matching result
+(including an unrelated terminal result), writes stay blocked and the dashboard asks for a disconnect/reconnect of
+that same board. Only a subsequently connected, non-stale status with benchmark-sequence or storage-ownership facts
+releases the local pending marker for an explicit retry. HTTP errors, another board's reconnect, and repeated clean-host
+replies do not satisfy this requirement. Re-sync never interprets a missing result as proof of non-delivery.
 Acknowledged saves and reboots immediately block subsequent writes; old connected snapshots cannot clear this
 per-board gate. It releases after an observed reboot-pending cycle or disconnect/reconnect, including when Re-sync
 confirms completion. Successful save readback mismatches retain both the uncertainty and the confirmed reboot effect.
 Unknown-board HTTP 404 responses trigger a board rescan at most once every five seconds.
 
-Shared frontend regressions use independent mounted scenarios, production-shaped replies, and an additive-listener DOM
-fixture. The console API, terminal, dashboard response boundary, and pure operation policy have strict JavaScript type
-checks and negative type contracts; the remaining application and view modules are not yet strictly checked.
+Shared frontend regressions use independent mounted scenarios, production-shaped replies, distinct per-board status
+objects, and an additive-listener DOM fixture. The console API, terminal, dashboard response boundary, and pure
+operation policy have strict JavaScript type checks and negative type contracts, including reconnect recovery
+reasons; the remaining application and view modules are not yet strictly checked.
 Mutation success bodies are validated against the operation's Python/.NET contract. Invalid JSON, malformed
 acknowledgements, and contradictory readback are unresolved outcomes, not permission to replay. Explicit known HTTP
 refusals remain distinguishable from unknown delivery.
@@ -104,7 +110,7 @@ The browser runner requires the Python host dependencies and .NET 10 SDK. It bui
 Python/.NET templates and assets with their production response headers; API replies are mocked, so no hardware
 requests are made. Both hosts run the same reboot and uncertainty gates, save-readback mismatch, 404 recovery, focus,
 narrow-layout, network-selection, cancellation, browser-only uncertainty recovery, failed terminal-result recovery,
-and clipboard checks.
+no-result reconnect recovery, and clipboard checks.
 For a static-only manual check, serve `host/web` locally and open `/tests/browser/index.html`.
 
 Console success bodies are validated by operation; malformed acknowledgements close the session without replaying
@@ -112,7 +118,8 @@ input. Output is coalesced into one pending animation frame; input is sent immed
 output, and page navigation cancels pending output.
 The runner measures parsing, text construction, DOM replacement, and layout using the actual console module and styles
 at 1,000 lines of the full 512-column bound, over 30 six-chunk bursts. Local Chromium measurements through both hosts
-kept one render per burst, with text-construction p95 about 6–7 ms and layout p95 about 20–24 ms. Timings are
+kept one render per burst; observed text-construction p95 ranged from about 6–29 ms and layout p95 from about 20–156 ms
+across runs in the shared environment. Timings are
 environment-dependent, not a performance guarantee; the runner enforces one render per burst rather than a
 machine-specific millisecond threshold.
 These checks do not establish physical board qualification.

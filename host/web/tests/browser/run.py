@@ -107,7 +107,7 @@ def main() -> None:
                     for report in reports:
                         print(f"{name}: {'FAIL' if report['error'] else 'PASS'} {report['name']}"
                               + (f": {report['error']}" if report["error"] else ""))
-                    assert len(reports) == 6 and not any(report["error"] for report in reports) and not errors, errors
+                    assert len(reports) == 7 and not any(report["error"] for report in reports) and not errors, errors
                     page.set_viewport_size({"width": 1000, "height": 800})
                     page.goto(f"{origin}/console")
                     measurement = page.evaluate("async () => {\n" + PERFORMANCE + "\nreturn await measureConsole(); }")
