@@ -2,4 +2,4 @@
 # Copyright (c) 2026 Ji Dong
 
 pyright==1.1.408
-uv==0.9.7
+uv==0.13.7
