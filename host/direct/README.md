@@ -45,22 +45,25 @@ host/direct/
     css/
       direct.css, console.css
     js/
-      app.mjs                       composition and page lifetime only
+      app.mjs                       composition, page lifetime, the only reader of browser globals
       protocol/
         constants.mjs               named firmware values
         codec.mjs                   pure validation, encoding and decoding
+        commands.mjs                capability and link policy per opcode
       transport/
         transport.mjs               common Transport contract
-        hid.mjs, ble.mjs            browser I/O, framing and link authentication
+        hid.mjs, ble.mjs            byte pipes: browser I/O, framing and link authentication
       board/
-        session.mjs                 single-flight command queue, polling and freshness
+        session.mjs                 single domain writer: command queue, polling and recovery
+        reports.mjs                 report receipts and freshness expiry
+        wireless-status.mjs         pure Feature 12 interpretation
         journal.mjs                 allowlisted same-tab recovery records
         workflows/wireless.mjs      Wi-Fi staging, scan, test, cancellation and save
       state/
-        store.mjs, reducer.mjs       one dashboard snapshot and subscriptions
-        selectors.mjs               the single operation-eligibility selector
+        store.mjs, reducer.mjs      allowlisted domain and UI stores with subscriptions
+        selectors.mjs               `canRun`: the one readiness gate for sessions and views
       ui/
-        dashboard.mjs               event wiring and coalesced rendering
+        dashboard.mjs               event wiring, UI store and coalesced rendering without I/O
         dashboard-view.mjs          section composition
         sections/*.mjs              pure view models followed by thin DOM updates
         dom.mjs                     required element lookup cached per document
@@ -68,12 +71,17 @@ host/direct/
       timers.mjs                    abortable waits and page-owned timer scopes
 ```
 
-Protocol and state modules do not access the DOM or browser device APIs. HID and BLE are peer transports, each
-implementing the same `AbortSignal`-aware contract; neither imports the board session. The session owns commands,
-freshness, status polling and recovery for either link. Its single-flight queue rejects concurrent submissions
-instead of buffering writes against potentially changing board state, and never replays an uncertain command.
-UI sections derive presentation from snapshots before updating the DOM. Display-only storage retention belongs to
-each mounted view, not module-global state. The architecture contract test checks these dependency boundaries.
+Protocol and state modules do not access the DOM or browser device APIs; `app.mjs` injects browser facts (secure
+context, WebHID/Web Bluetooth availability, clock, clipboard) into the UI. HID and BLE are peer byte pipes, each
+implementing the same `AbortSignal`-aware contract; link policy lives in `protocol/commands.mjs`, not the transport.
+The session is the only writer of domain state and owns commands, freshness, status polling and recovery for either
+link. Pending commands are recorded once in state, persisted before the write. Its single-flight queue rejects
+concurrent submissions instead of buffering writes against potentially changing board state, and never replays an
+uncertain command. Session methods and UI gating share `canRun`, so a button and its write cannot disagree.
+Workflows receive a narrow context from the session instead of reaching into it. UI-only state (dirty forms, busy
+dialogs, action errors) lives in a separate allowlisted UI store; rendering never triggers device I/O. Display-only
+storage retention belongs to each mounted view, not module-global state. The architecture contract test checks
+these boundaries.
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; the transport does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.

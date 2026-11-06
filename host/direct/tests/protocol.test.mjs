@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mscPending, selfTestPending } from "../web/js/state/selectors.mjs";
 import {
   decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
   decodeSelfTestReport,
@@ -310,7 +311,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   await client.connect();
   assert.equal(client.state.freshness[3], "unavailable");
   emit(device, 3, telemetry()); emit(device, 10, storage()); emit(device, 11, selfTest());
-  assert.ok(client.expiryTimer, "fresh reports schedule the next expiry instead of polling");
+  assert.ok(client.receipts.timer, "fresh reports schedule the next expiry instead of polling");
   now = 749; client.expireReports();
   assert.ok(client.state.runtime);
   now = 750; client.expireReports();
@@ -331,7 +332,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   emit(device, 3, telemetry()); client.expireReports(true);
   assert.equal(client.state.runtime, null);
   hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
-  assert.equal(client.expiryTimer, null);
+  assert.equal(client.receipts.timer, null);
   for (const field of ["hardware", "settings", "runtime", "memory", "msc", "self_test"]) {
     assert.equal(client.state[field], null, field);
   }
@@ -566,7 +567,7 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   emit(device, 11, completed);
   await client.setMsc(true);
   assert.equal(client.state.msc.enabled, false, "acceptance doesn't invent ownership");
-  assert.equal(client.state.msc_command_pending, true);
+  assert.equal(mscPending(client.state), true);
   const host = new Uint8Array(34); host[0] = 1; host[2] = 1; host[31] = 1;
   emit(device, 10, host);
   await assert.rejects(client.reboot(true), /firmware-owned/);
@@ -620,32 +621,32 @@ test("USB sharing stays pending through delivery, old reports, reconnect and own
     return send(...args);
   };
   const sharing = client.setMsc(true);
-  assert.equal(client.state.msc_command_pending, true, "submission hides benchmark immediately");
+  assert.equal(mscPending(client.state), true, "submission hides benchmark immediately");
   emit(device, 10, storage());
-  assert.equal(client.state.msc_command_pending, true);
+  assert.equal(mscPending(client.state), true);
   release();
   await sharing;
   emit(device, 10, storage());
-  assert.equal(client.state.msc_command_pending, true, "old firmware ownership cannot release latch");
+  assert.equal(mscPending(client.state), true, "old firmware ownership cannot release latch");
   hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
   device.opened = false;
   hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(client.state.msc_command_pending, true, "reconnect cannot release latch");
+  assert.equal(mscPending(client.state), true, "reconnect cannot release latch");
   emit(device, 10, storage());
-  assert.equal(client.state.msc_command_pending, true);
+  assert.equal(mscPending(client.state), true);
   const host = storage(); host[2] = 1; host.fill(0, 3, 31); host[31] = 1; host[32] = 1;
   emit(device, 10, host);
-  assert.equal(client.state.msc_command_pending, true, "transition must finish");
+  assert.equal(mscPending(client.state), true, "transition must finish");
   host[32] = 0; emit(device, 10, host);
   emit(device, 11, selfTest());
-  assert.equal(client.state.msc_command_pending, false);
+  assert.equal(mscPending(client.state), false);
   device.sendFeatureReport = send;
   await client.setMsc(false, true);
   emit(device, 10, host);
-  assert.equal(client.state.msc_command_pending, true, "return waits for firmware ownership");
+  assert.equal(mscPending(client.state), true, "return waits for firmware ownership");
   emit(device, 10, storage());
-  assert.equal(client.state.msc_command_pending, false);
+  assert.equal(mscPending(client.state), false);
   await client.disconnect();
 });
 
@@ -663,7 +664,7 @@ test("rejected USB sharing releases pending state without inventing ownership", 
       const rejected = storage(); rejected[33] = 1;
       emit(device, 10, rejected);
     }
-    assert.equal(client.state.msc_command_pending, false);
+    assert.equal(mscPending(client.state), false);
     assert.equal(client.state.msc.enabled, false);
     await client.disconnect();
   }
@@ -689,11 +690,11 @@ test("self-test acceptance keeps controls pending until a newer report, includin
   release();
   await starting;
   emit(device, 11, idle);
-  assert.equal(client.state.self_test_command_pending, true);
+  assert.equal(selfTestPending(client.state), true);
   await assert.rejects(client.setSelfTest("start", 32), /Fresh|unavailable/);
   const running = selfTest(1); running[1] = 0;
   emit(device, 11, running);
-  assert.equal(client.state.self_test_command_pending, false);
+  assert.equal(selfTestPending(client.state), false);
   assert.equal(client.state.self_test.active, true);
   await client.disconnect();
 });

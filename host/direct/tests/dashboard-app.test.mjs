@@ -77,14 +77,14 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     assert.equal(el("#status-message").textContent, "Pending command result confirmed after reconnect.");
     await sync({ recovery_message: null });
     assert.equal(el("#settings-save").disabled, true);
-    await sync({ self_test_command_pending: true });
+    await sync({ pending_self_test: { sequence: client.state.self_test?.sequence ?? null } });
     assert.equal(el("#settings-note").hidden, true);
-    await sync({ self_test_command_pending: false, self_test: decodeSelfTestReport(selfTest(1)) });
+    await sync({ pending_self_test: null, self_test: decodeSelfTestReport(selfTest(1)) });
     assert.equal(el("#settings-note").hidden, true);
     await sync({ self_test: decodeSelfTestReport(selfTest()) });
-    await sync({ msc_command_pending: true });
+    await sync({ pending_msc: true });
     assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
-    await sync({ msc_command_pending: false });
+    await sync({ pending_msc: null });
     assert.equal(el('[aria-labelledby="self-test-title"]').hidden, false);
     el("#settings-clock").value = "250"; el("#settings-clock").change(); await null;
     await sync({ error: null });
@@ -120,10 +120,10 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     await el("#confirm-share").click();
     assert.equal(commands.length, 2);
     await el("#msc-control").click();
-    await sync({ self_test_command_pending: true });
+    await sync({ pending_self_test: { sequence: client.state.self_test?.sequence ?? null } });
     await el("#confirm-share").click();
     assert.equal(commands.length, 2);
-    await sync({ self_test_command_pending: false });
+    await sync({ pending_self_test: null });
     await el("#msc-control").click();
     await el("#confirm-share").click();
     assert.deepEqual(commands[2], ["msc", true, false]);
@@ -190,20 +190,22 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     client.transport.device = device;
     await sync({ settings: { ...client.state.settings, radios: 1 },
       hardware: { ...client.state.hardware, capabilities: client.state.hardware.capabilities | 128 } });
+    client.wirelessPolling = true;
+    client.pollWireless();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(el("#direct-wifi-state").textContent, "HomeDev (192.168.1.9)");
     assert.equal(reads, 1);
     wifiState = 1;
-    await sync({});
+    client.pollWireless();
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(reads, 1, "input reports must not issue unthrottled wireless reads");
+    assert.equal(reads, 1, "polls inside the interval must not read Feature 12");
     now += 2000;
-    await sync({});
+    client.pollWireless();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(el("#direct-wifi-state").textContent, "HomeDev (connecting)");
     failure = true;
     now += 2000;
-    await sync({});
+    client.pollWireless();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(el("#direct-wifi-state").textContent, "HomeDev (connecting)", "one failed poll retains a fresh snapshot");
     now += 4000;
@@ -214,7 +216,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     let finishRead;
     delayed = new Promise(resolve => { finishRead = resolve; });
     now += 2000;
-    client.update({});
+    client.pollWireless();
     client.clearConnection();
     finishRead(new Uint8Array(48));
     await new Promise(resolve => setImmediate(resolve));
@@ -291,7 +293,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   BoardSession.prototype.connect = async function (key) {
     client = this;
     scans++;
-    usedKey = key;
+    usedKey = Buffer.from(key).toString("hex");
     this.update({ busy: true, error: null });
     await new Promise(resolve => { finishScan = resolve; });
     if (failure) {
@@ -413,8 +415,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     assert.equal(authCalls.length, 1, "the connected dashboard refuses a different board identity");
     assert.equal(consolePopup.responses[0][0].type, "direct-console-auth-error");
     assert.match(consolePopup.responses[0][0].error, /different board/);
-    client.outstanding = { opcode: 1, transaction_id: 1 };
-    await sync({ outcome_uncertain: true });
+    await sync({ pending_request: { opcode: 1, transaction_id: 1 }, outcome_uncertain: true });
     assert.equal(el("#usb-open").disabled, true);
     el("#bluetooth-open").click(); await null;
     assert.match(el("#bluetooth-connection-status").textContent, /Connected to Nearby PicoForge/);
@@ -424,8 +425,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     await el("#bluetooth-scan").click();
     assert.equal(client.transport.bleKey, null);
     assert.equal(el("#usb-open").disabled, true, "disconnect must not discard a pending command to switch transport");
-    client.outstanding = null;
-    await sync({ outcome_uncertain: false, command_pending: false });
+    await sync({ outcome_uncertain: false, pending_request: null });
     assert.equal(el("#usb-open").disabled, false);
     el("#direct-ble-control-key").value = "ab".repeat(32);
     el("#bluetooth-connection-close").click();

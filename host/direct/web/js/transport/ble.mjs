@@ -1,5 +1,5 @@
-import { BLE_OPCODES, OP } from "../protocol/constants.mjs";
-import { decodeIdentityReport, hexToBytes, parseHexBytes } from "../protocol/codec.mjs";
+import { BLE_PROOF_EXEMPT_OPCODES } from "../protocol/constants.mjs";
+import { decodeIdentityReport, hexToBytes } from "../protocol/codec.mjs";
 import { wait } from "../timers.mjs";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f502";
@@ -36,14 +36,17 @@ export class BleTransport extends EventTarget {
   }
 
   get name() { return this.device?.name ?? null; }
-  supportsOpcode(opcode) { return BLE_OPCODES.includes(opcode); }
   async reconnect() { return false; }
 
-  async setControlKey(hex) {
-    const bytes = parseHexBytes(hex ?? "", 32, "Control key (64 hex digits)");
+  /**
+   * @brief Import the 32-byte Control key as a non-extractable HMAC key, then wipe the caller's bytes.
+   * @param {Uint8Array<ArrayBuffer>} bytes Key bytes; zeroed on return.
+   */
+  async setControlKey(bytes) {
     try {
+      if (!(bytes instanceof Uint8Array) || bytes.length !== 32) throw new Error("Control key must be 32 bytes");
       this.bleKey = await crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    } finally { bytes.fill(0); }
+    } finally { if (bytes instanceof Uint8Array) bytes.fill(0); }
   }
 
   async prove(uid, request, signal) {
@@ -74,12 +77,12 @@ export class BleTransport extends EventTarget {
     }
   }
 
-  async connect(hex, signal) {
+  async connect(key, signal) {
     if (!this.api) throw new Error(this.unavailableMessage);
     signal.throwIfAborted();
     this.connecting = true;
     try {
-      await this.setControlKey(hex);
+      await this.setControlKey(key);
       signal.throwIfAborted();
       const device = await this.api.requestDevice({
         filters: [{ services: [BLE_SERVICE] }, { namePrefix: "PicoForge-" }],
@@ -136,11 +139,13 @@ export class BleTransport extends EventTarget {
 
   async writeReport(id, report, signal) {
     signal.throwIfAborted();
-    if (id !== 20 || report.length !== 68 || !this.supportsOpcode(report[2]) || report.subarray(9).some(Boolean)
-      || report[2] === OP.SAVE_SETTINGS && report[3] !== 0) throw new Error("This operation requires USB.");
+    // Framing only: the BLE request is the 9-byte prefix; link policy is enforced by the session before writing.
+    if (id !== 20 || report.length !== 68 || report.subarray(9).some(Boolean)) {
+      throw new Error("Request does not fit the 9-byte BLE control frame");
+    }
     const request = report.slice(0, 9);
     try {
-      if (report[2] !== OP.LED) await this.prove(hexToBytes(this.uid), request, signal);
+      if (!BLE_PROOF_EXEMPT_OPCODES.includes(report[2])) await this.prove(hexToBytes(this.uid), request, signal);
       signal.throwIfAborted();
       await this.characteristics.get(20).writeValueWithResponse(request);
       signal.throwIfAborted();

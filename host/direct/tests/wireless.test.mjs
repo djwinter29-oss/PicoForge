@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { createHmac, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { ReportReceipts } from "../web/js/board/reports.mjs";
+import { lifecycleOutcome } from "../web/js/board/wireless-status.mjs";
+import { OP } from "../web/js/protocol/constants.mjs";
 import { BleTransport, BLE_SERVICE } from "../web/js/transport/ble.mjs";
 import { HidTransport } from "../web/js/transport/hid.mjs";
 import { BoardSession } from "../web/js/board/session.mjs";
 import { buildControlRequest, decodeControlResult } from "../web/js/protocol/codec.mjs";
-import {
-  cancelWireless, readWireless,
-  saveWireless, scanWireless, testWireless, wirelessPollInterval,
-} from "../web/js/board/workflows/wireless.mjs";
+import { cancelWireless, saveWireless, scanWireless, testWireless } from "../web/js/board/workflows/wireless.mjs";
+import { wirelessPollInterval } from "../web/js/board/wireless-status.mjs";
 import { decodeWireless, displaySsid, ssidBytes } from "../web/js/protocol/codec.mjs";
 import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result, attachDevice }
   from "./support/fixtures.mjs";
@@ -312,14 +313,14 @@ test("Report12 freshness uses active500ms/idle2s and invalid reads never refresh
   let current = status();
   const read = setup.device.receiveFeatureReport;
   setup.device.receiveFeatureReport = async id => id === 12 ? current : read(id);
-  await readWireless(setup.client);
+  await setup.client.readWireless();
   now = 5999; setup.client.expireReports(); assert.ok(setup.client.state.wireless);
   now = 6000; setup.client.expireReports(); assert.equal(setup.client.state.wireless, null);
   current = status({ state: 4, flags: 48, testGeneration: 1 });
-  await readWireless(setup.client);
+  await setup.client.readWireless();
   assert.equal(wirelessPollInterval(setup.client.state.wireless), 500);
   current = new Uint8Array(53);
-  now = 7499; await assert.rejects(readWireless(setup.client));
+  now = 7499; await assert.rejects(setup.client.readWireless());
   setup.client.expireReports(); assert.ok(setup.client.state.wireless);
   now = 7500; setup.client.expireReports(); assert.equal(setup.client.state.wireless, null);
   await setup.client.disconnect();
@@ -377,7 +378,7 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
   } }), () => {},
     { pendingStore: setup.pendingStore, wirelessPolling: false });
   try {
-    await client.connect("ab".repeat(32));
+    await client.connect(new Uint8Array(32).fill(0xab));
     assert.equal(client.state.connected, true);
     assert.ok(requestedServices.includes(0x1801));
     assert.equal(notificationStarts, 1);
@@ -408,11 +409,11 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
     for (const opcode of [3, 4, 6, 7, 8, 9, 10, 11, 12, 13]) {
       await assert.rejects(client.command(opcode), /requires USB/);
     }
-    await readWireless(client);
+    await client.readWireless();
     assert.equal(client.state.wireless.ssid_hex, "");
     await client.disconnect();
     serviceChangedAvailable = false;
-    await client.connect("ab".repeat(32));
+    await client.connect(new Uint8Array(32).fill(0xab));
     assert.equal(client.state.connected, true);
     assert.equal(notificationStarts, 1);
     assert.ok(warnings.some(([message]) => message.includes("Service Changed is unavailable")));
@@ -450,12 +451,12 @@ test("BLE discovery retries only read-only setup on the chosen board and retains
   const client = new BoardSession(new BleTransport({ requestDevice: async () => { prompts++; return ble; } },
     { sleep: async () => {} }), () => {},
     { pendingStore: fakeConnection().pendingStore, sleep: async () => {}, wirelessPolling: false });
-  await client.connect("ab".repeat(32));
+  await client.connect(new Uint8Array(32).fill(0xab));
   assert.equal(client.state.connected, true);
   assert.deepEqual([prompts, connects], [1, 2]);
   await client.disconnect();
   failures = 3; connects = 0;
-  await client.connect("ab".repeat(32));
+  await client.connect(new Uint8Array(32).fill(0xab));
   assert.equal(client.state.connected, false);
   assert.equal(connects, 3);
   assert.match(client.state.error, /No matching service/);
@@ -487,10 +488,39 @@ test("all-zero32byte keys remain configured; only empty keys clear", async () =>
     } finally { await setup.client.disconnect(); }
   }
   const client = new BleTransport(undefined);
-  await client.setControlKey("0".repeat(64));
+  await client.setControlKey(new Uint8Array(32));
   assert.ok(client.bleKey, "an all-zero key can authorize a Bluetooth session");
   const message = Uint8Array.of(1, 2, 3);
   assert.deepEqual(Buffer.from(await crypto.subtle.sign("HMAC", client.bleKey, message)),
     createHmac("sha256", Buffer.alloc(32)).update(message).digest());
-  await assert.rejects(client.setControlKey(""), /64 hex/);
+  const short = new Uint8Array(31).fill(1);
+  await assert.rejects(client.setControlKey(short), /32 bytes/);
+  assert.ok(short.every(byte => byte === 0), "the transport wipes the caller's key bytes");
+});
+
+test("lifecycleOutcome reads one Feature 12 snapshot against the accepted generation", () => {
+  const scan = { operation: OP.SCAN, generation: 4 };
+  assert.equal(lifecycleOutcome({ scan_generation: 4, scan_state: 1 }, scan), null);
+  assert.equal(lifecycleOutcome({ scan_generation: 4, scan_state: 2 }, scan).kind, "completed");
+  assert.deepEqual(lifecycleOutcome({ scan_generation: 4, scan_state: 3 }, scan),
+    { kind: "failed", message: "Wireless scan failed" });
+  assert.throws(() => lifecycleOutcome({ scan_generation: 5, scan_state: 2 }, scan), /generation changed/);
+  const wifiTest = { operation: OP.TEST_WIFI, generation: 2 };
+  assert.equal(lifecycleOutcome({ test_generation: 2, state: 5, pair_tested: true }, wifiTest).result
+    .remaining_seconds, 599);
+  assert.equal(lifecycleOutcome({ test_generation: 2, state: 6, phase: "Auth failed" }, wifiTest).message,
+    "Auth failed");
+});
+
+test("report receipts expire each snapshot after its own lifetime and on suspend", () => {
+  let now = 0;
+  const receipts = new ReportReceipts(globalThis, () => now, () => null);
+  receipts.record(3);
+  receipts.record(10);
+  now = 800;
+  assert.deepEqual(receipts.expire({ 3: "fresh", 10: "fresh" }),
+    { runtime: null, freshness: { 3: "stale", 10: "fresh" } });
+  assert.equal(receipts.expire({ 10: "fresh" }), null, "storage outlives telemetry");
+  assert.equal(receipts.expire({ 10: "fresh" }, true).freshness[10], "stale", "suspend expires everything");
+  assert.equal(receipts.size, 0);
 });

@@ -2,7 +2,12 @@ import {
   bytesToHex, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE, parseHexBytes,
 } from "../console-auth.mjs";
 
-export function bindConsoleLink(getSession) {
+/**
+ * @brief Open the Wi-Fi console and answer its proof requests for the current session.
+ * @param getSession Returns the active board session.
+ * @param reportError Shows a UI-only failure; the console link never writes domain state.
+ */
+export function bindConsoleLink(getSession, reportError) {
   const windows = new WeakSet();
   async function provideProof(event) {
     const request = event.data;
@@ -40,12 +45,12 @@ export function bindConsoleLink(getSession) {
       event.preventDefault();
       const url = new URL(href, location.href);
       if (url.origin !== location.origin || url.pathname !== new URL("console.html", location.href).pathname) {
-        getSession().update({ error: "The Wi-Fi console URL is not part of this dashboard." });
+        reportError("The Wi-Fi console URL is not part of this dashboard.");
         return;
       }
       const popup = window.open(url.href, "_blank");
       if (!popup) {
-        getSession().update({ error: "The browser blocked the Wi-Fi console popup; allow popups for this dashboard." });
+        reportError("The browser blocked the Wi-Fi console popup; allow popups for this dashboard.");
         return;
       }
       windows.add(popup);

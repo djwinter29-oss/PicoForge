@@ -14,7 +14,25 @@ export const CONFIG_FLAGS = Object.freeze({
 });
 export const CLOCKS_MHZ = Object.freeze([0, 150, 200, 250]);
 export const BLE_OPCODES = Object.freeze([OP.LED, OP.REBOOT, OP.SAVE_SETTINGS]);
+/** Bluetooth commands accepted without a per-request HMAC proof. */
+export const BLE_PROOF_EXEMPT_OPCODES = Object.freeze([OP.LED]);
 export const SAVE_SETTINGS_FORCE_MSC = 1;
+/** Report IDs; see the HID report reference. */
+export const REPORT = Object.freeze({
+  IDENTITY: 1, CONFIG: 2, TELEMETRY: 3, STORAGE: 10, SELF_TEST: 11, WIRELESS: 12, CONTROL: 20,
+});
+/** Published status reports and how long each sample stays authoritative without a newer one. */
+export const REPORT_LIFETIME_MS = Object.freeze({
+  [REPORT.TELEMETRY]: 750, [REPORT.STORAGE]: 1500, [REPORT.SELF_TEST]: 1500,
+});
+/** Control result status byte. Values above PENDING are final. */
+export const RESULT = Object.freeze({ IDLE: 0, PENDING: 1, COMPLETED: 2 });
+/** Feature 12 `wifi_state`. */
+export const WIFI_STATE = Object.freeze({ TESTING: 4, TEST_JOINED: 5, TEST_FAILED: 6 });
+/** Feature 12 `scan_state`. */
+export const SCAN_STATE = Object.freeze({ IDLE: 0, SCANNING: 1, COMPLETE: 2, FAILED: 3 });
+/** Feature 12 `staged_state` bit set when staged wireless values expired. */
+export const STAGED_EXPIRED = 8;
 export const WIRELESS_TEST_DETAILS = Object.freeze([
   "", "Radio initialization failed", "Network not found", "Password rejected",
   "No DHCP address", "Timed out", "Test connection lost",

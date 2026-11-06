@@ -1,26 +1,25 @@
 // @ts-check
 /**
- * @file Reducer-backed dashboard snapshot shared by the device session and UI.
+ * @file Minimal observable store; the domain store is owned by BoardSession and the UI store by the dashboard.
  */
 
-import { dashboardReducer } from "./reducer.mjs";
+import { dashboardReducer, uiReducer } from "./reducer.mjs";
 /** @typedef {import("./reducer.mjs").DashboardState} DashboardState */
 /** @typedef {import("./reducer.mjs").DashboardAction} DashboardAction */
 
 /**
+ * @brief Create a store around a reducer.
+ * @param {(state: DashboardState, action: DashboardAction) => DashboardState} reducer
  * @param {DashboardState} initial
- * @param {(state: DashboardState) => void} [onChange]
  */
-export function createDashboardStore(initial, onChange = () => {}) {
+export function createStore(reducer, initial) {
   let state = initial;
   const listeners = new Set();
   return {
     getState: () => state,
     /** @param {DashboardAction} action */
     dispatch(action) {
-      const next = dashboardReducer(state, action);
-      state = next;
-      onChange(state);
+      state = reducer(state, action);
       for (const listener of listeners) listener(state);
       return state;
     },
@@ -31,3 +30,14 @@ export function createDashboardStore(initial, onChange = () => {}) {
     },
   };
 }
+
+/** @param {DashboardState} [initial] */
+export const createDashboardStore = (initial = {}) => createStore(dashboardReducer, initial);
+
+/** @brief Initial dashboard-only state; reset whenever the board disconnects. */
+export const UI_INITIAL = Object.freeze({
+  settings_dirty: false, wireless_form_busy: false, configuration_force_save: false, settings_message: null,
+  action_error: null,
+});
+
+export const createUiStore = () => createStore(uiReducer, { ...UI_INITIAL });

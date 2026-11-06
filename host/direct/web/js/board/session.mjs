@@ -1,94 +1,99 @@
 /**
- * Transport-independent board session: one command queue, report freshness and same-board recovery.
+ * @file Transport-independent board session: one command queue, report freshness and same-board recovery.
+ * The session is the only writer of the domain store; workflows use its public primitives, never its fields.
  */
 import {
-  buildControlRequest, decodeConfigReport,
-  decodeControlResult, decodeIdentityReport, decodeSelfTestReport, decodeSettings, decodeStorageReport,
-  decodeTelemetryReport, encodeSettings, hexToBytes, requireValid, validSettings,
+  buildControlRequest, decodeConfigReport, decodeControlResult, decodeIdentityReport, decodeSelfTestReport,
+  decodeSettings, decodeStorageReport, decodeTelemetryReport, decodeWireless, encodeSettings, hexToBytes,
+  requireValid, validSettings,
 } from "../protocol/codec.mjs";
-import { CAP, OP, SAVE_SETTINGS_FORCE_MSC } from "../protocol/constants.mjs";
+import { linkRestriction, requiredCapability } from "../protocol/commands.mjs";
+import { CAP, OP, REPORT, RESULT, SAVE_SETTINGS_FORCE_MSC } from "../protocol/constants.mjs";
 import { defaultPendingStore, loadPendingOperation, savePendingOperation } from "./journal.mjs";
-import { deriveOperationEligibility } from "../state/selectors.mjs";
-import { readWireless, waitLifecycle, wirelessPollInterval } from "./workflows/wireless.mjs";
+import { ReportReceipts, TRACKED_REPORTS } from "./reports.mjs";
+import { lifecycleOutcome, showsSavedSsid, wirelessPollInterval } from "./wireless-status.mjs";
+import { canRun, commandBlocked, commandPending, deriveOperationEligibility } from "../state/selectors.mjs";
 import { createDashboardStore } from "../state/store.mjs";
 import { createTimerScope, wait, withTimeout } from "../timers.mjs";
 
+/** @brief Per-connection facts reset on connect and disconnect; pending request facts survive. */
 const EMPTY = {
-  hardware: null, settings: null, settings_supported: false, settings_message: null,
+  hardware: null, settings: null, settings_supported: false,
   runtime: null, memory: null, filesystem_format: null, msc: null, self_test: null,
   wireless: null, wireless_error: null, wireless_poll_error: null, recovery_message: null, recovered_opcode: null,
-  freshness: { 3: "unavailable", 10: "unavailable", 11: "unavailable" },
-  self_test_command_pending: false, msc_command_pending: false, reboot_pending: false,
+  freshness: Object.fromEntries(TRACKED_REPORTS.map(id => [id, "unavailable"])),
+  pending_self_test: null, reboot_pending: false,
 };
 const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile
   && (a.radios ?? 0) === (b.radios ?? 0) && a.tcp_cli_enabled === b.tcp_cli_enabled;
-/** Capability bit each opcode requires; every wireless opcode (6 and above) requires CAP.WIRELESS. */
-const REQUIRED_CAP = { [OP.LED]: CAP.LED, [OP.REBOOT]: CAP.REBOOT, [OP.SELF_TEST]: CAP.SELF_TEST,
-  [OP.SAVE_SETTINGS]: CAP.SETTINGS };
+const commandError = (opcode, result, detail = true) => new Error(`Command ${opcode}: status ${result.status}, `
+  + `error ${result.error_reason}${detail ? `, detail ${result.detail}` : ""}`);
+
 export class BoardSession {
   /** @param {import("../transport/transport.mjs").Transport} transport */
   constructor(transport, onChange = () => {}, { now = () => performance.now(), sleep = wait, timeout = 3000,
     pendingStore, timerScope, wirelessPolling = true, store } = {}) {
     if (pendingStore === undefined) pendingStore = defaultPendingStore();
     const timers = timerScope?.createChild() ?? createTimerScope();
-    Object.assign(this, { transport, onChange, now, sleep, timeout, reconnectUid: null,
-      transaction: 0, outstanding: null, pendingWirelessCommand: null,
-      wirelessOperation: null, forcedSave: null,
-      receipts: new Map(), expiryTimer: null, generation: 0, mscPendingEnabled: null,
-      selfTestPendingSequence: null, pendingStore, recoveryError: null,
-      timers, connectionController: new AbortController(), queue: null, disposed: false,
+    Object.assign(this, { transport, onChange, now, sleep, timeout, reconnectUid: null, transaction: 0,
+      wirelessOperation: null, forcedSave: null, savedSsidHex: null, generation: 0, pendingStore,
+      recoveryError: null, timers, connectionController: new AbortController(), queue: null, disposed: false,
       pollTimer: null, wirelessPollTimer: null, wirelessLastRead: 0, wirelessReading: false, wirelessPolling });
+    this.receipts = new ReportReceipts(timers, () => this.now(), () => this.state.wireless);
     if (sleep === wait) this.sleep = (milliseconds, signal) => wait(milliseconds, signal, timers);
+    let pendingRequest = null;
+    let pendingWireless = null;
     try {
       const record = loadPendingOperation(pendingStore);
       if (record) {
         this.transaction = record.request?.transaction_id ?? 0;
         this.reconnectUid = record.uid;
-        if (record.kind === "control") this.outstanding = record.request;
-        if (record.kind === "wireless-lifecycle") this.pendingWirelessCommand = record;
+        if (record.kind === "control") pendingRequest = record.request;
+        if (record.kind === "wireless-lifecycle") {
+          pendingWireless = { operation: record.operation, generation: record.generation };
+        }
       }
     } catch (error) {
       this.recoveryError = `Pending operation recovery data is unavailable or invalid: ${error.message}`;
     }
     const initial = { ...EMPTY, link: transport.kind, connected: false, reconnecting: false, busy: false,
-      command_pending: Boolean(this.outstanding || this.pendingWirelessCommand), wireless_busy: false,
-      wireless_form_busy: false, settings_dirty: false, configuration_force_save: false,
-      outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
-      error: this.recoveryError
-        ?? (transport.available ? null : transport.unavailableMessage) };
+      wireless_busy: false, pending_request: pendingRequest, pending_wireless: pendingWireless, pending_msc: null,
+      outcome_uncertain: Boolean(this.recoveryError || pendingRequest || pendingWireless),
+      error: this.recoveryError ?? (transport.available ? null : transport.unavailableMessage) };
     this.store = store ?? createDashboardStore(initial);
     if (store) store.dispatch({ type: "replace", state: initial });
     this.unsubscribe = this.store.subscribe(state => this.onChange(state));
     this.onInputReport = event => {
-      if (!this.state.connected || this.connectionSignal.aborted) return;
+      const state = this.state;
+      if (!state.connected || this.connectionSignal.aborted) return;
       const id = event.reportId;
-      if (![3, 10, 11].includes(id) || (id === 11 && !(this.state.hardware.capabilities & CAP.SELF_TEST))) return;
+      if (!TRACKED_REPORTS.includes(id)
+        || (id === REPORT.SELF_TEST && !(state.hardware.capabilities & CAP.SELF_TEST))) return;
       try {
-        const changes = id === 3 ? { runtime: decodeTelemetryReport(event.data, this.state.hardware) }
-          : id === 10 ? decodeStorageReport(event.data, this.state.hardware)
+        const changes = id === REPORT.TELEMETRY ? { runtime: decodeTelemetryReport(event.data, state.hardware) }
+          : id === REPORT.STORAGE ? decodeStorageReport(event.data, state.hardware)
             : { self_test: decodeSelfTestReport(event.data) };
-        if (id === 10 && !this.state.busy && !this.outstanding && this.mscPendingEnabled !== null
-          && (changes.msc.request_rejected ||
-            (changes.msc.enabled === this.mscPendingEnabled && !changes.msc.transition_pending))) {
-          this.mscPendingEnabled = null;
-          changes.msc_command_pending = false;
+        const quiet = !state.busy && !state.pending_request;
+        if (id === REPORT.STORAGE && quiet && state.pending_msc != null && (changes.msc.request_rejected
+          || changes.msc.enabled === state.pending_msc && !changes.msc.transition_pending)) {
+          changes.pending_msc = null;
         }
-        if (id === 11 && !this.state.busy && !this.outstanding
-          && changes.self_test.sequence !== this.selfTestPendingSequence) {
-          changes.self_test_command_pending = false;
+        if (id === REPORT.SELF_TEST && quiet && state.pending_self_test
+          && changes.self_test.sequence !== state.pending_self_test.sequence) {
+          changes.pending_self_test = null;
         }
-        this.receipts.set(id, this.now());
+        this.receipts.record(id);
         this.scheduleExpiry();
-        this.update({ ...changes, freshness: { ...this.state.freshness, [id]: "fresh" } });
+        this.update({ ...changes, freshness: { ...state.freshness, [id]: "fresh" } });
       } catch (error) { this.update({ error: error.message }); }
     };
     this.onDisconnect = () => {
       this.clearConnection();
       this.update({ reconnecting: Boolean(transport.autoReconnect && this.reconnectUid),
-        error: this.recoveryError ?? (this.outstanding
-        ? "Command outcome uncertain after disconnect; no request will be replayed."
-        : this.pendingWirelessCommand
-          ? "Wireless command outcome uncertain; reconnect to inspect its result." : null) });
+        error: this.recoveryError ?? (this.state.pending_request
+          ? "Command outcome uncertain after disconnect; no request will be replayed."
+          : this.state.pending_wireless
+            ? "Wireless command outcome uncertain; reconnect to inspect its result." : null) });
     };
     this.onConnect = () => {
       if (this.reconnectUid && !this.device && !this.state.busy) void this.reconnect();
@@ -107,7 +112,7 @@ export class BoardSession {
     this.transport.removeEventListener("disconnect", this.onDisconnect);
     this.transport.removeEventListener("available", this.onConnect);
     this.transport.removeEventListener("suspend", this.onSuspend);
-    this.timers.clearTimeout(this.expiryTimer);
+    this.receipts.cancel();
     this.connectionController.abort();
     this.timers.dispose();
     this.unsubscribe();
@@ -118,107 +123,63 @@ export class BoardSession {
   get state() { return this.store.getState(); }
   get device() { return this.transport.device; }
   get connectionSignal() { return this.connectionController.signal; }
+  /** @brief Outstanding control request (read-only view of `state.pending_request`). */
+  get outstanding() { return this.state.pending_request; }
+  /** @brief Accepted scan/test lifecycle (read-only view of `state.pending_wireless`). */
+  get pendingWirelessCommand() { return this.state.pending_wireless; }
 
+  /** @brief Internal domain-store writer; the UI never calls it (architecture.test.mjs). */
   update(changes) {
     if (!this.disposed) this.store.dispatch({ type: "patch", changes });
   }
 
-  persistPendingOperation() {
+  /** @brief Persist the recovery record for the given pending facts before they enter state. */
+  persist(request, wireless) {
     const uid = this.state.hardware?.serial_number ?? this.reconnectUid;
-    const record = this.outstanding ? { version: 2, kind: "control", uid, request: this.outstanding }
-      : this.pendingWirelessCommand ? { version: 2, kind: "wireless-lifecycle", uid, ...this.pendingWirelessCommand }
-        : null;
-    savePendingOperation(this.pendingStore, record);
+    savePendingOperation(this.pendingStore, request ? { version: 2, kind: "control", uid, request }
+      : wireless ? { version: 2, kind: "wireless-lifecycle", uid, ...wireless } : null);
   }
-
-  clearPersistedOperation() { savePendingOperation(this.pendingStore, null); }
 
   /**
    * @brief Retire the outstanding transaction. A successful lifecycle request becomes the pending wireless command;
    * a failed MSC request releases its pending ownership change.
    */
   retire(request, succeeded) {
-    if (succeeded && request.lifecycle) {
-      this.pendingWirelessCommand = request.lifecycle;
-      this.outstanding = null;
-      this.persistPendingOperation();
-    } else {
-      this.clearPersistedOperation();
-      this.outstanding = null;
-    }
-    this.update({ command_pending: Boolean(this.outstanding || this.pendingWirelessCommand) });
-    if (!succeeded && request.opcode === OP.MSC) {
-      this.mscPendingEnabled = null;
-      this.update({ msc_command_pending: false });
-    }
-  }
-
-  /** @brief Record a decoded Feature 12 snapshot as fresh wireless state; its lifetime follows the poll interval. */
-  recordWireless(wireless) {
-    if (!wireless.staged_mask && ![4, 5, 6].includes(wireless.state)) this.savedSsidHex = wireless.ssid_hex;
-    this.receipts.set(12, this.now());
-    this.update({ wireless, wireless_error: null, wireless_poll_error: null,
-      freshness: { ...this.state.freshness, 12: "fresh" } });
-    this.scheduleExpiry();
-  }
-
-  /** @brief Run one wireless workflow exclusively; its commands pass the token as `workflow`. */
-  async exclusiveWireless(action) {
-    if (!this.eligibility().wirelessReady) {
-      throw new Error("Wireless configuration requires fresh idle USB storage, with sharing disabled.");
-    }
-    const token = Symbol("wireless operation");
-    this.wirelessOperation = token;
-    this.update({ wireless_busy: true });
-    try { return await action(token); }
-    finally {
-      this.wirelessOperation = null;
-      this.update({ wireless_busy: false, command_pending: Boolean(this.outstanding || this.pendingWirelessCommand) });
-    }
+    const wireless = succeeded && request.lifecycle ? request.lifecycle : null;
+    this.persist(null, wireless);
+    this.update({ pending_request: null, pending_wireless: wireless,
+      ...(!succeeded && request.opcode === OP.MSC ? { pending_msc: null } : {}) });
   }
 
   /** @brief Clear the recovery record after a wireless lifecycle outcome is known. */
   settleWireless() {
-    this.clearPersistedOperation();
-    this.pendingWirelessCommand = null;
-    this.update({ command_pending: Boolean(this.outstanding) });
+    this.persist(null, null);
+    this.update({ pending_wireless: null });
   }
 
-  /** @brief Single source of operation readiness; see eligibility.mjs. */
+  /** @brief Operation readiness after expiring stale reports; see state/selectors.mjs. */
   eligibility() {
     this.expireReports();
     return deriveOperationEligibility(this.state);
   }
 
+  /** @brief Throw the first failing precondition of a user operation; the UI uses the same `canRun` rule. */
+  require(operation) {
+    this.expireReports();
+    const { reason } = canRun(this.state, operation);
+    if (reason) throw new Error(reason);
+  }
+
   expireReports(suspended = false) {
-    const changes = {};
-    const freshness = { ...this.state.freshness };
-    for (const [id, received] of this.receipts) {
-      if (!suspended && this.now() - received < this.reportLifetime(id)) continue;
-      this.receipts.delete(id);
-      freshness[id] = "stale";
-      Object.assign(changes, id === 3 ? { runtime: null }
-        : id === 10 ? { memory: null, filesystem_format: null, msc: null }
-          : id === 12 ? { wireless: null, wireless_error: "Wireless status is stale" } : { self_test: null });
-    }
-    if (Object.keys(changes).length) this.update({ ...changes, freshness });
+    const changes = this.receipts.expire(this.state.freshness, suspended);
+    if (changes) this.update(changes);
     this.scheduleExpiry();
   }
 
   scheduleExpiry() {
-    this.timers.clearTimeout(this.expiryTimer);
-    this.expiryTimer = null;
-    if (!this.device || !this.receipts.size) return;
-    const deadline = Math.min(...[...this.receipts].map(([id, received]) =>
-      received + this.reportLifetime(id)));
-    this.expiryTimer = this.timers.setTimeout(() => {
-      this.expiryTimer = null;
-      this.expireReports();
-    }, Math.max(0, deadline - this.now()));
-    this.expiryTimer.unref?.();
+    if (this.device) this.receipts.schedule(() => this.expireReports());
+    else this.receipts.cancel();
   }
-
-  reportLifetime(id) { return id === 12 ? 3 * wirelessPollInterval(this.state.wireless) : id === 3 ? 750 : 1500; }
 
   async readReport(id, signal = this.connectionSignal, timeout = this.timeout) {
     const device = this.device;
@@ -233,10 +194,12 @@ export class BoardSession {
     this.pollTimer = null;
     if (!this.transport.pollInterval || !this.state.connected || this.disposed) return;
     const signal = this.connectionSignal;
-    if (!this.state.busy && !this.outstanding) {
+    const idle = () => !this.state.busy && !this.state.pending_request;
+    if (idle()) {
       try {
-        for (const id of [3, 10, ...(this.state.hardware.capabilities & CAP.SELF_TEST ? [11] : [])]) {
-          if (this.state.busy || this.outstanding) break;
+        for (const id of TRACKED_REPORTS) {
+          if (id === REPORT.SELF_TEST && !(this.state.hardware.capabilities & CAP.SELF_TEST)) continue;
+          if (!idle()) break;
           const data = await this.readReport(id, signal);
           this.onInputReport({ reportId: id, data });
         }
@@ -250,16 +213,16 @@ export class BoardSession {
     }
   }
 
-  /** One Feature 12 poll owner, shared by both transports and independent of UI refresh. */
+  /** @brief The one Feature 12 poll owner: shared by both transports, self-rescheduling, independent of the UI. */
   pollWireless() {
     this.timers.clearTimeout(this.wirelessPollTimer);
     this.wirelessPollTimer = null;
     if (!this.wirelessPolling || this.disposed || !this.state.connected
       || !(this.state.hardware?.capabilities & CAP.WIRELESS)) return;
     if (this.wirelessReading) return;
-    const delay = this.wirelessLastRead + wirelessPollInterval(this.state.wireless) - Date.now();
-    if (delay <= 0 && !this.state.busy && !this.state.reboot_pending && !this.outstanding
-      && !this.wirelessOperation && !this.state.wireless_form_busy) {
+    const delay = this.wirelessLastRead + wirelessPollInterval(this.state.wireless) - this.now();
+    if (delay <= 0 && !this.state.busy && !this.state.reboot_pending && !this.state.pending_request
+      && !this.wirelessOperation) {
       void this.readWirelessNow();
       return;
     }
@@ -270,8 +233,8 @@ export class BoardSession {
   async readWirelessNow() {
     const signal = this.connectionSignal;
     this.wirelessReading = true;
-    this.wirelessLastRead = Date.now();
-    try { await readWireless(this); }
+    this.wirelessLastRead = this.now();
+    try { await this.readWireless(); }
     catch (error) {
       if (!signal.aborted) {
         this.expireReports();
@@ -283,23 +246,84 @@ export class BoardSession {
     }
   }
 
+  /** @brief Read and record one Feature 12 snapshot; throws if the connection changed meanwhile. */
+  async readWireless(operationSignal, device = this.device) {
+    const signal = operationSignal ? AbortSignal.any([this.connectionSignal, operationSignal]) : this.connectionSignal;
+    const wireless = decodeWireless(await this.readReport(REPORT.WIRELESS, signal, 1500), this.state.settings);
+    if (signal.aborted || device !== this.device) throw new Error("Wireless connection changed");
+    if (showsSavedSsid(wireless)) this.savedSsidHex = wireless.ssid_hex;
+    this.receipts.record(REPORT.WIRELESS);
+    this.update({ wireless, wireless_error: null, wireless_poll_error: null,
+      freshness: { ...this.state.freshness, [REPORT.WIRELESS]: "fresh" } });
+    this.scheduleExpiry();
+    return wireless;
+  }
+
+  /** @brief Poll Feature 12 until the pending scan/test lifecycle completes or fails; never replays it. */
+  async waitLifecycle(pending, onProgress, operationSignal) {
+    const device = this.device;
+    const signal = operationSignal ? AbortSignal.any([this.connectionSignal, operationSignal]) : this.connectionSignal;
+    const deadline = this.now() + (pending.operation === OP.TEST_WIFI ? 35000 : 15000);
+    while (this.now() < deadline) {
+      if (signal.aborted) throw new Error("Wireless command outcome uncertain after disconnect");
+      const status = await this.readWireless(signal, device);
+      const outcome = lifecycleOutcome(status, pending);
+      if (outcome) return outcome;
+      onProgress?.(status.phase || "Connecting");
+      await this.sleep(500, signal);
+    }
+    throw new Error("Wireless operation timed out; reconnect to inspect it, never replay");
+  }
+
+  /** @brief Wait for a lifecycle outcome and settle its record; an unknown outcome stays pending and uncertain. */
+  async finishLifecycle(pending, onProgress, signal) {
+    try {
+      const outcome = await this.waitLifecycle(pending, onProgress, signal);
+      this.settleWireless();
+      return outcome;
+    } catch (error) {
+      if (this.state.pending_wireless) this.update({ outcome_uncertain: true, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * @brief Run one wireless workflow exclusively. The action receives a context whose `command` carries the
+   * workflow token, so only this workflow may use the queue while `wireless_busy` is set.
+   */
+  async runWirelessWorkflow(action) {
+    this.require("wireless");
+    const token = Symbol("wireless operation");
+    this.wirelessOperation = token;
+    this.update({ wireless_busy: true });
+    const context = {
+      command: (opcode, options) => this.command(opcode, { ...options, workflow: token }),
+      read: signal => this.readWireless(signal),
+      finishLifecycle: (pending, onProgress, signal) => this.finishLifecycle(pending, onProgress, signal),
+      invalidateWireless: message => this.update({ wireless: null, wireless_error: message }),
+      savedSsidHex: () => this.savedSsidHex,
+      settings: () => this.state.settings,
+    };
+    try { return await action(context); }
+    finally {
+      this.wirelessOperation = null;
+      this.update({ wireless_busy: false });
+    }
+  }
+
   clearConnection() {
     this.generation++;
     this.connectionController.abort(new DOMException("Device disconnected", "AbortError"));
     this.connectionController = new AbortController();
-    this.timers.clearTimeout(this.expiryTimer);
     this.timers.clearTimeout(this.pollTimer);
     this.timers.clearTimeout(this.wirelessPollTimer);
-    this.expiryTimer = null;
     this.pollTimer = null;
     this.wirelessPollTimer = null;
     this.wirelessLastRead = 0;
     this.savedSsidHex = null;
     this.receipts.clear();
     this.update({ ...EMPTY, connected: false, busy: false,
-      command_pending: Boolean(this.outstanding || this.pendingWirelessCommand),
-      outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
-      msc_command_pending: this.mscPendingEnabled !== null });
+      outcome_uncertain: Boolean(this.recoveryError || commandPending(this.state)) });
   }
 
   async connect(options) {
@@ -325,11 +349,12 @@ export class BoardSession {
     const device = this.device;
     const generation = this.generation;
     const signal = this.connectionController.signal;
+    const current = () => generation === this.generation && device === this.device;
     this.update({ busy: true });
     try {
       signal.throwIfAborted();
-      const hardware = decodeIdentityReport(await withTimeout(this.transport.readReport(1, signal), this.timeout, signal,
-        this.timers));
+      const hardware = decodeIdentityReport(await withTimeout(this.transport.readReport(REPORT.IDENTITY, signal),
+        this.timeout, signal, this.timers));
       const expectedUid = this.reconnectUid;
       if (expectedUid && hardware.serial_number !== expectedUid) {
         await this.transport.disconnect();
@@ -337,29 +362,26 @@ export class BoardSession {
           error: "Select the original board to resolve its pending operation." });
         return;
       }
-      const settings = decodeConfigReport(await withTimeout(this.transport.readReport(2, signal), this.timeout, signal,
-        this.timers), hardware);
-      if (generation !== this.generation || device !== this.device) throw new Error("Connection cancelled");
+      const settings = decodeConfigReport(await withTimeout(this.transport.readReport(REPORT.CONFIG, signal),
+        this.timeout, signal, this.timers), hardware);
+      if (!current()) throw new Error("Connection cancelled");
       this.reconnectUid = hardware.serial_number;
       this.update({ ...EMPTY, connected: true, reconnecting: false, busy: true,
-        outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
-        error: this.recoveryError,
-        hardware, settings, settings_supported: Boolean(hardware.capabilities & CAP.SETTINGS),
-        msc_command_pending: this.mscPendingEnabled !== null });
+        outcome_uncertain: Boolean(this.recoveryError || commandPending(this.state)), error: this.recoveryError,
+        hardware, settings, settings_supported: Boolean(hardware.capabilities & CAP.SETTINGS) });
       this.scheduleExpiry();
-      if (this.outstanding) {
-        const request = this.outstanding;
+      const request = this.state.pending_request;
+      if (request) {
         try {
           const result = await this.pollResult(device, request, signal);
-          const succeeded = result.status === 2;
+          const succeeded = result.status === RESULT.COMPLETED;
           if (succeeded && request.settings && (!sameSettings(result.settings, request.settings)
             || result.commit_mask !== request.commit_mask)) {
             throw new Error("Firmware did not confirm the selected values after reconnect");
           }
           this.retire(request, succeeded);
-          this.update({ outcome_uncertain: false, error: succeeded ? null
-            : `Command ${result.opcode}: status ${result.status}, error ${result.error_reason}`,
-          recovered_opcode: succeeded ? result.opcode : null, recovery_message: !succeeded ? null
+          this.update({ outcome_uncertain: false, error: succeeded ? null : commandError(result.opcode, result, false)
+            .message, recovered_opcode: succeeded ? result.opcode : null, recovery_message: !succeeded ? null
             : result.opcode === OP.CANCEL_TEST ? "Wireless test cancellation confirmed after reconnect."
               : "Pending command result confirmed after reconnect." });
           this.forcedSave?.settle({ result });
@@ -368,13 +390,11 @@ export class BoardSession {
           this.forcedSave?.settle({ error });
         }
       }
-      if (this.pendingWirelessCommand && !this.outstanding) {
-        const pending = this.pendingWirelessCommand;
+      const pending = this.state.pending_wireless;
+      if (pending && !this.state.pending_request) {
         try {
-          const outcome = await waitLifecycle(this, pending);
-          if (generation !== this.generation || device !== this.device) {
-            throw new Error("Wireless command outcome uncertain after disconnect");
-          }
+          const outcome = await this.waitLifecycle(pending);
+          if (!current()) throw new Error("Wireless command outcome uncertain after disconnect");
           this.settleWireless();
           this.update({ outcome_uncertain: Boolean(this.recoveryError),
             error: this.recoveryError ?? (outcome.kind === "failed" ? outcome.message : null),
@@ -383,7 +403,7 @@ export class BoardSession {
           this.update({ outcome_uncertain: true, error: error.message });
         }
       }
-      if (generation === this.generation && device === this.device) {
+      if (current()) {
         this.update({ busy: false });
         await this.pollReports();
         this.pollWireless();
@@ -401,10 +421,9 @@ export class BoardSession {
 
   async disconnect() {
     if (this.state.busy) return;
-    if (!this.outstanding && !this.pendingWirelessCommand) this.reconnectUid = null;
-    this.mscPendingEnabled = null;
+    if (!commandPending(this.state)) this.reconnectUid = null;
     this.clearConnection();
-    this.update({ reconnecting: false, error: this.recoveryError });
+    this.update({ reconnecting: false, error: this.recoveryError, pending_msc: null });
     try { await this.transport.disconnect(); } catch (error) { this.update({ error: error.message }); }
   }
 
@@ -413,13 +432,15 @@ export class BoardSession {
     const generation = this.generation;
     for (let attempt = 0; attempt < Math.ceil(this.timeout / 50) && this.now() < deadline; attempt++) {
       if (signal.aborted || device !== this.device) throw new Error("Command outcome uncertain after disconnect");
-      const report = await withTimeout(this.transport.readReport(20, signal), deadline - this.now(), signal, this.timers);
+      const report = await withTimeout(this.transport.readReport(REPORT.CONTROL, signal), deadline - this.now(),
+        signal, this.timers);
       if (signal.aborted || device !== this.device || generation !== this.generation) {
         throw new Error("Command outcome uncertain after disconnect");
       }
       const result = decodeControlResult(report, { ble: this.state.link === "ble" });
-      if (result.transaction_id === request.transaction_id && result.opcode === request.opcode && result.status > 1) {
-        if (result.status === 2 && request.opcode === OP.SCAN_ENTRY
+      if (result.transaction_id === request.transaction_id && result.opcode === request.opcode
+        && result.status > RESULT.PENDING) {
+        if (result.status === RESULT.COMPLETED && request.opcode === OP.SCAN_ENTRY
           && ((result.data[0] | result.data[1] << 8) !== request.scan_generation
             || result.data[2] !== request.scan_index)) {
           throw new Error("Scan entry did not match the requested generation and index");
@@ -440,7 +461,7 @@ export class BoardSession {
     if (!this.state.connected || !this.state.hardware) {
       throw new Error("Connect the matching PicoForge board before authorizing its Wi-Fi console");
     }
-    const serial = this.state.connected ? this.state.hardware?.serial_number : null;
+    const serial = this.state.hardware.serial_number;
     if (serial) {
       const expectedUid = hexToBytes(serial);
       if (uid.some((byte, index) => byte !== expectedUid[index])) {
@@ -461,17 +482,21 @@ export class BoardSession {
 
   /**
    * @brief Send one control request and wait for its authoritative result; the outcome stays persisted until known.
-   * Opcode-specific follow-up state belongs to the caller (setMsc, setSelfTest, reboot, saveSettings).
+   * `options.reboots` marks the board as rebooting after success; other follow-up state belongs to the caller.
    */
   async command(opcode, options) {
-    if (!this.transport.supportsOpcode(opcode)) throw new Error("This operation requires USB.");
+    const restriction = linkRestriction(this.state.link, opcode, options?.flags ?? 0);
+    if (restriction) throw new Error(restriction);
     if (this.queue) throw new Error("Command unavailable while another command owns the queue");
     const args = options?.args ? [...options.args] : undefined;
     const signal = options?.signal
       ? AbortSignal.any([this.connectionSignal, options.signal]) : this.connectionSignal;
     this.queue = { opcode, signal };
-    try { return await this.executeCommand(opcode, { ...options, args, signal }); }
-    finally {
+    try {
+      const result = await this.executeCommand(opcode, { ...options, args, signal });
+      if (options?.reboots) this.update({ reboot_pending: true });
+      return result;
+    } finally {
       args?.fill(0);
       this.queue = null;
     }
@@ -479,17 +504,13 @@ export class BoardSession {
 
   async executeCommand(opcode, options) {
     this.expireReports();
-    const signal = options?.signal
-      ? AbortSignal.any([this.connectionSignal, options.signal]) : this.connectionSignal;
+    const signal = options.signal;
     if (signal.aborted) throw signal.reason ?? new DOMException("Operation cancelled", "AbortError");
-    const commandState = options?.workflow === this.wirelessOperation
-      ? { ...this.state, wireless_busy: false } : this.state;
-    const { blocked } = deriveOperationEligibility(commandState);
-    if (!this.device || blocked || this.outstanding || this.pendingWirelessCommand
-      || this.state.self_test_command_pending || this.state.msc_command_pending) {
+    if (!this.device || commandBlocked(this.state)
+      || this.state.wireless_busy && options.workflow !== this.wirelessOperation) {
       throw new Error("Command unavailable or previous outcome uncertain");
     }
-    const bit = opcode >= OP.STAGE_SSID ? CAP.WIRELESS : REQUIRED_CAP[opcode];
+    const bit = requiredCapability(opcode);
     if (bit && !(this.state.hardware.capabilities & bit)) throw new Error("Unavailable capability");
     const transaction = this.transaction % 255 + 1;
     const report = buildControlRequest(transaction, opcode, options);
@@ -503,34 +524,25 @@ export class BoardSession {
       request.scan_index = report[4];
       request.scan_generation = report[5] | report[6] << 8;
     }
-    if (options?.lifecycle) request.lifecycle = options.lifecycle;
+    if (options.lifecycle) request.lifecycle = options.lifecycle;
     if (opcode === OP.SAVE_SETTINGS) {
       request.settings = decodeSettings(report.subarray(4, 8));
-      request.commit_mask = options?.commitMask ?? 0;
+      request.commit_mask = options.commitMask ?? 0;
     }
     const device = this.device;
     const generation = this.generation;
-    const commandSignal = signal;
-    this.outstanding = request;
-    if (opcode === OP.MSC) this.mscPendingEnabled = report[4] === 1;
-    try { this.persistPendingOperation(); }
-    catch (error) {
-      this.outstanding = null;
-      this.mscPendingEnabled = null;
-      throw error;
-    }
-    this.update({ busy: true, command_pending: true, error: null, recovery_message: null, recovered_opcode: null,
-      ...(opcode === OP.MSC ? { msc_command_pending: true } : {}) });
+    this.persist(request, null);
+    this.update({ busy: true, pending_request: request, error: null, recovery_message: null, recovered_opcode: null,
+      ...(opcode === OP.MSC ? { pending_msc: report[4] === 1 } : {}) });
     let sent = false;
     try {
-      await withTimeout(this.transport.writeReport(20, report, commandSignal), this.timeout, commandSignal, this.timers);
+      await withTimeout(this.transport.writeReport(REPORT.CONTROL, report, signal), this.timeout, signal, this.timers);
       sent = true;
       if (generation !== this.generation) throw new Error("Command outcome uncertain after disconnect");
-      const result = await this.pollResult(device, request, commandSignal);
-      if (result.status !== 2) {
+      const result = await this.pollResult(device, request, signal);
+      if (result.status !== RESULT.COMPLETED) {
         this.retire(request, false);
-        throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}, `
-          + `detail ${result.detail}`);
+        throw commandError(opcode, result);
       }
       if (request.settings) {
         if (!sameSettings(result.settings, request.settings) || result.commit_mask !== request.commit_mask) {
@@ -543,13 +555,11 @@ export class BoardSession {
       return result;
     } catch (error) {
       if (forced && sent && this.reconnectUid && !(generation === this.generation && this.state.outcome_uncertain)
-        && (this.outstanding || forced.outcome)) {
+        && (this.state.pending_request || forced.outcome)) {
         const { result } = forced.outcome ?? await withTimeout(forced.done, 5000, undefined, this.timers)
           .catch(() => ({}));
         if (result?.transaction_id === transaction && result.opcode === opcode) {
-          if (result.status !== 2) {
-            throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
-          }
+          if (result.status !== RESULT.COMPLETED) throw commandError(opcode, result, false);
           if (sameSettings(result.settings, request.settings) && result.commit_mask === request.commit_mask) {
             this.update({ settings: result.settings, outcome_uncertain: false });
             return result;
@@ -566,8 +576,7 @@ export class BoardSession {
         }
       }
       if (generation === this.generation) {
-        this.update({ outcome_uncertain: Boolean(this.outstanding || this.pendingWirelessCommand),
-          error: error.message });
+        this.update({ outcome_uncertain: commandPending(this.state), error: error.message });
       }
       throw error;
     } finally {
@@ -579,42 +588,35 @@ export class BoardSession {
 
   async setLed(on) {
     requireValid(typeof on === "boolean", "LED state");
-    this.expireReports();
-    if (!this.state.runtime?.led_available) throw new Error("Fresh LED telemetry unavailable");
+    this.require("led");
     return this.command(OP.LED, { args: [Number(on)] });
   }
 
   async reboot(confirmed = false) {
     if (confirmed !== true) throw new Error("Reboot requires explicit confirmation");
-    if (!this.eligibility().storageReady || this.state.msc.enabled) {
-      throw new Error("Fresh idle firmware-owned storage required");
-    }
-    const result = await this.command(OP.REBOOT, { flags: 1 });
-    this.update({ reboot_pending: true });
-    return result;
+    this.require("reboot");
+    return this.command(OP.REBOOT, { flags: 1, reboots: true });
   }
 
   async setMsc(enable, force = false) {
     requireValid(typeof enable === "boolean" && typeof force === "boolean" && !(force && enable), "MSC action");
-    if (!this.eligibility().storageReady || (force && !this.state.msc.enabled)) {
-      throw new Error("Fresh idle storage status required");
-    }
+    this.require("msc");
+    if (force && !this.state.msc.enabled) throw new Error("Fresh idle storage status required");
     return this.command(OP.MSC, { flags: Number(force), args: [force ? 2 : Number(enable)] });
   }
 
   async setSelfTest(action, sizeMiB = 32) {
     requireValid(["start", "cancel"].includes(action), "self-test action");
-    if (!this.eligibility().storageFresh || this.state.msc.enabled || !this.state.self_test?.valid_for_control
-      || (action === "start" && (this.state.self_test.active || !this.state.self_test.volume_mounted
-        || !this.state.memory?.initialized))) throw new Error("Fresh self-test and firmware-owned storage required");
+    this.require("selfTest");
+    if (action === "start" && (this.state.self_test.active || !this.state.self_test.volume_mounted
+      || !this.state.memory?.initialized)) throw new Error("Fresh self-test and firmware-owned storage required");
     if (action === "cancel") sizeMiB = 0;
     requireValid(Number.isInteger(sizeMiB) && sizeMiB >= (action === "start" ? 1 : 0) && sizeMiB <= 1024,
       "self-test size");
     const size = new Uint8Array(4);
     new DataView(size.buffer).setUint32(0, sizeMiB, true);
     const result = await this.command(OP.SELF_TEST, { args: [Number(action === "start"), ...size] });
-    this.selfTestPendingSequence = this.state.self_test?.sequence ?? null;
-    this.update({ self_test_command_pending: true });
+    this.update({ pending_self_test: { sequence: this.state.self_test?.sequence ?? null } });
     return result;
   }
 
@@ -623,12 +625,9 @@ export class BoardSession {
     requireValid(validSettings(settings), "boot settings");
     requireValid(typeof force === "boolean", "forced save confirmation");
     requireValid(tcpCliEnabled === undefined || typeof tcpCliEnabled === "boolean", "TCP CLI setting");
-    if (!this.eligibility().storageReady || this.state.msc.enabled !== force) {
-      throw new Error("Fresh idle firmware-owned storage required before saving.");
-    }
+    this.require("settings");
+    if (this.state.msc.enabled !== force) throw new Error("Fresh idle firmware-owned storage required before saving.");
     const tcp = tcpCliEnabled ?? settings.tcp_cli_enabled ?? this.state.settings?.tcp_cli_enabled ?? false;
-    const result = await this.command(OP.SAVE_SETTINGS, { flags: Number(force), args: encodeSettings(settings, tcp) });
-    this.update({ reboot_pending: true });
-    return result;
+    return this.command(OP.SAVE_SETTINGS, { flags: Number(force), args: encodeSettings(settings, tcp), reboots: true });
   }
 }

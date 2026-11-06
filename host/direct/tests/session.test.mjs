@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { commandPending } from "../web/js/state/selectors.mjs";
 import { BoardSession } from "../web/js/board/session.mjs";
 import { OP } from "../web/js/protocol/constants.mjs";
 import { config, fakeConnection, identity, result, telemetry } from "./support/fixtures.mjs";
@@ -9,7 +10,6 @@ test("the same board session consumes either peer transport without HID-shaped d
     const sent = [];
     const transport = Object.assign(new EventTarget(), {
       kind, available: true, autoReconnect: false, pollInterval: null, device: null,
-      supportsOpcode: () => true,
       async connect(_options, signal) { signal.throwIfAborted(); this.device = {}; return true; },
       async disconnect() { this.device = null; },
       async dispose() { await this.disconnect(); },
@@ -45,7 +45,7 @@ test("cancelling an in-flight write preserves uncertainty and its recovery journ
   await client.connect();
   const controller = new AbortController();
   const command = client.command(OP.LED, { args: [1], signal: controller.signal });
-  assert.equal(client.state.command_pending, true);
+  assert.equal(commandPending(client.state), true);
   controller.abort();
   await assert.rejects(command, { name: "AbortError" });
   assert.equal(client.state.outcome_uncertain, true);

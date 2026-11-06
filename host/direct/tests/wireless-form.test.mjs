@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bindWirelessForm } from "../web/js/ui/sections/wireless-form.mjs";
+import { bindWirelessForm, formTransition } from "../web/js/ui/sections/wireless-form.mjs";
 import { renderWirelessStatus } from "../web/js/ui/sections/wireless.mjs";
 
 test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
@@ -48,7 +48,6 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
   const tested = [];
   const form = bindWirelessForm({
     supported: () => true, ready: () => true,
-    load: async () => ({ ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true, ble_enabled: false }),
     scan: async () => [{ ssid: "\\x00\\xFF<script>", ssid_hex: "00ff3c7363726970743e", rssi: -60, secured: false }],
     test: async request => {
       tested.push(request);
@@ -59,7 +58,7 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
   });
   try {
     el("direct-settings-wifi").value = "1"; el("direct-settings-ble").value = "0";
-    await form.load();
+    form.update({ wireless: { ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true, ble_enabled: false } });
     await el("direct-wifi-scan").handlers.click();
     const button = el("direct-wifi-networks").children[0];
     assert.equal(button.children[0].textContent, "\\x00\\xFF<script>", "SSID label is text, never HTML");
@@ -133,15 +132,15 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
   try {
     el("direct-settings-wifi").value = "1";
     el("direct-settings-ble").value = "0";
-    const form = bindWirelessForm({ load: async () => status, ready: () => ready, supported: () => supported,
+    const form = bindWirelessForm({ ready: () => ready, supported: () => supported,
       test: async () => ({ ipv4: "192.168.1.2", remaining_seconds: 600 }), cancelTest: async () => {} });
-    await form.load();
+    form.update({ wireless: status });
     assert.equal(form.dirty(), false);
     assert.equal(el("direct-settings-tcp-cli").disabled, false);
     assert.equal(el("direct-settings-tcp-cli").label.hidden, false);
     el("direct-settings-tcp-cli").value = "0";
     el("direct-settings-tcp-cli").handlers.change();
-    await form.load();
+    form.update({ wireless: status });
     assert.equal(el("direct-settings-tcp-cli").value, "0", "periodic refresh preserves unsaved TCP edits");
     assert.equal(form.dirty(), true);
     assert.equal(form.request().tcp_cli_enabled, false);
@@ -222,11 +221,10 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
   try {
     el("direct-settings-wifi").value = "1";
     el("direct-settings-ble").value = "0";
-    const form = bindWirelessForm({ load: async () => ({ ssid: "saved", wifi_enabled: true }),
-      ready: () => true, supported: () => true,
+    const form = bindWirelessForm({ ready: () => true, supported: () => true,
       scan: () => (scan = deferred()).promise, test: () => (check = deferred()).promise,
       cancelTest: () => (cancel = deferred()).promise });
-    await form.load();
+    form.update({ wireless: { ssid: "saved", wifi_enabled: true } });
 
     const scanning = el("direct-wifi-scan").handlers.click();
     assert.equal(form.operationBusy(), true, "scanning owns the device");
@@ -238,7 +236,7 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
     assert.equal(el("direct-wifi-networks").children.length, 0, "a scan from before the reset is ignored");
     assert.equal(form.operationBusy(), false);
 
-    await form.load();
+    form.update({ wireless: { ssid: "saved", wifi_enabled: true } });
     el("direct-wifi-ssid").value = "home";
     el("direct-wifi-password").value = "password";
     const testing = el("direct-wifi-connect").handlers.click();
@@ -264,4 +262,19 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
     assert.equal(form.operationBusy(), false);
     assert.equal(form.canSave(), true);
   } finally { globalThis.document = previous; }
+});
+
+test("formTransition serializes one phase and requires reconnect recovery before a retry", () => {
+  const step = (form, ...events) => events.reduce((value, type) =>
+    formTransition(value, typeof type === "string" ? { type } : type), form);
+  const idle = step({}, "reset");
+  assert.equal(idle.phase, "idle");
+  assert.equal(step(idle, "scan", "test").phase, "scanning", "a running scan rejects a test");
+  assert.equal(step(idle, "scan", "done").phase, "idle");
+  assert.equal(step(idle, "test", "cancel").phase, "testing", "cancel waits for the test to finish");
+  const failed = step(idle, "cancel", { type: "cancelFailed", error: "x", needsReconnect: true });
+  assert.deepEqual(failed, { phase: "cancelFailed", cancelError: "x", cancelNeedsReconnect: true });
+  assert.equal(step(failed, "cancel"), failed, "retry is refused until the board reconnects");
+  assert.equal(step(failed, "recovered", "cancel", "cleared").phase, "idle");
+  assert.equal(step(idle, "test", "reset").phase, "idle", "reset drops any in-flight phase");
 });

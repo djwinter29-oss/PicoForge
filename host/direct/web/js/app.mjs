@@ -16,9 +16,18 @@ function createSession(kind) {
   return new BoardSession(transport, () => dashboard?.refresh(), { timerScope: timers, store });
 }
 
+/** Browser facts injected into the UI, read live so they match `createSession`; app.mjs is the only global reader. */
+const environment = {
+  get secure() { return Boolean(globalThis.isSecureContext); },
+  get hid() { return Boolean(navigator.hid); },
+  get ble() { return Boolean(navigator.bluetooth); },
+  get clipboard() { return navigator.clipboard ?? null; },
+  now: () => Date.now(),
+};
+
 let session = createSession("usb");
 dashboard = mountDashboard({
-  session, timers,
+  session, timers, environment,
   selectTransport(kind) {
     session.dispose();
     session = createSession(kind);

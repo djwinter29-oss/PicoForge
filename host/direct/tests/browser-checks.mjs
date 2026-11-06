@@ -57,10 +57,6 @@ await run("dashboard fits a narrow viewport without horizontal overflow", async 
 await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the test", async () => {
   let cancelAttempts = 0;
   const form = bindWirelessForm({
-    load: async () => ({
-      ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
-      ble_key_configured: false, tcp_cli_enabled: true,
-    }),
     scan: async () => [],
     test: async () => ({ remaining_seconds: 600, ipv4: "192.0.2.2" }),
     cancelTest: async () => {
@@ -69,7 +65,10 @@ await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the
     ready: () => true,
     supported: () => true,
   });
-  await form.load();
+  form.update({ wireless: {
+    ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
+    ble_key_configured: false, tcp_cli_enabled: true,
+  } });
 
   const wifi = document.querySelector("#direct-settings-wifi");
   const dialog = document.querySelector("#direct-wifi-dialog");

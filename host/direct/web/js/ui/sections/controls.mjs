@@ -1,4 +1,5 @@
 import { CAP } from "../../protocol/constants.mjs";
+import { canRun, mscPending, selfTestPending } from "../../state/selectors.mjs";
 import { queryElement, setText } from "../dom.mjs";
 
 const element = id => queryElement(`#${id}`);
@@ -32,29 +33,40 @@ export function renderClockOptions(state) {
   select.value = options.some(option => option.value === previous) ? previous : "0";
 }
 
+/**
+ * @brief Derive control labels, notes and gates. Operation gates come from `canRun`, so a disabled button and a
+ * refused session call share one reason (shown as the button title).
+ * @param state Domain state with the dashboard's merged `error`.
+ * @param ui `{eligibility, formBusy, settingsMessage, bleName, settingsDirty, wirelessDirty, wirelessCanSave}`.
+ * @param environment Injected browser facts `{secure, hid, ble}`.
+ */
 export function deriveControlsViewModel(state, ui, environment) {
   const bluetooth = state.link === "ble";
   const { eligibility } = ui;
-  const { blocked, storageReady, settingsReady } = eligibility;
+  const { storageReady } = eligibility;
+  const reason = operation => ui.formBusy ? "Finish the wireless operation first." : canRun(state, operation).reason;
+  const reasons = { "led-control": reason("led"), "msc-control": reason("msc"), "settings-reboot": reason("reboot"),
+    "settings-save": reason("settings") };
   const bleLinked = bluetooth && (state.connected || state.reconnecting);
   const usbUnsupported = !environment.secure || !environment.hid;
   const bleUnsupported = !environment.secure || !environment.ble;
-  const settingsNote = state.settings_message || (!state.connected ? "Connect to read the saved settings."
+  const settingsNote = ui.settingsMessage || (!state.connected ? "Connect to read the saved settings."
     : !state.settings_supported ? "Persistent settings save is unavailable."
       : bluetooth && state.msc?.enabled
         ? "USB storage owns the card; settings and reboot require firmware-owned storage."
-        : !storageReady ? state.self_test?.active || state.self_test_command_pending
+        : !storageReady ? state.self_test?.active || selfTestPending(state)
           ? "" : "Waiting for fresh, idle storage status."
           : bluetooth ? "Over Bluetooth, clock, SD Card, TCP CLI, and reboot are available; "
             + "radio and credential provisioning remain USB-only." : "");
   const mscNote = state.reconnecting ? "USB interfaces are reconnecting; HID will resume automatically."
     : state.msc?.request_rejected ? "Storage request or transition failed; inspect storage and CDC diagnostics."
-      : state.msc?.transition_pending || state.msc_command_pending ? "Waiting for the storage ownership transition result."
+      : state.msc?.transition_pending || mscPending(state) ? "Waiting for the storage ownership transition result."
         : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
   return {
     settingsValues: !ui.settingsDirty ? state.settings : null,
     radioHidden: !(state.hardware?.capabilities & CAP.WIRELESS),
-    settingsDisabled: !settingsReady || !state.settings_supported,
+    settingsDisabled: !eligibility.settingsReady || !state.settings_supported,
+    titles: Object.fromEntries(Object.entries(reasons).map(([id, text]) => [id, text ?? ""])),
     disabled: {
       "usb-open": Boolean(state.busy || eligibility.connectionLocked && bluetooth),
       "bluetooth-open": Boolean(state.busy || eligibility.connectionLocked && !bluetooth),
@@ -63,11 +75,11 @@ export function deriveControlsViewModel(state, ui, environment) {
       "direct-ble-control-key": Boolean(state.busy || !bluetooth || bleLinked || bleUnsupported),
       "usb-connection-close": Boolean(state.busy),
       "bluetooth-connection-close": Boolean(state.busy),
-      "led-control": blocked || !state.runtime?.led_available || !(state.hardware?.capabilities & CAP.LED),
-      "msc-control": blocked || !storageReady || bluetooth,
-      "settings-save": !settingsReady || !state.settings_supported || !ui.settingsDirty && !ui.wirelessDirty
+      "led-control": Boolean(reasons["led-control"]),
+      "msc-control": Boolean(reasons["msc-control"]),
+      "settings-save": Boolean(reasons["settings-save"]) || !ui.settingsDirty && !ui.wirelessDirty
         || !ui.wirelessCanSave || ui.wirelessDirty && Boolean(state.msc?.enabled),
-      "settings-reboot": !settingsReady || Boolean(state.msc?.enabled) || !(state.hardware?.capabilities & CAP.REBOOT),
+      "settings-reboot": Boolean(reasons["settings-reboot"]),
     },
     text: {
       "usb-connect": !bluetooth && (state.connected || state.reconnecting) ? "Disconnect" : "Select board",
@@ -88,10 +100,8 @@ export function deriveControlsViewModel(state, ui, environment) {
   };
 }
 
-export function renderControls(state, ui) {
-  const model = deriveControlsViewModel(state, ui, {
-    secure: globalThis.isSecureContext, hid: Boolean(navigator.hid), ble: Boolean(navigator.bluetooth),
-  });
+export function renderControls(state, ui, environment) {
+  const model = deriveControlsViewModel(state, ui, environment);
   if (model.settingsValues) {
     element("settings-clock").value = String(model.settingsValues.system_clock_mhz);
     element("settings-storage").value = String(model.settingsValues.sdcard_profile);
@@ -107,6 +117,7 @@ export function renderControls(state, ui) {
     queryElement(`label[for="${id}"]`).hidden = model.radioHidden;
   }
   for (const [id, disabled] of Object.entries(model.disabled)) element(id).disabled = disabled;
+  for (const [id, title] of Object.entries(model.titles)) element(id).title = title;
   element("settings-note").hidden = !model.text["settings-note"];
   element("msc-note").hidden = !model.text["msc-note"];
   element("status-message").hidden = model.hideStatus;

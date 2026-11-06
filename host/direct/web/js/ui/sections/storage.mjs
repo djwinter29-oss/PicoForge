@@ -1,4 +1,5 @@
 import { CAP } from "../../protocol/constants.mjs";
+import { mscPending } from "../../state/selectors.mjs";
 import { queryElement, setText } from "../dom.mjs";
 
 function formatBytes(bytes) {
@@ -39,7 +40,7 @@ export function deriveStorageViewModel(state, previous = {}) {
   return {
     retained: { absent, details },
     hidden: absent,
-    selfTestHidden: absent || Boolean(msc?.enabled || msc?.transition_pending || state.msc_command_pending)
+    selfTestHidden: absent || Boolean(msc?.enabled || msc?.transition_pending || mscPending(state))
       || !(state.hardware?.capabilities & CAP.SELF_TEST),
     text: {
       "memory-state": label,

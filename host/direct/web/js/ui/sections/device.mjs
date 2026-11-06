@@ -96,7 +96,9 @@ export function renderDevice(state) {
   }
   const uart = queryElement("#board-uart");
   if (uart.dataset.boardConfiguration === model.pins.signature) return;
-  for (const [id, [labels, pins]] of [["board-uart", model.pins.uart], ["board-storage-pins", model.pins.storage]]) {
+  const tables = /** @type {[string, [string[], string[]]][]} */ ([["board-uart", model.pins.uart],
+    ["board-storage-pins", model.pins.storage]]);
+  for (const [id, [labels, pins]] of tables) {
     const headings = document.createElement("tr");
     const values = document.createElement("tr");
     labels.forEach((label, index) => {

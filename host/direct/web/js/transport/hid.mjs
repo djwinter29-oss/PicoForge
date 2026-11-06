@@ -38,8 +38,6 @@ export class HidTransport extends EventTarget {
     hid?.addEventListener("suspend", this.onSuspend);
   }
 
-  supportsOpcode() { return true; }
-
   async connect(_options, signal) {
     signal.throwIfAborted();
     if (!this.api) throw new Error(this.unavailableMessage);

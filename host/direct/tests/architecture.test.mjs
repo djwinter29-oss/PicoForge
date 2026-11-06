@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { BleTransport } from "../web/js/transport/ble.mjs";
+import { HidTransport } from "../web/js/transport/hid.mjs";
 
 const root = new URL("../web/js/", import.meta.url);
 const paths = readdirSync(root, { recursive: true }).filter(path => path.endsWith(".mjs"))
@@ -46,4 +48,38 @@ test("the Direct runtime module graph is acyclic", () => {
     visited.add(path);
   }
   for (const path of paths) visit(path);
+});
+
+test("one domain writer: workflows use the session context and the UI never writes domain state", () => {
+  for (const [path, source] of sources) {
+    if (path !== "app.mjs") {
+      assert.doesNotMatch(source, /\b(navigator|isSecureContext)\b(?!\s*:)/,
+        `${path}: app.mjs is the only global reader`);
+    }
+    if (path.startsWith("ui/")) assert.doesNotMatch(source, /\.update\(\s*\{/, `${path} must not write domain state`);
+    if (path.startsWith("board/workflows/")) {
+      assert.doesNotMatch(source, /client\.(update|pendingWirelessCommand|savedSsidHex|exclusiveWireless)\b/,
+        `${path} must use only the workflow context`);
+    }
+    if (path.startsWith("transport/")) {
+      assert.ok(!dependencies.get(path).includes("protocol/commands.mjs"), `${path} must stay a byte pipe`);
+    }
+  }
+  assert.ok(!dependencies.get("board/session.mjs").some(target => target.startsWith("board/workflows/")),
+    "the session must not import the workflows that drive it");
+});
+
+test("transports are byte pipes that honour abort, reject bad framing and wipe the control key", async () => {
+  const aborted = AbortSignal.abort();
+  const live = new AbortController().signal;
+  const hid = new HidTransport(undefined);
+  await assert.rejects(hid.readReport(10, aborted), { name: "AbortError" });
+  await assert.rejects(hid.writeReport(20, new Uint8Array(68), live), /USB device disconnected/);
+  const ble = new BleTransport(undefined);
+  await assert.rejects(ble.writeReport(20, new Uint8Array(68), aborted), { name: "AbortError" });
+  const oversized = new Uint8Array(68);
+  oversized[9] = 1;
+  await assert.rejects(ble.writeReport(20, oversized, live), /9-byte BLE control frame/);
+  await assert.rejects(ble.writeReport(2, new Uint8Array(68), live), /9-byte BLE control frame/);
+  await assert.rejects(ble.setControlKey(new Uint8Array(31)), /Control key must be 32 bytes/);
 });
