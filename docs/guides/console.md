@@ -199,10 +199,14 @@ The console receives only
 the one-use proof, never the Control key. Entering the same key again would not add a separate factor or strengthen
 the challenge-response check.
 
-The matching dashboard tab must stay connected until the console authenticates. The console sends its challenge to
-the exact same-origin popup opened by the dashboard through `postMessage`; the dashboard checks the challenge UID,
-then returns the one-use proof to that popup. The URL contains only the board's private IPv4 address, not a pairing
-secret. The Direct bridge accepts loopback, same-origin requests and forwards the proof; it does not authenticate
+The matching dashboard tab must stay connected when the console connects or reconnects. The console sends each fresh
+challenge to its original same-origin dashboard through `postMessage`; the dashboard accepts only console windows it
+opened and checks both the original board UID and the current challenge UID before returning the one-use proof.
+The console's Connect button supports reconnecting in the same tab; reopening from the dashboard is required if that
+dashboard closes, reloads, or changes boards. Direct's page-navigation and history-restoration behavior is documented
+in its [dashboard lifecycle](../../host/direct/README.md#page-lifecycle). The URL contains only the board's private
+IPv4 address, not a pairing secret. The Direct bridge accepts loopback, same-origin requests and forwards the proof;
+it does not authenticate
 local OS users or processes. Treat a shared computer as trusted. If no matching dashboard responds, the console
 fails closed and asks you to connect the board there; it does not fall back to a key-entry field.
 

@@ -156,7 +156,6 @@ export function mountConsole({ document, window, location, fetch }) {
         timers.clearTimeout(timer);
         signal.removeEventListener("abort", abort);
         window.removeEventListener("message", receive);
-        if (window.opener === opener) window.opener = null;
         if (error) reject(error);
         else resolve(proof);
       };
@@ -280,5 +279,9 @@ export function mountConsole({ document, window, location, fetch }) {
       void fetch("/api/direct-terminal/close", { method: "POST", keepalive: true,
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: token }) });
     }
+  });
+  window.addEventListener("pageshow", event => {
+    // Recreate disposed timers without reopening a TCP session or resending terminal input.
+    if (event.persisted) location.reload();
   });
 }

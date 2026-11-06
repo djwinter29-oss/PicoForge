@@ -25,7 +25,10 @@ export const commandFailed = (result, withDetail = true) => new BoardError(REASO
   opcode: result.opcode, status: result.status, error: result.error_reason,
   ...withDetail ? { detail: result.detail } : {} });
 
-/** @brief Validate one version-2 journal record exactly; @return the record, or throw. */
+/**
+ * @brief Validate one version-2 journal record exactly; @return the record, or throw.
+ * @param {import("../state/reducer.mjs").PendingOperation} record
+ */
 export function validatePendingOperation(record) {
   if (!record || record.version !== 2 || !isUid(record.uid)) throw new BoardError(REASON.JOURNAL_IDENTITY);
   if (record.kind === "control") {
@@ -84,11 +87,13 @@ export class Commands {
     /** State error value when the journal could not be read; every write stays uncertain until reload. */
     this.recoveryError = null;
     /** Journal facts restored at construction: `{uid, request, wireless}`. */
+    /** @type {{uid: string | null, request: import("../state/reducer.mjs").PendingRequest | null,
+     *   wireless: import("../state/reducer.mjs").WirelessLifecycle | null}} */
     this.restored = { uid: null, request: null, wireless: null };
     try {
       const record = loadPendingOperation(pendingStore);
       if (record) {
-        this.transaction = record.request?.transaction_id ?? 0;
+        this.transaction = record.kind === "control" ? record.request.transaction_id : 0;
         this.restored = { uid: record.uid, request: record.kind === "control" ? record.request : null,
           wireless: record.kind === "wireless-lifecycle"
             ? { operation: record.operation, generation: record.generation } : null };
@@ -175,6 +180,7 @@ export class Commands {
     if (forced) forced.done = new Promise(resolve => { forced.settle = outcome => resolve(forced.outcome = outcome); });
     this.forcedSave = forced;
     this.transaction = transaction;
+    /** @type {import("../state/reducer.mjs").PendingRequest} */
     const request = { transaction_id: transaction, opcode, ...descriptor.facts?.read(report, options) };
     if (options.lifecycle) request.lifecycle = options.lifecycle;
     const device = s.device;

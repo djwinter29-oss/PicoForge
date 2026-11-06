@@ -38,3 +38,7 @@ window.addEventListener?.("pagehide", () => {
   session.dispose();
   timers.dispose();
 }, { once: true });
+window.addEventListener?.("pageshow", event => {
+  // Cached pages have disposed sessions; reload preserves the journal without resuming stale device state.
+  if (event.persisted) location.reload();
+});

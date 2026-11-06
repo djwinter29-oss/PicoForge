@@ -33,9 +33,9 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
   const previous = globalThis.document;
   const elements = new Map();
   const makeElement = () => ({
-    value: "", children: [], handlers: {}, options: ["0", "1", "configure"].map(value => ({ value })),
+    value: "", children: [], handlers: {}, dataset: {}, options: ["0", "1", "configure"].map(value => ({ value })),
     label: { toggleAttribute() {} }, closest() { return this.label; },
-    setAttribute() {}, append(...items) { this.children.push(...items); },
+    setAttribute(name, value) { this[name] = value; }, append(...items) { this.children.push(...items); },
     addEventListener(event, callback) { this.handlers[event] = callback; },
     replaceChildren(...items) { this.children = items; }, close() {}, showModal() {}, focus() {},
   });
@@ -61,8 +61,11 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
     form.update({ wireless: { ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true, ble_enabled: false } });
     await el("direct-wifi-scan").handlers.click();
     const button = el("direct-wifi-networks").children[0];
+    assert.equal(button.role, undefined, "network choices use native buttons, not a partial listbox");
+    assert.equal(button["aria-pressed"], "false");
     assert.equal(button.children[0].textContent, "\\x00\\xFF<script>", "SSID label is text, never HTML");
     button.handlers.click();
+    assert.equal(button["aria-pressed"], "true", "selection state follows the selected raw SSID");
     await el("direct-wifi-connect").handlers.click();
     assert.equal(tested[0].ssid_hex, "00ff3c7363726970743e");
     assert.equal(form.request().ssid_hex, "00ff3c7363726970743e");
@@ -75,6 +78,7 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
     assert.equal(form.canSave(), true);
     assert.equal(cancelCount, 2);
     el("direct-wifi-ssid").value = "manual"; el("direct-wifi-ssid").handlers.input();
+    assert.equal(button["aria-pressed"], "false", "manual edits clear the scanned selection");
     testFails = true;
     await el("direct-wifi-connect").handlers.click();
     assert.equal(Object.hasOwn(tested[1], "ssid_hex"), false, "manual text is encoded exactly once");
@@ -124,6 +128,16 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
   };
   globalThis.document = { querySelector: selector => el(selector.slice(1)) };
   let now = 100;
+  const intervals = new Map();
+  let nextTimer = 0;
+  const timerScope = {
+    createChild() { return this; },
+    setInterval(callback) { const handle = ++nextTimer; intervals.set(handle, callback); return handle; },
+    clearInterval(handle) { intervals.delete(handle); },
+    dispose() { intervals.clear(); },
+  };
+  const tick = () => { for (const callback of intervals.values()) callback(); };
+  let notifications = 0, saveEnabled = false;
   const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   context.mock.method(Date, "now", () => now);
   let status = { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true,
@@ -133,6 +147,7 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
     el("direct-settings-wifi").value = "1";
     el("direct-settings-ble").value = "0";
     const form = bindWirelessForm({ ready: () => ready, supported: () => supported,
+      timerScope, changed: () => { notifications++; saveEnabled = form.canSave(); },
       test: async () => ({ ipv4: "192.168.1.2", remaining_seconds: 600 }), cancelTest: async () => {} });
     form.update({ wireless: status });
     assert.equal(form.dirty(), false);
@@ -167,9 +182,20 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
     await el("direct-wifi-connect").handlers.click();
     assert.equal(form.request().use_tested_wifi, true);
     assert.equal(form.canSave(), true);
-    now += 600000;
-    form.update();
+    assert.equal(saveEnabled, true);
+    const beforeExpiry = notifications;
+    now += 599000;
+    tick();
+    assert.equal(notifications, beforeExpiry, "countdown ticks do not rerender the dashboard");
+    assert.match(el("direct-wireless-summary").textContent, /expires in 1s/);
+    now += 1000;
+    tick();
     assert.equal(form.canSave(), false);
+    assert.equal(saveEnabled, false, "expiry notifies Save readiness without any board or form update");
+    assert.equal(notifications, beforeExpiry + 1, "expiry produces one dashboard notification");
+    assert.equal(intervals.size, 0, "the completed expiry countdown stops");
+    tick();
+    assert.equal(notifications, beforeExpiry + 1, "expired credentials do not repeatedly notify");
     assert.throws(() => form.request(), /expired/);
     assert.match(el("direct-wireless-summary").textContent, /expired/);
     el("direct-settings-wifi").value = "0";

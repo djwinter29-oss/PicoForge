@@ -1,4 +1,3 @@
-import { CAP } from "../../protocol/constants.mjs";
 import { canRun, mscPending, selfTestPending } from "../../state/selectors.mjs";
 import { queryElement, setText } from "../dom.mjs";
 import { describe } from "../messages.mjs";
@@ -66,7 +65,6 @@ export function deriveControlsViewModel(state, ui, environment) {
         : state.msc?.enabled ? "Host owns storage. Safely eject before return whenever possible." : "";
   return {
     settingsValues: !ui.settingsDirty ? state.settings : null,
-    radioHidden: !(state.hardware?.capabilities & CAP.WIRELESS),
     settingsDisabled: !eligibility.settingsReady || !state.settings_supported,
     titles: Object.fromEntries(Object.entries(reasons).map(([id, text]) => [id, text ?? ""])),
     disabled: {
@@ -112,11 +110,8 @@ export function renderControls(state, ui, environment) {
     });
   }
   setText(model.text);
-  for (const id of ["settings-clock", "settings-storage", "direct-settings-wifi", "direct-settings-ble"]) {
+  for (const id of ["settings-clock", "settings-storage"]) {
     element(id).disabled = model.settingsDisabled;
-  }
-  for (const id of ["direct-settings-wifi", "direct-settings-ble"]) {
-    queryElement(`label[for="${id}"]`).hidden = model.radioHidden;
   }
   for (const [id, disabled] of Object.entries(model.disabled)) element(id).disabled = disabled;
   for (const [id, title] of Object.entries(model.titles)) element(id).title = title;

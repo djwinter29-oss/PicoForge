@@ -21,10 +21,11 @@ test("Direct console uses the connected dashboard for authentication without ask
     fetch: globalThis.fetch };
   const savedCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   const calls = [];
+  let reloads = 0;
   let readSignal;
   globalThis.document = { querySelector: element, createElement: () => ({}), createTextNode: text => ({ text }) };
   globalThis.location = { search: "?ipv4=192.168.66.87", origin: "http://localhost",
-    href: "http://localhost/console.html?ipv4=192.168.66.87" };
+    href: "http://localhost/console.html?ipv4=192.168.66.87", reload() { reloads++; } };
   const dashboardWindow = {
     postMessage(message) {
       this.request = message;
@@ -54,6 +55,8 @@ test("Direct console uses the connected dashboard for authentication without ask
   const tick = () => new Promise(resolve => setImmediate(resolve));
   try {
     await import(`../web/js/console-app.mjs?test=${Date.now()}`);
+    windowHandlers.get("pageshow")({ persisted: false });
+    assert.equal(reloads, 0, "initial page display must not reload");
     assert.equal(element("#console-target").textContent, "192.168.66.87:2323");
     assert.equal(elements.has("#console-auth-key"), false);
     assert.doesNotMatch(readFileSync(new URL("../web/console.html", import.meta.url), "utf8"), /console-auth-key/);
@@ -64,7 +67,7 @@ test("Direct console uses the connected dashboard for authentication without ask
       request_id: dashboardWindow.request.request_id,
       nonce: "000102030405060708090a0b0c0d0e0f", uid: "0102030405060708" });
     assert.match(dashboardWindow.request.request_id, /^[a-f0-9]{32}$/);
-    assert.equal(globalThis.window.opener, null, "the opener relationship closes after proof delivery");
+    assert.equal(globalThis.window.opener, dashboardWindow, "only the original dashboard authorizes reconnections");
     assert.deepEqual(calls[1], ["auth", { session: "session-a", proof: "ab".repeat(16) }]);
     assert.equal(element("#console-status").textContent, "Connected");
     assert.equal(element("#connect").textContent, "Disconnect", "one button toggles while connected");
@@ -83,6 +86,18 @@ test("Direct console uses the connected dashboard for authentication without ask
     assert.equal(element("#console-status").textContent, "Disconnected");
     assert.equal(element("#connect").textContent, "Connect");
     assert.equal(element("#connect").disabled, false);
+    handlers.get("#connect:click")();
+    await tick();
+    assert.equal(element("#console-status").textContent, "Connected", "Connect works again in the same tab");
+    assert.equal(calls.filter(([operation]) => operation === "auth").length, 2,
+      "each connection obtains a fresh board challenge proof");
+    windowHandlers.get("pagehide")({ persisted: true });
+    assert.equal(readSignal.aborted, true, "cached console pages abort pending reads");
+    assert.deepEqual(calls.at(-1), ["close", { session: "session-a" }]);
+    windowHandlers.get("pageshow")({ persisted: true });
+    assert.equal(reloads, 1, "history-cache restoration loads a fresh disconnected console");
+    assert.equal(calls.filter(([operation]) => operation === "open").length, 2,
+      "restoration must not open a session or resend input");
   } finally {
     Object.assign(globalThis, saved);
     if (savedCrypto) Object.defineProperty(globalThis, "crypto", savedCrypto);

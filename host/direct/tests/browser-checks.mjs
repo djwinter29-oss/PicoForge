@@ -54,10 +54,33 @@ await run("dashboard fits a narrow viewport without horizontal overflow", async 
   check(page.documentElement.scrollWidth <= page.documentElement.clientWidth, "page overflows horizontally");
 });
 
-await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the test", async () => {
+await run("invalid Bluetooth key stays visible while disconnected", async () => {
+  const api = page.defaultView.navigator;
+  const mocked = !api.bluetooth;
+  if (mocked) Object.defineProperty(api, "bluetooth", { configurable: true, value: {
+    requestDevice: async () => { throw new Error("Invalid input must not open the device chooser"); },
+  } });
+  try {
+    page.querySelector("#bluetooth-open").click();
+    const dialog = page.querySelector("#bluetooth-connection-dialog");
+    page.querySelector("#direct-ble-control-key").value = "invalid";
+    const scan = page.querySelector("#bluetooth-scan");
+    await waitFor(() => !scan.disabled, "Bluetooth form did not become ready");
+    scan.click();
+    await waitFor(() => page.querySelector("#bluetooth-connection-status").textContent.includes("Invalid Control key"),
+      "invalid-key error disappeared");
+    check(dialog.open, "validation closed the Bluetooth dialog");
+    page.querySelector("#bluetooth-connection-close").click();
+  } finally { if (mocked) delete api.bluetooth; }
+});
+
+await run("Wi-Fi selection and cancellation failure/retry keep accurate state", async () => {
   let cancelAttempts = 0;
   const form = bindWirelessForm({
-    scan: async () => [],
+    scan: async () => [
+      { ssid: "First", ssid_hex: "4669727374", secured: false, rssi: -40 },
+      { ssid: "Second", ssid_hex: "5365636f6e64", secured: false, rssi: -50 },
+    ],
     test: async () => ({ remaining_seconds: 600, ipv4: "192.0.2.2" }),
     cancelTest: async () => {
       if (++cancelAttempts === 1) throw new Error("temporary failure");
@@ -77,7 +100,16 @@ await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the
   wifi.dispatchEvent(new Event("input", { bubbles: true }));
   check(dialog.open, "Wi-Fi dialog did not open");
   check(dialog.contains(document.activeElement), "focus did not move into the Wi-Fi dialog");
+  document.querySelector("#direct-wifi-scan").click();
+  await waitFor(() => document.querySelector("#direct-wifi-networks").children.length === 2, "scan did not finish");
+  const networks = document.querySelector("#direct-wifi-networks").children;
+  networks[0].click();
+  networks[1].click();
+  check(networks[0].getAttribute("aria-pressed") === "false"
+    && networks[1].getAttribute("aria-pressed") === "true", "selected network state is incorrect");
+  check(!networks[1].hasAttribute("role"), "network choice overrides native button semantics");
   document.querySelector("#direct-wifi-other").click();
+  check(networks[1].getAttribute("aria-pressed") === "false", "manual selection kept a scanned network selected");
   const ssid = document.querySelector("#direct-wifi-ssid");
   ssid.value = "browser-check";
   ssid.dispatchEvent(new Event("input", { bubbles: true }));
@@ -102,4 +134,5 @@ await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the
   check(cancelAttempts === 2, "cancellation retry was not attempted");
   check(form.canSave(), "saving remained blocked after cancellation succeeded");
   check(document.activeElement === wifi, "focus was not restored after cancellation retry");
+  form.dispose();
 });

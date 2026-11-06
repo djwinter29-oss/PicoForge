@@ -24,7 +24,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     [name, BoardSession.prototype[name]]));
   const elements = new Map();
   const el = selector => {
-    if (!elements.has(selector)) elements.set(selector, { value: "0", dataset: {}, valueAsNumber: 32,
+    if (!elements.has(selector)) elements.set(selector, { value: "0", dataset: {}, valueAsNumber: 32, children: [],
       open: false, showModal() { this.open = true; }, close() { this.open = false; this.onclose?.(); },
       addEventListener(type, handler) { this[type === "close" ? "onclose" : type] = handler; },
       setAttribute(name, value) { this[name] = value; },
@@ -72,7 +72,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     for (const error of ["first", "second", null]) patchState(client, { error });
     assert.equal(renders, 0, "client changes render asynchronously");
     await null;
-    assert.equal(renders, 1, "a burst of client changes renders once");
+    assert.equal(renders, 0, "a coalesced refresh does not rewrite an unchanged connection label");
     await sync({ recovery_message: "Pending command result confirmed after reconnect." });
     assert.equal(el("#status-message").textContent, "Pending command result confirmed after reconnect.");
     await sync({ recovery_message: null });
@@ -250,6 +250,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   const createConsoleProof = BleTransport.prototype.createConsoleProof;
   const elements = new Map();
   const windowHandlers = new Map();
+  let reloads = 0;
   let consolePopup;
   const el = selector => {
     if (!elements.has(selector)) elements.set(selector, { value: "", dataset: {}, valueAsNumber: 32, children: [],
@@ -261,7 +262,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     return elements.get(selector);
   };
   globalThis.document = { querySelector: el, createElement: () => ({ append() {} }) };
-  globalThis.location = { origin: "http://localhost", href: "http://localhost/" };
+  globalThis.location = { origin: "http://localhost", href: "http://localhost/", reload() { reloads++; } };
   globalThis.window = {
     addEventListener(type, handler) { windowHandlers.set(type, handler); },
     open(url) {
@@ -328,6 +329,8 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   };
   try {
     await import(`../web/js/app.mjs?connections=${Date.now()}`);
+    windowHandlers.get("pageshow")({ persisted: false });
+    assert.equal(reloads, 0, "initial page display must not reload");
     el("#usb-open").click(); await null;
     assert.equal(el("#usb-connection-dialog").open, true);
     el("#usb-connection-close").click();
@@ -336,6 +339,15 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     assert.equal(scans, 0, "opening a dialog must not scan without another user gesture");
     assert.match(el("#bluetooth-connection-status").textContent, /Enter the control key/);
     assert.equal(el("#direct-ble-control-key").disabled, false);
+    el("#direct-ble-control-key").value = "not-a-key";
+    await el("#bluetooth-scan").click();
+    await null;
+    assert.equal(scans, 0, "invalid input must not open the device chooser");
+    assert.match(el("#bluetooth-connection-status").textContent, /Invalid Control key/);
+    assert.match(el("#status-message").textContent, /Invalid Control key/);
+    el("#bluetooth-open").click(); await null;
+    assert.match(el("#bluetooth-connection-status").textContent, /Invalid Control key/,
+      "another disconnected render preserves the error");
     failure = true;
     el("#direct-ble-control-key").value = "cd".repeat(32);
     let scan = el("#bluetooth-scan").click();
@@ -401,20 +413,34 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(authCalls, [], "unregistered same-origin windows cannot obtain a proof");
     windowHandlers.get("message")({ origin: "http://localhost", source: consolePopup, data: authRequest });
+    windowHandlers.get("message")({ origin: "http://localhost", source: consolePopup, data: authRequest });
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(authCalls, [[Array.from({ length: 16 }, (_, index) => index),
-      Array.from({ length: 8 }, (_, index) => index + 1)]]);
+      Array.from({ length: 8 }, (_, index) => index + 1)]], "only one proof request per console may run at a time");
     assert.deepEqual(consolePopup.responses[0], [{ type: "direct-console-auth-response",
       request_id: authRequest.request_id, uid: authRequest.uid,
       proof: "000102030405060708090a0b0c0d0e0f" }, "http://localhost"]);
+    windowHandlers.get("message")({ origin: "https://example.com", source: consolePopup, data: authRequest });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(authCalls.length, 1, "cross-origin requests remain unauthorized");
+    const reconnectRequest = { ...authRequest, request_id: "11".repeat(16), nonce: "22".repeat(16) };
+    windowHandlers.get("message")({ origin: "http://localhost", source: consolePopup, data: reconnectRequest });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(authCalls.length, 2, "the same console can request a new proof after disconnecting");
+    assert.equal(consolePopup.responses[1][0].request_id, reconnectRequest.request_id);
     consoleLink.onclick({ preventDefault() {} });
     const wrongIdentityRequest = { ...authRequest, request_id: "ffeeddccbbaa99887766554433221100",
       uid: "0807060504030201" };
     windowHandlers.get("message")({ origin: "http://localhost", source: consolePopup, data: wrongIdentityRequest });
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(authCalls.length, 1, "the connected dashboard refuses a different board identity");
+    assert.equal(authCalls.length, 2, "the connected dashboard refuses a different board identity");
     assert.equal(consolePopup.responses[0][0].type, "direct-console-auth-error");
     assert.match(consolePopup.responses[0][0].error, /different board/);
+    await sync({ hardware: { ...client.state.hardware, serial_number: wrongIdentityRequest.uid.toUpperCase() } });
+    windowHandlers.get("message")({ origin: "http://localhost", source: consolePopup, data: wrongIdentityRequest });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(authCalls.length, 2, "a console remains bound to the board it was opened for");
+    await sync({ hardware: { ...client.state.hardware, serial_number: authRequest.uid.toUpperCase() } });
     await sync({ pending_request: { opcode: 1, transaction_id: 1 }, outcome_uncertain: true });
     assert.equal(el("#usb-open").disabled, true);
     el("#bluetooth-open").click(); await null;
@@ -439,6 +465,11 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: false });
     await sync({});
     assert.equal(el("#usb-connect").disabled, true);
+    windowHandlers.get("pagehide")({ persisted: true });
+    assert.equal(client.disposed, true, "cached pages still release board resources");
+    windowHandlers.get("pageshow")({ persisted: true });
+    assert.equal(reloads, 1, "history-cache restoration loads a fresh disconnected dashboard");
+    assert.equal(scans, 2, "restoration must not reconnect or replay operations");
   } finally {
     for (const [name, method] of prototypes) BoardSession.prototype[name] = method;
     BleTransport.prototype.createConsoleProof = createConsoleProof;

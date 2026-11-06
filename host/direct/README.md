@@ -90,6 +90,8 @@ the only place they become text. `state/errors.mjs` imports nothing, so it is th
 Uncoded browser errors render as `UNEXPECTED` with the raw message kept as detail. Dashboard-level UI state
 (settings dirtiness, busy state, action errors) lives in a separate allowlisted UI store; wireless provisioning draft
 and phase state stays local to its form controller and never enters domain state. Rendering never triggers device I/O.
+The wireless form owns radio and TCP CLI control availability; dashboard controls own clock, storage, and action buttons.
+Disconnect resets drafts once, without erasing newly reported action errors on subsequent disconnected renders.
 Display-only storage retention belongs to each mounted view, not module-global state. The architecture contract test
 checks these boundaries, the opcode table and the connection transitions.
 
@@ -117,7 +119,9 @@ the Python dashboard console, it is an interactive terminal: Enter runs a comman
 and recall history. It relays raw keystrokes over unencrypted TCP port 2323. The console reuses the matching Direct
 dashboard's board authentication instead of asking for the Control key again; it requests a one-use proof through
 the exact same-origin dashboard popup without putting a pairing secret in the URL. Keep that dashboard connected
-until the console authenticates. The bridge permits one terminal session and closes it after 15 seconds without a
+when connecting or reconnecting in the same console tab. Each connection requires a fresh challenge proof from the
+original dashboard, and the console remains bound to the board it was opened for.
+The bridge permits one terminal session and closes it after 15 seconds without a
 request. Run the included server instead of a generic static-file server to enable this feature. See the
 [console guide](../../docs/guides/console.md#direct-dashboard-authentication) for the rationale and security limits.
 
@@ -185,6 +189,17 @@ Start authorizes temporary `/PFTEST.BIN` writes, not mounting; an existing file 
 Preflight free-space scanning can delay acceptance before progress appears. Wait for the matching command result
 instead of clicking Start again. Cleanup leaves the filesystem mounted.
 
+## Page lifecycle
+
+Navigating away releases the dashboard's board resources and closes the console's TCP session. Returning through
+the browser's history cache reloads the page into a disconnected state, clearing unsaved form drafts and console
+scrollback; reconnect explicitly. Pending-command
+journals survive for reconciliation, but commands and terminal input are never automatically replayed. Reloading
+the dashboard also discards its console-window registrations; reopen consoles from that dashboard.
+
+The Wi-Fi test countdown updates locally once per second. Expiry immediately notifies dashboard Save readiness,
+even without another board report, and stops the countdown timer. Expired credentials must be tested again.
+
 ## Checks
 
 ```sh
@@ -194,14 +209,17 @@ npx --yes --package typescript@5.9.3 tsc --project host/direct/web/js/tsconfig.j
 ```
 
 The no-emit JSDoc check covers protocol/state modules, the transport contract and its implementations, timer helpers,
-and selected UI helpers. It is a development check, not a build or a claim that every UI module is fully typed.
+and selected UI helpers. Explicit board/UI state and pending-operation types reuse the codec output shapes;
+`tests/state-types.mjs` checks that invalid field values and cross-store writes are rejected by the type checker.
+It is a development check, not a build or a claim that every UI module is fully typed.
 
-For browser interaction checks from a repository checkout, serve the Direct dashboard and open
+For browser interaction checks from a repository checkout, use a separate test-only static server and open
 `http://127.0.0.1:8000/tests/browser.html` in a supported browser:
 
 ```sh
-tools/host/run-direct.sh --port 8000
+python3 -m http.server 8000 --bind 127.0.0.1 --directory host/direct
 ```
 
-The page reports dialog focus and Escape behavior, narrow viewport overflow, and Wi-Fi cancellation failure/retry
-using mocked device operations.
+The page reports dialog focus and Escape behavior, narrow viewport overflow, invalid-key errors, Wi-Fi network
+selection, and cancellation failure/retry using mocked device operations. This test server does not provide the
+terminal bridge; the normal Direct runner serves only browser assets.

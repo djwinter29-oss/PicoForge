@@ -4,12 +4,15 @@ import { REASON } from "./state/errors.mjs";
  * @file Page-owned timer scopes so connection replacement and page teardown cancel scheduled work.
  */
 
+/** @typedef {ReturnType<typeof globalThis.setTimeout> & {unref?: () => void}} TimerHandle */
+
 export function createTimerScope(parent = null) {
   const timeouts = new Set();
   const intervals = new Set();
   const children = new Set();
   let disposed = false;
   const scope = {
+    /** @return {TimerHandle} Browser timer ID, or an unref-capable handle in host tests. */
     setTimeout(callback, delay, ...args) {
       if (disposed) throw new Error("Timer scope is disposed");
       let handle;
@@ -20,6 +23,7 @@ export function createTimerScope(parent = null) {
       timeouts.add(handle);
       return handle;
     },
+    /** @return {TimerHandle} */
     setInterval(callback, delay, ...args) {
       if (disposed) throw new Error("Timer scope is disposed");
       const handle = globalThis.setInterval(() => {
@@ -58,6 +62,7 @@ export function createTimerScope(parent = null) {
   return scope;
 }
 
+/** @param {Pick<typeof globalThis, "setTimeout" | "clearTimeout">} [timers] */
 export function wait(milliseconds, signal, timers = globalThis) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -78,6 +83,7 @@ export function wait(milliseconds, signal, timers = globalThis) {
   });
 }
 
+/** @param {Pick<typeof globalThis, "setTimeout" | "clearTimeout">} [timers] */
 export function withTimeout(operation, milliseconds, signal, timers = globalThis) {
   return new Promise((resolve, reject) => {
     let settled = false;

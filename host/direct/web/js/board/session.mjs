@@ -14,7 +14,7 @@ export class BoardSession {
   /**
    * @param {import("../transport/transport.mjs").Transport} transport Byte pipe to one board.
    * @param {{store?: ReturnType<typeof createDashboardStore>, now?: () => number, sleep?: Function, timeout?: number,
-   *   pendingStore?: Storage | null, timerScope?: any, wirelessPolling?: boolean}} [options]
+   *   pendingStore?: Storage | null, timerScope?: ReturnType<typeof createTimerScope>, wirelessPolling?: boolean}} [options]
    *   `store` (shared domain store, reset here), `now`, `sleep`, `timeout` (ms per report),
    *   `pendingStore` (journal storage; default sessionStorage), `timerScope`, `wirelessPolling`.
    */
@@ -46,7 +46,11 @@ export class BoardSession {
   get device() { return this.transport.device; }
   get connectionSignal() { return this.connection.signal; }
 
-  /** @brief Commit one named domain event (state/reducer.mjs); board modules are the only callers. */
+  /**
+   * @brief Commit one named domain event (state/reducer.mjs); board modules are the only callers.
+   * @param {string} type
+   * @param {Partial<import("../state/reducer.mjs").DashboardState>} changes
+   */
   emit(type, changes) {
     if (!this.disposed) this.store.dispatch({ type, changes });
   }

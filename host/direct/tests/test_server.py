@@ -36,6 +36,35 @@ class DirectTerminalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "private LAN"):
             DirectTerminal().open("8.8.8.8")
 
+    def test_terminal_activity_reuses_expiry_timer_and_old_sessions_cannot_expire_new_ones(self):
+        terminal = DirectTerminal()
+        connection = self.FakeSocket()
+        terminal._socket = connection
+        terminal._session = "first"
+        with patch("host.direct.server.threading.Timer") as timer, \
+                patch("host.direct.server.time.monotonic") as now:
+            now.return_value = 100
+            terminal._touch_locked()
+            now.return_value = 110
+            terminal._touch_locked()
+            self.assertEqual(timer.call_count, 1, "activity updates the deadline without creating a new thread")
+            now.return_value = 115
+            terminal._expire("first")
+            self.assertFalse(connection.closed)
+            self.assertEqual(timer.call_args.args, (10, terminal._expire))
+            self.assertEqual(timer.call_args.kwargs, {"args": ("first",)})
+            now.return_value = 125
+            terminal._expire("first")
+            self.assertTrue(connection.closed)
+            self.assertIsNone(terminal._timer)
+            replacement = self.FakeSocket()
+            terminal._socket = replacement
+            terminal._session = "second"
+            terminal._touch_locked()
+            terminal._expire("first")
+            self.assertFalse(replacement.closed)
+            terminal.close_all()
+
     def test_authenticated_open_waits_for_a_board_bound_proof_before_terminal_io(self):
         connection = self.FakeSocket(self.CHALLENGE)
         terminal = DirectTerminal()

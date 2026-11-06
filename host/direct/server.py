@@ -103,7 +103,7 @@ class DirectTerminal:
     def _touch_locked(self) -> None:
         self._last_request = time.monotonic()
         if self._timer is not None:
-            self._timer.cancel()
+            return
         self._timer = threading.Timer(15, self._expire, args=(self._session,))
         self._timer.daemon = True
         self._timer.start()
@@ -112,6 +112,7 @@ class DirectTerminal:
         with self._lock:
             if self._socket is None or session != self._session:
                 return
+            self._timer = None
             remaining = 15 - (time.monotonic() - self._last_request)
             if remaining > 0:
                 self._timer = threading.Timer(remaining, self._expire, args=(self._session,))

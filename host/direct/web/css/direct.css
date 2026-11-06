@@ -157,7 +157,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .self-test-body { padding: 12px; }
 .self-test-body .self-test-controls { justify-content: flex-start; margin-bottom: 12px; }
 .self-test-controls label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .self-test-controls input { width: 100px; height: 38px; padding: 0 10px; border: 1px solid #cbd6d3; border-radius: 7px; font: 12px var(--mono); color: var(--ink); background: var(--paper); }
 .settings-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 8px; padding: 1px; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 3px 12px #17332e08; }
 .settings-controls > .metric { min-height: 72px; padding: 12px 14px; }
@@ -184,7 +183,8 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .wifi-network { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; color: var(--ink);
   background: var(--paper); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
 .wifi-network:last-child { border-bottom: 0; }
-.wifi-network[aria-selected="true"] { background: #e8f4f1; box-shadow: inset 3px 0 var(--teal); }
+.wifi-network[aria-pressed="true"] { background: #e8f4f1; box-shadow: inset 3px 0 var(--teal); }
+.wifi-network:focus-visible { outline: 3px solid var(--teal); outline-offset: -3px; }
 .wifi-network small { color: var(--muted); font: 12px var(--mono); }
 .button-cancel { background: var(--paper); border-color: #cbd6d3; color: var(--ink); }
 .button-cancel:hover:not(:disabled) { background: #e8eeeb; }

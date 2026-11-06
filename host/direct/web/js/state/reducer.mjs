@@ -56,29 +56,67 @@ export const UI_KEYS = Object.freeze([
 ]);
 
 /**
- * @typedef {Record<string, any>} DashboardState
- * @typedef {{type: string, changes?: Partial<DashboardState>, state?: DashboardState}} DashboardAction
+ * @typedef {ReturnType<typeof import("../protocol/opcodes.mjs").decodeSettings>
+ *   & Partial<ReturnType<typeof import("../protocol/codec.mjs").decodeConfigReport>>} BoardSettings
+ * @typedef {string | {code: string, detail: unknown} | null} ReasonValue
+ * @typedef {{operation: number, generation: number}} WirelessLifecycle
+ * @typedef {{transaction_id: number, opcode: number, lifecycle?: WirelessLifecycle, settings?: BoardSettings,
+ *   commit_mask?: number, scan_index?: number, scan_generation?: number}} PendingRequest
+ * @typedef {{version: 2, kind: "control", uid: string, request: PendingRequest}
+ *   | {version: 2, kind: "wireless-lifecycle", uid: string, operation: number, generation: number}} PendingOperation
+ */
+
+/**
+ * @typedef {object} DashboardState
+ * @property {"usb" | "ble"} [link]
+ * @property {typeof import("../board/connection.mjs").PHASE[keyof typeof import("../board/connection.mjs").PHASE]} [phase]
+ * @property {boolean} [connected]
+ * @property {boolean} [reconnecting]
+ * @property {boolean} [busy]
+ * @property {ReasonValue} [error]
+ * @property {ReturnType<typeof import("../protocol/codec.mjs").decodeIdentityReport> | null} [hardware]
+ * @property {BoardSettings | null} [settings]
+ * @property {boolean} [settings_supported]
+ * @property {ReturnType<typeof import("../protocol/codec.mjs").decodeTelemetryReport> | null} [runtime]
+ * @property {ReturnType<typeof import("../protocol/codec.mjs").decodeStorageReport>["memory"] | null} [memory]
+ * @property {string | null} [filesystem_format]
+ * @property {ReturnType<typeof import("../protocol/codec.mjs").decodeStorageReport>["msc"] | null} [msc]
+ * @property {ReturnType<typeof import("../protocol/codec.mjs").decodeSelfTestReport> | null} [self_test]
+ * @property {ReturnType<typeof import("../protocol/codec.mjs").decodeWireless> | null} [wireless]
+ * @property {ReasonValue} [wireless_error]
+ * @property {ReasonValue} [wireless_poll_error]
+ * @property {ReasonValue} [recovery_message]
+ * @property {number | null} [recovered_opcode]
+ * @property {Record<number, "fresh" | "stale" | "unavailable">} [freshness]
+ * @property {boolean} [reboot_pending]
+ * @property {boolean} [outcome_uncertain]
+ * @property {boolean} [wireless_busy]
+ * @property {PendingRequest | null} [pending_request]
+ * @property {WirelessLifecycle | null} [pending_wireless]
+ * @property {boolean | null} [pending_msc]
+ * @property {{sequence: number | null} | null} [pending_self_test]
+ */
+
+/**
+ * @typedef {object} UiState
+ * @property {boolean} settings_dirty
+ * @property {boolean} wireless_form_busy
+ * @property {boolean} configuration_force_save
+ * @property {string | null} settings_message
+ * @property {string | null} action_error
+ */
+
+/**
+ * @template State
+ * @typedef {{type: string, changes?: Partial<State>, state?: State}} StateAction
  *   `replace` carries `state`; `patch` (UI store) and named domain events carry `changes`.
  */
+/** @typedef {StateAction<DashboardState>} DashboardAction */
 
 const checkKeys = (object, keys, label) => {
   const unknown = Object.keys(object).filter(key => !keys.includes(key));
   if (unknown.length) throw new Error(`Unknown ${label} keys: ${unknown.join(", ")}`);
 };
-
-/**
- * @brief Build a reducer that accepts only the given keys, so UI facts cannot leak into board state or vice versa.
- * ponytail: the UI store keeps one generic `patch` action; it has one writer (the dashboard) and no transitions.
- * @param {readonly string[]} keys Allowed state keys.
- * @return {(state: DashboardState, action: DashboardAction) => DashboardState}
- */
-export function allowlistReducer(keys) {
-  return (state, action) => {
-    if (action.type === "replace") { checkKeys(action.state, keys, "state"); return action.state; }
-    if (action.type === "patch") { checkKeys(action.changes, keys, "state"); return { ...state, ...action.changes }; }
-    throw new Error("Unknown state action");
-  };
-}
 
 /**
  * @brief Domain reducer: `replace` (session start) or a named event from DOMAIN_EVENTS changing only its keys.
@@ -92,4 +130,13 @@ export function dashboardReducer(state, action) {
   return { ...state, ...action.changes };
 }
 
-export const uiReducer = allowlistReducer(UI_KEYS);
+/**
+ * @brief Allowlisted UI snapshots; board facts cannot enter this store.
+ * ponytail: one generic patch action is enough for a single UI writer with no state transitions.
+ * @type {(state: UiState, action: StateAction<UiState>) => UiState}
+ */
+export function uiReducer(state, action) {
+  if (action.type === "replace") { checkKeys(action.state, UI_KEYS, "state"); return action.state; }
+  if (action.type === "patch") { checkKeys(action.changes, UI_KEYS, "state"); return { ...state, ...action.changes }; }
+  throw new Error("Unknown state action");
+}

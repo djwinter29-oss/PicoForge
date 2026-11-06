@@ -32,10 +32,11 @@ export function formTransition(form, event) {
 
 /**
  * @brief Bind the Wi-Fi/Bluetooth provisioning dialogs. Status comes from the session-polled `state.wireless`
- * passed to `update`; the form performs device I/O only through the injected scan/test/cancelTest intents.
+ * passed to `update`; this controller owns radio/TCP control availability and provisioning drafts.
+ * Device I/O runs only through the injected scan/test/cancelTest intents.
  */
 export function bindWirelessForm({
-  scan, test, cancelTest, ready, tcpReady = null, supported, changed = () => {}, timerScope,
+  scan, test, cancelTest, ready, settingsReady = ready, tcpReady = null, supported, changed = () => {}, timerScope,
   now = () => Date.now(), clipboard = null,
 }) {
   const timers = timerScope?.createChild() ?? createTimerScope();
@@ -74,6 +75,8 @@ export function bindWirelessForm({
     tcp.disabled = !tcpEnabled || !status;
     tcp.closest?.("label")?.toggleAttribute("hidden", !available);
     for (const id of ["direct-settings-wifi", "direct-settings-ble"]) {
+      el(id).disabled = !available || !settingsReady() || wifiBlocked;
+      el(id).closest?.("label")?.toggleAttribute("hidden", !available);
       const configure = option(id, "configure");
       if (configure) configure.disabled = !ready() || wifiBlocked;
     }
@@ -92,7 +95,11 @@ export function bindWirelessForm({
     el("direct-wifi-cancel").textContent = form.phase === "canceling" ? "Clearing…"
       : form.phase === "cancelFailed" ? "Retry clearing test" : "Cancel";
     for (const id of ["direct-wifi-ssid", "direct-wifi-password"]) el(id).disabled = wifiBlocked;
-    for (const button of el("direct-wifi-networks").children) button.disabled = wifiBlocked;
+    for (const button of el("direct-wifi-networks").children) {
+      button.disabled = wifiBlocked;
+      button.setAttribute("aria-pressed", String(selectedSsidHex !== undefined
+        && button.dataset.ssidHex === selectedSsidHex));
+    }
     el("direct-ble-copy").disabled ||= !el("direct-ble-secret").value;
     el("direct-wireless-summary").textContent = form.phase === "cancelFailed"
       ? `Could not clear the temporary Wi-Fi test: ${form.cancelError}. ${form.cancelNeedsReconnect
@@ -141,8 +148,7 @@ export function bindWirelessForm({
       const button = document.createElement("button");
       button.type = "button";
       button.className = "wifi-network";
-      button.setAttribute("role", "option");
-      button.setAttribute("aria-selected", String(el("direct-wifi-ssid").value === network.ssid));
+      button.dataset.ssidHex = network.ssid_hex;
       const name = document.createElement("span");
       name.textContent = network.ssid;
       const details = document.createElement("small");
@@ -258,6 +264,7 @@ export function bindWirelessForm({
     el("direct-wifi-ssid").value = "";
     el("direct-wifi-manual-label").hidden = false;
     el("direct-direct-wifi-password-label").hidden = false;
+    refresh();
     el("direct-wifi-ssid").focus();
   });
   el("direct-wifi-ssid").addEventListener("input", () => {
@@ -275,6 +282,7 @@ export function bindWirelessForm({
     const signal = lifecycleController.signal;
     const started = now();
     dispatch({ type: "test" });
+    let succeeded = false;
     let step = "Starting";
     const progress = () => {
       const elapsed = Math.floor((now() - started) / 1000);
@@ -300,13 +308,18 @@ export function bindWirelessForm({
       wifiStage = { ssid, ...rawSsid, use_tested_wifi: true, tested_at: now(),
         remaining_seconds: result.remaining_seconds };
       timers.clearInterval(stagedTimer);
-      stagedTimer = timers.setInterval(refresh, 1000);
+      stagedTimer = timers.setInterval(() => {
+        refresh();
+        if (remainingTestSeconds() !== 0) return;
+        timers.clearInterval(stagedTimer);
+        stagedTimer = null;
+        if (testExpired()) changed();
+      }, 1000);
       wifiEdited = false;
       enableRadio("direct-settings-wifi");
       clearWifiInputs();
       setStatus("direct-wifi-status", `Connected to “${ssid}” (${result.ipv4 || "IP assigned"}). Click Save&Reboot.`);
-      wifiDialog.close();
-      changed();
+      succeeded = true;
     } catch (error) {
       if (!signal.aborted) setStatus("direct-wifi-status", describe(error));
     } finally {
@@ -316,6 +329,7 @@ export function bindWirelessForm({
         dispatch({ type: "done" });
         refresh();
         changed();
+        if (succeeded) wifiDialog.close();
       }
     }
   });

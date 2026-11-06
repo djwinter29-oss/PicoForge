@@ -18,6 +18,7 @@ export function mountDashboard({ session, selectTransport, timers, environment }
   let client = session;
   let disposed = false;
   const ui = createUiStore();
+  /** @param {Partial<import("../state/reducer.mjs").UiState>} changes */
   const setUi = changes => ui.dispatch({ type: "patch", changes });
   const renderStatus = createDashboardView();
   const consoleLink = bindConsoleLink(() => client, error => setUi({ action_error: describe(error) }));
@@ -36,6 +37,7 @@ export function mountDashboard({ session, selectTransport, timers, environment }
   const rebootDialog = element("reboot-dialog");
   const returnDialog = element("return-dialog");
   const shareDialog = element("share-dialog");
+  let wasConnected = client.state.connected;
   let refreshQueued = false;
   /** Coalesce bursts of client state changes into one render and side-effect pass per microtask. */
   const scheduleRefresh = () => {
@@ -47,6 +49,7 @@ export function mountDashboard({ session, selectTransport, timers, environment }
   let wirelessForm;
   wirelessForm = bindWirelessForm({
     supported: () => Boolean(client.state.hardware?.capabilities & CAP.WIRELESS),
+    settingsReady: () => !bluetoothLink() && canRun(client.state, "settings").allowed,
     timerScope: timers,
     now: environment.now,
     clipboard: environment.clipboard,
@@ -74,13 +77,12 @@ export function mountDashboard({ session, selectTransport, timers, environment }
     refreshQueued = false;
     if (disposed) return;
     const board = client.state;
-    if (!board.connected) {
+    if (wasConnected && !board.connected) {
       wirelessForm.reset();
-      if (Object.entries(UI_INITIAL).some(([key, value]) => ui.getState()[key] !== value)) {
-        ui.dispatch({ type: "replace", state: { ...UI_INITIAL } });
-      }
+      ui.dispatch({ type: "replace", state: { ...UI_INITIAL, action_error: ui.getState().action_error } });
       for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
     }
+    wasConnected = board.connected;
     render(board, ui.getState());
   }
 
@@ -96,7 +98,6 @@ export function mountDashboard({ session, selectTransport, timers, environment }
       settingsMessage: view.settings_message, bleName: client.transport.name, settingsDirty: view.settings_dirty,
       wirelessDirty: wirelessForm.dirty(), wirelessCanSave: wirelessForm.canSave() }, environment);
     wirelessForm.update(board);
-    if (board.link === "ble") settingsRadios.forEach(control => { control.disabled = true; });
   }
 
   async function run(operation) {

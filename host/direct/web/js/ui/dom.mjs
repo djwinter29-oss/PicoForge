@@ -12,5 +12,9 @@ export function queryElement(selector, root = document) {
 }
 
 export function setText(values) {
-  for (const [id, value] of Object.entries(values)) queryElement(`#${id}`).textContent = value;
+  for (const [id, value] of Object.entries(values)) {
+    const element = queryElement(`#${id}`);
+    const text = value == null ? "" : String(value);
+    if (element.textContent !== text) element.textContent = text;
+  }
 }

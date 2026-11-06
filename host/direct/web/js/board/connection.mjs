@@ -37,11 +37,12 @@ export const canTransition = (from, to) => from === to || to === PHASE.DISCONNEC
   || Boolean(TRANSITIONS[from]?.includes(to));
 
 /** @brief Per-connection facts (state/reducer.mjs CONNECTION_FACTS) reset on connect and disconnect. */
+/** @type {Readonly<Partial<import("../state/reducer.mjs").DashboardState>>} */
 export const EMPTY = Object.freeze({
   hardware: null, settings: null, settings_supported: false,
   runtime: null, memory: null, filesystem_format: null, msc: null, self_test: null,
   wireless: null, wireless_error: null, wireless_poll_error: null, recovery_message: null, recovered_opcode: null,
-  freshness: Object.fromEntries(TRACKED_REPORTS.map(id => [id, "unavailable"])),
+  freshness: Object.fromEntries(TRACKED_REPORTS.map(id => [id, /** @type {const} */ ("unavailable")])),
   pending_self_test: null, reboot_pending: false,
 });
 
