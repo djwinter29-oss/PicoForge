@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
-using System.Text.Json;
+using System.Text;
 
 namespace PicoForge;
 
@@ -9,52 +12,98 @@ namespace PicoForge;
 internal sealed class ConsoleBridge : IDisposable
 {
     private readonly object gate = new();
-    private readonly Timer expiry;
+    private readonly TimeProvider time;
+    private readonly ITimer expiry;
+    private readonly int port;
+    private readonly bool allowLoopbackForTests;
     private Socket? connection;
+    private Socket? opening;
+    private CancellationTokenSource? openingCancel;
+    private bool closed;
     private string? session;
+    // TimeProvider timestamp of the last session request, guarded by gate.
     private long lastRequest;
 
-    public ConsoleBridge() => expiry = new Timer(_ => Expire(), null, 1000, 1000);
+    public ConsoleBridge(TimeProvider? time = null)
+        : this(time, 2323, false) { }
 
-    public string Open(WirelessStatusResponse wireless, Func<byte[], byte[], byte[]>? signProof = null)
+    internal ConsoleBridge(TimeProvider? time, int port, bool allowLoopbackForTests)
     {
-        if (!wireless.WifiEnabled || wireless.WifiState != "connected" || !wireless.TcpCliStarted)
-            throw new InvalidOperationException("The board's Wi-Fi TCP CLI is not available");
+        this.time = time ?? TimeProvider.System;
+        this.port = port;
+        this.allowLoopbackForTests = allowLoopbackForTests;
+        expiry = this.time.CreateTimer(_ => Expire(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
+
+    public async Task<string> OpenAsync(WirelessStatusResponse wireless,
+        Func<byte[], byte[], byte[]>? signProof = null, CancellationToken cancel = default)
+    {
+        if (!wireless.WifiEnabled || wireless.WifiState != WifiState.Connected || !wireless.TcpCliStarted)
+            throw new BoardStateException("The board's Wi-Fi TCP CLI is not available");
         if (!IPAddress.TryParse(wireless.Ipv4, out var address) ||
-            address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(address) ||
+            address.AddressFamily != AddressFamily.InterNetwork ||
+            !allowLoopbackForTests && IPAddress.IsLoopback(address) ||
             address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) ||
             address.GetAddressBytes()[0] is >= 224 and <= 239)
-            throw new ArgumentException("Invalid board IPv4 address");
-        if (wireless.TcpCliAuthRequired && signProof is null)
-            throw new InvalidOperationException("USB Control key proof is unavailable");
-        lock (gate)
+            throw new InvalidDataException("Invalid board IPv4 address");
+        if (!wireless.BleKeyConfigured || signProof is null)
+            throw new BoardStateException("USB Control key proof is unavailable");
+        const string Busy = "A web console is already connected; disconnect it first";
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        try
         {
-            if (connection is not null)
-                throw new InvalidOperationException("A web console is already connected; disconnect it first");
-            var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            try
+            lock (gate)
             {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                socket.ConnectAsync(new IPEndPoint(address, 2323), timeout.Token).AsTask().GetAwaiter().GetResult();
-                if (wireless.TcpCliAuthRequired)
-                    Authenticate(socket, signProof!);
-                socket.SendTimeout = 100;
+                if (closed) throw new BoardStateException("Console bridge is shutting down");
+                if (connection is not null || opening is not null) throw new BoardStateException(Busy);
+                opening = socket;
+                openingCancel = lifetime;
+            }
+            // Neither the 3 s connect nor the 8 s authentication budget holds the session lock.
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            await socket.ConnectAsync(new IPEndPoint(address, port), timeout.Token);
+            await AuthenticateAsync(socket, signProof, lifetime.Token);
+            socket.SendTimeout = 100;
+            lock (gate)
+            {
+                if (closed) throw new BoardStateException("Console bridge is shutting down");
+                if (connection is not null) throw new BoardStateException(Busy);
                 connection = socket;
                 session = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-                lastRequest = Environment.TickCount64;
+                lastRequest = time.GetTimestamp();
+                expiry.Change(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
                 return session;
             }
-            catch
-            {
-                socket.Dispose();
-                throw;
-            }
+        }
+        catch (Exception error)
+        {
+            socket.Dispose();
+            lock (gate)
+                if (closed && error is ObjectDisposedException or SocketException or IOException
+                    or OperationCanceledException or BoardStateException)
+                    throw new BoardStateException("Console bridge is shutting down");
+            throw;
+        }
+        finally
+        {
+            lock (gate)
+                if (ReferenceEquals(opening, socket))
+                {
+                    opening = null;
+                    openingCancel = null;
+                }
         }
     }
 
-    private static void Authenticate(Socket socket, Func<byte[], byte[], byte[]> signProof)
+    private async Task AuthenticateAsync(Socket socket, Func<byte[], byte[], byte[]> signProof,
+        CancellationToken cancel)
     {
-        var challenge = ReadChallenge(socket);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        var started = time.GetTimestamp();
+        var challenge = await ReadChallengeAsync(socket, timeout.Token);
         var fields = challenge[..^2].Split(' ');
         if (fields.Length != 4 || fields[0] != "PicoForge" || fields[1] != "AUTH" ||
             fields[2].Length != 32 || fields[2].Any(character => !Uri.IsHexDigit(character)) ||
@@ -65,20 +114,17 @@ internal sealed class ConsoleBridge : IDisposable
         byte[] proof = [];
         try
         {
+            timeout.Token.ThrowIfCancellationRequested();
+            RequireOpen();
             proof = signProof(nonce, uid);
-            if (proof.Length != 16) throw new InvalidOperationException("The board returned an invalid TCP CLI proof");
+            timeout.Token.ThrowIfCancellationRequested();
+            RequireOpen();
+            if (time.GetElapsedTime(started) >= TimeSpan.FromSeconds(8))
+                throw new TimeoutException("TCP CLI authentication timed out");
+            if (proof.Length != 16) throw new InvalidDataException("The board returned an invalid TCP CLI proof");
             var response = System.Text.Encoding.ASCII.GetBytes(
                 $"AUTH {Convert.ToHexString(proof).ToLowerInvariant()}\r\n");
-            try
-            {
-                var sent = 0;
-                while (sent < response.Length)
-                {
-                    var count = socket.Send(response.AsSpan(sent), SocketFlags.None);
-                    if (count == 0) throw new SocketException((int)SocketError.ConnectionReset);
-                    sent += count;
-                }
-            }
+            try { await SendAllAsync(socket, response, timeout.Token); }
             finally
             {
                 CryptographicOperations.ZeroMemory(response);
@@ -92,48 +138,117 @@ internal sealed class ConsoleBridge : IDisposable
         }
     }
 
-    private static string ReadChallenge(Socket socket)
+    private void RequireOpen()
+    {
+        lock (gate)
+            if (closed) throw new BoardStateException("Console bridge is shutting down");
+    }
+
+    private async Task<string> ReadChallengeAsync(Socket socket, CancellationToken cancel)
     {
         var line = new List<byte>(96);
-        var deadline = Environment.TickCount64 + 3000;
-        while (line.Count < 128 && Environment.TickCount64 < deadline)
+        var value = new byte[1];
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
+        try
         {
-            if (!socket.Poll(100_000, SelectMode.SelectRead)) continue;
-            var value = new byte[1];
-            var count = socket.Receive(value, SocketFlags.None);
-            if (count == 0) throw new IOException("Board closed the TCP CLI during authentication");
-            line.Add(value[0]);
-            if (line.Count >= 2 && line[^2] == '\r' && line[^1] == '\n')
-                return System.Text.Encoding.ASCII.GetString([.. line]);
+            while (line.Count < 128)
+            {
+                var count = await socket.ReceiveAsync(value, SocketFlags.None, timeout.Token);
+                if (count == 0) throw new IOException("Board closed the TCP CLI during authentication");
+                line.Add(value[0]);
+                if (line.Count >= 2 && line[^2] == '\r' && line[^1] == '\n')
+                    return System.Text.Encoding.ASCII.GetString([.. line]);
+            }
+        }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            throw new IOException("TCP CLI authentication challenge timed out or exceeded its limit");
         }
         throw new IOException("TCP CLI authentication challenge timed out or exceeded its limit");
     }
 
+    private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> data, CancellationToken cancel)
+    {
+        var sent = 0;
+        while (sent < data.Length)
+        {
+            var count = await socket.SendAsync(data[sent..], SocketFlags.None, cancel);
+            if (count == 0) throw new SocketException((int)SocketError.ConnectionReset);
+            sent += count;
+        }
+    }
+
+    private static void SendAll(Socket socket, ReadOnlySpan<byte> data)
+    {
+        while (!data.IsEmpty)
+        {
+            var count = socket.Send(data, SocketFlags.None);
+            if (count == 0) throw new SocketException((int)SocketError.ConnectionReset);
+            data = data[count..];
+        }
+    }
+
     private Socket RequireSession(string? token)
     {
-        if (connection is null || token != session)
-            throw new InvalidOperationException("Console disconnected; connect again");
-        lastRequest = Environment.TickCount64;
+        if (connection is null || session is null || !MatchesSession(token, session))
+            throw new BoardStateException("Console disconnected; connect again");
+        lastRequest = time.GetTimestamp();
         return connection;
     }
 
-    public (byte[] Data, bool Closed) Read(string? token)
+    private static bool MatchesSession(string? token, string session)
     {
+        if (token is null || token.Length != session.Length) return false;
+        var supplied = Encoding.ASCII.GetBytes(token);
+        var expected = Encoding.ASCII.GetBytes(session);
+        try { return CryptographicOperations.FixedTimeEquals(supplied, expected); }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(supplied);
+            CryptographicOperations.ZeroMemory(expected);
+        }
+    }
+
+    /// <summary>Waits up to 2 s for board output without holding the gate, so writes are never blocked.</summary>
+    public async Task<(byte[] Data, bool Closed)> ReadAsync(string? token, CancellationToken cancel = default)
+    {
+        Socket waiting;
+        lock (gate) waiting = RequireSession(token);
+        var data = new byte[4096];
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        int count;
+        try { count = await waiting.ReceiveAsync(data, SocketFlags.None, timeout.Token); }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            count = -1;
+        }
+        catch (Exception error) when (error is ObjectDisposedException or SocketException)
+        {
+            lock (gate)
+            {
+                if (!ReferenceEquals(connection, waiting))
+                    throw new BoardStateException("Console disconnected; connect again");
+                CloseConnection();
+            }
+            throw new IOException("TCP console connection failed", error);
+        }
         lock (gate)
         {
             var socket = RequireSession(token);
+            if (!ReferenceEquals(socket, waiting))
+                throw new BoardStateException("Console disconnected; connect again");
             try
             {
-                if (!socket.Poll(100_000, SelectMode.SelectRead)) return ([], false);
-                var data = new byte[4096];
-                var count = socket.Receive(data);
+                if (count < 0) return ([], false);
                 if (count == 0) CloseConnection();
                 return (data[..count], count == 0);
             }
-            catch (SocketException)
+            catch (Exception error) when (error is ObjectDisposedException or SocketException)
             {
                 CloseConnection();
-                throw;
+                throw new IOException("TCP console connection failed", error);
             }
         }
     }
@@ -143,16 +258,7 @@ internal sealed class ConsoleBridge : IDisposable
         lock (gate)
         {
             var socket = RequireSession(token);
-            try
-            {
-                var sent = 0;
-                while (sent < data.Length)
-                {
-                    var count = socket.Send(data.AsSpan(sent), SocketFlags.None);
-                    if (count == 0) throw new SocketException((int)SocketError.ConnectionReset);
-                    sent += count;
-                }
-            }
+            try { SendAll(socket, data); }
             catch (SocketException)
             {
                 CloseConnection();
@@ -175,76 +281,29 @@ internal sealed class ConsoleBridge : IDisposable
         connection?.Dispose();
         connection = null;
         session = null;
+        expiry.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
-    private void Expire()
+    /// <summary>Closes a session idle for 15 s; the timer calls it every second.</summary>
+    internal void Expire()
     {
         lock (gate)
-            if (connection is not null && Environment.TickCount64 - lastRequest >= 15_000) CloseConnection();
+            if (connection is not null && time.GetElapsedTime(lastRequest) >= TimeSpan.FromSeconds(15))
+                CloseConnection();
     }
 
     public void Dispose()
     {
-        expiry.Dispose();
-        lock (gate) CloseConnection();
-    }
-
-    public static void MapEndpoints(WebApplication app)
-    {
-        app.MapMethods("/api/console", ["POST", "GET", "PUT", "DELETE"],
-            async (HttpContext context, IDashboardBoards dashboard, ConsoleBridge bridge, ILogger<ConsoleBridge> log) =>
+        lock (gate)
         {
-            var request = context.Request;
-            if (request.Headers.TryGetValue("Origin", out var origin) &&
-                origin != $"{request.Scheme}://{request.Host}")
-                return Results.Json(new { error = "Console requests must be same-origin" }, statusCode: 403);
-            try
-            {
-                var token = request.Query["session"].ToString();
-                if (request.Method == "POST")
-                {
-                    var payload = await request.ReadFromJsonAsync<JsonElement>(context.RequestAborted);
-                    if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Any())
-                        throw new ArgumentException(
-                            "Expected an empty object; TCP authentication uses the connected board");
-                    var board = request.Query["board"].ToString();
-                    var wireless = dashboard.ReadWireless(board).Wireless;
-                    return Results.Ok(new { session = bridge.Open(wireless,
-                        (nonce, uid) => dashboard.TcpCliAuthProof(board, nonce, uid)) });
-                }
-                if (request.Method == "GET")
-                {
-                    var (data, closed) = bridge.Read(token);
-                    return Results.Ok(new { data = Convert.ToBase64String(data), closed });
-                }
-                if (request.Method == "PUT")
-                {
-                    var payload = await request.ReadFromJsonAsync<JsonElement>(context.RequestAborted);
-                    if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Count() != 1 ||
-                        !payload.TryGetProperty("data", out var field) || field.ValueKind != JsonValueKind.String)
-                        throw new ArgumentException("Expected base64-encoded input bytes");
-                    var encoded = field.GetString()!;
-                    if (encoded.Length > 1368) throw new ArgumentException("Input exceeds 1024 bytes");
-                    var data = Convert.FromBase64String(encoded);
-                    if (data.Length is < 1 or > 1024) throw new ArgumentException("Expected 1..1024 input bytes");
-                    bridge.Write(token, data);
-                }
-                else bridge.Close(token);
-                return Results.Ok(new { ok = true });
-            }
-            catch (Exception error) when (error is ArgumentException or FormatException or JsonException)
-            {
-                return Results.Json(new { error = error.Message }, statusCode: 400);
-            }
-            catch (InvalidOperationException error)
-            {
-                return Results.Json(new { error = error.Message }, statusCode: 409);
-            }
-            catch (Exception error) when (error is SocketException or IOException or OperationCanceledException)
-            {
-                log.LogWarning(error, "TCP console connection failed");
-                return Results.Json(new { error = $"TCP console connection failed: {error.Message}" }, statusCode: 503);
-            }
-        }).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(2048));
+            if (closed) return;
+            closed = true;
+            openingCancel?.Cancel();
+            openingCancel = null;
+            opening?.Dispose();
+            opening = null;
+            CloseConnection();
+            expiry.Dispose();
+        }
     }
 }

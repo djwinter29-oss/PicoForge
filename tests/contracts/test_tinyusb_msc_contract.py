@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Test pinned TinyUSB source ordering and the MSC linker-wrapper contract."""
 from pathlib import Path
 import pytest

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Native SD implementation of the shared backend contract over the SDIO-PIO wire interface.
  */

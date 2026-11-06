@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"]
+  },
+  "files": [
+    "src/js/dashboard-api.mjs",
+    "src/js/operation-state.mjs",
+    "src/js/wireless-form.mjs",
+    "src/js/app.mjs",
+    "src/js/dashboard.mjs",
+    "src/js/console.mjs",
+    "src/js/console-api.mjs",
+    "src/js/console-terminal.mjs",
+    "tests/types/console-types.mjs",
+    "tests/types/dashboard-types.mjs"
+  ]
+}

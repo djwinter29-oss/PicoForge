@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file
  * @brief Vendor HID reports and the Feature 20 control channel (LED, reboot, MSC, benchmark, boot settings).
@@ -27,11 +30,8 @@
 #include "app/wireless/wireless.h"
 #include "app/wireless/wireless_auth.h"
 static bool ble_dispatch; /**< Current synchronous dispatcher targets the BLE-specific result slot. */
-static bool self_test_from_ble; /**< Pending benchmark admission belongs to the BLE result slot. */
 static pf_hid_control_result_t ble_result = { .version = PF_HID_REPORT_VERSION };
-/** USB Feature 36 result; proof bytes are cleared immediately after the host reads them. */
-static uint8_t tcp_auth_proof_result[PF_WIRELESS_AUTH_RESULT_SIZE];
-static bool tcp_auth_proof_ready;
+static uint64_t tcp_auth_proof_expires_us; /**< USB opcode 13 proof retention deadline; GET never consumes it. */
 #endif
 
 #ifndef PF_HID_BOARD_MODEL
@@ -56,6 +56,10 @@ static uint64_t force_save_at_us; /**< Earliest detach, or deadline if no Pendin
 static bool force_save_reboot_waiting; /**< Completed forced save waits for result GET before reboot. */
 static uint64_t force_save_reboot_deadline_us; /**< Bounded wait for reconnect and result GET. */
 static pf_hid_control_request_t force_save_request; /**< Original transaction; never replayed. */
+static uint8_t control_write[PF_HID_CONTROL_PAYLOAD_SIZE + 1u]; /**< USB SET envelope, including report ID. */
+static bool control_write_valid; /**< DATA-stage validation passed before the USB status handshake. */
+static bool control_write_receiving; /**< Count actual OUT bytes, including prematurely short transfers. */
+static uint32_t control_write_bytes; /**< Received byte count for the current Feature 20 SET. */
 /** Latest Feature 20 result returned by GET. */
 static pf_hid_control_result_t control_result = {
     .version = PF_HID_REPORT_VERSION,
@@ -68,7 +72,7 @@ static pf_hid_control_request_t pending_self_test_request; /**< Request to compl
 
 static bool trailing_arguments_zero(const uint8_t *arguments, size_t first)
 {
-    for (size_t index = first; index < 5u; ++index) {
+    for (size_t index = first; index < 64u; ++index) {
         if (arguments[index] != 0u) return false;
     }
     return true;
@@ -88,7 +92,7 @@ static uint32_t read_u32_le(const uint8_t *value)
 #endif
 
 static void set_result(const pf_hid_control_request_t *request, uint8_t status, uint8_t error,
-                       const uint8_t result_data[4])
+                       const uint8_t result_data[63])
 {
     pf_hid_control_result_t *target = &control_result;
 #if PF_ENABLE_WIRELESS
@@ -102,6 +106,12 @@ static void set_result(const pf_hid_control_request_t *request, uint8_t status, 
         .error_reason = error,
     };
     if (result_data != NULL) memcpy(target->result_data, result_data, sizeof(target->result_data));
+#if PF_ENABLE_WIRELESS
+    if (!ble_dispatch) {
+        tcp_auth_proof_expires_us = request->opcode == PF_HID_OPCODE_TCP_PROOF &&
+            status == PF_HID_COMMAND_COMPLETED ? time_us_64() + 10000000u : 0u;
+    }
+#endif
 }
 
 static uint8_t board_model(void)
@@ -113,7 +123,7 @@ static uint8_t board_model(void)
 typedef struct {
     uint8_t status; /**< PF_HID_COMMAND_* value. */
     uint8_t error; /**< PF_HID_ERROR_* value. */
-    uint8_t data[4]; /**< Opcode-specific result bytes, zero otherwise. */
+    uint8_t data[63]; /**< Opcode-specific result bytes, zero otherwise. */
 } outcome_t;
 
 static outcome_t handle_save_settings(const pf_hid_control_request_t *request);
@@ -124,7 +134,12 @@ static outcome_t outcome(uint8_t status, uint8_t error)
 }
 
 static outcome_t completed(void) { return outcome(PF_HID_COMMAND_COMPLETED, PF_HID_ERROR_NONE); }
-static outcome_t busy_outcome(void) { return outcome(PF_HID_COMMAND_BUSY, PF_HID_ERROR_BUSY); }
+static outcome_t busy_outcome(void)
+{
+    outcome_t result = outcome(PF_HID_COMMAND_BUSY, PF_HID_ERROR_BUSY);
+    result.data[0] = pf_usb_msc_is_enabled() ? 2u : 1u;
+    return result;
+}
 static outcome_t failed(void) { return outcome(PF_HID_COMMAND_FAILED, PF_HID_ERROR_OPERATION); }
 static outcome_t invalid(uint8_t error) { return outcome(PF_HID_COMMAND_INVALID, error); }
 
@@ -132,8 +147,10 @@ static outcome_t invalid(uint8_t error) { return outcome(PF_HID_COMMAND_INVALID,
 /** @brief Map a rejected benchmark admission to the busy or failed outcome. */
 static outcome_t benchmark_rejection(pf_file_benchmark_error_t error)
 {
-    return (error == PF_FILE_BENCHMARK_ERROR_BUSY || error == PF_FILE_BENCHMARK_ERROR_USB_OWNER)
-               ? busy_outcome() : failed();
+    outcome_t result = (error == PF_FILE_BENCHMARK_ERROR_BUSY || error == PF_FILE_BENCHMARK_ERROR_USB_OWNER)
+        ? busy_outcome() : failed();
+    result.data[0] = (uint8_t)error;
+    return result;
 }
 #endif
 
@@ -178,21 +195,12 @@ void pf_hid_poll_async_commands(void)
 
     self_test_result_pending = false;
     pf_hid_control_result_t *target = &control_result;
-#if PF_ENABLE_WIRELESS
-    if (self_test_from_ble) target = &ble_result;
-#endif
     if ((target->transaction_id != pending_self_test_request.transaction_id) ||
         (target->opcode != pending_self_test_request.opcode)) {
         return;
     }
     const outcome_t result = accepted ? completed() : benchmark_rejection(error);
-#if PF_ENABLE_WIRELESS
-    ble_dispatch = self_test_from_ble;
-#endif
-    set_result(&pending_self_test_request, result.status, result.error, NULL);
-#if PF_ENABLE_WIRELESS
-    ble_dispatch = false;
-#endif
+    set_result(&pending_self_test_request, result.status, result.error, result.data);
 #endif
 }
 
@@ -254,6 +262,9 @@ void pf_hid_build_configuration_report(pf_hid_configuration_report_t *report)
     /* The logging UART is always configured by the board, so unlike the LED and card detect it has no absent case. */
     report->board_flags |= PF_HID_BOARD_FLAG_MONITOR_UART;
     report->board_flags |= (uint8_t)((pf_boot_config_radios() & PF_HID_RADIO_MASK) << PF_HID_BOARD_RADIO_SHIFT);
+#if PF_ENABLE_WIRELESS
+    if (pf_boot_config_tcp_cli_enabled()) report->board_flags |= 1u << 5u;
+#endif
     report->reset_cause = pf_system_reset_cause();
 }
 
@@ -359,7 +370,6 @@ void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t se
     report->mismatch_count = status.mismatch_count;
     report->error = (uint8_t)status.error;
     report->filesystem_result = (uint8_t)status.filesystem_result;
-    report->request_error = (uint8_t)status.request_error;
 #endif
 }
 
@@ -382,9 +392,24 @@ static outcome_t handle_reboot(const pf_hid_control_request_t *request)
     if ((request->flags & 1u) == 0u) {
         return invalid(PF_HID_ERROR_CONFIRMATION);
     }
+#if PF_ENABLE_WIRELESS
+    if (ble_dispatch && (force_save_pending || force_save_reboot_waiting)) {
+        outcome_t result = busy_outcome();
+        result.data[0] = 1u;
+        return result;
+    }
+#endif
     if (pf_storage_worker_busy() || pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
         return busy_outcome();
     }
+#if PF_ENABLE_WIRELESS
+    if (ble_dispatch && pf_wireless_staged()) {
+        outcome_t result = busy_outcome();
+        result.data[0] = 28u;
+        return result;
+    }
+    pf_wireless_discard();
+#endif
     reboot_requested = true;
     return completed();
 }
@@ -406,12 +431,10 @@ static outcome_t handle_msc(const pf_hid_control_request_t *request)
     if (!force && request->flags != 0u) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
-    if (force && !pf_usb_msc_is_enabled()) {
-        return invalid(PF_HID_ERROR_ARGUMENT);
-    }
-    if (pf_storage_worker_busy()) {
+    if (pf_storage_worker_busy() || pf_usb_msc_transition_pending()) {
         return busy_outcome();
     }
+    if (force && !pf_usb_msc_is_enabled()) return invalid(PF_HID_ERROR_ARGUMENT);
     const bool accepted = force ? pf_usb_msc_request_force_return()
                                 : pf_usb_msc_request(action == PF_HID_MSC_ACTION_ENABLE);
     if (!accepted) {
@@ -443,9 +466,6 @@ static outcome_t start_self_test(const pf_hid_control_request_t *request, uint32
     if (pf_storage_worker_benchmark_start(size_mib, false)) {
         pending_self_test_request = *request;
         self_test_result_pending = true;
-#if PF_ENABLE_WIRELESS
-        self_test_from_ble = ble_dispatch;
-#endif
         return outcome(PF_HID_COMMAND_PENDING, PF_HID_ERROR_NONE);
     }
     pf_storage_worker_benchmark_status(&benchmark);
@@ -457,16 +477,16 @@ static outcome_t handle_self_test(const pf_hid_control_request_t *request)
     const uint8_t action = request->arguments[0];
     const uint32_t size_mib = read_u32_le(&request->arguments[1]);
 
-    if (request->flags != 0u) {
+    if (request->flags != 0u || !trailing_arguments_zero(request->arguments, 5u)) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
     if (action > 1u || (action == 0u && size_mib != 0u)) {
         return invalid(PF_HID_ERROR_ARGUMENT);
     }
     if (action == 1u && (size_mib == 0u || size_mib > PF_FILE_BENCHMARK_MAX_MIB)) {
-        /* Not a real start: the rejected call records the size error in the benchmark status for Input 11. */
-        (void)pf_storage_worker_benchmark_start(size_mib, false);
-        return invalid(PF_HID_ERROR_ARGUMENT);
+        outcome_t result = invalid(PF_HID_ERROR_ARGUMENT);
+        result.data[0] = 3u;
+        return result;
     }
     if (pf_usb_msc_is_enabled() || pf_usb_msc_transition_pending()) {
         return busy_outcome();
@@ -479,26 +499,18 @@ static outcome_t handle_self_test(const pf_hid_control_request_t *request)
 /** @copydoc pf_hid_ble_control */
 bool pf_hid_ble_control(const pf_hid_control_request_t *request)
 {
-    if (request->version != PF_HID_REPORT_VERSION || request->transaction_id == 0u ||
-        (request->opcode != PF_HID_OPCODE_LED && request->opcode != PF_HID_OPCODE_REBOOT &&
-         request->opcode != PF_HID_OPCODE_SELF_TEST && request->opcode != PF_HID_OPCODE_SAVE_SETTINGS)) return false;
-    outcome_t result = busy_outcome();
-    if (!pf_hid_control_pending()) {
-        ble_dispatch = true;
-        switch (request->opcode) {
-        case PF_HID_OPCODE_LED: result = handle_led(request); break;
-        case PF_HID_OPCODE_REBOOT: result = handle_reboot(request); break;
-        case PF_HID_OPCODE_SAVE_SETTINGS: result = handle_save_settings(request); break;
-        case PF_HID_OPCODE_SELF_TEST:
-#if PF_ENABLE_STORAGE_BENCHMARK
-            result = handle_self_test(request);
-#else
-            result = outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
-#endif
-            break;
-        }
-    }
+    if (request->version != PF_HID_REPORT_VERSION || request->transaction_id == 0u) return false;
     ble_dispatch = true;
+    outcome_t result;
+    switch (request->opcode) {
+    case PF_HID_OPCODE_LED: result = handle_led(request); break;
+    case PF_HID_OPCODE_REBOOT: result = handle_reboot(request); break;
+    case PF_HID_OPCODE_SAVE_SETTINGS: result = handle_save_settings(request); break;
+    default:
+        result = outcome(PF_HID_COMMAND_UNSUPPORTED,
+            request->opcode >= 1u && request->opcode <= 13u ? PF_HID_ERROR_CAPABILITY : PF_HID_ERROR_OPCODE);
+        break;
+    }
     set_result(request, result.status, result.error, result.data);
     ble_dispatch = false;
     return true;
@@ -516,37 +528,54 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
 {
     const uint16_t system_clock_mhz = read_u16_le(request->arguments);
     const uint8_t sdcard_profile = request->arguments[2];
-    const uint8_t radios = request->arguments[3];
+    const uint8_t switches = request->arguments[3];
+    const uint8_t radios = switches & 3u;
     const bool force = (request->flags & PF_HID_SAVE_SETTINGS_FORCE_MSC) != 0u;
-    const bool set_tcp_cli = (request->flags & PF_HID_SAVE_SETTINGS_SET_TCP_CLI) != 0u;
+    const bool commit = (request->flags & PF_HID_SAVE_SETTINGS_COMMIT_WIRELESS) != 0u;
     outcome_t result;
 
-    if ((request->flags & (uint8_t)~(PF_HID_SAVE_SETTINGS_FORCE_MSC | PF_HID_SAVE_SETTINGS_SET_TCP_CLI)) != 0u ||
-        (!set_tcp_cli && request->arguments[4] != 0u)) {
+    if ((request->flags & (uint8_t)~3u) != 0u || !trailing_arguments_zero(request->arguments, 4u)) {
         return invalid(PF_HID_ERROR_MALFORMED);
     }
-    if (set_tcp_cli && request->arguments[4] > 1u) {
+#if PF_ENABLE_WIRELESS
+    if (ble_dispatch && request->flags != 0u) return invalid(PF_HID_ERROR_MALFORMED);
+#endif
+    if ((switches & (uint8_t)~(PF_HID_RADIO_MASK != 0u ? 7u : 0u)) != 0u ||
+        (system_clock_mhz != 0u && system_clock_mhz != 150u &&
+         system_clock_mhz != 200u && system_clock_mhz != 250u) || sdcard_profile > 1u) {
         return invalid(PF_HID_ERROR_ARGUMENT);
-    }
-    if (set_tcp_cli && PF_HID_RADIO_MASK == 0u) {
-        return outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
     }
 #if PF_ENABLE_WIRELESS
-    if (ble_dispatch && (force || radios != pf_boot_config_radios())) {
-        return invalid(PF_HID_ERROR_ARGUMENT);
+    if (ble_dispatch && (force_save_pending || force_save_reboot_waiting)) {
+        result = busy_outcome();
+        result.data[0] = 1u;
+        return result;
     }
 #endif
-    if ((radios & (uint8_t)~PF_HID_RADIO_MASK) != 0u ||
-        !pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(system_clock_mhz)) ||
-        !pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile) ||
-        (PF_HID_RADIO_MASK != 0u && !pf_boot_config_set_radios(radios)) ||
-        (set_tcp_cli && !pf_boot_config_set_tcp_cli_enabled(request->arguments[4] != 0u))) {
-        return invalid(PF_HID_ERROR_ARGUMENT);
-    }
     if (pf_usb_msc_transition_pending() || pf_storage_worker_busy() ||
         (pf_usb_msc_is_enabled() && !force)) {
         return busy_outcome();
     }
+#if PF_ENABLE_WIRELESS
+    if (ble_dispatch && pf_wireless_staged()) {
+        result = busy_outcome();
+        result.data[0] = 28u;
+        return result;
+    }
+    const uint8_t detail = pf_wireless_save_precondition(commit);
+    if (detail != 0u) {
+        result = detail == 25u || detail == 26u ? busy_outcome() : invalid(PF_HID_ERROR_ARGUMENT);
+        result.data[0] = detail;
+        return result;
+    }
+    if (ble_dispatch && radios != pf_boot_config_radios()) return invalid(PF_HID_ERROR_ARGUMENT);
+#else
+    if (commit) {
+        result = invalid(PF_HID_ERROR_ARGUMENT);
+        result.data[0] = 21u;
+        return result;
+    }
+#endif
     if (force && !pf_usb_msc_is_enabled()) return invalid(PF_HID_ERROR_ARGUMENT);
     if (force && !force_save_pending && !force_save_result_read) {
         force_save_request = *request;
@@ -558,7 +587,17 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
         PF_LOGGING_ERROR("settings", "Forced save refused: storage sync or USB detach failed");
         return failed();
     }
-    bool saved = pf_boot_config_save();
+    uint8_t commit_mask = 0u;
+    bool staged = pf_boot_config_set_sysclk(pf_sysclk_profile_from_mhz(system_clock_mhz)) &&
+        pf_boot_config_set_storage_speed((pf_storage_speed_t)sdcard_profile);
+#if PF_ENABLE_WIRELESS
+    staged = staged && pf_boot_config_set_radios(radios) &&
+        pf_boot_config_set_tcp_cli_enabled((switches & 4u) != 0u) &&
+        (!commit || pf_wireless_apply_staged(&commit_mask));
+#else
+    (void)radios;
+#endif
+    bool saved = staged && pf_boot_config_save();
     if (force) pf_usb_msc_finish_save(saved);
     if (!saved) {
         PF_LOGGING_ERROR("settings", "Boot settings save failed; reboot not scheduled");
@@ -568,13 +607,16 @@ static outcome_t save_settings(const pf_hid_control_request_t *request)
     result.data[0] = (uint8_t)system_clock_mhz;
     result.data[1] = (uint8_t)(system_clock_mhz >> 8u);
     result.data[2] = sdcard_profile;
-    result.data[3] = radios | (set_tcp_cli ? PF_HID_SETTINGS_RESULT_TCP_CLI_INCLUDED |
-        (request->arguments[4] != 0u ? PF_HID_SETTINGS_RESULT_TCP_CLI_ENABLED : 0u) : 0u);
+    result.data[3] = switches;
+    result.data[4] = commit_mask;
+#if PF_ENABLE_WIRELESS
+    pf_wireless_saved();
+#endif
     reboot_requested = true;
     return result;
 }
 
-/** @brief Save all requested settings or none: any other outcome drops the staged values (a pending save re-stages). */
+/** @brief Roll back boot-setting mutations on rejection; wireless candidates remain available for retry. */
 static outcome_t handle_save_settings(const pf_hid_control_request_t *request)
 {
     outcome_t result = save_settings(request);
@@ -604,9 +646,83 @@ static void process_control_request(const pf_hid_control_request_t *request)
 #endif
         break;
     case PF_HID_OPCODE_SAVE_SETTINGS: result = handle_save_settings(request); break;
+#if PF_ENABLE_WIRELESS
+    case PF_HID_OPCODE_STAGE_SSID:
+    case PF_HID_OPCODE_STAGE_PASSWORD:
+    case PF_HID_OPCODE_STAGE_KEY:
+    case PF_HID_OPCODE_WIFI_TEST:
+    case PF_HID_OPCODE_WIFI_CANCEL:
+    case PF_HID_OPCODE_WIFI_SCAN:
+    case PF_HID_OPCODE_WIFI_ENTRY:
+    case PF_HID_OPCODE_TCP_PROOF: {
+        pf_hid_control_result_t wireless_result;
+        pf_wireless_command(request, &wireless_result);
+        set_result(request, wireless_result.status, wireless_result.error_reason, wireless_result.result_data);
+        return;
+    }
+#else
+    case PF_HID_OPCODE_STAGE_SSID:
+    case PF_HID_OPCODE_STAGE_PASSWORD:
+    case PF_HID_OPCODE_STAGE_KEY:
+    case PF_HID_OPCODE_WIFI_TEST:
+    case PF_HID_OPCODE_WIFI_CANCEL:
+    case PF_HID_OPCODE_WIFI_SCAN:
+    case PF_HID_OPCODE_WIFI_ENTRY:
+    case PF_HID_OPCODE_TCP_PROOF:
+        result = outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_CAPABILITY);
+        break;
+#endif
     default: result = outcome(PF_HID_COMMAND_UNSUPPORTED, PF_HID_ERROR_OPCODE); break;
     }
     set_result(request, result.status, result.error, result.data);
+}
+
+bool __real_hidd_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_control_request_t *request);
+bool __real_usbd_control_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t bytes);
+void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
+                           const uint8_t *buffer, uint16_t bufsize);
+
+/** @brief Count SET data before TinyUSB invokes DATA validation; its class callback exposes only requested length. */
+bool __wrap_usbd_control_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t bytes)
+{
+    if (control_write_receiving && ep_addr == 0u && result == XFER_RESULT_SUCCESS) control_write_bytes += bytes;
+    return __real_usbd_control_xfer_cb(rhport, ep_addr, result, bytes);
+}
+
+/**
+ * @brief Reject invalid USB SET envelopes before the status handshake, without changing the result slot.
+ *
+ * The pinned TinyUSB SET callback runs at ACK, too late to reject an invalid envelope. Interpose only SET_REPORT;
+ * descriptors, GET_REPORT and the remaining HID class requests keep the SDK implementation.
+ */
+bool __wrap_hidd_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_control_request_t *request)
+{
+    if (stage == CONTROL_STAGE_SETUP) control_write_receiving = false;
+    if (request->bmRequestType_bit.type != TUSB_REQ_TYPE_CLASS || request->bRequest != HID_REQ_CONTROL_SET_REPORT) {
+        return __real_hidd_control_xfer_cb(rhport, stage, request);
+    }
+    if (request->bmRequestType_bit.direction != TUSB_DIR_OUT ||
+        request->wValue != ((uint16_t)HID_REPORT_TYPE_FEATURE << 8u | PF_HID_CONTROL_REPORT_ID) ||
+        request->wLength != sizeof(control_write)) return false;
+    if (stage == CONTROL_STAGE_SETUP) {
+        control_write_valid = false;
+        control_write_receiving = true;
+        control_write_bytes = 0u;
+        memset(control_write, 0, sizeof(control_write));
+        return tud_control_xfer(rhport, request, control_write, sizeof(control_write));
+    }
+    if (stage == CONTROL_STAGE_DATA) {
+        control_write_receiving = false;
+        control_write_valid = control_write_bytes == sizeof(control_write) &&
+            control_write[0] == PF_HID_CONTROL_REPORT_ID &&
+            control_write[1] == PF_HID_REPORT_VERSION && control_write[2] != 0u;
+        return control_write_valid;
+    }
+    if (stage != CONTROL_STAGE_ACK || !control_write_valid) return false;
+    control_write_valid = false;
+    tud_hid_set_report_cb(0u, PF_HID_CONTROL_REPORT_ID, HID_REPORT_TYPE_FEATURE,
+                          control_write + 1u, PF_HID_CONTROL_PAYLOAD_SIZE);
+    return true;
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
@@ -620,17 +736,6 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
         if (report_id == PF_WIRELESS_REPORT_ID && reqlen >= PF_WIRELESS_STATUS_SIZE) {
             pf_wireless_status(buffer);
             return PF_WIRELESS_STATUS_SIZE;
-        }
-        if (report_id == PF_WIRELESS_RESULT_REPORT_ID && reqlen >= PF_WIRELESS_RESULT_SIZE) {
-            pf_wireless_result_report(buffer);
-            return PF_WIRELESS_RESULT_SIZE;
-        }
-        if (report_id == PF_WIRELESS_AUTH_REPORT_ID && reqlen >= PF_WIRELESS_AUTH_RESULT_SIZE &&
-            tcp_auth_proof_ready) {
-            memcpy(buffer, tcp_auth_proof_result, sizeof(tcp_auth_proof_result));
-            memset(tcp_auth_proof_result + 3u, 0, sizeof(tcp_auth_proof_result) - 3u);
-            tcp_auth_proof_ready = false;
-            return PF_WIRELESS_AUTH_RESULT_SIZE;
         }
 #endif
         if (report_id == PF_HID_IDENTITY_REPORT_ID && reqlen >= sizeof(pf_hid_identity_report_t)) {
@@ -647,6 +752,14 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
             return sizeof(report);
         }
         if (report_id == PF_HID_CONTROL_REPORT_ID && reqlen >= sizeof(control_result)) {
+#if PF_ENABLE_WIRELESS
+            if (tcp_auth_proof_expires_us != 0u && time_us_64() >= tcp_auth_proof_expires_us) {
+                memset(control_result.result_data, 0, sizeof(control_result.result_data));
+                control_result.status = PF_HID_COMMAND_FAILED;
+                control_result.error_reason = PF_HID_ERROR_OPERATION;
+                tcp_auth_proof_expires_us = 0u;
+            }
+#endif
             if (force_save_pending && !force_save_result_read) {
                 force_save_result_read = true;
                 force_save_at_us = time_us_64() + 10000u;
@@ -686,35 +799,6 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            hid_report_type_t report_type, uint8_t const *buffer,
                            uint16_t bufsize)
 {
-#if PF_ENABLE_WIRELESS
-    if (instance == 0u && report_id == PF_WIRELESS_AUTH_REPORT_ID &&
-        report_type == HID_REPORT_TYPE_FEATURE && buffer != NULL &&
-        bufsize == PF_WIRELESS_AUTH_REQUEST_SIZE) {
-        memset(tcp_auth_proof_result, 0, sizeof(tcp_auth_proof_result));
-        tcp_auth_proof_ready = false;
-        if (buffer[0] != PF_HID_REPORT_VERSION || buffer[1] == 0u || buffer[18] != 0u) return;
-        tcp_auth_proof_result[0] = PF_HID_REPORT_VERSION;
-        tcp_auth_proof_result[1] = buffer[1];
-        tcp_auth_proof_result[2] = pf_wireless_auth_tcp_cli_proof(
-            buffer + 2u, tcp_auth_proof_result + 3u) ? 1u : 0u;
-        tcp_auth_proof_ready = true;
-        return;
-    }
-    if (instance == 0u && report_id == PF_WIRELESS_COMMAND_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
-        buffer != NULL && bufsize == PF_WIRELESS_COMMAND_SIZE) {
-        if (force_save_pending || force_save_reboot_waiting || reboot_requested)
-            pf_wireless_reject_command(buffer[PF_WIRELESS_COMMAND_TRANSACTION_OFFSET]);
-        else pf_wireless_command(buffer);
-        return;
-    }
-    if (instance == 0u && report_id == PF_WIRELESS_CONFIG_REPORT_ID && report_type == HID_REPORT_TYPE_FEATURE &&
-        buffer != NULL && bufsize == PF_WIRELESS_REQUEST_SIZE) {
-        if (force_save_pending || force_save_reboot_waiting || reboot_requested) {
-            PF_LOGGING_WARNING("wireless", "Provisioning ignored during outstanding reboot/save");
-        } else if (pf_wireless_configure(buffer)) reboot_requested = true;
-        return;
-    }
-#endif
     if (instance != 0u || report_id != PF_HID_CONTROL_REPORT_ID ||
         report_type != HID_REPORT_TYPE_FEATURE || buffer == NULL ||
         bufsize != sizeof(pf_hid_control_request_t)) return;

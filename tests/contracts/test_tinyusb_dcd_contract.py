@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Keep the DCD interposition surface aligned with the pinned Pico TinyUSB driver."""
 from pathlib import Path
 import re

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 import struct
 import unittest
 
@@ -5,19 +8,19 @@ from picoforge.reports import build_self_test_command_report, parse_self_test_re
 
 
 def report(state=0, flags=0, target=0, written=0, read=0, write_ms=0, read_ms=0,
-           mismatches=0, error=0, fs_result=0, request_error=0):
+           mismatches=0, error=0, fs_result=0, reserved0=0, reserved1=0):
     payload = bytes([1, 7, state, flags]) + struct.pack(
         "<IIIIII", target, written, read, write_ms, read_ms, mismatches
-    ) + bytes([error, fs_result, request_error, 0])
+    ) + bytes([error, fs_result, reserved0, reserved1])
     return bytes([11]) + payload
 
 
 class SelfTestProtocolTests(unittest.TestCase):
     def test_commands_use_control_report_20_and_enforce_action_size(self):
         self.assertEqual(build_self_test_command_report("start", 32, 7),
-                         bytes([20, 1, 7, 4, 0, 1, 32, 0, 0, 0]))
+                         bytes([20, 1, 7, 4, 0, 1, 32, 0, 0, 0]) + bytes(59))
         self.assertEqual(build_self_test_command_report("cancel", transaction_id=8),
-                         bytes([20, 1, 8, 4, 0, 0, 0, 0, 0, 0]))
+                         bytes([20, 1, 8, 4, 0, 0, 0, 0, 0, 0]) + bytes(59))
         with self.assertRaises(ValueError):
             build_self_test_command_report("cancel", 32)
         for size in (0, 1025, True, 32.5):
@@ -33,9 +36,9 @@ class SelfTestProtocolTests(unittest.TestCase):
         self.assertTrue(result["volume_mounted"])
 
     def test_retains_unknown_enums_but_reports_them_as_unknown(self):
-        result = parse_self_test_report(report(200, request_error=12))
+        result = parse_self_test_report(report(200))
         self.assertEqual(result["state"], "unknown (200)")
-        self.assertEqual(result["request_error_name"], "unknown (12)")
+        self.assertNotIn("request_error", result)
 
     def test_rejects_invalid_sizes_reserved_fields_and_state_combinations(self):
         for malformed in (
@@ -43,7 +46,9 @@ class SelfTestProtocolTests(unittest.TestCase):
             report(1, target=1, written=1),
             report(6, 2, 10, 10, 9),
             report(7, error=1),
-            report(0, request_error=0, flags=4),
+            report(0, flags=4),
+            report(0, reserved0=1),
+            report(0, reserved1=1),
         ):
             with self.subTest(report=malformed), self.assertRaises(ValueError):
                 parse_self_test_report(malformed)

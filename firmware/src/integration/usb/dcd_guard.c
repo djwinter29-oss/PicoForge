@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Serialize the pinned RP2040/RP2350 USB DCD against its fixed-core interrupt.
  */

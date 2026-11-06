@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """load.sh Tcl quoting contract; uses a fake OpenOCD and never touches hardware."""
 from pathlib import Path
 import shutil

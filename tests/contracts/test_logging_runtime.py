@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Compile the real logger against lightweight SDK stubs and exercise its public behavior."""
 
 from pathlib import Path

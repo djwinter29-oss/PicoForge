@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Storage HID report codecs."""
 
 from __future__ import annotations
@@ -5,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import HardwareIdentity, MemoryStatus
+    from .models import MemoryStatus, SupportedHardwareIdentity
 
 from .common import (
     REPORT_VERSION,
@@ -17,7 +20,7 @@ from .common import _input_payload
 
 def parse_memory_report(
     report: bytes | bytearray | list[int],
-    identity: HardwareIdentity | None = None,
+    identity: SupportedHardwareIdentity | None = None,
 ) -> MemoryStatus:
     """Decode and validate Input report 10 storage and MSC state."""
     payload = _input_payload(report, STORAGE_REPORT_ID, STORAGE_PAYLOAD_SIZE)
@@ -115,6 +118,3 @@ def parse_memory_report(
             "request_rejected": bool(msc_rejected),
         },
     }
-
-
-parse_storage_report = parse_memory_report

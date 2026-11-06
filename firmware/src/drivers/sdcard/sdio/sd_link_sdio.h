@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Native CMD/DAT operations implemented by SDIO-PIO; no card-command or stream policy.
  *

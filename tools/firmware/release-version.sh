@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 # Strict release boundary; local builds retain version.cmake's prerelease support.
 set -eu
 tag=${1:-}

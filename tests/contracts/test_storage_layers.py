@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Keep physical storage engines independent of device and filesystem policy."""
 
 from pathlib import Path

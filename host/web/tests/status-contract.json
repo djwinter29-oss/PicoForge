@@ -1,0 +1,19 @@
+{
+  "required": [
+    "board_configuration", "command_outcome_uncertain", "connected", "error", "hardware", "memory",
+    "reboot_pending", "reconnecting", "runtime", "self_test", "self_test_stale", "settings_message", "settings_supported",
+    "storage_stale", "telemetry_stale", "updated_at", "wireless", "wireless_error", "wireless_phase"
+  ],
+  "nested": {
+    "memory": ["msc", "filesystem_format"],
+    "board_configuration": [
+      "stored_sysclk_profile", "system_clock_mhz", "stored_sdcard_profile", "sdcard_profile", "radios",
+      "tcp_cli_enabled", "monitor_uart_index", "storage_gpios", "card_detect_gpio", "reset_cause"
+    ]
+  },
+  "absent": [
+    "board_status", "report_freshness", "wireless_freshness", "msc", "filesystem_format", "settings",
+    "telemetry_updated_at", "storage_updated_at", "self_test_updated_at"
+  ],
+  "removed_routes": [["GET", "/api/wireless"]]
+}

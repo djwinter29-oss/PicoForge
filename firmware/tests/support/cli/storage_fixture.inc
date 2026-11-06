@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 static char output[2048];
 static FRESULT open_result;
 static BYTE expected_mode;

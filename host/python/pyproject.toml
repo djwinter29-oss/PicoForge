@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 [build-system]
 requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
@@ -31,8 +34,16 @@ Issues = "https://github.com/djwinter29-oss/PicoForge/issues"
 picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
-package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
+package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web/src"}
 packages = ["picoforge", "picoforge.web", "picoforge.reports", "picoforge.hid", "picoforge.dashboard"]
 
 [tool.setuptools.package-data]
 "picoforge.web" = ["index.html", "console.html", "favicon.svg", "css/*.css", "js/*.mjs"]
+
+[tool.pyright]
+include = ["src/picoforge/dashboard/console.py", "src/picoforge/dashboard/boards.py",
+           "src/picoforge/dashboard/models.py", "src/picoforge/dashboard/monitor.py", "tests/types/command_types.py"]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+reportUnnecessaryIsInstance = false
+reportUnnecessaryTypeIgnoreComment = true

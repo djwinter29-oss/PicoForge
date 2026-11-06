@@ -103,12 +103,12 @@ Both native TX programs park on their completion IRQ until the CPU disables the 
 wrap into an empty FIFO pull after a completed payload, which would set TXSTALL and falsely report an underrun.
 The next TX start clears the old completion flag while the state machine is disabled; real FIFO stalls remain fatal.
 
-Default-Speed RX qualifies start and samples payload after rising CLK, half a bit after the card's falling-edge
+Default-Speed RX detects the start bit and samples payload after rising CLK, half a bit after the card's falling-edge
 launch. Sampling just after falling CLK could miss the start bit or capture changing data; extending only the payload
 delay did not fix start detection. High-Speed RX samples after falling CLK instead, following the card's rising-edge
 launch. Both receive programs run at the system clock, not a fractional data divider, so WAIT-to-IN latency is one
 system cycle. TX retains its separately synchronized clock/data dividers. Timing-model checks cover cadence and
-framing; actual card/pad timing still requires hardware qualification.
+framing; card/pad timing depends on the selected card, board, and wiring.
 
 #### Clock Planning
 
@@ -134,8 +134,9 @@ two system cycles per bus period, so its divider cannot be below 2.0 and the fas
 * The reported maximum clock is what the planner accepts for a 50 MHz request (50 MHz where SYSCLK / 4 allows it),
   otherwise 25 MHz. The SD host attempts High Speed only when this exceeds 25 MHz.
 
-Host tests sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and limits. These checks model timing; they do not qualify hardware. Historical card measurements are listed in the
-[test records](../../validation/records/README.md); release qualification remains configuration-specific.
+Host timing models sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and limits. Historical card
+measurements, with their tested configurations, are listed in the
+[test records](../../validation/records/README.md).
 
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
@@ -194,12 +195,13 @@ See [hardware setup](../../guides/hardware.md#memory-and-storage-connections) fo
 electrical requirements, and breakout. Dated bring-up observations are preserved in
 [bring-up records](../../validation/records/sdcard-bringup-observations.md), not current operating instructions.
 
-## Tests and Qualification
+## Timing Model and Measurements
 
 Host C tests cover descriptor helpers and statically linked lifecycle/wire calls against concrete transports under
 [firmware/tests/](../../../firmware/tests/drivers). The assembled
 [SDIO](../../../tests/pio/test_sdio_pio_timing.py) instruction model checks wire timing assumptions;
 [storage-layer contracts](../../../tests/contracts/test_storage_layers.py) check the directory structure and
 physical-driver header independence. Use the existing [test guidance](../../../tests/README.md) for commands.
-Host tests, firmware builds, and PIO models do not establish electrical margins, card compatibility, sustained
-throughput, or power-loss safety.
+Electrical margins, card compatibility, sustained throughput, and power-loss behavior depend on the card, board,
+wiring, firmware, and operating conditions. See the [hardware setup guide](../../guides/hardware.md) and
+configuration-specific [test records](../../validation/records/README.md).

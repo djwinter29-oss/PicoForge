@@ -1,4 +1,9 @@
-import { PicoForgeWebHid } from "../../js/device.mjs";
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
+import { describe } from "../../web/js/ui/messages.mjs";
+import { BoardSession } from "../../web/js/board/session.mjs";
+import { HidTransport } from "../../web/js/transport/hid.mjs";
 
 export function identity(capabilities = 1 | 2 | 4 | 16 | 32) {
   const bytes = new Uint8Array(26);
@@ -37,7 +42,9 @@ export function selfTest(state = 0) {
   return bytes;
 }
 export function result(transaction, opcode, status = 2, error = 0) {
-  return Uint8Array.from([1, transaction, opcode, status, error, 0, 0, 0, 0]);
+  const bytes = new Uint8Array(68);
+  bytes.set([1, transaction, opcode, status, error]);
+  return bytes;
 }
 export function emit(device, reportId, data) {
   device.dispatchEvent(Object.assign(new Event("inputreport"), { device, reportId, data: new DataView(data.buffer) }));
@@ -60,13 +67,31 @@ export function fakeConnection({ capabilities, ...options } = {}) {
       reads.push(id);
       if (id === 1) return identity(capabilities);
       if (id === 2) return config(capabilities & 8 ? "spi" : "sdio");
+      if (id === 12) { const status = new Uint8Array(48); status[0] = 1; return status; }
       const request = sent.at(-1);
       const reply = result(request[2], request[3]);
-      if (request[3] === 6) reply.set(request.slice(5, 9), 5);
+      if (request[3] === 5) reply.set(request.slice(5, 9), 5);
       return reply;
     } });
   const hid = new EventTarget(); hid.getDevices = async () => [device];
   hid.requestDevice = async () => [device];
-  const client = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, pendingStore, ...options });
+  const client = new BoardSession(new HidTransport(hid),
+    { sleep: async () => {}, pendingStore, wirelessPolling: false, ...options });
   return { client, device, hid, reads, sent, pendingStore };
+}
+
+export async function attachDevice(client, device) {
+  await client.transport.openDevice(device, client.connectionSignal);
+  await client.connection.initialize();
+}
+
+/** @brief Test-only state override: replace the domain snapshot with `changes` merged in (bypasses named events). */
+/** @brief `assert.rejects` validator: the rejection's user-visible text (via `describe`) matches `pattern`. */
+export const says = pattern => error => {
+  if (!pattern.test(describe(error))) throw new Error(`"${describe(error)}" does not match ${pattern}`);
+  return true;
+};
+
+export function patchState(client, changes) {
+  client.store.dispatch({ type: "replace", state: { ...client.state, ...changes } });
 }

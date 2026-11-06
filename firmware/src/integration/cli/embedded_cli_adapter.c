@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file embedded_cli_adapter.c
  * @brief Pinned Embedded CLI adapter rejecting editor/RX overflow before command dispatch.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Telemetry HID report codecs."""
 
 from __future__ import annotations
@@ -6,7 +9,7 @@ import struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import HardwareIdentity, RuntimeStatus
+    from .models import RuntimeStatus, SupportedHardwareIdentity
 
 from .common import (
     REPORT_VERSION,
@@ -21,7 +24,7 @@ from .common import (
 
 
 def parse_status_report(
-    report: bytes | bytearray | list[int], identity: HardwareIdentity | None = None
+    report: bytes | bytearray | list[int], identity: SupportedHardwareIdentity | None = None
 ) -> RuntimeStatus:
     """Decode and validate Input report 3 telemetry."""
     payload = _input_payload(report, TELEMETRY_REPORT_ID, TELEMETRY_PAYLOAD_SIZE)
@@ -69,6 +72,3 @@ def parse_status_report(
         "ram_used_bytes": identity.get("ram_reserved_bytes") if identity else None,
         "ram_total_bytes": identity.get("ram_total_bytes") if identity else None,
     }
-
-
-parse_telemetry_report = parse_status_report

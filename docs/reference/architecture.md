@@ -1,260 +1,208 @@
-# PicoForge Architecture
+# PicoForge Firmware Architecture
 
-## Current Firmware
+PicoForge is firmware for RP2040 and RP2350 boards. It provides board management, USB control, optional SD-card
+storage, and optional wireless services for W boards. This document describes the top-level structure and the
+runtime ownership rules that connect those capabilities. The linked references own protocol layouts, hardware
+requirements, settings persistence, and detailed driver behavior.
 
-`firmware/CMakeLists.txt` imports the Pico SDK selected by `PICO_SDK_PATH`, initializes the SDK, imports the
-platform-specific FreeRTOS-Kernel port, and builds `pico_forge` for the selected `PICO_BOARD`; see
-[artifact naming](../guides/getting-started.md#1-get-or-build-the-firmware). The TinyUSB configuration lives under
-`firmware/src/integration/usb`; USB descriptors, HID report helpers, and the statically allocated USB task live
-under `firmware/src/app/usb`. The composite device exposes CDC ACM, vendor-defined HID, and MSC interfaces in a fixed configuration.
-Board startup passes its monitor UART assignment to `platform/logging`, which initializes and selects
-it for stdio and emits serialized, severity-tagged lines at the board-configured default severity. USB stdio stays disabled so
-log messages remain separate from CDC. The USB task services the [CDC CLI](../guides/console.md) and publishes HID Input
-report `3` telemetry every 250 ms, plus storage and capability-gated self-test reports `10` and `11` every 500 ms.
-Feature report `1` carries stable product, MCU, board, capability, and SRAM information; Feature report `2` carries
-persisted profiles and board GPIO configuration. Feature report `20` handles LED, reboot, MSC, self-test, and
-settings transactions. The [HID Report Reference](usb-hid.md) defines the wire contract and
-validation. The temperature driver reads the on-chip ADC temperature sensor on channel 4, not GPIO 4.
-The shared Pico-family profile in `firmware/src/config/board.c` uses the SDK's default UART and direct-LED
-assignments; CMake selects `config/board_spi.c` or `config/board_sdio.c` for storage connector wiring.
-Pico, Pico 2, and Pico 2 W use the
-same monitor UART pins. Pico W and Pico 2 W have no direct GPIO LED; their images drive the CYW43 LED once the
-wireless chip starts at boot. Non-wireless boards without a direct GPIO LED do not advertise one. This follows PicoUart's
-[board-configuration approach](https://github.com/djwinter29-oss/PicoUart/blob/main/docs/hardware-setup.md) without
-adopting its UART-channel map or hardware features. Other layouts require a matching board profile; see
-[hardware setup](../guides/hardware.md). Platform services (system, temperature, LED, logging, boot config)
-live flat under `firmware/src/platform/`; native and SPI SD protocols live together under `drivers/sdcard/`, above
-the physical engines in `drivers/sdcard/`. USB interface roles, descriptors, and lifecycle are documented in the
-[HID Report Reference](usb-hid.md). The development VID/PID is `0xCAFE:0x4011` and is not for product
-release. `firmware/src/main.c` initializes logging output, temperature, and an available board LED, starts the USB
-task, and launches the scheduler.
-The local validation wrapper builds `pico` and `pico2`; PR/release workflows also build W variants.
-Physical HID, temperature, and LED behavior still require board validation.
+## System Context
 
-Input report `10` publishes SD detection/initialization, selected bus mode, effective bus speed, capacity, CID,
-filesystem format, and MSC ownership state every 500 ms. CDC, HID and MSC interfaces remain present in a fixed
-configuration; Pico-owned storage reports no medium to MSC. See the [HID Report Reference](usb-hid.md).
-The owner gate rejects
-firmware block calls while the host owns the card. Enabling queues a worker-owned FatFs unmount before acquisition
-and is rejected if CLI storage work is pending. Normal disable requires host eject; the dashboard's confirmed
-**Return to Pico** action requests [Pico-side return/remount](usb-hid.md#msc-force-return-safety),
-with one worker mount attempt and explicit failure reporting. Host apps never run OS eject commands.
+```mermaid
+flowchart LR
+    Host["Host computer"] <-->|USB CDC, HID, MSC| Device["PicoForge firmware"]
+    Host <-->|Optional Wi-Fi TCP CLI| Device
+    Phone["BLE control client"] <-->|Authenticated BLE| Device
+    Device <-->|SPI or SDIO-PIO| Card["SD card"]
+    Device --> Board["RP2040 or RP2350 board"]
+```
 
-CDC storage commands are queued to a statically allocated FreeRTOS storage worker,
-which is the sole FatFs caller for this workflow. USB/CLI and storage communicate
-through bounded request/reply queues; filesystem calls do not execute in the USB
-task. MSC transitions are rejected while a storage command is outstanding. Files
-are closed before command completion, and enabling MSC automatically queues filesystem
-unmount on the worker before acquiring USB ownership. See [the CDC CLI guide](../guides/console.md) for commands, safeguards,
-resource budgets, and validation limits.
+USB management works without an SD card or wireless network. The USB device configuration exposes CDC, vendor HID,
+and MSC interfaces. PicoForge keeps all three interfaces present; MSC reports no medium while firmware owns the
+card. W-board builds can additionally provide Wi-Fi and Bluetooth LE. Wi-Fi TCP CLI requires Wi-Fi to be enabled and
+connected; BLE control requires a configured Control key. See the [USB HID reference](usb-hid.md), the
+[wireless guide](../guides/wireless.md), and the [Bluetooth protocol](bluetooth.md) for user-visible behavior.
 
-The firmware separates application policy, reusable drivers, and the platform (services and storage) as described below.
-Maintenance and downstream integrations should preserve these boundaries.
+## Top-Level Design
 
-Feature Report `20` and Input report `11` implement the [SD self-test](../guides/sdcard-benchmark.md). Its RTOS-independent engine lives
-in `app/storage` and runs in the sole FatFs worker. The worker checks ownership,
-the mounted filesystem, available space, and the reserved `/PFTEST.BIN` path
-before accepting a run; existing files are left untouched. See the
-[performance-test safeguards](../guides/sdcard-benchmark.md#running). Browser, Python, and
-.NET dashboards expose the controls and calculate average read/write metrics.
-
-W-board images also provide optional [Wi-Fi and BLE](../guides/wireless.md). Radio switches default enabled, but credentials
-default empty; Wi-Fi needs a network and BLE needs a control key.
-SDK poll-mode radio work runs on the
-USB owner task; authenticated BLE LED/benchmark commands reuse existing admission with separate result slots.
-USB-only credential provisioning and existing storage ownership rules remain in force.
-
-## Core and Runtime Policy
-
-Before starting the scheduler, USB startup disconnects for 250 ms using the SDK busy wait, then reconnects.
-This boot-only delay must not depend on alarm or RTOS wakeups; an alarm-backed sleep stalled RP2040 startup.
-
-`app/runtime_stats.c` samples per-core FreeRTOS idle runtime and SDK-linked SRAM reservations for HID Feature report
-`1` and Input report `3`. Both dashboards show the current metrics in Runtime status.
-
-FreeRTOS-Kernel 11.3.1 runs with `configNUMBER_OF_CORES=2`. The Pico port launches core 1 when the scheduler
-starts on core 0; applications must not launch a second independent core entry point. USB, storage and timer
- tasks use the kernel's all-core affinity default and may migrate. Idle tasks are pinned to their corresponding
-physical cores (`configIDLE_AFFINITY=1`) so idle-runtime CPU telemetry remains per-core. Different priorities may execute
-simultaneously. Affinity capability remains enabled for Pico SDK boot-flash-safe execution, which temporarily uses a
-core-specific lockout task. On W boards the USB/radio owner task is pinned to its startup core
-because SDK poll contexts and CYW43 IRQ setup require it; other application tasks are not pinned.
-Task/ISR kernel critical sections exclude both cores,
-while existing media reservations serialize physical storage operations. FatFs retains one executor.
-SMP schedules tasks, not arbitrary hardware resources: board setup and IRQ installation still occur before scheduler
-startup, and IRQ routing stays on its initialization core. Peripheral ownership remains explicit rather than being
-inferred from the executing core. Two-core scheduling is not a hard real-time guarantee.
-
-Project `configASSERT` uses the SDK's `hard_assert`, so kernel and project invariants remain active under
-`NDEBUG` in Release builds. Host checks compile the real configuration and SDK assertion header both with and
-without `NDEBUG`; they do not qualify target fault handling.
-
-The project-owned [DCD guard](../../firmware/src/integration/usb/dcd_guard.c) interposes the pinned TinyUSB RP2040/RP2350
-driver entry points and its shared USB IRQ handler. A dedicated SDK spinlock and local interrupt masking exclude
-endpoint/reset/setup/SOF mutations across cores; same-core nested driver calls retain the outer reservation.
-Only low-level DCD operations hold this lock, never USB application callbacks or synchronous MSC media I/O.
-TinyUSB must retain the Pico OS adapter, whose event queue has its own cross-core critical section.
-The IRQ copies controller events into a static 16-entry queue under the same gate. The `tud_task_ext` interposition
-drains the upstream queue, forwards one bounded controller batch without holding the gate, then runs TinyUSB task
-dispatch. Thus the upstream queued-SETUP counter and device flags are only mutated on the USB task, not concurrently
-by the IRQ. Event order is retained; consecutive SOFs are coalesced to the newest frame so idle frame traffic cannot
-fill the queue while MSC blocks. Queue overflow asserts explicitly rather than losing controller events silently.
-The task-readiness query includes both queues; deinitialization discards pending controller events before reuse.
-There is no new heap allocation; the queue adds `16 * sizeof(dcd_event_t)` bytes plus indices to linked SRAM.
-Event/SOF hooks now run in task context; PicoForge defines no ISR event hooks or per-frame SOF consumer.
-Adding such hooks or USB classes requires revisiting the batching and coalescing contract.
-Initialization runs before the scheduler on core 0. NVIC enable/disable, deinitialization and reinitialization must
-remain on that IRQ-owning core; wrong-core lifecycle calls assert rather than silently mask another core's NVIC.
-Normal USB task processing does not change IRQ ownership or require task affinity. These safeguards have host
-concurrency tests; sustained concurrent USB/media workloads still require target qualification.
-Dependency upgrades must pass the pinned-driver surface contract before the guard can be considered compatible.
-Sustained dual-core stress remains unqualified; the one-off Pico 2 observation is in the
-[earlier qualification record](../validation/records/earlier-sdio-qualification-undated.md#pico-2-dual-core-msc-handoff-observation).
-The 16-entry event queue is a bounded design assumption, not a measured worst-case guarantee. Hardware qualification
-must stress concurrent USB events and slow MSC media callbacks, verify that event order and task readiness remain
-correct, and demonstrate that the queue does not overflow under the supported workload. Overflow remains an explicit
-assertion/fault, not a recoverable event loss; changes to event sources, callback latency, or USB classes require
-revalidating the bound.
-
-The example uses static allocation for its application task and the port-provided idle-task memory. Software timers are enabled because the Pico port uses the timer-pend API for SDK synchronization interoperation. Additional tasks should document their stack, priority, ownership, and whether allocation is static or dynamic. The current firmware disables dynamic task allocation.
-
-## Dependency Direction
-
-Application code orchestrates platform services. The platform, which includes storage, composes reusable drivers. Drivers and platform services adapt Pico SDK and board-specific hardware details.
+The firmware is organized by responsibility. Application code composes services and owns product policy; platform
+services provide reusable device-level behavior; integrations adapt external components; drivers implement reusable
+hardware operations. Build-selected board configuration supplies immutable pin and peripheral assignments.
 
 ```mermaid
 flowchart TD
-    App["Firmware application"] --> Platform["Platform services"]
-    Platform --> Drivers["Reusable drivers"]
-    Drivers --> SDK["Pico SDK"]
-    Platform --> SDK
+    HostTools["Direct, Python and .NET host tools"] -->|USB HID and CDC| USBApp
+    HostTools -->|USB mass storage| USBMSC
+    USBApp["Application: USB task, HID and CDC CLI"] -->|commands and admission| StorageWorker
+    USBApp -->|reports and settings| Platform
+    USBMSC["Application: MSC callbacks"] -->|export and handoff| PlatformStorage
+    StorageWorker["Application: storage worker"] -->|serialized filesystem work| PlatformStorage
+    CLI["Application: CLI session and command groups"] --> USBApp
+    Wireless["Application: Wi-Fi and BLE on W boards"] -->|poll-mode SDK work| USBApp
+    Platform["Platform services: boot settings, clock, logging, LED, temperature"] --> SDK["Pico SDK and FreeRTOS"]
+    PlatformStorage["Platform storage: volume, media lifecycle, block service"] --> FatFs["FatFs integration"]
+    FatFs --> Block["Logical block-device interface"]
+    Block --> Drivers["SD protocol and SPI or SDIO-PIO drivers"]
+    Drivers --> SDK
+    BoardConfig["Build-selected board assignments"] -.-> Drivers
+    BoardConfig -.-> Platform
     SDK --> Hardware["RP2040 / RP2350 hardware"]
 ```
 
-Dependencies should flow toward the hardware-facing layers. Avoid circular dependencies between drivers and platform services; use explicit interfaces when a lower layer needs an application-provided callback.
+Arrows show the main dependency and service paths, not every include or callback. Important ownership boundaries:
 
-## Layer Responsibilities
+- The **USB owner task** services TinyUSB, HID requests, CDC sessions, and optional SDK poll-mode wireless work. It
+  admits storage commands and coordinates MSC transitions but does not execute filesystem operations.
+- The **storage worker** is the sole FatFs executor. It serializes filesystem commands, benchmark work, automount,
+  recovery, and media lifecycle operations.
+- **Platform storage** owns the singleton volume, SD configuration, media state, logical block dispatch, and
+  firmware/MSC ownership. Application layers use its service API rather than accessing the SD driver directly.
+- **Drivers** and **platform services** do not depend on application headers. Project-specific policy stays above
+  those reusable interfaces.
 
-### Host dashboards
+The [SD-card driver design](sdcard/driver.md) details the storage driver and its ports. The
+[boot settings design](settings.md) owns settings storage and application. The [USB HID reference](usb-hid.md)
+owns report layouts and command semantics.
 
-The Direct dashboard in `host/direct` and the Python/.NET dashboard in `host/web` must not share any dashboard
-components. Python and .NET may share their own frontend; Direct remains independently implemented, packaged, and
-tested. See the authoritative
-[dashboard component isolation policy](../development/host-tools.md#dashboard-component-isolation).
+## Firmware Layers
 
 ### Application
 
-Own product behavior, startup, and composition of the services needed by a firmware target. Keep policy and hardware register details out of application code where a reusable service or driver is appropriate.
+`firmware/src/app/` owns PicoForge product behavior and coordinates the services below it:
 
-### Platform storage
-
-PicoForge is a platform that forks reuse, so `firmware/src/platform/storage/` is part of it. Storage adapts FatFs disk I/O to the logical block-device
-API. The platform storage service owns the singleton volume, configuration and media policy;
-the application worker serializes execution and USB admission.
-The firmware currently uses the USB device role; a USB host role is not selected.
-
-### Drivers
-
-Encapsulate reusable peripheral operations and Pico SDK hardware APIs. Multi-file drivers are grouped by subsystem
-under `firmware/src/drivers/sdcard/`. Reusable filesystem adaptation belongs in platform storage; media lifecycle and
-firmware/USB ownership policy belongs in the application. Sources in `firmware/src/config/` define build-selected
-assignment objects, declared `extern` in driver headers, including the optional CYW43 LED writer. CMake selects the
-storage assignment source alongside its transport binding. Each driver initializes its own hardware
-(`pf_led_init()`, `pf_logging_init()`); the CYW43 owner initializes the W-board LED before accepting writes.
-[sd_board.c](../../firmware/src/drivers/sdcard/sd_board.c) binds the selected SD transport, boot-config clock, and card
-detect. FatFs consumes the [logical block interface](../../firmware/src/platform/storage/block_device.h) through an
-application owner-gated descriptor. See the [hardware setup options](../guides/hardware.md).
-
-### SD-Card Driver Structure
-
-See [SD-Card Driver Design](sdcard/driver.md) for the authoritative layer
-boundaries, SDIO-PIO and SPI interfaces, initialization/read/write/ownership
-work, explicitly selected FreeRTOS/bare-metal ports, and hardware resource
-inventory. The default USB/storage application remains FreeRTOS-only; the
-bare-metal configuration builds the reusable driver and its link-smoke target.
-Board wiring and physical
-qualification records remain in the [SD-card driver guide](../guides/hardware.md#sd-card-breakout).
+- `usb/` owns interface descriptors, the USB task, HID command handling, CDC transport sessions, and MSC callbacks.
+- `cli/` owns the command session and command groups. The CLI engine is transport-independent; the USB task provides
+  CDC, and on supported W boards may provide a Wi-Fi TCP transport.
+- `storage/` owns the FreeRTOS storage worker and file benchmark. The worker serializes all FatFs calls and media
+  lifecycle work.
+- `wireless/` owns the W-board Wi-Fi/BLE integration and its application policy.
 
 ### Platform
 
-Own logging, system services, persistent settings, and integration with the selected MCU and SDK.
-The board pin/peripheral profile is immutable and selected at build time; firmware trusts this project-owned profile
-instead of repeating pin-range, mux, and collision validation at runtime. Wiring must agree with
-[the hardware setup baseline](../guides/hardware.md) and the board schematic. Boot-applied settings and their public
-load/save API and private RP2 flash persistence with FreeRTOS-safe access live in
-`firmware/src/platform/boot_config.c/.h`. Board pin mapping lives in `firmware/src/config/` as plain data; CMake
-selects the storage connector's SDIO-PIO or SPI assignment source. Both transports request the saved
-storage speed; card negotiation and hardware divider rounding determine the actual clock. Physical card operation
-still needs board validation.
+`firmware/src/platform/` contains reusable device services, including logging, system/clock setup, LED, temperature,
+boot settings, and storage. `platform/storage/` adapts the logical block interface to FatFs and owns media lifecycle
+and ownership policy. Its public interfaces avoid exposing a specific SD transport to callers.
 
-## External Components
+### Integrations
 
-Pico SDK 2.3.0 and FreeRTOS-Kernel V11.3.1 are pinned as Git submodules under `firmware/third_party/`. Initialize them with `git submodule update --init --recursive`. The build defaults to the SDK submodule, with `PICO_SDK_PATH` available as an override. The kernel's Pico SDK import selects the RP2040 or RP2350 port based on `PICO_PLATFORM`. The SD memory-card protocols are implemented in `firmware/src/drivers/sdcard/`; their reusable SPI and PIO engines live in `firmware/src/drivers/sdcard/`. FatFs R0.16 with upstream patches 1 and 2 is vendored under `firmware/third_party/fatfs/` and compiled into the firmware.
-Its upstream disk interface and configuration live under `firmware/src/integration/fatfs/`; project-owned disk
-adaptation and singleton volume lifecycle live under `firmware/src/platform/storage/`;
-the application storage worker serializes their use.
+`firmware/src/integration/` adapts external libraries to PicoForge interfaces. It contains TinyUSB configuration and
+the project-owned USB DCD concurrency guard, FreeRTOS configuration, FatFs configuration and disk interface, and
+wireless SDK integration. Integration code is where upstream APIs meet project policy; application modules should
+not duplicate these adapters.
 
-Embedded CLI is also pinned as a Git submodule. Its application session module is independent
-of the USB transport and RTOS; see [CDC CLI](../guides/console.md) for the dependency pin,
-session lifecycle, command-extension rules, memory budget, and validation plan.
+### Drivers and board configuration
 
-The application storage-owner task initializes the SD-card interface and mounts its existing volume through the
-device-independent `pf_fatfs_volume_mount()` service; mounting never formats media. FatFs uses a logical block device,
-selected by the application. The SD API uses 32-bit sector addresses (`FF_LBA64=0`), limiting volumes
-to fewer than 4,294,967,296 512-byte sectors (2 TiB); larger exFAT volumes are not supported. Mount, unmount, and file
-operations require caller serialization because FatFs is configured without cross-task locking. See the
-[filesystem block-device boundary](sdcard/driver.md#filesystem-block-device-boundary) for authoritative layering,
-binding lifetimes, and ownership contracts.
+`firmware/src/drivers/` contains reusable peripheral drivers. SD-card protocol logic is separated from physical SPI
+and SDIO-PIO engines. CMake selects one transport and its matching board assignment source for each firmware image.
+The [hardware guide](../guides/hardware.md) documents wiring and board constraints; the
+[physical-links reference](sdcard/physical-links.md) documents low-level SD transport timing and resources.
 
-`platform/storage/fatfs_volume.c/.h` owns the singleton FatFs instance, mount registration and format telemetry.
-`platform/storage/storage.c/.h` is the storage service over the SD driver: it obtains SD configuration, owns the media
-lifecycle, presence debounce, paced automount, recovery and forced-USB-return policy, the last failed operation, and
-exclusive firmware/USB MSC ownership. Its static firmware descriptor gates FatFs I/O. `pf_storage_get_status()` is a
-backend-neutral snapshot (state, medium, bus and pins, presence, clock, capacity, identity, last failure); its header
-includes no driver headers so another medium can implement the same API.
-Layers above platform storage treat storage as a filesystem that can be exported as USB MSC, and use only this service:
-the CLI `storage get status` and the HID board/storage reports are built from that snapshot.
-CLI command groups are split under `app/cli`: board/radio in `cli_board.c/.h`, boot settings in `cli_config.c/.h`,
-storage ownership and worker routing in `cli_storage.c/.h`, filesystem commands in `cli_fs.c/.h`, and private
-shared FatFs result reporting in `cli_fatfs_result.c/.h`. The USB task
-registers these groups and connects `pf_cli_storage_execute` to `pf_storage_worker_init()`; the worker runs commands
-without depending on the CLI. Application storage stays in `app/storage`: `file_benchmark.c/.h` verifies and times a
-dedicated file, and `storage_worker.c/.h` is the sole FatFs executor that serializes requests and runs the storage
-policy while idle.
-The worker calls `pf_storage_setup()` before task startup; the USB task no longer configures SD. Command and worker
-headers do not expose SD configuration.
-Automatic mount failures retain SD initialization, volume and FatFs result codes and log the first or changed failure;
-identical retries remain paced and do not repeat that warning. Successful mounting resets warning suppression.
-Mount registration and format are independent atomic telemetry snapshots; neither grants filesystem access.
-Presence and automount state is mutated only on the worker while holding the SD reservation; the worker's
-kernel-protected `media_service_busy` gate excludes admission while the policy runs.
+Board assignments live in `firmware/src/config/`. They are selected at build time and are treated as trusted
+configuration by the firmware, not dynamically probed pin maps. Keep application-specific pin choices there rather
+than embedding them in reusable drivers.
 
-Product-specific USB behavior lives under `app/usb`: `usb_task.c/.h` owns task startup, CDC command sessions and report
-scheduling; `usb_hid.c/.h` owns the product HID protocol; `usb_msc.c/.h` owns SCSI callbacks and application handoff
-coordination; MSC block access and handoff use the `pf_storage_msc_*` export API in `storage.h`. `usb_descriptors.c` defines product interfaces.
-TinyUSB configuration remains under `integration/usb`; the pinned TinyUSB stack supplies reusable USB machinery.
-No extra storage forwarding layer or runtime backend registry is introduced.
+## Boot and Runtime
 
-The product CLI instance, prompt, built-in commands and buffer/history settings live in `app/cli`, using Embedded
-CLI directly. USB owns CDC transport and connection sessions. Platform storage retains only logical block dispatch,
-device adapters and FatFs disk callbacks. The platform logging service owns severity filtering, formatting, and stdio output
-selection. Neither platform storage service depends on application headers.
+`main()` applies the saved system clock before initializing the remaining services. It then initializes logging,
+the board LED, and temperature, starts USB, and starts the FreeRTOS scheduler. The USB task owns management
+interfaces and starts or coordinates application services. On startup, the storage worker prepares the configured
+SD interface and attempts to mount existing media without formatting it. An absent or unusable card does not block
+USB management.
+
+```mermaid
+flowchart TD
+    Reset["SDK startup"] --> Clock["Apply saved clock profile"]
+    Clock --> Services["Initialize logging, LED and temperature"]
+    Services --> USB["Initialize USB and create owner task"]
+    USB --> Scheduler["Start dual-core FreeRTOS scheduler"]
+    Scheduler --> Owner["USB owner task services CDC, HID and optional wireless"]
+    Scheduler --> Worker["Storage worker initializes media and mounts existing filesystem"]
+    Owner --> Control["Host control and storage admission"]
+    Worker --> Storage["Serialized filesystem, automount and recovery work"]
+    Storage --> Interfaces["Platform storage and selected SD driver"]
+```
+
+The scheduler runs on both MCU cores. Tasks may migrate unless explicitly pinned; resource ownership does not follow a
+task to a core. USB, wireless SDK state, and filesystem/media access therefore use explicit task and resource
+ownership. FatFs is configured without cross-task locking, so serialization by the storage worker is required.
+Two-core scheduling does not provide a hard real-time guarantee.
+
+On W boards, the SDK poll-mode radio work shares the USB owner task so the required SDK context remains controlled.
+USB DCD operations have a separate low-level cross-core guard; application callbacks and synchronous MSC media I/O
+do not run while that guard is held. This is an integration constraint, not a general lock for application code.
+Changes to USB classes, event sources, or callback latency require rechecking the guard's bounded event queue under
+the resulting workload.
+
+## Main Runtime Flows
+
+### Management and commands
+
+The host tools use the stable USB identity and management reports to discover board capabilities and read telemetry.
+HID carries structured control and status; CDC carries the terminal session. Both are served by the USB owner task.
+The CLI command engine can also be attached to a TCP client on supported W boards, but only one transport owns the
+CLI session at a time. BLE provides a separate authenticated control path for supported LED and benchmark commands.
+
+HID and CLI commands call application/platform interfaces; they do not manipulate peripheral registers directly.
+Settings are staged and persisted for the next boot rather than reconfiguring active services. See the
+[settings design](settings.md), [console guide](../guides/console.md), and [Bluetooth protocol](bluetooth.md).
+
+### Storage
+
+The storage worker is the single executor for filesystem and media lifecycle work. The platform storage service
+provides a mounted filesystem to firmware and an exclusive logical-block export to USB MSC. The host never shares
+the mounted filesystem concurrently with firmware.
+
+```mermaid
+flowchart LR
+    Worker["Storage worker"] -->|owns mounted volume| Firmware["Firmware filesystem clients"]
+    Firmware -->|explicit request and idle gate| Unmount["Worker closes work and unmounts"]
+    Unmount -->|successful unmount| MSC["MSC receives exclusive card access"]
+    MSC -->|host safe eject and normal disable| Return["Reinitialize and remount"]
+    MSC -->|confirmed force return| Forced["Revoke MSC access and attempt one mount"]
+    Return -->|mount succeeds| Worker
+    Forced -->|mount succeeds| Worker
+    Forced -->|mount fails| Blocked["Remain unmounted until explicit recovery"]
+```
+
+The complete default-mounted policy, exceptional paths, and state diagram are in
+[Storage Ownership Lifecycle](#storage-ownership-lifecycle). The [USB HID reference](usb-hid.md) owns the command
+wire behavior and forced-return safeguards.
+
+## Layer Responsibilities
+
+Keep dependencies flowing toward hardware-facing services:
+
+1. **Host applications** implement their own UI and host OS integration. Direct is independent and shares no code
+   with the Python and .NET dashboard; Python and .NET may share their web frontend.
+2. **Application** owns product policy, command admission, and composition. It can depend on platform services and
+   integrations, but reusable lower layers do not depend on application code.
+3. **Platform services** own reusable device behavior and stable service interfaces, including storage lifecycle.
+   Platform storage adapts FatFs and the logical block-device interface to the selected media driver.
+4. **Drivers** implement reusable peripheral operations and hardware access. They do not own dashboard, command, or
+   product-specific policy.
+5. **Integrations** connect the Pico SDK and pinned external components to project-owned interfaces.
+6. **Board configuration** provides build-selected assignments and hardware identity; it is not a runtime backend
+   registry.
+
+For board-specific pin choices, use `firmware/src/config/`. For a reusable peripheral driver, use
+`firmware/src/drivers/`. Keep platform services flat under `firmware/src/platform/`; group a driver only when its
+multiple implementation files justify a named subdirectory. Avoid circular dependencies: when a lower layer needs
+application behavior, use a narrow explicit interface rather than including application headers.
 
 ### Storage Handoff Invariants
 
-- Only the storage worker executes firmware FatFs operations; per-block reservations do not serialize file transactions.
-- MSC acquisition reserves media across the worker-idle and unmounted checks and ownership transition.
-  Worker admission and transition coordination run on the USB task; these APIs are not arbitrary multi-task entry points.
-- Owner-gated I/O holds the same recursive reservation through backend completion; USB partial-sector
-  read-modify-write also holds it across the full operation.
-- Normal release requires checked eject/sync. Fault release requires revoked access to unavailable USB-owned media and queues
-  worker recovery without claiming a clean eject. Recovery logs its result and never mounts automatically.
+- Only the storage worker executes firmware FatFs operations; per-block reservations do not serialize file
+  transactions.
+- MSC acquisition reserves media across the worker-idle and unmounted checks and the ownership transition. Worker
+  admission and transition coordination run on the USB task; these APIs are not arbitrary multi-task entry points.
+- Owner-gated I/O holds the same recursive reservation through backend completion; USB partial-sector read-modify-write
+  holds it across the full operation.
+- Normal release requires checked eject/sync. Fault release requires revoked access to unavailable USB-owned media
+  and queues worker recovery without claiming a clean eject. Recovery logs its result and never mounts automatically.
 - Confirmed force return revokes MSC access before normal owner release and holds worker admission through one mount
   attempt; failure leaves the volume unmounted and blocks automatic retries. It never claims host-cache durability.
 - [Confirmed forced settings save/reboot](settings.md#forced-save-and-reboot) syncs and detaches before flash save,
   keeping media USB-reserved and unavailable until successful reset; failures do not schedule reboot.
-- Uncertain failed writes are not replayed. Host tests cover exclusion, failed sync retention, no-replay and recovery
-  rejection/completion; they do not establish physical USB BOT or power-loss qualification.
+- Uncertain failed writes are not replayed.
 
 ### Storage Ownership Lifecycle
 
@@ -282,10 +230,10 @@ are in [Storage Worker State](#storage-worker-state); the
   the existing five-second interval after each failed attempt completes. With board-provided card detect, debounce
   presence before acting. Never format, repair, or replay a failed write automatically.
 
-Explicit maintenance is an exception to the default: `storage unmount` suppresses automatic mounting until an insertion
-or normal USB return; `storage mount` permits deliberate manual mounting. Faulted-MSC recovery and failed forced return
-leave automatic mounting blocked for inspection until an explicit successful mount. These runtime-only safeguards
-are not persistent boot settings. A safe return does not clear an existing fault-recovery block.
+Explicit maintenance is an exception to the default: `storage unmount` suppresses automatic mounting until an
+insertion or normal USB return; `storage mount` permits deliberate manual mounting. Faulted-MSC recovery and failed
+forced return leave automatic mounting blocked for inspection until an explicit successful mount. These runtime-only
+safeguards are not persistent boot settings. A safe return does not clear an existing fault-recovery block.
 
 Start requires fresh mounted-state telemetry and idle firmware ownership. One **Start benchmark** request runs
 preflight before accepting the test; it never performs a mount-only step. The protocol has no distinct mounting or
@@ -321,11 +269,11 @@ stateDiagram-v2
 ```
 
 The diagram shows ownership and mount policy, not every request state; normal return retains a pre-existing recovery
-block even though that exceptional path is omitted. Worker admission remains held through file cleanup,
-command reply draining, and the relevant ownership transition. A failed force-return mount leaves firmware owning the
-card but the volume unmounted; it must not be interpreted as a successful return to a usable filesystem. Fault recovery
-is distinct: it revokes access to faulted host-owned media and reinitializes without claiming a clean eject or automatically
-mounting the filesystem.
+block even though that exceptional path is omitted. Worker admission remains held through file cleanup, command reply
+draining, and the relevant ownership transition. A failed force-return mount leaves firmware owning the card but the
+volume unmounted; it must not be interpreted as a successful return to a usable filesystem. Fault recovery is
+distinct: it revokes access to faulted host-owned media and reinitializes without claiming a clean eject or
+automatically mounting the filesystem.
 
 ### Storage Worker State
 
@@ -345,25 +293,44 @@ and USB task publish admission/completion state under critical sections; command
 `busy` and `media_service_busy` exclude each other. `benchmark_finished` implies `benchmark_active`, which implies
 `busy` until USB observes completion. Recovery and commands share the admission gate but not reply completion:
 recovery has no CDC session. Mount-policy flags are independent of operation admission. Recovery sets
-`auto_mount_blocked`; a successful explicit `storage mount` or confirmed force-return mount clears it.
-A failed initialization or mount leaves it set.
-Per-block reservations alone never authorize USB takeover while file cleanup or reply draining is outstanding.
+`auto_mount_blocked`; a successful explicit `storage mount` or confirmed force-return mount clears it. A failed
+initialization or mount leaves it set. Per-block reservations alone never authorize USB takeover while file cleanup
+or reply draining is outstanding.
+
+## External Components
+
+PicoForge pins the Pico SDK, FreeRTOS-Kernel, FatFs, and Embedded CLI in `firmware/third_party/`. TinyUSB is supplied
+through the Pico SDK. The build selects the supported MCU port and SD transport; it does not add a second SDK
+checkout or runtime transport registry. Dependency versions, build options, and test procedures are maintained in
+the [firmware testing guide](../development/firmware-testing.md) and source manifests.
+
+## Core and Runtime Policy
+
+FreeRTOS runs in SMP mode on both MCU cores. The Pico port starts core 1 with the scheduler; application code must
+not create an independent core entry point. Interrupt routing stays on the core where it was initialized, and tasks
+must not infer peripheral ownership from their current core. The wireless owner task is pinned on W boards where the
+SDK context requires it. Project assertions remain active in Release builds.
+
+The USB DCD guard serializes low-level controller mutations across cores and moves bounded controller events to the
+USB task before TinyUSB dispatch. Event order is retained and consecutive SOFs may be coalesced. Queue overflow is an
+explicit fault, not a silently dropped event. The guard adds no heap allocation and is not held across application
+callbacks or media I/O. See
+[dcd_guard.c](../../firmware/src/integration/usb/dcd_guard.c) for the implementation and its constraints.
 
 ## Stack Observations
 
-`INCLUDE_uxTaskGetStackHighWaterMark=1` enables the existing FreeRTOS stack-fill scan. USB and Storage sample
-only their own task (`NULL` handle), at 30-second intervals in their normal loops, and log the minimum untouched
-stack in **StackType_t words**, not bytes. Sampling does not scan a concurrently executing task on the other core.
-It does not reset the watermark, allocate memory, or add a new task. Existing overflow checking remains enabled.
+`INCLUDE_uxTaskGetStackHighWaterMark=1` enables the existing FreeRTOS stack-fill scan. USB and Storage sample only
+their own task (`NULL` handle), at 30-second intervals in their normal loops, and log the minimum untouched stack
+in **StackType_t words**, not bytes. Sampling does not scan a concurrently executing task on the other core. It does
+not reset the watermark, allocate memory, or add a new task. Existing overflow checking remains enabled.
 Sampling can be delayed by a long storage operation; UART logging and scanning add occasional service overhead.
-Unused fill bytes are an observation, not certified margin (unwritten stack reservations can remain filled).
+Unused fill bytes are an observation, not certified margin because unwritten stack reservations can remain filled.
 
 ## Testing and Validation
 
 Use [firmware testing](../development/firmware-testing.md) for builds and hardware acceptance,
 [host development](../development/host-tools.md) for dashboard tests, and the
-[test ownership index](../../tests/README.md) for fixtures and suite boundaries.
-The [release guide](../deployment/release.md) owns current CI matrices, package contents, and publication.
-Historical software checks belong in [review records](../validation/records/static-review-remediation.md); their old matrix and command
-results are not current build instructions. Outstanding physical validation is tracked in
-[qualification gaps](../validation/qualification-gaps.md).
+[test ownership index](../../tests/README.md) for fixtures and suite boundaries. The
+[release guide](../deployment/release.md) owns current CI matrices, package contents, and publication. Historical
+software checks belong in [review records](../validation/records/static-review-remediation.md); their old matrix and
+command results are not current build instructions.

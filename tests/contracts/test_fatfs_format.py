@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Exercise pinned FatFs and the production volume/disk adapters on temporary sparse files, never media."""
 from pathlib import Path
 import subprocess

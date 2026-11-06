@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Compile the real disk adapter with a variable-sector FatFs configuration; no media I/O."""
 from pathlib import Path
 import re

@@ -3,13 +3,15 @@
 USB HID control, diagnostics, and a local dashboard for PicoForge firmware on Pico, Pico 2, and their W variants.
 Basic monitoring needs no SD card. Storage and wireless controls depend on the connected firmware's capabilities.
 
-Python and .NET share their own frontend in `host/web`. The Direct dashboard is independent: **no dashboard
-components are shared with Direct**. See the
-[dashboard isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
+Python and .NET share their own frontend in `host/web/src`. The Direct dashboard is independent: **no code is shared
+with Direct**. See the
+[Direct independence policy](../../docs/development/host-tools.md#direct-dashboard-independence).
 This Python host connects over USB HID, not Bluetooth LE.
-Wireless Features 30, 31, 34 and 35 use version 1; Feature 36 uses the fixed TCP CLI proof format. The dashboard
-includes TCP CLI enable/authentication settings and scan security labels, and blocks saving expired temporary test
-credentials after ten minutes.
+Wireless status uses Feature 12 and all writes use the unified Feature 20 channel. The dashboard preserves saved
+service switches from Feature 2 and supports staged credentials, testing, scans, and USB-generated TCP CLI proofs.
+Opaque scan SSIDs include `ssid_hex` beside an escaped display name; test/save requests may send that hex value
+to preserve the network bytes. Saving a tested pair reuses its staging without resending either credential.
+See the [authoritative wire contract](../../docs/reference/usb-hid.md) for layouts and expiry rules.
 
 ## Install
 
@@ -29,6 +31,10 @@ picoforge web
 Open **http://127.0.0.1:5000/**. The wheel includes the local dashboard assets; Node.js and .NET are not required.
 Runtime dependencies are Flask and HIDAPI, with versions defined in [pyproject.toml](pyproject.toml).
 Native HID access still requires the operating system's usual libraries, drivers, and permissions.
+The displayed application version comes from the installed `picoforge` distribution metadata when the imported
+package is inside that metadata's distribution root, including source trees with local package metadata.
+Without matching metadata, imports use `0.0.0-debug`; an unrelated installation does not override the fallback.
+Release packaging stamps both distribution metadata and the source fallback.
 
 Packages are published to [PyPI](https://pypi.org/project/picoforge/) and
 [GitHub Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest) after successful
@@ -66,6 +72,7 @@ python -m picoforge --help
 All three commands accept either `--serial SERIAL` or `--device-path PATH` to select a board.
 The source launcher accepts the same command and options, for example `tools/host/run-python.sh web --port 5001`.
 `status` returns the reports received within a five-second collection window; unavailable report fields remain `null`.
+The top-level `msc` status key is retained for compatibility and deprecated in favor of `memory.msc`.
 
 Use **Rescan** and the dashboard's board selector to switch between attached boards. Run only one HID host connection
 per board; separate host processes can conflict for access. Python and .NET both default to port 5000, so use a
@@ -92,8 +99,9 @@ tools/host/hid-permissions-setup.sh
   file: back up card data and follow the [benchmark procedure](../../docs/guides/sdcard-benchmark.md).
 - **W-board wireless:** provision Wi-Fi and a Control key over USB. Bluetooth connections use the independent
   Direct dashboard. See [wireless setup and security limits](../../docs/guides/wireless.md).
-- **Wi-Fi console:** a connected SSID/IP link opens the local TCP console when supported by firmware. The board's TCP
-  service can require its saved Control key, but traffic is always unencrypted; use only on a trusted LAN. See
+- **Wi-Fi console:** a connected SSID/IP link opens the local TCP console when supported by firmware. Each dashboard
+  process allows one active console session, bound to its selected board. The board's TCP service can require its saved
+  Control key, but traffic is always unencrypted; use only on a trusted LAN. See
   [console setup and session limits](../../docs/guides/console.md#wi-fi-tcp-terminal).
 
 Commands can be rejected or remain uncertain after a timeout/disconnect; delivery is not completion.
@@ -103,25 +111,15 @@ Builds and host tests do not establish physical hardware reliability; see the
 
 ## Development and License
 
-For host tests and frontend ownership, see [Host Tools Development](../../docs/development/host-tools.md).
-Detailed wire reports and local wireless API semantics belong in the
-[USB HID reference](../../docs/reference/usb-hid.md) and [wireless reference](../../docs/reference/wireless.md).
+For host tests and frontend ownership, see [Host Tools Development](../../docs/development/host-tools.md). Detailed wire
+reports and local wireless API semantics belong in the [USB HID reference](../../docs/reference/usb-hid.md) and
+[wireless integration](../../docs/development/wireless-integration.md).
 
 The package uses the **BSD-3-Clause** license. Its [LICENSE](LICENSE) mirrors the
 [repository license](../../LICENSE) and is included in built wheels; keep both copies identical.
 Package metadata, dependencies, and the `picoforge` entry point are defined in [pyproject.toml](pyproject.toml).
 
-Python implementations are grouped by responsibility under `src/picoforge/reports`, `src/picoforge/hid`, and
-`src/picoforge/dashboard`. Report codecs are split by report family; dashboard board discovery, per-board monitoring,
-HTTP routes, and the TCP console bridge have separate modules. `DashboardBackend` and the dashboard/HID typed
-envelopes make internal boundaries explicit while JSON dictionaries remain the HTTP contract. Dashboard discovery
-expires absent serial-numbered boards after a 30-second reconnect grace and path-only boards after 5 seconds; an
-uncertain command keeps its monitor until shutdown so cleanup cannot silently clear the write block. One background
-worker stops expired monitors, and a monitor for a reconnected board is not created until its previous monitor has
-stopped. At most 16 monitors may be active or retiring; if cleanup stalls at capacity, new monitor starts are rejected
-instead of leaking HID handles. Failed retirement is retried three times, then reported as a shutdown failure that
-requires restarting the dashboard. Server shutdown closes the active TCP console session and waits for HID operations
-and monitor cleanup to finish before releasing board monitors; a wireless test can take up to 35 seconds.
-
 Import report codecs from `picoforge.reports`, HID access from `picoforge.hid`, and dashboard services from
-`picoforge.dashboard`.
+`picoforge.dashboard`. Each public package can be imported independently without opening a device.
+For module ownership, cleanup failure policy, and focused type checks, see
+[Python host design](../../docs/development/host-tools.md#python-host-design).

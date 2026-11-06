@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file boot_config.h
  * @brief Boot settings loaded before scheduling, then owned by the USB task.
@@ -8,6 +11,12 @@
  * This API is not thread-safe. After boot, mutations and saves must be serialized in the USB task.
  * This module must be the only flash_safe_execute() caller; tasks must not be created or deleted during a save
  * or while lockout reclamation remains pending, because reclamation is detected through the task count.
+ *
+ * @note Persistence writes v2 (148 bytes): the former 33-byte SSID string at offsets 12-44 becomes a byte length
+ * at 12 and opaque SSID bytes at 13-44. Password, key and CRC offsets are unchanged. Valid v1 records migrate in RAM
+ * without a flash write; the next save writes v2. Byte 141 bit 0 explicitly records Control-key presence; other bits
+ * and bytes 142-143 are zero. V1 migration infers presence from a nonzero key. Use byte helpers for network identity;
+ * the string helpers remain for text-only callers and cannot express an embedded-zero SSID as a C string.
  */
 
 #ifndef PF_DRIVERS_BOOT_CONFIG_H
@@ -32,7 +41,9 @@ typedef enum {
     PF_WIFI_AUTH_SAE = 3, /**< WPA3-SAE connection was confirmed. */
 } pf_wifi_auth_state_t;
 /**
- * @brief Copy the saved NUL-terminated SSID (up to 32 UTF-8 bytes).
+ * @brief Copy saved SSID bytes into a legacy 33-byte buffer, with a final terminator.
+ *
+ * Opaque SSIDs may contain embedded zeros or non-UTF-8 bytes; use the byte getter for network identity.
  * @param ssid Output buffer of at least 33 bytes.
  */
 void pf_boot_config_wifi_ssid(char ssid[PF_WIFI_SSID_SIZE]);
@@ -42,6 +53,19 @@ void pf_boot_config_wifi_ssid(char ssid[PF_WIFI_SSID_SIZE]);
  * @return false for invalid UTF-8, an overlength string, or when first-use loading is unsafe.
  */
 bool pf_boot_config_set_wifi_ssid(const char *ssid);
+/**
+ * @brief Copy the saved opaque SSID, zero padded to 32 bytes.
+ * @param ssid Output buffer of at least 32 bytes.
+ * @return Saved byte length, including embedded zero bytes.
+ */
+uint8_t pf_boot_config_wifi_ssid_bytes(uint8_t ssid[32]);
+/**
+ * @brief Stage an opaque SSID without text conversion; persist with pf_boot_config_save().
+ * @param ssid Bytes to copy; may be null only when length is zero.
+ * @param length Byte length, zero through 32.
+ * @return False for invalid arguments or unsafe first-use loading.
+ */
+bool pf_boot_config_set_wifi_ssid_bytes(const uint8_t *ssid, uint8_t length);
 /**
  * @brief Copy the saved private WPA2/WPA3 passphrase; never expose it in a host report.
  * @param password Output buffer of at least 64 bytes.
@@ -62,12 +86,12 @@ bool pf_boot_config_wifi_password_configured(void);
  */
 void pf_boot_config_ble_key(uint8_t key[32]);
 /**
- * @brief Stage a BLE key in RAM; an all-zero key clears it. Persist with pf_boot_config_save().
- * @param key 32-byte key.
- * @return false when the pointer is null or first-use loading is unsafe.
+ * @brief Stage a raw Control key in RAM; only null clears it. Persist with pf_boot_config_save().
+ * @param key 32-byte key, including all-zero bytes, or null to clear.
+ * @return false when first-use loading is unsafe.
  */
 bool pf_boot_config_set_ble_key(const uint8_t key[32]);
-/** @brief Return whether a nonzero BLE control key is configured, without copying it. */
+/** @brief Return whether a Control key is configured, independently of its raw byte values. */
 bool pf_boot_config_ble_key_configured(void);
 
 /** @brief Return the PF_WIRELESS_* radios allowed to start at boot; both by default, independent of credentials. */

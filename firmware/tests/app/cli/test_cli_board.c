@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #include "unity.h"
 TEST_SOURCE_FILE("embedded_cli_adapter.c")
 #include "cli.h"
@@ -55,10 +58,9 @@ void test_radio_status_uses_sanitized_state_and_never_prints_ssid_or_secrets(voi
     radio_report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 1u] = 168u;
     radio_report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 2u] = 66u;
     radio_report[PF_WIRELESS_STATUS_IP_ADDRESS_OFFSET + 3u] = 87u;
-    memcpy(radio_report + PF_WIRELESS_STATUS_SSID_OFFSET, "\x1b[2Jprivate-ssid", 16u);
-    radio_report[PF_WIRELESS_STATUS_PASSWORD_CONFIGURED_OFFSET] = 1u;
-    radio_report[PF_WIRELESS_STATUS_BLE_KEY_CONFIGURED_OFFSET] = 1u;
-    radio_report[PF_WIRELESS_STATUS_TCP_CLI_OFFSET] = 1u;
+    radio_report[4] = 0x07u; /* flags: network configured, key saved, CLI serving */
+    radio_report[9] = 16u; /* ssid_length */
+    memcpy(radio_report + 10u, "\x1b[2Jprivate-ssid", 16u);
     radio_report[PF_WIRELESS_STATUS_BLUETOOTH_STATE_OFFSET] = 2u;
     send("radio status\r");
     TEST_ASSERT_NOT_NULL(strstr(captured, "wifi=connected ip=192.168.66.87\r\nbluetooth=connected\r\n"));

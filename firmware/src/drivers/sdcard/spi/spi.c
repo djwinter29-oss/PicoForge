@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file Shared mode-0 SPI ownership, pin setup, chip select and byte I/O. */
 #include "spi.h"
 

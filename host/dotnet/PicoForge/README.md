@@ -2,21 +2,26 @@
 
 The .NET 10 host monitors the vendor HID interface and serves the shared local dashboard at `http://127.0.0.1:5000/` by default. Override the port with `tools/host/run-dotnet.sh --port PORT`; only one dashboard server can bind to port 5000 at a time.
 
-Python and .NET share their own frontend, but must not share any dashboard components with Direct. See the
-[dashboard component isolation policy](../../../docs/development/host-tools.md#dashboard-component-isolation).
+Python and .NET share their own frontend, but must not share any code with Direct. See the
+[Direct independence policy](../../../docs/development/host-tools.md#direct-dashboard-independence).
 
 ```sh
 dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 ```
+
+Select a default board at launch with `tools/host/run-dotnet.sh --serial SERIAL` or
+`tools/host/run-dotnet.sh --device-path HID_PATH`. The options are mutually exclusive; without either, the first
+discovered board is selected. Use **Rescan** to refresh the board list.
 
 `GET /api/boards` discovers attached boards. The dashboard's **Rescan** and board selector choose one, and
 status/command requests include its ID as `?board=<id>`. `GET /api/status` returns the selected board's hardware
 identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected
 board's LED; `POST /api/settings` saves supported boot settings and verifies HID readback.
 Serial-identified boards retain their monitor for at least 30 seconds after disappearing from a successful rescan,
-allowing brief USB reconnects without losing selection. Monitors with uncertain command outcomes remain pinned
-until host shutdown so reconnects cannot clear the write block. Boards without serial numbers use their HID device
-path as identity and are removed from the registry on the first successful rescan where they are absent. A path-only
+allowing brief USB reconnects without losing selection. Active commands postpone retirement; uncertain outcomes keep
+the monitor until confirmed re-sync or shutdown. Cleanup must finish before a replacement can open.
+Boards without serial numbers use their HID device
+path as identity and become eligible for removal on the first successful rescan where they are absent. A path-only
 identity cannot distinguish a different serial-less board reusing that path unless a rescan observes the gap.
 `POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Current firmware keeps CDC, HID and MSC connected;
 MSC reports no medium while Pico owns the card. Safely eject before disabling to return the card to PicoForge.
@@ -45,18 +50,21 @@ Self-tests and transitions still block saving; standalone reboot remains blocked
 - `Dashboard/` — board selection, grouped status/wireless endpoints, and TCP console bridge.
 
 The folders organize implementation by responsibility while retaining the existing `PicoForge` namespace.
-Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
+See the [.NET lifecycle design](../../../docs/development/host-tools.md#net-host-lifecycle) for retirement, shutdown,
+cleanup failures, configuration diagnostics, pending-reboot gates, console deadlines and production-pipeline test ownership.
+Build and publish always copy the current `host/web/src` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
-Wireless Features 30, 31, 34 and 35 use version 1; Feature 36 uses the fixed TCP CLI proof format. The dashboard
-supports the saved TCP CLI switch, Control key authentication, scan security labels, and staged-test lifetime, and
-blocks saving temporary test credentials after ten minutes.
+Wireless uses the version-1 [Report 12 and Feature 20 contract](../../../docs/reference/usb-hid.md).
+Report 2 supplies all saved service switches; it is cached per HID handle and re-read after a settings save or
+reconnect, so a Wi-Fi poll reads only Report 12. Omitted credentials are not staged. Tested saves commit the staged
+pair without restaging it. Status and scan entries include escaped `ssid` labels and lossless `ssid_hex`; test/save
+requests accept `ssid_hex` for opaque network names. A successful test returns a conservative 600-second countdown;
+fresh firmware staging flags remain authoritative. Removed password/auth-mode/reconnect diagnostics are not invented.
+TCP CLI access always requires the saved Control key and the board's fixed opcode-13 proof.
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.
-The host polls HID input every 50 ms, below firmware's 250 ms telemetry and 500 ms storage/self-test report periods,
-and reuses an input buffer per HID client to reduce idle wakeups and recurring allocations.
-
 The [storage lifecycle](../../../docs/reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
 startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
 USB sharing temporarily grants the host exclusive access; firmware file operations and self-test are unavailable.
@@ -64,5 +72,5 @@ Wait for fresh mounted status after return, not merely HID reconnection. Start u
 free space before accepting temporary writes; that scan can delay progress, but is not a mount-only action.
 Wait for its command result rather than clicking again. Self-test cleanup leaves the filesystem mounted.
 Board monitoring starts asynchronously on first access, so the first status response can briefly show that it is
-waiting for HID while identity and configuration are read in the background. The monitor polls every 50 ms and
+waiting for HID while identity and configuration are read in the background. The monitor polls every 100 ms and
 reuses input and feature report buffers per HID client to reduce idle wakeups and recurring allocations.

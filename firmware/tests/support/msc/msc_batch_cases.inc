@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /* Executes production MSC -> owner/lock facade -> data-bearing backend seam.
  * This is deliberately not a TinyUSB BOT or physical transport test. */
 #include "unity.h"

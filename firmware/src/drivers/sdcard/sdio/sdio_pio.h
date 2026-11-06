@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Concrete PIO/DMA resources and raw operations; protocol clients use sd_link_sdio.h instead.
  *

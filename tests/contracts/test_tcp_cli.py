@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Exercise the production raw TCP CLI transport against a minimal fake lwIP raw API."""
 from pathlib import Path
 import subprocess

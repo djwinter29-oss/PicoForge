@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 cmake_minimum_required(VERSION 3.13)
 
 set(CMAKE_C_STANDARD 11)
@@ -344,10 +347,12 @@ target_compile_definitions(pico_forge PRIVATE
     PF_BCD_DEVICE=${PF_BCD_DEVICE}u
 )
 
-# Interpose TinyUSB MSC reset processing without modifying the pinned SDK.
+# Interpose TinyUSB MSC reset processing and HID SET validation without modifying the pinned SDK.
 target_link_options(pico_forge PRIVATE
     "LINKER:--wrap=mscd_reset"
     "LINKER:--wrap=mscd_control_xfer_cb"
+    "LINKER:--wrap=hidd_control_xfer_cb"
+    "LINKER:--wrap=usbd_control_xfer_cb"
 )
 
 # Keep the pinned DCD's endpoint state and fixed-core IRQ behind one cross-core gate.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """CLI for PicoForge HID status and its local dashboard."""
 
 from __future__ import annotations
@@ -9,7 +12,7 @@ from math import ceil
 from time import monotonic
 
 from .hid.device import PicoForgeHid
-from .hid.models import MemoryStatus, RuntimeStatus, SelfTestStatus
+from .reports.models import MemoryStatus, RuntimeStatus, SelfTestStatus
 
 _STATUS_REPORT_TIMEOUT_SECONDS = 5.0
 
@@ -89,8 +92,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             configuration = device.read_configuration()
             settings = {
-                "system_clock_mhz": configuration["system_clock_mhz"],
-                "sdcard_profile": configuration["sdcard_profile"],
+                key: configuration[key]
+                for key in ("system_clock_mhz", "sdcard_profile", "radios", "tcp_cli_enabled")
             }
             runtime, memory, self_test = _read_status_reports(device, info["self_test_supported"])
             print(json.dumps({
@@ -107,3 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

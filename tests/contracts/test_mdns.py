@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Exercise saved-network mDNS registration against the SDK API without a radio."""
 from pathlib import Path
 import subprocess

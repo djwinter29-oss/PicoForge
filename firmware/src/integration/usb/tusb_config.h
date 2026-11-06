@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #ifndef PF_TUSB_CONFIG_H
 #define PF_TUSB_CONFIG_H
 
@@ -20,11 +23,7 @@
 #define CFG_TUD_CDC_EP_BUFSIZE 64
 
 #define CFG_TUD_HID 1
-#if PF_ENABLE_WIRELESS
-#define CFG_TUD_HID_EP_BUFSIZE 256
-#else
-#define CFG_TUD_HID_EP_BUFSIZE 64
-#endif
+#define CFG_TUD_HID_EP_BUFSIZE 128
 
 #define CFG_TUD_MSC 1
 #define CFG_TUD_MSC_EP_BUFSIZE 512

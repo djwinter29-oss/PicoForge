@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 # Post-link guard: fail if the firmware image reaches the reserved settings sector (last sector of flash).
 # Inputs: PF_FLASH_SIZE_BYTES (CMake arithmetic, physical size), PF_SECTOR_SIZE, and either PF_IMAGE_END or
 # PF_NM + PF_ELF (reads __flash_binary_end). The linker FLASH region is also shortened by one sector, so this

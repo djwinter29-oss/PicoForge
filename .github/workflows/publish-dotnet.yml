@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 name: Publish .NET Packages
 
 'on':
@@ -77,6 +80,9 @@ jobs:
           import urllib.request
           version, rid = os.environ["VERSION"], os.environ["RID"]
           root = Path("build/host-release").resolve()
+          source = Path("host/web/src")
+          assets = {path.relative_to(source).as_posix(): path.read_bytes()
+                    for path in source.rglob("*") if path.is_file()}
           assert f"PicoForge/{version}" in json.loads((root / "PicoForge.deps.json").read_text())["libraries"]
           shutil.copyfile("LICENSE", root / "LICENSE")
           Path("dist").mkdir()
@@ -84,6 +90,11 @@ jobs:
                                         "zip" if rid.startswith("win-") else "gztar", root_dir=root)
           with tempfile.TemporaryDirectory() as directory:
               shutil.unpack_archive(archive, directory)
+              web = Path(directory) / "wwwroot"
+              deployed = {path.relative_to(web).as_posix(): path.read_bytes()
+                          for path in web.rglob("*") if path.is_file()
+                          and path.suffix not in (".gz", ".br")}
+              assert deployed == assets, "Published dashboard must match the complete shared source"
               executable = Path(directory) / ("PicoForge.exe" if rid.startswith("win-") else "PicoForge")
               with socket.socket() as listener:
                   listener.bind(("127.0.0.1", 0))
@@ -106,6 +117,27 @@ jobs:
                           time.sleep(0.1)
                   else:
                       raise RuntimeError("Standalone dashboard did not become ready")
+                  for name, content in assets.items():
+                      if name.endswith(".html"):
+                          continue
+                      with urllib.request.urlopen(f"http://127.0.0.1:{port}/{name}", timeout=2) as response:
+                          assert response.read() == content, name
+                          assert response.headers["X-Content-Type-Options"] == "nosniff"
+                  with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2) as response:
+                      assert json.load(response)["connected"] is False
+                  for route, payload, expected in (
+                      ("/api/control/resync?board=unknown", b'{"confirm":false}', 400),
+                      ("/api/settings?board=unknown", b'{}' + b' ' * 4095, 413),
+                  ):
+                      request = urllib.request.Request(f"http://127.0.0.1:{port}{route}", data=payload,
+                                                       headers={"Content-Type": "application/json"})
+                      try:
+                          urllib.request.urlopen(request, timeout=2)
+                      except urllib.error.HTTPError as error:
+                          assert error.code == expected, route
+                          assert "error" in json.load(error), route
+                      else:
+                          raise AssertionError(f"Expected {expected} for {route}")
               finally:
                   if process.poll() is None:
                       process.terminate()

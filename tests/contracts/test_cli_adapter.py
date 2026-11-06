@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Require an explicit adapter review whenever its upstream editor implementation changes."""
 import hashlib
 from pathlib import Path

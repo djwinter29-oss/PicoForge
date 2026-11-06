@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #ifndef STORAGE_TEST_SELECTED_TRANSPORT_H
 #define STORAGE_TEST_SELECTED_TRANSPORT_H
 #include "drivers/sdcard/sd_backend.h"

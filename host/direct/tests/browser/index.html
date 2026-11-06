@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2026 Ji Dong
+-->
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Direct dashboard browser checks</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 1rem; }
+    iframe { border: 0; display: block; }
+    #results { white-space: pre-wrap; }
+    #wireless-fixture { position: absolute; top: 1000px; }
+  </style>
+</head>
+<body>
+  <h1>Direct dashboard browser checks</h1>
+  <ol id="results" aria-live="polite"></ol>
+  <iframe id="dashboard" title="Direct dashboard"></iframe>
+  <section id="wireless-fixture">
+    <select id="direct-settings-wifi"><option value="0">Disabled</option><option value="1">Enabled</option>
+      <option value="configure">Configure</option></select>
+    <select id="direct-settings-ble"><option value="0">Disabled</option><option value="1">Enabled</option>
+      <option value="configure">Configure</option></select>
+    <select id="direct-settings-tcp-cli"><option value="0">Off</option><option value="1">On</option></select>
+    <dialog id="direct-wifi-dialog">
+      <button id="direct-wifi-scan" type="button">Scan</button>
+      <p id="direct-wifi-status"></p>
+      <div id="direct-wifi-networks" role="group" aria-label="Available Wi-Fi networks"></div>
+      <button id="direct-wifi-other" type="button">Other</button>
+      <label id="direct-wifi-manual-label">SSID<input id="direct-wifi-ssid"></label>
+      <label id="direct-direct-wifi-password-label">Password<input id="direct-wifi-password"></label>
+      <button id="direct-wifi-connect" type="button">Test connection</button>
+      <button id="direct-wifi-cancel" type="button">Cancel</button>
+    </dialog>
+    <dialog id="direct-ble-dialog">
+      <p id="direct-ble-status"></p>
+      <input id="direct-ble-secret">
+      <button id="direct-ble-generate" type="button">Generate</button>
+      <button id="direct-ble-copy" type="button">Copy</button>
+      <button id="direct-ble-cancel" type="button">Close</button>
+    </dialog>
+    <p id="direct-wireless-summary"></p>
+  </section>
+  <script type="module" src="checks.mjs"></script>
+</body>
+</html>

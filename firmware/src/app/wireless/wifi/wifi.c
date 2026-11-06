@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file wifi.c
  * @brief Asynchronous WPA2/WPA3-SAE station connection, scans, temporary credential tests and paced reconnects.
@@ -14,9 +17,7 @@
 #include "platform/logging.h"
 
 #define PF_WIFI_SCAN_LIMIT 18u
-#define PF_WIFI_SCAN_PAGE_SIZE 6u
-/* ponytail: cap results at 18 (three report pages) to keep static RAM bounded on RP2040; raise with a paged
- * protocol. */
+/* ponytail: cap results at the protocol's strongest 18 networks to bound static RAM on RP2040. */
 /* ponytail: mirrors the pinned cyw43-driver's private "associated" join bit; the driver retries a WPA2 handshake
  * with a wrong passphrase silently instead of reporting BADAUTH. Recheck this bit when updating the driver. */
 #define PF_CYW43_JOIN_LINK 0x0400u
@@ -27,48 +28,17 @@
 #define PF_WIFI_LEAVE_RETRY_DELAY_US 5000000u /**< Pace retries when the driver refuses to leave a test network. */
 #define PF_WIFI_RSSI_REFRESH_US 2000000u /**< Avoid querying the radio for each status read. */
 #define PF_WIFI_SCAN_TIMEOUT_US 10000000u /**< Scan deadline; the driver has no completion timeout. */
-#define PF_WIFI_TEST_LIFETIME_US 600000000u /**< Successful test credentials expire after ten minutes. */
 #define PF_WIFI_SSID_MAX (PF_WIFI_SSID_SIZE - 1u)
-#define PF_WIFI_PASSWORD_MAX (PF_WIFI_PASSWORD_SIZE - 1u)
 
-/** @brief Feature 34 command payload byte offsets. */
-enum {
-    COMMAND_VERSION = 0, /**< Payload version, always 1. */
-    COMMAND_OPERATION = 1, /**< pf_wifi_operation_t. */
-    COMMAND_TRANSACTION = PF_WIRELESS_COMMAND_TRANSACTION_OFFSET, /**< Nonzero host transaction. */
-    COMMAND_PAGE = 3, /**< Result page for page selection; zero otherwise. */
-    COMMAND_SSID_LENGTH = 4, /**< Test SSID byte count. */
-    COMMAND_PASSWORD_LENGTH = 5, /**< Test passphrase byte count. */
-    COMMAND_SSID = 6, /**< 32 SSID bytes, zero padded. */
-    COMMAND_PASSWORD = 38, /**< 63 passphrase bytes, zero padded. */
-};
-
-/** @brief Feature 35 result payload byte offsets. */
-enum {
-    RESULT_VERSION = 0, /**< Payload version, always 1. */
-    RESULT_TRANSACTION = 1, /**< Transaction the result belongs to. */
-    RESULT_STATE = 2, /**< pf_wifi_command_state_t. */
-    RESULT_DETAIL = 3, /**< Scan page in states 0-3; pf_wifi_detail_t in states 4-6. */
-    RESULT_COUNT = 4, /**< Retained scan result count. */
-    RESULT_WIFI_STATE = 5, /**< pf_wifi_state_t. */
-    RESULT_ENTRIES = 6, /**< Six 35-byte entries: SSID length, SSID[32], RSSI, security bitmask. */
-    RESULT_ENTRY_SIZE = 35, /**< Bytes per scan entry. */
-    RESULT_ADDRESS = 216, /**< IPv4 address while a test is joined. */
-    RESULT_TEST_LIFETIME = 220, /**< Little-endian seconds remaining for staged credentials. */
-};
-
-/** @brief Feature 35 byte 2 scan/test state. */
+/** @brief Internal retained test state, independent of scans. */
 typedef enum {
-    PF_WIFI_COMMAND_IDLE = 0, /**< No scan or test result. */
-    PF_WIFI_COMMAND_SCANNING = 1, /**< Scan in progress. */
-    PF_WIFI_COMMAND_SCAN_DONE = 2, /**< Sorted scan results are available. */
-    PF_WIFI_COMMAND_SCAN_FAILED = 3, /**< The driver refused or did not finish the scan. */
+    PF_WIFI_COMMAND_IDLE = 0, /**< No retained test result. */
     PF_WIFI_COMMAND_TESTING = 4, /**< Test credentials are joining. */
     PF_WIFI_COMMAND_TEST_JOINED = 5, /**< Test credentials joined and are staged for saving. */
     PF_WIFI_COMMAND_FAILED = 6, /**< Test failed or the command was rejected. */
 } pf_wifi_command_state_t;
 
-/** @brief Feature 35 byte 3 during connection-test states 4-6. */
+/** @brief Internal association progress and retained failure reason. */
 typedef enum {
     PF_WIFI_DETAIL_NONE = 0, /**< No detail; also used for rejected commands. */
     PF_WIFI_DETAIL_SEARCHING = 1, /**< Finding and associating with the network. */
@@ -80,12 +50,11 @@ typedef enum {
     PF_WIFI_DETAIL_TIMEOUT = 7, /**< Failed: association did not complete before the deadline. */
     PF_WIFI_DETAIL_START_FAILED = 8, /**< Failed: the driver could not start the test connection. */
     PF_WIFI_DETAIL_LINK_LOST = 9, /**< Test link dropped; successful credentials remain staged until expiry. */
-    PF_WIFI_DETAIL_EXPIRED = 10, /**< Successful test credentials expired and were wiped. */
 } pf_wifi_detail_t;
 
 /** @brief Sanitized access point data retained between report reads. */
 typedef struct {
-    uint8_t ssid_length; /**< UTF-8 SSID byte count. */
+    uint8_t ssid_length; /**< Opaque SSID byte count. */
     uint8_t ssid[PF_WIFI_SSID_MAX]; /**< SSID; never contains credentials. */
     int8_t rssi; /**< Signal strength in dBm, saturated to int8_t. */
     uint8_t security; /**< SDK scan bits: privacy 1, WPA 2, RSN 4; RSN does not distinguish WPA2 from WPA3. */
@@ -106,6 +75,7 @@ typedef enum {
 } pf_wifi_after_leave_t;
 
 static char wifi_ssid[PF_WIFI_SSID_SIZE]; /**< Boot-applied SSID. */
+static uint8_t wifi_ssid_length; /**< Explicit boot-applied SSID byte count. */
 static char wifi_password[PF_WIFI_PASSWORD_SIZE]; /**< Boot-applied private passphrase. */
 static pf_wifi_scan_entry_t scan_entries[PF_WIFI_SCAN_LIMIT]; /**< Bounded strongest scan results. */
 static uint64_t connect_deadline_us; /**< Wi-Fi association/DHCP attempt deadline. */
@@ -117,11 +87,12 @@ static uint64_t retry_delay_us = PF_WIFI_RETRY_DELAY_US; /**< Exponential saved-
 static int8_t saved_rssi = PF_WIFI_RSSI_UNAVAILABLE; /**< Most recently sampled saved-link RSSI. */
 static pf_wifi_state_t wifi_state; /**< Station diagnostic state. */
 static pf_wireless_error_t wifi_error; /**< Latest join or test error. */
-static uint8_t command_transaction; /**< Latest accepted scan/test transaction. */
-static pf_wifi_command_state_t command_state; /**< Latest accepted scan/test state. */
-static uint8_t rejected_transaction; /**< One-shot rejection result, separate from accepted operation state. */
+static uint8_t saved_detail; /**< Report 12 saved-link failure detail, zero when no specific cause is known. */
+static pf_wifi_command_state_t command_state; /**< Retained test state; scan state is independent. */
 static uint8_t scan_count; /**< Number of retained results, at most PF_WIFI_SCAN_LIMIT. */
-static uint8_t scan_page; /**< Selected result page. */
+static uint8_t scan_state; /**< Idle/scanning/complete/failed, independent of the test. */
+static uint16_t scan_generation; /**< Nonzero generation for each accepted scan, skipping zero on wrap. */
+static uint8_t test_generation; /**< Nonzero generation for each accepted test, skipping zero on wrap. */
 static pf_wifi_detail_t join_detail; /**< Detail reported while a test is joining, joined or failed. */
 static pf_wifi_link_owner_t link_owner; /**< Saved/test ownership of the current station connection attempt. */
 static bool saved_wifi_enabled; /**< Saved switch and credential availability for restoring the boot network. */
@@ -132,8 +103,8 @@ static pf_wifi_after_leave_t after_leave; /**< Single owner of every wait for th
 /** @brief Temporary test state and credentials; cleared as one unit when discarded or expired. */
 static struct {
     char ssid[PF_WIFI_SSID_SIZE]; /**< Temporary SSID; never persisted before save. */
+    uint8_t ssid_length; /**< Explicit temporary SSID byte count. */
     char password[PF_WIFI_PASSWORD_SIZE]; /**< Temporary passphrase; wiped when the test ends. */
-    uint64_t expiry_us; /**< Deadline for retaining successfully tested credentials. */
     uint8_t handshake_failures; /**< Handshakes dropped back to association during the current test. */
     pf_wifi_detail_t wpa2_failure; /**< WPA2 failure detail if the SAE fallback also finds no network. */
     bool handshake_active; /**< Current test was associated at the previous poll. */
@@ -143,15 +114,6 @@ static struct {
 
 static pf_wifi_auth_state_t saved_auth_state; /**< Saved-network mode, loaded from its credential record. */
 static uint16_t reconnect_count; /**< Saturating count of saved-network reconnect attempts after first link loss. */
-
-/** @brief Return whether every byte in a reserved or unused report range is zero. */
-static bool bytes_zero(const uint8_t *bytes, size_t length)
-{
-    for (size_t i = 0u; i < length; ++i) {
-        if (bytes[i] != 0u) return false;
-    }
-    return true;
-}
 
 /** @brief Return whether the station is joining, associated or addressed. */
 static bool link_active(int link)
@@ -188,7 +150,7 @@ static bool testing(void)
 static void release_station(void)
 {
     if (!station_enabled || saved_wifi_enabled || testing() || test.succeeded ||
-        command_state == PF_WIFI_COMMAND_SCANNING || cyw43_wifi_scan_active(&cyw43_state)) return;
+        scan_state == 1u || cyw43_wifi_scan_active(&cyw43_state)) return;
     cyw43_arch_disable_sta_mode();
     station_enabled = false;
     link_owner = PF_WIFI_LINK_NONE;
@@ -208,7 +170,7 @@ static void clear_test_credentials(void)
 static int scan_result(void *environment, const cyw43_ev_scan_result_t *result)
 {
     (void)environment;
-    if (command_state != PF_WIFI_COMMAND_SCANNING || result == NULL || result->ssid_len == 0u ||
+    if (scan_state != 1u || result == NULL || result->ssid_len == 0u ||
         result->ssid_len > sizeof(result->ssid)) return 0;
     const int8_t rssi = result->rssi > INT8_MAX ? INT8_MAX
         : result->rssi < INT8_MIN ? INT8_MIN : (int8_t)result->rssi;
@@ -242,9 +204,11 @@ static void connect_wifi(uint64_t now)
 {
     link_owner = PF_WIFI_LINK_SAVED;
     const bool sae = saved_auth_state == PF_WIFI_AUTH_TRY_SAE || saved_auth_state == PF_WIFI_AUTH_SAE;
-    const int rc = cyw43_arch_wifi_connect_async(wifi_ssid, wifi_password, auth_for(wifi_password, sae));
+    const int rc = cyw43_wifi_join(&cyw43_state, wifi_ssid_length, (const uint8_t *)wifi_ssid,
+        strlen(wifi_password), (const uint8_t *)wifi_password, auth_for(wifi_password, sae), NULL, CYW43_CHANNEL_NONE);
     wifi_state = rc == 0 ? PF_WIFI_STATE_CONNECTING : PF_WIFI_STATE_FAILED;
     wifi_error = rc == 0 ? PF_WIRELESS_ERROR_NONE : PF_WIRELESS_ERROR_JOIN;
+    saved_detail = 0u;
     connect_deadline_us = now + PF_WIFI_CONNECT_TIMEOUT_US;
     if (rc != 0) schedule_retry(now);
     if (rc != 0) PF_LOGGING_ERROR("wifi", "Wi-Fi connection request failed: %d", rc);
@@ -271,7 +235,8 @@ static void fail_test(pf_wifi_detail_t detail, pf_wireless_error_t error, uint64
     join_detail = detail;
     after_leave = PF_WIFI_AFTER_LEAVE_NONE;
     leave_test_link(now);
-    clear_test_credentials();
+    mbedtls_platform_zeroize(test.password, sizeof(test.password));
+    test.succeeded = false;
     if (saved_wifi_enabled) {
         wifi_state = PF_WIFI_STATE_FAILED;
         wifi_error = error;
@@ -302,7 +267,9 @@ static void drop_test(bool rejoin_saved, uint64_t now)
 static void start_test_join(uint64_t now)
 {
     after_leave = PF_WIFI_AFTER_LEAVE_NONE;
-    const int rc = cyw43_arch_wifi_connect_async(test.ssid, test.password, auth_for(test.password, test.sae));
+    const int rc = cyw43_wifi_join(&cyw43_state, test.ssid_length, (const uint8_t *)test.ssid,
+        strlen(test.password), (const uint8_t *)test.password, auth_for(test.password, test.sae), NULL,
+        CYW43_CHANNEL_NONE);
     if (rc != 0) {
         fail_test(PF_WIFI_DETAIL_START_FAILED, PF_WIRELESS_ERROR_JOIN, now);
         PF_LOGGING_ERROR("wifi", "Wi-Fi test connection request failed: %d", rc);
@@ -314,13 +281,14 @@ static void poll_scan(uint64_t now)
 {
     if (cyw43_wifi_scan_active(&cyw43_state)) {
         if (now >= scan_deadline_us) {
-            command_state = PF_WIFI_COMMAND_SCAN_FAILED;
+            scan_state = 3u;
+            scan_count = 0u;
             scan_release_pending = true;
             PF_LOGGING_WARNING("wifi", "Wi-Fi scan timed out");
         }
         return;
     }
-    command_state = PF_WIFI_COMMAND_SCAN_DONE;
+    scan_state = 2u;
     release_station();
 }
 
@@ -336,7 +304,6 @@ static void poll_test(int link, uint64_t now)
         command_state = PF_WIFI_COMMAND_TEST_JOINED;
         join_detail = PF_WIFI_DETAIL_NONE;
         test.succeeded = true;
-        test.expiry_us = now + PF_WIFI_TEST_LIFETIME_US;
         wifi_state = PF_WIFI_STATE_CONNECTED;
         wifi_error = PF_WIRELESS_ERROR_NONE;
         return;
@@ -390,6 +357,7 @@ static void poll_station(int link, uint64_t now)
             }
             return;
         }
+        if (saved_wifi_enabled && pf_wifi_scan_active()) return;
         after_leave = PF_WIFI_AFTER_LEAVE_NONE;
         leave_retry_us = 0u;
         if (saved_wifi_enabled) connect_wifi(now);
@@ -415,6 +383,7 @@ static void poll_station(int link, uint64_t now)
     if (link == CYW43_LINK_UP) {
         wifi_state = PF_WIFI_STATE_CONNECTED;
         wifi_error = PF_WIRELESS_ERROR_NONE;
+        saved_detail = 0u;
         retry_delay_us = PF_WIFI_RETRY_DELAY_US;
         retry_us = 0u;
         if (link_owner == PF_WIFI_LINK_SAVED) {
@@ -424,6 +393,8 @@ static void poll_station(int link, uint64_t now)
     } else if (wifi_state == PF_WIFI_STATE_CONNECTING && (link < 0 || now >= connect_deadline_us)) {
         wifi_state = PF_WIFI_STATE_FAILED;
         wifi_error = link < 0 ? PF_WIRELESS_ERROR_JOIN : PF_WIRELESS_ERROR_TIMEOUT;
+        saved_detail = link == CYW43_LINK_NONET ? 2u : link == CYW43_LINK_BADAUTH ? 3u :
+            link == CYW43_LINK_NOIP ? 4u : 5u;
         schedule_retry(now);
         /* Probe the alternate mode only while the saved mode is unknown, and never for an open network. */
         if (wifi_password[0] != '\0' &&
@@ -436,75 +407,77 @@ static void poll_station(int link, uint64_t now)
     } else if (wifi_state == PF_WIFI_STATE_CONNECTED) {
         wifi_state = PF_WIFI_STATE_FAILED;
         wifi_error = PF_WIRELESS_ERROR_JOIN;
+        saved_detail = 0u;
         if (reconnect_count != UINT16_MAX) ++reconnect_count;
         schedule_retry(now);
         PF_LOGGING_WARNING("wifi", "Wi-Fi link lost");
     } else if (wifi_state == PF_WIFI_STATE_FAILED && saved_wifi_enabled &&
-               command_state != PF_WIFI_COMMAND_SCANNING && !cyw43_wifi_scan_active(&cyw43_state) &&
+               scan_state != 1u && !cyw43_wifi_scan_active(&cyw43_state) &&
                now >= retry_us) {
         connect_wifi(now);
     }
 }
 
-/** @brief Start a scan when no test or driver scan is active. */
-static bool start_scan(const uint8_t *report)
+/** @copydoc pf_wifi_scan */
+void pf_wifi_scan(void)
 {
-    if (!bytes_zero(report + COMMAND_PAGE, PF_WIRELESS_COMMAND_SIZE - COMMAND_PAGE) || testing() ||
-        cyw43_wifi_scan_active(&cyw43_state)) return false;
     cyw43_arch_enable_sta_mode();
     station_enabled = true;
     scan_release_pending = false;
     memset(scan_entries, 0, sizeof(scan_entries));
     scan_count = 0u;
-    scan_page = 0u;
-    command_state = PF_WIFI_COMMAND_SCANNING;
+    if (++scan_generation == 0u) ++scan_generation;
+    scan_state = 1u;
     scan_deadline_us = time_us_64() + PF_WIFI_SCAN_TIMEOUT_US;
     cyw43_wifi_scan_options_t options = {0};
     if (cyw43_wifi_scan(&cyw43_state, &options, NULL, scan_result) != 0) {
-        command_state = PF_WIFI_COMMAND_SCAN_FAILED;
+        scan_state = 3u;
         scan_release_pending = true;
         PF_LOGGING_WARNING("wifi", "Wi-Fi scan request failed");
         release_station();
     }
-    return true;
 }
 
-/** @brief Select a populated page of completed scan results. */
-static bool select_page(const uint8_t *report)
+/** @copydoc pf_wifi_scan_entry */
+uint8_t pf_wifi_scan_entry(uint8_t index, uint16_t generation, uint8_t data[63])
 {
-    const uint8_t page = report[COMMAND_PAGE];
-    if (command_state != PF_WIFI_COMMAND_SCAN_DONE || page * PF_WIFI_SCAN_PAGE_SIZE >= scan_count ||
-        !bytes_zero(report + COMMAND_SSID_LENGTH, PF_WIRELESS_COMMAND_SIZE - COMMAND_SSID_LENGTH)) return false;
-    scan_page = page;
-    return true;
+    if (generation != scan_generation) return 22u;
+    if (scan_state != 2u || index >= scan_count) return 23u;
+    const pf_wifi_scan_entry_t *entry = &scan_entries[index];
+    data[0] = (uint8_t)scan_generation;
+    data[1] = (uint8_t)(scan_generation >> 8u);
+    data[2] = index;
+    data[3] = entry->ssid_length;
+    memcpy(data + 4u, entry->ssid, entry->ssid_length);
+    data[36] = (uint8_t)entry->rssi;
+    data[37] = entry->security;
+    return 0u;
 }
 
-/** @brief Validate and stage test credentials, leaving any live link before joining them. */
-static bool start_test(const uint8_t *report)
+/** @copydoc pf_wifi_test */
+bool pf_wifi_test(const uint8_t *ssid, uint8_t ssid_length, const char *password)
 {
-    const uint8_t ssid_length = report[COMMAND_SSID_LENGTH];
-    const uint8_t password_length = report[COMMAND_PASSWORD_LENGTH];
-    if (report[COMMAND_PAGE] != 0u || command_state == PF_WIFI_COMMAND_SCANNING || testing() ||
-        cyw43_wifi_scan_active(&cyw43_state) || ssid_length == 0u || ssid_length > PF_WIFI_SSID_MAX ||
-        password_length > PF_WIFI_PASSWORD_MAX || (password_length != 0u && password_length < 8u) ||
-        memchr(report + COMMAND_SSID, '\0', ssid_length) != NULL ||
-        !bytes_zero(report + COMMAND_SSID + ssid_length, PF_WIFI_SSID_MAX - ssid_length) ||
-        !bytes_zero(report + COMMAND_PASSWORD + password_length, PF_WIFI_PASSWORD_MAX - password_length)) {
-        return false;
-    }
-    for (size_t i = 0u; i < password_length; ++i) {
-        const uint8_t character = report[COMMAND_PASSWORD + i];
-        if (character < 32u || character > 126u) return false;
-    }
+    if (++test_generation == 0u) ++test_generation;
+    clear_test_credentials();
+    memcpy(test.ssid, ssid, ssid_length);
+    test.ssid_length = ssid_length;
+    memcpy(test.password, password, strlen(password) + 1u);
     /* The previous link must drop first, or its CYW43_LINK_UP would look like a successful test. */
     const bool wait_for_disconnect = station_enabled &&
         link_active(cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA));
-    if (wait_for_disconnect && cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA) != 0) return false;
+    if (wait_for_disconnect && cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA) != 0) {
+        command_state = PF_WIFI_COMMAND_FAILED;
+        join_detail = PF_WIFI_DETAIL_START_FAILED;
+        mbedtls_platform_zeroize(test.password, sizeof(test.password));
+        if (link_owner == PF_WIFI_LINK_TEST) {
+            link_owner = PF_WIFI_LINK_NONE;
+            after_leave = PF_WIFI_AFTER_LEAVE_RESTORE;
+            leave_retry_us = time_us_64() + PF_WIFI_LEAVE_RETRY_DELAY_US;
+        }
+        return false;
+    }
     cyw43_arch_enable_sta_mode();
     station_enabled = true;
-    clear_test_credentials();
-    memcpy(test.ssid, report + COMMAND_SSID, ssid_length);
-    memcpy(test.password, report + COMMAND_PASSWORD, password_length);
     link_owner = PF_WIFI_LINK_TEST;
     after_leave = wait_for_disconnect ? PF_WIFI_AFTER_LEAVE_JOIN_TEST : PF_WIFI_AFTER_LEAVE_NONE;
     command_state = PF_WIFI_COMMAND_TESTING;
@@ -516,23 +489,25 @@ static bool start_test(const uint8_t *report)
     return true;
 }
 
-/** @brief Drop a staged or running test; rejoin the saved network only when the test owned the link. */
-static bool clear_test(const uint8_t *report)
+/** @copydoc pf_wifi_cancel_test */
+void pf_wifi_cancel_test(bool restore)
 {
-    if (!bytes_zero(report + COMMAND_PAGE, PF_WIRELESS_COMMAND_SIZE - COMMAND_PAGE) ||
-        command_state == PF_WIFI_COMMAND_SCANNING) return false;
     const uint64_t now = time_us_64();
     command_state = PF_WIFI_COMMAND_IDLE;
+    if (!restore) {
+        clear_test_credentials();
+        return;
+    }
     drop_test(true, now);
     if (!saved_wifi_enabled) wifi_state = PF_WIFI_STATE_DISABLED;
-    else if (after_leave == PF_WIFI_AFTER_LEAVE_NONE && wifi_state == PF_WIFI_STATE_FAILED) connect_wifi(now);
-    return true;
+    else if (after_leave == PF_WIFI_AFTER_LEAVE_NONE && wifi_state == PF_WIFI_STATE_FAILED &&
+             !pf_wifi_scan_active()) connect_wifi(now);
 }
 
 /** @copydoc pf_wifi_prepare */
 bool pf_wifi_prepare(void)
 {
-    pf_boot_config_wifi_ssid(wifi_ssid);
+    wifi_ssid_length = pf_boot_config_wifi_ssid_bytes((uint8_t *)wifi_ssid);
     pf_boot_config_wifi_password(wifi_password);
     saved_auth_state = pf_boot_config_wifi_auth_state();
     reconnect_count = 0u;
@@ -540,7 +515,8 @@ bool pf_wifi_prepare(void)
     retry_us = 0u;
     rssi_refresh_us = 0u;
     saved_rssi = PF_WIFI_RSSI_UNAVAILABLE;
-    saved_wifi_enabled = (pf_boot_config_radios() & PF_WIRELESS_WIFI) != 0u && wifi_ssid[0] != '\0';
+    saved_detail = 0u;
+    saved_wifi_enabled = (pf_boot_config_radios() & PF_WIRELESS_WIFI) != 0u && wifi_ssid_length != 0u;
     return saved_wifi_enabled;
 }
 
@@ -549,22 +525,13 @@ void pf_wifi_start(void)
 {
     cyw43_arch_enable_sta_mode();
     station_enabled = true;
-    if (wifi_ssid[0] != '\0') connect_wifi(time_us_64());
+    if (wifi_ssid_length != 0u) connect_wifi(time_us_64());
 }
 
 /** @copydoc pf_wifi_poll */
 void pf_wifi_poll(uint64_t now)
 {
-    if (test.succeeded && now >= test.expiry_us) {
-        if (command_state != PF_WIFI_COMMAND_SCANNING) {
-            command_state = PF_WIFI_COMMAND_FAILED;
-            join_detail = PF_WIFI_DETAIL_EXPIRED;
-        }
-        drop_test(true, now);
-        if (!saved_wifi_enabled) wifi_state = PF_WIFI_STATE_DISABLED;
-        PF_LOGGING_INFO("wifi", "Staged Wi-Fi credentials expired");
-    }
-    if (command_state == PF_WIFI_COMMAND_SCANNING) poll_scan(now);
+    if (scan_state == 1u) poll_scan(now);
     if (station_enabled) {
         const int link = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
         if (testing()) poll_test(link, now);
@@ -608,76 +575,45 @@ pf_wireless_error_t pf_wifi_error(void)
     return wifi_error;
 }
 
-/** @copydoc pf_wifi_command */
-bool pf_wifi_command(const uint8_t report[PF_WIRELESS_COMMAND_SIZE])
+/** @copydoc pf_wifi_test_active */
+bool pf_wifi_test_active(void) { return testing(); }
+
+/** @copydoc pf_wifi_scan_active */
+bool pf_wifi_scan_active(void)
 {
-    const uint8_t transaction = report[COMMAND_TRANSACTION];
-    if (transaction == 0u || report[COMMAND_VERSION] != 1u) return false;
-    bool accepted;
-    switch (report[COMMAND_OPERATION]) {
-    case PF_WIFI_OPERATION_SCAN: accepted = start_scan(report); break;
-    case PF_WIFI_OPERATION_PAGE: accepted = select_page(report); break;
-    case PF_WIFI_OPERATION_TEST: accepted = start_test(report); break;
-    case PF_WIFI_OPERATION_CLEAR: accepted = clear_test(report); break;
-    default: accepted = false; break;
-    }
-    if (accepted) command_transaction = transaction;
-    return accepted;
+    return scan_state == 1u || (station_enabled && cyw43_wifi_scan_active(&cyw43_state));
 }
 
-/** @copydoc pf_wifi_reject_command */
-void pf_wifi_reject_command(uint8_t transaction)
-{
-    const bool running = testing() || command_state == PF_WIFI_COMMAND_SCANNING;
-    if (transaction == 0u || (running && transaction == command_transaction)) return;
-    rejected_transaction = transaction;
-}
+/** @copydoc pf_wifi_test_succeeded */
+bool pf_wifi_test_succeeded(void) { return test.succeeded; }
 
-/** @copydoc pf_wifi_result */
-void pf_wifi_result(uint8_t report[PF_WIRELESS_RESULT_SIZE])
+/** @copydoc pf_wifi_status */
+void pf_wifi_status(uint8_t report[PF_WIRELESS_STATUS_SIZE])
 {
-    memset(report, 0, PF_WIRELESS_RESULT_SIZE);
-    report[RESULT_VERSION] = 1u;
-    report[RESULT_WIFI_STATE] = wifi_state;
-    if (rejected_transaction != 0u) {
-        report[RESULT_TRANSACTION] = rejected_transaction;
-        report[RESULT_STATE] = PF_WIFI_COMMAND_FAILED;
-        rejected_transaction = 0u;
-        return;
+    report[2] = 0u;
+    memset(report + 5u, 0, 37u);
+    report[1] = command_state == PF_WIFI_COMMAND_TESTING ? 4u :
+        command_state == PF_WIFI_COMMAND_TEST_JOINED ? 5u :
+        command_state == PF_WIFI_COMMAND_FAILED ? 6u : (uint8_t)wifi_state;
+    if (command_state == PF_WIFI_COMMAND_FAILED) {
+        report[2] = join_detail == PF_WIFI_DETAIL_NOT_FOUND ? 2u :
+            join_detail == PF_WIFI_DETAIL_REJECTED ? 3u :
+            join_detail == PF_WIFI_DETAIL_NO_ADDRESS ? 4u :
+            join_detail == PF_WIFI_DETAIL_LINK_LOST ? 6u : 5u;
+    } else if (command_state == PF_WIFI_COMMAND_IDLE) {
+        report[2] = saved_detail;
     }
-    report[RESULT_TRANSACTION] = command_transaction;
-    report[RESULT_STATE] = command_state;
-    report[RESULT_DETAIL] = command_state >= PF_WIFI_COMMAND_TESTING ? join_detail : scan_page;
-    report[RESULT_COUNT] = scan_count;
-    const uint8_t start = (uint8_t)(scan_page * PF_WIFI_SCAN_PAGE_SIZE);
-    for (uint8_t i = 0u; i < PF_WIFI_SCAN_PAGE_SIZE && start + i < scan_count; ++i) {
-        const pf_wifi_scan_entry_t *entry = &scan_entries[start + i];
-        uint8_t *item = report + RESULT_ENTRIES + (uint16_t)i * RESULT_ENTRY_SIZE;
-        item[0] = entry->ssid_length;
-        memcpy(item + 1u, entry->ssid, entry->ssid_length);
-        item[1u + PF_WIFI_SSID_MAX] = (uint8_t)entry->rssi;
-        item[2u + PF_WIFI_SSID_MAX] = entry->security;
+    if (station_enabled && cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP) {
+        pf_wifi_ip_address(report + 5u);
     }
-    if (command_state == PF_WIFI_COMMAND_TEST_JOINED) {
-        pf_wifi_ip_address(report + RESULT_ADDRESS);
-    }
-    const uint64_t now = time_us_64();
-    if (test.succeeded && test.expiry_us > now) {
-        const uint64_t remaining_us = test.expiry_us - now;
-        const uint16_t remaining_seconds = (uint16_t)((remaining_us + 999999u) / 1000000u);
-        report[RESULT_TEST_LIFETIME] = (uint8_t)remaining_seconds;
-        report[RESULT_TEST_LIFETIME + 1u] = (uint8_t)(remaining_seconds >> 8u);
-    }
-}
-
-/** @copydoc pf_wifi_tested_credentials */
-bool pf_wifi_tested_credentials(char ssid[PF_WIFI_SSID_SIZE], char password[PF_WIFI_PASSWORD_SIZE])
-{
-    /* Polling expires the staged secret; this independent guard rejects saves between owner-task polls. */
-    if (!test.succeeded || time_us_64() >= test.expiry_us || test.ssid[0] == '\0') return false;
-    memcpy(ssid, test.ssid, sizeof(test.ssid));
-    memcpy(password, test.password, sizeof(test.password));
-    return true;
+    const bool candidate = test.ssid_length != 0u;
+    report[9] = candidate ? test.ssid_length : wifi_ssid_length;
+    memcpy(report + 10u, candidate ? test.ssid : wifi_ssid, report[9]);
+    report[42] = scan_state;
+    report[43] = (uint8_t)scan_generation;
+    report[44] = (uint8_t)(scan_generation >> 8u);
+    report[45] = scan_state == 2u ? scan_count : 0u;
+    report[46] = test_generation;
 }
 
 /** @copydoc pf_wifi_tested_auth_state */
@@ -695,13 +631,6 @@ void pf_wifi_link_diagnostics(pf_wifi_auth_state_t *auth_state, uint16_t *reconn
         *rssi = PF_WIFI_RSSI_UNAVAILABLE;
         if (pf_wifi_saved_link_up()) *rssi = saved_rssi;
     }
-}
-
-/** @copydoc pf_wifi_clear_tested_credentials */
-void pf_wifi_clear_tested_credentials(void)
-{
-    command_state = PF_WIFI_COMMAND_IDLE;
-    drop_test(false, time_us_64());
 }
 
 /** @copydoc pf_wifi_ip_address */

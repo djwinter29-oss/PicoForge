@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file sd_port_freertos.c
  * @brief FreeRTOS recursive reservations and optional transport waits for the SD facade.
  */

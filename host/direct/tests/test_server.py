@@ -1,8 +1,11 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tools.host.direct_server import DirectHandler, DirectTerminal
+from host.direct.server import DirectHandler, DirectTerminal, _DEFAULT_WEB_ROOT
 
 
 class DirectTerminalTests(unittest.TestCase):
@@ -25,20 +28,52 @@ class DirectTerminalTests(unittest.TestCase):
         def close(self):
             self.closed = True
 
-    def test_open_rejects_non_lan_addresses_and_invalid_authentication_setting(self):
-        terminal = DirectTerminal()
+    CHALLENGE = b"PicoForge AUTH 000102030405060708090a0b0c0d0e0f 0001020304050607\r\n"
+
+    def test_default_web_root_contains_only_browser_assets(self):
+        self.assertEqual(_DEFAULT_WEB_ROOT.name, "web")
+        self.assertTrue((_DEFAULT_WEB_ROOT / "index.html").is_file())
+        self.assertFalse((_DEFAULT_WEB_ROOT / "server.py").exists())
+
+    def test_open_rejects_non_lan_addresses(self):
         with self.assertRaisesRegex(ValueError, "private LAN"):
-            terminal.open("8.8.8.8", False)
-        with self.assertRaisesRegex(ValueError, "authentication setting"):
-            terminal.open("192.168.1.2", "true")
+            DirectTerminal().open("8.8.8.8")
+
+    def test_terminal_activity_reuses_expiry_timer_and_old_sessions_cannot_expire_new_ones(self):
+        terminal = DirectTerminal()
+        connection = self.FakeSocket()
+        terminal._socket = connection
+        terminal._session = "first"
+        with patch("host.direct.server.threading.Timer") as timer, \
+                patch("host.direct.server.time.monotonic") as now:
+            now.return_value = 100
+            terminal._touch_locked()
+            now.return_value = 110
+            terminal._touch_locked()
+            self.assertEqual(timer.call_count, 1, "activity updates the deadline without creating a new thread")
+            now.return_value = 115
+            terminal._expire("first")
+            self.assertFalse(connection.closed)
+            self.assertEqual(timer.call_args.args, (10, terminal._expire))
+            self.assertEqual(timer.call_args.kwargs, {"args": ("first",)})
+            now.return_value = 125
+            terminal._expire("first")
+            self.assertTrue(connection.closed)
+            self.assertIsNone(terminal._timer)
+            replacement = self.FakeSocket()
+            terminal._socket = replacement
+            terminal._session = "second"
+            terminal._touch_locked()
+            terminal._expire("first")
+            self.assertFalse(replacement.closed)
+            terminal.close_all()
 
     def test_authenticated_open_waits_for_a_board_bound_proof_before_terminal_io(self):
-        challenge = b"PicoForge AUTH 000102030405060708090a0b0c0d0e0f 0001020304050607\r\n"
-        connection = self.FakeSocket(challenge)
+        connection = self.FakeSocket(self.CHALLENGE)
         terminal = DirectTerminal()
-        with patch("tools.host.direct_server.socket.create_connection", return_value=connection), \
+        with patch("host.direct.server.socket.create_connection", return_value=connection), \
                 patch.object(terminal, "_touch_locked"):
-            opened = terminal.open("192.168.1.2", True)
+            opened = terminal.open("192.168.1.2")
             self.assertEqual(opened["challenge"], {
                 "nonce": "000102030405060708090a0b0c0d0e0f", "uid": "0001020304050607",
             })
@@ -76,20 +111,19 @@ class DirectTerminalTests(unittest.TestCase):
         handler.headers["Origin"] = "http://localhost"
         self.assertFalse(handler._same_origin_loopback())
 
-    @patch("tools.host.direct_server.socket.create_connection")
+    @patch("host.direct.server.socket.create_connection")
     def test_open_uses_fixed_cli_port_and_closes_duplicate_connection(self, create_connection):
-        first = self.FakeSocket()
+        first = self.FakeSocket(self.CHALLENGE)
         create_connection.return_value = first
         terminal = DirectTerminal()
         with patch.object(terminal, "_touch_locked"):
-            opened = terminal.open("192.168.1.2", False)
+            opened = terminal.open("192.168.1.2")
             self.assertTrue(opened["session"])
-            self.assertIsNone(opened["challenge"])
             self.assertEqual(create_connection.call_args.args, (("192.168.1.2", 2323),))
-            second = self.FakeSocket()
+            second = self.FakeSocket(self.CHALLENGE)
             create_connection.return_value = second
             with self.assertRaisesRegex(RuntimeError, "already connected"):
-                terminal.open("192.168.1.3", False)
+                terminal.open("192.168.1.3")
             self.assertTrue(second.closed)
             terminal.close_all()
             self.assertTrue(first.closed)

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file bluetooth.h
  * @brief Internal BLE peripheral lifecycle, called only by the USB wireless owner task.
@@ -18,9 +21,12 @@ bool pf_bluetooth_prepare(void);
  */
 bool pf_bluetooth_start(void);
 
-/** @brief Report the peripheral link for Feature 30 byte 45.
+/** @brief Report the peripheral link for Feature 12 byte 3.
  * @return 0 when the controller is not working, 1 while advertising, 2 while a central is connected.
  */
 uint8_t pf_bluetooth_state(void);
+
+/** @brief Apply owner-task BLE timers, including the fast-to-slow advertising transition. */
+void pf_bluetooth_poll(void);
 
 #endif

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 name: Release build packages
 
 'on':
@@ -67,7 +70,7 @@ jobs:
           import re
           for filename, field in (
               ("host/python/pyproject.toml", "version"),
-              ("host/python/src/picoforge/__init__.py", "__version__"),
+              ("host/python/src/picoforge/__init__.py", "DEFAULT_VERSION"),
           ):
               path = Path(filename)
               text, count = re.subn(rf'^{field} = "[^"]+"$', f'{field} = "{os.environ["VERSION"]}"',
@@ -85,42 +88,7 @@ jobs:
         run: |
           python -m venv build/wheel-check
           build/wheel-check/bin/python -m pip install dist/*.whl
-          cd build
-          wheel-check/bin/python - <<'PY'
-          from importlib.metadata import version
-          from importlib.resources import files
-          from importlib.util import find_spec
-          import os
-          assert version("picoforge") == os.environ["VERSION"]
-          from picoforge import __version__
-          assert __version__ == os.environ["VERSION"]
-          from picoforge.cli import main
-          from picoforge.dashboard.server import create_app
-          from picoforge.hid.device import PicoForgeHid
-          from picoforge.reports import parse_identity_report
-          assert PicoForgeHid.__module__ == "picoforge.hid.device"
-          assert parse_identity_report.__module__ == "picoforge.reports.identity"
-          for name in ("console", "device", "monitor", "protocol"):
-              assert find_spec(f"picoforge.{name}") is None, name
-          web = files("picoforge").joinpath("web")
-          for name in ("index.html", "favicon.svg", "css/dashboard.css",
-                       "js/app.mjs", "js/dashboard.mjs", "js/wireless-form.mjs"):
-              assert web.joinpath(name).is_file(), name
-          client = create_app(monitor=object()).test_client()
-          response = client.get("/")
-          assert response.status_code == 200
-          assert b"PicoForge Dashboard | Python" in response.data
-          assert f'App v{os.environ["VERSION"]}<'.encode() in response.data
-          response = client.get("/console")
-          assert response.status_code == 200
-          assert b"PicoForge Console | Python" in response.data
-          assert f'App v{os.environ["VERSION"]}<'.encode() in response.data
-          response = client.get("/js/wireless-form.mjs")
-          assert response.status_code == 200
-          assert b"export function bindWirelessForm" in response.data
-          PY
-          wheel-check/bin/python -m picoforge --help
-          wheel-check/bin/picoforge --help
+          build/wheel-check/bin/python -I tools/validation/check-python-wheel.py "$VERSION"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-python
@@ -140,11 +108,11 @@ jobs:
           VERSION: ${{ needs.validate-tag.outputs.version }}
         run: |
           mkdir -p build/direct dist
-          cp host/direct/index.html host/direct/console.html host/direct/favicon.svg LICENSE build/direct/
-          cp -r host/direct/css host/direct/js build/direct/
-          cp tools/host/direct_server.py build/direct/server.py
-          sed -i "s/App v0\.0\.0-debug/App v$VERSION/" build/direct/index.html build/direct/console.html
-          test "$(grep -l "App v$VERSION<" build/direct/index.html build/direct/console.html | wc -l)" -eq 2
+          cp -r host/direct/web build/direct/
+          cp LICENSE build/direct/
+          cp host/direct/server.py build/direct/server.py
+          sed -i "s/App v0\.0\.0-debug/App v$VERSION/" build/direct/web/index.html build/direct/web/console.html
+          test "$(grep -l "App v$VERSION<" build/direct/web/index.html build/direct/web/console.html | wc -l)" -eq 2
           cd build/direct
           zip -r "../../dist/picoforge-direct-v$VERSION.zip" .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

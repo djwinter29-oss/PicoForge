@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Build/package workflow contracts; no runner, network or hardware access."""
 from pathlib import Path
 import json
@@ -5,6 +8,9 @@ import os
 import re
 import subprocess
 import sys
+import runpy
+from unittest.mock import patch
+from importlib.metadata import PackageNotFoundError
 
 import pytest
 
@@ -158,11 +164,21 @@ def test_host_packages_and_publishers_share_validated_artifacts():
     assert 'assert b"PicoForge Dashboard | .NET" in page' in dotnet
     assert 'assert b"PicoForge Console | .NET" in page' in dotnet
     assert 'assert f"App v{version}<".encode() in page' in dotnet
-    assert 'assert version("picoforge") == os.environ["VERSION"]' in packages
-    assert 'web = files("picoforge").joinpath("web")' in packages
-    assert 'assert b"PicoForge Dashboard | Python" in response.data' in packages
-    assert 'assert b"PicoForge Console | Python" in response.data' in packages
-    assert 'assert __version__ == os.environ["VERSION"]' in packages
+    assert 'assert deployed == assets' in dotnet
+    assert 'assert response.read() == content' in dotnet
+    assert '/api/status' in dotnet
+    assert 'assert json.load(response)["connected"] is False' in dotnet
+    assert 'assert error.code == expected' in dotnet
+    check = (ROOT / "tools/validation/check-python-wheel.py").read_text()
+    assert 'version("picoforge") == args.version' in check
+    assert 'web = files("picoforge").joinpath("web")' in check
+    assert "PicoForge Dashboard | Python" in check
+    assert "PicoForge Console | Python" in check
+    assert "picoforge.__version__ == args.version" in check
+    assert 'check-python-wheel.py "$VERSION"' in packages
+    assert "create_app(monitor=" not in packages
+    host = (ROOT / ".github/workflows/host-validation.yml").read_text()
+    assert "python -I tools/validation/check-python-wheel.py 0.0.0.dev0" in host
     for name, artifact, pattern in (
         ("pypi", "release-python", "picoforge-$version-py3-none-any.whl"),
         ("direct", "release-direct", "picoforge-direct-v$version.zip"),
@@ -177,9 +193,11 @@ def test_host_packages_and_publishers_share_validated_artifacts():
 
 def test_unreleased_host_versions_are_debug():
     assert '<Version>0.0.0-debug</Version>' in (ROOT / "host/dotnet/PicoForge/PicoForge.csproj").read_text()
-    assert '__version__ = "0.0.0-debug"' in (ROOT / "host/python/src/picoforge/__init__.py").read_text()
+    with patch("importlib.metadata.distribution", side_effect=PackageNotFoundError):
+        package = runpy.run_path(str(ROOT / "host/python/src/picoforge/__init__.py"))
+    assert package["__version__"] == "0.0.0-debug"
     for page in ("index.html", "console.html"):
-        assert "Direct · App v0.0.0-debug<" in (ROOT / "host/direct" / page).read_text()
+        assert "Direct · App v0.0.0-debug<" in (ROOT / "host/direct/web" / page).read_text()
 
 
 def test_python_release_stamps_metadata_and_app_version(tmp_path):
@@ -200,16 +218,29 @@ def test_python_release_stamps_metadata_and_app_version(tmp_path):
     subprocess.run([sys.executable, "-c", source], cwd=tmp_path,
                    env={**os.environ, "VERSION": "1.2.3"}, check=True)
     assert 'version = "1.2.3"' in (tmp_path / paths[0]).read_text()
-    assert '__version__ = "1.2.3"' in (tmp_path / paths[1]).read_text()
+    with patch("importlib.metadata.distribution", side_effect=PackageNotFoundError):
+        package = runpy.run_path(str(tmp_path / paths[1]))
+    assert package["__version__"] == "1.2.3"
+    installed = tmp_path / "site-packages"
+    package_path = installed / "picoforge" / "__init__.py"
+    package_path.parent.mkdir(parents=True)
+    package_path.write_bytes((tmp_path / paths[1]).read_bytes())
+    metadata = installed / "picoforge-1.2.3.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: picoforge\nVersion: 1.2.3\n")
+    subprocess.run([sys.executable, "-c",
+                    "import sys; sys.path.insert(0, sys.argv[1]); "
+                    "from picoforge import __version__; assert __version__ == '1.2.3'",
+                    str(installed)], cwd=tmp_path, check=True)
 
 
 def test_direct_release_stamps_both_app_headers(tmp_path):
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
     script = next(line.strip() for line in workflow.splitlines() if line.strip().startswith('sed -i "s/App v'))
-    output = tmp_path / "build/direct"
+    output = tmp_path / "build/direct/web"
     output.mkdir(parents=True)
     for page in ("index.html", "console.html"):
-        (output / page).write_bytes((ROOT / "host/direct" / page).read_bytes())
+        (output / page).write_bytes((ROOT / "host/direct/web" / page).read_bytes())
     subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path,
                    env={**os.environ, "VERSION": "1.2.3"}, check=True)
     for page in ("index.html", "console.html"):
@@ -281,7 +312,7 @@ def test_release_gates_packages_on_reusable_complete_host_validation():
     assert "tools/validation/setup-ceedling-testing.sh test:all" in host
     assert "tools/validation/test-host.sh" in host
     runner = (ROOT / "tools/validation/test-host.sh").read_text()
-    for suite in ("host/python/tests", "host/direct/tests/*.test.mjs", "host/web/tests/*.test.mjs",
+    for suite in ("host/python/tests", "host/direct/tests/run-tests.mjs", "host/web/tests/run-tests.mjs",
                   "host/dotnet/PicoForge.sln"):
         assert suite in runner
 
@@ -298,6 +329,20 @@ def test_host_validation_covers_three_os_and_two_python_versions():
     assert "shell: bash\n        run: bash tools/validation/test-host.sh" in workflow
     assert "if: matrix.python == '3.10'" in workflow
     assert "if: matrix.python == '3.12'" in workflow
+
+
+def test_shared_dashboard_boundaries_and_both_native_hosts_have_browser_validation():
+    workflow = (ROOT / ".github/workflows/host-validation.yml").read_text()
+    assert "typescript@5.9.3 tsc --project host/web/tsconfig.json" in workflow
+    assert "-r host/web/tests/browser/requirements.txt" in workflow
+    assert "run: python host/web/tests/browser/run.py" in workflow
+    assert workflow.index("- name: Install Python host dependencies") < workflow.index(
+        "- name: Run shared browser checks through Python and .NET hosting")
+    assert workflow.index("- name: Setup .NET") < workflow.index(
+        "- name: Run shared browser checks through Python and .NET hosting")
+    runner = (ROOT / "host/web/tests/browser/run.py").read_text()
+    assert '(("Python", python_host), (".NET", dotnet_host))' in runner
+    assert '"renders"]["median"] == 1' in runner
 
 
 def test_release_uses_commit_epoch_before_configuring_artifact_names():

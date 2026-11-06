@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 using PicoForge;
 using Xunit;
 
@@ -5,6 +8,24 @@ namespace PicoForge.Tests;
 
 public sealed class DashboardBoardsTests
 {
+    [Theory]
+    [InlineData("board-B", null, 1)]
+    [InlineData(null, "/hid/a", 0)]
+    public void ConfiguredSerialOrPathSelectsTheDefaultBoard(string? serial, string? path, int expected)
+    {
+        HidBoard[] attached =
+        [
+            new("/hid/a", "board-A", "PicoForge"),
+            new("/hid/b", "board-B", "PicoForge")
+        ];
+        using var boards = new DashboardBoards(serial, path, () => attached,
+            (_, _) => throw new InvalidOperationException("test discovery only"));
+
+        var result = boards.Boards();
+
+        Assert.Equal(result.Boards[expected].Id, result.DefaultBoardId);
+    }
+
     [Fact]
     public void DiscoveryIsLazyAndBoardIdsSurvivePathChangesWhenSerialExists()
     {
@@ -30,7 +51,7 @@ public sealed class DashboardBoardsTests
     }
 
     [Fact]
-    public void PathFallbackUsesThePathAndDuplicateSerialsAreRejected()
+    public void PathFallbackUsesThePathAndDuplicateIdentitiesAreReported()
     {
         HidBoard[] attached = [new("/hid/a", null, "PicoForge")];
         using var boards = new DashboardBoards(null, "/hid/a", () => attached,
@@ -40,13 +61,15 @@ public sealed class DashboardBoardsTests
         Assert.Null(listing.Boards[0].SerialNumber);
 
         attached = [new("/hid/a", "duplicate", "PicoForge"), new("/hid/b", "duplicate", "PicoForge")];
-        Assert.Throws<InvalidOperationException>(() => boards.Boards());
+        var duplicateListing = boards.Boards();
+        Assert.Empty(duplicateListing.Boards);
+        Assert.NotEmpty(duplicateListing.Warnings);
     }
 
     [Fact]
     public void SerialBackedMonitorsSurviveBriefDisconnectAndExpireAfterGracePeriod()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new ManualTime();
         HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
         var created = new List<FakeDeviceMonitor>();
         using var boards = new DashboardBoards(null, null, () => attached, (_, _) =>
@@ -67,8 +90,8 @@ public sealed class DashboardBoardsTests
 
         clock.Advance(TimeSpan.FromSeconds(1));
         boards.Boards();
-        Assert.True(created[0].Disposed);
-        Assert.Throws<InvalidOperationException>(() => boards.Snapshot(id));
+        Assert.True(SpinWait.SpinUntil(() => created[0].Disposed, TimeSpan.FromSeconds(2)));
+        Assert.Throws<BoardNotFoundException>(() => boards.Snapshot(id));
 
         attached = [new("/hid/new-a", "board-A", "PicoForge")];
         Assert.Equal(id, boards.Boards().Boards[0].Id);
@@ -93,8 +116,8 @@ public sealed class DashboardBoardsTests
         attached = [];
         boards.Boards();
 
-        Assert.True(created[0].Disposed);
-        Assert.Throws<InvalidOperationException>(() => boards.Snapshot(id));
+        Assert.True(SpinWait.SpinUntil(() => created[0].Disposed, TimeSpan.FromSeconds(2)));
+        Assert.Throws<BoardNotFoundException>(() => boards.Snapshot(id));
         attached = [new("/hid/a", "different-board", "PicoForge")];
         Assert.NotEqual(id, boards.Boards().Boards[0].Id);
     }
@@ -102,7 +125,7 @@ public sealed class DashboardBoardsTests
     [Fact]
     public void UncertainCommandKeepsMonitorAndWriteBlockAcrossStaleBoardExpiry()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new ManualTime();
         HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
         var monitor = new FakeDeviceMonitor
         {
@@ -241,39 +264,11 @@ public sealed class DashboardBoardsTests
         await monitor.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
     }
 
-    private sealed class ManualTimeProvider : TimeProvider
+
+    private sealed class FakeDeviceMonitor : TestMonitor
     {
-        private DateTimeOffset now = DateTimeOffset.UnixEpoch;
-
-        public override DateTimeOffset GetUtcNow() => now;
-
-        public void Advance(TimeSpan amount) => now += amount;
-    }
-
-    private sealed class FakeDeviceMonitor : IDeviceMonitor
-    {
-        public bool Disposed { get; private set; }
         public Action? OnStart { get; init; }
-        public StatusResponse Snapshot { get; set; } = new(false, null, null, null, null, null, null, null);
 
-        public Task StartAsync(CancellationToken cancellationToken)
-        {
-            OnStart?.Invoke();
-            return Task.CompletedTask;
-        }
-        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-        public void Dispose() => Disposed = true;
-        public bool SetLed(bool on) => throw new NotSupportedException();
-        public MscStatusResponse? SetMsc(bool enabled, bool force = false) => throw new NotSupportedException();
-        public BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false) =>
-            throw new NotSupportedException();
-        public bool Reboot() => throw new NotSupportedException();
-        public bool SetSelfTest(string action, uint sizeMib) => throw new NotSupportedException();
-        public WirelessResponse ReadWireless() => throw new NotSupportedException();
-        public WirelessResponse SetWireless(WirelessRequest settings) => throw new NotSupportedException();
-        public IReadOnlyList<WirelessNetworkResponse> ScanWireless() => throw new NotSupportedException();
-        public WirelessOperationResponse TestWireless(string ssid, string password) =>
-            throw new NotSupportedException();
-        public bool CancelWirelessTest() => throw new NotSupportedException();
+        public override void Start() => OnStart?.Invoke();
     }
 }

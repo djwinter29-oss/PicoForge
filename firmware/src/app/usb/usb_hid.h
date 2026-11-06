@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file
  * @brief Vendor HID wire protocol: report IDs, payload layouts, command codes and report builders.
@@ -34,7 +37,8 @@
 #define PF_HID_TELEMETRY_PAYLOAD_SIZE 22u
 #define PF_HID_STORAGE_PAYLOAD_SIZE 34u
 #define PF_HID_SELF_TEST_PAYLOAD_SIZE 32u
-#define PF_HID_CONTROL_PAYLOAD_SIZE 9u
+#define PF_HID_CONTROL_PAYLOAD_SIZE 68u
+#define PF_HID_BLE_CONTROL_PAYLOAD_SIZE 9u /**< Restricted BLE command/result, without a report ID. */
 
 /** @} */
 
@@ -92,15 +96,20 @@
 #define PF_HID_OPCODE_REBOOT 2u
 #define PF_HID_OPCODE_MSC 3u
 #define PF_HID_OPCODE_SELF_TEST 4u
-#define PF_HID_OPCODE_SAVE_SETTINGS 6u
+#define PF_HID_OPCODE_SAVE_SETTINGS 5u
+#define PF_HID_OPCODE_STAGE_SSID 6u
+#define PF_HID_OPCODE_STAGE_PASSWORD 7u
+#define PF_HID_OPCODE_STAGE_KEY 8u
+#define PF_HID_OPCODE_WIFI_TEST 9u
+#define PF_HID_OPCODE_WIFI_CANCEL 10u
+#define PF_HID_OPCODE_WIFI_SCAN 11u
+#define PF_HID_OPCODE_WIFI_ENTRY 12u
+#define PF_HID_OPCODE_TCP_PROOF 13u
 /** @} */
 
-/** @name Opcode 6 save-settings flags and result bits @{ */
+/** @name Opcode 5 save-settings flags @{ */
 #define PF_HID_SAVE_SETTINGS_FORCE_MSC (1u << 0) /**< Confirm save while USB MSC owns the card. */
-#define PF_HID_SAVE_SETTINGS_SET_TCP_CLI (1u << 1) /**< Save arguments[4] as the TCP CLI enable switch. */
-#define PF_HID_SETTINGS_RESULT_RADIO_MASK 0x03u /**< Radio enables in result_data[3], bits 0-1. */
-#define PF_HID_SETTINGS_RESULT_TCP_CLI_ENABLED (1u << 2) /**< Saved TCP CLI switch is on. */
-#define PF_HID_SETTINGS_RESULT_TCP_CLI_INCLUDED (1u << 3) /**< Result includes the saved TCP CLI switch. */
+#define PF_HID_SAVE_SETTINGS_COMMIT_WIRELESS (1u << 1) /**< Commit staged wireless credentials atomically. */
 /** @} */
 
 /** @name Feature 20 result status (control result @c status) @{ */
@@ -205,27 +214,27 @@ typedef struct __attribute__((packed)) {
     uint32_t mismatch_count; /**< Detected byte mismatches. */
     uint8_t error; /**< Accepted run error. */
     uint8_t filesystem_result; /**< FatFs result associated with the run. */
-    uint8_t request_error; /**< Most recent request rejection. */
+    uint8_t reserved_error; /**< Reserved; request errors are returned through Feature 20 only. */
     uint8_t reserved; /**< Must remain zero. */
 } pf_hid_self_test_report_t;
 
 /** @brief Feature 20 request envelope; SET never contains its report ID. */
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed)) pf_hid_control_request {
     uint8_t version; /**< Report layout version. */
     uint8_t transaction_id; /**< Host-selected nonzero request identifier. */
     uint8_t opcode; /**< PF_HID_OPCODE_* operation. */
     uint8_t flags; /**< Opcode-specific flags. */
-    uint8_t arguments[5]; /**< Opcode-specific arguments. */
+    uint8_t arguments[64]; /**< Opcode-specific arguments; unused bytes are zero. */
 } pf_hid_control_request_t;
 
 /** @brief Feature 20 result slot returned by GET. */
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed)) pf_hid_control_result {
     uint8_t version; /**< Report layout version. */
     uint8_t transaction_id; /**< ID associated with the result. */
     uint8_t opcode; /**< Operation associated with the result. */
     uint8_t status; /**< Idle, Pending, Completed, Invalid, Unsupported, Busy, or Failed. */
     uint8_t error_reason; /**< Zero on success; otherwise command error enum. */
-    uint8_t result_data[4]; /**< Saved settings for opcode six, zero otherwise. */
+    uint8_t result_data[63]; /**< Opcode-specific data or rejection detail; unused bytes are zero. */
 } pf_hid_control_result_t;
 
 _Static_assert(sizeof(pf_hid_identity_report_t) == PF_HID_IDENTITY_PAYLOAD_SIZE, "identity report size changed");
@@ -272,7 +281,7 @@ void pf_hid_build_storage_report(pf_hid_storage_report_t *report, uint8_t sequen
 void pf_hid_build_self_test_report(pf_hid_self_test_report_t *report, uint8_t sequence);
 
 #if PF_ENABLE_WIRELESS
-/** @brief Execute an authenticated BLE LED, reboot, benchmark, or settings request on the USB owner task. */
+/** @brief Execute an authenticated BLE LED, reboot, or settings request on the USB owner task. */
 bool pf_hid_ble_control(const pf_hid_control_request_t *request);
 /** @brief Read the BLE-specific result slot; USB results remain independent. */
 void pf_hid_ble_result(pf_hid_control_result_t *report);

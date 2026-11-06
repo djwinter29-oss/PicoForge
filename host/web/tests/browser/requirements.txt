@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
+# Shared dashboard checks exercise both native hosts using local Chromium.
+playwright==1.64.1

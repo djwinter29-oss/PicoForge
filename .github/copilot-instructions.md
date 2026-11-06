@@ -1,5 +1,8 @@
 # PicoForge Copilot Instructions
 
+- Always try CodeGraph first for repository exploration, symbol lookup, references, and call relationships.
+  Discover and query its tools before falling back to other search methods. If CodeGraph is unavailable or returns
+  no useful results, state that briefly and continue with available code intelligence or targeted file searches.
 - Keep changes small, focused, and consistent with the existing project structure.
 - Do not repeat the README; use it as the project overview and documentation index.
 - Target RP2040 and RP2350 through Pico SDK-supported interfaces. Avoid assuming a specific board when the SDK or board-support layer can provide the information.
@@ -12,6 +15,7 @@
 - Preserve existing public APIs and hardware behavior unless the task explicitly requires a change. Update focused documentation when behavior or configuration changes.
 - Add or update the smallest relevant test for non-trivial behavior. Keep host-runnable tests independent of physical hardware where practical; document tests that require a board or probe.
 - Do not claim firmware builds until the firmware CMake project and its required sources are present.
+- The Direct dashboard (`host/direct`) is independent and shares no code with the Python/.NET dashboard (`host/web`, `host/python`, `host/dotnet`), including copied files. See `docs/development/host-tools.md#direct-dashboard-independence`.
 
 ## Documentation
 

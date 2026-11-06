@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file
  * @brief USB mass-storage ownership state machine and SCSI callbacks for the single-LUN SD card.

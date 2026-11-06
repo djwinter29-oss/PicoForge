@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Test assembled TX timing/completion and RX cadence, not electrical qualification.
 
 Model divider-1 data instructions, an integer-half-period clock, and 0/1

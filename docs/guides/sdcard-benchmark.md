@@ -140,8 +140,8 @@ command delivery, not successful completion:
 {"action":"cancel"}
 ```
 
-Poll `/api/status` and its `self_test` object. Firmware rejection is reported by
-`request_error`; execution failure uses `error` and `filesystem_result`.
+Poll `/api/status` and its `self_test` object for an accepted run. Request rejection is reported by the command
+response, including its Feature `20` detail; execution failure uses `error` and `filesystem_result`.
 The HID command result reports Pending while start preflight runs, then Completed when the test is accepted or Failed
 for preflight I/O, card, space, or existing-path errors. Input report `11` retains the previous test result for
 rejected starts and carries progress after acceptance. Storage status is reported independently in Input report `10`.

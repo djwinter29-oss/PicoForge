@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Validation regressions using copied sources and real ARM ELF binutils."""
 import hashlib
 import os

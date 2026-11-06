@@ -1,3 +1,8 @@
+<!--
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2026 Ji Dong
+-->
+
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -11,6 +16,7 @@
   <ItemGroup>
     <None Include="../../../tests/fixtures/hid-filesystem.csv" Link="hid-filesystem.csv" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../../tests/fixtures/wireless-status.json" Link="wireless-status.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../tests/fixtures/host-invalid-requests.json" Link="host-invalid-requests.json" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" PrivateAssets="all" />

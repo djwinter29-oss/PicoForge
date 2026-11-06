@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #ifndef PF_SERIAL_FAKE_H
 #define PF_SERIAL_FAKE_H
 #include <stdbool.h>

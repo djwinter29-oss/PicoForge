@@ -1,310 +1,581 @@
-using System.Diagnostics;
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace PicoForge;
 
-internal interface IDeviceMonitor : IHostedService, IDisposable
+/// <summary>
+/// One board's monitor. Commands throw instead of returning a flag: see <c>UseApiErrors</c>. <c>cancel</c> stops only
+/// the wait for the board (an aborted request); a command that reached the board always runs to completion.
+/// </summary>
+internal interface IDeviceMonitor : IDisposable, IAsyncDisposable
 {
     StatusResponse Snapshot { get; }
-    bool SetLed(bool on);
-    MscStatusResponse? SetMsc(bool enabled, bool force = false);
-    BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false);
-    bool Reboot();
-    bool SetSelfTest(string action, uint sizeMib);
-    WirelessResponse ReadWireless();
-    WirelessResponse SetWireless(WirelessRequest settings);
-    IReadOnlyList<WirelessNetworkResponse> ScanWireless();
-    WirelessOperationResponse TestWireless(string ssid, string password);
-    bool CancelWirelessTest();
-    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) =>
-        throw new NotSupportedException("USB TCP CLI authentication is unavailable");
+    void Start();
+    /// <summary>Claims idle, resolved command ownership without waiting; refuses all subsequent commands.</summary>
+    bool TryRetire();
+    /// <summary>Blocks new writes without interrupting an accepted command or losing its result.</summary>
+    void SetQuarantined(bool value);
+    CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default);
+    void SetLed(bool on, CancellationToken cancel = default);
+    MscStatusResponse SetMsc(bool enabled, bool force = false, CancellationToken cancel = default);
+    BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false,
+        CancellationToken cancel = default);
+    void Reboot(CancellationToken cancel = default);
+    void SetSelfTest(string action, uint sizeMib, CancellationToken cancel = default);
+    WirelessResponse SetWireless(WirelessRequest settings, CancellationToken cancel = default);
+    IReadOnlyList<WirelessNetworkResponse> ScanWireless(CancellationToken cancel = default);
+    WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null,
+        CancellationToken cancel = default);
+    void CancelWirelessTest(CancellationToken cancel = default);
+    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid, CancellationToken cancel = default);
 }
+
+/// <summary>The board is running another command; nothing was sent, so retrying is safe.</summary>
+internal sealed class BoardBusyException()
+    : BoardStateException("Board is busy with another command; retry when it finishes");
 
 /// <summary>Serialized HID operations used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
 internal interface IHidCommands
 {
     bool CommandOutcomeUncertain { get; }
+    ControlCommandReference? UncertainCommand { get; }
+    WirelessOperationReference? UncertainWirelessOperation { get; }
+    ControlResult? LastCommandResult { get; }
     InputReport? ReadInputReport(int timeoutMilliseconds = 250);
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
     BoardConfigurationResponse ReadConfiguration();
-    BootSettingsResponse ReadSettings();
     BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false);
     void Reboot();
     void SetSelfTest(string action, uint sizeMib);
     WirelessStatusResponse ReadWireless();
-    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) =>
-        throw new NotSupportedException("USB TCP CLI authentication is unavailable");
+    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid);
+    CommandResyncResult? ReconcileOutcome(ControlCommandReference? command,
+        WirelessOperationReference? wirelessOperation);
     WirelessStatusResponse SetWireless(WirelessRequest settings);
     IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null);
     WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
-        Action<string>? onProgress = null);
+        Action<string>? onProgress = null, string? ssidHex = null, CancellationToken cancel = default);
     void CancelWirelessTest();
+}
+
+/// <summary>An opened board handle: identity plus <see cref="IHidCommands"/>; lets tests replace HID.</summary>
+internal interface IHidClient : IHidCommands, IDisposable
+{
+    HardwareInfoResponse ReadInfo();
 }
 
 internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 {
-    private readonly Func<PicoForgeHid> createClient;
+    private const string UncertainMessage = "A prior HID command outcome is uncertain; further writes are blocked";
+    // An API command waits this long for the board, then gets a 409; Wi-Fi scan and test hold it up to 15 s and 35 s.
+    private static readonly TimeSpan BusyWait = TimeSpan.FromSeconds(2);
+    private const int InputPollIntervalMs = 100;
+    private const int ActiveWirelessPollIntervalMs = 500;
+    private const int IdleWirelessPollIntervalMs = 2000;
+    private const int TelemetryMaximumAgeMs = 750;
+    private const int StorageMaximumAgeMs = 1500;
+    private const int SelfTestMaximumAgeMs = 1500;
+    private const int WirelessMaximumAgeMs = 5000;
+    private readonly Func<IHidClient> createClient;
     private readonly ILogger<DeviceMonitor> logger;
+    private readonly TimeProvider time;
     private readonly object gate = new();
-    // Handle operations always acquire deviceGate before the snapshot gate.
-    private readonly object deviceGate = new();
+    private readonly object lifecycleGate = new();
+    private Task? disposal;
+    private int stopping;
+    private int quarantined;
+    private Exception? cleanupError;
+    private IHidClient? failedClient; // Retain native ownership after an unrecoverable close failure.
+    // Handle operations always acquire deviceGate before the snapshot gate. Not reentrant.
+    private readonly SemaphoreSlim deviceGate = new(1, 1);
     private IHidCommands? activeClient;
+    // TimeProvider timestamps of the last report per section, guarded by gate; 0 means none since connecting.
     private long telemetryReceipt;
     private long storageReceipt;
     private long selfTestReceipt;
-    private bool commandOutcomeUncertain;
+    private long wirelessReceipt;
+    private ControlCommandReference? uncertainCommand;
+    private WirelessOperationReference? uncertainWirelessOperation;
     private long mscReconnectDeadline;
     private bool? mscReconnectEnabled;
-    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID", null, null, null, null, null, null);
+    // Set while a Wi-Fi test owns deviceGate, guarded by gate, so a cancel can reach it without waiting.
+    private CancellationTokenSource? wirelessTestCancel;
+    private StatusResponse snapshot = new(false, "Waiting for PicoForge HID");
 
     public DeviceMonitor() : this((string?)null, null) { }
 
     public DeviceMonitor(string? serialNumber, string? devicePath, ILogger<DeviceMonitor>? logger = null)
         : this(() => new PicoForgeHid(serialNumber, devicePath), logger ?? NullLogger<DeviceMonitor>.Instance) { }
 
-    internal DeviceMonitor(Func<PicoForgeHid> createClient)
-        : this(createClient, NullLogger<DeviceMonitor>.Instance) { }
-
-    private DeviceMonitor(Func<PicoForgeHid> createClient, ILogger<DeviceMonitor> logger)
+    internal DeviceMonitor(Func<IHidClient> createClient, ILogger<DeviceMonitor>? logger = null,
+        TimeProvider? time = null)
     {
         this.createClient = createClient;
-        this.logger = logger;
+        this.logger = logger ?? NullLogger<DeviceMonitor>.Instance;
+        this.time = time ?? TimeProvider.System;
     }
 
-    public StatusResponse Snapshot
+    public void Start()
     {
-        get { lock (gate) return snapshot; }
-    }
-
-    // deviceGate keeps activeClient stable, so the write runs outside the snapshot gate without going stale.
-    public bool SetLed(bool on)
-    {
-        lock (deviceGate)
+        lock (lifecycleGate)
         {
-            IHidCommands? client;
-            lock (gate)
-            {
-                if (activeClient is null || snapshot.BoardStatus?.LedAvailable != true) return false;
-                client = activeClient;
-            }
-            ExecuteCommand(client, () => client.SetLed(on));
-            lock (gate)
-                snapshot = snapshot with { BoardStatus = snapshot.BoardStatus! with { LedOn = on } };
-            return true;
+            if (Volatile.Read(ref stopping) != 0) throw new BoardStateException("Board monitor is shutting down");
+            StartAsync(CancellationToken.None).GetAwaiter().GetResult();
         }
     }
 
-    public MscStatusResponse? SetMsc(bool enabled, bool force = false)
+    public bool TryRetire()
     {
-        lock (deviceGate)
+        if (!deviceGate.Wait(0)) return false;
+        try
         {
-            IHidCommands? client;
+            if (Snapshot is { CommandOutcomeUncertain: true } or { WirelessCleanupRequired: true }) return false;
+            Interlocked.Exchange(ref stopping, 1);
+            return true;
+        }
+        finally { deviceGate.Release(); }
+    }
+
+    public void SetQuarantined(bool value) => Volatile.Write(ref quarantined, value ? 1 : 0);
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Exchange(ref stopping, 1);
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (lifecycleGate)
+        {
+            Interlocked.Exchange(ref stopping, 1);
+            disposal ??= Task.Run(StopAndDisposeAsync);
+            return new(disposal);
+        }
+    }
+
+    private async Task StopAndDisposeAsync()
+    {
+        try
+        {
+            await StopAsync(CancellationToken.None).ConfigureAwait(false);
+            if (ExecuteTask is { } worker)
+            {
+                try { await worker.ConfigureAwait(false); }
+                catch (OperationCanceledException) when (Volatile.Read(ref stopping) != 0) { }
+            }
+            using (Owner())
+            lock (gate) activeClient = null;
+            if (cleanupError is not null)
+                throw new IOException("HID cleanup failed; restart the dashboard before reconnecting", cleanupError);
+        }
+        finally { base.Dispose(); }
+    }
+
+    public override void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    /// <summary>Holds <see cref="deviceGate"/> until disposed.</summary>
+    private readonly struct DeviceLease(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
+    }
+
+    /// <summary>
+    /// API commands wait at most <see cref="BusyWait"/>; a busy board is a 409 because nothing was sent.
+    /// </summary>
+    private DeviceLease Device(CancellationToken cancel, bool readOnly = false, bool cleanup = false)
+    {
+        if (!deviceGate.Wait(BusyWait, cancel)) throw new BoardBusyException();
+        if (Volatile.Read(ref stopping) != 0)
+        {
+            deviceGate.Release();
+            throw new BoardStateException("Board monitor is shutting down");
+        }
+        if (!readOnly && Volatile.Read(ref quarantined) != 0)
+        {
+            deviceGate.Release();
+            throw new BoardStateException("Board identity is ambiguous; rescan after removing duplicate identities");
+        }
+        if (!readOnly && !cleanup && Snapshot.WirelessCleanupRequired)
+        {
+            deviceGate.Release();
+            throw new BoardStateException("Clear the Wi-Fi test before sending other commands");
+        }
+        return new(deviceGate);
+    }
+
+    /// <summary>The monitor loop owns the device, so it waits without a limit.</summary>
+    private DeviceLease Owner()
+    {
+        deviceGate.Wait();
+        return new(deviceGate);
+    }
+
+    private async ValueTask<DeviceLease> OwnerAsync(CancellationToken cancel)
+    {
+        await deviceGate.WaitAsync(cancel);
+        return new(deviceGate);
+    }
+
+    /// <summary>The latest reports, with any section older than its freshness limit hidden.</summary>
+    public StatusResponse Snapshot
+    {
+        get { lock (gate) return Fresh(); }
+    }
+
+    public CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default)
+    {
+        if (!confirm) throw new ApiInputException("Explicit confirm: true is required");
+        using (Device(cancel, readOnly: true))
+        {
+            if (!Snapshot.CommandOutcomeUncertain) return new(false);
+            var client = Client(requireConfiguration: false);
+            CommandResyncResult? result;
+            try
+            {
+                result = client.ReconcileOutcome(uncertainCommand, uncertainWirelessOperation);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or TimeoutException)
+            {
+                throw new BoardStateException("Could not confirm the command result; uncertainty remains");
+            }
+            if (result is null)
+                throw new BoardStateException("No final result matches the pending operation; uncertainty remains");
             lock (gate)
             {
-                if (activeClient is null) return null;
-                if (force && (enabled || snapshot.Msc is not
-                    { Enabled: true, TransitionPending: false })) return null;
-                client = activeClient;
+                uncertainCommand = null;
+                uncertainWirelessOperation = null;
+                if (result.Wireless is not null) wirelessReceipt = time.GetTimestamp();
+                snapshot = snapshot with
+                {
+                    CommandOutcomeUncertain = false,
+                    Error = null,
+                    Wireless = result.Wireless ?? snapshot.Wireless,
+                    WirelessError = result.Wireless is null ? snapshot.WirelessError : null
+                };
+                PublishCommandResult(result.ControlResult);
             }
+            var control = result.ControlResult is { } controlResult
+                ? new ControlResultResponse(HidProtocol.ReportVersion, controlResult.TransactionId,
+                    (byte)controlResult.Opcode, (byte)controlResult.Status,
+                    controlResult.Status.ToString().ToLowerInvariant(), (byte)controlResult.ErrorReason,
+                    controlResult.ErrorReason.ToString().ToLowerInvariant(),
+                    controlResult.Status is ControlStatus.Invalid or ControlStatus.Busy or ControlStatus.Failed
+                        ? controlResult.ResultData[0] : (byte)0)
+                : null;
+            return new(false, control, result.Wireless);
+        }
+    }
+
+    /// <summary>Test seam: adopt <paramref name="client"/> with <paramref name="status"/> as just reported.</summary>
+    internal void Attach(IHidCommands client, StatusResponse status)
+    {
+        using (Owner())
+        lock (gate)
+        {
+            activeClient = status.Connected ? client : null;
+            snapshot = status;
+            uncertainCommand = null;
+            uncertainWirelessOperation = null;
+            telemetryReceipt = storageReceipt = selfTestReceipt = time.GetTimestamp();
+            wirelessReceipt = status.Wireless is null ? 0 : time.GetTimestamp();
+        }
+    }
+
+    // Board-state rules live here; the endpoints validate request shape and protocol ranges once, before the board.
+    public void SetLed(bool on, CancellationToken cancel = default)
+    {
+        using (Device(cancel))
+        {
+            var client = Client(requireConfiguration: false);
+            if (Snapshot.Runtime?.LedAvailable != true)
+                throw new BoardStateException("The board LED is unavailable");
+            ExecuteCommand(client, () => client.SetLed(on));
+            lock (gate)
+                if (snapshot.Runtime is { } runtime) snapshot = snapshot with { Runtime = runtime with { LedOn = on } };
+        }
+    }
+
+    public MscStatusResponse SetMsc(bool enabled, bool force = false, CancellationToken cancel = default)
+    {
+        using (Device(cancel))
+        {
+            var client = Client();
+            if (force && Snapshot.Memory?.Msc is not { Enabled: true, TransitionPending: false })
+                throw new BoardStateException("Force return requires enabled MSC");
             ExecuteCommand(client, () => client.SetMsc(enabled, force));
             lock (gate)
             {
-                var changingOwner = (snapshot.Msc?.Enabled ?? false) != enabled;
-                snapshot = snapshot with
-                {
-                    Msc = new MscStatusResponse(snapshot.Msc?.Enabled ?? false, true, false)
-                };
-                mscReconnectDeadline = changingOwner ? Environment.TickCount64 + 5000 : 0;
+                var changingOwner = (snapshot.Memory?.Msc?.Enabled ?? false) != enabled;
+                var msc = new MscStatusResponse(snapshot.Memory?.Msc?.Enabled ?? false, true, false);
+                if (snapshot.Memory is { } memory) snapshot = snapshot with { Memory = memory with { Msc = msc } };
+                mscReconnectDeadline = changingOwner ? time.GetTimestamp() + time.TimestampFrequency * 5 : 0;
                 mscReconnectEnabled = changingOwner ? enabled : null;
-                return snapshot.Msc;
+                return msc;
             }
         }
     }
 
-    public BootSettingsResponse? SetSettings(BootSettingsResponse settings, bool force = false)
+    public BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false,
+        CancellationToken cancel = default)
     {
-        if (settings.SystemClockMhz is not (0 or 150 or 200 or 250) || settings.SdCardProfile is < 0 or > 1 ||
-            settings.Radios is < 0 or > 3)
-            throw new ArgumentOutOfRangeException(nameof(settings));
-        lock (deviceGate)
+        using (Device(cancel))
         {
-            IHidCommands? client;
-            lock (gate)
-            {
-                if (activeClient is null || snapshot.Settings is null || snapshot.Msc is null ||
-                    snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true ||
-                    (force ? !snapshot.Connected || !snapshot.Msc.Enabled : snapshot.Msc.Enabled))
-                    return null;
-                client = activeClient;
-            }
+            var client = Client();
+            var current = Snapshot;
+            if (!current.SettingsSupported)
+                throw new BoardStateException("Boot settings are unavailable on this firmware");
+            RequireIdleStorage(current, "saving boot settings", force);
             var saved = ExecuteCommand(client, () => client.SetSettings(settings, force));
             lock (gate)
-            {
                 snapshot = snapshot with
                 {
-                    Settings = saved,
-                    RebootPending = true,
-                    Msc = force ? snapshot.Msc! with { Enabled = false } : snapshot.Msc
+                    BoardConfiguration = snapshot.BoardConfiguration! with { NextBoot = saved },
+                    Memory = force && snapshot.Memory is { Msc: { } msc } memory
+                        ? memory with { Msc = msc with { Enabled = false } } : snapshot.Memory
                 };
-                return saved;
+            return saved;
+        }
+    }
+
+    public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid, CancellationToken cancel = default)
+    {
+        using (Device(cancel))
+        {
+            var client = Client();
+            return ExecuteCommand(client, () => client.TcpCliAuthProof(nonce, uid));
+        }
+    }
+
+    public WirelessResponse SetWireless(WirelessRequest settings, CancellationToken cancel = default)
+    {
+        using (Device(cancel))
+        {
+            var client = RequireWirelessIdle();
+            var saved = ExecuteCommand(client, () => client.SetWireless(settings));
+            lock (gate)
+            {
+                wirelessReceipt = time.GetTimestamp();
+                snapshot = snapshot with
+                {
+                    BoardConfiguration = snapshot.BoardConfiguration is { } configuration
+                        ? configuration with { NextBoot = settings.Board } : null,
+                    Wireless = saved
+                };
             }
-        }
-    }
-
-    public WirelessResponse ReadWireless()
-    {
-        lock (deviceGate)
-        {
-            if (activeClient is null) throw new InvalidOperationException("PicoForge HID is not connected");
-            return new(activeClient.ReadWireless(), Snapshot.RebootPending);
-        }
-    }
-
-    public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid)
-    {
-        lock (deviceGate)
-        {
-            if (activeClient is null) throw new InvalidOperationException("PicoForge HID is not connected");
-            return activeClient.TcpCliAuthProof(nonce, uid);
-        }
-    }
-
-    public WirelessResponse SetWireless(WirelessRequest settings)
-    {
-        HidProtocol.BuildWirelessRequest(settings, 1, true);
-        lock (deviceGate)
-        {
-            var current = Snapshot;
-            if (activeClient is null || !current.Connected || current.Hardware?.WirelessSupported != true)
-                throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
-            if (current.CommandOutcomeUncertain || current.StorageStale ||
-                current.Msc is not { Enabled: false, TransitionPending: false } ||
-                current.RebootPending || current.SelfTest?.Active == true ||
-                ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 &&
-                    (current.SelfTest is null || current.SelfTestStale)))
-                throw new InvalidOperationException("Wireless provisioning is unavailable while storage or the board is busy");
-            var saved = ExecuteCommand(activeClient, () => activeClient.SetWireless(settings));
-            lock (gate) snapshot = snapshot with { Settings = settings.Board, RebootPending = true };
             return new(saved, true, settings.Board);
         }
     }
 
-    public IReadOnlyList<WirelessNetworkResponse> ScanWireless()
+    public IReadOnlyList<WirelessNetworkResponse> ScanWireless(CancellationToken cancel = default)
     {
-        lock (deviceGate)
+        using (Device(cancel))
         {
             var client = RequireWirelessIdle();
             return ExecuteCommand(client, () => client.ScanWireless(() => PollInputs(client)));
         }
     }
 
-    public WirelessOperationResponse TestWireless(string ssid, string password)
+    public WirelessOperationResponse TestWireless(string ssid, string password, string? ssidHex = null,
+        CancellationToken cancel = default)
     {
-        lock (deviceGate)
+        using (Device(cancel))
         {
             var client = RequireWirelessIdle();
+            using var stop = new CancellationTokenSource();
+            lock (gate)
+            {
+                wirelessTestCancel = stop;
+                snapshot = snapshot with { Wireless = null, WirelessError = null };
+                wirelessReceipt = 0;
+            }
             try
             {
                 return ExecuteCommand(client, () => client.TestWireless(ssid, password, () => PollInputs(client),
-                    SetWirelessPhase));
+                    SetWirelessPhase, ssidHex, stop.Token));
             }
-            finally { SetWirelessPhase(null); }
+            finally
+            {
+                lock (gate) wirelessTestCancel = null;
+                SetWirelessPhase(null);
+                // Honor a late cancel, but never replay one that already has a final result (including failure).
+                if (stop.IsCancellationRequested &&
+                    client.LastCommandResult?.Opcode != Opcode.WifiCancel && !Snapshot.CommandOutcomeUncertain)
+                    ClearWirelessTest(client);
+            }
         }
     }
 
-    public bool CancelWirelessTest()
+    public void CancelWirelessTest(CancellationToken cancel = default)
     {
-        lock (deviceGate)
+        // A running test owns the board for up to 35 s; it sends the cancel at its next 0.5 s poll instead.
+        lock (gate)
+            if (wirelessTestCancel is { } running)
+            {
+                snapshot = snapshot with { WirelessCleanupRequired = true };
+                running.Cancel();
+                return;
+            }
+        using (Device(cancel, cleanup: true))
         {
             var client = RequireWirelessIdle();
-            ExecuteCommand(client, client.CancelWirelessTest);
-            return true;
+            ClearWirelessTest(client);
         }
     }
 
+    private void ClearWirelessTest(IHidCommands client) => ExecuteCommand(client, () =>
+    {
+        lock (gate)
+        {
+            snapshot = snapshot with { WirelessCleanupRequired = true, Wireless = null, WirelessError = null };
+            wirelessReceipt = 0;
+        }
+        client.CancelWirelessTest();
+    });
+
+    public void Reboot(CancellationToken cancel = default)
+    {
+        using (Device(cancel))
+        {
+            var client = Client();
+            RequireIdleStorage(Snapshot, "rebooting");
+            ExecuteCommand(client, client.Reboot);
+        }
+    }
+
+    public void SetSelfTest(string action, uint sizeMib, CancellationToken cancel = default)
+    {
+        using (Device(cancel))
+        {
+            var client = Client();
+            ExecuteCommand(client, () => client.SetSelfTest(action, sizeMib));
+        }
+    }
+
+    /// <summary>Returns the open handle; call holding deviceGate so it cannot be replaced mid-command.</summary>
+    private IHidCommands Client(bool requireConfiguration = true)
+    {
+        lock (gate)
+        {
+            var client = activeClient ?? throw new IOException("PicoForge HID is not connected");
+            if (requireConfiguration && snapshot.BoardConfiguration is null)
+                throw new BoardStateException("Board configuration is unavailable; reconnect before sending commands");
+            return client;
+        }
+    }
+
+    /// <summary>Throws unless firmware owns idle storage, or for a forced save, the host owns it.</summary>
+    private static void RequireIdleStorage(StatusResponse status, string action, bool force = false)
+    {
+        if (status.Memory?.Msc is not { } msc)
+            throw new BoardStateException("Waiting for storage ownership status");
+        if (force && !msc.Enabled) throw new BoardStateException("Forced save requires USB ownership");
+        if (msc.TransitionPending || (msc.Enabled && !force))
+            throw new BoardStateException($"Disable the USB drive before {action}");
+        if (status.SelfTest?.Active == true)
+            throw new BoardStateException($"Wait for the storage self-test to finish before {action}");
+    }
+
+    /// <summary>Returns the handle when Wi-Fi staging cannot race storage, self-test or an unresolved write.</summary>
     private IHidCommands RequireWirelessIdle()
     {
+        var client = Client();
         var current = Snapshot;
-        if (activeClient is null || !current.Connected || current.Hardware?.WirelessSupported != true)
-            throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
-        if (current.CommandOutcomeUncertain || current.StorageStale ||
-            current.Msc is not { Enabled: false, TransitionPending: false } ||
-            current.RebootPending || current.SelfTest?.Active == true ||
-            ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 &&
-                (current.SelfTest is null || current.SelfTestStale)))
-            throw new InvalidOperationException("Wireless scan and connection test require idle firmware-owned storage");
-        return activeClient;
-    }
-
-    public bool Reboot()
-    {
-        lock (deviceGate)
-        {
-            IHidCommands? client;
-            lock (gate)
-            {
-                if (activeClient is null || snapshot.Msc is null || snapshot.Msc.Enabled
-                    || snapshot.Msc.TransitionPending || snapshot.SelfTest?.Active == true)
-                    return false;
-                client = activeClient;
-            }
-            ExecuteCommand(client, client.Reboot);
-            return true;
-        }
+        if (current.Hardware?.WirelessSupported != true)
+            throw new BoardStateException("Wireless provisioning is unavailable on this firmware");
+        if (current.Memory?.Msc is not { Enabled: false, TransitionPending: false } ||
+            current.SelfTest?.Active == true ||
+            ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
+            throw new BoardStateException(
+                "Wireless scan and connection test require idle firmware-owned storage");
+        return client;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // ponytail: Yield before synchronous HID discovery so first API access does not wait for device startup.
         await Task.Yield();
-        while (!stoppingToken.IsCancellationRequested)
+        while (!stoppingToken.IsCancellationRequested && Volatile.Read(ref stopping) == 0)
         {
-            PicoForgeHid? client = null;
+            IHidClient? client = null;
             try
             {
                 client = createClient();
                 var hardware = client.ReadInfo();
-                var configuration = client.ReadConfiguration();
-                var settings = HidProtocol.ToBootSettings(configuration);
-                telemetryReceipt = storageReceipt = selfTestReceipt = 0;
-                lock (deviceGate)
+                BoardConfigurationResponse? configuration;
+                string? settingsMessage = null;
+                try { configuration = client.ReadConfiguration(); }
+                catch (Exception error) when (IsDeviceError(error))
+                {
+                    logger.LogWarning(error, "Board configuration unavailable; retaining read-only diagnostics");
+                    configuration = null;
+                    settingsMessage = $"Boot settings unavailable: {error.Message}";
+                }
+                using (await OwnerAsync(CancellationToken.None))
                 lock (gate)
                 {
                     activeClient = client;
-                    snapshot = new(true, commandOutcomeUncertain
-                            ? "A prior HID command outcome is uncertain; further writes are blocked" : null,
-                        hardware, null, null, null, null, null,
-                        Settings: settings, BoardConfiguration: configuration,
-                        CommandOutcomeUncertain: commandOutcomeUncertain);
+                    telemetryReceipt = storageReceipt = selfTestReceipt = wirelessReceipt = 0;
+                    var uncertain = snapshot.CommandOutcomeUncertain;
+                    snapshot = new(true, uncertain ? UncertainMessage : null, hardware,
+                        BoardConfiguration: configuration, CommandOutcomeUncertain: uncertain,
+                        WirelessCleanupRequired: snapshot.WirelessCleanupRequired,
+                        SettingsMessage: settingsMessage,
+                        WirelessError: hardware.WirelessSupported ? settingsMessage : null);
                 }
 
+                long wirelessPollAt = 0;
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    lock (deviceGate)
+                    using (await OwnerAsync(stoppingToken))
                     {
                         PollInputs(client);
+                        if (hardware.WirelessSupported && configuration is not null &&
+                            time.GetTimestamp() >= wirelessPollAt)
+                            wirelessPollAt = PollWireless(client);
                     }
-                    // ponytail: 50 ms stays below the 250 ms telemetry cadence and cuts idle wakeups by 80%.
-                    await Task.Delay(TimeSpan.FromMilliseconds(50), stoppingToken);
+                    // ponytail: 100 ms stays below the 250 ms telemetry cadence and halves idle wakeups.
+                    await Task.Delay(InputPollIntervalMs, stoppingToken);
                 }
             }
-            catch (Exception error) when (IsDeviceError(error))
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception error)
             {
+                if (error is HidOpenCleanupException failedOpen)
+                {
+                    client = failedOpen.Client;
+                    cleanupError = failedOpen;
+                }
+                // Any fault, including a code bug, must leave a visible error and a retrying monitor.
+                if (!IsDeviceError(error)) logger.LogError(error, "PicoForge HID monitor failed; retrying");
                 HandleDisconnect(error);
             }
             finally
             {
-                lock (deviceGate)
+                using (Owner())
                 {
                     lock (gate)
                     {
                         if (ReferenceEquals(activeClient, client)) activeClient = null;
                     }
-                    client?.Dispose();
+                    try { client?.Dispose(); }
+                    catch (Exception error)
+                    {
+                        cleanupError ??= error;
+                        logger.LogError(cleanupError, "HID cleanup failed; stopping monitor to prevent overlapping handles");
+                        failedClient = client;
+                        Interlocked.Exchange(ref stopping, 1);
+                        lock (gate) snapshot = new(false, "HID cleanup failed; restart the dashboard",
+                            CommandOutcomeUncertain: snapshot.CommandOutcomeUncertain,
+                            WirelessCleanupRequired: snapshot.WirelessCleanupRequired);
+                    }
                 }
             }
 
+            if (Volatile.Read(ref stopping) != 0) break;
             try { await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
@@ -315,109 +586,127 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         lock (gate) snapshot = snapshot with { WirelessPhase = phase };
     }
 
+    /// <summary>
+    /// Publishes Feature 12 into the snapshot; returns the next poll time (0.5 s while active, else 2 s).
+    /// </summary>
+    private long PollWireless(IHidCommands client)
+    {
+        var active = false;
+        try
+        {
+            var wireless = client.ReadWireless();
+            active = wireless.WifiState == WifiState.Testing ||
+                (WirelessScanState)wireless.ScanState == WirelessScanState.Scanning;
+            lock (gate)
+            {
+                wirelessReceipt = time.GetTimestamp();
+                snapshot = snapshot with { Wireless = wireless, WirelessError = null };
+            }
+        }
+        catch (Exception error) when (IsDeviceError(error))
+        {
+            lock (gate) snapshot = snapshot with { WirelessError = error.Message };
+        }
+        var intervalMs = active ? ActiveWirelessPollIntervalMs : IdleWirelessPollIntervalMs;
+        return time.GetTimestamp() + time.TimestampFrequency * intervalMs / 1000;
+    }
+
     private void PollInputs(IHidCommands client)
     {
         for (var i = 0; i < 16; i++)
         {
             var report = client.ReadInputReport(0);
-            ApplyInputReport(report);
             if (report is null) break;
+            ApplyInputReport(report);
         }
     }
 
-    private void ApplyInputReport(InputReport? report)
+    /// <summary>Merges one report; freshness is derived on read by <see cref="Fresh"/>.</summary>
+    private void ApplyInputReport(InputReport report)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (report?.Runtime is not null) telemetryReceipt = Stopwatch.GetTimestamp();
-        if (report?.Memory is not null) storageReceipt = Stopwatch.GetTimestamp();
-        if (report?.SelfTest is not null) selfTestReceipt = Stopwatch.GetTimestamp();
+        var receivedAt = time.GetTimestamp();
         lock (gate)
         {
-            if (report?.Msc is { TransitionPending: false } ownership &&
-                ownership.Enabled == mscReconnectEnabled)
+            if (report.Runtime is not null) telemetryReceipt = receivedAt;
+            if (report.Memory is not null) storageReceipt = receivedAt;
+            if (report.SelfTest is not null) selfTestReceipt = receivedAt;
+            if (report.Memory?.Msc is { TransitionPending: false } ownership
+                && ownership.Enabled == mscReconnectEnabled)
             {
                 mscReconnectDeadline = 0;
                 mscReconnectEnabled = null;
             }
-            var telemetryStale = IsStale(telemetryReceipt, 750);
-            var storageStale = IsStale(storageReceipt, 1500);
-            var selfTestStale = IsStale(selfTestReceipt, 1500);
-            var runtime = telemetryStale ? null : report?.Runtime ?? snapshot.Runtime;
-            var memory = storageStale ? null : report?.Memory ?? snapshot.Memory;
-            var msc = storageStale ? null : report?.Msc ?? snapshot.Msc;
             snapshot = snapshot with
             {
-                Connected = true,
-                Error = commandOutcomeUncertain
-                    ? "A prior HID command outcome is uncertain; further writes are blocked" : null,
-                Runtime = runtime,
-                BoardStatus = runtime?.ToBoardStatus(),
-                Memory = memory,
-                Msc = msc,
-                SelfTest = selfTestStale ? null : report?.SelfTest ?? snapshot.SelfTest,
-                FilesystemFormat = storageStale ? null : report?.FilesystemFormat ?? snapshot.FilesystemFormat,
-                UpdatedAt = report is null ? snapshot.UpdatedAt : now,
-                TelemetryUpdatedAt = report?.Runtime is null ? snapshot.TelemetryUpdatedAt : now,
-                StorageUpdatedAt = report?.Memory is null ? snapshot.StorageUpdatedAt : now,
-                SelfTestUpdatedAt = report?.SelfTest is null ? snapshot.SelfTestUpdatedAt : now,
-                TelemetryStale = telemetryStale,
-                StorageStale = storageStale,
-                SelfTestStale = selfTestStale
+                Runtime = report.Runtime ?? snapshot.Runtime,
+                Memory = report.Memory ?? snapshot.Memory,
+                SelfTest = report.SelfTest ?? snapshot.SelfTest,
+                UpdatedAt = time.GetUtcNow()
             };
         }
     }
 
-    private void HandleDisconnect(Exception error)
+    /// <summary>Call under gate: the snapshot with stale sections hidden, judged at read time.</summary>
+    private StatusResponse Fresh()
     {
-        lock (deviceGate)
+        if (!snapshot.Connected) return snapshot;
+        var telemetryStale = IsStale(telemetryReceipt, TelemetryMaximumAgeMs);
+        var storageStale = IsStale(storageReceipt, StorageMaximumAgeMs);
+        var selfTestStale = IsStale(selfTestReceipt, SelfTestMaximumAgeMs);
+        return snapshot with
+        {
+            Runtime = telemetryStale ? null : snapshot.Runtime,
+            Memory = storageStale ? null : snapshot.Memory,
+            SelfTest = selfTestStale ? null : snapshot.SelfTest,
+            TelemetryStale = telemetryStale,
+            StorageStale = storageStale,
+            SelfTestStale = selfTestStale,
+            WirelessError = snapshot.WirelessError ??
+                (snapshot.Wireless is not null && IsStale(wirelessReceipt, WirelessMaximumAgeMs)
+                    ? "Wireless status is stale; wait for a fresh report" : null)
+        };
+    }
+
+    internal void HandleDisconnect(Exception error)
+    {
+        using (Owner())
         lock (gate)
         {
-            var reconnecting = !commandOutcomeUncertain && Environment.TickCount64 < mscReconnectDeadline &&
-                (error is IOException or TimeoutException ||
-                    error is InvalidOperationException && error.Message.StartsWith(
-                        "PicoForge HID interface not found;", StringComparison.Ordinal));
+            // Only a lost or timed-out handle during a confirmed USB-drive switch is an expected reconnect.
+            var uncertain = snapshot.CommandOutcomeUncertain;
+            var reconnecting = !uncertain && time.GetTimestamp() < mscReconnectDeadline &&
+                error is IOException or TimeoutException;
             if (reconnecting)
                 logger.LogInformation(error, "USB-drive mode change: waiting for HID reconnection");
             activeClient = null;
             telemetryReceipt = storageReceipt = selfTestReceipt = 0;
-            snapshot = new(false, commandOutcomeUncertain
-                    ? "A prior HID command outcome is uncertain; further writes are blocked"
-                    : reconnecting ? null : error.Message,
-                null, null, null, null, null, null,
-                CommandOutcomeUncertain: commandOutcomeUncertain, Reconnecting: reconnecting);
+            snapshot = new(false, uncertain ? UncertainMessage
+                    : reconnecting ? null
+                    : IsDeviceError(error) ? error.Message : $"Internal monitor error: {error.Message}",
+                CommandOutcomeUncertain: uncertain, Reconnecting: reconnecting,
+                WirelessCleanupRequired: snapshot.WirelessCleanupRequired);
         }
     }
 
-    private static bool IsDeviceError(Exception error) => error is IOException or InvalidOperationException
-        or UnauthorizedAccessException or NotSupportedException or TimeoutException;
+    // Board refusals are typed separately; unclassified exceptions are logged as monitor faults.
+    private static bool IsDeviceError(Exception error) => error is IOException or InvalidDataException
+        or UnauthorizedAccessException or TimeoutException;
 
-    private static bool IsStale(long receivedAt, int maximumAgeMs) =>
-        receivedAt == 0 || Stopwatch.GetElapsedTime(receivedAt).TotalMilliseconds >= maximumAgeMs;
-
-    public bool SetSelfTest(string action, uint sizeMib)
-    {
-        lock (deviceGate)
-        {
-            IHidCommands? client;
-            lock (gate)
-            {
-                if (activeClient is null || snapshot.Hardware is null
-                    || (snapshot.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) == 0) return false;
-                client = activeClient;
-            }
-            ExecuteCommand(client, () => client.SetSelfTest(action, sizeMib));
-            return true;
-        }
-    }
+    private bool IsStale(long receivedAt, int maximumAgeMs) =>
+        receivedAt == 0 || time.GetElapsedTime(receivedAt).TotalMilliseconds >= maximumAgeMs;
 
     private void ExecuteCommand(IHidCommands client, Action command) =>
         ExecuteCommand(client, () => { command(); return true; });
 
+    // ponytail: a command blocks one thread-pool thread while it holds deviceGate: up to 35 s for a Wi-Fi test, 15 s
+    // for a scan and 5 s for a forced save. Other commands give up after BusyWait (409) and a cancel reaches a running
+    // test without waiting, so one user per board never queues. If many clients share a board, run Wi-Fi scan and
+    // test in the background and publish their results through /api/status instead.
     private T ExecuteCommand<T>(IHidCommands client, Func<T> command)
     {
-        if (commandOutcomeUncertain)
-            throw new InvalidOperationException(
-                "A prior HID command outcome is uncertain; further writes are blocked");
+        if (Snapshot.CommandOutcomeUncertain) throw new BoardStateException(UncertainMessage);
+        if (Snapshot.RebootPending) throw new BoardStateException("Board reboot is pending; wait for reconnection");
+        var previousResult = client.LastCommandResult;
         try
         {
             return command();
@@ -426,15 +715,28 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             if (client.CommandOutcomeUncertain)
             {
-                commandOutcomeUncertain = true;
-                lock (gate)
-                    snapshot = snapshot with
-                    {
-                        Error = "A prior HID command outcome is uncertain; further writes are blocked",
-                        CommandOutcomeUncertain = true
-                    };
+                uncertainCommand = client.UncertainCommand;
+                uncertainWirelessOperation = client.UncertainWirelessOperation;
+                lock (gate) snapshot = snapshot with { Error = UncertainMessage, CommandOutcomeUncertain = true };
             }
             throw;
         }
+        finally
+        {
+            if (!ReferenceEquals(previousResult, client.LastCommandResult))
+                PublishCommandResult(client.LastCommandResult);
+        }
+    }
+
+    /// <summary>Applies confirmed lifecycle transitions, even if a later read or validation failed.</summary>
+    private void PublishCommandResult(ControlResult? result)
+    {
+        if (result is not { Status: ControlStatus.Completed }) return;
+        lock (gate)
+            snapshot = snapshot with
+            {
+                RebootPending = snapshot.RebootPending || result.Opcode is Opcode.Reboot or Opcode.SaveSettings,
+                WirelessCleanupRequired = snapshot.WirelessCleanupRequired && result.Opcode != Opcode.WifiCancel
+            };
     }
 }

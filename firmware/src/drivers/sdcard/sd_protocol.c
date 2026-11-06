@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file SD command/register helpers, native response decoding and four-lane data codecs. */
 #include "sd_protocol.h"
 

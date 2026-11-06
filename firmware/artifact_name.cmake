@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 # Use the SDK platform identity, not a particular board name.
 if(PICO_RP2040)
     set(pf_image_mcu rp2040)

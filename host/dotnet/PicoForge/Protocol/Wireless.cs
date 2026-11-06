@@ -1,51 +1,150 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
+using System.Buffers;
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace PicoForge;
 
-/// <summary>Sanitized saved configuration and live wireless state; never contains credentials.</summary>
-public sealed record WirelessStatusResponse(bool WifiEnabled, bool BleEnabled, string Ssid,
-    bool PasswordConfigured, bool BleKeyConfigured, string Status, byte TransactionId,
-    string WifiState, string Ipv4, byte Error, string BleState = "off", bool TcpCliStarted = false,
-    bool TcpCliEnabled = true, bool TcpCliAuthRequired = false, string WifiAuthState = "try_wpa2",
-    ushort ReconnectCount = 0, int? Rssi = null, bool RestartRequired = false);
+/// <summary>Wi-Fi states in Feature 12 and the shared dashboard JSON contract.</summary>
+public enum WifiState
+{
+    /// <summary>Wi-Fi is disabled.</summary>
+    Disabled,
+    /// <summary>Joining the saved network.</summary>
+    Connecting,
+    /// <summary>Connected and assigned an address.</summary>
+    Connected,
+    /// <summary>Join failed or the link was lost.</summary>
+    Failed,
+    /// <summary>A staged pair is being tested.</summary>
+    Testing,
+    /// <summary>The staged pair passed its connection test.</summary>
+    TestJoined,
+    /// <summary>The staged pair failed its connection test.</summary>
+    TestFailed
+}
 
-/// <summary>Wireless status with acknowledgement of an imminent reboot and, after a save, the confirmed board settings.</summary>
+/// <summary>Bluetooth states reported in Feature 12.</summary>
+public enum BleState
+{
+    /// <summary>Bluetooth is off.</summary>
+    Off,
+    /// <summary>The board is advertising.</summary>
+    Advertising,
+    /// <summary>A Bluetooth connection is active.</summary>
+    Connected
+}
+
+internal enum WirelessScanState : byte
+{
+    Idle = 0,
+    Scanning = 1,
+    Complete = 2,
+    Failed = 3
+}
+
+[Flags]
+internal enum WirelessStatusFlags : byte
+{
+    NetworkConfigured = 1 << 0,
+    BleKeyConfigured = 1 << 1,
+    TcpCliStarted = 1 << 2,
+    SsidStaged = 1 << 4,
+    PasswordStaged = 1 << 5,
+    KeyStaged = 1 << 6,
+    PairTested = 1 << 7
+}
+
+[Flags]
+internal enum WirelessStagingFlags : byte
+{
+    Ssid = 1 << 0,
+    Password = 1 << 1,
+    Key = 1 << 2,
+    PairTested = 1 << 3
+}
+
+internal static class DashboardJson
+{
+    public static JsonSerializerOptions Options { get; } = CreateOptions();
+
+    public static void Configure(JsonSerializerOptions options)
+    {
+        options.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+        options.PropertyNameCaseInsensitive = false;
+        options.RespectRequiredConstructorParameters = true;
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower));
+    }
+
+    private static JsonSerializerOptions CreateOptions()
+    {
+        var options = new JsonSerializerOptions();
+        Configure(options);
+        return options;
+    }
+}
+
+/// <summary>Report 12 runtime state and Report 2 saved switches; never contains credentials.</summary>
+public sealed record WirelessStatusResponse
+{
+    public bool WifiEnabled { get; init; }
+    public bool BleEnabled { get; init; }
+    public string Ssid { get; init; } = "";
+    public WifiState WifiState { get; init; }
+    public string Ipv4 { get; init; } = "";
+    public byte Error { get; init; }
+    public BleState BleState { get; init; }
+    public bool TcpCliStarted { get; init; }
+    public bool TcpCliEnabled { get; init; }
+    public bool NetworkConfigured { get; init; }
+    public bool BleKeyConfigured { get; init; }
+    public string SsidHex { get; init; } = "";
+    public bool SsidStaged { get; init; }
+    public bool PasswordStaged { get; init; }
+    public bool KeyStaged { get; init; }
+    public bool PairTested { get; init; }
+    public byte StagedState { get; init; }
+    public byte ScanState { get; init; }
+    public ushort ScanGeneration { get; init; }
+    public byte ScanCount { get; init; }
+    public byte TestGeneration { get; init; }
+
+    public string Phase => HidProtocol.WifiDetail(Error);
+}
+
 public sealed record WirelessResponse(WirelessStatusResponse Wireless, bool RebootPending,
     BootSettingsResponse? Settings = null);
 
-/// <summary>One nearby wireless access point from the sanitized scan list.</summary>
-public sealed record WirelessNetworkResponse(string Ssid, int Rssi, bool Secured, string Security = "Secured");
+/// <summary>Opaque SSID bytes and their escaped display label.</summary>
+public sealed record WirelessNetworkResponse(string Ssid, int Rssi, bool Secured, string Security,
+    string SsidHex);
 
-/// <summary>Sanitized scan or temporary-join status; never includes a password.</summary>
-public sealed record WirelessOperationResponse(byte TransactionId, byte State, byte Page, byte Count,
-    byte WifiState, string Ipv4, IReadOnlyList<WirelessNetworkResponse> Networks, byte Detail = 0,
-    ushort RemainingSeconds = 0)
+/// <summary>Retained test result associated with a Report 12 test generation.</summary>
+public sealed record WirelessOperationResponse(byte State, byte WifiState, string Ipv4, byte Detail,
+    byte TestGeneration, ushort RemainingSeconds = 600, string? TestId = null)
 {
-    /// <summary>Feature 35 byte 3 while testing (states 4..6): join phase or failure reason.</summary>
-    public static readonly string[] Details = ["", "Searching for network", "Checking password",
-        "Waiting for IP address", "Network not found", "Password rejected", "Connected but no IP address from DHCP",
-        "Timed out", "Could not start connection", "Test connection lost", "Test credentials expired"];
-
-    public string Phase => Details[Detail];
+    public string Phase => HidProtocol.WifiDetail(Detail);
 }
 
-/// <summary>Atomic board-settings and provisioning input. Omitted credentials preserve the stored values.</summary>
+/// <summary>Confirmed atomic save; omitted credentials are not staged.</summary>
 public sealed class WirelessRequest
 {
     public bool? WifiEnabled { get; set; }
     public bool? BleEnabled { get; set; }
-    /// <summary>Enable unauthenticated LAN CLI access; omitted preserves the saved switch.</summary>
     public bool? TcpCliEnabled { get; set; }
     public string? Ssid { get; set; }
+    public string? SsidHex { get; set; }
     public string? Password { get; set; }
     public string? BleKey { get; set; }
-    /// <summary>Clock, SD profile and radio switches committed in the same save.</summary>
     public BootSettingsResponse? Board { get; set; }
-    /// <summary>Use the successful RAM-only Wi-Fi test credentials instead of resending a password.</summary>
     public bool UseTestedWifi { get; set; }
+    public string? TestId { get; set; }
+    public byte? TestGeneration { get; set; }
     public bool ConfirmReboot { get; set; }
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
@@ -55,208 +154,199 @@ public sealed class WirelessRequest
         try
         {
             if (json.ValueKind != JsonValueKind.Object) throw new JsonException();
-            var request = json.Deserialize<WirelessRequest>(new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-            }) ?? throw new JsonException();
-            if (json.TryGetProperty("password", out var password) && password.ValueKind != JsonValueKind.String ||
-                json.TryGetProperty("ble_key", out var key) && key.ValueKind != JsonValueKind.String ||
-                json.TryGetProperty("tcp_cli_enabled", out var tcp) &&
-                    tcp.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
-                !json.TryGetProperty("board", out var board) || board.ValueKind != JsonValueKind.Object ||
-                !board.TryGetProperty("system_clock_mhz", out _) || !board.TryGetProperty("sdcard_profile", out _) ||
-                !board.TryGetProperty("radios", out _))
+            var request = json.Deserialize<WirelessRequest>(DashboardJson.Options)
+                ?? throw new JsonException();
+            if (HasExplicitNull(json, "password") || HasExplicitNull(json, "ble_key") ||
+                HasExplicitNull(json, "ssid") || HasExplicitNull(json, "ssid_hex") ||
+                HasExplicitNull(json, "test_id") || HasExplicitNull(json, "test_generation") ||
+                HasExplicitNull(json, "tcp_cli_enabled"))
                 throw new JsonException();
-            HidProtocol.BuildWirelessRequest(request, 1, true);
+            HidProtocol.ValidateWirelessRequest(request);
             return request;
         }
         catch (Exception error) when (error is JsonException or ArgumentException)
         {
-            throw new ArgumentException("Invalid wireless configuration; confirm reboot and check field types and lengths");
+            throw new ArgumentException(
+                "Invalid wireless configuration; confirm reboot and check field types and lengths");
         }
     }
+
+    private static bool HasExplicitNull(JsonElement json, string name) =>
+        json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Null;
 }
 
 internal static partial class HidProtocol
 {
-    public const byte WirelessReportId = 30;
-    public const byte WirelessConfigurationReportId = 31;
-    public const int WirelessFeatureSize = 54;
-    public const byte WirelessCommandReportId = 34;
-    public const int WirelessCommandFeatureSize = 102;
-    public const byte WirelessResultReportId = 35;
-    public const int WirelessResultFeatureSize = 223;
-    public const byte TcpCliAuthReportId = 36;
-    public const int TcpCliAuthRequestSize = 20;
-    public const int TcpCliAuthResultSize = 20;
+    public const byte WirelessReportId = 12;
+    public const int WirelessFeatureSize = 49;
 
-    public static byte[] BuildTcpCliAuthRequest(byte transaction, ReadOnlySpan<byte> nonce)
+    public static void ValidateWirelessRequest(WirelessRequest settings)
     {
-        if (transaction == 0 || nonce.Length != 16)
-            throw new ArgumentException("TCP CLI auth requires a transaction and a 16-byte nonce");
-        var report = new byte[TcpCliAuthRequestSize];
-        report[0] = TcpCliAuthReportId;
-        report[1] = 1;
-        report[2] = transaction;
-        nonce.CopyTo(report.AsSpan(3));
-        return report;
-    }
-
-    public static byte[] ParseTcpCliAuthResult(ReadOnlySpan<byte> report, byte transaction)
-    {
-        if (transaction == 0) throw new ArgumentException("TCP CLI auth transaction must be nonzero");
-        var payload = FeaturePayload(report, TcpCliAuthReportId, TcpCliAuthResultSize - 1);
-        Require(payload[0] == 1 && payload[1] == transaction && payload[2] is 0 or 1,
-            "invalid or stale TCP CLI auth result");
-        if (payload[2] != 1)
-            throw new InvalidOperationException(
-                "The board cannot create a TCP CLI proof; check the saved Control key and firmware");
-        return payload[3..].ToArray();
-    }
-
-    /// <summary>Build Feature 31; an omitted TCP CLI switch is sent as <paramref name="savedTcpCliEnabled"/>.</summary>
-    public static byte[] BuildWirelessRequest(WirelessRequest settings, byte transaction, bool savedTcpCliEnabled)
-    {
-        if (!settings.ConfirmReboot || transaction == 0 || settings.WifiEnabled is null ||
-            settings.BleEnabled is null || settings.Ssid is null || settings.Extra?.Count > 0 ||
-            settings.Board is not { SystemClockMhz: 0 or 150 or 200 or 250, SdCardProfile: 0 or 1, Radios: >= 0 and <= 3 })
+        if (!settings.ConfirmReboot || settings.WifiEnabled is null || settings.BleEnabled is null ||
+            settings.Extra?.Count > 0 || settings.Board is null)
             throw new ArgumentException("Invalid wireless configuration or missing reboot confirmation");
+        ValidateSettings(settings.Board);
         if (settings.WifiEnabled.Value != ((settings.Board.Radios & 1) != 0) ||
             settings.BleEnabled.Value != ((settings.Board.Radios & 2) != 0))
             throw new ArgumentException("Wireless enable flags must match the board radio switches");
-        byte[] ssid;
-        try { ssid = new UTF8Encoding(false, true).GetBytes(settings.Ssid); }
-        catch (EncoderFallbackException) { throw new ArgumentException("Invalid SSID encoding"); }
-        if (ssid.Length > 32 || ssid.Contains((byte)0) || settings.WifiEnabled == true && ssid.Length == 0)
-            throw new ArgumentException("SSID must be at most 32 UTF-8 bytes and nonempty when Wi-Fi is enabled");
-        var report = new byte[137];
-        report[0] = WirelessConfigurationReportId;
-        report[1] = ReportVersion;
-        report[2] = transaction;
-        report[3] = (byte)settings.Board.Radios;
-        report[4] = settings.TcpCliEnabled ?? savedTcpCliEnabled ? (byte)0 : (byte)8;
-        if (settings.UseTestedWifi) report[4] |= 4;
-        BinaryPrimitives.WriteUInt16LittleEndian(report.AsSpan(134), (ushort)settings.Board.SystemClockMhz);
-        report[136] = (byte)settings.Board.SdCardProfile;
-        ssid.CopyTo(report, 5);
-        if (settings.Password is null && !settings.UseTestedWifi) report[4] |= 1;
-        else if (settings.UseTestedWifi && settings.Password is not null)
+        if (settings.Ssid is not null || settings.SsidHex is not null)
+            EncodeSsid(settings.Ssid, settings.SsidHex);
+        if (settings.Password is not null) ValidatePassword(settings.Password);
+        if (settings.BleKey is not null) EncodeControlKey(settings.BleKey);
+        if (settings.UseTestedWifi && settings.Password is not null)
             throw new ArgumentException("Do not resend a password after a successful test join");
-        else if (!settings.UseTestedWifi)
-        {
-            var password = settings.Password ?? throw new ArgumentException("Invalid Wi-Fi password");
-            if (password.Length != 0 && (password.Length is < 8 or > 63 ||
-                password.Any(c => c is < ' ' or > '~')))
-                throw new ArgumentException("Password must be empty or contain 8..63 printable ASCII characters");
-            Encoding.ASCII.GetBytes(password).CopyTo(report, 38);
-        }
-        if (settings.BleKey is null) report[4] |= 2;
-        else if (settings.BleKey.Length != 0) // an empty key erases the saved key; the report field stays zero
-        {
-            if (settings.BleKey.Length != 64 || settings.BleKey.Any(c => !Uri.IsHexDigit(c)))
-                throw new ArgumentException("Control key must contain 64 hexadecimal characters and be nonzero");
-            var key = Convert.FromHexString(settings.BleKey);
-            if (key.All(value => value == 0))
-                throw new ArgumentException("Control key must contain 64 hexadecimal characters and be nonzero");
-            key.CopyTo(report, 102);
-        }
-        return report;
+        if (settings.UseTestedWifi
+            ? settings.TestId is not { Length: 32 } || settings.TestId.Any(c => !char.IsAsciiHexDigit(c)
+                || char.IsUpper(c)) || settings.TestGeneration is null or 0
+            : settings.TestId is not null || settings.TestGeneration is not null)
+            throw new ArgumentException("A tested pair requires its test_id and test_generation");
     }
 
-    public static byte[] BuildWirelessCommand(byte transaction, byte operation, byte page = 0,
-        string? ssid = null, string? password = null)
+    public static byte[] EncodeSsid(string? ssid, string? hex = null)
     {
-        if (transaction == 0 || operation is < 1 or > 4)
-            throw new ArgumentException("Invalid wireless command");
-        var report = new byte[WirelessCommandFeatureSize];
-        report[0] = WirelessCommandReportId;
-        report[1] = 1;
-        report[2] = operation;
-        report[3] = transaction;
-        if (operation == 2)
+        byte[] bytes;
+        if (hex is not null)
         {
-            if (page > 2) throw new ArgumentOutOfRangeException(nameof(page));
-            report[4] = page;
+            if (hex.Length > 64 || hex.Length % 2 != 0 || !hex.All(Uri.IsHexDigit))
+                throw new ArgumentException("Invalid SSID hex");
+            bytes = Convert.FromHexString(hex);
         }
-        else if (operation == 3)
+        else
         {
-            if (ssid is null) throw new ArgumentException("SSID is required for a connection test");
-            byte[] encoded;
-            try { encoded = new UTF8Encoding(false, true).GetBytes(ssid); }
+            if (ssid is null) throw new ArgumentException("SSID is required");
+            try { bytes = new UTF8Encoding(false, true).GetBytes(ssid); }
             catch (EncoderFallbackException) { throw new ArgumentException("Invalid SSID encoding"); }
-            password ??= "";
-            if (encoded.Length is 0 or > 32 || encoded.Contains((byte)0))
-                throw new ArgumentException("SSID must contain 1..32 UTF-8 bytes");
-            if (password.Length != 0 && (password.Length is < 8 or > 63 ||
-                password.Any(c => c is < ' ' or > '~')))
-                throw new ArgumentException("Password must contain 8..63 printable ASCII characters");
-            report[5] = (byte)encoded.Length;
-            report[6] = (byte)password.Length;
-            encoded.CopyTo(report, 7);
-            Encoding.ASCII.GetBytes(password).CopyTo(report, 39);
         }
-        return report;
+        if (bytes.Length > 32) throw new ArgumentException("SSID must contain at most 32 bytes");
+        return bytes;
     }
 
-    public static WirelessOperationResponse ParseWirelessOperation(ReadOnlySpan<byte> report)
+    public static void ValidatePassword(string password)
     {
-        var payload = FeaturePayload(report, WirelessResultReportId, 222);
-        var maxPage = payload[2] >= 4 ? WirelessOperationResponse.Details.Length - 1 : 2;
-        Require(payload[0] == ReportVersion && payload[2] <= 6 && payload[3] <= maxPage && payload[4] <= 18 && payload[5] <= 3,
-            "Invalid wireless scan/test result");
-        var networks = new List<WirelessNetworkResponse>();
-        for (var index = 0; index < 6; index++)
-        {
-            var entry = payload.Slice(6 + index * 35, 35);
-            var length = entry[0];
-            if (length == 0)
-            {
-                Require(entry.IndexOfAnyExcept((byte)0) < 0, "Invalid empty wireless scan entry");
-                continue;
-            }
-            Require(length <= 32 && entry.Slice(1 + length, 32 - length).IndexOfAnyExcept((byte)0) < 0
-                && entry[34] <= 7, "Invalid wireless scan entry");
-            string ssid;
-            try { ssid = new UTF8Encoding(false, true).GetString(entry.Slice(1, length)); }
-            catch (DecoderFallbackException) { throw new InvalidOperationException("Invalid wireless scan SSID"); }
-            var security = new[] { "Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)", "RSN (WPA2/WPA3)",
-                "WPA/RSN", "WPA/RSN" }[entry[34]];
-            networks.Add(new(ssid, unchecked((sbyte)entry[33]), entry[34] != 0, security));
-        }
-        var remainingSeconds = BinaryPrimitives.ReadUInt16LittleEndian(payload[220..]);
-        var staged = payload[2] == 5 || payload[2] == 6 && payload[3] == 9;
-        Require(networks.Count <= payload[4] && (payload[2] == 5 ||
-            payload[216..220].IndexOfAnyExcept((byte)0) < 0) && remainingSeconds <= 600 &&
-            (staged || remainingSeconds == 0),
-            "Invalid wireless scan/test result fields");
-        var ip = string.Join(".", payload[216..220].ToArray());
-        var detail = payload[2] >= 4 ? payload[3] : (byte)0;
-        return new(payload[1], payload[2], payload[2] >= 4 ? (byte)0 : payload[3], payload[4], payload[5], ip, networks,
-            detail, staged ? remainingSeconds : (ushort)0);
+        if (password.Length != 0 && (password.Length is < 8 or > 63 || password.Any(c => c is < ' ' or > '~')))
+            throw new ArgumentException("Password must contain 8..63 printable ASCII characters");
     }
 
-    public static WirelessStatusResponse ParseWirelessStatus(ReadOnlySpan<byte> report)
+    public static byte[] EncodeControlKey(string key)
     {
-        var payload = FeaturePayload(report, WirelessReportId, WirelessFeatureSize - 1);
-        Require(payload[0] == ReportVersion && (payload[1] & ~3) == 0 && payload[2] <= 6 &&
-            payload[4] <= 3 && payload[42] <= 1 && payload[43] <= 1 && payload[44] <= 3 &&
-            payload[45] <= 2 && payload[46] <= 1 && payload[47] <= 3 && payload[48] <= 3 && payload[52] <= 1,
+        if (key.Length == 0) return [];
+        if (key.Length != 64 || !key.All(Uri.IsHexDigit)) throw new ArgumentException("Control key must be 32 bytes");
+        return Convert.FromHexString(key);
+    }
+
+    public static byte[] StagingArguments(Opcode opcode, ReadOnlySpan<byte> value)
+    {
+        if (opcode is not (Opcode.StageSsid or Opcode.StagePassword or Opcode.StageKey) ||
+            value.Length > (opcode == Opcode.StagePassword ? 63 : 32))
+            throw new ArgumentException("Invalid staging arguments");
+        var arguments = new byte[64];
+        arguments[0] = (byte)value.Length;
+        value.CopyTo(arguments.AsSpan(1));
+        return arguments;
+    }
+
+    public static WirelessStatusResponse ParseWirelessStatus(ReadOnlySpan<byte> report,
+        BoardConfigurationResponse configuration)
+    {
+        var payload = FeaturePayload(report, WirelessReportId, 48);
+        Require(payload[0] == ReportVersion && payload[1] <= (byte)WifiState.TestFailed &&
+            payload[3] <= (byte)BleState.Connected &&
+            payload[9] <= 32 && payload.Slice(10 + payload[9], 32 - payload[9]).IndexOfAnyExcept((byte)0) < 0 &&
+            payload[42] <= (byte)WirelessScanState.Failed && payload[45] <= 18 &&
+            (payload[47] & 0xf0) == 0,
             "Invalid wireless status report");
-        var ssid = payload.Slice(9, 33);
-        var nul = ssid.IndexOf((byte)0);
-        Require(nul >= 0 && ssid[nul..].IndexOfAnyExcept((byte)0) < 0, "Invalid wireless SSID encoding");
-        string name;
-        try { name = new UTF8Encoding(false, true).GetString(ssid[..nul]); }
-        catch (DecoderFallbackException) { throw new InvalidOperationException("Invalid wireless SSID encoding"); }
-        return new((payload[1] & 1) != 0, (payload[1] & 2) != 0, name,
-            payload[42] != 0, payload[43] != 0,
-            new[] { "idle", "pending", "completed", "invalid", "unsupported", "busy", "failed" }[payload[2]],
-            payload[3], new[] { "disabled", "connecting", "connected", "failed" }[payload[4]],
-            $"{payload[5]}.{payload[6]}.{payload[7]}.{payload[8]}", payload[44],
-            new[] { "off", "advertising", "connected" }[payload[45]], payload[46] != 0,
-            (payload[47] & 1) == 0, (payload[47] & 2) != 0,
-            new[] { "try_wpa2", "try_sae", "wpa2", "sae" }[payload[48]],
-            BinaryPrimitives.ReadUInt16LittleEndian(payload[49..]),
-            payload[51] == 127 ? null : unchecked((sbyte)payload[51]), payload[52] != 0);
+        var flags = (WirelessStatusFlags)payload[4];
+        var staged = (WirelessStagingFlags)payload[47];
+        var scanGeneration = BinaryPrimitives.ReadUInt16LittleEndian(payload[43..]);
+        Require(((WirelessScanState)payload[42] == WirelessScanState.Complete || payload[45] == 0) &&
+            ((WirelessScanState)payload[42] == WirelessScanState.Idle
+                ? scanGeneration == 0 : scanGeneration != 0) &&
+            ((staged & WirelessStagingFlags.PairTested) == 0 ||
+                (flags & (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged |
+                    WirelessStatusFlags.KeyStaged | WirelessStatusFlags.PairTested)) == 0) &&
+            ((staged & WirelessStagingFlags.Ssid) == 0 || (flags & WirelessStatusFlags.SsidStaged) != 0) &&
+            ((staged & WirelessStagingFlags.Password) == 0 ||
+                (flags & WirelessStatusFlags.PasswordStaged) != 0) &&
+            ((staged & WirelessStagingFlags.Key) == 0 || (flags & WirelessStatusFlags.KeyStaged) != 0) &&
+            ((staged & WirelessStagingFlags.Ssid) == 0 ||
+                (staged & WirelessStagingFlags.Password) != 0 &&
+                (flags & (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged)) ==
+                    (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged)) &&
+            ((flags & WirelessStatusFlags.PairTested) == 0 ||
+                (flags & (WirelessStatusFlags.SsidStaged | WirelessStatusFlags.PasswordStaged)) != 0 &&
+                payload[46] != 0) &&
+            ((flags & WirelessStatusFlags.TcpCliStarted) == 0 ||
+                (flags & WirelessStatusFlags.BleKeyConfigured) != 0) &&
+            (payload[3] == (byte)BleState.Off ||
+                (flags & WirelessStatusFlags.BleKeyConfigured) != 0) &&
+            (payload[1] < (byte)WifiState.Testing || payload[46] != 0), "Invalid wireless status fields");
+        var ssid = payload.Slice(10, payload[9]).ToArray();
+        var saved = configuration.BoardFlags;
+        return new()
+        {
+            WifiEnabled = (saved & BoardFlagWifi) != 0,
+            BleEnabled = (saved & BoardFlagBle) != 0,
+            Ssid = DisplaySsid(ssid),
+            WifiState = (WifiState)payload[1],
+            Ipv4 = string.Join(".", payload[5..9].ToArray()),
+            Error = payload[2] <= 6 ? payload[2] : (byte)0,
+            BleState = (BleState)payload[3],
+            TcpCliStarted = (flags & WirelessStatusFlags.TcpCliStarted) != 0,
+            TcpCliEnabled = (saved & BoardFlagTcpCli) != 0,
+            NetworkConfigured = (flags & WirelessStatusFlags.NetworkConfigured) != 0,
+            BleKeyConfigured = (flags & WirelessStatusFlags.BleKeyConfigured) != 0,
+            SsidHex = Convert.ToHexString(ssid),
+            SsidStaged = (flags & WirelessStatusFlags.SsidStaged) != 0,
+            PasswordStaged = (flags & WirelessStatusFlags.PasswordStaged) != 0,
+            KeyStaged = (flags & WirelessStatusFlags.KeyStaged) != 0,
+            PairTested = (flags & WirelessStatusFlags.PairTested) != 0,
+            StagedState = payload[47],
+            ScanState = payload[42],
+            ScanGeneration = scanGeneration,
+            ScanCount = payload[45],
+            TestGeneration = payload[46]
+        };
+    }
+
+    public static WirelessNetworkResponse ParseScanEntry(ControlResult result, ushort generation, byte index)
+    {
+        var data = result.ResultData;
+        Require(result.Opcode == Opcode.WifiEntry && result.Status == ControlStatus.Completed &&
+            BinaryPrimitives.ReadUInt16LittleEndian(data) == generation && data[2] == index,
+            "Scan entry belongs to another scan");
+        var ssid = data.AsSpan(4, data[3]).ToArray();
+        var security = new[] { "Open", "WEP", "WPA", "WPA", "RSN (WPA2/WPA3)", "RSN (WPA2/WPA3)",
+            "WPA/RSN", "WPA/RSN" }[data[37]];
+        return new(DisplaySsid(ssid), unchecked((sbyte)data[36]), data[37] != 0, security,
+            Convert.ToHexString(ssid));
+    }
+
+    public static string WifiDetail(byte detail) => detail switch
+    {
+        1 => "Radio initialization failed", 2 => "Network not found", 3 => "Password rejected",
+        4 => "Connected but no IP address from DHCP", 5 => "Timed out", 6 => "Test connection lost", _ => ""
+    };
+
+    public static string DisplaySsid(ReadOnlySpan<byte> bytes)
+    {
+        var display = new StringBuilder();
+        while (!bytes.IsEmpty)
+        {
+            var status = Rune.DecodeFromUtf8(bytes, out var rune, out var consumed);
+            if (status != OperationStatus.Done || Rune.GetUnicodeCategory(rune) is
+                UnicodeCategory.Control or UnicodeCategory.Format or UnicodeCategory.LineSeparator or
+                UnicodeCategory.ParagraphSeparator)
+            {
+                var length = status == OperationStatus.Done ? consumed : 1;
+                foreach (var value in bytes[..length]) display.Append($"\\x{value:X2}");
+                bytes = bytes[length..];
+            }
+            else
+            {
+                display.Append(rune.ToString());
+                bytes = bytes[consumed..];
+            }
+        }
+        return display.ToString();
     }
 }

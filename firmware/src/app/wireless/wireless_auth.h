@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file wireless_auth.h
  * @brief Shared key ownership and protocol-separated HMAC proofs for wireless control services.
@@ -9,12 +12,12 @@
 #include <stdint.h>
 
 /**
- * @brief Replace the shared control key; null or all-zero input clears it.
- * @param key 32-byte key, or null/all-zero to clear.
+ * @brief Replace the shared Control key; only null clears it.
+ * @param key Raw 32-byte key, including all-zero bytes, or null to clear.
  */
 void pf_wireless_auth_set_key(const uint8_t key[32]);
 
-/** @brief Return whether a nonzero shared control key is available. @return True when a control key is loaded. */
+/** @brief Return whether any raw Control key is loaded. @return False only when no key is loaded. */
 bool pf_wireless_auth_available(void);
 
 /**

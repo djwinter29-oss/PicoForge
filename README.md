@@ -108,8 +108,8 @@ Implemented features are not blanket hardware qualification. Radio qualification
 mass-storage compatibility, and power-loss recovery remain limited. Review the
 [qualification gaps](docs/validation/qualification-gaps.md) and [test records](docs/validation/records/README.md).
 
-The Wi-Fi TCP CLI is unencrypted; without a saved control key, it is also unauthenticated. Use it
-only on trusted LANs. Bluetooth runs only with a saved control key, and that key does not encrypt the BLE link.
+The Wi-Fi TCP CLI is unencrypted and serves only with a saved control key. Use it only on trusted LANs.
+Bluetooth also runs only with a saved control key, and that key does not encrypt the BLE link.
 
 ## Documentation
 
@@ -121,7 +121,8 @@ See the [documentation index](docs/README.md) for reading order and authoritativ
   [console](docs/guides/console.md) · [wireless](docs/guides/wireless.md)
 - **Build and develop:** [architecture](docs/reference/architecture.md) ·
   [settings](docs/reference/settings.md) · [SD-card driver](docs/reference/sdcard/driver.md) ·
-  [USB HID reference](docs/reference/usb-hid.md) · [host tools](docs/development/host-tools.md) ·
+  [USB HID reference](docs/reference/usb-hid.md) · [Bluetooth LE protocol](docs/reference/bluetooth.md) ·
+  [host tools](docs/development/host-tools.md) ·
   [firmware testing](docs/development/firmware-testing.md)
 - **Maintain and release:** [contributing](CONTRIBUTING.md) ·
   [release guide](docs/deployment/release.md) · [security reporting](SECURITY.md)

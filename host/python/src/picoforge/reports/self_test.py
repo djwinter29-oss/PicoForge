@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Self test HID report codecs."""
 
 from __future__ import annotations
@@ -6,14 +9,15 @@ import struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import SelfTestStatus
+    from .models import SelfTestStatus
 
 from .common import (
     REPORT_VERSION,
     SELF_TEST_PAYLOAD_SIZE,
     SELF_TEST_REPORT_ID,
+    ControlOpcode,
 )
-from .common import _input_payload, _unknown_name
+from .common import InvalidRequest, _input_payload, _unknown_name
 from .control import build_control_command_report
 
 
@@ -23,29 +27,29 @@ def build_self_test_command_report(
     transaction_id: int = 1,
 ) -> bytes:
     if action not in ("start", "cancel"):
-        raise ValueError("Self-test action must be start or cancel")
+        raise InvalidRequest("Self-test action must be start or cancel")
     if size_mib is not None and type(size_mib) is not int:
-        raise ValueError("Self-test size must be an integer")
+        raise InvalidRequest("Self-test size must be an integer")
     if action == "cancel":
         if size_mib not in (None, 0):
-            raise ValueError("Self-test cancel does not accept a size")
+            raise InvalidRequest("Self-test cancel does not accept a size")
         size_mib = 0
     elif size_mib is None:
         size_mib = 32
     elif not 1 <= size_mib <= 1024:
-        raise ValueError("Self-test size must be an integer from 1 to 1024 MiB")
+        raise InvalidRequest("Self-test size must be an integer from 1 to 1024 MiB")
     args = bytes((int(action == "start"),)) + int(size_mib).to_bytes(4, "little")
-    return build_control_command_report(transaction_id, 4, arguments=args)
+    return build_control_command_report(transaction_id, ControlOpcode.SELF_TEST, arguments=args)
 
 def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestStatus:
     """Decode and validate Input report 11 self-test progress and retained result."""
     payload = _input_payload(report, SELF_TEST_REPORT_ID, SELF_TEST_PAYLOAD_SIZE)
     version, sequence, state, flags = payload[:4]
     target, written, read, write_ms, read_ms, mismatches = struct.unpack_from("<IIIIII", payload, 4)
-    error, fs_result, request_error, reserved = payload[28:32]
+    error, fs_result, reserved0, reserved1 = payload[28:32]
     if version != REPORT_VERSION:
         raise ValueError(f"unsupported HID self-test report version {version}")
-    if flags & ~3 or reserved or target > 1024 * 1024 * 1024 or written > target or read > written:
+    if flags & ~3 or reserved0 or reserved1 or target > 1024 * 1024 * 1024 or written > target or read > written:
         raise ValueError("invalid HID self-test report")
     if state in range(1, 9) and not target:
         raise ValueError("active or retained self-test state requires a target size")
@@ -71,8 +75,6 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
         pass
     elif fs_result:
         raise ValueError("filesystem result is only valid for applicable self-test errors")
-    if request_error in (8, 9):
-        raise ValueError("execution-only self-test request error")
     state_names = {
         0: "idle", 1: "queued", 2: "preparing", 3: "writing",
         4: "reading", 5: "cleanup", 6: "passed", 7: "failed", 8: "cancelled",
@@ -99,14 +101,6 @@ def parse_self_test_report(report: bytes | bytearray | list[int]) -> SelfTestSta
             10: "filesystem not mounted",
         }),
         "filesystem_result": fs_result,
-        "request_error": request_error,
-        "request_error_name": _unknown_name(request_error, {
-            0: "none", 1: "busy", 2: "USB owns storage", 3: "invalid size", 4: "card unavailable",
-            5: "insufficient space", 6: "test file exists", 7: "filesystem I/O", 10: "filesystem not mounted",
-        }),
         "file_remains": bool(flags & 1),
         "volume_mounted": bool(flags & 2),
     }
-
-
-parse_self_test_status_report = parse_self_test_report

@@ -1,5 +1,11 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
+import json
+import re
 import struct
 import unittest
+from pathlib import Path
 
 from picoforge.reports import (
     build_control_command_report,
@@ -8,6 +14,11 @@ from picoforge.reports import (
     build_self_test_command_report,
     build_settings_command_report,
     build_wireless_command_report,
+    ControlError,
+    ControlOpcode,
+    ControlStatus,
+    BleState,
+    WifiState,
     parse_configuration_report,
     parse_control_result_report,
     parse_identity_report,
@@ -15,6 +26,10 @@ from picoforge.reports import (
     parse_self_test_report,
     parse_status_report,
 )
+
+
+def status_contract():
+    return json.loads((Path(__file__).parents[2] / "web/tests/status-contract.json").read_text())
 
 
 def identity_report(capabilities=0x35, mcu=2, board=2):
@@ -57,18 +72,62 @@ class ProtocolTests(unittest.TestCase):
     def test_forced_save_capability_and_confirmation_flag(self):
         info = parse_identity_report(identity_report(capabilities=0x75))
         self.assertTrue(info["capabilities"] & 64)
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False}
         self.assertEqual(build_settings_command_report(settings, 3, force=True),
-                         bytes([20, 1, 3, 6, 1, 200, 0, 1, 0, 0]))
+                         bytes([20, 1, 3, 5, 1, 200, 0, 1, 0]) + bytes(60))
         self.assertEqual(build_settings_command_report(settings, 3, tcp_cli_enabled=True),
-                         bytes([20, 1, 3, 6, 2, 200, 0, 1, 0, 1]))
+                         bytes([20, 1, 3, 5, 0, 200, 0, 1, 4]) + bytes(60))
         self.assertEqual(build_settings_command_report(settings, 3, force=True, tcp_cli_enabled=False),
-                         bytes([20, 1, 3, 6, 3, 200, 0, 1, 0, 0]))
+                         bytes([20, 1, 3, 5, 1, 200, 0, 1, 0]) + bytes(60))
         self.assertEqual(build_settings_command_report(settings, 3)[4], 0)
         with self.assertRaises(ValueError):
             build_settings_command_report(settings, force="yes")
         with self.assertRaises(ValueError):
             build_settings_command_report(settings, tcp_cli_enabled=1)
+
+    def test_feature_20_values_match_firmware_header(self):
+        header = (Path(__file__).resolve().parents[3] / "firmware/src/app/usb/usb_hid.h").read_text()
+        macros = {
+            name: int(value)
+            for name, value in re.findall(
+                r"^#define (PF_HID_(?:OPCODE|COMMAND|ERROR)_\w+) (\d+)u?(?:[ \t]|$)", header, re.MULTILINE,
+            )
+        }
+        expected = {
+            **{f"PF_HID_OPCODE_{item.name}": int(item) for item in ControlOpcode},
+            **{f"PF_HID_COMMAND_{item.name}": int(item) for item in ControlStatus},
+            **{f"PF_HID_ERROR_{item.name}": int(item) for item in ControlError},
+        }
+        self.assertEqual({name: macros[name] for name in expected}, expected)
+
+    def test_wireless_state_values_match_firmware(self):
+        root = Path(__file__).resolve().parents[3] / "firmware/src/app/wireless"
+        wifi_header = (root / "wifi/wifi.h").read_text()
+        wifi_source = (root / "wifi/wifi.c").read_text()
+        bluetooth_source = (root / "bluetooth/bluetooth.c").read_text()
+        wifi_states = {
+            name: int(value)
+            for name, value in re.findall(r"PF_WIFI_STATE_(\w+) = (\d+)", wifi_header)
+        }
+        test_states = {
+            name: int(value)
+            for name, value in re.findall(r"PF_WIFI_COMMAND_(TESTING|TEST_JOINED|FAILED) = (\d+)", wifi_source)
+        }
+        ble_states = {
+            name: int(value)
+            for name, value in re.findall(r"PF_BLUETOOTH_STATE_(\w+) = (\d+)", bluetooth_source)
+        }
+        self.assertEqual({item.name: int(item) for item in tuple(WifiState)[:4]}, wifi_states)
+        self.assertEqual({item.name: int(item) for item in tuple(WifiState)[4:]}, {
+            "TESTING": test_states["TESTING"],
+            "TEST_JOINED": test_states["TEST_JOINED"],
+            "TEST_FAILED": test_states["FAILED"],
+        })
+        self.assertEqual({item.name: int(item) for item in BleState}, {
+            "OFF": ble_states["STARTING"],
+            "ADVERTISING": ble_states["ADVERTISING"],
+            "CONNECTED": ble_states["CONNECTED"],
+        })
 
     def test_identity_and_board_configuration_decode(self):
         self.assertEqual(self.identity["device_uid"], "0123456789ABCDEF")
@@ -77,9 +136,11 @@ class ProtocolTests(unittest.TestCase):
         config = parse_configuration_report(configuration_report(), self.identity)
         self.assertEqual(config["system_clock_mhz"], 200)
         self.assertEqual(config["sdcard_profile"], 1)
+        self.assertLessEqual(set(status_contract()["nested"]["board_configuration"]), set(config))
         raw = identity_report()
         for framed in (bytes([0]) + raw + bytes(4), raw + bytes(4)):
-            self.assertEqual(parse_identity_report(framed)["product_id"], 2)
+            with self.assertRaises(ValueError):
+                parse_identity_report(framed)
         with self.assertRaises(ValueError):
             parse_identity_report(raw + bytes(3) + b"\x01")
 
@@ -107,6 +168,12 @@ class ProtocolTests(unittest.TestCase):
         wireless = parse_identity_report(identity_report(capabilities=0xB5))
         self.assertEqual(parse_configuration_report(config, wireless)["radios"], 3)
         self.assertEqual(parse_configuration_report(configuration_report(), wireless)["radios"], 0)
+        config[14] = 0x22  # TCP CLI enabled, both radios disabled; independent saved switch.
+        parsed = parse_configuration_report(config, wireless)
+        self.assertTrue(parsed["tcp_cli_enabled"])
+        self.assertEqual(parsed["radios"], 0)
+        with self.assertRaisesRegex(ValueError, "wireless capability"):
+            parse_configuration_report(config, self.identity)
         config = bytearray(configuration_report())
         config[16] = 255
         with self.assertRaisesRegex(ValueError, "LED"):
@@ -143,6 +210,7 @@ class ProtocolTests(unittest.TestCase):
     def test_storage_snapshot_decodes_independent_sd_and_msc_fields(self):
         data = parse_memory_report(storage_report(), self.identity)
         self.assertTrue(data["sample_valid"])
+        self.assertLessEqual(set(status_contract()["nested"]["memory"]), set(data))
         self.assertTrue(data["initialized"])
         self.assertEqual(data["mode"], "sdio")
         self.assertEqual(data["capacity_bytes"], 4096 * 512)
@@ -165,14 +233,14 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(parse_memory_report(pending, self.identity)["msc"]["transition_pending"])
 
     def test_control_commands_use_report_20_and_validate_fields(self):
-        self.assertEqual(build_led_command_report(True, 9), bytes([20, 1, 9, 1, 0, 1, 0, 0, 0, 0]))
+        self.assertEqual(build_led_command_report(True, 9), bytes([20, 1, 9, 1, 0, 1]) + bytes(63))
         self.assertEqual(build_msc_command_report(False, force=True, transaction_id=4),
-                         bytes([20, 1, 4, 3, 1, 2, 0, 0, 0, 0]))
+                         bytes([20, 1, 4, 3, 1, 2]) + bytes(63))
         self.assertEqual(build_self_test_command_report("start", 1024, 3),
-                         bytes([20, 1, 3, 4, 0, 1, 0, 4, 0, 0]))
-        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
+                         bytes([20, 1, 3, 4, 0, 1, 0, 4]) + bytes(61))
+        settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False}
         self.assertEqual(build_settings_command_report(settings, 2),
-                         bytes([20, 1, 2, 6, 0, 200, 0, 1, 0, 0]))
+                         bytes([20, 1, 2, 5, 0, 200, 0, 1, 0]) + bytes(60))
         for arguments in (b"\x02\0\0\0\0", b"\0\x01\0\0\0"):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 build_control_command_report(1, 1, arguments=arguments)
@@ -187,38 +255,40 @@ class ProtocolTests(unittest.TestCase):
         for operation in (True, 3.0, "3", 0, 5):
             with self.subTest(operation=operation), self.assertRaises(ValueError):
                 build_wireless_command_report(1, operation)
-        for operation in (1, 2, 3, 4):
+        for operation in (9, 10, 11):
             with self.subTest(operation=operation):
-                report = build_wireless_command_report(
-                    1, operation, ssid="test-network" if operation == 3 else ""
-                )
-                self.assertEqual(report[2], operation)
+                report = build_wireless_command_report(1, operation)
+                self.assertEqual(report[3], operation)
 
     def test_control_result_validates_transaction_status_and_data(self):
-        result = parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 0]))
+        def result_report(switches):
+            return bytes([20, 1, 11, 5, 2, 0, 200, 0, 1, switches, 0]) + bytes(58)
+        result = parse_control_result_report(result_report(0))
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["saved_settings"], {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0})
-        self.assertEqual(parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 2]))["saved_settings"],
-                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2})
-        self.assertEqual(parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 14]))["saved_settings"],
-                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2, "tcp_cli_enabled": True})
-        self.assertEqual(parse_control_result_report(bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 8]))["saved_settings"],
+        self.assertEqual(result["saved_settings"],
                          {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False})
-        self.assertEqual(build_settings_command_report({"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 1}, 2),
-                         bytes([20, 1, 2, 6, 0, 200, 0, 1, 1, 0]))
+        self.assertEqual(parse_control_result_report(result_report(2))["saved_settings"],
+                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2, "tcp_cli_enabled": False})
+        self.assertEqual(parse_control_result_report(result_report(6))["saved_settings"],
+                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 2, "tcp_cli_enabled": True})
+        self.assertEqual(parse_control_result_report(result_report(0))["saved_settings"],
+                         {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "tcp_cli_enabled": False})
+        self.assertEqual(build_settings_command_report(
+            {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 1, "tcp_cli_enabled": False}, 2),
+                         bytes([20, 1, 2, 5, 0, 200, 0, 1, 1]) + bytes(60))
         with self.assertRaises(ValueError):
             build_settings_command_report({"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 4})
         for malformed in (
-            bytes([20, 1, 0, 6, 2, 0, 0, 0, 0, 0]),
-            bytes([20, 1, 11, 6, 3, 5, 0, 0, 0, 0]),
-            bytes([20, 1, 11, 3, 4, 4, 0, 0, 0, 0]),
-            bytes([20, 1, 11, 6, 2, 0, 0, 0, 2, 0]),
-            bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 4]),
-            bytes([20, 1, 11, 6, 2, 0, 200, 0, 1, 16]),
+            bytes([20, 1, 0, 5, 2, 0]) + bytes(63),
+            bytes([20, 1, 11, 5, 3, 5]) + bytes(63),
+            bytes([20, 1, 11, 3, 4, 4]) + bytes(63),
+            bytes([20, 1, 11, 5, 2, 0, 0, 0, 2, 0, 0]) + bytes(58),
+            result_report(8),
+            result_report(16),
         ):
             with self.subTest(report=malformed), self.assertRaises(ValueError):
                 parse_control_result_report(malformed)
-        unsupported_led = bytes([20, 1, 11, 1, 4, 4, 0, 0, 0, 0])
+        unsupported_led = bytes([20, 1, 11, 1, 4, 4]) + bytes(63)
         with self.assertRaisesRegex(ValueError, "advertised capabilities"):
             parse_control_result_report(unsupported_led, self.identity)
 

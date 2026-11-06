@@ -1,10 +1,13 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Typed data shapes shared by dashboard services and route registration."""
 
 from __future__ import annotations
 
 from typing import TypedDict
 
-from ..hid.models import (
+from ..reports.models import (
     BoardConfiguration,
     BootSettings,
     ControlResult,
@@ -13,50 +16,35 @@ from ..hid.models import (
     MscStatus,
     RuntimeStatus,
     SelfTestStatus,
-    WirelessNetwork,
-    WirelessOperation,
     WirelessStatus,
 )
 
 
-class ReportFreshness(TypedDict):
-    supported: bool | None
-    available: bool
-    stale: bool
-    age_ms: int | None
+class DashboardSnapshot(TypedDict):
+    """Complete status published by `GET /api/status`; `_empty_snapshot()` fills every key."""
 
-
-class BoardStatus(TypedDict, total=False):
-    temperature_valid: bool | None
-    temperature_centidegrees: int | None
-    led_available: bool
-    led_on: bool
-
-
-class DashboardSnapshot(TypedDict, total=False):
     connected: bool
     reconnecting: bool
     error: str | None
     hardware: HardwareIdentity | None
     board_configuration: BoardConfiguration | None
     runtime: RuntimeStatus | None
-    board_status: BoardStatus | None
     memory: MemoryStatus | None
-    filesystem_format: str | None
-    msc: MscStatus | None
     self_test: SelfTestStatus | None
-    settings: BootSettings | None
     settings_supported: bool
     settings_message: str | None
     control_result: ControlResult | None
     command_outcome_uncertain: bool
     reboot_pending: bool
-    report_freshness: dict[str, ReportFreshness]
     telemetry_stale: bool
     storage_stale: bool
-    self_test_stale: bool | None
+    self_test_stale: bool
     updated_at: str | None
     wireless_phase: str | None
+    wireless: WirelessStatus | None
+    wireless_error: str | None
+    wireless_cleanup_required: bool
+    command_resync_supported: bool
 
 
 class DashboardBoard(TypedDict):
@@ -66,22 +54,13 @@ class DashboardBoard(TypedDict):
     device_path: str
 
 
-class DashboardBoardsResponse(TypedDict):
+class _BoardWarnings(TypedDict, total=False):
+    warnings: list[str]
+
+
+class DashboardBoardsResponse(_BoardWarnings):
     boards: list[DashboardBoard]
     default_board_id: str | None
-
-
-class WirelessDashboardResponse(TypedDict):
-    wireless: WirelessStatus
-    reboot_pending: bool
-
-
-class WirelessScanResponse(TypedDict):
-    networks: list[WirelessNetwork]
-
-
-class WirelessTestResponse(TypedDict):
-    test: WirelessOperation
 
 
 class WirelessSaveResponse(TypedDict):
@@ -90,5 +69,20 @@ class WirelessSaveResponse(TypedDict):
     settings: BootSettings
 
 
-class WirelessCancelResponse(TypedDict):
-    cancelled: bool
+class ControlResponse(TypedDict):
+    control_result: ControlResult
+
+
+class MscResponse(ControlResponse):
+    msc: MscStatus
+
+
+class SettingsResponse(TypedDict):
+    settings: BootSettings
+    control_result: ControlResult | None
+
+
+class ResyncResponse(TypedDict):
+    uncertain: bool
+    control_result: ControlResult | None
+    wireless: WirelessStatus | None

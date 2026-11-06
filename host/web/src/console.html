@@ -1,0 +1,53 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2026 Ji Dong
+-->
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>PicoForge Console | {{ dashboard_type }}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3">
+  <link rel="stylesheet" href="/css/dashboard.css">
+  <link rel="stylesheet" href="/css/console.css">
+  <script type="module" src="/js/console.mjs"></script>
+</head>
+<body class="console-page">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="PicoForge dashboard">
+      <span class="brand-mark">PF</span>
+      <span class="brand-copy">
+        <strong>PicoForge</strong><small>{{ dashboard_type }} · App v{{ app_version }}</small>
+      </span>
+    </a>
+    <div class="connection">
+      <span class="connection-light" aria-hidden="true"></span>
+      <span>TCP port 2323</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-heading">
+      <div>
+        <h1>Wi-Fi console</h1>
+        <p class="console-lede">Only one CLI session is allowed; close other USB or TCP terminals before connecting.</p>
+      </div>
+      <div class="actions">
+        <button class="button button-secondary" id="connect" type="button" data-state="disconnected">Connect</button>
+      </div>
+    </section>
+
+    <section class="console-window" aria-label="CLI session">
+      <div class="console-bar">
+        <span id="console-status" role="status" aria-live="polite">Disconnected</span>
+        <span>Enter runs · Tab completes · ↑/↓ history · Shift+Tab leaves</span>
+      </div>
+      <div id="terminal" tabindex="0" role="textbox" aria-label="PicoForge CLI terminal"
+        aria-multiline="true" aria-readonly="true"></div>
+    </section>
+  </main>
+</body>
+</html>

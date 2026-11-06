@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file SD command/data sequencing and stream recovery over a native wire transport. */
 #include "sd_sdio_host.h"
 #include "sd_protocol.h"

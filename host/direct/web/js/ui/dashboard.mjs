@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
+import { CAP, OP, STAGED_EXPIRED } from "../protocol/constants.mjs";
+import { createDashboardView, renderControls } from "./dashboard-view.mjs";
+import { bindWirelessForm } from "./sections/wireless-form.mjs";
+import { bindConsoleLink } from "./sections/console-link.mjs";
+import { canRun } from "../state/selectors.mjs";
+import { createUiStore, UI_INITIAL } from "../state/store.mjs";
+import { parseHexBytes } from "../protocol/codec.mjs";
+import { queryElement } from "./dom.mjs";
+import { deriveDashboardViewModel } from "./sections/status-model.mjs";
+import { describe } from "./messages.mjs";
+
+/**
+ * @typedef {{secure: boolean, hid: boolean, ble: boolean, now: () => number,
+ *   clipboard: Pick<Clipboard, "writeText"> | null}} DashboardEnvironment
+ * @typedef {{session: import("../board/session.mjs").BoardSession,
+ *   selectTransport: (kind: "usb" | "ble") => import("../board/session.mjs").BoardSession,
+ *   timers: ReturnType<typeof import("../timers.mjs").createTimerScope>,
+ *   environment: DashboardEnvironment}} DashboardOptions
+ */
+
+/**
+ * @brief Wire the dashboard DOM to a board session: subscribe to its domain store, send user intents to it, render.
+ * @param {DashboardOptions} options Injected session, timers, intents and browser facts.
+ */
+export function mountDashboard({ session, selectTransport, timers, environment }) {
+  /** @param {string} id */
+  const element = id => queryElement(`#${id}`);
+  /** @param {string} id */
+  const button = id => queryElement(`button#${id}`);
+  let client = session;
+  let disposed = false;
+  const ui = createUiStore();
+  /** @param {Partial<import("../state/reducer.mjs").UiState>} changes */
+  const setUi = changes => ui.dispatch({ type: "patch", changes });
+  const renderStatus = createDashboardView();
+  const consoleLink = bindConsoleLink(() => client, error => setUi({ action_error: describe(error) }));
+  const usbDialog = queryElement("dialog#usb-connection-dialog");
+  const bluetoothDialog = queryElement("dialog#bluetooth-connection-dialog");
+  const ledControl = button("led-control");
+  const mscControl = button("msc-control");
+  const settingsSave = button("settings-save");
+  const settingsReboot = button("settings-reboot");
+  const settingsClock = queryElement("select#settings-clock");
+  const settingsStorage = queryElement("select#settings-storage");
+  const settingsRadios = [queryElement("select#direct-settings-wifi"), queryElement("select#direct-settings-ble")];
+  const controlKey = queryElement("input#direct-ble-control-key");
+  const tcpCli = queryElement("select#direct-settings-tcp-cli");
+  const selectedRadios = () => client.state.hardware?.capabilities & CAP.WIRELESS
+    ? Number(settingsRadios[0].value) | Number(settingsRadios[1].value) << 1 : 0;
+  const configurationDialog = queryElement("dialog#configuration-dialog");
+  const rebootDialog = queryElement("dialog#reboot-dialog");
+  const returnDialog = queryElement("dialog#return-dialog");
+  const shareDialog = queryElement("dialog#share-dialog");
+  let wasConnected = client.state.connected;
+  let refreshQueued = false;
+  /** Coalesce bursts of client state changes into one render and side-effect pass per microtask. */
+  const scheduleRefresh = () => {
+    if (refreshQueued || disposed) return;
+    refreshQueued = true;
+    queueMicrotask(refresh);
+  };
+  const bluetoothLink = () => client.state.link === "ble";
+  /** @type {ReturnType<typeof bindWirelessForm>} */
+  let wirelessForm;
+  wirelessForm = bindWirelessForm({
+    supported: () => Boolean(client.state.hardware?.capabilities & CAP.WIRELESS),
+    settingsReady: () => !bluetoothLink() && canRun(client.state, "settings").allowed,
+    timerScope: timers,
+    now: environment.now,
+    clipboard: environment.clipboard,
+    ready: () => canRun(client.state, "wireless").allowed,
+    tcpReady: () => bluetoothLink() ? canRun(client.state, "settings").allowed
+      : canRun(client.state, "wireless").allowed && Number(settingsRadios[0].value) === 1,
+    scan: signal => client.scanWireless(signal),
+    test: (settings, onProgress, signal) => client.testWireless(settings, onProgress, signal),
+    cancelTest: signal => client.cancelWireless(signal),
+    changed: () => setUi({ wireless_form_busy: wirelessForm.operationBusy() }),
+  });
+  ui.subscribe(scheduleRefresh);
+  let watched = null;
+  let unwatch = () => {};
+  /** Follow the session's domain store; a transport switch may hand over a session with a different store. */
+  const watch = () => {
+    if (watched === client.store) return;
+    unwatch();
+    watched = client.store;
+    unwatch = watched.subscribe(scheduleRefresh);
+  };
+  watch();
+  /** Reset dashboard-only state after a disconnect, then render once. Performs no device I/O. */
+  function refresh() {
+    refreshQueued = false;
+    if (disposed) return;
+    const board = client.state;
+    if (wasConnected && !board.connected) {
+      wirelessForm.reset();
+      ui.dispatch({ type: "replace", state: { ...UI_INITIAL, action_error: ui.getState().action_error } });
+      for (const dialog of [configurationDialog, rebootDialog, returnDialog, shareDialog]) dialog.close();
+    }
+    wasConnected = board.connected;
+    render(board, ui.getState());
+  }
+
+  /** View update: reads board and UI state, writes only DOM and the form's adopted snapshot. */
+  /** @param {import("../state/reducer.mjs").DashboardState} board
+   * @param {import("../state/reducer.mjs").UiState} view */
+  function render(board, view) {
+    // Domain state carries reason codes; this is the one place they become text.
+    const state = { ...board, error: describe(board.error) ?? view.action_error,
+      recovery_message: describe(board.recovery_message), wireless_error: describe(board.wireless_error),
+      wireless_poll_error: describe(board.wireless_poll_error) };
+    const viewModel = deriveDashboardViewModel(state, view.wireless_form_busy);
+    const settingsReady = canRun(board, "settings", viewModel.eligibility).allowed;
+    const wirelessReady = canRun(board, "wireless", viewModel.eligibility).allowed;
+    renderStatus({ ...state, ...viewModel, open_console: consoleLink.open }, viewModel);
+    renderControls(state, { eligibility: viewModel.eligibility, formBusy: view.wireless_form_busy,
+      settingsMessage: view.settings_message, bleName: client.transport.name, settingsDirty: view.settings_dirty,
+      wirelessDirty: wirelessForm.dirty(),
+      wirelessSaveBlockReason: wirelessForm.saveBlockReason() }, environment);
+    wirelessForm.update(board, { wireless: wirelessReady, settings: !bluetoothLink() && settingsReady,
+      tcp: bluetoothLink() ? settingsReady : wirelessReady && Number(settingsRadios[0].value) === 1 });
+  }
+
+  async function run(operation) {
+    setUi({ action_error: null });
+    try { await operation(); } catch (error) { setUi({ action_error: describe(error) }); }
+  }
+
+  for (const [id, dialog, bluetooth] of /** @type {[string, HTMLDialogElement, boolean][]} */ (
+    [["usb-open", usbDialog, false], ["bluetooth-open", bluetoothDialog, true]])) {
+    element(id).addEventListener("click", () => {
+      if (button(id).disabled) return;
+      if ((client.state.link === "ble") !== bluetooth) {
+        client = selectTransport(bluetooth ? "ble" : "usb");
+        watch();
+      }
+      scheduleRefresh();
+      dialog.showModal();
+    });
+  }
+  element("usb-connect").addEventListener("click", () => run(async () => {
+    if (button("usb-connect").disabled) return;
+    if (client.state.connected || client.state.reconnecting) await client.disconnect();
+    else {
+      await client.connect();
+      if (client.state.connected) usbDialog.close();
+    }
+  }));
+  element("bluetooth-scan").addEventListener("click", () => run(async () => {
+    if (button("bluetooth-scan").disabled) return;
+    if (client.state.connected || client.state.reconnecting) {
+      await client.disconnect();
+      return;
+    }
+    const key = controlKey.value;
+    controlKey.value = "";
+    await client.connect(parseHexBytes(key, 32, "control-key"));
+    if (client.state.connected) bluetoothDialog.close();
+  }));
+  for (const [name, dialog] of /** @type {[string, HTMLDialogElement][]} */ (
+    [["usb", usbDialog], ["bluetooth", bluetoothDialog]])) {
+    element(`${name}-connection-close`).addEventListener("click", () => {
+      if (!client.state.busy) dialog.close();
+    });
+    dialog.addEventListener("cancel", event => {
+      if (client.state.busy) event.preventDefault();
+    });
+    dialog.addEventListener("close", () => { controlKey.value = ""; });
+  }
+  ledControl.addEventListener("click", () => run(() => client.setLed(!client.state.runtime?.led_on)));
+  mscControl.addEventListener("click", () => run(async () => {
+    if (mscControl.disabled) return;
+    const enabled = client.state.msc?.enabled;
+    if (enabled) returnDialog.showModal();
+    else shareDialog.showModal();
+  }));
+  element("self-test-start").addEventListener("click", () => run(() =>
+    client.setSelfTest("start", queryElement("input#self-test-size").valueAsNumber)));
+  element("self-test-cancel").addEventListener("click", () => run(() => client.setSelfTest("cancel")));
+  element("self-test-size").addEventListener("input", scheduleRefresh);
+  for (const control of [settingsClock, settingsStorage, ...settingsRadios]) {
+    control.addEventListener("change", () => {
+      setUi({ settings_dirty: Number(settingsClock.value) !== client.state.settings?.system_clock_mhz
+        || Number(settingsStorage.value) !== client.state.settings?.sdcard_profile
+        || selectedRadios() !== (client.state.settings?.radios ?? 0) });
+      scheduleRefresh();
+    });
+  }
+  settingsSave.addEventListener("click", () => {
+    if (settingsSave.disabled) return;
+    const bluetooth = bluetoothLink();
+    setUi({ configuration_force_save: Boolean(client.state.msc?.enabled) });
+    element("configuration-force-warning").hidden = !ui.getState().configuration_force_save;
+    const wirelessWarning = element("direct-configuration-wireless-warning");
+    wirelessWarning.textContent = bluetooth
+      ? "This saves the TCP CLI switch without sending Wi-Fi credentials or the Control key. "
+        + "Bluetooth is authenticated but not encrypted."
+      : "Wi-Fi and Bluetooth credentials are saved with these settings. Keep a copy of the Control key; "
+        + "it cannot be read back. Flash credentials are not encrypted.";
+    wirelessWarning.hidden = !wirelessForm.dirty();
+    const clock = Number(settingsClock.value);
+    element("configuration-dialog-profile").textContent =
+      `System clock: ${clock ? `${clock} MHz` : "Default"}. `
+      + `SD Card: ${Number(settingsStorage.value) === 1 ? "High-Speed" : "Standard"}.`
+      + (!bluetooth && client.state.hardware?.capabilities & CAP.WIRELESS
+        ? ` Wi-Fi: ${selectedRadios() & 1 ? "Enabled" : "Disabled"}.`
+          + ` Bluetooth: ${selectedRadios() & 2 ? "Enabled" : "Disabled"}.` : "")
+      + (bluetooth && wirelessForm.dirty()
+        ? ` TCP CLI: ${tcpCli.value === "1" ? "Enabled" : "Disabled"}.` : "");
+    configurationDialog.showModal();
+  });
+  element("confirm-configuration").addEventListener("click", () => run(async () => {
+    if (!configurationDialog.open) return;
+    configurationDialog.close();
+    if (settingsSave.disabled) return;
+    const force = ui.getState().configuration_force_save;
+    if (Boolean(client.state.msc?.enabled) !== force) return;
+    const owner = client;
+    const signal = wirelessForm.signal;
+    const generation = owner.connection.generation;
+    const current = () => !disposed && client === owner && !signal.aborted
+      && owner.connection.generation === generation;
+    const bluetooth = bluetoothLink();
+    const tcpCliEnabled = bluetooth && wirelessForm.dirty()
+      ? tcpCli.value === "1" : undefined;
+    const settings = { system_clock_mhz: Number(settingsClock.value), sdcard_profile: Number(settingsStorage.value),
+      radios: bluetooth ? client.state.settings?.radios ?? 0 : selectedRadios() };
+    let wireless = null;
+    try {
+      wireless = wirelessForm.request();
+      const saved = await client.saveConfiguration({ settings, force, tcpCliEnabled,
+        wireless });
+      // Forced saves intentionally cross a reconnect; only a verified result with no newer draft may update the UI.
+      const recovered = force && !disposed && client === owner && owner.state.recovered_opcode === OP.SAVE_SETTINGS
+        && !ui.getState().settings_dirty && !wirelessForm.dirty();
+      if (!current() && !recovered) return;
+      if (saved) wirelessForm.finish(saved);
+      setUi({ settings_dirty: false, settings_message: recovered
+        ? "Settings saved and confirmed after reconnect." : "Settings saved. Waiting for the board to reboot." });
+    } catch (error) {
+      if (!current()) return;
+      if (!bluetooth && wirelessForm.dirty()) wirelessForm.finish(null, describe(error));
+      setUi({ settings_message: `Save failed: ${describe(error)}` });
+    }
+  }));
+  settingsReboot.addEventListener("click", () => {
+    if (settingsReboot.disabled) return;
+    element("reboot-consequence").textContent = client.state.wireless?.staged_mask
+      || client.state.wireless?.staged_state & STAGED_EXPIRED
+      ? "Staged wireless credentials and their expiry marker will be discarded."
+      : ui.getState().settings_dirty || wirelessForm.dirty()
+      ? "Unsaved dashboard changes will be lost." : "Saved next-boot settings will be applied.";
+    rebootDialog.showModal();
+  });
+  element("confirm-reboot").addEventListener("click", () => run(async () => {
+    if (!rebootDialog.open) return;
+    rebootDialog.close();
+    if (!settingsReboot.disabled) await client.reboot(true);
+  }));
+  element("confirm-return").addEventListener("click", () => run(async () => {
+    if (!returnDialog.open) return;
+    returnDialog.close();
+    if (!mscControl.disabled && client.state.msc?.enabled) await client.setMsc(false, true);
+  }));
+  element("confirm-share").addEventListener("click", () => run(async () => {
+    if (!shareDialog.open) return;
+    shareDialog.close();
+    if (!mscControl.disabled && !client.state.msc?.enabled) await client.setMsc(true, false);
+  }));
+  for (const [name, dialog] of /** @type {[string, HTMLDialogElement][]} */ (
+    [["configuration", configurationDialog], ["reboot", rebootDialog], ["return", returnDialog], ["share", shareDialog]])) {
+    element(`cancel-${name}`).addEventListener("click", () => dialog.close());
+  }
+  // ponytail: handle Escape on keydown instead of relying on the native cancel event, because a repeated Escape may
+  // close a modal without a cancelable cancel event; connection dialogs stay open while a link is being set up.
+  for (const dialog of [usbDialog, bluetoothDialog, configurationDialog, rebootDialog, returnDialog, shareDialog]) {
+    dialog.addEventListener("keydown", event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (!client.state.busy || ![usbDialog, bluetoothDialog].includes(dialog)) dialog.close();
+    });
+  }
+  refresh();
+  return {
+    refresh: scheduleRefresh,
+    dispose() {
+      disposed = true;
+      unwatch();
+      wirelessForm.dispose();
+      consoleLink.dispose();
+    },
+  };
+}

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Keep scheduling unrestricted except for the SDK radio owner's initialization-core requirement."""
 from pathlib import Path
 import re

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file
  * @brief USB service task: CLI session pump (CDC or Wi-Fi TCP), HID report scheduling and MSC ownership.

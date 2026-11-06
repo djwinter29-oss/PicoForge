@@ -24,13 +24,14 @@ Keep each topic in one authoritative document; other guides link to it rather th
 | Runtime, storage ownership, automount and worker admission | [Architecture](reference/architecture.md) |
 | Clock profiles, flash settings and forced-save safety | [Settings](reference/settings.md) |
 | USB management report layouts and command semantics | [USB HID reference](reference/usb-hid.md) |
-| Radio execution, credential extension, provisioning and BLE authorization | [Wireless reference](reference/wireless.md) |
+| Radio execution, credential extension, provisioning and TCP CLI authorization | [Wireless integration](development/wireless-integration.md) |
+| BLE advertising, GATT layout, authorization and command form | [Bluetooth LE protocol](reference/bluetooth.md) |
 | SD protocol, block interfaces and recovery | [SD driver](reference/sdcard/driver.md) |
 | PIO/SPI engine lifecycle and wire timing | [Physical links](reference/sdcard/physical-links.md) |
 | CLI commands and terminal use | [Console guide](guides/console.md) |
 | CLI dependency, registration and transport internals | [Console integration](development/console-integration.md) |
 | Benchmark safety, timing boundaries and interpretation | [Benchmark guide](guides/sdcard-benchmark.md) |
-| Dashboard component isolation and host checks | [Host development](development/host-tools.md) |
+| Direct dashboard independence and host checks | [Host development](development/host-tools.md) |
 | Build/test commands and hardware acceptance | [Firmware testing](development/firmware-testing.md) |
 | GitHub Actions release packaging, publication and download verification | [Release and publishing](deployment/release.md) |
 | Current evidence gaps and SD review dispositions | [Qualification gaps](validation/qualification-gaps.md), [SD review](validation/sd-review.md) |

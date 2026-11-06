@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 name: Host Validation
 
 'on':
@@ -41,6 +44,24 @@ jobs:
         with:
           node-version: "22.x"
 
+      - name: Check Direct JavaScript types
+        if: matrix.python == '3.12'
+        run: npx --yes --package typescript@5.9.3 tsc --project host/direct/web/js/tsconfig.json
+
+      - name: Check shared JavaScript boundaries
+        if: matrix.python == '3.12'
+        run: npx --yes --package typescript@5.9.3 tsc --project host/web/tsconfig.json
+
+      - name: Install dashboard browser test dependencies
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.12'
+        run: |
+          python -m pip install --disable-pip-version-check --no-input -r host/direct/tests/browser/requirements.txt -r host/web/tests/browser/requirements.txt
+          python -m playwright install --with-deps chromium firefox webkit
+
+      - name: Run Direct browser checks
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.12'
+        run: python host/direct/tests/browser/run.py
+
       - name: Setup .NET
         if: matrix.python == '3.12'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -58,7 +79,7 @@ jobs:
         run: brew install hidapi
 
       - name: Install Python host dependencies
-        run: python -m pip install --disable-pip-version-check --no-input --editable host/python
+        run: python -m pip install --disable-pip-version-check --no-input --editable host/python -r host/python/tests/requirements.txt
 
       - name: Run host unit tests
         if: matrix.python == '3.12'
@@ -66,6 +87,18 @@ jobs:
           PYTHON: python
         shell: bash
         run: bash tools/validation/test-host.sh
+
+      - name: Verify installed Python wheel
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.12'
+        run: |
+          python -m pip wheel --no-deps host/python --wheel-dir build/wheels
+          python -m venv build/wheel-check
+          build/wheel-check/bin/python -m pip install build/wheels/*.whl
+          build/wheel-check/bin/python -I tools/validation/check-python-wheel.py 0.0.0.dev0
+
+      - name: Run shared browser checks through Python and .NET hosting
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.12'
+        run: python host/web/tests/browser/run.py --browser chromium firefox webkit
 
       - name: Test minimum Python version
         if: matrix.python == '3.10'

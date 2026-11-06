@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Stable USB device descriptors: CDC CLI, vendor HID and removable-media MSC.
  */
@@ -81,23 +84,7 @@ static uint8_t const hid_report_descriptor[] = {
 #if PF_ENABLE_WIRELESS
     0x85, PF_WIRELESS_REPORT_ID,
     0x95, PF_WIRELESS_STATUS_SIZE,
-    0x09, 0x1E,
-    0xB1, 0x02,
-    0x85, PF_WIRELESS_CONFIG_REPORT_ID,
-    0x95, PF_WIRELESS_REQUEST_SIZE,
-    0x09, 0x1F,
-    0xB1, 0x02,
-    0x85, PF_WIRELESS_COMMAND_REPORT_ID,
-    0x95, PF_WIRELESS_COMMAND_SIZE,
-    0x09, 0x22,
-    0xB1, 0x02,
-    0x85, PF_WIRELESS_RESULT_REPORT_ID,
-    0x95, PF_WIRELESS_RESULT_SIZE,
-    0x09, 0x23,
-    0xB1, 0x02,
-    0x85, PF_WIRELESS_AUTH_REPORT_ID,
-    0x95, PF_WIRELESS_AUTH_RESULT_SIZE,
-    0x09, 0x24,
+    0x09, 0x0C,
     0xB1, 0x02,
 #endif
     0xC0,

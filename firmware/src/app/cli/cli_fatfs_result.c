@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file
  * @brief FatFs result reporting shared by storage and filesystem CLI groups.

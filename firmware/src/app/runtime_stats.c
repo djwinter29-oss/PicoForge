@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Interval CPU accounting and static SRAM reservation from Pico SDK linker symbols.
  */

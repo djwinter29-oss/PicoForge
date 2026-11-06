@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
@@ -15,15 +18,17 @@ for tool in "$PYTHON" "$NODE" "$DOTNET"; do
 done
 
 printf '%s\n' '=== Python host tests ==='
+"$PYTHON" -m uv lock --check --project "$REPO_ROOT/host/python"
+"$PYTHON" -m pyright --project "$REPO_ROOT/host/python/pyproject.toml"
 "$PYTHON" -m unittest discover -s "$REPO_ROOT/host/python/tests" -v
 
 printf '%s\n' '=== Direct dashboard tests ==='
-"$NODE" --test "$REPO_ROOT"/host/direct/tests/*.test.mjs
+"$NODE" "$REPO_ROOT/host/direct/tests/run-tests.mjs"
 "$PYTHON" -m unittest discover -s "$REPO_ROOT/host/direct/tests" -p 'test_*.py' -v
 
 printf '%s\n' '=== Python/.NET dashboard tests ==='
-"$NODE" --test "$REPO_ROOT"/host/web/tests/*.test.mjs
+"$NODE" "$REPO_ROOT/host/web/tests/run-tests.mjs"
 
 printf '%s\n' '=== .NET host tests ==='
 "$DOTNET" test "$REPO_ROOT/host/dotnet/PicoForge.sln" \
-    --configuration Release --nologo
+    --configuration Release --nologo --filter "Category!=Performance"

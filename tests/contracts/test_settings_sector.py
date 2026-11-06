@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Exercise the post-link settings reservation guard without hardware."""
 from pathlib import Path
 import subprocess

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #include "unity.h"
 #include <string.h>
 #define WORKER_SOURCE "app/storage/storage_worker.c"
@@ -16,6 +19,33 @@ static bool msc_enabled;
 static bool msc_transition_pending;
 static bool prepare_save_fails;
 static unsigned prepare_save_calls;
+static void *hid_control_buffer;
+static uint16_t hid_control_length;
+static unsigned hid_control_delegates;
+bool __real_usbd_control_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t bytes)
+{
+    (void)rhport;
+    (void)ep_addr;
+    (void)result;
+    (void)bytes;
+    return true;
+}
+bool __real_hidd_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_control_request_t *request)
+{
+    (void)rhport;
+    (void)stage;
+    (void)request;
+    ++hid_control_delegates;
+    return true;
+}
+bool tud_control_xfer(uint8_t rhport, const tusb_control_request_t *request, void *buffer, uint16_t length)
+{
+    (void)rhport;
+    (void)request;
+    hid_control_buffer = buffer;
+    hid_control_length = length;
+    return true;
+}
 bool pf_usb_msc_prepare_save(void) { ++prepare_save_calls; return !prepare_save_fails; }
 void pf_usb_msc_finish_save(bool saved) { msc_enabled = !saved; }
 void pf_usb_msc_task(void) {}

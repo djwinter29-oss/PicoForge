@@ -1,0 +1,54 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2026 Ji Dong
+-->
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
+  <title>PicoForge Console | Direct</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/direct.css">
+  <link rel="stylesheet" href="css/console.css">
+  <script type="module" src="js/console-app.mjs"></script>
+</head>
+<body class="console-page">
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="PicoForge Direct dashboard">
+      <span class="brand-mark">PF</span>
+      <span class="brand-copy"><strong>PicoForge</strong><small>Direct · App v0.0.0-debug</small></span>
+    </a>
+    <div class="connection">
+      <span class="connection-light" aria-hidden="true"></span>
+      <span id="console-target"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-heading">
+      <div>
+        <h1>Wi-Fi console</h1>
+        <p class="console-lede">Only one CLI session is allowed; close other USB or TCP terminals before connecting.</p>
+      </div>
+      <div class="actions">
+        <button class="button button-secondary" id="connect" type="button" data-state="disconnected">Connect</button>
+      </div>
+    </section>
+
+    <section class="console-window" aria-label="CLI session">
+      <div class="console-bar">
+        <span id="console-status" role="status" aria-live="polite">Disconnected</span>
+        <span>Enter runs · Tab completes · ↑/↓ history · Shift+Tab leaves</span>
+      </div>
+      <pre id="terminal" tabindex="0" role="textbox" aria-label="PicoForge CLI terminal"
+        aria-multiline="true" aria-readonly="true"></pre>
+    </section>
+  </main>
+</body>
+</html>
