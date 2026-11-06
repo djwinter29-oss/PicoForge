@@ -14,11 +14,12 @@ from .models import (
     ControlResult,
     HardwareIdentity,
     InputReport,
-    MscStatus,
+    SupportedHardwareIdentity,
     WirelessNetwork,
-    WirelessOperation,
+    WirelessReportStatus,
     WirelessSaveResult,
     WirelessStatus,
+    WirelessTestResult,
 )
 from ..reports import (
     CAP_FORCE_SAVE,
@@ -177,10 +178,11 @@ class PicoForgeHid:
         self.identity: HardwareIdentity | None = None
         self.configuration: BoardConfiguration | None = None
         self._transaction_id = 0
-        self.last_command_result: dict[str, object] | None = None
+        self.last_command_result: ControlResult | None = None
         self._command_uncertain = False
+        self._uncertain_command: tuple[int, int] | None = None
+        self._uncertain_wireless_operation: tuple[str, int] | None = None
         self._control_lock = RLock()
-        self._wireless_snapshot: WirelessStatus | None = None
         self._wireless_active = False
         self._tested_generation: int | None = None
         self._tested_at: float | None = None
@@ -188,7 +190,15 @@ class PicoForgeHid:
     @property
     def command_uncertain(self) -> bool:
         """True after a write whose firmware outcome could not be confirmed; further writes are blocked."""
-        return self._command_uncertain
+        return self._command_uncertain or self._uncertain_wireless_operation is not None
+
+    @property
+    def uncertain_command(self) -> tuple[int, int] | None:
+        return self._uncertain_command
+
+    @property
+    def uncertain_wireless_operation(self) -> tuple[str, int] | None:
+        return self._uncertain_wireless_operation
 
     @property
     def wireless_active(self) -> bool:
@@ -212,8 +222,9 @@ class PicoForgeHid:
         self._require_open()
         identity = self._supported_identity()
         report = self._device.get_feature_report(CONFIGURATION_REPORT_ID, CONFIGURATION_FEATURE_SIZE)
-        self.configuration = _parse_report(parse_configuration_report, report, identity)
-        return self.configuration
+        configuration = _parse_report(parse_configuration_report, report, identity)
+        self.configuration = configuration
+        return configuration
 
     def read_input_report(self, timeout_ms: int = 250) -> InputReport | None:
         if timeout_ms < 0:
@@ -224,7 +235,7 @@ class PicoForgeHid:
         )
         if not report:
             return None
-        identity = self.identity or self.read_info()
+        identity = self._supported_identity()
         if report[0] == STORAGE_REPORT_ID:
             data = _parse_report(parse_memory_report, report, identity)
             return {"kind": "memory", "data": data}
@@ -236,15 +247,15 @@ class PicoForgeHid:
             return {"kind": "runtime", "data": _parse_report(parse_status_report, report, identity)}
         raise ProtocolError(f"unexpected HID Input report ID {report[0]}")
 
-    def _supported_identity(self) -> HardwareIdentity:
+    def _supported_identity(self) -> SupportedHardwareIdentity:
         identity = self.identity or self.read_info()
-        if identity.get("supported") is False:
+        if identity["supported"] is not True:
             raise RuntimeError(f"unsupported product: {identity.get('product_name', 'unknown product')}")
         return identity
 
-    def _require(self, capability: int, message: str) -> HardwareIdentity:
+    def _require(self, capability: int, message: str) -> SupportedHardwareIdentity:
         identity = self._supported_identity()
-        if not identity.get("capabilities", 0) & capability:
+        if not identity["capabilities"] & capability:
             raise RuntimeError(message)
         return identity
 
@@ -264,12 +275,10 @@ class PicoForgeHid:
         settings = self._complete_settings(settings)
         command = build_settings_command_report(settings, self._next_transaction_id(), force=force)
         result = self._execute_control(command, ControlOpcode.SAVE_SETTINGS, reconnect=force)
-        if result["status"] != "completed":
-            raise RuntimeError(f"settings command {result['status']}: {result['error']}")
+        self._require_completed(result, "Settings")
         saved = result["saved_settings"]
-        if saved != settings:
-            self._command_uncertain = True
-            raise RuntimeError("firmware did not confirm the selected boot settings")
+        if saved is None or saved != settings:
+            raise RuntimeError("Firmware did not confirm the requested settings")
         return saved
 
     def _complete_settings(self, settings: dict[str, object]) -> dict[str, object]:
@@ -290,24 +299,22 @@ class PicoForgeHid:
     def read_wireless(self) -> WirelessStatus:
         self._require_open()
         self._require(CAP_WIRELESS, "Wireless provisioning is unavailable on this firmware")
-        try:
-            status = _parse_report(
-                parse_wireless_status_report,
-                self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE),
-            )
-        except (OSError, ValueError):
-            if self._wireless_snapshot is not None:
-                self._wireless_snapshot["stale"] = True
-            raise
+        report_status: WirelessReportStatus = _parse_report(
+            parse_wireless_status_report,
+            self._device.get_feature_report(WIRELESS_REPORT_ID, WIRELESS_FEATURE_SIZE),
+        )
         configuration = self.configuration or self.read_configuration()
-        status.update(wifi_enabled=bool(configuration["radios"] & 1),
-                      ble_enabled=bool(configuration["radios"] & 2),
-                      tcp_cli_enabled=configuration["tcp_cli_enabled"], stale=False)
+        status: WirelessStatus = {
+            **report_status,
+            "wifi_enabled": bool(configuration["radios"] & 1),
+            "ble_enabled": bool(configuration["radios"] & 2),
+            "tcp_cli_enabled": configuration["tcp_cli_enabled"],
+            "stale": False,
+            "remaining_seconds": None,
+        }
         if (status["pair_tested"] and status["test_generation"] == self._tested_generation
                 and self._tested_at is not None):
             status["remaining_seconds"] = max(0, 600 - ceil(monotonic() - self._tested_at))
-        # Return the cached mapping so existing snapshot holders can observe a later read failure as stale.
-        self._wireless_snapshot = status
         self._wireless_active = (
             status["wifi_state_id"] == WifiState.TESTING or status["scan_state"] == "scanning"
         )
@@ -329,7 +336,10 @@ class PicoForgeHid:
             retry_get=True,
         )
         self._require_completed(result)
-        return bytes(result["proof"])
+        proof = result["proof"]
+        if proof is None:
+            raise ProtocolError("TCP CLI authentication result is missing its proof")
+        return bytes(proof)
 
     @_serialized
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResult:
@@ -339,7 +349,14 @@ class PicoForgeHid:
             raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
         validate_wireless_configuration(settings)
         previous = self.read_wireless()
-        board = dict(settings["board"])
+        board_settings = settings["board"]
+        if not isinstance(board_settings, dict):
+            raise ProtocolError("Validated wireless settings are missing board configuration")
+        board: dict[str, object] = {}
+        for key, value in board_settings.items():
+            if not isinstance(key, str):
+                raise ProtocolError("Validated board setting names must be strings")
+            board[key] = value
         if "tcp_cli_enabled" in settings:
             board["tcp_cli_enabled"] = settings["tcp_cli_enabled"]
         board = self._complete_settings(board)
@@ -365,13 +382,18 @@ class PicoForgeHid:
         command = build_settings_command_report(board, self._next_transaction_id(), commit=commit)
         result = self._execute_control(command, ControlOpcode.SAVE_SETTINGS)
         self._require_completed(result)
-        if result["saved_settings"] != board or result["commit_mask"] != expected_mask:
-            self._command_uncertain = True
-            raise RuntimeError("Saved board settings or credential commit were not confirmed; outcome is uncertain")
+        saved = result["saved_settings"]
+        radios = board["radios"]
+        tcp_cli_enabled = board["tcp_cli_enabled"]
+        if saved is None or type(radios) is not int or type(tcp_cli_enabled) is not bool:
+            raise ProtocolError("Wireless save result is missing validated board settings")
+        if saved != board or result["commit_mask"] != expected_mask:
+            raise RuntimeError("Firmware settings or credential commit differ from the requested values")
         # Reset is already scheduled. Confirm saved fields from the verified commit, not a post-save GET.
-        response = {**staged, "wifi_enabled": bool(board["radios"] & 1),
-                    "ble_enabled": bool(board["radios"] & 2), "tcp_cli_enabled": board["tcp_cli_enabled"],
-                    "stale": True, "settings": result["saved_settings"]}
+        response: WirelessSaveResult = {
+            **staged, "wifi_enabled": bool(radios & 1), "ble_enabled": bool(radios & 2),
+            "tcp_cli_enabled": tcp_cli_enabled, "stale": True, "settings": saved,
+        }
         if not use_tested and ("ssid" in settings or "ssid_hex" in settings):
             raw = request_ssid(settings)
             response.update(ssid=display_ssid(raw), ssid_hex=raw.hex(),
@@ -385,15 +407,19 @@ class PicoForgeHid:
         """Scan for nearby access points and return strongest unique SSIDs."""
         self._require_open()
         previous = self.read_wireless()
-        self._wireless_command(ControlOpcode.WIFI_SCAN)
-        scan = self._poll_wireless("scan", previous["scan_generation"], 15.0, on_poll=on_poll)
+        command = self._wireless_command(ControlOpcode.WIFI_SCAN)
+        scan = self._poll_wireless(
+            "scan", previous["scan_generation"], 15.0, on_poll=on_poll,
+            command_reference=(command["transaction_id"], command["opcode"]),
+        )
         networks = []
         for index in range(scan["scan_count"]):
             result = self._wireless_command(ControlOpcode.WIFI_ENTRY, index=index, generation=scan["scan_generation"])
             entry = result["scan_entry"]
+            if entry is None:
+                raise ProtocolError("Wireless scan entry result is missing")
             if entry["generation"] != scan["scan_generation"] or entry["index"] != index:
-                self._command_uncertain = True
-                raise ValueError("Mismatched scan entry generation or index")
+                raise ProtocolError("Mismatched scan entry generation or index")
             networks.append(entry)
         return networks
 
@@ -401,7 +427,7 @@ class PicoForgeHid:
     def test_wireless(
         self, ssid: str, password: str = "", *, on_poll: Callable[[], None] | None = None,
         on_progress: Callable[[str], None] | None = None, cancel: Event | None = None,
-    ) -> WirelessOperation:
+    ) -> WirelessTestResult:
         """Test a temporary network join; firmware retains credentials only in RAM after success."""
         self._require_open()
         # Validate both fields before staging either, including opaque SSIDs selected from scans.
@@ -410,22 +436,27 @@ class PicoForgeHid:
         previous = self.read_wireless()
         self._wireless_command(ControlOpcode.STAGE_SSID, value=ssid)
         self._wireless_command(ControlOpcode.STAGE_PASSWORD, value=password)
-        result = self._wireless_command(ControlOpcode.WIFI_TEST)
+        command = self._wireless_command(ControlOpcode.WIFI_TEST)
         status = self._poll_wireless("test", previous["test_generation"], 35.0,
-                                     on_poll=on_poll, on_progress=on_progress, cancel=cancel)
+                                     on_poll=on_poll, on_progress=on_progress, cancel=cancel,
+                                     command_reference=(command["transaction_id"], command["opcode"]))
         self._tested_generation = status["test_generation"]
         self._tested_at = monotonic()
-        return {"transaction_id": result["transaction_id"], "state": 5, "page": 0,
-                "detail": status["detail"], "phase": status["phase"], "count": status["scan_count"],
-                "wifi_state": status["wifi_state_id"], "ipv4": status["ipv4"], "networks": [],
-                "test_generation": status["test_generation"], "scan_generation": status["scan_generation"],
-                "remaining_seconds": 600}
+        return {
+            "ipv4": status["ipv4"],
+            "detail": status["detail"],
+            "phase": status["phase"],
+            "test_generation": status["test_generation"],
+            "remaining_seconds": 600,
+        }
 
     @_serialized
     def cancel_wireless_test(self) -> None:
         """Clear temporary test credentials from firmware RAM."""
         self._require_open()
         self._wireless_command(ControlOpcode.WIFI_CANCEL)
+        self._uncertain_wireless_operation = None
+        self._uncertain_command = None
 
     def _wireless_command(
         self, operation: int, *, value: object = None, index: int = 0, generation: int = 0,
@@ -434,28 +465,37 @@ class PicoForgeHid:
         command = build_wireless_command_report(self._next_transaction_id(), operation, value=value,
                                                 index=index, generation=generation)
         result = self._execute_control(command, operation)
-        self._require_completed(result)
+        self._require_completed(result, "Wireless")
         return result
 
     @staticmethod
-    def _require_completed(result: ControlResult) -> None:
+    def _require_completed(result: ControlResult, action: str = "Control") -> None:
         if result["status"] != "completed":
-            raise RuntimeError(f"Wireless command {result['status']}: {result['error']} (detail {result['detail']})")
+            raise RuntimeError(
+                f"{action} command {result['status']}: {result['error']} (detail {result['detail']})"
+            )
 
     def _poll_wireless(
         self, kind: str, previous_generation: int, timeout: float, *,
         on_poll: Callable[[], None] | None = None, on_progress: Callable[[str], None] | None = None,
         cancel: Event | None = None,
+        command_reference: tuple[int, int] | None = None,
     ) -> WirelessStatus:
         deadline = monotonic() + timeout
         modulus = 65535 if kind == "scan" else 255
         expected_generation = previous_generation % modulus + 1
-        self._command_uncertain = True
+        self._uncertain_command = command_reference
+        self._uncertain_wireless_operation = (kind, expected_generation)
         while monotonic() < deadline:
             if cancel is not None and cancel.is_set():
-                # Opcode 10 drops the test, so its result never arrives; the cancel reply is the known outcome.
-                self._command_uncertain = False
-                self.cancel_wireless_test()
+                try:
+                    self._uncertain_command = None
+                    self._uncertain_wireless_operation = None
+                    self.cancel_wireless_test()
+                except Exception:
+                    self._uncertain_command = self._uncertain_command or command_reference
+                    self._uncertain_wireless_operation = (kind, expected_generation)
+                    raise
                 raise WirelessTestCancelled("Wi-Fi test cancelled")
             if on_poll is not None:
                 on_poll()
@@ -471,7 +511,8 @@ class PicoForgeHid:
                 completed = status["scan_state"] == "complete" if kind == "scan" else (
                     status["wifi_state_id"] == WifiState.TEST_JOINED and status["pair_tested"])
                 if failed or completed:
-                    self._command_uncertain = False
+                    self._uncertain_command = None
+                    self._uncertain_wireless_operation = None
                     if failed:
                         raise RuntimeError(f"Wireless {kind} failed: {status['phase'] or 'Timed out'}")
                     return status
@@ -496,7 +537,6 @@ class PicoForgeHid:
         if not self.closed:
             self._device.close()
             self.closed = True
-            self._wireless_snapshot = None
     
     @_serialized
     def set_self_test(self, action: str, size_mib: int | None = None) -> ControlResult:
@@ -509,42 +549,88 @@ class PicoForgeHid:
         self._transaction_id = self._transaction_id % 255 + 1
         return self._transaction_id
 
+    @_serialized
+    def reconcile_outcome(
+        self,
+        command_reference: tuple[int, int] | None,
+        wireless_reference: tuple[str, int] | None,
+    ) -> tuple[ControlResult | None, WirelessStatus | None] | None:
+        """Read the result slots and confirm only the exact pending command and operation."""
+        self._require_open()
+        if command_reference is None and wireless_reference is None:
+            return None
+
+        control_result = None
+        if command_reference is not None:
+            report = self._device.get_feature_report(CONTROL_REPORT_ID, CONTROL_FEATURE_SIZE)
+            control_result = _parse_report(
+                parse_control_result_report, report, self._supported_identity(),
+            )
+            if ((control_result["transaction_id"], control_result["opcode"]) != command_reference
+                    or control_result["status"] in ("idle", "pending")):
+                return None
+
+        wireless_status = None
+        if wireless_reference is not None:
+            kind, expected_generation = wireless_reference
+            wireless_status = self.read_wireless()
+            if kind == "scan":
+                finished = (
+                    wireless_status["scan_generation"] == expected_generation
+                    and wireless_status["scan_state"] in ("complete", "failed")
+                )
+            elif kind == "test":
+                finished = (
+                    wireless_status["test_generation"] == expected_generation
+                    and wireless_status["wifi_state_id"] in (WifiState.TEST_JOINED, WifiState.TEST_FAILED)
+                )
+            else:
+                return None
+            if not finished:
+                return None
+
+        self._command_uncertain = False
+        self._uncertain_command = None
+        self._uncertain_wireless_operation = None
+        if control_result is not None:
+            control_result["proof"] = None
+            self.last_command_result = control_result
+        return control_result, wireless_status
+
     def _execute_control(
         self, command: bytes, opcode: int, *, reconnect: bool = False, retry_get: bool = False,
     ) -> ControlResult:
-        if self._command_uncertain:
+        if self.command_uncertain:
             raise RuntimeError("a prior HID command has an uncertain outcome; reconnect and inspect device state")
         self._command_uncertain = True
+        transaction_id = command[2]
+        self._uncertain_command = (transaction_id, opcode)
         sent = self._device.send_feature_report(list(command))
         if sent != len(command):
             raise OSError(f"failed to send HID control opcode {opcode}")
-        transaction_id = command[2]
         deadline = monotonic() + 5.0
         while True:
             try:
                 report = self._device.get_feature_report(CONTROL_REPORT_ID, CONTROL_FEATURE_SIZE)
-                result = _parse_report(parse_control_result_report, report, self.identity)
+                result = _parse_report(parse_control_result_report, report, self._supported_identity())
             except OSError as error:
                 if retry_get and monotonic() < deadline:
                     sleep(0.05)
                     continue
                 if reconnect and monotonic() < deadline:
-                    self._command_uncertain = True
                     self._reopen_for_result(deadline, error)
                     continue
-                self._command_uncertain = True
-                raise
-            except ValueError:
-                self._command_uncertain = True
                 raise
             if result["transaction_id"] == transaction_id and result["opcode"] == opcode:
                 if result["status"] != "pending":
                     self._command_uncertain = False
+                    self._uncertain_command = None
                     # Proof bytes are not dashboard snapshot data.
-                    self.last_command_result = {**result, "proof": None}
+                    public_result = result.copy()
+                    public_result["proof"] = None
+                    self.last_command_result = public_result
                     return result
             if monotonic() >= deadline:
-                self._command_uncertain = True
                 raise TimeoutError(
                     f"timed out waiting for HID control transaction {transaction_id}; outcome is uncertain"
                 )
@@ -552,7 +638,7 @@ class PicoForgeHid:
 
     def _reopen_for_result(self, deadline: float, disconnect_error: OSError) -> None:
         """Reopen only the original UID to read its outstanding result; never replay SET."""
-        expected_uid = self.identity["serial_number"]
+        expected_uid = self._supported_identity()["serial_number"]
         self._device.close()
         self.closed = True
         while monotonic() < deadline:
@@ -562,7 +648,6 @@ class PicoForgeHid:
             if not candidates:
                 continue
             if len(candidates) != 1:
-                self._command_uncertain = True
                 raise RuntimeError("Multiple HID devices matched the original board UID")
             device = _require_hid().device()
             try:
@@ -574,16 +659,14 @@ class PicoForgeHid:
                 continue
             except ValueError:
                 device.close()
-                self._command_uncertain = True
                 raise
-            if identity["serial_number"] != expected_uid:
+            if identity["supported"] is not True or identity["serial_number"] != expected_uid:
                 device.close()
-                self._command_uncertain = True
                 raise RuntimeError("Reconnected HID identity does not match the original board")
             self._device = device
+            self.identity = identity
             self.closed = False
             return
-        self._command_uncertain = True
         raise TimeoutError("Forced save result unavailable after USB detach; outcome is uncertain") from disconnect_error
 
     def _require_open(self) -> None:

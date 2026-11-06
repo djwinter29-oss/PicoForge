@@ -19,6 +19,7 @@ internal static class StatusEndpoints
     public sealed record SetMscResponse(MscStatusResponse Msc);
     /// <summary>Start a 1..1024 MiB temporary-file test or request cancellation.</summary>
     public sealed record SetSelfTestRequest(string Action, uint SizeMib = 32);
+    public sealed record CommandResyncRequest(bool Confirm);
     /// <summary>Explicit acknowledgement that the device will reboot and disconnect.</summary>
     public sealed record RebootRequest(bool Confirm);
     /// <summary>Every <c>/api</c> error body, matching the Python server.</summary>
@@ -50,7 +51,7 @@ internal static class StatusEndpoints
     /// <remarks>
     /// <paramref name="WithDetail"/> appends the transport error and logs it, as the Python console does.
     /// </remarks>
-    public sealed record UnavailableMessage(string Message, string? Timeout = null, bool WithDetail = false);
+    public sealed record UnavailableMessage(string Message, bool WithDetail = false);
 
     /// <summary>
     /// The single <c>/api</c> error mapping, matching the Python server; every error body is <c>{error}</c>.
@@ -71,10 +72,9 @@ internal static class StatusEndpoints
                 var (status, message) = error switch
                 {
                     BadHttpRequestException bad => (bad.StatusCode, bad.Message),
-                    ArgumentException or JsonException or FormatException => (400, error.Message),
-                    KeyNotFoundException => (404, error.Message),
-                    InvalidOperationException or NotSupportedException => (409, error.Message),
-                    TimeoutException when unavailable?.Timeout is not null => (503, unavailable.Timeout),
+                    ApiInputException or JsonException => (400, error.Message),
+                    BoardNotFoundException => (404, error.Message),
+                    BoardStateException => (409, error.Message),
                     _ when unavailable is { WithDetail: true } && IsUnavailable(error) =>
                         (503, $"{unavailable.Message}: {error.Message}"),
                     _ when IsUnavailable(error) => (503, unavailable?.Message ?? error.Message),
@@ -146,6 +146,11 @@ internal static class StatusEndpoints
                 "and average read/write metrics.")
             .Produces<EmptyResponse>(StatusCodes.Status202Accepted)
             .Errors(CommandErrors);
+        endpoints.MapPost("/api/control/resync", ResyncCommand)
+            .WithName("ResyncCommandOutcome")
+            .WithSummary("Confirm the result of an uncertain HID command")
+            .Produces<CommandResyncResponse>(StatusCodes.Status200OK)
+            .Errors(CommandErrors);
         endpoints.MapPost("/api/msc/force-return", ForceReturnMsc)
             .WithName("ForceReturnMsc")
             .WithSummary("Force storage back to Pico after acknowledging possible data loss")
@@ -166,7 +171,7 @@ internal static class StatusEndpoints
         CancellationToken cancel)
     {
         if (request.On is not bool on)
-            throw new ArgumentException("Expected JSON with a boolean 'on' field");
+            throw new ApiInputException("Expected JSON with a boolean 'on' field");
         dashboard.Monitor(board).SetLed(on, cancel);
         return Results.Ok(new EmptyResponse());
     }
@@ -176,7 +181,8 @@ internal static class StatusEndpoints
     {
         BootSettingsResponse settings = new(request.SystemClockMhz ?? -1, request.SdCardProfile ?? -1,
             request.Radios ?? -1);
-        HidProtocol.ValidateSettings(settings);
+        try { HidProtocol.ValidateSettings(settings); }
+        catch (ArgumentException error) { throw new ApiInputException(error.Message); }
         return Results.Ok(new SetSettingsResponse(
             dashboard.Monitor(board).SetSettings(settings, request.ConfirmDataLoss, cancel)));
     }
@@ -184,7 +190,7 @@ internal static class StatusEndpoints
     private static IResult Reboot(RebootRequest request, string? board, IDashboardBoards dashboard,
         CancellationToken cancel)
     {
-        if (!request.Confirm) throw new ArgumentException("Explicit reboot confirmation is required");
+        if (!request.Confirm) throw new ApiInputException("Explicit reboot confirmation is required");
         dashboard.Monitor(board).Reboot(cancel);
         return Results.Ok(new EmptyResponse());
     }
@@ -193,14 +199,14 @@ internal static class StatusEndpoints
         CancellationToken cancel)
     {
         if (request.Enabled is not bool enabled)
-            throw new ArgumentException("Expected JSON with a boolean 'enabled' field");
+            throw new ApiInputException("Expected JSON with a boolean 'enabled' field");
         return Results.Ok(new SetMscResponse(dashboard.Monitor(board).SetMsc(enabled, cancel: cancel)));
     }
 
     private static IResult ForceReturnMsc(ForceReturnMscRequest request, string? board, IDashboardBoards dashboard,
         CancellationToken cancel)
     {
-        if (!request.ConfirmDataLoss) throw new ArgumentException("Explicit confirm_data_loss: true is required");
+        if (!request.ConfirmDataLoss) throw new ApiInputException("Explicit confirm_data_loss: true is required");
         return Results.Ok(new SetMscResponse(dashboard.Monitor(board).SetMsc(false, force: true, cancel)));
     }
 
@@ -209,8 +215,12 @@ internal static class StatusEndpoints
     {
         if (request.Action is not ("start" or "cancel") ||
             (request.Action == "start" && request.SizeMib is not (>= 1 and <= 1024)))
-            throw new ArgumentException("Expected start/cancel and a size from 1 to 1024 MiB");
+            throw new ApiInputException("Expected start/cancel and a size from 1 to 1024 MiB");
         dashboard.Monitor(board).SetSelfTest(request.Action, request.SizeMib, cancel);
         return Results.Json(new EmptyResponse(), statusCode: StatusCodes.Status202Accepted);
     }
+
+    private static IResult ResyncCommand(CommandResyncRequest request, string? board, IDashboardBoards dashboard,
+        CancellationToken cancel) =>
+        Results.Ok(dashboard.Monitor(board).ResyncCommand(request.Confirm, cancel));
 }

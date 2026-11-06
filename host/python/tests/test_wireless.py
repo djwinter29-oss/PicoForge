@@ -8,9 +8,11 @@ from unittest.mock import Mock, patch
 
 from helpers import make_monitor
 from picoforge.dashboard.server import create_app
+from picoforge.dashboard.monitor import CommandOutcomeUncertain
 from picoforge.hid.device import PicoForgeHid, WirelessTestCancelled
 from picoforge.reports import (
-    build_tcp_cli_auth_request, build_wireless_command_report, build_settings_command_report,
+    CONTROL_REPORT_ID, WIRELESS_REPORT_ID, build_tcp_cli_auth_request,
+    build_wireless_command_report, build_settings_command_report,
     ProtocolError, parse_control_result_report, parse_wireless_status_report,
     validate_wireless_configuration,
 )
@@ -43,13 +45,14 @@ class WirelessTests(unittest.TestCase):
     def client(self, reports=()):
         client = PicoForgeHid.__new__(PicoForgeHid)
         client.closed = False
-        client.identity = {"capabilities": 0xF5, "serial_number": "0123456789ABCDEF"}
+        client.identity = {"supported": True, "capabilities": 0xF5, "serial_number": "0123456789ABCDEF"}
         client.configuration = {"radios": 3, "tcp_cli_enabled": True}
         client._transaction_id = 0
         client._command_uncertain = False
+        client._uncertain_command = None
+        client._uncertain_wireless_operation = None
         client._control_lock = threading.RLock()
         client.last_command_result = None
-        client._wireless_snapshot = None
         client._wireless_active = False
         client._tested_generation = None
         client._tested_at = None
@@ -189,8 +192,8 @@ class WirelessTests(unittest.TestCase):
         commands = [bytes(call.args[0]) for call in client._device.send_feature_report.call_args_list]
         self.assertEqual([command[3] for command in commands], [6, 7, 9])
         self.assertEqual(commands[0][6:12], b"Pico\0\xff")
-        self.assertEqual(tested["test_generation"], 1)
-        self.assertEqual(tested["scan_generation"], 900)
+        self.assertEqual(tested, {"ipv4": "192.168.1.2", "detail": 0, "phase": "",
+                                  "test_generation": 1, "remaining_seconds": 600})
         self.assertEqual(poll.call_count, 3)
         sleep.assert_called_with(0.5)
         self.assertFalse(client._command_uncertain)
@@ -214,7 +217,7 @@ class WirelessTests(unittest.TestCase):
                               result(12, 2, data=bytes((2,)) + data[1:])])
         with self.assertRaisesRegex(ValueError, "generation"):
             client.scan_wireless()
-        self.assertTrue(client._command_uncertain)
+        self.assertFalse(client.command_uncertain)
 
     def test_test_failure_expiry_and_generation_mismatch(self):
         for final, error in ((status(wifi=6, test=1, flags=0x33, detail=3), RuntimeError),
@@ -222,7 +225,7 @@ class WirelessTests(unittest.TestCase):
             client = self.client([status(), result(6), result(7, 2), result(9, 3), final])
             with self.assertRaises(error):
                 client.test_wireless("new", "secret12")
-            self.assertEqual(client._command_uncertain, error is ValueError)
+            self.assertEqual(client.command_uncertain, error is ValueError)
         client = self.client([status(staged=8)])
         with self.assertRaisesRegex(RuntimeError, "expired"):
             client.set_wireless(settings(use_tested_wifi=True))
@@ -261,9 +264,9 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 0)
         for data in (bytes((150, 0, 1, 7, 1)), bytes((200, 0, 1, 7, 0))):
             client = self.client([status(), result(6), status(flags=0x13), result(5, 2, data=data)])
-            with self.assertRaisesRegex(RuntimeError, "uncertain"):
+            with self.assertRaisesRegex(RuntimeError, "differ"):
                 client.set_wireless(settings())
-            self.assertTrue(client._command_uncertain)
+            self.assertFalse(client.command_uncertain)
 
     def test_hex_save_uses_raw_ssid_and_returns_verified_saved_fields(self):
         board = {**BOARD, "tcp_cli_enabled": False, "radios": 1}
@@ -329,7 +332,32 @@ class WirelessTests(unittest.TestCase):
         client = self.client([])
         with patch("picoforge.hid.device.monotonic", side_effect=[0, 36]), self.assertRaises(TimeoutError):
             client._poll_wireless("test", 0, 35)
-        self.assertTrue(client._command_uncertain)
+        self.assertTrue(client.command_uncertain)
+        self.assertEqual(client.uncertain_wireless_operation, ("test", 1))
+
+    def test_reconcile_requires_matching_command_and_terminal_wireless_generation(self):
+        client = self.client()
+        client._command_uncertain = True
+        client._uncertain_command = (7, 11)
+        client._uncertain_wireless_operation = ("scan", 3)
+        statuses = iter((status(scan=1, generation=3), status(scan=2, generation=3, count=1)))
+
+        def read_report(report_id, _size):
+            if report_id == CONTROL_REPORT_ID:
+                return result(11, transaction=7)
+            if report_id == WIRELESS_REPORT_ID:
+                return next(statuses)
+            raise AssertionError(f"Unexpected HID report {report_id}")
+
+        client._device.get_feature_report.side_effect = read_report
+        self.assertIsNone(client.reconcile_outcome((8, 11), ("scan", 3)))
+        self.assertTrue(client.command_uncertain)
+        self.assertIsNone(client.reconcile_outcome((7, 11), ("scan", 3)))
+        self.assertTrue(client.command_uncertain)
+        control, wireless = client.reconcile_outcome((7, 11), ("scan", 3))
+        self.assertEqual((control["transaction_id"], control["opcode"]), (7, 11))
+        self.assertEqual(wireless["scan_state"], "complete")
+        self.assertFalse(client.command_uncertain)
 
     def test_commands_cannot_interleave_with_proof_retry(self):
         entered, release, contender = threading.Event(), threading.Event(), threading.Event()
@@ -394,7 +422,7 @@ class WirelessTests(unittest.TestCase):
         with self.assertRaises(OSError):
             client._complete_settings(request)
 
-    def test_status_activity_and_failed_reads_mark_cached_status_stale(self):
+    def test_status_read_returns_owned_snapshot_without_mutating_previous_reads(self):
         for initial, active in ((status(), False), (status(wifi=4, flags=0x33, test=1), True),
                                 (status(scan=1, generation=1), True)):
             client = self.client([initial, OSError("USB")])
@@ -402,7 +430,7 @@ class WirelessTests(unittest.TestCase):
             self.assertEqual(client.wireless_active, active)
             with self.assertRaises(OSError):
                 client.read_wireless()
-            self.assertTrue(cached["stale"])
+            self.assertFalse(cached["stale"])
 
     def test_proof_retention_get_retry_and_no_set_replay(self):
         nonce, proof = bytes(range(16)), bytes(range(16, 32))
@@ -459,11 +487,15 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(client.post("/api/wireless/test?board=a",
                                      json={"ssid": "ignored", "ssid_hex": "4100FF", "password": ""}).status_code, 200)
         dashboard.test_wireless.assert_called_with(b"A\0\xff", "")
-        for failure in (TimeoutError("secret12"), OSError("secret12"), ProtocolError("secret12")):
+        for failure, uncertain in (
+            (TimeoutError("secret12"), True),
+            (OSError("secret12"), False),
+            (ProtocolError("secret12"), False),
+        ):
             dashboard.test_wireless.side_effect = failure
             response = client.post("/api/wireless/test", json={"ssid": "Pico", "password": "secret12"})
             self.assertEqual(response.status_code, 503)
-            self.assertIn("uncertain", response.json["error"])
+            self.assertEqual(response.json["uncertain"], uncertain)
             self.assertNotIn("secret12", response.text)
         dashboard.test_wireless.side_effect = ValueError("bug")
         response = client.post("/api/wireless/test", json={"ssid": "Pico", "password": ""})
@@ -478,7 +510,7 @@ class WirelessTests(unittest.TestCase):
     def test_busy_command_reply_does_not_block_later_wireless_commands(self):
         monitor, client = self.monitor()
         monitor._snapshot["hardware"] = {"wireless_supported": True, "led_available": True}
-        client.set_led.return_value = {"status": "busy", "error": "busy"}
+        client.set_led.return_value = {"status": "busy", "error": "busy", "detail": 0}
         with self.assertRaisesRegex(RuntimeError, "LED command busy"):
             monitor.set_led(True)
         self.assertEqual(monitor.snapshot()["control_result"]["status"], "busy")
@@ -508,7 +540,9 @@ class WirelessTests(unittest.TestCase):
             monitor, client = self.monitor()
             monitor._stop = threading.Event()
             client.wireless_active = active
-            client.read_info.return_value = {"supported": True, "wireless_supported": True}
+            client.read_info.return_value = {
+                "supported": True, "settings_supported": False, "wireless_supported": True,
+            }
             client.read_configuration.return_value = BOARD
             client.read_input_report.return_value = None
             client.read_wireless.side_effect = [OSError("bad status"), {"ssid": "new", "stale": False}]
@@ -553,10 +587,10 @@ class WirelessTests(unittest.TestCase):
                 self.assertFalse(snapshot["storage_stale"])
                 self.assertEqual(snapshot["runtime"], runtime)
                 self.assertEqual(snapshot["memory"], memory)
-            return {"state": 5}
+            return {"remaining_seconds": 600}
 
         client.test_wireless.side_effect = joining
-        self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["state"], 5)
+        self.assertEqual(monitor.test_wireless("Pico網", "secret12")["test"]["remaining_seconds"], 600)
         self.assertIsNone(monitor.snapshot()["wireless_phase"])
 
     def test_cancel_reaches_running_test_while_other_commands_get_busy(self):
@@ -570,7 +604,7 @@ class WirelessTests(unittest.TestCase):
                     started.set()
                     self.assertTrue(cancel.wait(10), "never cancelled")
                     if finishes_first:
-                        return {"state": 5}
+                        return {"remaining_seconds": 600}
                     client.cancel_wireless_test()
                     raise WirelessTestCancelled("Wi-Fi test cancelled")
 
@@ -586,14 +620,14 @@ class WirelessTests(unittest.TestCase):
                 self.assertEqual(monitor.cancel_wireless_test(), {"cancelled": True})
                 worker.join(2)
                 self.assertFalse(worker.is_alive())
-                self.assertEqual(outcome, [5 if finishes_first else "cancelled"])
+                self.assertEqual(outcome, [600 if finishes_first else "cancelled"])
                 client.cancel_wireless_test.assert_called_once_with()
                 self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
 
     @staticmethod
     def run_test(monitor):
         try:
-            return monitor.test_wireless("Pico", "secret12")["test"]["state"]
+            return monitor.test_wireless("Pico", "secret12")["test"]["remaining_seconds"]
         except WirelessTestCancelled:
             return "cancelled"
 
@@ -601,7 +635,7 @@ class WirelessTests(unittest.TestCase):
         monitor, client = self.monitor()
         client.command_uncertain = True
         client.tcp_cli_auth_proof.side_effect = OSError("USB")
-        with self.assertRaises(OSError):
+        with self.assertRaises(CommandOutcomeUncertain):
             monitor.tcp_cli_auth_proof(bytes(16), bytes(8))
         self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
         with self.assertRaisesRegex(RuntimeError, "uncertain"):

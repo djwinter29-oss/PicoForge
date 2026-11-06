@@ -117,6 +117,11 @@ export function renderStatus(snapshot) {
   statusLine.dataset.error = String(Boolean(snapshot.error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
   document.querySelector("#status-message").textContent = message;
+  const commandResync = document.querySelector("#command-resync");
+  if (commandResync) {
+    commandResync.hidden = !snapshot.command_resync_supported || !snapshot.command_outcome_uncertain;
+    commandResync.disabled = !connected || snapshot.command_resyncing || snapshot.status_read_error;
+  }
 }
 
 function renderSettings(snapshot) {

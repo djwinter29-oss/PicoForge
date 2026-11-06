@@ -47,9 +47,9 @@ public sealed class ConsoleBridgeTests
             var auth = new byte[64];
             var authCount = await peer.ReceiveAsync(auth, SocketFlags.None, timeout.Token);
             Assert.Equal("AUTH 00000000000000000000000000000000\r\n", Encoding.ASCII.GetString(auth[..authCount]));
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            await Assert.ThrowsAsync<BoardStateException>(() =>
                 bridge.OpenAsync(Wireless(IPAddress.Loopback.ToString()), null));
-            Assert.Throws<InvalidOperationException>(() => bridge.Close("wrong"));
+            Assert.Throws<BoardStateException>(() => bridge.Close("wrong"));
             using (var aborted = new CancellationTokenSource(TimeSpan.FromMilliseconds(100)))
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => bridge.ReadAsync(token, aborted.Token));
             Assert.Empty((await bridge.ReadAsync(token, timeout.Token)).Data);
@@ -65,7 +65,7 @@ public sealed class ConsoleBridgeTests
             Assert.False(response.Closed);
             peer.Shutdown(SocketShutdown.Both);
             Assert.True((await bridge.ReadAsync(token, timeout.Token)).Closed);
-            await Assert.ThrowsAsync<InvalidOperationException>(() => bridge.ReadAsync(token));
+            await Assert.ThrowsAsync<BoardStateException>(() => bridge.ReadAsync(token));
         }
         finally { listener.Stop(); }
     }
@@ -87,7 +87,7 @@ public sealed class ConsoleBridgeTests
             var token = await opening.WaitAsync(timeout.Token);
             time.Advance(TimeSpan.FromSeconds(15));
             bridge.Expire();
-            await Assert.ThrowsAsync<InvalidOperationException>(() => bridge.ReadAsync(token));
+            await Assert.ThrowsAsync<BoardStateException>(() => bridge.ReadAsync(token));
         }
         finally { listener.Stop(); }
     }
@@ -102,14 +102,14 @@ public sealed class ConsoleBridgeTests
     public async Task DoesNotUseInvalidBoardAddressesAsProxyTargets(string address)
     {
         using var bridge = new ConsoleBridge(null, 2323, false);
-        await Assert.ThrowsAsync<ArgumentException>(() => bridge.OpenAsync(Wireless(address), null));
+        await Assert.ThrowsAsync<InvalidDataException>(() => bridge.OpenAsync(Wireless(address), null));
     }
 
     [Fact]
     public async Task DoesNotConnectWhenTheListenerHasNotStarted()
     {
         using var bridge = new ConsoleBridge();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<BoardStateException>(() =>
             bridge.OpenAsync(Wireless("192.168.66.87") with { TcpCliStarted = false }, null));
     }
 
@@ -147,7 +147,7 @@ public sealed class ConsoleBridgeTests
     public async Task RequiresUsbProofSupportWhenTheBoardRequiresTcpAuthentication()
     {
         using var bridge = new ConsoleBridge();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<BoardStateException>(() =>
             bridge.OpenAsync(Wireless("192.168.66.87", true)));
     }
 }

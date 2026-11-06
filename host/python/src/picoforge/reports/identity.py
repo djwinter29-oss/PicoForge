@@ -6,7 +6,7 @@ import struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import BoardConfiguration, HardwareIdentity
+    from ..hid.models import BoardConfiguration, HardwareIdentity, SupportedHardwareIdentity
 
 from .common import (
     BOARD_NAMES,
@@ -86,7 +86,7 @@ def parse_identity_report(report: bytes | bytearray | list[int]) -> HardwareIden
     }
 
 def parse_configuration_report(
-    report: bytes | bytearray | list[int], identity: HardwareIdentity
+    report: bytes | bytearray | list[int], identity: SupportedHardwareIdentity
 ) -> BoardConfiguration:
     """Decode Feature report 2 and validate transport- and board-dependent fields."""
     payload = _feature_payload(report, CONFIGURATION_REPORT_ID, CONFIGURATION_PAYLOAD_SIZE)

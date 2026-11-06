@@ -48,7 +48,7 @@ public sealed class DashboardBoardsTests
     }
 
     [Fact]
-    public void PathFallbackUsesThePathAndDuplicateSerialsAreRejected()
+    public void PathFallbackUsesThePathAndDuplicateIdentitiesAreReported()
     {
         HidBoard[] attached = [new("/hid/a", null, "PicoForge")];
         using var boards = new DashboardBoards(null, "/hid/a", () => attached,
@@ -58,7 +58,9 @@ public sealed class DashboardBoardsTests
         Assert.Null(listing.Boards[0].SerialNumber);
 
         attached = [new("/hid/a", "duplicate", "PicoForge"), new("/hid/b", "duplicate", "PicoForge")];
-        Assert.Throws<InvalidOperationException>(() => boards.Boards());
+        var duplicateListing = boards.Boards();
+        Assert.Empty(duplicateListing.Boards);
+        Assert.NotEmpty(duplicateListing.Warnings);
     }
 
     [Fact]
@@ -86,7 +88,7 @@ public sealed class DashboardBoardsTests
         clock.Advance(TimeSpan.FromSeconds(1));
         boards.Boards();
         Assert.True(created[0].Disposed);
-        Assert.Throws<KeyNotFoundException>(() => boards.Snapshot(id));
+        Assert.Throws<BoardNotFoundException>(() => boards.Snapshot(id));
 
         attached = [new("/hid/new-a", "board-A", "PicoForge")];
         Assert.Equal(id, boards.Boards().Boards[0].Id);
@@ -112,7 +114,7 @@ public sealed class DashboardBoardsTests
         boards.Boards();
 
         Assert.True(created[0].Disposed);
-        Assert.Throws<KeyNotFoundException>(() => boards.Snapshot(id));
+        Assert.Throws<BoardNotFoundException>(() => boards.Snapshot(id));
         attached = [new("/hid/a", "different-board", "PicoForge")];
         Assert.NotEqual(id, boards.Boards().Boards[0].Id);
     }

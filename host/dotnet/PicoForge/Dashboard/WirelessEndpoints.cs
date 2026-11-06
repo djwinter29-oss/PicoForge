@@ -33,8 +33,7 @@ internal static class WirelessEndpoints
             .WithSummary("Join a Wi-Fi network as a test without saving it")
             .Produces<WirelessTestResponse>(StatusCodes.Status200OK)
             .Errors(CommandErrors)
-            .WithMetadata(new UnavailableMessage($"Wi-Fi test result is uncertain. {Retry}",
-                $"Wi-Fi test timed out; outcome is uncertain. {Retry}"));
+            .WithMetadata(new UnavailableMessage($"Wi-Fi test result is uncertain. {Retry}"));
         // A cancel during a running test returns at once; the test sends it at its next poll.
         endpoints.MapPost("/api/wireless/cancel",
             (string? board, IDashboardBoards dashboard, CancellationToken cancel) =>
@@ -54,7 +53,9 @@ internal static class WirelessEndpoints
     private static IResult SetWireless(JsonElement request, string? board, IDashboardBoards dashboard,
         CancellationToken cancel)
     {
-        var settings = WirelessRequest.Parse(request);
+        WirelessRequest settings;
+        try { settings = WirelessRequest.Parse(request); }
+        catch (ArgumentException error) { throw new ApiInputException(error.Message); }
         return Results.Ok(dashboard.Monitor(board).SetWireless(settings, cancel));
     }
 
@@ -65,14 +66,15 @@ internal static class WirelessEndpoints
         try
         {
             test = request.Deserialize<WirelessTestRequest>(DashboardJson.Options)
-                ?? throw new ArgumentException("Expected SSID and optional password");
-            if (HidProtocol.EncodeSsid(test.Ssid, test.SsidHex).Length == 0) throw new ArgumentException();
+                ?? throw new ApiInputException("Expected SSID and optional password");
+            if (HidProtocol.EncodeSsid(test.Ssid, test.SsidHex).Length == 0)
+                throw new ApiInputException("Invalid SSID or password");
             HidProtocol.ValidatePassword(test.Password ?? "");
         }
         // The message is fixed so a rejected password never echoes back.
         catch (Exception error) when (error is JsonException or ArgumentException)
         {
-            throw new ArgumentException("Invalid SSID or password");
+            throw new ApiInputException("Invalid SSID or password");
         }
         return Results.Ok(new WirelessTestResponse(
             dashboard.Monitor(board).TestWireless(test.Ssid ?? "", test.Password ?? "", test.SsidHex, cancel)));

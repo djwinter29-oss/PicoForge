@@ -81,10 +81,19 @@ public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoR
     SelfTestStatusResponse? SelfTest = null, BoardConfigurationResponse? BoardConfiguration = null,
     bool TelemetryStale = true, bool StorageStale = true, bool SelfTestStale = true,
     bool CommandOutcomeUncertain = false, bool RebootPending = false, bool Reconnecting = false,
-    string? WirelessPhase = null, WirelessStatusResponse? Wireless = null, string? WirelessError = null)
+    string? WirelessPhase = null, WirelessStatusResponse? Wireless = null, string? WirelessError = null,
+    bool CommandResyncSupported = true)
 {
     public bool SettingsSupported => BoardConfiguration is not null;
 }
+
+internal readonly record struct ControlCommandReference(byte TransactionId, Opcode Opcode);
+internal readonly record struct WirelessOperationReference(string Kind, ushort Generation);
+internal sealed record CommandResyncResult(ControlResult? ControlResult, WirelessStatusResponse? Wireless);
+public sealed record ControlResultResponse(byte Version, byte TransactionId, byte Opcode, byte StatusId,
+    string Status, byte ErrorReason, string Error, byte Detail);
+public sealed record CommandResyncResponse(bool Uncertain, ControlResultResponse? ControlResult = null,
+    WirelessStatusResponse? Wireless = null);
 
 /// <summary>Feature 20 opcodes, named as <c>PF_HID_OPCODE_*</c> in firmware <c>usb_hid.h</c>.</summary>
 internal enum Opcode : byte
@@ -582,7 +591,7 @@ internal static partial class HidProtocol
                 25 => "a Wi-Fi test is active", 26 => "a Wi-Fi scan is active",
                 27 => "staged wireless values require explicit commit", _ => description
             };
-        throw new InvalidOperationException(
+        throw new BoardStateException(
             $"HID command rejected ({(byte)result.Status}/{(byte)result.ErrorReason}): {description}");
     }
 

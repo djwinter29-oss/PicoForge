@@ -6,7 +6,7 @@ import struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import HardwareIdentity, RuntimeStatus
+    from ..hid.models import RuntimeStatus, SupportedHardwareIdentity
 
 from .common import (
     REPORT_VERSION,
@@ -21,7 +21,7 @@ from .common import (
 
 
 def parse_status_report(
-    report: bytes | bytearray | list[int], identity: HardwareIdentity | None = None
+    report: bytes | bytearray | list[int], identity: SupportedHardwareIdentity | None = None
 ) -> RuntimeStatus:
     """Decode and validate Input report 3 telemetry."""
     payload = _input_payload(report, TELEMETRY_REPORT_ID, TELEMETRY_PAYLOAD_SIZE)

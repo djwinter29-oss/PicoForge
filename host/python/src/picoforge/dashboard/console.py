@@ -16,6 +16,7 @@ from ..reports.common import ProtocolError
 _LOGGER = logging.getLogger(__name__)
 # ponytail: one long-poll GET per 2 s idle replaces 20 polls/s; a WebSocket would only cut the per-chunk request.
 _READ_WAIT_SECONDS = 2.0
+_CONSOLE_IDLE_SECONDS = 15.0
 
 
 class ConsoleBridge:
@@ -91,7 +92,7 @@ class ConsoleBridge:
                 self._session = secrets.token_urlsafe(32)
                 self._board_id = board_id
                 self._last_request = time.monotonic()
-                self._schedule_expiry(15)
+                self._schedule_expiry(_CONSOLE_IDLE_SECONDS)
                 installed = True
                 return self._session
         finally:
@@ -112,7 +113,7 @@ class ConsoleBridge:
         with self._lock:
             if self._socket is None or session is not None and session != self._session:
                 return
-            remaining = 15 - (time.monotonic() - self._last_request)
+            remaining = _CONSOLE_IDLE_SECONDS - (time.monotonic() - self._last_request)
             if remaining > 0:
                 self._schedule_expiry(remaining)
             else:

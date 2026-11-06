@@ -39,6 +39,7 @@ class DashboardSnapshot(TypedDict):
     wireless_phase: str | None
     wireless: WirelessStatus | None
     wireless_error: str | None
+    command_resync_supported: bool
 
 
 class DashboardBoard(TypedDict):

@@ -6,6 +6,8 @@ internal class TestMonitor : IDeviceMonitor
     public virtual StatusResponse Snapshot { get; set; } = new(false, null, null, null, null, null);
     public bool Disposed { get; private set; }
     public virtual void Start() { }
+    public virtual CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default) =>
+        confirm ? new(false) : throw new ApiInputException("Explicit confirm: true is required");
     public void Dispose() => Disposed = true;
     public virtual void SetLed(bool on, CancellationToken cancel = default) => throw new NotSupportedException();
     public virtual MscStatusResponse SetMsc(bool enabled, bool force = false, CancellationToken cancel = default) =>
@@ -47,8 +49,8 @@ internal sealed class ManualTime : TimeProvider
 /// <summary>Serves <paramref name="monitor"/> as board <c>board-a</c>; any other ID is unknown (404).</summary>
 internal sealed class OneBoard(IDeviceMonitor monitor) : IDashboardBoards
 {
-    public DashboardBoardList Boards() => new([new("board-a", "PicoForge", "uid", "/hid/a")], "board-a");
+    public DashboardBoardList Boards() => new([new("board-a", "PicoForge", "uid", "/hid/a")], "board-a", []);
     public StatusResponse Snapshot(string? boardId) => Monitor(boardId).Snapshot;
     public IDeviceMonitor Monitor(string? boardId) => boardId is null or "board-a" ? monitor
-        : throw new KeyNotFoundException("unknown board; rescan and select a listed board");
+        : throw new BoardNotFoundException("unknown board; rescan and select a listed board");
 }

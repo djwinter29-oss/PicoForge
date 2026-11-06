@@ -4,7 +4,7 @@ using System.Text;
 namespace PicoForge;
 
 public sealed record DashboardBoard(string Id, string ProductName, string? SerialNumber, string DevicePath);
-public sealed record DashboardBoardList(DashboardBoard[] Boards, string? DefaultBoardId);
+public sealed record DashboardBoardList(DashboardBoard[] Boards, string? DefaultBoardId, string[] Warnings);
 
 /// <summary>Board discovery plus one lazily started monitor per listed board.</summary>
 internal interface IDashboardBoards
@@ -50,18 +50,24 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
     {
         lock (discoveryGate)
         {
-            var seen = new HashSet<string>();
-            var boards = discover().Select(device =>
+            var discovered = discover().Select(device =>
             {
                 var serial = string.IsNullOrEmpty(device.SerialNumber) ? null : device.SerialNumber;
                 var identity = serial is null ? $"path:{device.DevicePath}" : $"serial:{serial}";
                 var id = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
-                if (!seen.Add(id))
-                    throw new InvalidOperationException(
-                        "duplicate PicoForge board identity; board serials must be unique");
                 var productName = string.IsNullOrEmpty(device.ProductName) ? "PicoForge" : device.ProductName;
                 return new DashboardBoard(id, productName, serial, device.DevicePath);
             }).ToArray();
+            var duplicateIds = discovered.GroupBy(board => board.Id)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToHashSet();
+            var boards = discovered.Where(board => !duplicateIds.Contains(board.Id)).ToArray();
+            var seen = discovered.Select(board => board.Id).ToHashSet();
+            var warnings = duplicateIds.Count == 0
+                ? Array.Empty<string>()
+                : [$"Skipped {duplicateIds.Count} ambiguous board identity group(s); " +
+                    "serial numbers or paths must be unique"];
             MonitorEntry[] expiredMonitors;
             DashboardBoardList listing;
             lock (gate)
@@ -73,6 +79,17 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                     known[board.Id] = board;
                     lastSeen[board.Id] = now;
                 }
+                var ambiguousIds = duplicateIds
+                    .Where(id => !monitors.TryGetValue(id, out var monitor) ||
+                        !monitor.Snapshot.CommandOutcomeUncertain)
+                    .ToArray();
+                var ambiguousMonitors = ambiguousIds.Where(monitors.ContainsKey).Select(id => monitors[id]).ToArray();
+                foreach (var id in ambiguousIds)
+                {
+                    known.Remove(id);
+                    lastSeen.Remove(id);
+                    monitors.Remove(id);
+                }
                 var expiredIds = known
                     .Where(entry => !seen.Contains(entry.Key) &&
                         (entry.Value.SerialNumber is null ||
@@ -81,10 +98,10 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                          !monitor.Snapshot.CommandOutcomeUncertain))
                     .Select(entry => entry.Key)
                     .ToArray();
-                expiredMonitors = expiredIds
+                expiredMonitors = ambiguousMonitors.Concat(expiredIds
                     .Where(monitors.ContainsKey)
                     .Select(id => monitors[id])
-                    .ToArray();
+                    ).ToArray();
                 foreach (var id in expiredIds)
                 {
                     known.Remove(id);
@@ -95,11 +112,8 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                     (serialNumber is not null && board.SerialNumber == serialNumber)
                     || (devicePath is not null && board.DevicePath == devicePath));
                 listing = new DashboardBoardList(boards, preferred?.Id
-                    ?? (serialNumber is null && devicePath is null ? boards.FirstOrDefault()?.Id : null));
+                    ?? (serialNumber is null && devicePath is null ? boards.FirstOrDefault()?.Id : null), warnings);
             }
-            // ponytail: An unresolved write keeps this monitor and board entry until shutdown so reconnects cannot
-            // silently clear the write block. It may retain one board indefinitely; safe clearing needs firmware
-            // recovery.
             foreach (var monitor in expiredMonitors) monitor.Dispose();
             return listing;
         }
@@ -116,7 +130,7 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
         {
             ObjectDisposedException.ThrowIf(closed, this);
             if (boardId is null || !known.TryGetValue(boardId, out var board))
-                throw new KeyNotFoundException("unknown board; rescan and select a listed board");
+                throw new BoardNotFoundException("unknown board; rescan and select a listed board");
             if (!monitors.TryGetValue(boardId, out var current))
             {
                 entry = new MonitorEntry(createMonitor(

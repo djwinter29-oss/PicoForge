@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.FileProviders;
 using Xunit;
 
@@ -73,7 +74,16 @@ public sealed class SharedDashboardAssetsTests
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         await using var app = builder.Build();
-        app.UseTemplateFileGuard();
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Path.Equals("/index.html", StringComparison.OrdinalIgnoreCase) ||
+                context.Request.Path.Equals("/console.html", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            await next();
+        });
         using var files = new PhysicalFileProvider(WebRoot());
         app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
         await app.StartAsync();

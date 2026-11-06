@@ -19,10 +19,10 @@ internal static class ConsoleEndpoints
             ConsoleBridge bridge, CancellationToken cancel) =>
         {
             if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Any())
-                throw new ArgumentException("Expected an empty object; TCP authentication uses the connected board");
+                throw new ApiInputException("Expected an empty object; TCP authentication uses the connected board");
             var monitor = dashboard.Monitor(board);
             var wireless = monitor.Snapshot.Wireless ??
-                throw new InvalidOperationException("Waiting for the board's wireless status");
+                throw new BoardStateException("Waiting for the board's wireless status");
             var session = await bridge.OpenAsync(wireless,
                 (nonce, uid) => monitor.TcpCliAuthProof(nonce, uid, cancel), cancel);
             return Results.Ok(new ConsoleSessionResponse(session));
@@ -46,11 +46,13 @@ internal static class ConsoleEndpoints
         {
             if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Count() != 1 ||
                 !payload.TryGetProperty("data", out var field) || field.ValueKind != JsonValueKind.String)
-                throw new ArgumentException("Expected base64-encoded input bytes");
+                throw new ApiInputException("Expected base64-encoded input bytes");
             var encoded = field.GetString()!;
-            if (encoded.Length > 1368) throw new ArgumentException("Input exceeds 1024 bytes");
-            var data = Convert.FromBase64String(encoded);
-            if (data.Length is < 1 or > 1024) throw new ArgumentException("Expected 1..1024 input bytes");
+            if (encoded.Length > 1368) throw new ApiInputException("Input exceeds 1024 bytes");
+            byte[] data;
+            try { data = Convert.FromBase64String(encoded); }
+            catch (FormatException error) { throw new ApiInputException(error.Message); }
+            if (data.Length is < 1 or > 1024) throw new ApiInputException("Expected 1..1024 input bytes");
             bridge.Write(session, data);
             return Results.Ok(new ConsoleActionResponse(true));
         })

@@ -140,6 +140,11 @@ test("shared dashboard preserves drafts and command state across status failures
         default_board_id: "board-a",
       }) };
     }
+    if (url.startsWith("/api/control/resync?board=")) {
+      assert.deepEqual(JSON.parse(options.body), { confirm: true });
+      connected.command_outcome_uncertain = false;
+      return { ok: true, json: async () => ({ uncertain: false, control_result: null, wireless: null }) };
+    }
     if (url.startsWith("/api/status?board=")) {
       if (statusFails) throw new Error("status down");
       if (statusUnknownBoard) return { ok: false, status: 409,
@@ -163,6 +168,7 @@ test("shared dashboard preserves drafts and command state across status failures
       wirelessSettings.push(settings);
       return { ok: wirelessFailure === 0, status: wirelessFailure || 200, json: async () => ({
         error: wirelessFailure === 409 ? wirelessError : "Wireless outcome is uncertain",
+        uncertain: wirelessFailure === 503 || wirelessError === "Wireless outcome is uncertain",
         reboot_pending: true, settings: settings.board,
         wireless: { ...settings, board: undefined, password: undefined, ble_key: undefined,
           ssid_hex: settings.ssid_hex ?? Buffer.from(settings.ssid).toString("hex"),
@@ -938,7 +944,7 @@ test("shared dashboard preserves drafts and command state across status failures
     await handlers.get("#wifi-connect:click")();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 3);
-    assert.match(elements.get("#wifi-status").textContent, /uncertain.*not resent/);
+    assert.match(elements.get("#wifi-status").textContent, /uncertain/);
     await tick();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 3);
@@ -958,7 +964,7 @@ test("shared dashboard preserves drafts and command state across status failures
     await handlers.get("#wifi-connect:click")();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 4);
-    assert.match(elements.get("#wifi-status").textContent, /uncertain.*not resent/);
+    assert.match(elements.get("#wifi-status").textContent, /Wireless outcome is uncertain/);
     await tick();
     await saveAndConfirm();
     assert.equal(wirelessSettings.length, 4);
@@ -975,6 +981,14 @@ test("shared dashboard preserves drafts and command state across status failures
     await tick();
     assert.equal(elements.get("#wifi-connect").disabled, true);
     assert.equal(elements.get("#settings-save").disabled, true);
+    connected.command_outcome_uncertain = true;
+    connected.command_resync_supported = true;
+    await tick();
+    assert.equal(elements.get("#command-resync").hidden, false);
+    await handlers.get("#command-resync:click")();
+    assert.equal(connected.command_outcome_uncertain, false);
+    assert.equal(elements.get("#command-resync").hidden, true);
+    assert.equal(requestedUrls.at(-1), "/api/status?board=board-b");
   } finally {
     Object.assign(globalThis, saved);
   }

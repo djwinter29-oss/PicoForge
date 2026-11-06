@@ -329,6 +329,14 @@ public sealed class ProtocolTests
         var reboot = await client.PostAsJsonAsync("/api/reboot?board=board-a", new { confirm = true });
         Assert.Equal(HttpStatusCode.OK, reboot.StatusCode);
         Assert.True(monitor.RebootRequested);
+        var unconfirmedResync = await client.PostAsJsonAsync("/api/control/resync?board=board-a",
+            new { confirm = false });
+        Assert.Equal(HttpStatusCode.BadRequest, unconfirmedResync.StatusCode);
+        var resync = await client.PostAsJsonAsync("/api/control/resync?board=board-a", new { confirm = true });
+        Assert.Equal(HttpStatusCode.OK, resync.StatusCode);
+        Assert.False((await resync.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("uncertain").GetBoolean());
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/status?board=board-a");
+        Assert.True(status.GetProperty("command_resync_supported").GetBoolean());
 
         var unknownStatus = await client.GetAsync("/api/status?board=unknown");
         Assert.Equal(HttpStatusCode.NotFound, unknownStatus.StatusCode);
@@ -353,10 +361,11 @@ public sealed class ProtocolTests
         app.UseApiErrors();
         Exception[] errors =
         [
-            new ArgumentException("bad input"), new JsonException("bad json"), new KeyNotFoundException("no board"),
-            new InvalidOperationException("busy"), new NotSupportedException("no capability"),
+            new ApiInputException("bad input"), new JsonException("bad json"), new BoardNotFoundException("no board"),
+            new BoardStateException("busy"), new ArgumentException("bug"), new KeyNotFoundException("bug"),
+            new InvalidOperationException("bug"), new NotSupportedException("bug"), new FormatException("bug"),
             new IOException("unplugged"), new InvalidDataException("garbled"), new TimeoutException("slow"),
-            new UnauthorizedAccessException("denied"), new FormatException("bad hex"),
+            new UnauthorizedAccessException("denied"),
             new System.Net.Sockets.SocketException(10061), new OperationCanceledException("gave up"),
             new BoardBusyException(), new NullReferenceException("bug")
         ];
@@ -366,15 +375,15 @@ public sealed class ProtocolTests
             app.MapGet($"/api/fail/{index}", () => { throw error; });
         }
         app.MapGet("/api/masked", () => { throw new IOException("raw"); })
-            .WithMetadata(new StatusEndpoints.UnavailableMessage("friendly", "too slow"));
+            .WithMetadata(new StatusEndpoints.UnavailableMessage("friendly"));
         app.MapGet("/api/masked-timeout", () => { throw new TimeoutException("raw"); })
-            .WithMetadata(new StatusEndpoints.UnavailableMessage("friendly", "too slow"));
+            .WithMetadata(new StatusEndpoints.UnavailableMessage("too slow"));
         app.MapGet("/api/detail", () => { throw new IOException("refused"); })
             .WithMetadata(new StatusEndpoints.UnavailableMessage("TCP console connection failed", WithDetail: true));
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
 
-        int[] expected = [400, 400, 404, 409, 409, 503, 503, 503, 503, 400, 503, 503, 409, 500];
+        int[] expected = [400, 400, 404, 409, 500, 500, 500, 500, 500, 503, 503, 503, 503, 503, 503, 409, 500];
         for (var index = 0; index < errors.Length; index++)
         {
             var response = await client.GetAsync($"/api/fail/{index}");

@@ -299,7 +299,7 @@ public sealed class WirelessTests
         var settings = Settings();
         settings.UseTestedWifi = true;
         settings.Ssid = "other";
-        Assert.Throws<InvalidOperationException>(() => wire.Hid.SetWireless(settings));
+        Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(settings));
         Assert.Empty(wire.Writes);
     }
 
@@ -308,7 +308,7 @@ public sealed class WirelessTests
     {
         using var wire = new Wire();
         wire.StatusReport[5] |= 0x30;
-        Assert.Throws<InvalidOperationException>(() => wire.Hid.SetWireless(Settings()));
+        Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(Settings()));
         Assert.Empty(wire.Writes);
     }
 
@@ -386,7 +386,7 @@ public sealed class WirelessTests
     public void ProofRejectsDifferentUidWithoutTouchingResultSlot()
     {
         using var wire = new Wire();
-        Assert.Throws<ArgumentException>(() => wire.Hid.TcpCliAuthProof(new byte[16], new byte[8]));
+        Assert.Throws<InvalidDataException>(() => wire.Hid.TcpCliAuthProof(new byte[16], new byte[8]));
         Assert.Empty(wire.Writes);
     }
 
@@ -396,8 +396,8 @@ public sealed class WirelessTests
         using var wire = new Wire { SaveDisconnect = true };
         Assert.Throws<IOException>(() => wire.Hid.SetWireless(Settings()));
         Assert.True(wire.Hid.CommandOutcomeUncertain);
-        Assert.Throws<InvalidOperationException>(() => wire.Hid.CancelWirelessTest());
-        Assert.Throws<InvalidOperationException>(() => wire.Hid.TcpCliAuthProof(new byte[16],
+        Assert.Throws<BoardStateException>(() => wire.Hid.CancelWirelessTest());
+        Assert.Throws<BoardStateException>(() => wire.Hid.TcpCliAuthProof(new byte[16],
             Convert.FromHexString(Hardware.SerialNumber)));
         Assert.Single(wire.Writes);
     }
@@ -409,6 +409,68 @@ public sealed class WirelessTests
         Assert.Throws<InvalidDataException>(() => wire.Hid.SetWireless(Settings()));
         Assert.True(wire.Hid.CommandOutcomeUncertain);
         Assert.Single(wire.Writes);
+    }
+
+    [Fact]
+    public void ReconcileClearsUncertaintyOnlyForTheExactFinalTransaction()
+    {
+        using var wire = new Wire { SaveDisconnect = true };
+        Assert.Throws<IOException>(() => wire.Hid.SetWireless(Settings()));
+        var pending = wire.Hid.UncertainCommand;
+        Assert.NotNull(pending);
+        Assert.True(wire.Hid.CommandOutcomeUncertain);
+
+        wire.SaveDisconnect = false;
+        Assert.Null(wire.Hid.ReconcileOutcome(new(pending!.Value.TransactionId, Opcode.Led), null));
+        Assert.True(wire.Hid.CommandOutcomeUncertain);
+
+        var result = wire.Hid.ReconcileOutcome(pending, null);
+        Assert.NotNull(result?.ControlResult);
+        Assert.False(wire.Hid.CommandOutcomeUncertain);
+    }
+
+    [Theory]
+    [InlineData("scan")]
+    [InlineData("test")]
+    public void ReconcileRequiresTheExactTerminalWirelessGeneration(string kind)
+    {
+        var clock = new ManualTime();
+        using var wire = new Wire(clock) { NeverFinishScan = kind == "scan", NeverFinishTest = kind == "test" };
+        Assert.Throws<TimeoutException>(() =>
+        {
+            if (kind == "scan")
+                wire.Hid.ScanWireless(() => clock.Advance(TimeSpan.FromSeconds(16)));
+            else
+                wire.Hid.TestWireless("PicoForge", "password",
+                    () => clock.Advance(TimeSpan.FromSeconds(36)));
+        });
+        var pending = wire.Hid.UncertainWirelessOperation;
+        Assert.NotNull(pending);
+        Assert.Equal(kind, pending.Value.Kind);
+        Assert.True(wire.Hid.CommandOutcomeUncertain);
+
+        wire.StatusReport[43] = kind == "scan" ? (byte)2 : (byte)0;
+        if (kind == "scan")
+            BinaryPrimitives.WriteUInt16LittleEndian(wire.StatusReport.AsSpan(44), 2);
+        else
+        {
+            wire.StatusReport[2] = 5;
+            wire.StatusReport[5] |= 128;
+            wire.StatusReport[6] = 192;
+            wire.StatusReport[7] = 168;
+            wire.StatusReport[8] = 1;
+            wire.StatusReport[9] = 2;
+            wire.StatusReport[47] = 2;
+        }
+        Assert.Null(wire.Hid.ReconcileOutcome(null, pending));
+        Assert.True(wire.Hid.CommandOutcomeUncertain);
+
+        if (kind == "scan")
+            BinaryPrimitives.WriteUInt16LittleEndian(wire.StatusReport.AsSpan(44), 1);
+        else
+            wire.StatusReport[47] = 1;
+        Assert.NotNull(wire.Hid.ReconcileOutcome(null, pending)?.Wireless);
+        Assert.False(wire.Hid.CommandOutcomeUncertain);
     }
 
     [Fact]
@@ -492,7 +554,10 @@ public sealed class WirelessTests
         public int ConfigurationReads { get; private set; }
         private byte[] result = Result(1);
 
-        public Wire() => Hid = new(Hardware, Read, Write, _ => Reopens++);
+        public bool NeverFinishScan { get; set; }
+        public bool NeverFinishTest { get; set; }
+
+        public Wire(TimeProvider? time = null) => Hid = new(Hardware, Read, Write, _ => Reopens++, time);
 
         private byte[] Read(byte id, int size)
         {
@@ -530,21 +595,27 @@ public sealed class WirelessTests
                 case 7: StatusReport[5] = (byte)((StatusReport[5] | 32) & ~128); break;
                 case 8: StatusReport[5] |= 64; break;
                 case 9:
-                    StatusReport[47] = StatusReport[47] == 255 ? (byte)1 : (byte)(StatusReport[47] + 1);
-                    StatusReport[2] = 5;
-                    StatusReport[5] |= 128;
-                    StatusReport[6] = 192;
-                    StatusReport[7] = 168;
-                    StatusReport[8] = 1;
-                    StatusReport[9] = 2;
+                    if (!NeverFinishTest)
+                    {
+                        StatusReport[47] = StatusReport[47] == 255 ? (byte)1 : (byte)(StatusReport[47] + 1);
+                        StatusReport[2] = 5;
+                        StatusReport[5] |= 128;
+                        StatusReport[6] = 192;
+                        StatusReport[7] = 168;
+                        StatusReport[8] = 1;
+                        StatusReport[9] = 2;
+                    }
                     break;
                 case 10: StatusReport[5] &= 15; StatusReport[48] = 0; break;
                 case 11:
-                    StatusReport[43] = 2;
-                    var generation = BinaryPrimitives.ReadUInt16LittleEndian(StatusReport.AsSpan(44));
-                    BinaryPrimitives.WriteUInt16LittleEndian(StatusReport.AsSpan(44),
-                        generation == 65535 ? (ushort)1 : (ushort)(generation + 1));
-                    StatusReport[46] = 1;
+                    if (!NeverFinishScan)
+                    {
+                        StatusReport[43] = 2;
+                        var generation = BinaryPrimitives.ReadUInt16LittleEndian(StatusReport.AsSpan(44));
+                        BinaryPrimitives.WriteUInt16LittleEndian(StatusReport.AsSpan(44),
+                            generation == 65535 ? (ushort)1 : (ushort)(generation + 1));
+                        StatusReport[46] = 1;
+                    }
                     break;
                 case 12:
                     result[6] = StaleScanEntry ? (byte)2 : request[6];

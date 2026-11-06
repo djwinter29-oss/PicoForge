@@ -128,7 +128,7 @@ public sealed class ForcedSaveTests
             _ => Assert.Fail("invalid results must not trigger reconnect"));
         Assert.Throws<InvalidDataException>(() => hid.SetSettings(Settings, true));
         Assert.True(hid.CommandOutcomeUncertain);
-        Assert.Throws<InvalidOperationException>(() => hid.SetSettings(Settings));
+        Assert.Throws<BoardStateException>(() => hid.SetSettings(Settings));
         Assert.Equal(1, writes);
     }
 
@@ -143,7 +143,7 @@ public sealed class ForcedSaveTests
         result[5] = reason;
         using var hid = Hid((_, _) => result, writes.Add,
             _ => Assert.Fail("terminal rejection must not reconnect"));
-        Assert.Throws<InvalidOperationException>(() => hid.SetSettings(Settings, true));
+        Assert.Throws<BoardStateException>(() => hid.SetSettings(Settings, true));
         Assert.Single(writes);
         Assert.Equal((byte)1, writes[0][4]);
         Assert.False(hid.CommandOutcomeUncertain);
@@ -172,7 +172,7 @@ public sealed class ForcedSaveTests
         var error = Assert.Throws<InvalidDataException>(() => hid.SetSettings(Settings, true));
         Assert.Contains("selected next-boot settings", error.Message);
         Assert.True(hid.CommandOutcomeUncertain);
-        Assert.Throws<InvalidOperationException>(() => hid.SetSettings(Settings));
+        Assert.Throws<BoardStateException>(() => hid.SetSettings(Settings));
         Assert.Equal(1, writes);
         Assert.Equal(1, reopens);
     }
@@ -259,7 +259,7 @@ public sealed class ForcedSaveTests
         Assert.Throws<TimeoutException>(() => monitor.SetSettings(Settings, true));
         Assert.True(monitor.Snapshot.CommandOutcomeUncertain);
         Assert.Contains("uncertain", monitor.Snapshot.Error);
-        Assert.Throws<InvalidOperationException>(() => monitor.SetSettings(Settings, true));
+        Assert.Throws<BoardStateException>(() => monitor.SetSettings(Settings, true));
         Assert.Equal(new[] { true }, commands.Forces);
     }
 
@@ -312,8 +312,8 @@ public sealed class ForcedSaveTests
         })
         {
             monitor.Attach(commands, status);
-            Assert.Throws<InvalidOperationException>(() => monitor.SetSettings(Settings));
-            Assert.Throws<InvalidOperationException>(() => monitor.Reboot());
+            Assert.Throws<BoardStateException>(() => monitor.SetSettings(Settings));
+            Assert.Throws<BoardStateException>(() => monitor.Reboot());
         }
         Assert.Empty(commands.Forces);
         Assert.Equal(0, commands.Reboots);
@@ -411,7 +411,7 @@ public sealed class ForcedSaveTests
         Assert.Throws<TimeoutException>(() => monitor.CancelWirelessTest());
         Assert.True(monitor.Snapshot.CommandOutcomeUncertain);
         Assert.Contains("uncertain", monitor.Snapshot.Error);
-        Assert.Throws<InvalidOperationException>(() => monitor.CancelWirelessTest());
+        Assert.Throws<BoardStateException>(() => monitor.CancelWirelessTest());
     }
 
     [Fact]
@@ -520,6 +520,10 @@ public sealed class ForcedSaveTests
         public bool TestFinishesBeforeCancelCheck { get; init; }
         public ManualResetEventSlim TestStarted { get; } = new();
         public bool CommandOutcomeUncertain => Failure is not null || CancelUncertain;
+        public ControlCommandReference? UncertainCommand => null;
+        public WirelessOperationReference? UncertainWirelessOperation => null;
+        public CommandResyncResult? ReconcileOutcome(ControlCommandReference? command,
+            WirelessOperationReference? wirelessOperation) => null;
         public InputReport? ReadInputReport(int timeoutMilliseconds = 250) =>
             throw new NotSupportedException();
         public void SetLed(bool on) { }
@@ -538,6 +542,7 @@ public sealed class ForcedSaveTests
             SelfTests++;
         }
         public WirelessStatusResponse ReadWireless() => throw new NotSupportedException();
+        public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) => throw new NotSupportedException();
         public WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new NotSupportedException();
         public IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null) =>
             throw new NotSupportedException();

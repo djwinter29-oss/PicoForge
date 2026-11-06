@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..hid.models import WirelessNetwork, WirelessStatus
+from ..hid.models import WirelessNetwork, WirelessReportStatus
 from .common import (
     REPORT_VERSION, WIRELESS_REPORT_ID, BleState, ControlOpcode, InvalidRequest,
     WifiState, WirelessFlags, WirelessStagedFlags, _feature_payload, _validate_settings,
@@ -162,7 +162,7 @@ def parse_scan_entry(data: bytes) -> WirelessNetwork:
             "secured": bool(security), "security": labels[security]}
 
 
-def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> WirelessStatus:
+def parse_wireless_status_report(report: bytes | bytearray | list[int]) -> WirelessReportStatus:
     """Decode only runtime fields actually carried by Feature 12."""
     p = _feature_payload(report, WIRELESS_REPORT_ID, WIRELESS_STATUS_SIZE)
     flags, length, staged = p[4], p[9], p[47]

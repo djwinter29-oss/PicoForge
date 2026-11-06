@@ -5,7 +5,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from helpers import make_monitor
-from picoforge.dashboard.monitor import DeviceMonitor, _empty_snapshot
+from picoforge.dashboard.monitor import CommandOutcomeUncertain, DeviceMonitor, _empty_snapshot
+from picoforge.reports import ProtocolError
 
 
 class MonitorMscTests(unittest.TestCase):
@@ -111,13 +112,43 @@ class MonitorMscTests(unittest.TestCase):
         }
         self.client.command_uncertain = True
         self.client.set_led.side_effect = TimeoutError("uncertain")
-        with self.assertRaises(TimeoutError):
+        with self.assertRaises(CommandOutcomeUncertain):
             self.monitor.set_led(True)
         self.assertTrue(self.monitor.snapshot()["command_outcome_uncertain"])
         self.client = self.monitor._active_client = Mock(command_uncertain=False)
         with self.assertRaisesRegex(RuntimeError, "outcome is uncertain"):
             self.monitor.set_msc(True)
         self.client.set_msc.assert_not_called()
+
+    def test_resync_keeps_uncertainty_until_exact_result_is_confirmed(self):
+        client = Mock(command_uncertain=True)
+        monitor = make_monitor(client, {"connected": True})
+        monitor._command_outcome_uncertain = True
+        monitor._uncertain_command = (7, 11)
+        monitor._uncertain_wireless_operation = ("scan", 3)
+        client.reconcile_outcome.return_value = None
+        with self.assertRaises(CommandOutcomeUncertain):
+            monitor.resync_command()
+        self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
+        client.reconcile_outcome.assert_called_once_with((7, 11), ("scan", 3))
+
+        control_result = {"transaction_id": 7, "opcode": 11, "status": "completed"}
+        wireless = {"scan_generation": 3, "scan_state": "complete"}
+        client.reconcile_outcome.return_value = control_result, wireless
+        self.assertEqual(monitor.resync_command(), {
+            "uncertain": False, "control_result": control_result, "wireless": wireless,
+        })
+        self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertEqual(monitor.snapshot()["wireless"], wireless)
+
+    def test_malformed_input_report_does_not_abort_wireless_poll_drain(self):
+        client = Mock(command_uncertain=False)
+        client.read_input_report.side_effect = [ProtocolError("bad report"), None]
+        monitor = make_monitor(client)
+        with self.assertLogs("picoforge.dashboard.monitor", "WARNING"):
+            monitor._drain_input_reports()
+        self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertEqual(client.read_input_report.call_count, 2)
 
     def test_snapshot_mutations_do_not_change_monitor_state(self):
         monitor = make_monitor(snapshot={"hardware": {"product_name": "PicoForge"}, "runtime": {"uptime_ms": 42}})
@@ -144,7 +175,9 @@ class MonitorReconnectTests(unittest.TestCase):
 
     def test_unexpected_report_error_keeps_the_monitor_alive_and_visible(self):
         client = Mock()
-        client.read_info.return_value = {"supported": True}
+        client.read_info.return_value = {
+            "supported": True, "settings_supported": False, "wireless_supported": False,
+        }
         client.read_input_report.return_value = {"kind": "memory", "data": {}}
         with self.assertLogs("picoforge.dashboard.monitor", "ERROR"):
             monitor = DeviceMonitor(client_factory=lambda: client)
@@ -159,7 +192,9 @@ class MonitorReconnectTests(unittest.TestCase):
     def test_monitor_yields_outside_the_hid_lock_between_nonblocking_input_batches(self):
         monitor = make_monitor(fresh=False)
         client = Mock()
-        client.read_info.return_value = {"supported": True}
+        client.read_info.return_value = {
+            "supported": True, "settings_supported": False, "wireless_supported": False,
+        }
         client.read_configuration.return_value = {
             "system_clock_mhz": 0, "sdcard_profile": 0, "radios": 0, "tcp_cli_enabled": False,
         }
@@ -221,7 +256,8 @@ class MonitorReconnectTests(unittest.TestCase):
         monitor = make_monitor(fresh=False)
         client = Mock()
         client.read_info.return_value = {
-            "product_name": "PicoForge", "settings_supported": True,
+            "supported": True, "product_name": "PicoForge", "settings_supported": True,
+            "wireless_supported": False,
             "storage_transport": "sdio",
             "self_test_supported": True,
         }
@@ -249,7 +285,8 @@ class MonitorReconnectTests(unittest.TestCase):
         self_test = {"state": "idle", "active": False}
         client = Mock()
         client.read_info.return_value = {
-            "product_name": "PicoForge", "settings_supported": False,
+            "supported": True, "product_name": "PicoForge", "settings_supported": False,
+            "wireless_supported": False,
             "storage_transport": "sdio", "self_test_supported": True,
         }
         client.read_configuration.return_value = {
@@ -320,10 +357,9 @@ class MonitorWirelessCancellationTests(unittest.TestCase):
         client.test_wireless.side_effect = finish_test
         client.cancel_wireless_test.side_effect = OSError("USB disconnected during cleanup")
 
-        with self.assertLogs("picoforge.dashboard.monitor", "ERROR"):
-            result = monitor.test_wireless("network")
-
-        self.assertEqual(result, {"test": expected})
+        with self.assertLogs("picoforge.dashboard.monitor", "ERROR"), \
+                self.assertRaises(CommandOutcomeUncertain):
+            monitor.test_wireless("network")
         client.cancel_wireless_test.assert_called_once_with()
         self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
 

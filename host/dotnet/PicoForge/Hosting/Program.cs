@@ -39,7 +39,16 @@ app.Use(async (context, next) =>
 app.UseSameOriginApiWrites();
 app.UseApiErrors();
 
-app.UseTemplateFileGuard();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.Equals("/index.html", StringComparison.OrdinalIgnoreCase) ||
+        context.Request.Path.Equals("/console.html", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next();
+});
 var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 var files = new PhysicalFileProvider(webRoot);
 app.UseStaticFiles(new StaticFileOptions { FileProvider = files });

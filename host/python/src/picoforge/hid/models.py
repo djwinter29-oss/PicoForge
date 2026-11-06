@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 
 
-class HardwareIdentity(TypedDict, total=False):
+class SupportedHardwareIdentity(TypedDict):
     version: int
     product_id: int
     product_name: str
-    supported: bool
+    supported: Literal[True]
     device_uid: str
     serial_number: str
     firmware_major: int
@@ -31,6 +31,22 @@ class HardwareIdentity(TypedDict, total=False):
     ram_reserved_bytes: int
 
 
+class UnsupportedHardwareIdentity(TypedDict):
+    version: int
+    product_id: int
+    product_name: str
+    supported: Literal[False]
+    capabilities: int
+    led_available: bool
+    reboot_available: bool
+    settings_supported: bool
+    self_test_supported: bool
+    wireless_supported: bool
+
+
+HardwareIdentity = SupportedHardwareIdentity | UnsupportedHardwareIdentity
+
+
 class BoardConfiguration(TypedDict):
     version: int
     stored_sysclk_profile: int
@@ -50,7 +66,7 @@ class BoardConfiguration(TypedDict):
     storage_transport: str
 
 
-class BootSettings(TypedDict, total=False):
+class BootSettings(TypedDict):
     system_clock_mhz: int
     sdcard_profile: int
     radios: int
@@ -138,9 +154,7 @@ class SelfTestStatus(TypedDict):
     volume_mounted: bool
 
 
-class WirelessStatus(TypedDict, total=False):
-    wifi_enabled: bool
-    ble_enabled: bool
+class WirelessReportStatus(TypedDict):
     wifi_state: str
     wifi_state_id: int
     ipv4: str
@@ -162,8 +176,14 @@ class WirelessStatus(TypedDict, total=False):
     scan_count: int
     test_generation: int
     staged_state: int
+
+
+class WirelessStatus(WirelessReportStatus):
+    wifi_enabled: bool
+    ble_enabled: bool
+    tcp_cli_enabled: bool
     stale: bool
-    remaining_seconds: int
+    remaining_seconds: int | None
 
 
 class WirelessSaveResult(WirelessStatus):
@@ -180,18 +200,11 @@ class WirelessNetwork(TypedDict):
     index: int
 
 
-class WirelessOperation(TypedDict):
-    transaction_id: int
-    state: int
-    page: int
+class WirelessTestResult(TypedDict):
+    ipv4: str
     detail: int
     phase: str
-    count: int
-    wifi_state: int
-    ipv4: str
-    networks: list[WirelessNetwork]
     test_generation: int
-    scan_generation: int
     remaining_seconds: int
 
 

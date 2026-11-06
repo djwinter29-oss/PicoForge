@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from picoforge.dashboard.server import create_app
+from picoforge.dashboard.monitor import CommandOutcomeUncertain
 from picoforge.cli import parse_args
 from picoforge.reports import ProtocolError, build_self_test_command_report
 from picoforge.reports.common import _validate_settings
@@ -277,12 +278,11 @@ class WebTests(unittest.TestCase):
         }
         unavailable = {
             "scan": "Wireless scan failed",
-            "test": "Wi-Fi test result is uncertain. Restart the dashboard and reconnect the board before retrying.",
+            "test": "Wi-Fi test is unavailable",
             "cancel": "Could not clear the wireless test credentials",
-            "save": "Wireless provisioning outcome is uncertain; command was not resent",
+            "save": "Wireless provisioning is unavailable",
         }
-        timed_out = {"test": "Wi-Fi test timed out; outcome is uncertain. Restart the dashboard "
-                             "and reconnect the board before retrying."}
+        timed_out = {"test": "Wi-Fi test timed out; confirm the result before retrying"}
         for route, (method, url, body) in routes.items():
             for error, status in ((RuntimeError("busy"), 409), (LookupError("unknown board"), 404),
                                   (OSError("io"), 503), (ConnectionError("PicoForge HID is not connected"), 503),
@@ -306,6 +306,31 @@ class WebTests(unittest.TestCase):
         with self.assertLogs("picoforge.dashboard.server", "ERROR"):
             bug = create_app(Raising(KeyError("bug"))).test_client().get("/api/status?board=a")
         self.assertEqual(bug.status_code, 500, "programming errors must not be reported as unknown boards")
+
+    def test_uncertain_command_errors_are_machine_readable(self):
+        class UncertainMonitor(FakeMonitor):
+            def test_wireless(self, *_args, **_kwargs):
+                raise CommandOutcomeUncertain("Re-sync before retrying")
+
+        monitor = UncertainMonitor()
+        client = create_app(FakeBoards(monitor)).test_client()
+        response = client.post(
+            "/api/wireless/test?board=a", json={"ssid": "net", "password": ""},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(response.json["uncertain"])
+        self.assertEqual(response.json["error"], "Re-sync before retrying")
+
+    def test_control_resync_requires_explicit_confirmation(self):
+        class ResyncMonitor(FakeMonitor):
+            def resync_command(self):
+                return {"uncertain": False, "control_result": None, "wireless": None}
+
+        client = create_app(FakeBoards(ResyncMonitor())).test_client()
+        self.assertEqual(client.post("/api/control/resync?board=a", json={}).status_code, 400)
+        response = client.post("/api/control/resync?board=a", json={"confirm": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"uncertain": False, "control_result": None, "wireless": None})
 
     def test_boards_route_lists_selectable_devices(self):
         response = create_app(FakeBoards()).test_client().get(

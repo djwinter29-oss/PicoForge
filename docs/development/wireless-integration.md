@@ -55,6 +55,12 @@ those reports do not define.
   stages provided credentials with ops `6`-`8`, optionally tests with op `9`, then commits through op `5` with the
   explicit wireless-commit flag. Omitted credentials are not staged. `POST /api/wireless/scan` uses op `11` and reads
   each result through op `12`; `POST /api/wireless/test` and `/cancel` use ops `9` and `10`.
+- `POST /api/control/resync` requires `{"confirm": true}`. It clears a blocked command only when Feature 20 reports
+  the exact pending transaction and, for asynchronous Wi-Fi work, Feature 12 reports the matching terminal
+  generation. Missing, stale or mismatched results leave writes blocked. Both the Python and .NET dashboards expose
+  this route and advertise support through `command_resync_supported`.
+- The .NET `/api/boards` response skips duplicate serial/path identity groups and includes a `warnings` array so an
+  ambiguous device does not prevent other uniquely identified boards from being selected.
 
 ## Wi-Fi station behavior
 

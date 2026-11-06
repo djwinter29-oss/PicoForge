@@ -6,7 +6,7 @@ import struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import BootSettings, ControlResult, HardwareIdentity, WirelessNetwork
+    from ..hid.models import BootSettings, ControlResult, SupportedHardwareIdentity, WirelessNetwork
 
 from .common import (
     CAP_LED, CAP_REBOOT, CAP_SAVE_SETTINGS, CAP_SELF_TEST, CAP_WIRELESS,
@@ -139,7 +139,7 @@ def _validate_detail(opcode: int, status: int, error: int, detail: int) -> None:
 
 
 def parse_control_result_report(
-    report: bytes | bytearray | list[int], identity: HardwareIdentity | None = None,
+    report: bytes | bytearray | list[int], identity: SupportedHardwareIdentity | None = None,
 ) -> ControlResult:
     """Decode and validate the latest USB result without consuming it."""
     payload = _feature_payload(report, CONTROL_REPORT_ID, CONTROL_PAYLOAD_SIZE)

@@ -12,14 +12,13 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .boards import DashboardBoards
 from .console import ConsoleBridge
-from .monitor import _empty_snapshot
+from .monitor import CommandOutcomeUncertain, _empty_snapshot
 from .. import __version__
 from ..hid.device import WirelessTestCancelled
 from ..hid.models import WirelessStatus
 from ..reports import InvalidRequest, ProtocolError
 from ..reports.wireless import request_ssid, validate_wireless_configuration
 
-_WIRELESS_RETRY = "Restart the dashboard and reconnect the board before retrying."
 _INTERNAL_WIRELESS_FIELDS = frozenset({"wifi_state_id", "tcp_cli_auth_required", "age_ms", "error"})
 
 
@@ -29,8 +28,8 @@ def _public_wireless(status: WirelessStatus) -> WirelessStatus:
     })
 
 
-def _unavailable(message: str) -> tuple:
-    return jsonify({"error": message}), 503
+def _unavailable(message: str, *, uncertain: bool = False) -> tuple:
+    return jsonify({"error": message, "uncertain": uncertain}), 503
 
 
 def _limit_console_request() -> None:
@@ -63,6 +62,10 @@ def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None =
             return jsonify({"error": str(error)}), 409
         app.logger.exception("Unhandled RuntimeError")
         return jsonify({"error": "Internal server error"}), 500
+
+    @app.errorhandler(CommandOutcomeUncertain)
+    def uncertain_command(error: CommandOutcomeUncertain):
+        return jsonify({"error": str(error), "uncertain": True}), 503
 
     @app.errorhandler(LookupError)
     def not_found(error: LookupError):
@@ -230,6 +233,13 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
             return jsonify({"error": "Explicit confirm: true is required"}), 400
         return jsonify(_board(boards).reboot())
 
+    @app.post("/api/control/resync")
+    def resync_control():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or payload.get("confirm") is not True:
+            return jsonify({"error": "Explicit confirm: true is required"}), 400
+        return jsonify(_board(boards).resync_command())
+
     @app.post("/api/self-test")
     def self_test():
         payload = request.get_json(silent=True)
@@ -268,10 +278,10 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
             return jsonify(_board(boards).test_wireless(ssid, payload.get("password", "")))
         except TimeoutError:
             app.logger.exception("Wi-Fi test timed out")
-            return _unavailable(f"Wi-Fi test timed out; outcome is uncertain. {_WIRELESS_RETRY}")
+            return _unavailable("Wi-Fi test timed out; confirm the result before retrying", uncertain=True)
         except (OSError, ProtocolError):
-            app.logger.exception("Wi-Fi test result is uncertain")
-            return _unavailable(f"Wi-Fi test result is uncertain. {_WIRELESS_RETRY}")
+            app.logger.exception("Wi-Fi test is unavailable")
+            return _unavailable("Wi-Fi test is unavailable")
 
     @app.post("/api/wireless/cancel")
     def cancel_wireless_test():
@@ -293,7 +303,7 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
             return jsonify(result)
         except (OSError, ProtocolError):
             app.logger.exception("Wireless provisioning outcome is uncertain")
-            return _unavailable("Wireless provisioning outcome is uncertain; command was not resent")
+            return _unavailable("Wireless provisioning is unavailable")
 
 
 def run_server(port: int = 5000, serial_number: str | None = None, device_path: str | None = None) -> None:

@@ -10,6 +10,7 @@ internal interface IDeviceMonitor : IDisposable
 {
     StatusResponse Snapshot { get; }
     void Start();
+    CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default);
     void SetLed(bool on, CancellationToken cancel = default);
     MscStatusResponse SetMsc(bool enabled, bool force = false, CancellationToken cancel = default);
     BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false,
@@ -26,12 +27,14 @@ internal interface IDeviceMonitor : IDisposable
 
 /// <summary>The board is running another command; nothing was sent, so retrying is safe.</summary>
 internal sealed class BoardBusyException()
-    : InvalidOperationException("Board is busy with another command; retry when it finishes");
+    : BoardStateException("Board is busy with another command; retry when it finishes");
 
 /// <summary>Serialized HID operations used by <see cref="DeviceMonitor"/>; allows tests to block a write.</summary>
 internal interface IHidCommands
 {
     bool CommandOutcomeUncertain { get; }
+    ControlCommandReference? UncertainCommand { get; }
+    WirelessOperationReference? UncertainWirelessOperation { get; }
     InputReport? ReadInputReport(int timeoutMilliseconds = 250);
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
@@ -40,8 +43,9 @@ internal interface IHidCommands
     void Reboot();
     void SetSelfTest(string action, uint sizeMib);
     WirelessStatusResponse ReadWireless();
-    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) =>
-        throw new NotSupportedException("USB TCP CLI authentication is unavailable");
+    byte[] TcpCliAuthProof(byte[] nonce, byte[] uid);
+    CommandResyncResult? ReconcileOutcome(ControlCommandReference? command,
+        WirelessOperationReference? wirelessOperation);
     WirelessStatusResponse SetWireless(WirelessRequest settings);
     IReadOnlyList<WirelessNetworkResponse> ScanWireless(Action? onPoll = null);
     WirelessOperationResponse TestWireless(string ssid, string password, Action? onPoll = null,
@@ -71,7 +75,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private long telemetryReceipt;
     private long storageReceipt;
     private long selfTestReceipt;
-    private bool commandOutcomeUncertain;
+    private ControlCommandReference? uncertainCommand;
+    private WirelessOperationReference? uncertainWirelessOperation;
     private long mscReconnectDeadline;
     private bool? mscReconnectEnabled;
     // Set while a Wi-Fi test owns deviceGate, guarded by gate, so a cancel can reach it without waiting.
@@ -115,10 +120,58 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         return new(deviceGate);
     }
 
+    private async ValueTask<DeviceLease> OwnerAsync(CancellationToken cancel)
+    {
+        await deviceGate.WaitAsync(cancel);
+        return new(deviceGate);
+    }
+
     /// <summary>The latest reports, with any section older than its freshness limit hidden.</summary>
     public StatusResponse Snapshot
     {
         get { lock (gate) return Fresh(); }
+    }
+
+    public CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default)
+    {
+        if (!confirm) throw new ApiInputException("Explicit confirm: true is required");
+        using (Device(cancel))
+        {
+            if (!Snapshot.CommandOutcomeUncertain) return new(false);
+            var client = Client();
+            CommandResyncResult? result;
+            try
+            {
+                result = client.ReconcileOutcome(uncertainCommand, uncertainWirelessOperation);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or TimeoutException)
+            {
+                throw new BoardStateException("Could not confirm the command result; uncertainty remains");
+            }
+            if (result is null)
+                throw new BoardStateException("No final result matches the pending operation; uncertainty remains");
+            lock (gate)
+            {
+                uncertainCommand = null;
+                uncertainWirelessOperation = null;
+                snapshot = snapshot with
+                {
+                    CommandOutcomeUncertain = false,
+                    Error = null,
+                    Wireless = result.Wireless ?? snapshot.Wireless,
+                    WirelessError = result.Wireless is null ? snapshot.WirelessError : null
+                };
+            }
+            var control = result.ControlResult is { } controlResult
+                ? new ControlResultResponse(HidProtocol.ReportVersion, controlResult.TransactionId,
+                    (byte)controlResult.Opcode, (byte)controlResult.Status,
+                    controlResult.Status.ToString().ToLowerInvariant(), (byte)controlResult.ErrorReason,
+                    controlResult.ErrorReason.ToString().ToLowerInvariant(),
+                    controlResult.Status is ControlStatus.Invalid or ControlStatus.Busy or ControlStatus.Failed
+                        ? controlResult.ResultData[0] : (byte)0)
+                : null;
+            return new(false, control, result.Wireless);
+        }
     }
 
     /// <summary>Test seam: adopt <paramref name="client"/> with <paramref name="status"/> as just reported.</summary>
@@ -129,7 +182,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             activeClient = status.Connected ? client : null;
             snapshot = status;
-            commandOutcomeUncertain = status.CommandOutcomeUncertain;
+            uncertainCommand = null;
+            uncertainWirelessOperation = null;
             telemetryReceipt = storageReceipt = selfTestReceipt = time.GetTimestamp();
         }
     }
@@ -141,7 +195,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             var client = Client();
             if (Snapshot.Runtime?.LedAvailable != true)
-                throw new InvalidOperationException("The board LED is unavailable");
+                throw new BoardStateException("The board LED is unavailable");
             ExecuteCommand(client, () => client.SetLed(on));
             lock (gate)
                 if (snapshot.Runtime is { } runtime) snapshot = snapshot with { Runtime = runtime with { LedOn = on } };
@@ -154,7 +208,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             var client = Client();
             if (force && Snapshot.Memory?.Msc is not { Enabled: true, TransitionPending: false })
-                throw new InvalidOperationException("Force return requires enabled MSC");
+                throw new BoardStateException("Force return requires enabled MSC");
             ExecuteCommand(client, () => client.SetMsc(enabled, force));
             lock (gate)
             {
@@ -176,7 +230,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             var client = Client();
             var current = Snapshot;
             if (!current.SettingsSupported)
-                throw new InvalidOperationException("Boot settings are unavailable on this firmware");
+                throw new BoardStateException("Boot settings are unavailable on this firmware");
             RequireIdleStorage(current, "saving boot settings", force);
             var saved = ExecuteCommand(client, () => client.SetSettings(settings, force));
             lock (gate)
@@ -251,7 +305,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate) wirelessTestCancel = null;
                 SetWirelessPhase(null);
                 // A cancel that arrived after the client's last check must still clear the test credentials.
-                if (stop.IsCancellationRequested && !cancelSent && !commandOutcomeUncertain)
+                if (stop.IsCancellationRequested && !cancelSent && !Snapshot.CommandOutcomeUncertain)
                     ExecuteCommand(client, client.CancelWirelessTest);
             }
         }
@@ -302,12 +356,12 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private static void RequireIdleStorage(StatusResponse status, string action, bool force = false)
     {
         if (status.Memory?.Msc is not { } msc)
-            throw new InvalidOperationException("Waiting for storage ownership status");
-        if (force && !msc.Enabled) throw new InvalidOperationException("Forced save requires USB ownership");
+            throw new BoardStateException("Waiting for storage ownership status");
+        if (force && !msc.Enabled) throw new BoardStateException("Forced save requires USB ownership");
         if (msc.TransitionPending || (msc.Enabled && !force))
-            throw new InvalidOperationException($"Disable the USB drive before {action}");
+            throw new BoardStateException($"Disable the USB drive before {action}");
         if (status.SelfTest?.Active == true)
-            throw new InvalidOperationException($"Wait for the storage self-test to finish before {action}");
+            throw new BoardStateException($"Wait for the storage self-test to finish before {action}");
     }
 
     /// <summary>Returns the handle when Wi-Fi staging cannot race storage, self-test or an unresolved write.</summary>
@@ -316,11 +370,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         var client = Client();
         var current = Snapshot;
         if (current.Hardware?.WirelessSupported != true)
-            throw new InvalidOperationException("Wireless provisioning is unavailable on this firmware");
+            throw new BoardStateException("Wireless provisioning is unavailable on this firmware");
         if (current.Memory?.Msc is not { Enabled: false, TransitionPending: false } ||
             current.RebootPending || current.SelfTest?.Active == true ||
             ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
-            throw new InvalidOperationException(
+            throw new BoardStateException(
                 "Wireless scan and connection test require idle firmware-owned storage");
         return client;
     }
@@ -337,26 +391,27 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 client = createClient();
                 var hardware = client.ReadInfo();
                 var configuration = client.ReadConfiguration();
-                using (Owner())
+                using (await OwnerAsync(CancellationToken.None))
                 lock (gate)
                 {
                     activeClient = client;
                     telemetryReceipt = storageReceipt = selfTestReceipt = 0;
-                    snapshot = new(true, commandOutcomeUncertain ? UncertainMessage : null, hardware,
-                        BoardConfiguration: configuration, CommandOutcomeUncertain: commandOutcomeUncertain);
+                    var uncertain = snapshot.CommandOutcomeUncertain;
+                    snapshot = new(true, uncertain ? UncertainMessage : null, hardware,
+                        BoardConfiguration: configuration, CommandOutcomeUncertain: uncertain);
                 }
 
                 long wirelessPollAt = 0;
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    using (Owner())
+                    using (await OwnerAsync(stoppingToken))
                     {
                         PollInputs(client);
                         if (hardware.WirelessSupported && time.GetTimestamp() >= wirelessPollAt)
                             wirelessPollAt = PollWireless(client);
                     }
-                    // ponytail: 50 ms stays below the 250 ms telemetry cadence and cuts idle wakeups by 80%.
-                    await Task.Delay(TimeSpan.FromMilliseconds(50), stoppingToken);
+                    // ponytail: 100 ms stays below the 250 ms telemetry cadence and halves idle wakeups.
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
                 }
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
@@ -466,22 +521,23 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         lock (gate)
         {
             // Only a lost or timed-out handle during a confirmed USB-drive switch is an expected reconnect.
-            var reconnecting = !commandOutcomeUncertain && time.GetTimestamp() < mscReconnectDeadline &&
+            var uncertain = snapshot.CommandOutcomeUncertain;
+            var reconnecting = !uncertain && time.GetTimestamp() < mscReconnectDeadline &&
                 error is IOException or TimeoutException;
             if (reconnecting)
                 logger.LogInformation(error, "USB-drive mode change: waiting for HID reconnection");
             activeClient = null;
             telemetryReceipt = storageReceipt = selfTestReceipt = 0;
-            snapshot = new(false, commandOutcomeUncertain ? UncertainMessage
+            snapshot = new(false, uncertain ? UncertainMessage
                     : reconnecting ? null
                     : IsDeviceError(error) ? error.Message : $"Internal monitor error: {error.Message}",
-                CommandOutcomeUncertain: commandOutcomeUncertain, Reconnecting: reconnecting);
+                CommandOutcomeUncertain: uncertain, Reconnecting: reconnecting);
         }
     }
 
-    // InvalidDataException is malformed board data; InvalidOperationException is a board-state or firmware refusal.
+    // Board refusals are typed separately; unclassified exceptions are logged as monitor faults.
     private static bool IsDeviceError(Exception error) => error is IOException or InvalidDataException
-        or InvalidOperationException or UnauthorizedAccessException or NotSupportedException or TimeoutException;
+        or UnauthorizedAccessException or TimeoutException;
 
     private bool IsStale(long receivedAt, int maximumAgeMs) =>
         receivedAt == 0 || time.GetElapsedTime(receivedAt).TotalMilliseconds >= maximumAgeMs;
@@ -495,7 +551,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     // test in the background and publish their results through /api/status instead.
     private T ExecuteCommand<T>(IHidCommands client, Func<T> command)
     {
-        if (commandOutcomeUncertain) throw new InvalidOperationException(UncertainMessage);
+        if (Snapshot.CommandOutcomeUncertain) throw new BoardStateException(UncertainMessage);
         try
         {
             return command();
@@ -504,7 +560,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             if (client.CommandOutcomeUncertain)
             {
-                commandOutcomeUncertain = true;
+                uncertainCommand = client.UncertainCommand;
+                uncertainWirelessOperation = client.UncertainWirelessOperation;
                 lock (gate) snapshot = snapshot with { Error = UncertainMessage, CommandOutcomeUncertain = true };
             }
             throw;

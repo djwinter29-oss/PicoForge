@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace PicoForge;
 
@@ -25,25 +26,25 @@ internal sealed class ConsoleBridge : IDisposable
         this.time = time ?? TimeProvider.System;
         this.port = port;
         this.allowLoopbackForTests = allowLoopbackForTests;
-        expiry = this.time.CreateTimer(_ => Expire(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        expiry = this.time.CreateTimer(_ => Expire(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     public async Task<string> OpenAsync(WirelessStatusResponse wireless,
         Func<byte[], byte[], byte[]>? signProof = null, CancellationToken cancel = default)
     {
         if (!wireless.WifiEnabled || wireless.WifiState != WifiState.Connected || !wireless.TcpCliStarted)
-            throw new InvalidOperationException("The board's Wi-Fi TCP CLI is not available");
+            throw new BoardStateException("The board's Wi-Fi TCP CLI is not available");
         if (!IPAddress.TryParse(wireless.Ipv4, out var address) ||
             address.AddressFamily != AddressFamily.InterNetwork ||
             !allowLoopbackForTests && IPAddress.IsLoopback(address) ||
             address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) ||
             address.GetAddressBytes()[0] is >= 224 and <= 239)
-            throw new ArgumentException("Invalid board IPv4 address");
+            throw new InvalidDataException("Invalid board IPv4 address");
         if (!wireless.BleKeyConfigured || signProof is null)
-            throw new InvalidOperationException("USB Control key proof is unavailable");
+            throw new BoardStateException("USB Control key proof is unavailable");
         const string Busy = "A web console is already connected; disconnect it first";
         lock (gate)
-            if (connection is not null) throw new InvalidOperationException(Busy);
+            if (connection is not null) throw new BoardStateException(Busy);
         // Connect and authenticate (up to 6 s) without the gate, so reads, writes and expiry never wait on them.
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         try
@@ -55,10 +56,11 @@ internal sealed class ConsoleBridge : IDisposable
             socket.SendTimeout = 100;
             lock (gate)
             {
-                if (connection is not null) throw new InvalidOperationException(Busy);
+                if (connection is not null) throw new BoardStateException(Busy);
                 connection = socket;
                 session = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
                 lastRequest = time.GetTimestamp();
+                expiry.Change(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
                 return session;
             }
         }
@@ -85,7 +87,7 @@ internal sealed class ConsoleBridge : IDisposable
         {
             cancel.ThrowIfCancellationRequested();
             proof = signProof(nonce, uid);
-            if (proof.Length != 16) throw new InvalidOperationException("The board returned an invalid TCP CLI proof");
+            if (proof.Length != 16) throw new InvalidDataException("The board returned an invalid TCP CLI proof");
             var response = System.Text.Encoding.ASCII.GetBytes(
                 $"AUTH {Convert.ToHexString(proof).ToLowerInvariant()}\r\n");
             try { await SendAllAsync(socket, response, cancel); }
@@ -149,10 +151,23 @@ internal sealed class ConsoleBridge : IDisposable
 
     private Socket RequireSession(string? token)
     {
-        if (connection is null || token != session)
-            throw new InvalidOperationException("Console disconnected; connect again");
+        if (connection is null || session is null || !MatchesSession(token, session))
+            throw new BoardStateException("Console disconnected; connect again");
         lastRequest = time.GetTimestamp();
         return connection;
+    }
+
+    private static bool MatchesSession(string? token, string session)
+    {
+        if (token is null || token.Length != session.Length) return false;
+        var supplied = Encoding.ASCII.GetBytes(token);
+        var expected = Encoding.ASCII.GetBytes(session);
+        try { return CryptographicOperations.FixedTimeEquals(supplied, expected); }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(supplied);
+            CryptographicOperations.ZeroMemory(expected);
+        }
     }
 
     /// <summary>Waits up to 2 s for board output without holding the gate, so writes are never blocked.</summary>
@@ -174,7 +189,7 @@ internal sealed class ConsoleBridge : IDisposable
             lock (gate)
             {
                 if (!ReferenceEquals(connection, waiting))
-                    throw new InvalidOperationException("Console disconnected; connect again");
+                    throw new BoardStateException("Console disconnected; connect again");
                 CloseConnection();
             }
             throw new IOException("TCP console connection failed", error);
@@ -183,7 +198,7 @@ internal sealed class ConsoleBridge : IDisposable
         {
             var socket = RequireSession(token);
             if (!ReferenceEquals(socket, waiting))
-                throw new InvalidOperationException("Console disconnected; connect again");
+                throw new BoardStateException("Console disconnected; connect again");
             try
             {
                 if (count < 0) return ([], false);
@@ -226,6 +241,7 @@ internal sealed class ConsoleBridge : IDisposable
         connection?.Dispose();
         connection = null;
         session = null;
+        expiry.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Closes a session idle for 15 s; the timer calls it every second.</summary>
@@ -238,7 +254,7 @@ internal sealed class ConsoleBridge : IDisposable
 
     public void Dispose()
     {
-        expiry.Dispose();
         lock (gate) CloseConnection();
+        expiry.Dispose();
     }
 }

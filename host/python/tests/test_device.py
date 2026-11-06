@@ -66,7 +66,6 @@ class HidDeviceTests(unittest.TestCase):
             hid.return_value.device.return_value = transport
             client = PicoForgeHid()
         self.assertIsNone(client.configuration)
-        self.assertIsNone(client._wireless_snapshot)
         self.assertIsNone(client._tested_generation)
         self.assertIsNone(client._tested_at)
 
@@ -99,16 +98,14 @@ class HidDeviceTests(unittest.TestCase):
         replacement.send_feature_report.assert_not_called()
         self.assertFalse(client._command_uncertain)
 
-    def test_forced_save_invalid_saved_values_remain_uncertain(self):
+    def test_forced_save_rejects_mismatched_confirmed_saved_values(self):
         client = self.connection()
         client.identity["capabilities"] |= 64
         client._device.feature_reports[20] = [control_result(opcode=5)]
         with self.assertRaisesRegex(RuntimeError, "did not confirm"):
             client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 1, "radios": 0,
                                  "tcp_cli_enabled": False}, force=True)
-        self.assertTrue(client._command_uncertain)
-        with self.assertRaisesRegex(RuntimeError, "uncertain"):
-            client.set_led(True)
+        self.assertFalse(client.command_uncertain)
         self.assertEqual(len(client._device.sent), 1)
 
     def connection(self, reports=None):
@@ -138,8 +135,9 @@ class HidDeviceTests(unittest.TestCase):
         client._transaction_id = 0
         client.last_command_result = None
         client._command_uncertain = False
+        client._uncertain_command = None
+        client._uncertain_wireless_operation = None
         client._control_lock = threading.RLock()
-        client._wireless_snapshot = None
         client._wireless_active = False
         client._tested_generation = None
         client._tested_at = None
