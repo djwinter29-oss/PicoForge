@@ -17,6 +17,26 @@ namespace PicoForge.Tests;
 
 public sealed class WirelessLifecycleTests
 {
+    [Fact]
+    public async Task TestingAndCleanupInvalidatePreviousCachedCandidates()
+    {
+        using var wire = new Wire { FailCancel = false };
+        using var hid = new PicoForgeHid(wire, () => []);
+        await using var monitor = new DeviceMonitor(() => throw new InvalidOperationException("No worker expected"),
+            time: new ManualTime());
+        var old = hid.ReadWireless() with { TestGeneration = 255, Ssid = "previous-candidate" };
+        monitor.Attach(hid, Ready(hid) with { Wireless = old });
+        var test = monitor.TestWireless("Pico", "password");
+        Assert.Equal((byte)1, test.TestGeneration);
+        Assert.NotNull(test.TestId);
+        Assert.Null(monitor.Snapshot.Wireless);
+        monitor.Attach(hid, Ready(hid) with { Wireless = hid.ReadWireless() });
+        monitor.CancelWirelessTest();
+        Assert.Null(monitor.Snapshot.Wireless);
+        Assert.False(monitor.Snapshot.WirelessCleanupRequired);
+        Assert.Equal(new byte[] { 6, 7, 9, 10 }, wire.Writes.Select(request => request[3]));
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]

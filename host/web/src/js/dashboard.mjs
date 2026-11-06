@@ -1,11 +1,29 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Ji Dong
 
-import { renderWirelessStatus } from "./wireless-form.mjs?v=19";
+// @ts-check
+import { renderWirelessStatus } from "./wireless-form.mjs";
 import { operationState } from "./operation-state.mjs";
 
+/**
+ * @typedef {import("./dashboard-api.mjs").StatusSnapshot & {
+ * console_url?: string, settings_draft?: import("./dashboard-api.mjs").BootSettings,
+ * settings_dirty?: boolean, wireless_dirty?: boolean, no_board_selected?: boolean,
+ * msc_outcome_uncertain?: boolean, status_read_error?: boolean, status_reading?: boolean}} DashboardView
+ */
+/** @param {string} selector */
+function element(selector) {
+  const node = /** @type {HTMLElement | null} */ (document.querySelector(selector));
+  if (!node) throw new Error(`Missing dashboard element: ${selector}`);
+  return node;
+}
+/** @param {string} selector */
+const select = selector => /** @type {HTMLSelectElement} */ (element(selector));
+/** @param {string} selector */
+const button = selector => /** @type {HTMLButtonElement} */ (element(selector));
+/** @param {number | undefined} milliseconds */
 function uptimeLabel(milliseconds) {
-  if (!Number.isFinite(milliseconds)) return "--";
+  if (milliseconds === undefined || !Number.isFinite(milliseconds)) return "--";
   const totalSeconds = Math.floor(milliseconds / 1000);
   const days = Math.floor(totalSeconds / 86400);
   const hours = Math.floor((totalSeconds % 86400) / 3600);
@@ -14,15 +32,22 @@ function uptimeLabel(milliseconds) {
   return days ? `${days}d ${hours}h ${minutes}m` : `${hours}h ${minutes}m ${seconds}s`;
 }
 
+/** @type {{memory: import("./dashboard-api.mjs").Memory, filesystemFormat: string | null | undefined} | null} */
 let lastStorageDetails = null;
 let cardAbsent = false;
+/** @type {string | null} */
 let boardConfigurationSignature = null;
+/** @type {{uartTitle: HTMLElement, storageTitle: HTMLElement, uartTable: HTMLElement,
+ * storageTable: HTMLElement, resetCause: HTMLElement} | null} */
 let boardConfigurationElements = null;
+/** @type {Document | null} */
 let boardConfigurationDocument = null;
 
 /**
  * Lift the view's shortcuts out of the shared status shape (tests/status-contract.json): both servers nest USB-drive
  * ownership and filesystem format in `memory` and next-boot settings in `board_configuration`.
+ * @param {import("./dashboard-api.mjs").StatusSnapshot} snapshot
+ * @returns {import("./dashboard-api.mjs").StatusSnapshot}
  */
 export function normalizeStatus(snapshot) {
   const configuration = snapshot.settings_supported ? snapshot.board_configuration : null;
@@ -37,7 +62,10 @@ export function normalizeStatus(snapshot) {
   };
 }
 
-export function renderStatus(snapshot) {
+/** @param {DashboardView} snapshot @param {import("./operation-state.mjs").OperationState} [operations] */
+export function renderStatus(snapshot, operations = operationState(snapshot, {
+  settingsDirty: snapshot.settings_dirty, wirelessDirty: snapshot.wireless_dirty,
+}, (/** @type {HTMLInputElement} */ (element("#self-test-size"))).valueAsNumber)) {
   const connected = Boolean(snapshot.connected);
   if (!connected) {
     lastStorageDetails = null;
@@ -45,76 +73,74 @@ export function renderStatus(snapshot) {
   }
   const hardware = snapshot.hardware;
   const runtime = snapshot.telemetry_stale ? null : snapshot.runtime;
-  const connection = document.querySelector("#connection");
+  const connection = element("#connection");
   connection.dataset.state = snapshot.error ? "error" : connected ? "connected" : "disconnected";
-  document.querySelector("#connection-label").textContent = snapshot.error
+  element("#connection-label").textContent = snapshot.error
     ? "Attention" : snapshot.reconnecting ? "Reconnecting" : connected ? "Connected" : "Disconnected";
-  document.querySelector("#product-name").textContent = hardware
-    ? `${hardware.product_name} (${hardware.capabilities & 8 ? "SPI" : "SDIO"})` : "--";
+  element("#product-name").textContent = hardware?.product_name !== undefined
+    ? `${hardware.product_name} (${(hardware.capabilities ?? 0) & 8 ? "SPI" : "SDIO"})` : "--";
   const boardModel = typeof hardware?.board_model === "string" ? hardware.board_model
-    : ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W", 4: "Pico W" })[hardware?.board_model]
-      ?? (hardware ? `Unknown (${hardware.board_model})` : "--");
-  document.querySelector("#board-model").textContent = hardware?.mcu
+    : ({ 1: "Pico", 2: "Pico 2", 3: "Pico 2 W", 4: "Pico W" })[hardware?.board_model ?? 0]
+      ?? (hardware?.board_model !== undefined ? `Unknown (${hardware.board_model})` : "--");
+  element("#board-model").textContent = hardware?.mcu
     ? `${boardModel} (${hardware.mcu})` : boardModel;
-  document.querySelector("#firmware-version").textContent = hardware?.firmware_version ?? "Unknown";
-  const clock = runtime
+  element("#firmware-version").textContent = hardware?.firmware_version ?? "Unknown";
+  const clock = runtime?.system_clock_hz !== undefined
     ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--";
-  document.querySelector("#identity-clock").textContent = clock;
-  renderSettings(snapshot);
-  document.querySelector("#cpu-usage-core0").textContent = runtime?.cpu_usage_core0_basis_points == null
+  element("#identity-clock").textContent = clock;
+  renderSettings(snapshot, operations);
+  element("#cpu-usage-core0").textContent = runtime?.cpu_usage_core0_basis_points == null
     ? "--" : `${(runtime.cpu_usage_core0_basis_points / 100).toFixed(1)}%`;
-  document.querySelector("#cpu-usage-core1").textContent = runtime?.cpu_usage_core1_basis_points == null
+  element("#cpu-usage-core1").textContent = runtime?.cpu_usage_core1_basis_points == null
     ? "--" : `${(runtime.cpu_usage_core1_basis_points / 100).toFixed(1)}%`;
   const ramUsed = hardware?.ram_reserved_bytes;
   const ramTotal = hardware?.ram_total_bytes;
-  document.querySelector("#ram-usage").textContent = Number.isSafeInteger(ramTotal) && ramTotal > 0
-    && Number.isSafeInteger(ramUsed) && ramUsed >= 0 && ramUsed <= ramTotal
+  element("#ram-usage").textContent = typeof ramTotal === "number" && Number.isSafeInteger(ramTotal) && ramTotal > 0
+    && typeof ramUsed === "number" && Number.isSafeInteger(ramUsed) && ramUsed >= 0 && ramUsed <= ramTotal
     ? `${(ramUsed / 1024).toFixed(1)} / ${(ramTotal / 1024).toFixed(0)} KiB`
       + ` (${(ramUsed * 100 / ramTotal).toFixed(1)}%)`
     : "--";
-  document.querySelector("#serial").textContent = hardware?.serial_number || "--";
-  document.querySelector("#uptime").textContent = runtime
+  element("#serial").textContent = hardware?.serial_number || "--";
+  element("#uptime").textContent = runtime
     ? uptimeLabel(runtime.uptime_milliseconds ?? runtime.uptime_ms) : "--";
-  setState("#cdc-state", runtime ? (runtime.cdc_open ? "Open" : "Closed") : "--", runtime?.cdc_open);
+  setState("#cdc-state", runtime?.cdc_open === undefined ? "--" : runtime.cdc_open ? "Open" : "Closed",
+    runtime?.cdc_open);
   renderWirelessStatus(snapshot);
   const memory = snapshot.storage_stale ? null : snapshot.memory;
   if (memory?.presence_known === true) cardAbsent = memory.present === false;
-  const storageShared = snapshot.msc_command_pending || snapshot.msc?.enabled || snapshot.msc?.transition_pending;
-  document.querySelector('[aria-labelledby="memory-title"]').hidden = cardAbsent;
-  document.querySelector('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared;
-  document.querySelector("#temperature").textContent = runtime?.temperature_valid
+  const storageShared = Boolean(operations.mscPending || snapshot.msc?.enabled || snapshot.msc?.transition_pending);
+  element('[aria-labelledby="memory-title"]').hidden = cardAbsent;
+  element('[aria-labelledby="self-test-title"]').hidden = cardAbsent || storageShared;
+  element("#temperature").textContent = runtime?.temperature_valid && runtime.temperature_centidegrees !== undefined
     ? `${(runtime.temperature_centidegrees / 100).toFixed(2)} °C` : "--";
-  const ledControl = document.querySelector("#led-control");
+  const ledControl = button("#led-control");
   const ledOn = runtime?.led_available ? Boolean(runtime.led_on) : null;
   ledControl.textContent = ledOn === null ? "Board LED: --" : `Board LED: ${ledOn ? "On" : "Off"}`;
   ledControl.dataset.state = ledOn === null ? "unknown" : ledOn ? "on" : "off";
   ledControl.setAttribute("aria-pressed", String(ledOn === true));
-  if (snapshot.can_set_led !== undefined) ledControl.disabled = !snapshot.can_set_led;
+  ledControl.disabled = !operations.canSetLed;
   ledControl.title = ledOn === null ? "Onboard LED unavailable"
     : `Turn onboard LED ${ledOn ? "off" : "on"}`;
   const msc = snapshot.msc;
-  const mscControl = document.querySelector("#msc-control");
+  const mscControl = button("#msc-control");
   mscControl.textContent = msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  mscControl.disabled = snapshot.can_change_msc === undefined
-    ? snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
-    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
-    : !snapshot.can_change_msc;
-  document.querySelector("#msc-note").textContent = snapshot.msc_outcome_uncertain
+  mscControl.disabled = !operations.canChangeMsc;
+  element("#msc-note").textContent = snapshot.msc_outcome_uncertain
     ? "Storage command outcome is uncertain. Check fresh ownership status before taking action."
     : msc?.request_rejected
     ? (msc.enabled ? "Request refused. Disabling requires idle storage and successful device sync. Check diagnostics."
       : "Storage return failed. Volume may be unmounted; inspect media and UART errors before mounting.")
     : msc?.transition_pending ? "Storage handoff in progress; waiting for fresh ownership status."
-      : "";
-  document.querySelector("#msc-note").hidden = !document.querySelector("#msc-note").textContent;
-  const mscStatusRefresh = document.querySelector("#msc-status-refresh");
+      : operations.storageBlockReason ?? "";
+  element("#msc-note").hidden = !element("#msc-note").textContent;
+  const mscStatusRefresh = button("#msc-status-refresh");
   mscStatusRefresh.hidden = !snapshot.msc_outcome_uncertain;
   mscStatusRefresh.disabled = Boolean(snapshot.status_read_error || snapshot.status_reading);
   renderBoardConfiguration(snapshot);
   renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc,
     snapshot.board_configuration?.card_detect_gpio);
-  renderSelfTest(snapshot);
+  renderSelfTest(snapshot, operations);
 
   const message = snapshot.error ?? (snapshot.wireless_cleanup_required
     ? "Temporary Wi-Fi credentials need cleanup. Clear the Wi-Fi test before sending another command."
@@ -123,20 +149,17 @@ export function renderStatus(snapshot) {
     : connected && snapshot.telemetry_stale ? "Telemetry report is stale"
     : connected ? "Waiting for first status report"
       : snapshot.no_board_selected ? "Select a PicoForge board" : "Connect a PicoForge board");
-  const statusLine = document.querySelector(".status-line");
-  statusLine.dataset.error = String(Boolean(snapshot.error));
+  const statusLine = element(".status-line");
+  statusLine.dataset.error = String(Boolean(snapshot.error || snapshot.diagnostic_error));
   statusLine.dataset.active = String(Boolean(connected && runtime));
-  document.querySelector("#status-message").textContent = message;
-  const commandResync = document.querySelector("#command-resync");
+  element("#status-message").textContent = [message, snapshot.diagnostic_error].filter(Boolean).join(" ");
+  const commandResync = button("#command-resync");
   if (commandResync) {
-    const operations = operationState(snapshot, {
-      resyncing: snapshot.command_resyncing, statusFailed: snapshot.status_read_error,
-    });
-    const recovery = snapshot.command_recovery === undefined ? operations.recovery : snapshot.command_recovery;
+    const recovery = operations.recovery;
     commandResync.textContent = recovery === "cleanup" ? "Clear Wi-Fi test" : "Re-sync";
     commandResync.hidden = recovery === null;
-    commandResync.disabled = !(snapshot.can_recover_command ?? operations.canRecover);
-    const wifiResync = document.querySelector("#wifi-resync");
+    commandResync.disabled = !operations.canRecover;
+    const wifiResync = button("#wifi-resync");
     if (wifiResync) {
       wifiResync.hidden = recovery !== "resync";
       wifiResync.disabled = commandResync.disabled;
@@ -144,56 +167,54 @@ export function renderStatus(snapshot) {
   }
 }
 
-function renderSettings(snapshot) {
+/** Project accepted settings plus owned field drafts into the controls. */
+/** @param {DashboardView} snapshot */
+export function initializeSettings(snapshot) {
+  const settings = snapshot.settings_draft ?? snapshot.settings;
+  const storageControl = select("#settings-storage");
+  updateClockOptions(select("#settings-clock"), snapshot.hardware?.mcu,
+    settings?.system_clock_mhz);
+  if (settings) {
+    select("#settings-clock").value = String(settings.system_clock_mhz);
+    storageControl.value = String(storageSpeed(settings));
+  }
+}
+
+/** @param {DashboardView} snapshot @param {import("./operation-state.mjs").OperationState} operations */
+function renderSettings(snapshot, operations) {
   const settings = snapshot.settings;
   const supported = Boolean(snapshot.connected && snapshot.settings_supported && settings);
   const msc = snapshot.msc;
-  const storageBusy = snapshot.msc_command_pending || !msc || msc.transition_pending
-    || snapshot.self_test?.active || snapshot.self_test_command_pending;
+  const storageBusy = operations.storageCommandPending;
   const ready = supported && !storageBusy;
-  const storageControl = document.querySelector("#settings-storage");
-  updateClockOptions(document.querySelector("#settings-clock"), snapshot.hardware?.mcu,
-    settings?.system_clock_mhz);
-  if (settings && !snapshot.settings_dirty) {
-    document.querySelector("#settings-clock").value = String(settings.system_clock_mhz);
-  }
-  if (settings && !snapshot.settings_storage_dirty) {
-    storageControl.value = String(storageSpeed(settings));
-  }
-  const wireless = Boolean(snapshot.hardware?.capabilities & 128);
-  for (const [id, radio] of [["settings-wifi", 1], ["settings-ble", 2]]) {
-    const control = document.querySelector(`#${id}`);
-    document.querySelector(`label[for="${id}"]`).hidden = !wireless;
-    if (settings && !snapshot.settings_dirty) control.value = String(Number(Boolean((settings.radios ?? 0) & radio)));
-  }
+  const wireless = Boolean((snapshot.hardware?.capabilities ?? 0) & 128);
+  for (const id of ["wifi-settings", "ble-settings"])
+    element(`#${id}`).hidden = !wireless;
   for (const selector of ["#settings-clock", "#settings-storage", "#settings-wifi", "#settings-ble"]) {
-    document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
+    (/** @type {HTMLSelectElement} */ (element(selector))).disabled = operations.settingsBusy || !ready
+      || (selector === "#settings-wifi" || selector === "#settings-ble") && !operations.wirelessStatusReady;
   }
-  // Credentials have no forced-save path: provisioning requires firmware-owned storage.
-  const saveBlockReason = snapshot.wireless_save_block_reason || (snapshot.wireless_dirty && msc?.enabled
-    ? "Wireless changes cannot be saved while USB storage is shared. Stop host file activity, safely eject, "
-      + "then use Return to Pico before saving." : "");
-  document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready
-    || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(saveBlockReason)
-    || Boolean(snapshot.wireless_dirty && snapshot.wireless_stage_valid === false)
-    || !((snapshot.hardware?.capabilities ?? 0) & 2);
-  document.querySelector("#settings-save").title = saveBlockReason;
-  document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
-    || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
-    || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
-    || snapshot.self_test_command_pending || snapshot.msc_command_pending;
-  document.querySelector("#settings-note").textContent = snapshot.settings_message || saveBlockReason
+  const canSave = operations.canSaveSettings;
+  const saveBlockReason = operations.saveBlockReason;
+  button("#settings-save").disabled = !canSave;
+  button("#settings-save").title = saveBlockReason ?? "";
+  button("#reboot-control").disabled = operations.settingsBusy || !snapshot.connected
+    || !((snapshot.hardware?.capabilities ?? 0) & 2) || !msc || msc.enabled || storageBusy;
+  element("#settings-note").textContent = snapshot.settings_message
+    || ((snapshot.settings_dirty || snapshot.wireless_dirty) ? saveBlockReason : null)
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
         : !msc ? "Waiting for storage ownership status."
           : msc.transition_pending ? "Wait for the USB storage transition before saving settings."
-            : "");
-  document.querySelector("#settings-note").hidden = !document.querySelector("#settings-note").textContent;
-  document.querySelector("#status-message").hidden = !snapshot.error
-    && !document.querySelector("#settings-note").hidden;
+            : operations.storageBlockReason ?? operations.wirelessBlockReason ?? "");
+  element("#settings-note").hidden = !element("#settings-note").textContent;
+  element("#status-message").hidden = !snapshot.error && !snapshot.diagnostic_error
+    && !element("#settings-note").hidden;
 }
 
+/** @param {HTMLSelectElement} select @param {string | undefined} mcu @param {number | undefined} savedClock */
 function updateClockOptions(select, mcu, savedClock) {
+  /** @type {Array<[number, string, boolean?]>} */
   const choices = mcu === "RP2040"
     ? [[0, "Default (125 MHz)"], [150, "150 MHz"], [200, "200 MHz"], [250, "250 MHz"]]
     : mcu === "RP2350"
@@ -206,9 +227,11 @@ function updateClockOptions(select, mcu, savedClock) {
     || typeof document.createElement !== "function" || typeof select.replaceChildren !== "function") return;
 
   const previous = select.value;
-  const options = [...choices, ...(unsupportedClock === null ? []
-    : [[unsupportedClock, `${unsupportedClock} MHz (saved; unsupported)`, true]])]
-    .map(([value, label, disabled = false]) => {
+  /** @type {Array<[number, string, boolean?]>} */
+  const allChoices = [...choices];
+  if (unsupportedClock !== null && unsupportedClock !== undefined)
+    allChoices.push([unsupportedClock, `${unsupportedClock} MHz (saved; unsupported)`, true]);
+  const options = allChoices.map(([value, label, disabled = false]) => {
       const option = document.createElement("option");
       option.value = String(value);
       option.textContent = label;
@@ -220,28 +243,33 @@ function updateClockOptions(select, mcu, savedClock) {
   select.value = options.some(option => option.value === previous) ? previous : "0";
 }
 
+/** @param {import("./dashboard-api.mjs").BootSettings} settings */
 export function storageSpeed(settings) {
   return settings.sdcard_profile;
 }
 
+/** @param {DashboardView} snapshot */
 function renderBoardConfiguration(snapshot) {
-  if (boardConfigurationDocument !== document) {
+  if (boardConfigurationDocument !== document || !boardConfigurationElements) {
     boardConfigurationDocument = document;
     boardConfigurationSignature = null;
     boardConfigurationElements = {
-      uartTitle: document.querySelector("#board-uart-title"),
-      storageTitle: document.querySelector("#board-storage-title"),
-      uartTable: document.querySelector("#board-uart"),
-      storageTable: document.querySelector("#board-storage-pins"),
-      resetCause: document.querySelector("#board-reset-cause"),
+      uartTitle: element("#board-uart-title"),
+      storageTitle: element("#board-storage-title"),
+      uartTable: element("#board-uart"),
+      storageTable: element("#board-storage-pins"),
+      resetCause: element("#board-reset-cause"),
     };
   }
   const { uartTitle, storageTitle, uartTable, storageTable, resetCause } = boardConfigurationElements;
   const configuration = snapshot.board_configuration;
+  /** @param {HTMLElement} element @param {string} value */
   const setText = (element, value) => {
     if (element.textContent !== value) element.textContent = value;
   };
-  const formatPin = pin => pin === 255 || pin == null ? "Unassigned" : `GP${pin}`;
+  /** @param {number | undefined} pin */
+  const formatPin = pin => pin === undefined ? "--" : pin === 255 ? "Unassigned" : `GP${pin}`;
+  /** @param {HTMLElement} table @param {string[]} signals @param {(number | undefined)[]} pins */
   const renderPins = (table, signals, pins) => {
     const headings = document.createElement("tr");
     const values = document.createElement("tr");
@@ -256,30 +284,37 @@ function renderBoardConfiguration(snapshot) {
     });
     table.replaceChildren(headings, values);
   };
-  const spi = Boolean(snapshot.hardware?.capabilities & 8);
+  const spi = Boolean((snapshot.hardware?.capabilities ?? 0) & 8);
   const labels = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
   const signature = JSON.stringify([spi, configuration]);
   if (signature !== boardConfigurationSignature) {
     boardConfigurationSignature = signature;
-    setText(uartTitle, configuration && configuration.monitor_uart_index !== 255
+    setText(uartTitle, configuration?.monitor_uart_index !== undefined && configuration.monitor_uart_index !== 255
       ? `Monitor UART${configuration.monitor_uart_index}` : "Monitor UART");
     setText(storageTitle, configuration ? `Storage (${spi ? "SPI" : "SDIO-PIO"})` : "Storage");
     renderPins(uartTable, ["TX", "RX"],
       [configuration?.monitor_uart_tx_gpio, configuration?.monitor_uart_rx_gpio]);
     renderPins(storageTable, [...labels, "Card detect"],
-      [...labels.map((_, index) => configuration?.storage_gpios[index]), configuration?.card_detect_gpio]);
+      [...labels.map((_, index) => configuration?.storage_gpios?.[index]), configuration?.card_detect_gpio]);
   }
-  if (!configuration) {
+  if (configuration?.reset_cause === undefined) {
     setText(resetCause, "--");
     return;
   }
-  const resetCauseLabel = ({ 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" })[configuration.reset_cause]
+  /** @type {Record<number, string>} */
+  const resetCauses = { 0: "Unknown", 1: "Power-on", 2: "Watchdog", 3: "Software request", 4: "Watchdog after HardFault" };
+  const resetCauseLabel = resetCauses[configuration.reset_cause]
     ?? `Unassigned (${configuration.reset_cause})`;
   setText(resetCause, resetCauseLabel);
 }
 
+/** @param {import("./dashboard-api.mjs").Memory | null | undefined} memory
+ * @param {string | null | undefined} filesystemFormat @param {boolean} stale
+ * @param {import("./dashboard-api.mjs").Msc | null | undefined} msc @param {number | undefined} cardDetectGpio
+ */
 function renderMemory(memory, filesystemFormat, stale, msc, cardDetectGpio) {
-  const set = (id, value) => { document.querySelector(id).textContent = value; };
+  /** @param {string} id @param {string} value */
+  const set = (id, value) => { element(id).textContent = value; };
   const busy = !stale && memory?.configured && memory.sample_valid === false
     && !msc?.enabled && !msc?.transition_pending;
   if (!stale && memory?.sample_valid && memory.initialized && !msc?.enabled && !msc?.transition_pending) {
@@ -303,7 +338,8 @@ function renderMemory(memory, filesystemFormat, stale, msc, cardDetectGpio) {
         : memory && !memory.sample_valid ? ""
     : memory.presence_known && !memory.present
       ? `No card detected. Check card insertion and the active-high DET connection${
-        Number.isInteger(cardDetectGpio) && cardDetectGpio >= 0 && cardDetectGpio < 255 ? ` on GP${cardDetectGpio}` : ""}.`
+        cardDetectGpio !== undefined && Number.isInteger(cardDetectGpio) && cardDetectGpio >= 0 && cardDetectGpio < 255
+          ? ` on GP${cardDetectGpio}` : ""}.`
       : memory.present && !memory.initialized
         ? "Card detected but not initialized; check UART logs and SD wiring."
         : memory.initialized ? "" : "Card presence has not been established.");
@@ -316,50 +352,63 @@ function renderMemory(memory, filesystemFormat, stale, msc, cardDetectGpio) {
     ? `${(memory.bus_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz`
     : "--");
   set("#memory-size", memory?.capacity_bytes ? formatBytes(memory.capacity_bytes) : "--");
+  /** @type {Record<string, string>} */
   const filesystemLabels = { unknown: "Unknown", fat12: "FAT12", fat16: "FAT16", fat32: "FAT32", exfat: "exFAT" };
-  set("#memory-filesystem", filesystemLabels[filesystemFormat] ?? "Unknown");
+  set("#memory-filesystem", filesystemLabels[filesystemFormat ?? "unknown"] ?? "Unknown");
   set("#memory-manufacturer", formatManufacturer(manufacturer));
-  set("#memory-product", manufacturer
+  set("#memory-product", manufacturer?.product_name !== undefined && manufacturer.product_revision !== undefined
+    && manufacturer.manufacture_year !== undefined && manufacturer.manufacture_month !== undefined
     ? `${manufacturer.product_name} rev ${manufacturer.product_revision} · ${manufacturer.manufacture_year}-${String(manufacturer.manufacture_month).padStart(2, "0")}`
     : "--");
-    set("#memory-serial", manufacturer ? manufacturer.serial_number.toString(16).padStart(8, "0") : "--");
+  set("#memory-serial", manufacturer?.serial_number !== undefined
+    ? manufacturer.serial_number.toString(16).padStart(8, "0") : "--");
 }
 
+/** @param {import("./dashboard-api.mjs").Manufacturer | null | undefined} manufacturer */
 function formatManufacturer(manufacturer) {
   if (!manufacturer) return "--";
   const id = manufacturer.id ?? manufacturer.manufacturer_id;
-  if (!Number.isInteger(id) || id < 0 || id > 0xff) return "Unknown manufacturer";
+  if (id === undefined || !Number.isInteger(id) || id < 0 || id > 0xff) return "Unknown manufacturer";
+  /** @type {Record<number, string>} */
   const names = { 0x03: "SanDisk", 0x41: "Kingston" };
   return `${names[id] ?? "Unknown manufacturer"} (0x${id.toString(16).padStart(2, "0")})`;
 }
 
+/** @param {number} bytes */
 function formatBytes(bytes) {
   const gibibytes = bytes / (1024 ** 3);
   return gibibytes >= 1 ? `${gibibytes.toFixed(2)} GiB`
     : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 ** 2)).toFixed(2)} MiB`;
 }
 
+/** @param {string} selector @param {string} label @param {boolean | undefined} active */
 function setState(selector, label, active) {
-  const element = document.querySelector(selector);
-  element.textContent = label;
-  if (active === undefined) delete element.dataset.active;
-  else element.dataset.active = String(active);
+  const node = element(selector);
+  node.textContent = label;
+  if (active === undefined) delete node.dataset.active;
+  else node.dataset.active = String(active);
 }
 
-export function renderSelfTest(snapshot) {
+/** @param {DashboardView} snapshot @param {import("./operation-state.mjs").OperationState} [operations] */
+export function renderSelfTest(snapshot, operations = operationState(snapshot, {},
+  (/** @type {HTMLInputElement} */ (element("#self-test-size"))).valueAsNumber)) {
   const status = snapshot.self_test;
-  const set = (selector, value) => { document.querySelector(selector).textContent = value; };
+  /** @param {string} selector @param {string} value */
+  const set = (selector, value) => { element(selector).textContent = value; };
+  /** @param {number | undefined} value */
   const speed = value => value == null ? "--" : `${(value / 1048576).toFixed(2)} MiB/s`;
-  const count = value => `${(value / 1048576).toFixed(1)} MiB`;
+  /** @param {number | undefined} value */
+  const count = value => value === undefined ? "--" : `${(value / 1048576).toFixed(1)} MiB`;
+  /** @type {Record<string, string>} */
   const labels = { idle: "Idle", queued: "Queued", preparing: "Preparing", writing: "Writing", reading: "Verifying",
     cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
   const errors = ["", "Storage busy", "USB host owns the card", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
-  set("#self-test-state", status ? `${labels[status.state] ?? "Unknown"} · ${Math.floor(status.progress_percent ?? 0)}%`
+  set("#self-test-state", status ? `${labels[status.state ?? ""] ?? "Unknown"} · ${Math.floor(status.progress_percent ?? 0)}%`
     : "Unavailable");
-  document.querySelector("#self-test-progress").value = status?.progress_percent ?? 0;
-  document.querySelector("#self-test-meter").dataset.result = ["passed", "failed"].includes(status?.state)
+  (/** @type {HTMLProgressElement} */ (element("#self-test-progress"))).value = status?.progress_percent ?? 0;
+  element("#self-test-meter").dataset.result = status?.state === "passed" || status?.state === "failed"
     ? status.state : "";
-  const disclosure = document.querySelector("#self-test-disclosure");
+  const disclosure = /** @type {HTMLDetailsElement} */ (element("#self-test-disclosure"));
   const autoOpen = status?.active ? "active" : status?.state === "failed" ? "failed" : "";
   if (autoOpen && disclosure.dataset.autoOpen !== autoOpen) disclosure.open = true;
   disclosure.dataset.autoOpen = autoOpen;
@@ -367,17 +416,18 @@ export function renderSelfTest(snapshot) {
   set("#self-test-read-speed", speed(status?.read_bytes_per_second));
   set("#self-test-written", status ? `${count(status.written_bytes)} / ${count(status.target_bytes)}` : "--");
   set("#self-test-read", status ? `${count(status.read_bytes)} / ${count(status.target_bytes)}` : "--");
-  set("#self-test-write-time", status ? `${(status.write_elapsed_ms / 1000).toFixed(2)} s` : "--");
-  set("#self-test-read-time", status ? `${(status.read_elapsed_ms / 1000).toFixed(2)} s` : "--");
+  set("#self-test-write-time", status?.write_elapsed_ms !== undefined
+    ? `${(status.write_elapsed_ms / 1000).toFixed(2)} s` : "--");
+  set("#self-test-read-time", status?.read_elapsed_ms !== undefined
+    ? `${(status.read_elapsed_ms / 1000).toFixed(2)} s` : "--");
   const notices = [];
   if (status?.request_error) notices.push(`Request rejected: ${errors[status.request_error]}.`);
   if (status?.error) notices.push(`${errors[status.error]} (FatFs ${status.filesystem_result}).`);
   if (status?.file_remains) notices.push("PFTEST.BIN remains on the card.");
   if (status?.mismatch_count) notices.push(`${status.mismatch_count} mismatched bytes.`);
   set("#self-test-message", notices.join(" "));
-  const size = document.querySelector("#self-test-size");
-  const operations = operationState(snapshot, {}, size.valueAsNumber);
-  document.querySelector("#self-test-start").disabled = !(snapshot.can_start_self_test ?? operations.canStartSelfTest);
-  document.querySelector("#self-test-cancel").disabled = !(snapshot.can_cancel_self_test ?? operations.canCancelSelfTest);
-  size.disabled = !(snapshot.can_edit_self_test ?? operations.canEditSelfTest);
+  const size = (/** @type {HTMLInputElement} */ (element("#self-test-size")));
+  button("#self-test-start").disabled = !operations.canStartSelfTest;
+  button("#self-test-cancel").disabled = !operations.canCancelSelfTest;
+  size.disabled = !operations.canEditSelfTest;
 }

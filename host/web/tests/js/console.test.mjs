@@ -104,8 +104,9 @@ test("console coalesces output frames, sends input immediately, flushes close, a
   const events = new Map();
   let nextFrame = 0, renders = 0, writes = 0;
   const terminal = fixture.el("#terminal");
-  const replace = terminal.replaceChildren.bind(terminal);
-  terminal.replaceChildren = (...children) => { renders++; replace(...children); };
+  const { ConsoleTerminal } = await import("../../src/js/console-terminal.mjs");
+  const cursorLine = ConsoleTerminal.prototype.cursorLine;
+  context.mock.method(ConsoleTerminal.prototype, "cursorLine", function () { renders++; return cursorLine.call(this); });
   const saved = { document: globalThis.document, window: globalThis.window, location: globalThis.location };
   Object.assign(globalThis, { document: fixture.document, location: { search: "" }, window: {
     addEventListener: (name, callback) => events.set(name, callback),
@@ -155,3 +156,54 @@ test("console coalesces output frames, sends input immediately, flushes close, a
   assert.equal(renders, before, "navigation cancels without painting stale output");
 });
 
+test("console preserves reading position and reuses unchanged rows while following output only at the bottom",
+  async context => {
+    const fixture = domFixture();
+    const frames = new Map();
+    let nextFrame = 0, pendingRead;
+    const saved = { document: globalThis.document, window: globalThis.window, location: globalThis.location };
+    Object.assign(globalThis, { document: fixture.document, location: { search: "" }, window: {
+      addEventListener() {},
+      requestAnimationFrame: callback => { frames.set(++nextFrame, callback); return nextFrame; },
+      cancelAnimationFrame: id => frames.delete(id),
+    } });
+    context.after(() => Object.assign(globalThis, saved));
+    context.mock.method(globalThis, "fetch", async (_url, options) => {
+      const body = value => ({ ok: true, json: async () => value });
+      if (options.method === "POST") return body({ session: "scroll-session" });
+      if (options.method === "DELETE") return body({ ok: true });
+      return new Promise((resolve, reject) => {
+        pendingRead = text => resolve(body({ data: btoa(text), closed: false }));
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    });
+    await import(`../../src/js/console.mjs?scroll=${Date.now()}`);
+    await fixture.el("#connect").fire("click");
+    await new Promise(resolve => setImmediate(resolve));
+    const terminal = fixture.el("#terminal");
+    const feed = async text => {
+      pendingRead(text);
+      await new Promise(resolve => setImmediate(resolve));
+      for (const [id, callback] of frames) { frames.delete(id); callback(); }
+    };
+    await feed(("line\r\n").repeat(999));
+    assert.equal(terminal.children.length, 1000);
+    assert.equal(terminal.children[0].tagName, "DIV", "semantic blocks preserve native copied line separators");
+    terminal.scrollHeight = 20000;
+    terminal.clientHeight = 400;
+    terminal.scrollTop = 5000;
+    const retained = terminal.children[1];
+    await feed("next\r\n");
+    assert.equal(terminal.scrollTop, 4980, "dropping one row preserves the viewed content, not the bottom");
+    assert.equal(terminal.children[0], retained);
+    assert.equal(terminal.children.length, 1000);
+    terminal.scrollTop = 19600;
+    await feed("tail");
+    assert.equal(terminal.scrollTop, terminal.scrollHeight, "bottom-follow remains available");
+    const last = terminal.children.at(-1);
+    await feed("\rX");
+    assert.equal(terminal.children.at(-1), last, "cursor edits reuse the existing row");
+    assert.match(last.textContent, /^Xail/);
+    await fixture.el("#connect").fire("click");
+    await new Promise(resolve => setImmediate(resolve));
+  });

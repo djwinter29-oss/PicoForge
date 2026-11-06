@@ -410,6 +410,10 @@ class DeviceMonitor:
     def test_wireless(self, ssid: str | bytes, password: str = "") -> dict[str, WirelessTestResult]:
         with self._device():
             client = self._require_wireless_idle()
+            with self._lock:
+                self._snapshot["wireless"] = None
+                self._snapshot["wireless_error"] = None
+                self._wireless_received_at = None
             stop = threading.Event()
             with self._lock:
                 self._wireless_test_cancel = stop
@@ -439,6 +443,9 @@ class DeviceMonitor:
         """Retain cleanup ownership until cancellation completes; only unknown delivery requires Re-sync."""
         with self._lock:
             self._wireless_cleanup_required = True
+            self._snapshot["wireless"] = None
+            self._snapshot["wireless_error"] = None
+            self._wireless_received_at = None
         try:
             self._send_control(client.cancel_wireless_test)
         except (OSError, BoardConflict, ProtocolError) as error:

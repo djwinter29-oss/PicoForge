@@ -162,7 +162,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 #wifi-diagnostics, #ble-diagnostics { grid-column: span 3; }
 #wifi-diagnostics[hidden], #ble-diagnostics[hidden] { display: none; }
 .runtime[aria-labelledby="settings-title"] .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.runtime[aria-labelledby="settings-title"] .settings-controls:has(> #wifi-settings:not([hidden])) { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -220,7 +220,11 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .settings-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 8px; padding: 1px; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 10px; box-shadow: 0 3px 12px #17332e08; }
 .settings-controls > .metric { min-height: 72px; padding: 12px 14px; }
 .settings-controls label { min-height: 72px; padding: 12px 14px; display: grid; align-content: start; gap: 8px; color: var(--muted); background: var(--paper); font-size: 12px; }
-.settings-controls label[hidden] { display: none; }
+.settings-controls label[hidden], .radio-setting[hidden] { display: none; }
+.radio-setting { display: grid; align-content: start; gap: 8px; padding: 12px 14px; background: var(--paper); }
+.radio-setting label { padding: 0; min-height: 0; }
+.radio-setting .button { width: 100%; }
+.radio-setting:has(select:disabled) { background: #f2f5f4; }
 .settings-controls label:has(select:disabled) { background: #f2f5f4; }
 .settings-controls select, .settings-controls input {
   min-width: 0;
@@ -275,7 +279,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .status-line[data-active="true"] .status-mark { background: var(--green); }
 
 @media (max-width: 1200px) {
-  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: row; }
+  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> #wifi-settings:not([hidden])) { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: row; }
   .settings-controls > label[for="settings-tcp-cli"]:not([hidden]) { grid-column: span 2; }
 }
 
@@ -283,7 +287,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
   .identity, .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime[aria-labelledby="runtime-title"] .runtime-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
+  .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls:has(> #wifi-settings:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
 }
 
 @media (max-width: 720px) {
@@ -305,6 +309,6 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 @media (max-width: 420px) {
   h1 { font-size: 26px; }
   .settings-controls, .runtime[aria-labelledby="settings-title"] .settings-controls,
-  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> label[for="settings-wifi"]:not([hidden])) { grid-template-columns: minmax(0, 1fr); grid-auto-flow: row; }
+  .runtime[aria-labelledby="settings-title"] .settings-controls:has(> #wifi-settings:not([hidden])) { grid-template-columns: minmax(0, 1fr); grid-auto-flow: row; }
   .settings-controls > label[for="settings-tcp-cli"]:not([hidden]) { grid-column: auto; }
 }

@@ -12,12 +12,13 @@ test("server dashboard keeps radio dialogs, confirmation controls and benchmark 
     const footer = dashboard.split('<footer class="status-line"')[1].split("</footer>")[0];
     assert.doesNotMatch(settings, /id="settings-note"/);
     assert.doesNotMatch(settings, /wireless-actions|wifi-open|ble-open/);
-    assert.match(settings, /id="settings-wifi"[\s\S]*?<option value="configure">Configure…<\/option>/);
-    assert.match(settings, /id="settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
-    const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
+    assert.doesNotMatch(settings, /value="configure"/);
+    for (const radio of ["wifi", "ble"])
+      assert.match(settings, new RegExp(`id="${radio}-configure"[^>]*[\\s\\S]*?aria-controls="${radio}-dialog"`));
+    const board = settings.split('<div class="settings-controls">')[1].split('<p id="wireless-summary"')[0];
     assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
       ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli"]);
-    assert.match(board, /<label for="settings-wifi" hidden>[\s\S]*<label for="settings-ble" hidden>/);
+    assert.match(board, /id="wifi-settings" hidden>[\s\S]*id="ble-settings" hidden>/);
     for (const id of ["settings-tcp-cli"]) {
       assert.match(board, new RegExp(`<label for="${id}" hidden>[\\s\\S]*?<select id="${id}"`));
       const attributes = board.match(new RegExp(`<select id="${id}"([^>]*)>`))[1];
@@ -27,6 +28,7 @@ test("server dashboard keeps radio dialogs, confirmation controls and benchmark 
     }
     assert.doesNotMatch(board, /type="checkbox"/);
     assert.doesNotMatch(settings, /id="wifi-ssid"|id="wifi-password"|id="ble-secret"/);
+    assert.match(settings, /id="wireless-discard"[^>]*hidden disabled/);
     assert.match(dashboard, /<dialog[^>]*id="wifi-dialog"/);
     assert.match(dashboard, /id="wifi-resync"[^>]*hidden>Re-sync<\/button>/);
     assert.match(dashboard, /<dialog[^>]*id="ble-dialog"/);

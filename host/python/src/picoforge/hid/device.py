@@ -9,6 +9,7 @@ from math import ceil
 from functools import wraps
 from threading import Event, RLock
 from time import monotonic, sleep
+from uuid import uuid4
 from typing import Any, Callable, Concatenate, ParamSpec, TypeVar
 
 from ..reports.models import (
@@ -193,6 +194,7 @@ class PicoForgeHid:
         self._control_lock = RLock()
         self._wireless_active = False
         self._tested_generation: int | None = None
+        self._tested_id: str | None = None
         self._tested_at: float | None = None
 
     @property
@@ -372,9 +374,15 @@ class PicoForgeHid:
         if "tcp_cli_enabled" in settings:
             board["tcp_cli_enabled"] = settings["tcp_cli_enabled"]
         board = self._complete_settings(board)
-        use_tested = settings.get("use_tested_wifi", False)
+        use_tested = settings.get("use_tested_wifi") is True
+        if (not use_tested and (previous["ssid_staged"] and "ssid" not in settings and "ssid_hex" not in settings
+                               or previous["password_staged"] and "password" not in settings)
+                or previous["key_staged"] and "ble_key" not in settings):
+            raise BoardConflict("Discard or explicitly include the existing staged wireless values")
         if use_tested:
-            if (not previous["pair_tested"] or previous["staged_state"] & 8
+            if (settings["test_id"] != self._tested_id or settings["test_generation"] != self._tested_generation
+                    or previous["test_generation"] != settings["test_generation"]
+                    or not previous["pair_tested"] or previous["staged_state"] & 8
                     or (("ssid" in settings or "ssid_hex" in settings)
                         and request_ssid(settings).hex() != previous["ssid_hex"])):
                 raise BoardConflict("The exact staged Wi-Fi pair has not passed testing or has expired")
@@ -388,9 +396,15 @@ class PicoForgeHid:
         staged = self.read_wireless()
         if use_tested and (not staged["pair_tested"] or staged["test_generation"] != previous["test_generation"]):
             raise BoardConflict("The tested Wi-Fi pair changed before saving")
-        commit = staged["ssid_staged"] or staged["password_staged"] or staged["key_staged"]
-        expected_mask = (int(staged["ssid_staged"]) | (int(staged["password_staged"]) << 1)
-                         | (int(staged["key_staged"]) << 2))
+        erase_wifi = ("ssid" in settings or "ssid_hex" in settings) and not request_ssid(settings)
+        expected_mask = (int(use_tested or "ssid" in settings or "ssid_hex" in settings)
+                         | (int(use_tested or "password" in settings or erase_wifi) << 1)
+                         | (int("ble_key" in settings) << 2))
+        staged_mask = (int(staged["ssid_staged"]) | (int(staged["password_staged"]) << 1)
+                       | (int(staged["key_staged"]) << 2))
+        if staged_mask != expected_mask:
+            raise BoardConflict("Staged wireless values expired or were replaced; save was not sent")
+        commit = expected_mask != 0
         command = build_settings_command_report(board, self._next_transaction_id(), commit=commit)
         result = self._execute_control(command, ControlOpcode.SAVE_SETTINGS)
         self._require_completed(result)
@@ -453,6 +467,7 @@ class PicoForgeHid:
                                      on_poll=on_poll, on_progress=on_progress, cancel=cancel,
                                      command_reference=(command["transaction_id"], command["opcode"]))
         self._tested_generation = status["test_generation"]
+        self._tested_id = uuid4().hex
         self._tested_at = monotonic()
         return {
             "ipv4": status["ipv4"],
@@ -460,12 +475,14 @@ class PicoForgeHid:
             "phase": status["phase"],
             "test_generation": status["test_generation"],
             "remaining_seconds": 600,
+            "test_id": self._tested_id,
         }
 
     @_serialized
     def cancel_wireless_test(self) -> None:
         """Clear temporary test credentials from firmware RAM."""
         self._require_open()
+        self._tested_id = None
         self._wireless_command(ControlOpcode.WIFI_CANCEL)
         self._uncertain_wireless_operation = None
         self._uncertain_command = None
@@ -474,6 +491,8 @@ class PicoForgeHid:
         self, operation: int, *, value: object = None, index: int = 0, generation: int = 0,
     ) -> ControlResult:
         self._require(CAP_WIRELESS, "Wireless provisioning is unavailable on this firmware")
+        if operation in (ControlOpcode.STAGE_SSID, ControlOpcode.STAGE_PASSWORD):
+            self._tested_id = None
         command = build_wireless_command_report(self._next_transaction_id(), operation, value=value,
                                                 index=index, generation=generation)
         result = self._execute_control(command, operation)

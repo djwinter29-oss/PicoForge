@@ -59,6 +59,7 @@ class WirelessTests(unittest.TestCase):
         client.last_command_result = None
         client._wireless_active = False
         client._tested_generation = None
+        client._tested_id = None
         client._tested_at = None
         client._device = Mock()
         client._device.send_feature_report.side_effect = lambda value: len(value)
@@ -196,7 +197,8 @@ class WirelessTests(unittest.TestCase):
         commands = [bytes(call.args[0]) for call in client._device.send_feature_report.call_args_list]
         self.assertEqual([command[3] for command in commands], [6, 7, 9])
         self.assertEqual(commands[0][6:12], b"Pico\0\xff")
-        self.assertEqual(tested, {"ipv4": "192.168.1.2", "detail": 0, "phase": "",
+        self.assertRegex(tested["test_id"], r"^[0-9a-f]{32}$")
+        self.assertEqual(tested, {"ipv4": "192.168.1.2", "detail": 0, "phase": "", "test_id": client._tested_id,
                                   "test_generation": 1, "remaining_seconds": 600})
         self.assertEqual(poll.call_count, 3)
         sleep.assert_called_with(0.5)
@@ -232,14 +234,16 @@ class WirelessTests(unittest.TestCase):
             self.assertEqual(client.command_uncertain, error is ValueError)
         client = self.client([status(staged=8)])
         with self.assertRaisesRegex(RuntimeError, "expired"):
-            client.set_wireless(settings(use_tested_wifi=True))
+            client._tested_id, client._tested_generation = "a" * 32, 9
+            client.set_wireless(settings(use_tested_wifi=True, test_id="a" * 32, test_generation=9))
         client._device.send_feature_report.assert_not_called()
 
     def test_tested_save_never_restages_pair_or_reads_after_save(self):
         candidate = status(wifi=5, flags=0xB3, test=9)
         saved = bytes((200, 0, 1, 7, 3))
         client = self.client([candidate, candidate, result(5, data=saved)])
-        response = client.set_wireless(settings(use_tested_wifi=True))
+        client._tested_id, client._tested_generation = "a" * 32, 9
+        response = client.set_wireless(settings(use_tested_wifi=True, test_id="a" * 32, test_generation=9))
         sent = client._device.send_feature_report.call_args_list
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0].args[0][3:5], [5, 2])
@@ -248,9 +252,101 @@ class WirelessTests(unittest.TestCase):
         self.assertTrue(response["stale"])
         self.assertEqual(client._device.get_feature_report.call_count, 3)
         client = self.client([candidate])
+        client._tested_id, client._tested_generation = "a" * 32, 9
         with self.assertRaisesRegex(RuntimeError, "exact staged"):
-            client.set_wireless(settings(use_tested_wifi=True, ssid="different"))
+            client.set_wireless(settings(use_tested_wifi=True, ssid="different", test_id="a" * 32, test_generation=9))
         client._device.send_feature_report.assert_not_called()
+
+    def test_tested_save_requires_the_browser_test_identity_before_any_write(self):
+        candidate = status(wifi=5, flags=0xB3, test=9)
+        for token, generation in (("b" * 32, 9), ("a" * 32, 8), ("a" * 32, 9)):
+            client = self.client([candidate])
+            client._tested_id = "a" * 32 if generation != 9 or token != "a" * 32 else None
+            client._tested_generation = 9
+            request = settings(use_tested_wifi=True, test_id=token, test_generation=generation)
+            with self.subTest(token=token, generation=generation), self.assertRaisesRegex(RuntimeError, "test"):
+                client.set_wireless(request)
+            client._device.send_feature_report.assert_not_called()
+
+    def test_same_ssid_retest_issues_new_identity_and_rejects_the_original_browser(self):
+        client = self.client([status(test=255), result(6), result(7, 2), result(9, 3),
+                              status(wifi=5, flags=0xB3, test=1),
+                              status(wifi=5, flags=0xB3, test=1), result(6, 4), result(7, 5), result(9, 6),
+                              status(wifi=5, flags=0xB3, test=2), status(wifi=5, flags=0xB3, test=2)])
+        first = client.test_wireless("Pico網", "secret12")
+        second = client.test_wireless("Pico網", "another12")
+        self.assertNotEqual(first["test_id"], second["test_id"])
+        self.assertEqual((first["test_generation"], second["test_generation"]), (1, 2))
+        with self.assertRaisesRegex(RuntimeError, "test"):
+            client.set_wireless(settings(use_tested_wifi=True, test_id=first["test_id"],
+                                         test_generation=first["test_generation"]))
+        self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list],
+                         [6, 7, 9, 6, 7, 9])
+
+    def test_key_only_save_cannot_commit_an_unowned_password(self):
+        for flags, include_ssid in ((0xB3, True), (0xB3, False), (0x43, False)):
+            client = self.client([status(wifi=5, flags=flags, test=9)])
+            request = settings(ble_key="ab" * 32) if flags != 0x43 else settings()
+            if not include_ssid:
+                request.pop("ssid")
+            with self.subTest(flags=flags, include_ssid=include_ssid), self.assertRaisesRegex(RuntimeError, "staged"):
+                client.set_wireless(request)
+            client._device.send_feature_report.assert_not_called()
+
+    def test_tested_save_rechecks_pair_after_staging_owned_key(self):
+        for replaced in (False, True):
+            candidate = status(wifi=5, flags=0xB3, test=9)
+            staged = status(wifi=5, flags=0xF3, test=10 if replaced else 9)
+            reports = [candidate, result(8), staged]
+            if not replaced:
+                reports.append(result(5, 2, data=bytes((200, 0, 1, 7, 7))))
+            client = self.client(reports)
+            client._tested_id, client._tested_generation = "a" * 32, 9
+            request = settings(use_tested_wifi=True, test_id="a" * 32, test_generation=9, ble_key="ab" * 32)
+            if replaced:
+                with self.assertRaisesRegex(RuntimeError, "pair changed"):
+                    client.set_wireless(request)
+            else:
+                client.set_wireless(request)
+            self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list],
+                             [8] if replaced else [8, 5])
+
+    def test_invalid_or_unrelated_test_identity_is_rejected(self):
+        for token, generation in ((None, 1), ("", 1), ("a" * 32, None), ("a" * 32, 0), ("a" * 32, True),
+                                  ("a" * 32, 256), ("A" * 32, 1), ("g" * 32, 1)):
+            with self.subTest(token=token, generation=generation), self.assertRaises(ValueError):
+                validate_wireless_configuration(settings(use_tested_wifi=True, test_id=token,
+                                                         test_generation=generation))
+        with self.assertRaises(ValueError):
+            validate_wireless_configuration(settings(test_id="a" * 32, test_generation=1))
+
+    def test_success_and_cancel_invalidate_cached_wireless_observations(self):
+        monitor, client = self.monitor()
+        monitor._snapshot["wireless"] = {"ssid": "previous-candidate", "test_generation": 1}
+        def tested(*args, **kwargs):
+            self.assertIsNone(monitor.snapshot()["wireless"], "invalidate before the test writes or returns")
+            return {"test_generation": 2, "remaining_seconds": 600, "test_id": "a" * 32}
+        client.test_wireless.side_effect = tested
+        monitor.test_wireless("new-candidate", "")
+        self.assertIsNone(monitor.snapshot()["wireless"])
+        monitor._snapshot["wireless"] = {"ssid": "new-candidate", "test_generation": 2}
+        monitor.cancel_wireless_test()
+        self.assertIsNone(monitor.snapshot()["wireless"])
+
+    def test_explicit_empty_ssid_owns_firmware_implicit_password_erasure(self):
+        client = self.client([status(), result(6), status(flags=0x33, ssid=b""),
+                              result(5, 2, data=bytes((200, 0, 1, 7, 3)))])
+        client.set_wireless(settings(ssid=""))
+        self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list], [6, 5])
+
+    def test_save_rejects_expired_or_unrequested_staged_fields_before_commit(self):
+        for flags in (0x03, 0x73):
+            client = self.client([status(), result(8), status(flags=flags)])
+            request = settings(ble_key="ab" * 32)
+            request.pop("ssid")
+            with self.subTest(flags=flags), self.assertRaisesRegex(RuntimeError, "expired or were replaced"):
+                client.set_wireless(request)
+            self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list], [8])
 
     def test_sequential_save_stages_only_provided_fields_and_verifies_commit(self):
         staged = status(flags=0x73)

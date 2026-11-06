@@ -208,6 +208,7 @@ class WirelessTestResult(TypedDict):
     phase: str
     test_generation: int
     remaining_seconds: int
+    test_id: str
 
 
 class ControlResult(TypedDict):

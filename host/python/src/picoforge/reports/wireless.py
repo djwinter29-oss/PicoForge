@@ -125,7 +125,7 @@ def validate_wireless_configuration(settings: object) -> None:
     if not isinstance(settings, dict):
         raise InvalidRequest("Expected wireless configuration JSON")
     if set(settings) - {"wifi_enabled", "ble_enabled", "ssid", "ssid_hex", "password", "ble_key", "confirm_reboot",
-                        "board", "use_tested_wifi", "tcp_cli_enabled"}:
+                        "board", "use_tested_wifi", "tcp_cli_enabled", "test_id", "test_generation"}:
         raise InvalidRequest("Unknown wireless configuration field")
     if settings.get("confirm_reboot") is not True:
         raise InvalidRequest("Explicit confirm_reboot: true is required")
@@ -133,6 +133,14 @@ def validate_wireless_configuration(settings: object) -> None:
         raise InvalidRequest("wifi_enabled and ble_enabled must be boolean")
     if "use_tested_wifi" in settings and type(settings["use_tested_wifi"]) is not bool:
         raise InvalidRequest("use_tested_wifi must be boolean")
+    if settings.get("use_tested_wifi"):
+        token = settings.get("test_id")
+        generation = settings.get("test_generation")
+        if (not isinstance(token, str) or len(token) != 32 or any(char not in "0123456789abcdef" for char in token)
+                or type(generation) is not int or not 1 <= generation <= 255):
+            raise InvalidRequest("A tested pair requires its test_id and test_generation")
+    elif "test_id" in settings or "test_generation" in settings:
+        raise InvalidRequest("Test identity requires use_tested_wifi")
     if "tcp_cli_enabled" in settings and type(settings["tcp_cli_enabled"]) is not bool:
         raise InvalidRequest("tcp_cli_enabled must be boolean")
     if "ble_key" in settings and not isinstance(settings["ble_key"], str):

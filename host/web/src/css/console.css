@@ -55,6 +55,7 @@
   outline: none;
 }
 .terminal-cursor { background: var(--lime); color: #0c1d1c; }
+.terminal-line { display: block; min-height: 1lh; }
 #connect[data-state="connected"] {
   background: var(--paper);
   border-color: #cbd6d3;

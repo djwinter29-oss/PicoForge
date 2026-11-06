@@ -3,12 +3,64 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commandEffects, commandSettled, operationState, unresolvedCommand } from "../../src/js/operation-state.mjs";
+import {
+  commandEffects, commandSettled, createCommandState, observeCommandStatus, operationState, unresolvedCommand,
+} from "../../src/js/operation-state.mjs";
 
 const ready = {
   connected: true, runtime: { led_available: true }, msc: { enabled: false }, memory: { initialized: true },
   self_test: { active: false, state: "idle" }, filesystem_format: "exfat",
 };
+
+test("one Save projection supplies eligibility and the same reason for all draft and board gates", () => {
+  const facts = { ...ready, hardware: { capabilities: 128 | 2 }, settings_supported: true,
+    settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 1 }, storage_stale: false,
+    wireless: { stale: false } };
+  const draft = { settingsDirty: true };
+  assert.equal(operationState(facts, draft).canSaveSettings, true);
+  assert.equal(operationState(facts, draft).saveBlockReason, null);
+  for (const [changes, activity, reason] of [
+    [{ connected: false }, {}, /connection/],
+    [{ settings_supported: false }, {}, /Boot settings unavailable/],
+    [{ hardware: { capabilities: 128 } }, {}, /does not support/],
+    [{}, { saving: true }, /pending operation/],
+    [{}, { uncertain: true }, /recovery/],
+    [{ storage_stale: true }, {}, /fresh storage/],
+    [{}, { selfTestPending: true }, /benchmark/],
+    [{ wireless: null }, { radiosDirty: true }, /fresh wireless/],
+    [{}, { wirelessBlockReason: "Retest credentials." }, /Retest credentials/],
+    [{ msc: { enabled: true } }, { wirelessDirty: true }, /safely eject.*Return to Pico/],
+    [{}, { settingsDirty: false }, /No unsaved/],
+  ]) {
+    const state = operationState({ ...facts, ...changes }, { ...draft, ...activity });
+    assert.equal(state.canSaveSettings, false);
+    assert.match(state.saveBlockReason, reason);
+  }
+  assert.equal(operationState({ ...facts, wireless: null }, draft).canSaveSettings, true);
+  assert.equal(operationState({ ...facts, msc: { enabled: true } }, draft).canSaveSettings, true,
+    "ordinary boot settings keep the explicit forced-save path");
+});
+
+test("radio writes require fresh wireless facts while unrelated settings preserve saved radios", () => {
+  const facts = { ...ready, hardware: { capabilities: 128 | 2 }, settings_supported: true,
+    settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 1 },
+    storage_stale: false, wireless: { stale: false } };
+  assert.equal(operationState(facts, { radiosDirty: true, settingsDirty: true }).canSaveSettings, true);
+  assert.equal(operationState(facts).canProvisionWireless, true);
+  for (const changes of [{ wireless: null }, { wireless: { stale: true } }, { wireless_error: "read failed" }]) {
+    const state = operationState({ ...facts, ...changes }, { radiosDirty: true, settingsDirty: true });
+    assert.equal(state.wirelessStatusReady, false);
+    assert.equal(state.canSaveSettings, false);
+    assert.equal(state.canProvisionWireless, false);
+    assert.match(state.wirelessBlockReason, /Waiting for fresh wireless configuration/);
+    assert.equal(operationState({ ...facts, ...changes }, { settingsDirty: true }).canSaveSettings, true);
+    assert.equal(state.canSetLed, true, "missing wireless facts must not block unrelated writes");
+  }
+  for (const activity of [{ saving: true }, { uncertain: true }, { mscPending: true }])
+    assert.equal(operationState(facts, activity).canProvisionWireless, false);
+  assert.equal(operationState({ ...facts, msc: { enabled: true } }).canProvisionWireless, false);
+  assert.equal(operationState({ ...facts, hardware: { capabilities: 0 } }).canProvisionWireless, false);
+});
 
 test("missing and unrelated results require a matching reconnect and fresh board facts", () => {
   for (const opcode of [3, 4]) {
@@ -107,6 +159,10 @@ test("tagged uncertainty settles only on the matching fresh evidence", () => {
   assert.equal(commandSettled(null, facts), false);
   assert.equal(commandSettled(command({ kind: "resync" }), facts), false);
   assert.equal(commandSettled(command({ kind: "reconnect" }), facts), false);
+  for (const connected of [undefined, null, 0, "", "false"])
+    assert.equal(commandSettled(command({ kind: "reconnect" }), { connected }), false);
+  for (const reboot_pending of [undefined, null, 0, 1, "", "true"])
+    assert.equal(commandSettled(command({ kind: "reconnect" }), { connected: true, reboot_pending }), false);
   assert.equal(commandSettled(command({ kind: "reconnect" }), { connected: false }), true);
   assert.equal(commandSettled(command({ kind: "reconnect" }), { ...facts, reboot_pending: true }), true);
   assert.equal(commandSettled(command({ kind: "led", on: true }), facts), true);
@@ -116,9 +172,81 @@ test("tagged uncertainty settles only on the matching fresh evidence", () => {
   for (const key of Object.keys(settings)) {
     assert.equal(commandSettled(command({ kind: "settings", expected: { ...settings, [key]: 99 } }), facts), false);
   }
-  assert.equal(commandSettled(command({ kind: "self-test", sequence: 3 }), facts), true);
-  assert.equal(commandSettled(command({ kind: "self-test", sequence: 4 }), facts), false);
-  assert.equal(commandSettled(command({ kind: "self-test", sequence: 3 }), {}), false);
+  assert.equal(commandSettled(command({ kind: "self-test" }), facts), false);
+  assert.equal(commandSettled(command({ kind: "self-test" }), {}), false);
+});
+
+test("storage admission projects its own blocking reason without blocking unrelated LED access", () => {
+  const facts = { ...ready, hardware: { capabilities: 32 }, self_test_stale: false };
+  assert.equal(operationState(facts).storageBlockReason, null);
+  for (const [changes, activity, reason] of [
+    [{ storage_stale: true }, {}, /fresh storage ownership/],
+    [{ msc: null }, {}, /fresh storage ownership/],
+    [{ self_test: null }, {}, /fresh benchmark status/],
+    [{ self_test_stale: true }, {}, /fresh benchmark status/],
+    [{}, { selfTestPending: true }, /updated benchmark status/],
+    [{ self_test: { active: true } }, {}, /finish or cancel/],
+    [{}, { mscPending: true }, /USB storage transition/],
+  ]) {
+    const projection = operationState({ ...facts, ...changes }, activity);
+    assert.match(projection.storageBlockReason, reason);
+    assert.equal(projection.canChangeMsc, false);
+    assert.equal(projection.canSetLed, true);
+  }
+});
+
+test("periodic benchmark reports release observation fences, never unknown delivery", () => {
+  const state = createCommandState();
+  state.uncertainCommand = { kind: "self-test", message: "uncertain" };
+  state.selfTestPendingSequence = 254;
+  for (const sequence of [255, 0, 1]) {
+    const snapshot = { ...ready, self_test: { sequence, active: false, state: "idle" } };
+    assert.equal(observeCommandStatus(state, snapshot, false), null);
+    assert.equal(state.selfTestPendingSequence, null, "a fresh report satisfies only the observation fence");
+    assert.equal(state.uncertainCommand.kind, "self-test");
+    assert.equal(unresolvedCommand(null, false, false, state.uncertainCommand).opcode, 4,
+      "recovery identity outlives the observation fence");
+  }
+  const independent = createCommandState();
+  assert.equal(independent.uncertainCommand, null);
+  state.selfTestPendingSequence = 1;
+  observeCommandStatus(state, { ...ready, self_test: { sequence: 2 } }, true);
+  assert.equal(state.selfTestPendingSequence, 1, "reports during delivery cannot release its fence");
+});
+
+test("storage-dependent admission requires fresh benchmark facts only on supporting hardware", () => {
+  const capable = { ...ready, hardware: { capabilities: 32 }, self_test_stale: false };
+  assert.equal(operationState(capable, {}, 32).canStartSelfTest, true);
+  for (const change of [{ self_test: null }, { self_test_stale: true }, { self_test_stale: undefined },
+    { storage_stale: true }]) {
+    const facts = { ...capable, ...change };
+    const state = operationState(facts, {}, 32);
+    assert.equal(state.canChangeMsc, false);
+    assert.equal(state.canStartSelfTest, false);
+    assert.equal(state.storageCommandPending, true);
+    assert.equal(state.canSetLed, true);
+  }
+  assert.equal(operationState({ ...ready, self_test: null, self_test_stale: true }).canChangeMsc, true,
+    "firmware without benchmark support does not need benchmark reports");
+  const state = createCommandState();
+  state.uncertainCommand = { kind: "reconnect-status", opcode: 4, disconnected: true, message: "reconnect" };
+  observeCommandStatus(state, { ...capable, self_test: { sequence: 9 }, self_test_stale: true }, false);
+  assert.notEqual(state.uncertainCommand, null, "stale reconnect reports cannot settle benchmark recovery");
+});
+
+test("confirmed benchmark delivery requires a post-command baseline then a newer report", () => {
+  const state = createCommandState();
+  state.selfTestPendingSequence = "awaiting-status";
+  observeCommandStatus(state, { connected: false, self_test: { sequence: 254 } }, false);
+  observeCommandStatus(state, { ...ready, self_test_stale: true, self_test: { sequence: 254 } }, false);
+  observeCommandStatus(state, { ...ready, self_test: { sequence: 254 } }, true);
+  assert.equal(state.selfTestPendingSequence, "awaiting-status");
+  observeCommandStatus(state, { ...ready, self_test: { sequence: 255 } }, false);
+  assert.equal(state.selfTestPendingSequence, 255);
+  observeCommandStatus(state, { ...ready, self_test: { sequence: 255 } }, false);
+  assert.equal(state.selfTestPendingSequence, 255);
+  observeCommandStatus(state, { ...ready, self_test: { sequence: 0 } }, false);
+  assert.equal(state.selfTestPendingSequence, null);
 });
 
 test("benchmark policy enforces actual size bounds, ownership, and initialized filesystem", () => {

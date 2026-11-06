@@ -66,13 +66,77 @@ Without firmware reconciliation support, persistent feedback directs the user to
 The pure operation policy combines reported facts and local activity for command admission and rendering. Benchmark
 size edits use the complete view projection, never a raw status render that could discard local gates. Local delivery,
 uncertainty, and reboot lifecycle state remain separate from server-reported pending flags and credential drafts.
+The application passes one operation result to the presentation helpers; settings, recovery, storage and benchmark
+controls consume that result rather than reconstructing separate admission policies.
+Each board has one authoritative command-state object; selection changes switch references instead of copying fields
+between selected-board globals and a map. Status-driven lifecycle transitions are strictly typed.
 Local uncertainty records a typed recovery reason and matching evidence rather than an opaque callback. Wireless
-controls initialize synchronously from the first ready status snapshot per board lifecycle; later polls preserve
-unsaved edits and staged credentials.
+controls initialize synchronously from the first ready status snapshot per board lifecycle. Later fresh snapshots
+refresh clean wireless configuration, including TCP CLI and the lossless SSID. Live link state and scan progress do
+not invalidate drafts. If the reported wireless configuration changes while local edits or tested credentials are
+pending, the dashboard preserves those edits and blocks Save. **Discard wireless edits and reload** clears only the
+wireless draft and secrets, then waits for accepted wireless configuration; clock/storage edits remain intact.
+Any temporary pair must be cleared successfully first. Cleanup refusals retain the draft and open Wi-Fi settings for
+an explicit retry; unknown delivery requires Re-sync, never automatic replay. An observation started before discard
+cannot initialize the replacement baseline.
+Feature 12 reports a temporary candidate SSID during Wi-Fi testing; it is not proof that the saved network changed.
+The form keeps its saved baseline separate from local tests and observed staging. Temporary candidate SSIDs never
+become a saved baseline, including when another client staged them before the first ready poll. Radio, TCP CLI, and
+saved-key flags still participate in conflict detection. Manual SSIDs are compared as UTF-8 bytes; scan-selected SSIDs
+retain their opaque bytes. Clock, storage and each radio have independent draft values. User change events record
+those values; accepted status supplies the baseline for untouched fields. Save requests and confirmations use the
+baseline plus drafts, never values scraped back from controls. The accepted-status initializer projects those values
+into the controls; a clock or storage draft cannot freeze radios against a newer baseline.
+Enabled/Disabled selectors contain only values. Separate **Configure...** buttons open the Wi-Fi and Bluetooth dialogs
+without changing radio state or credential intent, even if a remote update arrives while a selector retains focus.
+The wireless form owns radio drafts, network inputs, generated key and TCP switch. It projects explicit
+**preserve**, **replace** or **erase** credential actions, shown in Save confirmation. A DOM value mismatch alone never
+authorizes erasure. Untouched radio bits come from accepted saved settings, not stale controls.
+Missing, stale or failed wireless status disables radio editing and blocks radio changes in both the view and Save
+handler. Clock/storage-only saves remain available when otherwise safe and preserve the saved radio bits. Disabling a
+configured radio after fresh wireless status arrives explicitly erases only that radio's credentials through the
+combined provisioning commit. Form initialization consumes accepted status polls, not local re-renders of cached
+snapshots; rendering does not reset lifecycle state or synchronize editable values.
+A local tested pair requires matching SSID bytes, test generation and tested/staged-pair flags when a subsequent
+observation arrives. An old or replaced candidate produces a recoverable waiting gate, not a sticky saved-configuration
+conflict; matching observations release it, or the user can retest or clear staging. Foreign staging requires explicit
+cleanup in Wi-Fi settings before Save, preserving unrelated local edits. Failed joins also require retesting or cleanup,
+but never authorize Save or become permanent saved-configuration conflicts.
+Clearing the only tested network also removes its dependent Wi-Fi enable draft when no saved network exists.
+Explicit disables and enable drafts backed by saved credentials remain intact. Serialization and final Save admission
+reject radio enable edits without saved or valid replacement credentials; a disabled select option is not the gate.
+
+Both host monitors invalidate cached wireless observations when testing starts and when staging is cleared. A new
+HTTP status request therefore cannot return a pre-test or pre-cleanup candidate as fresh evidence. The regular monitor
+read repopulates status; no extra post-success HID read can turn confirmed completion into an uncertain result.
+Successful test replies include a host-issued opaque `test_id` (32 lowercase hexadecimal characters) and the firmware
+`test_generation` (1..255). A tested Save must return both with `use_tested_wifi: true`. Under device ownership, both
+hosts require the acknowledged identity to match their current successful test and the live firmware generation, and
+recheck the generation and exact staged-field mask before committing. Replaced tests, generation reuse and reopened
+device handles cannot authorize an older browser's Save. Status/Re-sync alone never manufactures test ownership;
+retest or clean up when the successful test response was lost. This is a version identity, not authentication, and does
+not claim an atomic firmware-side comparison against independent external HID writers.
+Unrelated saves omit SSID/password fields; only tested-pair replacement or explicit credential erasure sends them.
+Both hosts refuse omitted, pre-existing staged fields rather than silently including another client's credentials.
 Normal acknowledgements and Re-sync share typed terminal-result publication. Confirmed failed, busy, invalid, or
 unsupported benchmark/storage results release only their matching local pending marker; their failure reason remains
 visible across polling and board selection until an explicit retry. Successful acknowledgements still wait for fresh
 ownership or benchmark-sequence evidence, and successful save/reboot results retain their reboot obligation.
+The benchmark sequence is a periodic 8-bit report counter, not a run or command identifier. Advancing or wrapping it
+can satisfy a fresh-report fence after confirmed delivery, but never settles unknown command delivery. That uncertainty
+retains its own command identity until a terminal Re-sync result or the explicit no-result reconnect flow resolves it.
+Confirmed benchmark completion rearms the report fence at confirmation time, even if reports arrived while uncertain.
+The first connected, non-stale benchmark snapshot requested after completion establishes the observation baseline;
+a subsequent changed report counter releases the fence. This also handles a cached report captured before completion
+without treating it as post-command progress. This conservative fence can add an extra status-poll interval.
+Status requests are fenced by both board-selection and command generations. A command starting or finishing
+invalidates earlier in-flight status responses, including delayed JSON bodies and errors. Polling during wireless
+testing can still display live progress, but delayed responses cannot overwrite post-command state.
+Status replies validate connection, uncertainty, reboot and freshness booleans, plus available command-admission facts,
+before normalization or any lifecycle transition. A malformed successful reply follows the status-read error path:
+the last known snapshot, credential drafts and recovery obligations are retained, the error is displayed, and writes
+remain blocked until a valid read. Only an explicit `connected: false` is disconnect evidence; missing or falsy
+connection fields cannot settle unknown reboot delivery. Optional diagnostic additions remain compatible.
 Malformed or non-terminal reconciliation results cannot release local gates. No recovery path automatically replays
 the original command.
 Browser-only benchmark and storage delivery failures also expose Re-sync. If the host has no matching result
@@ -84,15 +148,38 @@ Acknowledged saves and reboots immediately block subsequent writes; old connecte
 per-board gate. It releases after an observed reboot-pending cycle or disconnect/reconnect, including when Re-sync
 confirms completion. Successful save readback mismatches retain both the uncertainty and the confirmed reboot effect.
 Unknown-board HTTP 404 responses trigger a board rescan at most once every five seconds.
+The same capability-aware policy gates storage handoff, configuration save, reboot and wireless operations. On
+benchmark-capable boards, a missing or stale benchmark report means activity is unknown, not idle. Storage-dependent
+writes wait for fresh facts; read-only status/Re-sync and unrelated LED access remain available.
+The policy also projects the blocking reason. One Save eligibility result and reason drive the button, tooltip,
+settings note and confirmation handler. Confirmation rechecks current admission, storage ownership and the reviewed
+proposal before sending anything. A changed clock/storage/radio proposal, credential action, generated key revision or
+tested-pair identity requires renewed confirmation; the outgoing request cannot silently differ from the review.
+The confirmation identity contains no password or generated key bytes. Repeated observations alone do not invalidate
+an unchanged proposal. Ordinary boot settings retain the explicit forced-save path while
+credentials require firmware-owned storage. Storage and settings notes explain missing/stale ownership or benchmark
+status and pending transitions instead of leaving disabled controls unexplained.
 
 Shared frontend regressions use independent mounted scenarios, production-shaped replies, distinct per-board status
-objects, and an additive-listener DOM fixture. The console API, terminal, dashboard response boundary, and pure
-operation policy have strict JavaScript type checks and negative type contracts, including reconnect recovery
-reasons; the remaining application and view modules are not yet strictly checked.
+objects, and an additive-listener DOM fixture. Wireless faults, gates, saved configuration and temporary staging also
+belong to each board; late replies retain their originating board and request. Default Wi-Fi/Bluetooth observations
+match the saved radio bits, and successful combined saves assert that invariant. Deliberately contradictory reports
+require explicit fault overrides. Cancellation clears only that board's temporary staging.
+All production JavaScript modules, including dashboard presentation,
+status normalization and console lifecycle orchestration, have strict JavaScript type checks. Negative type contracts
+cover the API and normalized view boundaries, per-board command state, status-driven transitions, reconnect recovery
+reasons, radio drafts, credential actions and Save admission. Shared status types live at the existing API boundary;
+no separate schema library or state-management dependency is required.
 Mutation success bodies are validated against the operation's Python/.NET contract. Invalid JSON, malformed
 acknowledgements, and contradictory readback are unresolved outcomes, not permission to replay. Explicit known HTTP
 refusals remain distinguishable from unknown delivery.
-Scan entries are validated before rendering, including raw SSID bytes, signal strength, and security field types.
+Board discovery and scan entries are validated before rendering, including board identity, raw SSID bytes, signal
+strength, and security field types. Combined Save validates credential-specific readback without treating omitted SSID
+fields as permission to replace Wi-Fi credentials.
+Optional diagnostic fields are checked separately from lifecycle facts. Missing manufacturer details display `--`;
+malformed diagnostic values are removed with an explicit status warning, without discarding valid ownership facts,
+drafts or command capabilities. Lifecycle validation remains fail-closed. Diagnostic normalization does not mutate
+the response, and unknown additional fields remain compatible.
 Benchmark labels follow the native hosts' state vocabulary, and missing-card diagnostics use reported card-detect
 wiring rather than a fixed board GPIO.
 Wi-Fi test progress and staged-credential countdowns use monotonic elapsed time; wall-clock changes neither expire a
@@ -102,26 +189,55 @@ valid stage early nor extend it. Firmware credential expiry remains authoritativ
 node host/web/tests/run-tests.mjs
 npx --yes --package typescript@5.9.3 tsc --project host/web/tsconfig.json
 python3 -m pip install -r host/web/tests/browser/requirements.txt
-python3 -m playwright install chromium
-python3 host/web/tests/browser/run.py
+python3 -m playwright install --with-deps chromium firefox webkit
+python3 host/web/tests/browser/run.py --browser chromium firefox webkit
 ```
 
 The browser runner requires the Python host dependencies and .NET 10 SDK. It builds the .NET host and serves the actual
 Python/.NET templates and assets with their production response headers; API replies are mocked, so no hardware
-requests are made. Both hosts run the same reboot and uncertainty gates, save-readback mismatch, 404 recovery, focus,
+requests are made. It defaults to Chromium; `--browser` selects one or more engines, and missing engines fail explicitly.
+Linux CI runs the complete suite through both hosts in Chromium, Firefox and WebKit.
+Both hosts run the same reboot and uncertainty gates, save-readback mismatch, 404 recovery, focus,
 narrow-layout, network-selection, cancellation, browser-only uncertainty recovery, failed terminal-result recovery,
-no-result reconnect recovery, and clipboard checks.
+no-result reconnect recovery, periodic report-counter wraparound, delayed pre-command status, stale benchmark admission,
+clean wireless-baseline refresh, dirty-draft conflicts, new-network and replacement-test candidate polls through
+Save&Reboot, cached previous-candidate recovery, same-SSID cross-client test replacement, foreign-stage cleanup and
+credential omission on key-only Save, clock/storage drafts with remote radio changes, missing first wireless status,
+forced-handler readiness enforcement, explicit credential-erasure recovery, malformed-status draft retention,
+reboot-recovery fencing, and clipboard checks. Four additional native-interaction scenarios per host cover both radios
+after remote enable/disable, keyboard activation and Escape/focus restoration, repeated-status draft invariance,
+explicit credential erasure and DOM-only changes that must not alter saved drafts. Native selects emit their actual
+input/change sequence; disabling a tested pair clears staging once without reverting the requested disable.
+Three further native scenarios per host cover renewed confirmation after a remote proposal change, clearing the only
+tested network, and local conflict discard with cleanup retry while preserving clock/storage drafts. Focused sequence
+tests also cover credential replacement during confirmation, missing credential prerequisites, repeated observations,
+and known/unknown cleanup failures.
+Each engine/host combination also checks keyboard-only clock editing and confirmation, initial Cancel focus,
+Escape/focus restoration without sending a command, 200-percent zoom, 320-pixel reflow, dialog reflow and explicit
+clipboard-refusal feedback without reporting success. These automated checks do not certify screen-reader usability.
+Before release, manually verify named settings and dialog controls, disabled-action explanations, status/error
+announcements and focus restoration with a screen reader on each supported desktop platform. Record the reader,
+browser, platform and results alongside physical-board provisioning/reconnect qualification; neither qualification is
+established by these mocked browser tests.
+Wireless test mocks change the polled SSID and staged-pair generation like the firmware, rather than continuing to
+report the saved SSID after a successful test. Runtime boundary tests also reject missing or mistyped lifecycle facts
+and test identities. These are protocol-shaped simulations, not physical provisioning qualification.
 For a static-only manual check, serve `host/web` locally and open `/tests/browser/index.html`.
 
 Console success bodies are validated by operation; malformed acknowledgements close the session without replaying
 input. Output is coalesced into one pending animation frame; input is sent immediately, disconnect flushes final
-output, and page navigation cancels pending output.
-The runner measures parsing, text construction, DOM replacement, and layout using the actual console module and styles
+output, and page navigation cancels pending output. The console retains bounded per-line DOM nodes, removes only
+expired scrollback rows, and updates changed lines/cursor segments without rebuilding the transcript. Output follows
+the bottom only when the reader is already there; new output and scrollback trimming preserve the viewed content
+when reading older lines.
+The runner measures parsing, cursor text construction, row appends, and layout using the actual console module and styles
 at 1,000 lines of the full 512-column bound, over 30 six-chunk bursts. Local Chromium measurements through both hosts
-kept one render per burst; observed text-construction p95 ranged from about 6–29 ms and layout p95 from about 20–156 ms
-across runs in the shared environment. Timings are
-environment-dependent, not a performance guarantee; the runner enforces one render per burst rather than a
-machine-specific millisecond threshold.
+kept one render per burst, with cursor text-construction p95 at about 0.1 ms and layout p95 about 3–4.3 ms after
+incremental rendering (previous full-transcript runs measured about 19–29 ms and 80–156 ms respectively). Timings are
+environment-dependent, not a performance guarantee; the runner enforces one render per burst, at most 24 DOM mutation
+records for a six-line burst, retained row identity, and scroll anchoring rather than a machine-specific time threshold.
+Browser checks also verify that selecting retained rows preserves their line separators for copying in all three engines;
+rows use semantic block elements rather than relying on styled inline elements to produce native copied newlines.
 These checks do not establish physical board qualification.
 
 ## Run a Host Application

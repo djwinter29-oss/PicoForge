@@ -29,7 +29,9 @@ test("server dashboard presents expected USB reconnection without hiding real er
     assert.equal(element("#status-message").textContent, "read error");
     assert.equal(element(".status-line").dataset.error, "true");
     assert.equal(element("#status-message").hidden, false);
-    const shared = { connected: true, settings_supported: true, hardware: { capabilities: 2 },
+    const shared = { connected: true, settings_supported: true, storage_stale: false, hardware: { capabilities: 128 | 2 },
+      wireless: { ssid: "saved", wifi_enabled: true, ble_enabled: false,
+        ble_key_configured: false, tcp_cli_enabled: true },
       settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 1 },
       wireless_dirty: true, wireless_stage_valid: true, msc: { enabled: true, transition_pending: false } };
     renderStatus(shared);
@@ -109,19 +111,19 @@ test("board identity warnings stay visible across status polls and clear on a cl
 test("settings presentation respects active and pending self-tests", async context => {
   const { state, connected, elements } = await appFixture(context);
   for (const testState of [
-    { self_test: { active: true, state: "writing" } },
+    { self_test: { sequence: 1, active: true, state: "writing" } },
     { self_test_command_pending: true },
   ]) {
     renderStatus({ ...connected, ...testState });
-    assert.equal(elements.get("#settings-note").textContent, "");
-    assert.equal(elements.get("#settings-note").hidden, true);
+    assert.match(elements.get("#settings-note").textContent, /benchmark/);
+    assert.equal(elements.get("#settings-note").hidden, false);
     for (const selector of ["#settings-clock", "#settings-storage", "#settings-save", "#reboot-control"]) {
       assert.equal(elements.get(selector).disabled, true);
     }
     renderStatus({ ...connected, ...testState, settings_dirty: true });
     assert.equal(elements.get("#settings-save").disabled, true);
-    assert.equal(elements.get("#settings-note").textContent, "");
-    assert.equal(elements.get("#settings-note").hidden, true);
+    assert.match(elements.get("#settings-note").textContent, /benchmark/);
+    assert.equal(elements.get("#settings-note").hidden, false);
     renderStatus({ ...connected, ...testState, settings_message: "Save failed: device busy" });
     assert.equal(elements.get("#settings-note").textContent, "Save failed: device busy");
     assert.equal(elements.get("#settings-note").hidden, false);
@@ -531,6 +533,10 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
     "switching back restores the benchmark sequence awaiting reconciliation");
   connected.self_test = { sequence: 7, active: false, state: "idle" };
   await state.tick();
+  assert.equal(elements.get("#self-test-start").disabled, true, "periodic reports cannot confirm unknown delivery");
+  connected.command_resync_supported = true;
+  state.resyncResult = { uncertain: false, control_result: { opcode: 4, status: "failed" } };
+  await handlers.get("#command-resync:click")();
   for (const name of ["#led-control:click", "#msc-control:click", "#self-test-start:click"]) {
     state.gate = new Promise(resolve => { state.release = resolve; });
     state.statusFails = false;
@@ -553,6 +559,7 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
   state.statusFails = false;
   await state.tick();
   connected.msc.request_rejected = false;
+  await handlers.get("#command-resync:click")();
   await new Promise(resolve => setImmediate(resolve));
   const ledRequestsBeforeGate = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
   let finishLed;
@@ -651,7 +658,7 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
   handlers.get("#board-select:change")();
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(requestedUrls.includes("/api/status?board=board-b"));
-  assert.equal(elements.get('label[for="settings-wifi"]').hidden, true);
+  assert.equal(elements.get("#wifi-settings").hidden, true);
 });
 
 test("wireless provisioning and cancellation preserve draft and uncertainty invariants", async context => {
@@ -663,12 +670,13 @@ test("wireless provisioning and cancellation preserve draft and uncertainty inva
   await switchBoard("board-b");
   connected.hardware.capabilities = 128 | 16 | 2;
   connected.settings.radios = 3;
+  state.wirelessStatus = { ble_enabled: true, ble_key_configured: true };
   connected.storage_stale = false;
   connected.msc = { enabled: false, transition_pending: false };
   await state.tick();
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(elements.get('label[for="settings-wifi"]').hidden, false);
-  assert.equal(elements.get('label[for="settings-ble"]').hidden, false);
+  assert.equal(elements.get("#wifi-settings").hidden, false);
+  assert.equal(elements.get("#ble-settings").hidden, false);
   assert.equal(elements.get("#settings-wifi").value, "1");
   assert.equal(elements.get("#settings-ble").value, "1");
   assert.equal(elements.get("#wifi-ssid").value, "saved");
@@ -834,6 +842,7 @@ test("wireless provisioning and cancellation preserve draft and uncertainty inva
   assert.equal(elements.get("#wifi-password").value, "");
   assert.equal(elements.get("#ble-secret").value, "");
   const firstBoard = boardStatuses.get("board-a");
+  state.wirelessStatus = null;
   firstBoard.hardware.capabilities |= 128;
   firstBoard.storage_stale = false;
   await state.tick();
@@ -862,6 +871,7 @@ test("wireless provisioning and cancellation preserve draft and uncertainty inva
   await handlers.get("#command-resync:click")();
   configureRadio("wifi");
   elements.get("#wifi-ssid").value = "timed-out-network";
+  handlers.get("#wifi-ssid:input")();
   state.wirelessTestError = new DOMException("HTTP deadline", "TimeoutError");
   const beforeTimeout = testedWireless.length;
   await handlers.get("#wifi-connect:click")();

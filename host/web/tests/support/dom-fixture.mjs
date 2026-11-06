@@ -11,10 +11,16 @@ export function domFixture() {
     const events = new Map();
     const attributes = {};
     const classes = new Set();
+    let textContent = "";
     const element = {
-      value: "", valueAsNumber: 32, textContent: "", dataset: {}, style: {}, children: [], attributes,
-      disabled: false, hidden: false, open: false, type: "", tagName: "DIV", scrollHeight: 0, scrollTop: 0,
-      options: ["0", "1", "configure"].map(value => ({ value })),
+      value: "", valueAsNumber: 32, dataset: {}, style: {}, children: [], attributes,
+      get textContent() {
+        return this.children.length ? this.children.map(child => child.textContent).join("") : textContent;
+      },
+      set textContent(value) { textContent = String(value); this.children = []; },
+      disabled: false, hidden: false, open: false, type: "", tagName: "DIV",
+      scrollHeight: 0, scrollTop: 0, clientHeight: 0,
+      options: ["0", "1"].map(value => ({ value })),
       setAttribute(name, value) { attributes[name] = String(value); },
       getAttribute(name) { return attributes[name] ?? null; },
       toggleAttribute(name, force) {
@@ -34,8 +40,22 @@ export function domFixture() {
       },
       closest() { return this.label; },
       querySelector() { return this.children[0] ?? null; },
-      replaceChildren(...children) { this.children = children; },
-      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) {
+        textContent = "";
+        this.children = [];
+        this.append(...children);
+      },
+      append(...children) {
+        for (const child of children) { child.parentElement = this; this.children.push(child); }
+      },
+      remove() {
+        if (this.parentElement) {
+          const siblings = this.parentElement.children;
+          siblings.splice(siblings.indexOf(this), 1);
+          this.parentElement = null;
+        }
+      },
+      getBoundingClientRect() { return { height: 20 }; },
       addEventListener(name, callback) {
         if (!events.has(name)) events.set(name, []);
         events.get(name).push(callback);

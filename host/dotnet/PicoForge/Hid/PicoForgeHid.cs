@@ -27,6 +27,8 @@ internal sealed class PicoForgeHid : IHidClient
     // and again after a save. Another host saving over WebHID meanwhile leaves Wi-Fi switch display stale until then.
     private BoardConfigurationResponse? configuration;
     private byte transactionId;
+    private string? testedId;
+    private byte testedGeneration;
     public bool CommandOutcomeUncertain { get; private set; }
     public ControlCommandReference? UncertainCommand { get; private set; }
     public WirelessOperationReference? UncertainWirelessOperation { get; private set; }
@@ -233,7 +235,8 @@ internal sealed class PicoForgeHid : IHidClient
             throw new BoardStateException("Discard or explicitly include the existing staged wireless values");
         if (settings.UseTestedWifi)
         {
-            if (!previous.PairTested ||
+            if (settings.TestId != testedId || testedId is null || settings.TestGeneration != testedGeneration ||
+                previous.TestGeneration != settings.TestGeneration || !previous.PairTested ||
                 ((WirelessStagingFlags)previous.StagedState & WirelessStagingFlags.PairTested) != 0 ||
                 ssid is not null && !ssid.SequenceEqual(Convert.FromHexString(previous.SsidHex)))
                 throw new BoardStateException("The selected staged Wi-Fi pair has not passed testing");
@@ -245,16 +248,15 @@ internal sealed class PicoForgeHid : IHidClient
         }
         if (settings.BleKey is not null) Stage(Opcode.StageKey, HidProtocol.EncodeControlKey(settings.BleKey));
         var staged = ReadWireless();
-        if (settings.UseTestedWifi && !staged.PairTested ||
-            !settings.UseTestedWifi && ssid is not null && !staged.SsidStaged ||
-            settings.Password is not null && !staged.PasswordStaged ||
-            settings.BleKey is not null && !staged.KeyStaged)
+        var expectedMask = (settings.UseTestedWifi || ssid is not null ? 1 : 0) |
+            (settings.UseTestedWifi || settings.Password is not null || ssid?.Length == 0 ? 2 : 0) |
+            (settings.BleKey is not null ? 4 : 0);
+        var stagedMask = (staged.SsidStaged ? 1 : 0) | (staged.PasswordStaged ? 2 : 0) | (staged.KeyStaged ? 4 : 0);
+        if (settings.UseTestedWifi && (!staged.PairTested || staged.TestGeneration != settings.TestGeneration) ||
+            stagedMask != expectedMask)
             throw new BoardStateException("Staged wireless values expired or were replaced; save was not sent");
-        var commit = settings.UseTestedWifi || ssid is not null || settings.Password is not null ||
-            settings.BleKey is not null;
         var arguments = HidProtocol.EncodeSettings(settings.Board!, settings.TcpCliEnabled ?? previous.TcpCliEnabled);
-        var expectedMask = (staged.SsidStaged ? 1 : 0) | (staged.PasswordStaged ? 2 : 0) | (staged.KeyStaged ? 4 : 0);
-        var result = SaveSettings(arguments, commit ? HidProtocol.SaveCommitWireless : (byte)0, expectedMask,
+        var result = SaveSettings(arguments, expectedMask != 0 ? HidProtocol.SaveCommitWireless : (byte)0, expectedMask,
             "Saved settings were not confirmed; outcome is uncertain");
         // Keep the last runtime snapshot, with only the verified saved configuration updated.
         return staged with
@@ -296,6 +298,7 @@ internal sealed class PicoForgeHid : IHidClient
         Action<string>? onProgress = null, string? ssidHex = null, CancellationToken cancel = default)
     {
         EnsureCapability(HidProtocol.CapabilityWireless, "wireless test");
+        testedId = null;
         Stage(Opcode.StageSsid, HidProtocol.EncodeSsid(ssid, ssidHex));
         Stage(Opcode.StagePassword, Encoding.ASCII.GetBytes(password));
         var prior = ReadWireless();
@@ -306,12 +309,15 @@ internal sealed class PicoForgeHid : IHidClient
             "test", generation, onProgress, cancel);
         if (result.WifiState != WifiState.TestJoined || !result.PairTested)
             throw new BoardStateException($"Could not connect: {result.Phase}");
-        return new(5, 5, result.Ipv4, result.Error, result.TestGeneration);
+        testedId = Guid.NewGuid().ToString("N");
+        testedGeneration = result.TestGeneration;
+        return new(5, 5, result.Ipv4, result.Error, result.TestGeneration, TestId: testedId);
     }
 
     public void CancelWirelessTest()
     {
         EnsureCapability(HidProtocol.CapabilityWireless, "wireless test");
+        testedId = null;
         SendCommand(Opcode.WifiCancel);
     }
 
@@ -348,8 +354,11 @@ internal sealed class PicoForgeHid : IHidClient
         return new(controlResult, wireless);
     }
 
-    private void Stage(Opcode opcode, byte[] value) =>
+    private void Stage(Opcode opcode, byte[] value)
+    {
+        if (opcode is Opcode.StageSsid or Opcode.StagePassword) testedId = null;
         SendCommand(opcode, arguments: HidProtocol.StagingArguments(opcode, value));
+    }
 
     private WirelessStatusResponse WaitWireless(Func<WirelessStatusResponse, bool> terminal, int timeoutMilliseconds,
         Action? onPoll, string kind, ushort expectedGeneration, Action<string>? onProgress = null,

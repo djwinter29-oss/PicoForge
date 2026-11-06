@@ -289,6 +289,8 @@ public sealed class WirelessTests
         Assert.Equal(600, test.RemainingSeconds);
         var settings = Settings();
         settings.UseTestedWifi = true;
+        settings.TestId = test.TestId;
+        settings.TestGeneration = test.TestGeneration;
         settings.SsidHex = "4100ff";
         wire.Hid.SetWireless(settings);
         Assert.Equal(new byte[] { 6, 7, 9, 5 }, wire.Writes.Select(report => report[3]));
@@ -299,20 +301,108 @@ public sealed class WirelessTests
     public void TestedSaveRejectsDifferentPairBeforeAnyWrite()
     {
         using var wire = new Wire();
+        var test = wire.Hid.TestWireless("Pico", "secret12");
+        var writes = wire.Writes.Count;
         var settings = Settings();
         settings.UseTestedWifi = true;
+        settings.TestId = test.TestId;
+        settings.TestGeneration = test.TestGeneration;
         settings.Ssid = "other";
         Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(settings));
+        Assert.Equal(writes, wire.Writes.Count);
+    }
+
+    [Fact]
+    public void TestedSaveRejectsReplacedOrReconnectedTestIdentityWithoutWriting()
+    {
+        using var wire = new Wire();
+        var first = wire.Hid.TestWireless("Pico", "secret12");
+        var second = wire.Hid.TestWireless("Pico", "another12");
+        Assert.NotEqual(first.TestId, second.TestId);
+        var writes = wire.Writes.Count;
+        var settings = Settings();
+        settings.UseTestedWifi = true;
+        settings.TestId = first.TestId;
+        settings.TestGeneration = first.TestGeneration;
+        Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(settings));
+        Assert.Equal(writes, wire.Writes.Count);
+        settings.TestId = second.TestId;
+        settings.TestGeneration = first.TestGeneration;
+        Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(settings));
+        Assert.Equal(writes, wire.Writes.Count);
+        using var reconnected = new Wire();
+        settings.TestGeneration = second.TestGeneration;
+        Assert.Throws<BoardStateException>(() => reconnected.Hid.SetWireless(settings));
+        Assert.Empty(reconnected.Writes);
+    }
+
+    [Fact]
+    public void TestedSaveRechecksGenerationAfterStagingAnOwnedKey()
+    {
+        using var wire = new Wire { ReplaceTestOnKeyStage = true };
+        var test = wire.Hid.TestWireless("Pico", "secret12");
+        var settings = Settings();
+        settings.UseTestedWifi = true;
+        settings.TestId = test.TestId;
+        settings.TestGeneration = test.TestGeneration;
+        settings.BleKey = new string('a', 64);
+        Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(settings));
+        Assert.Equal(new byte[] { 6, 7, 9, 8 }, wire.Writes.Select(report => report[3]));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TestedSaveWithOwnedKeyPreservesTestIdentity(bool wrapGeneration)
+    {
+        using var wire = new Wire();
+        if (wrapGeneration) wire.StatusReport[47] = 255;
+        var test = wire.Hid.TestWireless("Pico", "secret12");
+        var settings = Settings();
+        settings.UseTestedWifi = true;
+        settings.TestId = test.TestId;
+        settings.TestGeneration = test.TestGeneration;
+        settings.BleKey = new string('a', 64);
+        wire.Hid.SetWireless(settings);
+        Assert.Equal(new byte[] { 6, 7, 9, 8, 5 }, wire.Writes.Select(report => report[3]));
+    }
+
+    [Theory]
+    [InlineData(null, (byte)1)]
+    [InlineData("", (byte)1)]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", null)]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", (byte)0)]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", (byte)1)]
+    [InlineData("gggggggggggggggggggggggggggggggg", (byte)1)]
+    public void TestedSaveRequiresAValidIdentity(string? token, byte? generation)
+    {
+        var settings = Settings();
+        settings.UseTestedWifi = true;
+        settings.TestId = token;
+        settings.TestGeneration = generation;
+        Assert.Throws<ArgumentException>(() => HidProtocol.ValidateWirelessRequest(settings));
+    }
+
+    [Theory]
+    [InlineData((byte)0x30)]
+    [InlineData((byte)0x40)]
+    public void OmittedCredentialsCannotSilentlyCommitPreviousStaging(byte staged)
+    {
+        using var wire = new Wire();
+        wire.StatusReport[5] |= staged;
+        Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(Settings()));
         Assert.Empty(wire.Writes);
     }
 
     [Fact]
-    public void OmittedCredentialsCannotSilentlyCommitPreviousStaging()
+    public void EmptySsidOwnsFirmwareImplicitPasswordErasure()
     {
         using var wire = new Wire();
-        wire.StatusReport[5] |= 0x30;
-        Assert.Throws<BoardStateException>(() => wire.Hid.SetWireless(Settings()));
-        Assert.Empty(wire.Writes);
+        var settings = Settings();
+        settings.Ssid = "";
+        var saved = wire.Hid.SetWireless(settings);
+        Assert.False(saved.NetworkConfigured);
+        Assert.Equal(new byte[] { 6, 5 }, wire.Writes.Select(report => report[3]));
     }
 
     [Fact]
@@ -530,7 +620,8 @@ public sealed class WirelessTests
         Assert.DoesNotContain("secret12", await tested.Content.ReadAsStringAsync());
         var saved = await client.PostAsJsonAsync("/api/wireless?board=board-a",
             new { wifi_enabled = true, ble_enabled = true, ssid_hex = "4100ff", confirm_reboot = true,
-                use_tested_wifi = true, board = new { system_clock_mhz = 200, sdcard_profile = 1, radios = 3 } });
+                use_tested_wifi = true, test_id = new string('a', 32), test_generation = 1,
+                board = new { system_clock_mhz = 200, sdcard_profile = 1, radios = 3 } });
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
         Assert.True(dashboard.Saved!.UseTestedWifi);
         Assert.Equal("4100ff", dashboard.Saved.SsidHex);
@@ -559,6 +650,7 @@ public sealed class WirelessTests
         public bool SaveDisconnect { get; set; }
         public bool WrongSaveMask { get; set; }
         public bool ProofReadFailure { get; set; }
+        public bool ReplaceTestOnKeyStage { get; init; }
         public int Reopens { get; private set; }
         public int ConfigurationReads { get; private set; }
         private byte[] result = Result(1);
@@ -602,7 +694,10 @@ public sealed class WirelessTests
                     if (request[5] == 0) { StatusReport[5] |= 32; StatusReport[48] |= 3; }
                     break;
                 case 7: StatusReport[5] = (byte)((StatusReport[5] | 32) & ~128); break;
-                case 8: StatusReport[5] |= 64; break;
+                case 8:
+                    StatusReport[5] |= 64;
+                    if (ReplaceTestOnKeyStage) StatusReport[47]++;
+                    break;
                 case 9:
                     if (!NeverFinishTest)
                     {

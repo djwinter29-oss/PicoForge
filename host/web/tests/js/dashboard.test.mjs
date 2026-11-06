@@ -6,6 +6,8 @@ import test from "node:test";
 import {
   normalizeStatus, renderStatus as renderServerStatus, renderSelfTest as renderServerSelfTest,
 } from "../../src/js/dashboard.mjs";
+import { operationState } from "../../src/js/operation-state.mjs";
+import { statusResponse } from "../../src/js/dashboard-api.mjs";
 
 function withDocument(run) {
   const saved = globalThis.document;
@@ -31,6 +33,20 @@ function snapshot() {
     memory: { sample_valid: true, initialized: true, configured: true, presence_known: true, present: true },
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
+
+test("presentation uses the supplied operation projection consistently without reconstructing admission", () =>
+  withDocument(el => {
+    const state = snapshot();
+    const operations = { ...operationState(state), canSetLed: false, canChangeMsc: false,
+      canSaveSettings: false, saveBlockReason: "Projected Save gate.", canRecover: false,
+      recovery: "resync", canStartSelfTest: false, canCancelSelfTest: false, canEditSelfTest: false };
+    renderServerStatus({ ...state, settings_dirty: true }, operations);
+    for (const id of ["led-control", "msc-control", "settings-save", "command-resync",
+      "self-test-start", "self-test-cancel", "self-test-size"]) assert.equal(el(`#${id}`).disabled, true);
+    assert.equal(el("#settings-save").title, operations.saveBlockReason);
+    assert.equal(el("#settings-note").textContent, operations.saveBlockReason);
+    assert.equal(el("#command-resync").hidden, false);
+  }));
 
 test("every native benchmark state has a known display label", () => withDocument(el => {
   for (const [state, label] of Object.entries({
@@ -162,3 +178,52 @@ test("status normalization reads only the shared nested shape", () => {
   assert.equal(stale.filesystem_format, null);
   assert.equal(stale.settings, null);
 });
+
+test("diagnostic rendering distinguishes missing facts, explicit false and reported unassigned sentinels", () =>
+  withDocument(el => {
+    for (const cdc_open of [undefined, "bad", false, true]) {
+      const result = statusResponse({
+        connected: true, reboot_pending: false, command_outcome_uncertain: false, settings_supported: true,
+        telemetry_stale: false, storage_stale: false, self_test_stale: false,
+        hardware: { capabilities: 2, product_name: {} },
+        runtime: { cdc_open },
+        memory: { msc: { enabled: false, transition_pending: false } },
+        board_configuration: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0,
+          monitor_uart_index: "bad", monitor_uart_tx_gpio: "bad", monitor_uart_rx_gpio: 255,
+          storage_gpios: [0, 255], reset_cause: "bad" },
+      });
+      renderServerStatus(normalizeStatus(result));
+      assert.equal(el("#cdc-state").textContent, cdc_open === true ? "Open" : cdc_open === false ? "Closed" : "--");
+      assert.equal(el("#cdc-state").dataset.active, typeof cdc_open === "boolean" ? String(cdc_open) : undefined);
+      assert.equal(el("#board-uart-title").textContent, "Monitor UART");
+      assert.equal(el("#board-uart").children[1].children[0].textContent, "--");
+      assert.equal(el("#board-uart").children[1].children[1].textContent, "Unassigned");
+      assert.deepEqual(el("#board-storage-pins").children[1].children.map(cell => cell.textContent),
+        ["GP0", "Unassigned", "--", "--", "--", "--", "--"]);
+      assert.equal(el("#board-reset-cause").textContent, "--");
+      assert.equal(el("#product-name").textContent, "--");
+      assert.equal(el("#board-model").textContent, "--");
+      assert.match(el("#status-message").textContent, /Unavailable diagnostic fields/);
+    }
+    for (const monitor_uart_index of [0, 1, 255]) {
+      renderServerStatus({ ...snapshot(), board_configuration: { ...snapshot().settings, monitor_uart_index } });
+      assert.equal(el("#board-uart-title").textContent,
+        monitor_uart_index === 255 ? "Monitor UART" : `Monitor UART${monitor_uart_index}`);
+    }
+    renderServerStatus({ ...snapshot(), hardware: { ...snapshot().hardware, board_model: 9 },
+      board_configuration: { ...snapshot().settings, reset_cause: 0 } });
+    assert.equal(el("#board-model").textContent, "Unknown (9) (RP2350)");
+    assert.equal(el("#board-reset-cause").textContent, "Unknown");
+  }));
+
+test("partial manufacturer diagnostics remain renderable and diagnostic warnings do not hide behind settings notes",
+  () => withDocument(el => {
+    for (const manufacturer of [{}, { id: 3 }, { serial_number: 0 }, { product_name: "Card" }]) {
+      renderServerStatus({ ...snapshot(), diagnostic_error: "Unavailable diagnostic fields: memory.manufacturer.",
+        memory: { ...snapshot().memory, manufacturer } });
+      assert.equal(el("#memory-product").textContent, "--");
+      assert.equal(el("#memory-serial").textContent, manufacturer.serial_number === 0 ? "00000000" : "--");
+      assert.match(el("#status-message").textContent, /Unavailable diagnostic/);
+      assert.equal(el("#status-message").hidden, false);
+    }
+  }));

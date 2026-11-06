@@ -126,7 +126,7 @@ public sealed record WirelessNetworkResponse(string Ssid, int Rssi, bool Secured
 
 /// <summary>Retained test result associated with a Report 12 test generation.</summary>
 public sealed record WirelessOperationResponse(byte State, byte WifiState, string Ipv4, byte Detail,
-    byte TestGeneration, ushort RemainingSeconds = 600)
+    byte TestGeneration, ushort RemainingSeconds = 600, string? TestId = null)
 {
     public string Phase => HidProtocol.WifiDetail(Detail);
 }
@@ -143,6 +143,8 @@ public sealed class WirelessRequest
     public string? BleKey { get; set; }
     public BootSettingsResponse? Board { get; set; }
     public bool UseTestedWifi { get; set; }
+    public string? TestId { get; set; }
+    public byte? TestGeneration { get; set; }
     public bool ConfirmReboot { get; set; }
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
@@ -156,6 +158,7 @@ public sealed class WirelessRequest
                 ?? throw new JsonException();
             if (HasExplicitNull(json, "password") || HasExplicitNull(json, "ble_key") ||
                 HasExplicitNull(json, "ssid") || HasExplicitNull(json, "ssid_hex") ||
+                HasExplicitNull(json, "test_id") || HasExplicitNull(json, "test_generation") ||
                 HasExplicitNull(json, "tcp_cli_enabled"))
                 throw new JsonException();
             HidProtocol.ValidateWirelessRequest(request);
@@ -192,6 +195,11 @@ internal static partial class HidProtocol
         if (settings.BleKey is not null) EncodeControlKey(settings.BleKey);
         if (settings.UseTestedWifi && settings.Password is not null)
             throw new ArgumentException("Do not resend a password after a successful test join");
+        if (settings.UseTestedWifi
+            ? settings.TestId is not { Length: 32 } || settings.TestId.Any(c => !char.IsAsciiHexDigit(c)
+                || char.IsUpper(c)) || settings.TestGeneration is null or 0
+            : settings.TestId is not null || settings.TestGeneration is not null)
+            throw new ArgumentException("A tested pair requires its test_id and test_generation");
     }
 
     public static byte[] EncodeSsid(string? ssid, string? hex = null)

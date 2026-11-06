@@ -15,10 +15,12 @@ function formFixture(context, overrides = {}) {
   globalThis.document = fixture.document;
   const form = bindWirelessForm({
     ready: () => true, supported: () => true,
-    test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 600 }), cancelTest: async () => {},
+    test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 600, test_generation: 1, test_id: "a".repeat(32) }),
+    cancelTest: async () => {},
     ...overrides,
   });
-  form.initialize({ ssid: "saved", tcp_cli_enabled: true });
+  form.initialize({ ssid: "saved", wifi_enabled: true, ble_enabled: false,
+    ble_key_configured: false, tcp_cli_enabled: true });
   context.after(() => { form.reset(); globalThis.document = previous; });
   return { form, el };
 }
@@ -28,6 +30,166 @@ function deferred() {
   const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+test("enabling a radio without saved or replacement credentials is blocked at serialization", async context => {
+  const { form, el } = formFixture(context);
+  form.initialize({ ssid: "", wifi_enabled: false, ble_enabled: false,
+    ble_key_configured: false, tcp_cli_enabled: true });
+  for (const [radio, reason] of [["wifi", /test.*network/i], ["ble", /generate.*key/i]]) {
+    el(`settings-${radio}`).value = "1";
+    await el(`settings-${radio}`).fire("change");
+    assert.match(form.saveBlockReason(), reason);
+    assert.throws(() => form.request(), reason);
+    el(`settings-${radio}`).value = "0";
+    await el(`settings-${radio}`).fire("change");
+    assert.equal(form.saveBlockReason(), null);
+  }
+});
+
+test("test/clear/observe sequences preserve only enables backed by saved credentials and explicit disables",
+  async context => {
+    for (const saved of [false, true]) for (const disable of [false, true]) {
+      await context.test(`saved=${saved}, disable=${disable}`, async context => {
+        let cancellations = 0;
+        const { form, el } = formFixture(context, { cancelTest: async () => { cancellations++; } });
+        const baseline = { ssid: saved ? "saved" : "", wifi_enabled: saved, ble_enabled: false,
+          ble_key_configured: false, tcp_cli_enabled: true };
+        form.initialize(baseline);
+        el("wifi-ssid").value = "candidate";
+        await el("wifi-ssid").fire("input");
+        await el("wifi-connect").fire("click");
+        if (disable) {
+          el("settings-wifi").value = "0";
+          await el("settings-wifi").fire("input");
+          await el("settings-wifi").fire("change");
+          await new Promise(resolve => setImmediate(resolve));
+        } else await el("wifi-cancel").fire("click");
+        for (let poll = 0; poll < 3; poll++) form.initialize(baseline);
+        assert.equal(cancellations, 1);
+        assert.equal(form.selectedRadios(Number(saved)), Number(saved && !disable));
+        assert.equal(form.saveBlockReason(), null);
+        const request = form.request();
+        assert.equal(Object.hasOwn(request, "use_tested_wifi"), false);
+        if (saved && disable) assert.equal(request.ssid, "");
+        else assert.equal(Object.hasOwn(request, "ssid"), false);
+      });
+    }
+  });
+
+test("confirmation identity tracks key and tested-pair replacements without retaining credential bytes", async context => {
+  let generation = 0;
+  const { form, el } = formFixture(context, {
+    test: async () => ({ remaining_seconds: 600, test_generation: ++generation,
+      test_id: String(generation).repeat(32) }),
+  });
+  const initial = form.saveIdentity();
+  await el("ble-generate").fire("click");
+  const withKey = form.saveIdentity();
+  assert.notEqual(withKey, initial);
+  assert.equal(withKey.includes(el("ble-secret").value), false);
+  el("wifi-password").value = "private-passphrase";
+  await el("wifi-password").fire("input");
+  await el("wifi-connect").fire("click");
+  const firstPair = form.saveIdentity();
+  assert.equal(firstPair.includes("private-passphrase"), false);
+  await el("wifi-connect").fire("click");
+  assert.notEqual(form.saveIdentity(), firstPair);
+});
+
+test("failed conflict cleanup preserves drafts and requires explicit retry before discard", async context => {
+  for (const uncertain of [false, true]) {
+    await context.test(uncertain ? "unknown delivery" : "known refusal", async context => {
+      let refusing = true;
+      const error = uncertain ? new TypeError("reply lost") : new Error("storage busy");
+      const { form, el } = formFixture(context, {
+        cancelTest: async () => { if (refusing) throw error; },
+      });
+      await el("wifi-connect").fire("click");
+      await el("ble-generate").fire("click");
+      const key = el("ble-secret").value;
+      form.initialize({ ssid: "saved", wifi_enabled: true, ble_enabled: false,
+        ble_key_configured: false, tcp_cli_enabled: false });
+      assert.equal(form.conflicted(), true);
+      assert.equal(await form.discardEdits(), false);
+      assert.equal(form.conflicted(), true);
+      assert.equal(el("ble-secret").value, key);
+      assert.equal(el("wifi-dialog").open, true);
+      assert.throws(() => form.request(), /configuration changed/);
+      refusing = false;
+      if (uncertain) {
+        assert.equal(await form.clearTest(), false, "unknown cleanup must be reconciled, not replayed");
+        form.cancelResolved(true);
+      } else await el("wifi-cancel").fire("click");
+      assert.equal(await form.discardEdits(), true);
+      assert.equal(form.conflicted(), false);
+      assert.equal(el("ble-secret").value, "");
+    });
+  }
+});
+
+test("only explicit radio edits can erase credentials; DOM synchronization never owns intent", async context => {
+  const { form, el } = formFixture(context);
+  form.initialize({ ssid: "saved", wifi_enabled: true, ble_enabled: true, ble_key_configured: true,
+    tcp_cli_enabled: true });
+  el("settings-wifi").value = "0";
+  el("settings-ble").value = "0";
+  assert.deepEqual(form.credentialActions(), { wifi: "preserve", ble: "preserve" });
+  assert.equal(form.dirty(), false);
+  assert.equal(form.request().wifi_enabled, true);
+  assert.equal(form.request().ble_enabled, true);
+  for (const radio of ["wifi", "ble"]) {
+    await el(`settings-${radio}`).fire("change");
+    assert.equal(form.radioEdited(radio), true);
+    assert.equal(form.credentialActions()[radio], "erase");
+  }
+  assert.deepEqual(form.request(), { wifi_enabled: false, ble_enabled: false,
+    ssid: "", password: "", ble_key: "", tcp_cli_enabled: true, confirm_reboot: true });
+  for (const radio of ["wifi", "ble"]) {
+    el(`settings-${radio}`).value = "1";
+    await el(`settings-${radio}`).fire("change");
+    assert.equal(form.radioEdited(radio), false);
+  }
+  assert.deepEqual(form.credentialActions(), { wifi: "preserve", ble: "preserve" });
+  assert.equal(form.dirty(), false);
+});
+
+test("credential requests use draft values rather than later DOM changes", async context => {
+  const { form, el } = formFixture(context);
+  el("wifi-ssid").value = "tested";
+  await el("wifi-ssid").fire("input");
+  el("wifi-password").value = "password";
+  await el("wifi-password").fire("input");
+  el("wifi-ssid").value = "dom-only";
+  await el("wifi-connect").fire("click");
+  assert.equal(form.request().ssid, "tested");
+  await el("ble-generate").fire("click");
+  const key = el("ble-secret").value;
+  el("ble-secret").value = "dom-only";
+  el("settings-tcp-cli").value = "0";
+  assert.equal(form.request().ble_key, key);
+  assert.equal(form.request().tcp_cli_enabled, true);
+});
+
+test("native input then change disables a tested pair with one cleanup and preserves the disable", async context => {
+  const pending = deferred();
+  let cancels = 0;
+  const { form, el } = formFixture(context, {
+    cancelTest: () => { cancels++; return pending.promise; },
+  });
+  await el("wifi-connect").fire("click");
+  el("settings-wifi").value = "0";
+  await el("settings-wifi").fire("input");
+  await el("settings-wifi").fire("change");
+  assert.equal(cancels, 1);
+  assert.equal(form.inFlight(), true);
+  pending.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(el("settings-wifi").value, "0");
+  assert.equal(form.inFlight(), false);
+  assert.equal(form.request().ssid, "");
+  assert.equal(form.request().password, "");
+  assert.equal(Object.hasOwn(form.request(), "use_tested_wifi"), false);
+});
 
 test("clipboard feedback belongs to the current key draft and board lifecycle", async context => {
   for (const change of ["current", "regenerate", "disable", "saved", "failed-save", "reset"]) {
@@ -52,7 +214,7 @@ test("clipboard feedback belongs to the current key draft and board lifecycle", 
           assert.notEqual(el("ble-secret").value, copied[0]);
         } else if (change === "disable") {
           el("settings-ble").value = "0";
-          await el("settings-ble").fire("input");
+          await el("settings-ble").fire("change");
         } else if (change === "saved") form.finish({ ssid: "saved", ble_key_configured: true });
         else if (change === "failed-save") form.finish(null, "Save failed");
         else if (change === "reset") form.reset();
@@ -65,11 +227,11 @@ test("clipboard feedback belongs to the current key draft and board lifecycle", 
         } else assert.equal(el("ble-status").textContent, feedback);
         if (change === "failed-save") {
           assert.equal(feedback, "Save failed");
-          assert.equal(form.canSave(), false);
+          assert.notEqual(form.saveBlockReason(), null);
           assert.throws(() => form.request(), /Generate a replacement/);
           el("settings-ble").value = "0";
-          await el("settings-ble").fire("input");
-          assert.equal(form.canSave(), true, "disabling releases failed-key recovery");
+          await el("settings-ble").fire("change");
+          assert.equal(form.saveBlockReason(), null, "disabling releases failed-key recovery");
         }
       });
     }
@@ -81,19 +243,18 @@ test("failed replacement Wi-Fi testing invalidates the previous stage and blocks
   const { form, el } = formFixture(context, {
     test: async () => {
       if (fails) throw new Error("access point refused");
-      return { ipv4: "192.0.2.1", remaining_seconds: 600 };
+      return { ipv4: "192.0.2.1", remaining_seconds: 600, test_generation: 1, test_id: "a".repeat(32) };
     },
   });
   await el("wifi-connect").fire("click");
-  assert.equal(form.canSave(), true);
+  assert.equal(form.saveBlockReason(), null);
   fails = true;
   await el("wifi-connect").fire("click");
   assert.equal(form.dirty(), true);
-  assert.equal(form.canSave(), false);
-  assert.equal(form.stageValid(), false);
+  assert.notEqual(form.saveBlockReason(), null);
   assert.throws(() => form.request(), /Test the connection again or clear/);
   await el("wifi-cancel").fire("click");
-  assert.equal(form.canSave(), true);
+  assert.equal(form.saveBlockReason(), null);
   assert.equal(form.dirty(), false);
 });
 
@@ -113,14 +274,14 @@ test("reset fences wireless continuations, including errors", async context => {
         el("wifi-status").textContent = "Current board";
         el("wifi-dialog").showModal();
         if (succeeds) pending.resolve(operation === "scan" ? [{ ssid: "old", ssid_hex: "6f6c64" }]
-          : { ipv4: "192.0.2.1", remaining_seconds: 600 });
+          : { ipv4: "192.0.2.1", remaining_seconds: 600, test_generation: 1, test_id: "a".repeat(32) });
         else pending.reject(new Error("old board error"));
         await work;
         assert.equal(el("wifi-status").textContent, "Current board");
         assert.equal(el("wifi-networks").children.length, 0);
         assert.equal(el("wifi-dialog").open, true);
         assert.equal(form.operationBusy(), false);
-        assert.equal(form.canSave(), true);
+        assert.equal(form.saveBlockReason(), null);
       });
     }
   }
@@ -135,17 +296,77 @@ test("snapshot initialization preserves drafts and reset admits the next board",
   form.initialize({ ssid: "poll must not overwrite edits", tcp_cli_enabled: true });
   assert.equal(el("wifi-ssid").value, "edited network");
   assert.equal(el("settings-tcp-cli").value, "0");
-  assert.equal(form.canSave(), false);
+  assert.notEqual(form.saveBlockReason(), null);
   form.reset();
   form.initialize({ ssid: "current board", tcp_cli_enabled: true });
   assert.equal(el("wifi-ssid").value, "current board");
   assert.equal(el("settings-tcp-cli").value, "1");
-  assert.equal(form.canSave(), true);
+  assert.equal(form.saveBlockReason(), null);
   await el("wifi-connect").fire("click");
   const staged = form.request();
-  form.initialize({ ssid: "poll must not overwrite staged credentials", tcp_cli_enabled: false });
+  form.initialize({ ssid: "current board", tcp_cli_enabled: true, wifi_state: "connected" });
+  assert.notEqual(form.saveBlockReason(), null, "an older saved-network observation cannot authorize a staged pair");
+  assert.match(form.saveBlockReason(), /Waiting.*tested pair/);
+  form.initialize({ ssid: "current board", tcp_cli_enabled: true, test_generation: 1,
+    pair_tested: true, ssid_staged: true, password_staged: true });
   assert.deepEqual(form.request(), staged);
 });
+
+test("clean wireless settings follow authoritative configuration rather than the first poll forever", async context => {
+  const { form, el } = formFixture(context);
+  const fresh = { ssid: "new network", ssid_hex: "6e6577", wifi_enabled: true,
+    ble_enabled: false, ble_key_configured: false, tcp_cli_enabled: false };
+  form.initialize({ ...fresh, stale: true });
+  assert.equal(el("settings-tcp-cli").value, "1", "stale facts cannot replace the baseline");
+  form.initialize(fresh);
+  assert.equal(el("settings-tcp-cli").value, "0");
+  assert.equal(el("wifi-ssid").value, fresh.ssid);
+  assert.equal(form.dirty(), false);
+  await el("ble-generate").fire("click");
+  const request = form.request();
+  assert.equal(request.tcp_cli_enabled, false, "an unrelated Bluetooth draft cannot restore the old TCP setting");
+  assert.equal(Object.hasOwn(request, "ssid"), false);
+  assert.equal(Object.hasOwn(request, "ssid_hex"), false);
+});
+
+test("configuration changes conflict with drafts without overwriting them or treating live telemetry as configuration",
+  async context => {
+    for (const draft of ["tcp", "wifi-input", "wifi-stage", "ble-key", "radio"]) {
+      await context.test(draft, async context => {
+        const { form, el } = formFixture(context);
+        const baseline = { ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true,
+          ble_enabled: false, ble_key_configured: true, tcp_cli_enabled: true };
+        form.initialize(baseline);
+        if (draft === "tcp") {
+          el("settings-tcp-cli").value = "0";
+          await el("settings-tcp-cli").fire("change");
+        } else if (draft === "wifi-input") {
+          el("wifi-ssid").value = "draft";
+          el("wifi-password").value = "password";
+          await el("wifi-ssid").fire("input");
+        } else if (draft === "wifi-stage") await el("wifi-connect").fire("click");
+        else if (draft === "ble-key") await el("ble-generate").fire("click");
+        else {
+          el("settings-ble").value = "1";
+          await el("settings-ble").fire("change");
+        }
+        const values = ["wifi-ssid", "wifi-password", "ble-secret", "settings-tcp-cli", "settings-ble"]
+          .map(id => el(id).value);
+        form.initialize({ ...baseline, ipv4: "192.0.2.2", wifi_state: "connected", scan_generation: 8 });
+        assert.doesNotMatch(form.saveBlockReason() ?? "", /configuration changed/);
+        form.initialize({ ...baseline, tcp_cli_enabled: false });
+        assert.deepEqual(["wifi-ssid", "wifi-password", "ble-secret", "settings-tcp-cli", "settings-ble"]
+          .map(id => el(id).value), values);
+        assert.match(form.saveBlockReason(), /configuration changed.*Discard wireless edits/);
+        assert.notEqual(form.saveBlockReason(), null);
+        assert.throws(() => form.request(), /configuration changed/);
+        assert.equal(await form.discardEdits(), true);
+        form.initialize({ ...baseline, tcp_cli_enabled: false });
+        assert.equal(form.saveBlockReason(), null);
+        assert.equal(el("settings-tcp-cli").value, "0");
+      });
+    }
+  });
 
 test("Wi-Fi expiry notifies Save eligibility once and stops its countdown", async context => {
   let now = 0, wall = 0, changes = 0;
@@ -156,24 +377,83 @@ test("Wi-Fi expiry notifies Save eligibility once and stops its countdown", asyn
   context.mock.method(globalThis, "setInterval", callback => { ticks.set(++timer, callback); return timer; });
   context.mock.method(globalThis, "clearInterval", id => ticks.delete(id));
   const { form, el } = formFixture(context, {
-    changed: () => changes++, test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 1 }),
+    changed: () => changes++,
+    test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 1, test_generation: 1, test_id: "a".repeat(32) }),
   });
   await el("wifi-connect").fire("click");
-  assert.equal(form.canSave(), true);
+  assert.equal(form.saveBlockReason(), null);
   const before = changes;
   wall = 3600000;
   now = 999;
   for (const tick of ticks.values()) tick();
-  assert.equal(form.canSave(), true, "wall-clock changes cannot expire the stage");
+  assert.equal(form.saveBlockReason(), null, "wall-clock changes cannot expire the stage");
   assert.equal(changes, before);
   wall = -3600000;
   now = 1000;
   for (const tick of ticks.values()) tick();
-  assert.equal(form.canSave(), false);
+  assert.notEqual(form.saveBlockReason(), null);
   assert.equal(changes, before + 1);
   assert.equal(ticks.size, 0);
-  assert.equal(form.canSave(), false, "a backward clock change cannot extend the stage");
+  assert.notEqual(form.saveBlockReason(), null, "a backward clock change cannot extend the stage");
 });
+
+test("candidate mismatches are recoverable while saved-configuration changes still require explicit reload",
+  async context => {
+  const baseline = { ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true,
+    ble_enabled: false, ble_key_configured: false, tcp_cli_enabled: true };
+  const candidate = { ...baseline, ssid: "different", ssid_hex: "646966666572656e74",
+    test_generation: 255, pair_tested: true, ssid_staged: true, password_staged: true, wifi_state: "test_joined" };
+  for (const changes of [{}, { test_generation: 1 }, { pair_tested: false }, { ssid_staged: false },
+    { password_staged: false }, { ssid_hex: "666f726569676e" }, { tcp_cli_enabled: false },
+    { ble_enabled: true }, { wifi_enabled: false }, { ble_key_configured: true }, { stale: true }]) {
+    await context.test(JSON.stringify(changes), async context => {
+      const { form, el } = formFixture(context, {
+        test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 600, test_generation: 255, test_id: "a".repeat(32) }),
+      });
+      form.initialize(baseline);
+      el("wifi-ssid").value = candidate.ssid;
+      await el("wifi-ssid").fire("input");
+      await el("wifi-connect").fire("click");
+      form.initialize({ ...candidate, ...changes });
+      const accepted = !Object.keys(changes).length || changes.stale === true;
+      assert.equal((form.saveBlockReason() === null), accepted);
+      assert.equal(form.dirty(), true);
+      assert.equal(el("wifi-ssid").value, candidate.ssid, "conflicts must not erase the local draft");
+      if (accepted) assert.equal(form.request().ssid, candidate.ssid);
+      else if (Object.keys(changes).some(field =>
+        ["tcp_cli_enabled", "ble_enabled", "wifi_enabled", "ble_key_configured"].includes(field)))
+        assert.match(form.saveBlockReason(), /configuration changed.*Discard wireless edits/);
+      else {
+        assert.match(form.saveBlockReason(), /Waiting.*tested pair/);
+        form.initialize(candidate);
+        assert.equal(form.saveBlockReason(), null, "a matching newer observation clears the recoverable gate");
+      }
+    });
+  }
+});
+
+test("a failed new-network candidate stays cleanup-blocked without creating a permanent saved-configuration conflict",
+  async context => {
+    const { form, el } = formFixture(context, {
+      test: async () => { throw new Error("password rejected"); },
+    });
+    const baseline = { ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true,
+      ble_enabled: false, ble_key_configured: false, tcp_cli_enabled: true };
+    form.initialize(baseline);
+    el("wifi-ssid").value = "different";
+    await el("wifi-ssid").fire("input");
+    await el("wifi-connect").fire("click");
+    form.initialize({ ...baseline, ssid: "different", ssid_hex: "646966666572656e74",
+      test_generation: 1, pair_tested: false, ssid_staged: true, password_staged: true,
+      wifi_state: "test_failed", wifi_state_id: 6 });
+    assert.notEqual(form.saveBlockReason(), null, "a failed candidate can never authorize Save");
+    assert.match(form.saveBlockReason(), /Test the connection again or clear/);
+    await el("wifi-cancel").fire("click");
+    form.initialize({ ...baseline, test_generation: 1, pair_tested: false,
+      ssid_staged: false, password_staged: false, wifi_state: "connected" });
+    assert.equal(form.saveBlockReason(), null, "known cleanup restores the saved baseline without a reload");
+    assert.equal(Object.hasOwn(form.request(), "ssid_hex"), false);
+  });
 
 test("connection-test progress uses monotonic elapsed time despite wall-clock changes", async context => {
   let now = 0, wall = 0;
@@ -194,7 +474,7 @@ test("connection-test progress uses monotonic elapsed time despite wall-clock ch
   now = 30000;
   for (const tick of ticks.values()) tick();
   assert.match(el("wifi-status").textContent, /30s; waiting for the final result/);
-  pending.resolve({ ipv4: "192.0.2.1", remaining_seconds: 600 });
+  pending.resolve({ ipv4: "192.0.2.1", remaining_seconds: 600, test_generation: 1, test_id: "a".repeat(32) });
   await work;
 });
 
@@ -213,7 +493,7 @@ test("scanned network buttons expose raw-SSID selection and clear it for manual 
   await el("wifi-other").fire("click");
   assert.equal(two.attributes["aria-pressed"], "false");
   assert.equal(el("wifi-ssid").value, "");
-  assert.equal(form.canSave(), false);
+  assert.notEqual(form.saveBlockReason(), null);
 });
 
 test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
@@ -267,7 +547,8 @@ test("TCP switch is saved and expired test credentials block saving", async cont
     el("settings-wifi").value = "1";
     el("settings-ble").value = "0";
     const form = bindWirelessForm({ ready: () => ready, supported: () => supported,
-      test: async () => ({ ipv4: "192.168.1.2", remaining_seconds: 600 }), cancelTest: async () => {} });
+      test: async () => ({ ipv4: "192.168.1.2", remaining_seconds: 600, test_generation: 1, test_id: "a".repeat(32) }),
+      cancelTest: async () => {} });
     form.initialize(status);
     assert.equal(form.dirty(), false);
     assert.equal(el("settings-tcp-cli").disabled, false);
@@ -298,29 +579,32 @@ test("TCP switch is saved and expired test credentials block saving", async cont
     ready = true;
     form.update();
     el("wifi-ssid").value = "tested";
+    el("wifi-ssid").handlers.input();
     await el("wifi-connect").handlers.click();
     assert.equal(form.request().use_tested_wifi, true);
-    assert.equal(form.canSave(), true);
+    assert.equal(form.saveBlockReason(), null);
     el("wifi-ssid").value = "edited-network";
     el("wifi-ssid").handlers.input();
-    assert.equal(form.canSave(), false);
+    assert.notEqual(form.saveBlockReason(), null);
     assert.throws(() => form.request(), /test the connection again/);
     el("wifi-password").value = "new-passphrase";
     el("wifi-password").handlers.input();
-    assert.equal(form.canSave(), false);
+    assert.notEqual(form.saveBlockReason(), null);
     await el("wifi-connect").handlers.click();
     assert.equal(form.request().ssid, "edited-network");
     assert.equal(form.request().use_tested_wifi, true);
     now += 600000;
     form.update();
-    assert.equal(form.canSave(), false);
+    assert.notEqual(form.saveBlockReason(), null);
     assert.throws(() => form.request(), /expired/);
     assert.match(el("wireless-summary").textContent, /expired/);
     el("settings-wifi").value = "0";
+    el("settings-wifi").handlers.change();
+    await new Promise(resolve => setImmediate(resolve));
     form.update();
     assert.equal(el("settings-tcp-cli").disabled, true);
     assert.equal(el("settings-tcp-cli").value, "1");
-    assert.equal(form.canSave(), true, "expired credentials do not prevent disabling Wi-Fi");
+    assert.equal(form.saveBlockReason(), null, "expired credentials do not prevent disabling Wi-Fi");
     const disabled = form.request();
     assert.equal(disabled.wifi_enabled, false);
     assert.equal(disabled.password, "");
@@ -367,7 +651,11 @@ test("scanned opaque SSIDs retain their bytes through testing and saving; manual
     form = bindWirelessForm({
       ready: () => true, supported: () => true,
       scan: async () => [{ ssid: "\\xFF\\x00", ssid_hex: "ff00", rssi: -30, secured: false }],
-      test: async request => { requests.push(request); return { ipv4: "192.0.2.1", remaining_seconds: 600 }; },
+      test: async request => {
+        requests.push(request);
+        return { ipv4: "192.0.2.1", remaining_seconds: 600, test_generation: requests.length,
+          test_id: "a".repeat(32) };
+      },
       cancelTest: async () => {},
     });
     form.initialize({ ssid: "saved", ssid_hex: "7361766564", tcp_cli_enabled: true });
@@ -417,7 +705,7 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
       scan: async () => [],
       test: async () => {
         if (testFailure) throw new Error("test could not connect");
-        return { ipv4: "192.168.1.2", remaining_seconds: 600 };
+        return { ipv4: "192.168.1.2", remaining_seconds: 600, test_generation: 1, test_id: "a".repeat(32) };
       },
       cancelTest: async () => {
         cancelCalls++;
@@ -429,6 +717,7 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
     });
     form.initialize({ ssid: "saved", wifi_enabled: true, ble_key_configured: false });
     el("wifi-ssid").value = "tested-network";
+    el("wifi-ssid").handlers.input();
     await el("wifi-connect").handlers.click();
     el("wifi-dialog").showModal();
     await el("wifi-cancel").handlers.click();
@@ -438,8 +727,7 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
     assert.equal(el("wifi-cancel").textContent, "Retry clearing test");
     assert.match(el("wifi-status").textContent, /device is busy/);
     assert.match(el("wireless-summary").textContent, /Open Wi-Fi settings to retry/);
-    assert.equal(form.stageValid(), false);
-    assert.equal(form.canSave(), false);
+    assert.notEqual(form.saveBlockReason(), null);
     assert.equal(form.operationBusy(), true, "board selection stays locked until temporary credentials are cleared");
     assert.equal(el("wifi-connect").disabled, true, "block another wireless operation until cleanup succeeds");
     assert.throws(() => form.request(), /Clear the temporary Wi-Fi test/);
@@ -448,12 +736,13 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
     await el("wifi-cancel").handlers.click();
     assert.equal(cancelCalls, 2);
     assert.equal(el("wifi-dialog").open, false);
-    assert.equal(form.stageValid(), true);
+    assert.equal(form.saveBlockReason(), null);
     assert.equal(Object.hasOwn(form.request(), "use_tested_wifi"), false);
     assert.equal(el("wireless-summary").hidden, true);
 
     testFailure = true;
     el("wifi-ssid").value = "failed-network";
+    el("wifi-ssid").handlers.input();
     await el("wifi-connect").handlers.click();
     el("wifi-dialog").showModal();
     await el("wifi-cancel").handlers.click();
@@ -462,6 +751,7 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
 
     testFailure = false;
     el("wifi-ssid").value = "second-network";
+    el("wifi-ssid").handlers.input();
     await el("wifi-connect").handlers.click();
     el("wifi-dialog").showModal();
     cancelFailure = "timeout";

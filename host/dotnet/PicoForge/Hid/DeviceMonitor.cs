@@ -386,7 +386,12 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             var client = RequireWirelessIdle();
             using var stop = new CancellationTokenSource();
-            lock (gate) wirelessTestCancel = stop;
+            lock (gate)
+            {
+                wirelessTestCancel = stop;
+                snapshot = snapshot with { Wireless = null, WirelessError = null };
+                wirelessReceipt = 0;
+            }
             try
             {
                 return ExecuteCommand(client, () => client.TestWireless(ssid, password, () => PollInputs(client),
@@ -423,7 +428,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
 
     private void ClearWirelessTest(IHidCommands client) => ExecuteCommand(client, () =>
     {
-        lock (gate) snapshot = snapshot with { WirelessCleanupRequired = true };
+        lock (gate)
+        {
+            snapshot = snapshot with { WirelessCleanupRequired = true, Wireless = null, WirelessError = null };
+            wirelessReceipt = 0;
+        }
         client.CancelWirelessTest();
     });
 

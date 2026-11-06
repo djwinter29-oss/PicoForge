@@ -13,6 +13,7 @@ export class ConsoleTerminal {
   column = 0;
   saved = [0, 0];
   escape = "";
+  lineOffset = 0;
 
   /** @param {string} text */
   write(text) {
@@ -41,6 +42,7 @@ export class ConsoleTerminal {
       }
       if (this.lines.length > 1000) {
         this.lines.shift();
+        this.lineOffset++;
         this.row--;
         this.saved[0] = Math.max(0, this.saved[0] - 1);
       }
@@ -63,14 +65,19 @@ export class ConsoleTerminal {
     }
   }
 
+  /** Return just the cursor line's text segments for incremental plain-text rendering. */
+  cursorLine() {
+    const line = this.lines[this.row].padEnd(this.column + 1, " ");
+    return [line.slice(0, this.column), line[this.column], line.slice(this.column + 1)];
+  }
+
   /** Return text surrounding the cursor for safe text-node rendering (never HTML). */
   display() {
-    const line = this.lines[this.row].padEnd(this.column + 1, " ");
-    const before = this.row ? `${this.lines.slice(0, this.row).join("\n")}\n${line.slice(0, this.column)}`
-      : line.slice(0, this.column);
-    const after = `${line.slice(this.column + 1)}${this.row < this.lines.length - 1
+    const [prefix, cursor, suffix] = this.cursorLine();
+    const before = this.row ? `${this.lines.slice(0, this.row).join("\n")}\n${prefix}` : prefix;
+    const after = `${suffix}${this.row < this.lines.length - 1
       ? `\n${this.lines.slice(this.row + 1).join("\n")}` : ""}`;
-    return [before, line[this.column], after];
+    return [before, cursor, after];
   }
 }
 

@@ -6,6 +6,12 @@ import { domFixture } from "./dom-fixture.mjs";
 
 let generation = 0;
 
+/** Check fixture observations explicitly; staged SSIDs are candidates, but radio flags remain saved configuration. */
+export function assertWirelessConsistent(board, wireless) {
+  assert.equal(wireless.wifi_enabled, Boolean(board.settings.radios & 1), "fixture Wi-Fi flag matches boot bits");
+  assert.equal(wireless.ble_enabled, Boolean(board.settings.radios & 2), "fixture Bluetooth flag matches boot bits");
+}
+
 /** Serve the integration fixture in the shared Python/.NET status shape. */
 function serverShape({ msc = null, filesystem_format = null, settings = null, memory = null, board_configuration = null,
   ...status }) {
@@ -23,20 +29,16 @@ export async function appFixture(context) {
     saveFails: false, settingsFailure: "save", settingsOutcomeConflict: false, settingsTimeout: false,
     readbackMismatch: false, rebootFails: false, rebootResponseError: false,
     selfTestResponseError: false, selfTestSucceeds: false,
-    wirelessFailure: 0, wirelessError: "Storage busy", wirelessTestGate: null, wirelessTestError: null,
-    wirelessState: "connected", wirelessReadFails: false, now: Date.now(),
+    now: Date.now(),
     responses: new Map(), resyncGate: null, resyncError: null,
     resyncResult: { uncertain: false, control_result: null, wireless: null },
   };
   const fixture = domFixture();
   const { handlers, elements, el: element } = fixture;
-  /** Pick Configure… the way a browser does: focus, then an input event before change. */
-  const configureRadio = radio => {
-    handlers.get(`#settings-${radio}:focus`)();
-    element(`#settings-${radio}`).value = "configure";
-    handlers.get(`#settings-${radio}:input`)();
-  };
-  const connected = { connected: true, error: null, runtime: { led_available: true, led_on: false },
+  const configureRadio = radio => handlers.get(`#${radio}-configure:click`)();
+  const connected = { connected: true, error: null, command_outcome_uncertain: false, reboot_pending: false,
+    telemetry_stale: false, storage_stale: false, self_test_stale: false,
+    runtime: { led_available: true, led_on: false },
     hardware: { product_name: "PicoForge", board_model: "Pico 2", mcu: "RP2350", capabilities: 2 | 16,
       ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
     settings_supported: true, settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
@@ -50,13 +52,27 @@ export async function appFixture(context) {
   secondBoard.runtime.led_on = true;
   secondBoard.self_test = { sequence: 91, active: false, state: "idle" };
   const boardStatuses = new Map([["board-a", connected], ["board-b", secondBoard]]);
+  const boardWireless = new Map([...boardStatuses.keys()].map(id => [id, {
+    wirelessFailure: 0, wirelessError: "Storage busy", wirelessTestGate: null, wirelessTestError: null,
+    wirelessState: "connected", wirelessReadFails: false, wirelessStatus: null, wirelessSaved: null,
+  }]));
+  // Scenario controls target the selected board; requests retain their originating board across awaits.
+  for (const field of Object.keys(boardWireless.get("board-a"))) Object.defineProperty(state, field, {
+    get: () => boardWireless.get(element("#board-select").value || "board-a")[field],
+    set: value => { boardWireless.get(element("#board-select").value || "board-a")[field] = value; },
+  });
   const ledRequestedStates = [];
   const requestedUrls = [];
   const savedSettings = [];
   const wirelessSettings = [];
   const testedWireless = [];
-  const savedWireless = () => ({ ssid: "saved", wifi_enabled: true, ble_enabled: false, tcp_cli_enabled: true,
-    wifi_state: state.wirelessState, ipv4: "192.168.1.9" });
+  const savedWireless = (board, wireless) => {
+    const baseline = { ssid: "saved", wifi_enabled: Boolean(board.settings.radios & 1),
+      ble_enabled: Boolean(board.settings.radios & 2), ble_key_configured: Boolean(board.settings.radios & 2),
+      tcp_cli_enabled: true, wifi_state: wireless.wirelessState, ipv4: "192.168.1.9" };
+    assertWirelessConsistent(board, baseline);
+    return { ...baseline, ...wireless.wirelessSaved, ...wireless.wirelessStatus };
+  };
   const requestTimeouts = [];
   context.mock.method(globalThis, "setInterval", () => 1);
   context.mock.method(Date, "now", () => state.now);
@@ -93,7 +109,9 @@ export async function appFixture(context) {
   globalThis.fetch = async (url, options = {}) => {
     requestedUrls.push(url);
     assert.ok(options.signal instanceof AbortSignal, "dashboard API requests have a deadline");
-    const connected = boardStatuses.get(new URL(url, "http://localhost").searchParams.get("board"));
+    const boardId = new URL(url, "http://localhost").searchParams.get("board");
+    const connected = boardStatuses.get(boardId);
+    const radio = boardWireless.get(boardId);
     const response = state.responses.get(url.split("?")[0]);
     if (response) return response(options);
     if (url === "/api/boards") {
@@ -119,29 +137,51 @@ export async function appFixture(context) {
       if (state.statusUnknownBoard) return { ok: false, status: 404,
         json: async () => ({ error: "unknown board; rescan and select a listed board" }) };
       const wireless = connected.hardware.capabilities & 128 ? {
-        wireless: state.wirelessReadFails ? null : savedWireless(),
-        wireless_error: state.wirelessReadFails ? "wireless down" : null,
+        wireless: radio.wirelessReadFails ? null : savedWireless(connected, radio),
+        wireless_error: radio.wirelessReadFails ? "wireless down" : null,
       } : {};
       return { ok: true, json: async () => ({ ...serverShape(structuredClone(connected)), ...wireless }) };
     }
     if (url.startsWith("/api/wireless/test?board=")) {
       assert.ok(options.signal instanceof AbortSignal);
-      testedWireless.push(JSON.parse(options.body));
-      await state.wirelessTestGate;
-      if (state.wirelessTestError) throw state.wirelessTestError;
-      return { ok: true, json: async () => ({ test: { ipv4: "192.168.1.9", remaining_seconds: 600 } }) };
+      const request = JSON.parse(options.body);
+      testedWireless.push(request);
+      await radio.wirelessTestGate;
+      if (radio.wirelessTestError) throw radio.wirelessTestError;
+      const test_generation = (radio.wirelessStatus?.test_generation ?? 0) % 255 + 1;
+      const test_id = test_generation.toString(16).padStart(32, "0");
+      radio.wirelessStatus = { ...radio.wirelessStatus, ssid: request.ssid,
+        ssid_hex: request.ssid_hex ?? Buffer.from(request.ssid).toString("hex"),
+        test_generation, test_id, wifi_state: "test_joined",
+        pair_tested: true, ssid_staged: true, password_staged: true };
+      return { ok: true, json: async () => ({
+        test: { ipv4: "192.168.1.9", remaining_seconds: 600, test_generation, test_id },
+      }) };
+    }
+    if (url.startsWith("/api/wireless/cancel?board=")) {
+      radio.wirelessStatus = null;
+      return { ok: true, json: async () => ({ cancelled: true }) };
     }
     if (url.startsWith("/api/wireless?board=")) {
       assert.equal(options.method, "POST", "Wi-Fi status is read from /api/status, never GET /api/wireless");
       const settings = JSON.parse(options.body);
       wirelessSettings.push(settings);
-      return { ok: state.wirelessFailure === 0, status: state.wirelessFailure || 200, json: async () => ({
-        error: state.wirelessFailure === 409 ? state.wirelessError : "Wireless outcome is uncertain",
-        uncertain: state.wirelessFailure === 503 || state.wirelessError === "Wireless outcome is uncertain",
+      const baseline = savedWireless(connected, radio);
+      const wireless = { ...baseline, ...settings, board: undefined, password: undefined, ble_key: undefined,
+        ssid_hex: settings.ssid_hex ?? Buffer.from(settings.ssid ?? baseline.ssid).toString("hex"),
+        ble_key_configured: settings.ble_key === undefined ? baseline.ble_key_configured : Boolean(settings.ble_key),
+        wifi_state: "connected", ssid_staged: false, password_staged: false, pair_tested: false, key_staged: false };
+      if (!radio.wirelessFailure) {
+        connected.settings = { ...settings.board };
+        radio.wirelessSaved = wireless;
+        radio.wirelessStatus = null;
+        assertWirelessConsistent(connected, wireless);
+      }
+      return { ok: radio.wirelessFailure === 0, status: radio.wirelessFailure || 200, json: async () => ({
+        error: radio.wirelessFailure === 409 ? radio.wirelessError : "Wireless outcome is uncertain",
+        uncertain: radio.wirelessFailure === 503 || radio.wirelessError === "Wireless outcome is uncertain",
         reboot_pending: true, settings: settings.board,
-        wireless: { ...settings, board: undefined, password: undefined, ble_key: undefined,
-          ssid_hex: settings.ssid_hex ?? Buffer.from(settings.ssid).toString("hex"),
-          ble_key_configured: Boolean(settings.ble_key), wifi_state: "connected" },
+        wireless,
       }) };
     }
     if (url.startsWith("/api/settings?board=")) {
@@ -206,6 +246,6 @@ export async function appFixture(context) {
   return {
     state, connected, handlers, elements, configureRadio, requestedUrls, savedSettings, wirelessSettings,
     testedWireless, requestTimeouts, ledRequestedStates, saveAndConfirm, switchBoard,
-    reconnect, boardStatuses,
+    reconnect, boardStatuses, boardWireless,
   };
 }
